@@ -101,8 +101,11 @@ function SignalComputedWorkspaceTopics({ initialBundle, brandName, data, loading
   const tabButtons = useRef<Array<HTMLButtonElement | null>>([]);
 
   const refreshCallback = useRef(onRefresh); refreshCallback.current = onRefresh;
-  const [drawer, setDrawer] = useState(false), [reading, setReading] = useState(false), [error, setError] = useState<string | null>(null);
   const initial = validInitialTopicBundle(initialBundle, data);
+  const [drawer, setDrawer] = useState(false);
+  const [reading, setReading] = useState(() => Boolean(data.population_segments && data.is_current && surface !== "consumers"
+    && !initial && workspaceTermsForSectionV1(data, "topics").length));
+  const [error, setError] = useState<string | null>(null);
   const [page, setPage] = useState<SignalWorkspaceTopicEvidencePageV1 | null>(initial?.evidence ?? null);
   const [detail, setDetail] = useState<SignalWorkspaceTopicDetailV1 | null>(initial?.detail ?? null);
   const consumedInitial = useRef<SignalWorkspaceTopicReadBundleV1 | null>(null);

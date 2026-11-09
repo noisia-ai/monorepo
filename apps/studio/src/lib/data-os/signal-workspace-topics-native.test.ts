@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import {readFileSync} from "node:fs";
+import ts from "typescript";
+import {createHash} from "node:crypto";
 import type { SignalWorkspaceTopicsOverviewV1 } from "@noisia/query-engine";
 import { workspaceTopicsInterpretationCoverageV1 } from "@noisia/db";
 import type { SignalWorkspaceTopicSelectionStatusV1, SignalWorkspaceCapabilitiesV1 } from "@noisia/db";
@@ -59,4 +62,24 @@ test("editorial coverage is an exact projection snapshot; absent coverage is not
   for (const patch of [{ interpreted_unit_count: -1 }, { interpreted_unit_count: 358 }, { interpreted_unit_count: "32" },
     { interpreted_unit_count: 1.2 }, { expected_unit_count: undefined }, { complete: true }, { complete: "false" }])
     assert.throws(() => workspaceTopicsInterpretationCoverageV1({ ...input, ...patch }), /coverage_invalid/);
+});
+
+
+test("Studio page options explicitly defer only mass inspection while default callers retain a full bundle",async()=>{
+  const calls:Array<Record<string,unknown>>=[];
+  const dependencies:Record<string,unknown>={
+    "node:crypto":{createHash},"@/lib/db":{pool:{fixture:true}},
+    "@noisia/db":{loadSignalWorkspaceTopicsPageV1:async(args:Record<string,unknown>)=>{calls.push(args);return {overview:{workspace_id:"workspace"}};}}
+  };
+  const source=readFileSync(new URL("./signal-workspace-topics-native.ts",import.meta.url),"utf8"),exports:Record<string,unknown>={};
+  new Function("require","exports",ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText)(
+    (name:string)=>{assert.ok(name in dependencies,name);return dependencies[name];},exports);
+  const read=exports.loadNativeSignalTopicsPageV1 as (actorScope:typeof scope,params?:URLSearchParams,options?:{defer_mass_inspection?:boolean})=>Promise<unknown>;
+  await read(scope);assert.equal(calls.at(-1)!.defer_mass_inspection,false);
+  await read(scope,new URLSearchParams(),{defer_mass_inspection:true});assert.equal(calls.at(-1)!.defer_mass_inspection,true);
+  await read(scope,new URLSearchParams("initial_inspection=deferred&conversation_segment=conversation"));
+  assert.equal(calls.at(-1)!.defer_mass_inspection,true);assert.equal(calls.at(-1)!.conversation_segment,"conversation");
+  assert.equal(calls.at(-1)!.workspace_id,"workspace");assert.equal(calls.at(-1)!.actor_user_id,"actor");
+  for(const value of ["initial_inspection=unknown","initial_inspection=","initial_inspection=deferred&initial_inspection=complete"])
+    await assert.rejects(read(scope,new URLSearchParams(value)),(error:unknown)=>(error as {status:number}).status===422);
 });

@@ -44,12 +44,25 @@ export async function loadNativeSignalTopicsV1(scope: ActorScope & { imported_fa
   if (native && invalid) throw invalid;
   return native;
 }
-export async function loadNativeSignalTopicsPageV1(scope: ActorScope & { imported_fallback?: boolean }, params = new URLSearchParams()) {
+export async function loadNativeSignalTopicsPageV1(
+  scope: ActorScope & { imported_fallback?: boolean },
+  params = new URLSearchParams(),
+  options: { defer_mass_inspection?: boolean } = {}
+) {
   if (!nativeTopicsViewV1(params)) return null;
   let filter: ReturnType<typeof nativeTopicsQueryV1> = {}, invalid: unknown = null;
   const { pool } = await import("@/lib/db");
-  try { filter = nativeTopicsQueryV1(params); } catch (error) { invalid = error; }
-  const native = await loadSignalWorkspaceTopicsPageV1({ database: pool, ...scope, timezone: scope.timezone ?? "UTC", ...filter });
+  const filterParams = new URLSearchParams(params);
+  filterParams.delete("initial_inspection");
+  try {
+    if (new Set(params.getAll("initial_inspection")).size > 1
+      || (params.has("initial_inspection") && !["complete", "deferred"].includes(params.get("initial_inspection")!))) {
+      throw Object.assign(new Error("Invalid initial inspection mode"), { code: "workspace_topic_filter_invalid", status: 422 });
+    }
+    filter = nativeTopicsQueryV1(filterParams);
+  } catch (error) { invalid = error; }
+  const native = await loadSignalWorkspaceTopicsPageV1({ database: pool, ...scope, timezone: scope.timezone ?? "UTC", ...filter,
+    defer_mass_inspection: options.defer_mass_inspection ?? params.get("initial_inspection") === "deferred" });
   if (native && invalid) throw invalid;
   return native;
 }

@@ -122,7 +122,7 @@ export async function SignalV2WorkspacePage({
     }
     if (!params.has("conversation_segment")) params.set("conversation_segment", "conversation");
     const bundle = await loadNativeSignalTopicsPageV1({ workspace_id: workspace.id, actor_user_id: session.appUser.id,
-      timezone: workspace.timezone, imported_fallback: allowImportedSignalFallbackV1(workspace) }, params);
+      timezone: workspace.timezone, imported_fallback: allowImportedSignalFallbackV1(workspace) }, params, { defer_mass_inspection: true });
     const native = bundle?.overview;
     if (native && (!activeReportKey || native.consumer_indicators)) {
       const [workspaceOptions, releases] = await Promise.all([

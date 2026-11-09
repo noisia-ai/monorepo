@@ -326,6 +326,8 @@ test("Signal keeps served semantics while applying a safe working label", async 
     sql.includes("generation.workspace_id=$1::uuid AND true")));
   const initialBundle = await loadSignalWorkspaceTopicsPageV1(args);
   assert.deepEqual(initialBundle, bundle);
+  assert.deepEqual(await loadSignalWorkspaceTopicsPageV1({...args,defer_mass_inspection:true}),bundle,
+    "the opt-in retains the complete legacy generation contract");
   await assert.rejects(loadSignalWorkspaceTopicReadBundleV1({ ...args, expected_scope_digest: sha("0") }), /workspace_topics_scope_changed/);
   await assert.rejects(loadSignalWorkspaceTopicReadBundleV1({ ...args, term_key: "foreign" }), /workspace_topics_topic_unavailable/);
   selectedInterest = true;

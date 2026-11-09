@@ -47,7 +47,7 @@ test("inspection fails closed for revoked access, unsupported kind/view and sani
 
 test("page bundle route scopes the first detail and evidence before exposing a fresh snapshot", async () => {
   const source = readFileSync(new URL("../../app/api/data-os/signal/[workspaceId]/topics-narratives/page/route.ts", import.meta.url), "utf8");
-  for (const denied of [0, 401, 403, 404]) {
+  for (const deferred of [false,true]) for (const denied of [0, 401, 403, 404]) {
     const calls: string[] = [], exports: Record<string, unknown> = {};
     const dependencies: Record<string, unknown> = {
       "@/lib/data-os/signal-imported-serving": { allowImportedSignalFallbackV1: () => true },
@@ -57,15 +57,15 @@ test("page bundle route scopes the first detail and evidence before exposing a f
         topicResponse: (body: unknown, status = 200) => Response.json(body, { status, headers: { "Cache-Control": "private, no-store" } }),
         topicError: () => Response.json({}, { status: 503 }),
       },
-      "@/lib/data-os/signal-workspace-topics-native": { loadNativeSignalTopicsPageV1: async (scope: unknown) => {
-        calls.push("page"); assert.deepEqual(scope, { workspace_id: "workspace", actor_user_id: "actor", timezone: "UTC", imported_fallback: true });
+      "@/lib/data-os/signal-workspace-topics-native": { loadNativeSignalTopicsPageV1: async (scope: unknown,params:URLSearchParams) => {
+        calls.push("page"); assert.equal(params.get("initial_inspection"),deferred?"deferred":null);assert.deepEqual(scope, { workspace_id: "workspace", actor_user_id: "actor", timezone: "UTC", imported_fallback: true });
         return { contract_version: "signal-workspace-topic-read-bundle-v1" };
       } },
     };
     new Function("require", "exports", ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText)(
       (name: string) => { assert.ok(name in dependencies); return dependencies[name]; }, exports);
     const get = exports.GET as (request: Request, context: { params: Promise<{ workspaceId: string }> }) => Promise<Response>;
-    const response = await get(new Request("https://noisia.invalid/page?view=all_conversations"), { params: Promise.resolve({ workspaceId: "workspace" }) });
+    const response = await get(new Request(`https://noisia.invalid/page?view=all_conversations${deferred?"&initial_inspection=deferred":""}`), { params: Promise.resolve({ workspaceId: "workspace" }) });
     assert.equal(response.status, denied || 200); assert.deepEqual(calls, denied ? ["access"] : ["access", "page"]);
     if (!denied) assert.equal(response.headers.get("Cache-Control"), "private, no-store");
   }

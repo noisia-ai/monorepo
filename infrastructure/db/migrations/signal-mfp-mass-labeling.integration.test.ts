@@ -14,7 +14,7 @@ import {createMassLabelingMapV1, createMassLabelingStoreV1, requestMassLabelingV
   continueMassLabelingV1, provisionMassLabelingPolicyV1, selectMassLabelingTopicsV1,
   correctMassLabelingTopicV1, exportMassLabelingSnapshotV1, measureMassLabelingSmokeV1} from "../signal-mass-labeling";
 import {loadSignalWorkspaceTopicsOverviewV1, loadSignalWorkspaceTopicEvidenceV1,
-  loadSignalWorkspaceTopicDetailV1} from "../signal-workspace-topics-serving";
+  loadSignalWorkspaceTopicDetailV1,loadSignalWorkspaceTopicsPageV1} from "../signal-workspace-topics-serving";
 import {importMassLabelingR13V1} from "../signal-mass-labeling-r13";
 import * as editorialMoney from "../signal-workspace-engine-interpretation";
 import {SIGNAL_WORKSPACE_MASS_LABELING_EDITORIAL_CONFIGURATION_V1 as globalConfiguration,buildMassLabelingConsolidationRequestV1} from "@noisia/query-engine";
@@ -38,8 +38,9 @@ for(const authorization of ["rotation","scoped","scoped-scale","scoped-funding",
   try {
     await raw.query("BEGIN");
     let sequence = 0; const stack: string[] = [];
-    let massPlanChecked = false;
+    let massPlanChecked = false,readQueries=0;
     const query = async (sql: string, values?: unknown[]) => {
+      readQueries++;
       if (sql.startsWith("BEGIN")) {const save = `mass_${++sequence}`; stack.push(save); return raw.query(`SAVEPOINT ${save}`);}
       if (sql === "COMMIT") return raw.query(`RELEASE SAVEPOINT ${stack.pop()!}`);
       if (sql === "ROLLBACK") {const save = stack.pop()!; await raw.query(`ROLLBACK TO SAVEPOINT ${save}`); return raw.query(`RELEASE SAVEPOINT ${save}`);}
@@ -721,6 +722,18 @@ for(const authorization of ["rotation","scoped","scoped-scale","scoped-funding",
     assert.equal(massPlanChecked,true,"the actual mass-labeling reader was planned and checked");
     assert.equal(view.denominator, 3);
     assert.equal(view.terms[0]!.mention_count, 2, "an exact 0.7 probability remains unclassified");
+    if(authorization==="rotation"||authorization==="scoped"){
+      await assert.rejects(loadSignalWorkspaceTopicsPageV1({...access,actor_user_id:foreignActor,defer_mass_inspection:true}),/workspace_topics_forbidden/);
+      const fullStart=readQueries;
+      const full=await loadSignalWorkspaceTopicsPageV1(access);
+      const fullQueries=readQueries-fullStart,deferredStart=readQueries;
+      const deferred=await loadSignalWorkspaceTopicsPageV1({...access,defer_mass_inspection:true});
+      const deferredQueries=readQueries-deferredStart;
+      assert.ok(full?.detail&&full.evidence);
+      assert.equal(deferred?.detail,null);assert.equal(deferred?.evidence,null);
+      assert.deepEqual({...deferred!.overview,observed_at:null},{...full!.overview,observed_at:null});
+      assert.equal(deferredQueries,fullQueries-2,"the initial page skips exactly the detail and evidence queries");
+    }
     const evidenceArgs = {...access, term_key: "bicycle_repairs", expected_scope_digest: view.scope_digest, limit: 1};
     const page1 = await loadSignalWorkspaceTopicEvidenceV1(evidenceArgs), page2 = await loadSignalWorkspaceTopicEvidenceV1({...evidenceArgs, cursor: page1.next_cursor});
     const sampled=[calls[0]!.inputs[0]!.root_id,calls[2]!.inputs[0]!.root_id].sort((a,b)=>

@@ -1203,14 +1203,15 @@ function assertTopicContext(ctx: Context, term: string, kind: "topic" | "narrati
     return fail("workspace_topics_topic_unavailable", 404);
   if (!ctx.is_current) return fail("workspace_topics_evidence_stale");
 }
-/** One authorized snapshot; no result cache or provider work. */
-export async function loadSignalWorkspaceTopicsPageV1(args: Args): Promise<SignalWorkspaceTopicReadBundleV1 | null> {
+/** Default callers receive a complete authorized snapshot. Studio can defer
+ * the mass map's inspection while rendering its initial overview. */
+export async function loadSignalWorkspaceTopicsPageV1(args: Args & { defer_mass_inspection?: boolean }): Promise<SignalWorkspaceTopicReadBundleV1 | null> {
   return transaction(args.database, async client => {
     const ctx = reuseProjectionSource(await context(client, args));
     if (!ctx.native) return null;
     const view = await overview(client, args, ctx);
     const term = view.source === "workspace_imported" ? null : view.terms.find(item => item.kind !== "narrative");
-    if (!term || !view.is_current)
+    if (!term || !view.is_current || (ctx.mass_labeling && args.defer_mass_inspection === true))
       return { contract_version: "signal-workspace-topic-read-bundle-v1", overview: view, detail: null, evidence: null };
     const selected = { ...args, term_key: term.term_key, kind: "topic" as const, expected_scope_digest: view.scope_digest, limit: 25 };
     assertTopicContext(ctx, selected.term_key, selected.kind);
