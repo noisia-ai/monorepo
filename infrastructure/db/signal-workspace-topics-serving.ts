@@ -1,3 +1,4 @@
+import { massLabelingLexiconDigestV1 } from "./signal-mass-labeling-lexicon-suggestions";
 import {loadMassLabelingStudyPolicyWithClientV1,massLabelingStudyInterestDigestV1,type MassLabelingStudyPolicyV1} from "./signal-mass-labeling-study-policy";
 import {loadMassLabelingServingContextV1, type MassLabelingMapV1} from "./signal-mass-labeling";
 import { facetForcedAbstentionsSqlV1 } from "./signal-facet-normalizations";
@@ -1371,5 +1372,65 @@ export async function loadSignalWorkspaceMentionsV1(args: SignalWorkspaceMention
     }
     return { ...common, items, ...(request.focus ? { focused_item: focusedItem } : {}),
       generation_id: ctx.generation!.id, source_engine_execution_id: ctx.generation!.source_engine_execution_id };
+  });
+}
+
+export type MassLabelingLexiconSuggestionsV1 = {
+  contract_version: "mass-labeling-lexicon-suggestions-v1";
+  workspace_id: string; revision: number; available: boolean;
+  items: Array<{ term: string; roots: number; trigger_roots: number; barrier_roots: number }>;
+};
+/** Free corpus evidence. Count each word or bigram once per eligible root. */
+export async function loadMassLabelingLexiconSuggestionsV1(args: Omit<Args, "include_unselected"> & {
+  limit?: number;
+}): Promise<MassLabelingLexiconSuggestionsV1> {
+  const limit = args.limit ?? 100;
+  if (!Number.isSafeInteger(limit) || limit < 1 || limit > 200)
+    return fail("lexicon_suggestion_invalid", 422);
+  return transaction(args.database, async client => {
+    const ctx = await context(client, { ...args, conversation_segment: "conversation" });
+    const policy = ctx.mass_study_policy;
+    const result: MassLabelingLexiconSuggestionsV1 = {
+      contract_version: "mass-labeling-lexicon-suggestions-v1", workspace_id: args.workspace_id,
+      revision: policy?.revision ?? 0, available: false, items: []
+    };
+    if (!ctx.mass_labeling || !ctx.is_current || !ctx.mass_consumer_category_current || !policy) return result;
+    const items = (await client.query<MassLabelingLexiconSuggestionsV1["items"][number]>(`
+      ${populationSql(true, false, false, false, false, undefined, true, "conversation", false)},
+      eligible_answers AS MATERIALIZED (
+        SELECT root.root_id, mention.text_clean,
+          COALESCE(review.trigger_barrier, ${ctx.mass_product ? "prior.probabilities->'trigger_barrier'" : "NULL::jsonb"}) answer
+        FROM period_roots root
+        JOIN mentions mention ON mention.workspace_id=$1::uuid AND mention.id=root.root_id
+        JOIN signal_mass_labeling_category_matches lexical ON lexical.workspace_id=$1::uuid
+          AND lexical.policy_revision=$7 AND lexical.root_id=root.root_id AND NOT lexical.matched
+        JOIN signal_mass_labeling_results prior ON prior.map_id=$2::uuid AND prior.root_id=root.root_id
+        LEFT JOIN signal_mass_labeling_r13_results review ON review.workspace_id=$1::uuid
+          AND review.map_id=$2::uuid AND review.root_id=root.root_id
+        WHERE root.metrics AND root.evidence AND root.conversation_segment='conversation'
+          AND prior.probabilities#>>'{voice,choice}'='individual'
+          AND (prior.probabilities#>>'{promotion,noul}')::double precision<=0.7
+      ), high_confidence AS MATERIALIZED (
+        SELECT root_id,text_clean,answer->>'choice' choice FROM eligible_answers
+        WHERE answer->>'choice' IN('trigger','barrier')
+          AND (answer->'probabilities'->>(answer->>'choice'))::double precision>=0.9
+      ), words AS MATERIALIZED (
+        SELECT root_id,choice,token.word,token.position,
+          lead(token.word) OVER(PARTITION BY root_id ORDER BY token.position) following
+        FROM high_confidence CROSS JOIN LATERAL
+          regexp_split_to_table(btrim(regexp_replace(lower(text_clean),'[^[:alnum:]]+',' ','g')),' +')
+            WITH ORDINALITY token(word,position)
+      ), terms AS MATERIALIZED (
+        SELECT DISTINCT root_id,choice,candidate.term FROM words
+        CROSS JOIN LATERAL (VALUES(word),(word||' '||following)) candidate(term)
+        WHERE char_length(candidate.term) BETWEEN 2 AND 200 AND candidate.term ~ '[[:alpha:]]'
+      ) SELECT term,count(DISTINCT root_id)::int roots,
+          count(DISTINCT root_id) FILTER(WHERE choice='trigger')::int trigger_roots,
+          count(DISTINCT root_id) FILTER(WHERE choice='barrier')::int barrier_roots
+        FROM terms WHERE NOT EXISTS(SELECT 1 FROM signal_mass_labeling_lexicon_dismissals dismissal
+          WHERE dismissal.workspace_id=$1::uuid AND dismissal.lexicon_digest=$8 AND dismissal.term=terms.term)
+        GROUP BY term ORDER BY roots DESC,term COLLATE "C" LIMIT $9`,
+    [...populationParams(args, ctx), policy.revision, massLabelingLexiconDigestV1(policy), limit])).rows;
+    return { ...result, available: true, items };
   });
 }

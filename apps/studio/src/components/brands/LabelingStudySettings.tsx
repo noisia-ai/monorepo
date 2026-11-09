@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useTranslations } from "next-intl";
 import { labelingStudySettingsInputV1, setLabelingTopicDisplayNameV1, type LabelingStudySettingsV1 } from "@/lib/data-os/signal-labeling-settings";
+import { LabelingLexiconSuggestions } from "./LabelingLexiconSuggestions";
 import { useMfpMutation, useMfpResource } from "./useMfpResource";
 
 export function LabelingStudySettings({ workspaceId, onAccessDenied, onSaved, onReadyChange }: {
@@ -48,6 +49,9 @@ export function LabelingStudySettings({ workspaceId, onAccessDenied, onSaved, on
         <label>{t("lexicon")}<textarea rows={7} value={draft.terms} disabled={disabled}
           onChange={event => edit({ terms: event.target.value })} /></label>
         <p className="admin-drawer-form__hint">{t("lexiconHelp")}</p>
+        <LabelingLexiconSuggestions workspaceId={workspaceId} revision={state.revision} disabled={disabled || draft.category.trim() !== state.category}
+          terms={draft.terms.split(/\r?\n/u).map(term => term.trim()).filter(Boolean)} onAccessDenied={onAccessDenied}
+          onAccept={term => edit({ terms: [draft.terms.trim(), term].filter(Boolean).join("\n") })} />
         <label>{t("threshold")}<input type="number" min={0} max={1} step={0.01} value={draft.threshold}
           disabled={disabled} onChange={event => edit({ threshold: event.target.value })} /></label>
         <p className="admin-drawer-form__hint">{t("thresholdHelp")}</p>

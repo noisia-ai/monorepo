@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { SIGNAL_WORKSPACE_MASS_LABELING_PRODUCT_CONFIGURATION_V2 as configuration,
+  SIGNAL_WORKSPACE_MASS_LABELING_PRODUCT_LEGACY_CONFIGURATION_V2 as legacyConfiguration,
   signalWorkspaceEmbeddingDigestV1 as digest } from "@noisia/query-engine";
 import type { LabelingDatabaseV1 } from "./signal-mention-facets";
 import { loadSignalWorkspaceCapabilitiesStoreV1 } from "./signal-workspace-capabilities";
@@ -26,7 +27,11 @@ export async function provisionMassLabelingProductEditorialPolicyV2(args: {
     const action = (await client.query<{ provider: string; model: string; configuration: unknown; max_execution_micro_usd: string | null; automatic_allowed: boolean }>(`SELECT provider,model,configuration,max_execution_micro_usd::text,automatic_allowed
       FROM signal_processing_policy_actions WHERE policy_version_id=$1 AND action='topic_interpretation'`, [prior.id])).rows[0];
     if (!action) throw new SignalLabelingError("mass_labeling_editorial_policy_required");
-    if (digest(action.configuration) === digest(configuration)) { await client.query("COMMIT"); return { status: "existing_policy" as const, policy_id: prior.id }; }
+    const approved = [configuration, legacyConfiguration].find(profile => digest(action.configuration) === digest(profile));
+    if (approved) {
+      await client.query("COMMIT");
+      return { status: "existing_policy" as const, policy_id: prior.id, configuration: approved };
+    }
     if (!(await client.query(`SELECT 1 FROM users WHERE id=$1 AND status='active' AND user_type='noisia_internal'
       AND primary_role IN('noisia_admin','founder','admin')`, [args.actor_user_id])).rows.length) throw new SignalLabelingError("mass_labeling_policy_internal_only", 403);
     if (await readClassicPolicyActiveWorkV1(client, scope.organization_id)) throw new SignalLabelingError("mass_labeling_policy_active_work");
@@ -42,6 +47,6 @@ export async function provisionMassLabelingProductEditorialPolicyV2(args: {
       [id, configuration.provider, configuration.model, JSON.stringify(configuration), digest(configuration), action.max_execution_micro_usd, action.automatic_allowed]);
     await client.query("UPDATE signal_processing_policy_versions SET status='revoked' WHERE id=$1", [prior.id]);
     await client.query("UPDATE signal_processing_policy_versions SET status='active' WHERE id=$1", [id]);
-    await client.query("COMMIT"); return { status: "provisioned" as const, policy_id: id };
+    await client.query("COMMIT"); return { status: "provisioned" as const, policy_id: id, configuration };
   } catch (error) { await client.query("ROLLBACK"); throw error; } finally { client.release(); }
 }

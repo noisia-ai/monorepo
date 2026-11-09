@@ -137,3 +137,5 @@ export * from "./signal-mass-labeling-study-policy";
 export * from "./signal-mass-labeling-product";
 export * from "./signal-mass-labeling-editorial-policy";
 export * from "./signal-mass-labeling-product-finalization";
+
+export * from "./signal-mass-labeling-lexicon-suggestions";

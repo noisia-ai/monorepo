@@ -9,6 +9,7 @@ import { basename, join, resolve } from "node:path";
 import { eq } from "drizzle-orm";
 import { createMassLabelingProductDatabaseFixtureV1 } from "./signal-mass-labeling-product-database.synthetic.fixture";
 import { users } from "../schema";
+import { provisionMassLabelingProductEditorialPolicyV2 } from "../signal-mass-labeling-editorial-policy";
 import { loadSignalWorkspaceCapabilitiesStoreV1 } from "../signal-workspace-capabilities";
 import { loadSignalWorkspaceEnginePreflightV1, beginSignalWorkspaceEngineV1 } from "../signal-workspace-engine";
 import { requestSignalWorkspaceCorpusPreparationStoreV1 } from "../signal-workspace-corpus-preparation-management";
@@ -21,25 +22,27 @@ import { signalWorkspaceEngineJobV1 } from "../../../services/workers/src/worker
 import { createBrandContextSyntheticVoyageProviderV1 } from "./signal-brand-context.synthetic.fixture";
 import { materializeMassLabelingProductMapV2 } from "../../../services/workers/src/workers/signal-mass-labeling-product-map";
 import type { WorkspaceEngineStorageV1 } from "../../../services/workers/src/workers/signal-workspace-engine-storage";
-import { SIGNAL_WORKSPACE_EMBEDDING_PROFILE_V1, SIGNAL_WORKSPACE_MASS_LABELING_PRODUCT_CONFIGURATION_V2,
+import { SIGNAL_WORKSPACE_EMBEDDING_PROFILE_V1, SIGNAL_WORKSPACE_MASS_LABELING_PRODUCT_CONFIGURATION_V2 as currentConfiguration,
+  SIGNAL_WORKSPACE_MASS_LABELING_PRODUCT_LEGACY_CONFIGURATION_V2 as legacyConfiguration,
   type SignalWorkspaceEngineInputManifestV1 } from "@noisia/query-engine";
 
 const hash = (value: string | Buffer) => `sha256:${createHash("sha256").update(value).digest("hex")}`;
 
 /** Runs in its own process so Studio aliases resolve exactly as they do in the
  * normal brand-creation service, and every external transport is synthetic. */
-test("the native product engine worker admits a new client study without a private operator", {
+for (const variant of ["current", "legacy"] as const) test(`the native product engine worker admits a new client study without a private operator (${variant})`, {
   skip: process.env.NOISIA_MFP_PG_CI !== "true", timeout: 600_000,
 }, async () => {
   if (process.env.NOISIA_MFP_NATIVE_ENGINE_CHILD !== "true") {
     const env: NodeJS.ProcessEnv = { ...process.env, NOISIA_MFP_NATIVE_ENGINE_CHILD: "true",
       TSX_TSCONFIG_PATH: resolve(fileURLToPath(new URL("../../../apps/studio/tsconfig.json", import.meta.url))) };
     for (const key of ["NODE_TEST_CONTEXT", "REDIS_URL", "UPSTASH_REDIS_REST_URL", "UPSTASH_REDIS_REST_TOKEN", "ANTHROPIC_API_KEY", "VOYAGE_API_KEY", "TYPESAFE_API_KEY", "NOISIA_MASS_LABELING_ENABLED"]) delete env[key];
-    const child = spawnSync(process.execPath, ["--test", "--import", "tsx", fileURLToPath(import.meta.url)], { env, encoding: "utf8", timeout: 540_000, maxBuffer: 2_000_000 });
+    const child = spawnSync(process.execPath, ["--test", "--test-name-pattern", `\\(${variant}\\)$`, "--import", "tsx", fileURLToPath(import.meta.url)], { env, encoding: "utf8", timeout: 540_000, maxBuffer: 2_000_000 });
     assert.equal(child.status, 0, child.stdout + child.stderr);
-    assert.match(child.stdout, /# pass 1\b/u); assert.match(child.stdout, /# skipped 0\b/u); assert.match(child.stdout, /native_product_engine_signal_ready/u);
+    assert.match(child.stdout, /# pass 1\b/u); assert.match(child.stdout, /# skipped 1\b/u); assert.match(child.stdout, /native_product_engine_signal_ready/u);
     return;
   }
+  const configuration = variant === "legacy" ? legacyConfiguration : currentConfiguration;
   const { database,cleanup:cleanupDatabase } = await createMassLabelingProductDatabaseFixtureV1();
   const client = await database.connect();
   const directory = await mkdtemp(join(tmpdir(), "noisia-native-product-engine-"));
@@ -74,9 +77,33 @@ test("the native product engine worker admits a new client study without a priva
     assert.equal(capability.can_request_processing, true); assert.equal(capability.can_execute_topics, false);
     const features = (await database.query("SELECT feature FROM signal_workspace_features WHERE workspace_id=$1", [workspace])).rows.map(row => row.feature);
     assert.ok(features.includes("mass_labeling")); assert.ok(!features.includes("mfp_discovery"));
+    if (variant === "legacy") {
+      // Seed the pre-upgrade organization's exact R14 policy before any provider work.
+      // All study operations below still use the ordinary client actor and admissions.
+      const previous = (await client.query("SELECT id FROM signal_processing_policy_versions WHERE organization_id=$1 AND status='active'", [organization])).rows[0]!.id;
+      const successor = randomUUID();
+      await client.query("BEGIN");
+      try {
+        await client.query(`INSERT INTO signal_processing_policy_versions(id,organization_id,version,status,valid_from,valid_until,budget_timezone,daily_cap_micro_usd,created_by_user_id)
+          SELECT $1,organization_id,version+1,'draft',valid_from,valid_until,budget_timezone,daily_cap_micro_usd,created_by_user_id
+          FROM signal_processing_policy_versions WHERE id=$2`, [successor, previous]);
+        await client.query(`INSERT INTO signal_processing_policy_actions(policy_version_id,action,kind,provider,model,configuration,configuration_digest,max_execution_micro_usd,automatic_allowed)
+          SELECT $1,action,kind,provider,model,
+            CASE WHEN action='topic_interpretation' THEN $3::jsonb ELSE configuration END,
+            CASE WHEN action='topic_interpretation' THEN signal_semantic_context_digest_json_v2($3::jsonb) ELSE configuration_digest END,
+            max_execution_micro_usd,automatic_allowed FROM signal_processing_policy_actions WHERE policy_version_id=$2`,
+        [successor, previous, JSON.stringify(configuration)]);
+        await client.query("UPDATE signal_processing_policy_versions SET status='revoked' WHERE id=$1", [previous]);
+        await client.query("UPDATE signal_processing_policy_versions SET status='active' WHERE id=$1", [successor]);
+        await client.query("COMMIT");
+      } catch (error) { await client.query("ROLLBACK"); throw error; }
+    }
     const policy = (await database.query(`SELECT a.action,a.configuration FROM signal_processing_policy_actions a
       JOIN signal_processing_policy_versions p ON p.id=a.policy_version_id WHERE p.organization_id=$1 AND p.status='active'`, [organization])).rows;
-    assert.deepEqual(policy.find(row => row.action === "topic_interpretation")?.configuration, SIGNAL_WORKSPACE_MASS_LABELING_PRODUCT_CONFIGURATION_V2);
+    assert.deepEqual(policy.find(row => row.action === "topic_interpretation")?.configuration, configuration);
+    const admittedPolicy = await provisionMassLabelingProductEditorialPolicyV2(access);
+    assert.equal(admittedPolicy.status, "existing_policy");
+    assert.deepEqual(admittedPolicy.configuration, configuration);
     assert.equal(policy.find(row => row.action === "mass_labeling_jev")?.configuration.contract_version, "mass-labeling-jev-v2");
     assert.equal((await database.query("SELECT count(*)::int n FROM signal_taxonomy_profiles WHERE workspace_id=$1", [workspace])).rows[0]!.n, 0);
     await updateMassLabelingStudyPolicyV1({ ...access, expected_revision: 0, category: "bicycles", lexicon_terms: [],
@@ -96,14 +123,27 @@ test("the native product engine worker admits a new client study without a priva
     const preflight = await loadSignalWorkspaceEnginePreflightV1(access);
     assert.equal(preflight.engine_configuration?.profile_version, "workspace-bertopic-mass-labeling-v3");
     assert.equal(imported.roots.length, 80);
-    const started = await beginSignalWorkspaceEngineV1({ ...access, embedding_run_id: embedded.run_id,
+    const startArguments = { ...access, embedding_run_id: embedded.run_id,
       expected_catalog_digest: preflight.expected_catalog_digest, expected_context_digest: preflight.expected_context_digest,
       engine_config: preflight.engine_configuration!, parent_execution_id: null, claude_cap_micro_usd: 30_000_000,
-      idempotency_key: randomUUID(), interpretation_config: { call_configuration: SIGNAL_WORKSPACE_MASS_LABELING_PRODUCT_CONFIGURATION_V2,
-        daily_cap_micro_usd: 100_000_000, budget_timezone: "America/Mexico_City" } });
+      idempotency_key: randomUUID(), interpretation_config: { call_configuration: configuration,
+        daily_cap_micro_usd: 100_000_000, budget_timezone: "America/Mexico_City" } };
+    const unapprovedConfiguration = { ...configuration, consolidation_prompt_digest: hash("unapproved editorial prompt") };
+    await assert.rejects(beginSignalWorkspaceEngineV1({ ...startArguments, idempotency_key: randomUUID(),
+      interpretation_config: { ...startArguments.interpretation_config, call_configuration: unapprovedConfiguration } }), /workspace_engine_interpretation_config_invalid/u);
+    const started = await beginSignalWorkspaceEngineV1(startArguments);
     const queued = (await database.query("SELECT execution.status,execution.actor_user_id,outbox.worker_job_id,execution.input_snapshot,execution.processing_admission_id FROM signal_topic_catalog_executions execution JOIN signal_topic_classification_outbox outbox ON outbox.execution_id=execution.id WHERE execution.id=$1", [started.execution_id])).rows[0]!;
     assert.equal(queued.status, "queued"); assert.equal(queued.actor_user_id, clientActor); assert.ok(queued.processing_admission_id);
     assert.equal(queued.input_snapshot.mass_labeling_product, true); assert.equal(queued.input_snapshot.discovery_population, undefined);
+    for (const [candidate, expected] of [[currentConfiguration, true], [legacyConfiguration, true],
+      [{ ...configuration, consolidation_prompt_digest: hash("unapproved editorial prompt") }, false],
+      [{ ...configuration, max_output_tokens: configuration.max_output_tokens + 1 }, false]] as const) {
+      const snapshot = { ...queued.input_snapshot, interpretation_config: {
+        ...queued.input_snapshot.interpretation_config, call_configuration: candidate } };
+      assert.equal((await database.query("SELECT signal_mass_labeling_product_engine_v2($1,'workspace-topic-engine-v1',$2::jsonb) admitted",
+        [workspace, JSON.stringify(snapshot)])).rows[0]!.admitted, expected);
+    }
+
     const bodies = new Map<string, Buffer>();
     const storage: WorkspaceEngineStorageV1 = { async put(args) {
       const body = await readFile(args.file); assert.equal(hash(body), args.sha256);
@@ -122,7 +162,7 @@ test("the native product engine worker admits a new client study without a priva
       assert.equal(String(url), "https://api.anthropic.com/v1/messages"); assert.equal(init?.method, "POST");
       assert.equal(new Headers(init?.headers).get("x-api-key"), "synthetic-native-product-test-key");
       const body = JSON.parse(String(init?.body)), packet = JSON.parse(body.messages[0].content);
-      assert.equal(body.model, SIGNAL_WORKSPACE_MASS_LABELING_PRODUCT_CONFIGURATION_V2.model);
+      assert.equal(body.model, configuration.model);
       let output: unknown;
       if (packet.clusters) {
         groupRequests++;

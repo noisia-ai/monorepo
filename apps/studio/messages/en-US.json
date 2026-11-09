@@ -4825,6 +4825,17 @@
     "unavailable": "Setup could not be completed. Check your permissions and try again."
   },
   "LabelingStudySettings": {
+    "suggestionsTitle": "Suggested terms from the corpus",
+    "suggestionsHelp": "Frequent words and two-word phrases in individual consumer motivators or barriers with probability at least 0.90 whose text matches no current category term. Review their meaning before adding them. Add terms to the list, then save settings. Dismissed terms stay hidden while the category and lexicon are unchanged. This uses saved results and has no provider cost.",
+    "suggestionsRefresh": "Refresh suggestions",
+    "suggestionsLoading": "Finding frequent terms…",
+    "suggestionsUnavailable": "Suggestions become available after the study has a current topic map and consumer classification.",
+    "suggestionsEmpty": "No more suggestions for the current lexicon.",
+    "suggestionCounts": "{roots, number} roots · {triggers, number} motivators · {barriers, number} barriers",
+    "suggestionAccept": "Add to terms",
+    "suggestionDismiss": "Dismiss",
+    "suggestionRetry": "Retry dismissal",
+    "suggestionsError": "Suggestions could not be confirmed. Refresh settings and try again.",
     "title": "Labeling settings",
     "body": "Set the study category and the language your audience uses to refer to it.",
     "refresh": "Refresh settings",
