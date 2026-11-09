@@ -1,0 +1,22 @@
+{
+  "$schema": "https://railway.com/railway.schema.json",
+  "build": {
+    "builder": "RAILPACK",
+    "watchPatterns": [
+      "services/workers/**",
+      "packages/**",
+      "infrastructure/db/**",
+      "pnpm-lock.yaml",
+      "pnpm-workspace.yaml",
+      "package.json",
+      "tsconfig.base.json",
+      "tools/signal-semantic-lab/src/**"
+    ],
+    "buildCommand": "sh services/workers/build-engine-uat.sh"
+  },
+  "deploy": {
+    "startCommand": "sh services/workers/start-engine-uat.sh",
+    "restartPolicyType": "ALWAYS",
+    "restartPolicyMaxRetries": 10
+  }
+}

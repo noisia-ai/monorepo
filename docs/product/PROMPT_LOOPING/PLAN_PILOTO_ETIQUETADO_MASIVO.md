@@ -138,6 +138,12 @@ La sección 6 del informe privado R14 fija ocho entregables. Se usa el mapa cong
 7. Incorporar al recibo la proyección por millón con siete preguntas y el costo incremental de los intereses dentro de la misma solicitud.
 8. Operar en dev-test con las cuentas autorizadas, custodia privada y URLs introducidas directamente. Verificar el recorrido normal de un estudio nuevo y los resultados del piloto en el dominio autenticado. Cerrar con revisión y CI/PostgreSQL sobre cada fusión.
 
+### Hito 7 · Traslado a UAT (R15)
+
+El fundador autorizó UAT para esta ronda. R14 es la referencia aceptada de dev-test. La entrega requiere una marca y un estudio nuevos por la interfaz, con CSV de la carpeta fuente en lectura, Brand OS, vectores, mapa nuevo, consolidación editorial, léxico, clasificación con dos intereses y Signal. Se compararán las dos poblaciones y se conservará el recibo de cada etapa en un paquete privado con SHA256SUMS. El presupuesto orientativo es USD 15–25.
+
+Antes del estudio se revisan los commits exclusivos de UAT y se verifican tres cambios en develop: coincidencia de léxico materializada por raíz y revisión, propuestas de palabras y bigramas a partir de las voces con probabilidad ≥0.9 y muestras reproducibles por indicador. Las metas en el estudio de dev-test son ≤3 segundos para la vista general y ≤2 segundos para evidencia. Antes de migrar UAT se restaura un respaldo completo en una copia temporal y se compara el resultado de Signal de tres marcas históricas antes y después del ensayo. Studio y workers deben quedar en la misma cabeza de develop con Railpack y cero cambios preparados. La guía del fundador tendrá enlace al nuevo estudio. La salida a producción se limita a un plan escrito con verificación en lectura.
+
 ## Organización con subagentes
 
 - **El orquestador (el chat principal) es el único que:**
@@ -205,6 +211,9 @@ Lo demás se resuelve de forma autónoma y se anota en el registro de decisiones
 
 ## Progreso
 
+- [x] H7 · Se leyó la auditoría R15, se identificaron los destinos de Railway y Supabase y se midió la referencia en dev-test. Conversación tardó 18.925 s en la vista, 40.280 s en evidencia de motivador y 39.586 s en barrera. Con todo el contenido tardaron 24.036, 33.646 y 37.632 s respectivamente.
+- [ ] H7 · Respaldar, restaurar y ensayar en una copia, preservar las tres marcas históricas, aplicar una vez en UAT, verificar el producto y entregar la comparación con sus recibos.
+
 - [x] H6 · El despliegue de Studio y del worker de dev-test desde `0c33eb05` sirvió los resultados desde el dominio habitual. Se probaron los cuatro filtros, cinco ejemplos por indicador y ambos intereses. Se dio de alta una marca ficticia en su propia organización desde el formulario normal, con el etiquetado activo y umbral inicial de 0.85.
 
 - [x] H6 · Dev-test aplicó las migraciones 0282–0285 tras verificar las 262 huellas anteriores. La importación validó 167,924 puntuaciones contra sus entradas y recibos. Las huellas del mapa, los centroides y las asignaciones históricas volvieron a coincidir con R13.
@@ -264,6 +273,8 @@ Lo demás se resuelve de forma autónoma y se anota en el registro de decisiones
 - [x] Hito 4 · Recibo, comparación y muestras ciegas verificados. Se entregan el recibo público de una página y, en custodia privada, el anexo comparativo, método/fuentes, 600 casos en 11 cohortes y la clave sellada por separado. Son 597 raíces distintas por los solapamientos entre cohortes; cada cohorte cumple sus cuotas de 50 raíces por tópico para los 10 tópicos mayores y 100 de triggers/barriers. Las cohortes no representan evaluación de precisión humana.
 
 ## Sorpresas y descubrimientos
+
+- H7 · El ledger Drizzle de UAT contiene 30 entradas hasta 0029. También existen objetos posteriores y un asiento administrado por Supabase. El número de migraciones pendientes requiere comparar los objetos reales y las operaciones de cada archivo.
 
 - H6 · Al volver a escribir el nombre canónico de T3, Signal recuperó el texto visible pero conservó una personalización redundante. La prueba comprobó el volumen y la huella del mapa y motivó verificar la eliminación del alias desde la interfaz.
 
@@ -331,6 +342,8 @@ Lo demás se resuelve de forma autónoma y se anota en el registro de decisiones
 - Dos lotes devolvieron referencias válidas dentro de la muestra de 30 pero superaron el máximo de diez referencias por campo. La comprobación privada de las respuestas originales y de reparación encontró entre 11 y 30 referencias en los campos rechazados.
 
 ## Registro de decisiones
+
+- H7 · Ensayar en una copia de PostgreSQL 17.6 con la misma distribución de Supabase que UAT. Mantener los archivos de respaldo, las definiciones de roles y los resultados por marca bajo custodia privada.
 
 - H6 · Aislar los fallos de materialización por ejecución. Un mapa vacío tiene un estado terminal y una lectura fallida se reintenta con espera. El worker recupera la medición de la muestra y la publicación a partir de los recibos del mismo actor y estudio.
 
