@@ -22,12 +22,12 @@ En la comparación pareada de R13, la solicitud de trece preguntas promedió 2,4
 
 La comparación R14 de candidatos inglés y portugués usó 597 raíces, siete preguntas base y dos intereses activos en cada idioma. Se liquidaron 1,194 respuestas. El costo de uso medido fue USD 0.042683 para el brazo portugués y USD 0.040350 para el brazo inglés. Estos importes corresponden sólo a la comparación lingüística, no a una ejecución nueva de todo el corpus.
 
-La comparación de candidatos produjo 220 positivos correctos entre 316 candidatos positivos con definiciones en inglés (69.62 %) y 222 entre 326 con definiciones originales (68.10 %). La diferencia fue +1.52 puntos porcentuales. La regla del informe elige inglés porque la precisión superó por más de tres puntos la referencia del original. Se conserva el original en la interfaz.
+La comparación de candidatos produjo 220 positivos correctos entre 316 candidatos positivos con definiciones en inglés (69.62 %) y 222 entre 326 con definiciones originales (68.10 %). La diferencia fue +1.52 puntos porcentuales, por debajo del margen de mejora de más de tres puntos requerido para elegir inglés por este criterio. Por tanto, esta comparación no justifica el cambio de idioma; el original continúa disponible en la interfaz y el resultado comparativo no demuestra que inglés haya superado el umbral.
 
 ## Lectura de consumidor y léxico R14
 
 La lectura independiente sobre el texto completo en PostgreSQL encontró 50,273 voces elegibles: 18,464 raíces con término del léxico y 31,809 excluidas por no contenerlo. De las raíces incluidas, 4,174 quedaron como motivadores, 842 como barreras, 7,889 sin motivador ni barrera y 5,559 intermedias. Estas cuatro cantidades suman las 18,464 raíces incluidas; las excluidas quedan fuera de ese denominador.
 
-La propuesta de términos desde Brand OS contiene 156 términos; la lista curada del estudio contiene 102. La única propuesta editorial del léxico usó 471 tokens de entrada y 683 de salida, con costo tarifario medido de USD 0.011658. La salida fue validada. Este valor describe uso tarifario y no un débito confirmado del panel del proveedor.
+La propuesta de términos desde Brand OS contenía 156 términos antes de la curación; la configuración vigente conserva 102. La UI de configuración muestra la lista vigente, no necesariamente la propuesta previa. La única propuesta editorial del léxico usó 471 tokens de entrada y 683 de salida, con costo tarifario medido de USD 0.011658. La salida fue validada. Este valor describe uso tarifario y no un débito confirmado del panel del proveedor.
 
 La estimación por millón es un modelo tarifario de planeación. No equivale a un cargo de proveedor ni a una promesa de precio. Consulta el límite calculado de una corrida antes de iniciarla.
