@@ -772,7 +772,7 @@ for(const authorization of ["rotation","scoped","scoped-scale","scoped-funding",
       for (const [text,expected] of hashtagFixtures) assert.equal((await query("SELECT signal_mass_labeling_r13_hashtags_v1($1) yes",[text])).rows[0]!.yes,expected);
       await query("SAVEPOINT inherited_lexical_edit");
       const brand=(await query("SELECT brand_id FROM signal_workspaces WHERE id=$1",[access.workspace_id])).rows[0]!.brand_id;
-      await query("UPDATE brands SET industry='repair',industry_sub='appointment' WHERE id=$1",[brand]);
+      await query("UPDATE brands SET industry=$2,industry_sub=$3 WHERE id=$1",[brand,"\t\u00a0repair\ufeff","\u202fappointment\u3000"]);
       const inherited=await loadSignalWorkspaceTopicsOverviewV1(access);
       assert.equal(inherited!.is_current,true,"industry edits refresh the inherited lexical materialization");
       assert.notEqual(inherited!.scope_digest,enriched!.scope_digest);

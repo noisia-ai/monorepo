@@ -31,6 +31,11 @@ test("inherited category matches follow seed changes and serialize concurrent so
       assert.ok(matches.every(row=>row.matched===row.expected&&row.matched===expected));
     };
     await verify(false);
+    for(const value of ["\t bicycle\t","\u00a0bicycle\u00a0","\ufeffbicycle\ufeff","\u1680\u2000bicycle\u202f\u3000","\u0085bicycle\u0085","\t\u00a0\ufeff"]){
+      assert.equal((await database.query("SELECT signal_mass_labeling_seed_text_v1($1) value",[value])).rows[0]!.value,value.trim());
+    }
+    await database.query("UPDATE brands SET industry='\t\u00a0bicycle\ufeff' WHERE id=$1",[fixture.brand_id]);
+    await verify(true);
     await database.query("UPDATE brands SET industry='bicycle' WHERE id=$1",[fixture.brand_id]);
     await verify(true);
     await database.query("UPDATE brands SET industry='absent category' WHERE id=$1",[fixture.brand_id]);

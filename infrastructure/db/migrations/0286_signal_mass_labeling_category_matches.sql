@@ -18,6 +18,13 @@ DO $$ BEGIN
  IF EXISTS(SELECT 1 FROM pg_roles WHERE rolname='authenticated') THEN REVOKE ALL ON signal_mass_labeling_category_matches FROM authenticated; END IF;
 END $$;
 
+-- ECMAScript String.trim whitespace, shared with the inherited JS seed builder.
+CREATE FUNCTION signal_mass_labeling_seed_text_v1(value text) RETURNS text
+ LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE SET search_path=pg_catalog AS $$
+ SELECT btrim(value,U&'\0009\000A\000B\000C\000D\0020\00A0\1680\2000\2001\2002\2003\2004\2005\2006\2007\2008\2009\200A\2028\2029\202F\205F\3000\FEFF')
+$$;
+REVOKE ALL ON FUNCTION signal_mass_labeling_seed_text_v1(text) FROM PUBLIC;
+
 -- Revision zero is the pre-policy Brand OS default used by existing maps.
 -- This mirrors the governed seed names, including aliases, without reading a
 -- delivered taxonomy or mutating the analyst's append-only policy history.
@@ -39,7 +46,7 @@ CREATE FUNCTION signal_mass_labeling_default_lexicon_v1(target_workspace uuid) R
    WHERE entity.entity_type='category' AND entity.status='active'
   UNION ALL SELECT alias.alias FROM brand JOIN intelligence_entities entity ON entity.brand_id=brand.id
    JOIN entity_aliases alias ON alias.entity_id=entity.id WHERE entity.entity_type='category' AND entity.status='active'
- ) SELECT COALESCE(array_agg(DISTINCT btrim(term) ORDER BY btrim(term)),ARRAY[]::text[]) FROM names WHERE term IS NOT NULL AND btrim(term)<>''
+ ) SELECT COALESCE(array_agg(DISTINCT signal_mass_labeling_seed_text_v1(term) ORDER BY signal_mass_labeling_seed_text_v1(term)),ARRAY[]::text[]) FROM names WHERE term IS NOT NULL AND signal_mass_labeling_seed_text_v1(term)<>''
 $$;
 REVOKE ALL ON FUNCTION signal_mass_labeling_default_lexicon_v1(uuid) FROM PUBLIC;
 
