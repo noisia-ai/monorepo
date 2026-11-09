@@ -9,5 +9,7 @@ export const studyLabelingRequestSchemaV2 = z.discriminatedUnion("action", [
 
 /** Studio advertises worker availability. The sending worker owns its credentials. */
 export function studyLabelingProviderAvailableV2(env: Readonly<Record<string, string | undefined>> = process.env) {
-  return env.NOISIA_JEV_PROVIDER_ENABLED === "true";
+  if (env.NOISIA_JEV_PROVIDER_ENABLED === "false") return false;
+  if (env.NOISIA_JEV_PROVIDER_ENABLED === "true") return true;
+  return env.NOISIA_JEV_PROVIDER_ENABLED === undefined && Boolean(env.TYPESAFE_API_KEY?.trim());
 }

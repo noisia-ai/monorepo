@@ -2,10 +2,13 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { studyLabelingProviderAvailableV2, studyLabelingRequestSchemaV2 } from "./signal-study-labeling-request";
 
-test("Studio requires explicit worker availability and keeps the provider key in the worker", () => {
+test("Studio supports a separate worker and monolithic provider configuration while honoring explicit disable", () => {
   assert.equal(studyLabelingProviderAvailableV2({ NOISIA_JEV_PROVIDER_ENABLED: "true" }), true);
-  for (const NOISIA_JEV_PROVIDER_ENABLED of [undefined, "false", "TRUE", "1"]) {
-    assert.equal(studyLabelingProviderAvailableV2({ NOISIA_JEV_PROVIDER_ENABLED, TYPESAFE_API_KEY: "unused-in-studio" }), false);
+  assert.equal(studyLabelingProviderAvailableV2({ TYPESAFE_API_KEY: "synthetic-existing-local-credential" }), true);
+  assert.equal(studyLabelingProviderAvailableV2({}), false);
+  assert.equal(studyLabelingProviderAvailableV2({ TYPESAFE_API_KEY: "   " }), false);
+  for (const NOISIA_JEV_PROVIDER_ENABLED of ["false", "TRUE", "1", ""]) {
+    assert.equal(studyLabelingProviderAvailableV2({ NOISIA_JEV_PROVIDER_ENABLED, TYPESAFE_API_KEY: "synthetic-existing-local-credential" }), false);
   }
 });
 
