@@ -4,11 +4,12 @@ import type {Pool} from "pg";
 import {completeWorkspaceImport,workspaceImportClosureTimeoutMs,WorkspaceImportClosureReconciledError} from "./workspace-import-completion";
 
 const request=(count=50_000)=>({workspaceId:"00000000-0000-4000-8000-000000000001",dataSourceId:"00000000-0000-4000-8000-000000000002",importBatchId:"00000000-0000-4000-8000-000000000003",workerJobId:"job-one",fileHash:"a".repeat(64),verifiedHash:"a".repeat(64),verifiedBytes:100,expectedBytes:100,processedBytes:100,progressRecords:count,stats:{record_count:count,included_count:1,excluded_count:0,duplicate_count:count-1}});
-function fixture(options:{commitError?:boolean;committed?:boolean;queryError?:boolean;reconcileLockFailures?:number;hang?:"completion"|"commit"|"rollback"|"reconciliation"}={}){
+function fixture(options:{checkoutFailure?:boolean;commitError?:boolean;committed?:boolean;queryError?:boolean;reconcileLockFailures?:number;hang?:"completion"|"commit"|"rollback"|"reconciliation"}={}){
  const sql:string[]=[];const releases:unknown[]=[];const events:string[]=[];let acquisitions=0,closures=0,commits=0,reconciles=0;
  const row={import_batch_id:request().importBatchId,accepted:true,accepted_batch_id:request().importBatchId};
  const database={query:async(text:string)=>{sql.push('pool:'+text);closures++;return{rows:[row]};},connect:async()=>{
   const index=acquisitions++;events.push(`acquire:${index}`);
+  if(index===0&&options.checkoutFailure)throw new Error('timeout exceeded when trying to connect');
   return{release:(error?:unknown)=>{events.push(`release:${index}`);releases.push(error);},query:async(text:string)=>{
    sql.push(text);events.push(`query:${index}:${text}`);
    if(text==='ROLLBACK'&&index===0&&options.hang==='rollback')return new Promise(()=>undefined);
@@ -80,3 +81,12 @@ for (const hangingOperation of ["completion", "commit", "rollback", "reconciliat
     if (hangingOperation === "reconciliation") assert.equal(state.counts().reconciles, 2);
   });
 }
+
+test('initial large-client checkout failure uses only the durable failure fence',async()=>{
+ const f=fixture({checkoutFailure:true,reconcileLockFailures:1});
+ await assert.rejects(completeWorkspaceImport(f.database,request(),{reconciliationRetryDelayMs:0}),error=>
+  error instanceof WorkspaceImportClosureReconciledError && error.cause instanceof Error
+  && error.cause.message==='timeout exceeded when trying to connect');
+ assert.equal(f.counts().closures,0);assert.equal(f.counts().reconciles,2);assert.equal(f.counts().acquisitions,3);
+ assert(!f.events.includes('query:0:BEGIN'),'a failed checkout never sends closure SQL');
+});

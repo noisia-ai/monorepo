@@ -139,7 +139,14 @@ export async function completeWorkspaceImport(
     throw new Error("workspace_import_closure_budget_invalid");
   }
 
-  const client = await database.connect();
+  let client: PoolClient;
+  try {
+    client = await database.connect();
+  } catch (error) {
+    // No completion SQL was sent, but recording failure still needs the fence
+    // if the pool or transport is temporarily unavailable.
+    return await reconcileCommit(database, request, [], retryDelay, operationTimeout, error, "closure_failed");
+  }
   let phase: "before-completion" | "completion-sent" | "commit-sent" | "committed" = "before-completion";
   let begun = false;
   let released = false;

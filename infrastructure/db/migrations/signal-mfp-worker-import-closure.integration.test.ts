@@ -86,6 +86,24 @@ test("worker large closure has local budgets, native FK locks and durable COMMIT
       finally{await setup.query('ROLLBACK');}
       assert.equal(await scalar(setup,'SELECT status FROM import_batches WHERE id=$1',[blocked.batch.id]),'failed');
     });
+    await context.test('failed initial checkout is reconciled without sending completion SQL',async()=>{
+      const pending=await prepare('checkout-failed');
+      const checkoutError=new Error('timeout exceeded when trying to connect');
+      let acquisitions=0,nativeCalls=0;
+      const intercepted=Object.assign(Object.create(closurePool) as pg.Pool,{connect:async()=>{
+        if(++acquisitions===1)throw checkoutError;
+        const client=await closurePool.connect();
+        return{release:client.release.bind(client),query:(sql:string,params?:unknown[])=>{
+          if(sql.includes('FROM complete_signal_workspace_import_v1'))nativeCalls++;
+          return client.query(sql,params);
+        }} as pg.PoolClient;
+      }});
+      await assert.rejects(completeWorkspaceImport(intercepted,pending.request,{statementTimeoutMs:2000}),error=>
+        error instanceof WorkspaceImportClosureReconciledError && error.cause===checkoutError);
+      assert.equal(nativeCalls,0);assert.equal(acquisitions,2);
+      assert.equal(await scalar(setup,'SELECT status FROM import_batches WHERE id=$1',[pending.batch.id]),'failed');
+      assert.equal(await scalar(setup,'SELECT count(*)::int FROM source_sync_runs WHERE import_batch_id=$1',[pending.batch.id]),0);
+    });
     await context.test('same-batch native completion keeps advisory-before-row lock order',async()=>{
       const pending=await prepare('concurrent-close');
       const pid=(await closurePool.query('SELECT pg_backend_pid() pid')).rows[0].pid;
