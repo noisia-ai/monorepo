@@ -22,7 +22,7 @@ En la comparación pareada de R13, la solicitud de trece preguntas promedió 2,4
 
 La comparación R14 de candidatos inglés y portugués usó 597 raíces, siete preguntas base y dos intereses activos en cada idioma. Se liquidaron 1,194 respuestas. El costo de uso medido fue USD 0.042683 para el brazo portugués y USD 0.040350 para el brazo inglés. Estos importes corresponden sólo a la comparación lingüística, no a una ejecución nueva de todo el corpus.
 
-La comparación de candidatos produjo 220 positivos correctos entre 316 candidatos positivos con definiciones en inglés (69.62 %) y 222 entre 326 con definiciones originales (68.10 %). La diferencia fue +1.52 puntos porcentuales, por debajo del margen de mejora de más de tres puntos requerido para elegir inglés por este criterio. Por tanto, esta comparación no justifica el cambio de idioma; el original continúa disponible en la interfaz y el resultado comparativo no demuestra que inglés haya superado el umbral.
+La comparación de candidatos produjo 220 positivos correctos entre 316 candidatos positivos con definiciones en inglés (69.62 %) y 222 entre 326 con definiciones originales (68.10 %). La diferencia fue +1.52 puntos porcentuales. Se eligió inglés. El plan admite inglés si su precisión queda como máximo tres puntos por debajo de la del original (diferencia ≥ −3 puntos). El original sigue disponible en Signal.
 
 ## Lectura de consumidor y léxico R14
 
