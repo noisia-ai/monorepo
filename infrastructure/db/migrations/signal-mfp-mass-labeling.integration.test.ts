@@ -1,3 +1,4 @@
+import {assertMassLabelingOverviewProvenanceV1} from "./signal-mass-labeling-overview-provenance.assertions";
 import {assertMassLabelingServingProjectionV1,assertMassLabelingProjectionBackfillV1} from "./signal-mass-labeling-serving-projection.assertions";
 import {assertMassLabelingProductNativeV2} from "./signal-mass-labeling-product.synthetic.fixture";
 import {assertMassLabelingStudyPolicyV1} from "./signal-mass-labeling-study-policy.assertions";
@@ -814,6 +815,7 @@ for(const authorization of ["rotation","scoped","scoped-scale","scoped-funding",
     await assert.rejects(loadSignalWorkspaceTopicsOverviewV1(access),/workspace_topics_materialization_incomplete/);
     await query("ROLLBACK TO SAVEPOINT missing_serving_projection");await query("RELEASE SAVEPOINT missing_serving_projection");
     const changed = await loadSignalWorkspaceTopicsOverviewV1(access); assert.equal(changed?.terms[0]!.mention_count, 1);
+    if(authorization==="scoped")await assertMassLabelingOverviewProvenanceV1({...access,query:scoped.query});
     await assert.rejects(loadSignalWorkspaceTopicEvidenceV1({...evidenceArgs,cursor:page1.next_cursor}), /workspace_topics_scope_changed/);
     await query("SAVEPOINT rights_revoked");
     await query("UPDATE data_sources SET status='archived' WHERE workspace_id=$1",[access.workspace_id]);
