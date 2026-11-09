@@ -2,7 +2,7 @@ import { shareWorkspaceAnalysisRead } from "./workspace-analysis-read-sharing";
 import { readWorkspaceAnalysis } from "./mfp-population-read";
 import { createHash } from "node:crypto";
 import type { Pool } from "pg";
-import { getMassLabelingStudyPolicyV1, loadSignalDiscoveryPolicyV1, discoveryStrictCapV1, replaySignalWorkspaceDiscoveryRequestV1, beginSignalWorkspaceEngineV1, loadSignalWorkspaceCapabilitiesStoreV1, signalWorkspaceFeatureEnabledV1,
+import { provisionMassLabelingProductEditorialPolicyV2, getMassLabelingStudyPolicyV1, loadSignalDiscoveryPolicyV1, discoveryStrictCapV1, replaySignalWorkspaceDiscoveryRequestV1, beginSignalWorkspaceEngineV1, loadSignalWorkspaceCapabilitiesStoreV1, signalWorkspaceFeatureEnabledV1,
   loadSignalWorkspaceCorpusPreparationStoreV1, loadSignalWorkspaceEnginePreflightV1,
   loadSignalWorkspaceEngineStatusV1, retrySignalWorkspaceEngineV1, isSignalWorkspaceEngineRetryableErrorV1, SignalWorkspaceEngineError,
   retrySignalWorkspaceEngineProgressV1, retrySignalWorkspaceNumericUpdateV1, retrySignalWorkspaceIncrementalDeliveryV1, loadSignalWorkspaceAnalysisUpdateV1, loadSignalWorkspaceNumericReadinessV1,
@@ -237,6 +237,12 @@ export async function requestWorkspaceAnalysisForActorV1(args: Access & { idempo
       discovery_sample_cap: args.body.discovery_sample_cap ?? null, discovery_sample_seed: args.body.discovery_sample_seed ?? null }) : undefined;
     if (intentDigest && await replaySignalWorkspaceDiscoveryRequestV1({ ...access, idempotency_key: args.idempotencyKey, request_intent_digest: intentDigest }))
       return loadWorkspaceAnalysisForActorV1({ ...args, idempotencyKey: args.idempotencyKey });
+    if (access.massEnabled) {
+      if (!workspaceAnalysisAdmissionProviderAvailableV1()) throw new SignalWorkspaceEngineError("workspace_analysis_interpretation_unavailable", 422);
+      const settings = await getMassLabelingStudyPolicyV1(access);
+      if (!settings.category.trim()) throw new SignalWorkspaceEngineError("workspace_analysis_category_required", 422);
+      await provisionMassLabelingProductEditorialPolicyV2(access);
+    }
     const policy = access.governedEnabled ? { ...await loadSignalDiscoveryPolicyV1(access.database,args.workspaceId) } : workspaceAnalysisInterpretationPolicyV1();
   policy.available = policy.available && workspaceAnalysisAdmissionProviderAvailableV1();
     if (!policy.available) throw new SignalWorkspaceEngineError("workspace_analysis_interpretation_unavailable", 422);
@@ -248,10 +254,6 @@ export async function requestWorkspaceAnalysisForActorV1(args: Access & { idempo
     try { effectiveCap = discoveryStrictCapV1(args.body.claude_cap_micro_usd,policy.maximum_cap_micro_usd); }
     catch { throw new SignalWorkspaceEngineError("workspace_analysis_interpretation_cap_invalid",422); }
     const massEnabled = access.massEnabled;
-    if (massEnabled) {
-      const settings = await getMassLabelingStudyPolicyV1(access);
-      if (!settings.category.trim()) throw new SignalWorkspaceEngineError("workspace_analysis_category_required", 422);
-    }
     const enginePreflight = massEnabled ? await loadSignalWorkspaceEnginePreflightV1(access) : null;
     if (enginePreflight?.engine_configuration) {
       try { await assertAnthropicProviderAccessV1({api_key:process.env.ANTHROPIC_API_KEY??"",enabled:policy.available}); }
