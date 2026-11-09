@@ -4860,6 +4860,7 @@
     "spanishName": "Nombre en español"
   },
   "StudyLabeling": {
+    "providerUnavailable": "La clasificación no está disponible en este entorno. Pide a un administrador que revise el servicio de procesamiento.",
     "title": "Clasificar menciones del estudio",
     "body": "Clasifica cada raíz una sola vez con la categoría, sus tópicos más cercanos y los intereses activos del estudio.",
     "refresh": "Actualizar clasificación",

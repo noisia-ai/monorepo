@@ -7,7 +7,7 @@ import { formatEmbeddingMicroUsd, parseEmbeddingCapMicroUsd } from "@/lib/data-o
 import { useMfpMutation, useMfpResource } from "./useMfpResource";
 
 type Status = {
-  contract_version: "mass-labeling-product-status-v2"; workspace_id: string; enabled: boolean; can_request_processing: boolean;
+  contract_version: "mass-labeling-product-status-v2"; workspace_id: string; enabled: boolean; can_request_processing: boolean; provider_available: boolean;
   map: { id: string; root_count: number; topic_count: number } | null;
   run: { id: string; status: string; smoke_root_limit: number | null; smoke_metrics: { technical_failure: boolean } | null;
     counts: Record<string, number>; estimated_micro_usd: string; cap_micro_usd: string | null } | null;
@@ -28,7 +28,7 @@ export function StudyLabelingControls({ workspaceId, signalHref, refreshSignal, 
   const active = ["queued", "running"].includes(data?.run?.status ?? "");
   const smokeReady = data?.run?.status === "completed" && data.run.smoke_root_limit !== null;
   const ready = data?.run?.status === "completed" && data.run.smoke_root_limit === null;
-  const blocked = disabled || !data?.enabled || !data.can_request_processing || mutation.busy || resource.loading || Boolean(resource.error);
+  const blocked = disabled || !data?.enabled || !data.can_request_processing || !data.provider_available || mutation.busy || resource.loading || Boolean(resource.error);
   const send = async (body?: Record<string, unknown>) => { if (await mutation.send(body)) await resource.read(); };
   return <section className="admin-section" aria-label={t("title")} aria-busy={resource.loading || mutation.busy}>
     <header className="admin-section__head"><div><h2>{t("title")}</h2><p>{t("body")}</p></div>
@@ -37,6 +37,7 @@ export function StudyLabelingControls({ workspaceId, signalHref, refreshSignal, 
     <div className="admin-section__body admin-drawer-form">
       {!data && resource.loading ? <p role="status">{t("loading")}</p> : null}
       {data && !data.map ? <p>{t("prepareMap")}</p> : null}
+      {data && !data.provider_available ? <p role="status">{t("providerUnavailable")}</p> : null}
       {data?.map ? <>
         <p>{t("population", { roots: data.map.root_count, topics: data.map.topic_count })}</p>
         {data.estimated_micro_usd !== null ? <p>{t("estimate", { amount: formatEmbeddingMicroUsd(String(data.estimated_micro_usd), locale) })}</p> : null}

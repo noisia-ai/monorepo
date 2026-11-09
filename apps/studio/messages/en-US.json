@@ -4860,6 +4860,7 @@
     "spanishName": "Spanish name"
   },
   "StudyLabeling": {
+    "providerUnavailable": "Classification is not available in this environment. Ask an administrator to check the processing service.",
     "title": "Classify study mentions",
     "body": "Classify each root once with the study category, its nearest topics and active interests.",
     "refresh": "Refresh classification",

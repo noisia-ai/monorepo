@@ -17,7 +17,7 @@ export async function GET(request: Request, context: { params: Promise<{ workspa
       loadMassLabelingProductStatusV2({ database: pool, workspace_id: workspaceId, actor_user_id: loaded.session.appUser.id }),
       signalWorkspaceFeatureEnabledV1({ queryable: pool, workspace_id: workspaceId, feature: "mass_labeling" })
     ]);
-    return topicResponse({ ...status, enabled });
+    return topicResponse({ ...status, enabled, provider_available: studyLabelingProviderAvailableV2() });
   } catch (error) { return topicError(error, "mass_labeling_status_unavailable"); }
 }
 
@@ -31,6 +31,7 @@ export async function POST(request: Request, context: { params: Promise<{ worksp
     if (!await signalWorkspaceFeatureEnabledV1({ queryable: pool, workspace_id: workspaceId, feature: "mass_labeling" }))
       return topicResponse({ error: "mass_labeling_not_enabled" }, 409);
     if (body.action === "start") {
+      if (!studyLabelingProviderAvailableV2()) return topicResponse({ error: "mass_labeling_provider_unavailable" }, 409);
       await enableMassLabelingProductV2({ ...access, cap_micro_usd: body.cap_micro_usd });
       await requestMassLabelingProductV2({ ...access, map_id: body.map_id, idempotency_key: body.idempotency_key,
         cap_micro_usd: body.cap_micro_usd, provider_available: studyLabelingProviderAvailableV2() });
