@@ -31,3 +31,9 @@ La lectura independiente sobre el texto completo en PostgreSQL encontró 50,273 
 La propuesta de términos desde Brand OS contenía 156 términos antes de la curación; la configuración vigente conserva 102. La UI de configuración muestra la lista vigente, no necesariamente la propuesta previa. La única propuesta editorial del léxico usó 471 tokens de entrada y 683 de salida, con costo tarifario medido de USD 0.011658. La salida fue validada. Este valor describe uso tarifario y no un débito confirmado del panel del proveedor.
 
 La estimación por millón es un modelo tarifario de planeación. No equivale a un cargo de proveedor ni a una promesa de precio. Consulta el límite calculado de una corrida antes de iniciarla.
+
+## Intereses ajustados y uso total de R14
+
+Con el umbral inclusivo de 0.85, apuestas alcanzó 436 raíces y racismo 153. Hubo una coincidencia entre ambos intereses y 588 raíces distintas positivas entre las 83,962 verificadas. Se reutilizaron las 597 respuestas del brazo inglés y se clasificaron sólo los dos intereses en las otras 83,365 raíces. Esta última operación consumió 53,365,424 tokens de entrada y 3,417,965 de salida, por USD 2.282633 a tarifa.
+
+Las tres etapas JEV sumaron USD 2.365666. La propuesta editorial del léxico añadió USD 0.011658. El total de uso medido de R14 fue USD 2.377324. Cada solicitud compartida por los dos intereses se contó una vez.
