@@ -14,7 +14,7 @@ import { provisionMassLabelingProductEditorialPolicyV2, getMassLabelingStudyPoli
   loadSignalWorkspaceEngineInterpretationBudgetV1,
   SignalTopicCatalogError,
   type SignalWorkspaceEngineInterpretationBudgetV1, type SignalWorkspaceEngineStatusV1, type SignalWorkspaceIncrementalEditorialStatusV1 } from "@noisia/db";
-import { assertAnthropicProviderAccessV1, signalWorkspaceEmbeddingDigestV1, SIGNAL_WORKSPACE_ENGINE_CONFIG_V1, SIGNAL_WORKSPACE_INTERPRETATION_MULTILINGUAL_CONFIGURATION_V1, SIGNAL_WORKSPACE_MASS_LABELING_PRODUCT_CONFIGURATION_V2 } from "@noisia/query-engine";
+import { assertAnthropicProviderAccessV1, signalWorkspaceEmbeddingDigestV1, signalWorkspaceMassLabelingConfigV3, SIGNAL_WORKSPACE_ENGINE_CONFIG_V1, SIGNAL_WORKSPACE_INTERPRETATION_MULTILINGUAL_CONFIGURATION_V1, SIGNAL_WORKSPACE_MASS_LABELING_PRODUCT_CONFIGURATION_V2 } from "@noisia/query-engine";
 import { parsePendingWorkspaceAnalysis, validWorkspaceAnalysisStatus,
   type WorkspaceAnalysisRequest, type WorkspaceAnalysisRun, type WorkspaceAnalysisStatus } from "./signal-workspace-analysis-ui";
 import type { WorkspaceIncrementalEditorial } from "./signal-workspace-incremental-editorial-ui";
@@ -260,8 +260,15 @@ export async function requestWorkspaceAnalysisForActorV1(args: Access & { idempo
     try { effectiveCap = discoveryStrictCapV1(args.body.claude_cap_micro_usd,policy.maximum_cap_micro_usd); }
     catch { throw new SignalWorkspaceEngineError("workspace_analysis_interpretation_cap_invalid",422); }
     const massEnabled = access.massEnabled;
-    const enginePreflight = massEnabled ? await loadSignalWorkspaceEnginePreflightV1(access) : null;
-    if (enginePreflight?.engine_configuration) {
+    let engineConfiguration: Record<string, unknown> = SIGNAL_WORKSPACE_ENGINE_CONFIG_V1;
+    if (massEnabled) {
+      // Configuration depends on the requested receipt, including on replay.
+      // Admission rechecks its current revision, rights and guides under lock.
+      const embedded = (await access.database.query<{ counts: { eligible_roots: number } }>(`SELECT run.counts FROM signal_workspace_embedding_runs run
+        WHERE run.id=$1::uuid AND run.workspace_id=$2::uuid AND run.input_contract='corpus'`,
+      [args.body.embedding_run_id, args.workspaceId])).rows[0];
+      if (!embedded) throw new SignalWorkspaceEngineError("workspace_engine_complete_embeddings_required");
+      engineConfiguration = signalWorkspaceMassLabelingConfigV3(embedded.counts.eligible_roots);
       try { await assertAnthropicProviderAccessV1({api_key:workspaceAnalysisAnthropicApiKeyV1(access.massEnabled),enabled:policy.available}); }
       catch { throw new SignalWorkspaceEngineError("workspace_analysis_interpretation_unavailable",422); }
     }
@@ -270,8 +277,8 @@ export async function requestWorkspaceAnalysisForActorV1(args: Access & { idempo
       expected_catalog_digest: args.body.expected_catalog_digest, claude_cap_micro_usd: effectiveCap,
       discovery_request_intent_digest: intentDigest,
       discovery_sample_cap: args.body.discovery_sample_cap, discovery_sample_seed: args.body.discovery_sample_seed,
-      engine_config: enginePreflight?.engine_configuration ?? SIGNAL_WORKSPACE_ENGINE_CONFIG_V1, interpretation_config: {
-        call_configuration: enginePreflight?.engine_configuration ? productConfiguration : SIGNAL_WORKSPACE_INTERPRETATION_MULTILINGUAL_CONFIGURATION_V1,
+      engine_config: engineConfiguration, interpretation_config: {
+        call_configuration: massEnabled ? productConfiguration : SIGNAL_WORKSPACE_INTERPRETATION_MULTILINGUAL_CONFIGURATION_V1,
         budget_timezone: policy.budget_timezone, daily_cap_micro_usd: policy.daily_cap_micro_usd } });
   } else if (args.body.action === "prepare_incremental_editorial") {
     await requestSignalWorkspaceIncrementalEditorialPreparationV1({ ...access, numeric_execution_id: args.body.run_id,
