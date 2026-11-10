@@ -17,13 +17,16 @@ test('real outbox SQL preserves failed editorial owners and recovers only an adm
   const workspace=randomUUID(),actor=randomUUID();
   try {
     await client.query('BEGIN');
+    await client.query('SET LOCAL search_path=pg_temp,public,extensions,pg_catalog');
     // Session-local shadows only. No migration, public fixture, provider or Redis.
     await client.query(`CREATE TEMP TABLE signal_topic_catalog_executions(
       id uuid PRIMARY KEY,workspace_id uuid,actor_user_id uuid,input_contract text,status text,
-      input_snapshot jsonb DEFAULT '{}',error_code text,completed_at timestamptz,updated_at timestamptz DEFAULT now());
+      input_snapshot jsonb DEFAULT '{}',processing_admission_id uuid,request_digest text,
+      error_code text,completed_at timestamptz,updated_at timestamptz DEFAULT now());
       CREATE TEMP TABLE signal_topic_classification_outbox(
       id uuid PRIMARY KEY DEFAULT gen_random_uuid(),execution_id uuid,workspace_id uuid,worker_job_id text,
       dispatch_kind text DEFAULT 'execution',attempt_count int DEFAULT 0,status text DEFAULT 'pending',
+      preparation_token uuid,preparation_expires_at timestamptz,preparation_operation_id uuid,
       error_code text,lease_token uuid,lease_expires_at timestamptz,available_at timestamptz DEFAULT now(),
       created_at timestamptz DEFAULT now(),updated_at timestamptz DEFAULT now(),dispatched_at timestamptz);`);
     assert.equal((await client.query("SELECT relnamespace=pg_my_temp_schema() temporary FROM pg_class WHERE oid='signal_topic_catalog_executions'::regclass")).rows[0].temporary,true);
