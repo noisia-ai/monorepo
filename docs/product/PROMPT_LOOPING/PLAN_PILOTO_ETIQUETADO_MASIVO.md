@@ -223,7 +223,8 @@ Lo demás se resuelve de forma autónoma y se anota en el registro de decisiones
 - [x] H7 · La marca y su Brand OS existen en UAT. Studio aceptó once archivos con 113,338 registros. El cotejo privado verificó los once SHA-256, tamaños y conteos contra los originales. El archivo de 95,100 filas tiene un recibo aceptado y conserva sus cuatro intentos fallidos. Studio y workers sirven el commit de integración `b9dbd456` del PR #150, con CI y PostgreSQL verdes antes y después de la fusión.
 - [x] H7 · UAT completó la preparación el 9 de noviembre a las 18:01, hora de México. Procesó 96,150 raíces, con 83,962 elegibles y 12,188 excluidas. Generó 127,117 fragmentos, sin raíces pendientes ni bloqueadas por derechos.
 - [x] H7 · Studio y el ledger confirmaron los vectores de 83,962 de 83,962 raíces y de 127,117 de 127,117 fragmentos. Se liquidaron 998 respuestas con 25,591,524 tokens y USD 3.071449 a tarifa. Voyage mostraba USD 0.00 de costo en noviembre al cerrar esta etapa.
-- [ ] H7 · Iniciar el mapa desde Topics y completar la propuesta editorial y de léxico, la clasificación y Signal. La lectura de las guías superó el límite de tiempo de PostgreSQL al comprobar las condiciones de inicio.
+- [x] H7 · Studio y workers de UAT ejecutan `3217854e`, con Railpack, salud verificada y cero cambios preparados. Los PR #154 y #155 pasaron CI y PostgreSQL en la solicitud y en cada fusión. Topics consultó las guías en 43.332 s. El inicio desde el producto recibió HTTP 202 en 91.249 s con un único recibo para 83,962 raíces.
+- [ ] H7 · Completar el despacho de la ejecución ya admitida, la propuesta editorial y de léxico, la clasificación y Signal.
 
 - [x] H7 · La lectura optimizada de Signal pasó la comprobación en los cuatro segmentos del estudio de dev-test. En seis mediciones intercaladas, la vista general tardó de 1.570 a 2.570 s y la evidencia de 1.027 a 1.621 s. La medición posterior de la página desplegada figura arriba. [PR de la consulta](https://github.com/noisia-ai/monorepo/pull/142)
 
@@ -303,6 +304,8 @@ Lo demás se resuelve de forma autónoma y se anota en el registro de decisiones
 - [x] Hito 4 · Recibo, comparación y muestras ciegas verificados. Se entregan el recibo público de una página y, en custodia privada, el anexo comparativo, método/fuentes, 600 casos en 11 cohortes y la clave sellada por separado. Son 597 raíces distintas por los solapamientos entre cohortes; cada cohorte cumple sus cuotas de 50 raíces por tópico para los 10 tópicos mayores y 100 de triggers/barriers. Las cohortes no representan evaluación de precisión humana.
 
 ## Sorpresas y descubrimientos
+
+- H7 · El motor quedó «En cola» con cero intentos de despacho. La guarda del worker para los pilotos privados excluía también la ejecución creada por Studio. El cotejo en UAT encontró un solo trabajo de producto afectado, con admisión y actor vigentes.
 
 - H7 · En «Analizar conversaciones», las dos primeras variantes de la consulta de guías alcanzaron el límite de 55 s en las pruebas de lectura. Calcular una vez por texto los límites UTF-16 y reunir las huellas coincidentes antes de leer los vectores permitió obtener las tres guías dentro del límite. La versión anterior había agotado los 120 s de la ruta normal.
 
@@ -398,6 +401,8 @@ Lo demás se resuelve de forma autónoma y se anota en el registro de decisiones
 
 ## Registro de decisiones
 
+- H7 · Conservar la ejecución creada en Topics y su recibo. El worker recogerá el asiento pendiente al reconocer el contrato de producto y su admisión. Los pilotos privados siguen su ruta de operador.
+
 - H7 · Para dimensionar el mapa se usa la cantidad de raíces del recibo de vectores que Studio envía al iniciar el estudio. La admisión revalida la revisión vigente, los permisos, la configuración y las guías dentro de la transacción. Las pruebas incluyen una repetición de la solicitud original después de crear otra corrida de vectores.
 
 - H7 · Programar el despliegue de la consulta entre el cierre de vectores y el inicio del mapa. Así el worker que custodia cada respuesta de Voyage termina su ejecución antes del relevo.
@@ -487,7 +492,7 @@ Lo demás se resuelve de forma autónoma y se anota en el registro de decisiones
 
 ## Resultado y retrospectiva
 
-El corte de base de datos de R15 terminó en UAT con el mismo catálogo que la copia ensayada. Los resultados y el acceso a evidencia de las marcas históricas coincidieron antes y después. Studio y workers ya sirven desde la misma revisión. Studio aceptó los once archivos y preparó el texto de 83,962 raíces elegibles. El recibo de preparación registra 127,117 fragmentos. El worker completó los vectores de todo el corpus. Studio y workers quedaron en `23dc6f46` con Railpack y cero cambios preparados. La consulta previa al mapa alcanzó el límite de tiempo de PostgreSQL.
+El corte de base de datos de R15 terminó en UAT con el mismo catálogo que la copia ensayada. Los resultados y el acceso a evidencia de las marcas históricas coincidieron antes y después. Studio y workers ya sirven desde la misma revisión. Studio aceptó los once archivos y preparó el texto de 83,962 raíces elegibles. El recibo de preparación registra 127,117 fragmentos. El worker completó los vectores de todo el corpus. Studio y workers pasaron a `3217854e` con Railpack y cero cambios preparados. Topics admitió un único mapa en la ruta normal de UAT. El asiento sigue pendiente de despacho por el worker.
 
 ### Ronda 14
 
