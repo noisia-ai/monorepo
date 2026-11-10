@@ -1,66 +1,362 @@
-# Video · el estudio contado en dos minutos
+# Video · la familia de motion de Noisia
 
-> Receta, no plantilla todavía. Salió de un estudio pagado de cerveza y fútbol: un video vertical de
-> 1080 × 1920, de unos 130 segundos, hecho todo en código y sin imágenes generadas. El cliente lo
-> describió como "a quick way of consuming the insight". El proyecto completo vive en la carpeta
-> del caso; aquí queda lo que se repite.
+> Todo lo que se mueve: clips de /insights y TikTok, piezas para redes y LinkedIn, el video de un
+> estudio y las animaciones dentro de un deck. Salió de tres fuentes que se hicieron por separado y se
+> unificaron en noviembre de 2026: las historias de noisia.ai/insights, nueve animaciones de un deck de
+> partnership con una plataforma de listening, y el video de un estudio pagado de cerveza y fútbol.
+>
+> **Esta guía delimita la marca, no restringe el estilo.** Lo que está en §2 no se negocia porque es
+> Noisia. Lo de §4 son opciones, cada una con su propósito: se elige la que sirve a la historia. Lo
+> que sí se pide es saber por qué se eligió.
 
-## Para qué sirve, y para qué no
+## 1. Los cuatro formatos
 
-Es la puerta del estudio para quien no va a abrir 40 slides: el equipo creativo, el comité, alguien
-que lo reenvía. No reemplaza al deck ni es un resumen leído en voz alta. La versión que funcionó
-para creativos no era la que resumía el estudio: le hacía falta copy, y de ahí salió el *Creative
-Spark* por capítulo.
+| Formato | Para qué | Duración | Audio | Lienzo | Base |
+|---|---|---|---|---|---|
+| **Clip** | noisia.ai/insights y TikTok: un insight con su evidencia | ~21 s, 5 escenas | Sin voz | 1080 × 1920 | El motor y el esquema del website (§5.1) |
+| **Social** | LinkedIn, Reels, TikTok: una pieza para publicar que cuenta un hallazgo | 15 a 30 s | Subtítulos siempre; voz opcional | 1080 × 1920 | Nuevo (§5.2) |
+| **Estudio** | La puerta del estudio para quien no va a abrir 40 slides | 90 a 150 s | Narrador y voces de ElevenLabs, música, efectos | 1080 × 1920 | El video del estudio pagado (§5.3) |
+| **Motion de deck** | Un diagrama vivo dentro de una slide | Loops de 10 a 16 s | Mudo | El tamaño de su caja en la slide | Las animaciones del deck de partnership (§5.4) |
 
-## El contrato con el deck
+**Todo video es vertical 9:16**, también en LinkedIn. El motion de deck es la excepción porque vive
+dentro de una slide 16:9.
 
-1. **Las cifras salen del builder del deck.** El builder escribe un `data.json` (por ejemplo con
-   `build_deck.py --video-data`) y el video solo lee de ahí: deck y video dicen las mismas cifras,
-   y si el corpus cambia, cambian los dos.
-2. **Las citas son literales.** Cada extracto lleva su `assert fragmento in texto_verificado` antes
-   de entrar al video, igual que en el deck.
-3. **El guion se arma con los números de los datos.** La narración interpola `data.json`; nada se
-   teclea.
-4. **Nada de imágenes generadas.** Todo es tipografía, gráficas y posts reales del corpus.
-5. **Etiquetas honestas en pantalla** cuando algo se dramatiza: "verified post, voiced", "real fan
-   posts, as a group chat".
+## 2. Lo que es Noisia y no cambia
 
-## La estructura que funcionó
+- **Google Sans**, local en woff2 o TTF, en 400 y 500 (700 solo para números héroe o una palabra). Un
+  render que baja la fuente por red sale con `system-ui` sin avisar cuando no hay red.
+- **Tokens del engine** (`engine/noisia-tokens.css`, el mismo `theme.ts` del website):
 
-- **Abre en frío** con la voz de una persona real del corpus.
-- **Un capítulo por pregunta o tema**, cada uno con tres tiempos: el insight, la prueba (el dato y
-  una voz real) y el *Creative Spark*, una línea de copy que el creativo puede usar.
-- **Un clímax con el mejor hallazgo de espacio vacío.** En el caso, un contador baja a cero, la música
-  se corta y aparece un chat de grupo con posts reales y un hueco: "la marca… escribiendo". El
-  usuario lo pidió así porque ese insight había quedado "ahí nomás".
-- **Cierra con la apuesta.**
-- Una barra de progreso tipo stories.
+  | Token | Valor | Uso |
+  |---|---|---|
+  | ink | `#0a0a0a` | Texto principal |
+  | fg | `#2b2b2b` | Texto secundario fuerte |
+  | muted | `#6d6d6d` | Contexto y metadatos |
+  | line / track | `#e6e6e6` / `#f1f1f1` | Divisores y fondo de barras |
+  | bubble | `#eeeeee` | Burbuja de cita |
+  | teal / tealSoft | `#008a8a` / `#e6f7f7` | La cifra protagonista, lo que empuja |
+  | coral / coralSoft | `#e2543c` / `#fdece8` | Lo que frena |
+  | cyan / red | `#00eeee` / `#ee0b00` | El logo y los fondos bloom; un acento puntual con propósito |
 
-La duración la marca el contenido: el usuario pidió no cortar uno de 141 segundos porque tenía
-sentido. Tampoco todas las escenas pesan igual: las meramente descriptivas se acortan.
+- **El logo real** de Noisia en el cierre de cada pieza, nunca escrito en texto (`assets/logo`,
+  `public/brand/noisia.svg` en el website).
+- **Cada plataforma con su logo**, nunca el nombre solo (`assets/icons.json`, Simple Icons en el
+  website). Nada de caracteres Unicode como `𝕏` o `▶` en lugar del logo.
+- **Las cifras salen de datos**, con su cálculo anotado (`notes` en el clip, `data.json` en el estudio).
+  Ninguna se teclea en el video.
+- **Las citas son literales y verificadas:** `assert fragmento in texto_verificado` antes de entrar, con
+  plataforma y mes. Si se dramatiza, la etiqueta en pantalla lo dice: "verified post, voiced", "real fan
+  posts, as a group chat".
+- **La evidencia es real.** Una imagen generada o de atmósfera nunca se presenta como lo que dijo
+  alguien (§4.3).
+- **Las reglas de copy del kit** (`COPY_RULES.md`): sin em dash, sin "no es X, es Y", sin dos puntos de
+  revelación, nada que suene a IA. Bilingüe es-MX y en-US cuando aplica.
+- **Ningún dato de cliente en una pieza pública** y ningún proyecto de caso en el repo.
 
-## Audio
+## 3. El guion: Human Signals
 
-- **Las voces del sistema no sirven para entregar**: "se escuchan súper feas". Con ElevenLabs por
-  API: un narrador en el idioma del cliente, voces nativas del mercado para las citas con el tono de
-  cada una, efectos generados y música con ducking bajo la voz. Hace falta un opening, un cierre y
-  sonidos de movimiento: "darle más vida".
-- **Subtítulos palabra por palabra** desde los timestamps por carácter de la API (`with-timestamps`):
-  la sincronía sale exacta sin editar a mano.
-- **Caché por hash del spec** (texto, voz, modelo): volver a correr solo regenera lo que cambió.
-- **La API key es del usuario y cuesta dinero.** Vive en el `.env` del caso, nunca en el repo ni en el
-  chat, y se pide permiso antes de generar. Sin key, las voces del sistema sirven de borrador.
+El guion se piensa antes de animar nada, con las etapas 01 a 07 de `HUMAN_SIGNALS.md`. Se escriben en
+el chat y se aprueban antes de construir, igual que las tres frases de un estudio:
 
-## Render
+1. **La pregunta de negocio** y su reformulación humana.
+2. **El hallazgo**, con su cifra y su fuente en el corpus.
+3. **El insight:** la verdad humana en una o dos frases.
+4. **La tensión:** las dos fuerzas que conviven (lo que quieren y lo que los frena, pertenencia y
+   desconexión).
+5. **La intención emocional** en tres niveles: lo que se siente al primer contacto, lo que se siente
+   al seguir mirando y la idea que queda.
+6. **El momento humano:** el instante cotidiano en que el insight se ve. De ahí sale el gancho.
 
-Remotion, con los tokens del kit (Google Sans local, los íconos de `assets/`), Chrome headless y
-h264 con CRF 22. El comando exacto va en el README del proyecto del caso.
+Cómo cae en las escenas:
 
-Para una animación corta dentro de un PPTX comercial, la receta es otra: GIF desde una secuencia de
-PNG, en `commercial/COMMERCIAL.md` §9.
+| Etapa | Clip y social | Estudio |
+|---|---|---|
+| Momento humano | `hook`: la frase tal como la diría la gente, en primera persona | Cold open con la voz de una persona real |
+| Hallazgo | `stat`, `compare`, `split` | La prueba de cada capítulo: el dato y una voz real |
+| Tensión | `tension` | El clímax: el hallazgo de espacio vacío |
+| Evidencia | `quote` en burbuja | Tarjeta de post real |
+| Insight | `takeaway` | Creative Spark: la línea de copy que el creativo puede usar |
 
-## Lo que falta para que sea plantilla
+**La intención emocional decide el ritmo y el sonido:** curiosidad pide un gancho que deje algo sin
+explicar; complicidad, una cita con voz; extrañamiento, un silencio. En el estudio, el clímax corta la
+música justo en el hallazgo de espacio vacío.
 
-Una carpeta `video/` con `Root.tsx` y `Study.tsx` parametrizados por `scenes.json`, un `audio.py`
-genérico (voces por rol, caché, timestamps) y los componentes de escena: cold open, capítulo,
-clímax, cierre y barra de progreso. Está en la deuda de `CANON.md` §9.
+## 4. Estilo: las opciones y su propósito
+
+### 4.1 Fondos
+
+| Fondo | Cuándo | Cómo |
+|---|---|---|
+| **Bloom de Noisia** (el favorito) | Gancho, apertura, cierre, cualquier escena que tenga que sentirse Noisia | El campo de color con grano y blur de `commercial/builder/make_shapes.py`: `linear(..., size=(1080, 1920))` o `bloom(..., size=...)`. Tiene que ser **estático**, o muy lento y moviendo la imagen entera: el grano que cambia en cada cuadro infló un video de 14.7 MB a 415 MB. Falta un `--size` en el CLI; las composiciones están afinadas para 16:9 y una vertical se revisa en hoja de contacto |
+| **Blanco con lavado teal** | Escenas de lectura: cifra, comparación, cita. Lo usan las historias de /insights | `linear-gradient(180deg, #fff 0%, #fff 55%, #f1f9f9 100%)` |
+| **Blanco liso** | Obligatorio en el motion de deck (§5.4) | `#ffffff` exacto |
+| **Imagen de atmósfera** | Apertura, entrada de capítulo, cierre | Una imagen con el lenguaje Kinetic Cinema de `HUMAN_SIGNALS.md` (§4.3), con el texto encima en una zona que la imagen deja limpia |
+
+Los halos radiales con grano que usó el primer video de estudio quedaron atrás: el bloom los
+reemplaza. En noisia.ai/insights, cada historia ajusta su fondo al insight y se renderiza en HTML.
+
+### 4.2 Tarjetas y énfasis
+
+- **Teal suave** (`tealSoft`, radio 48, padding 64 × 60): la caja del takeaway, la opción por defecto.
+- **Tarjeta negra** (`ink`, radio 30): vale cuando tiene un propósito, por ejemplo aislar la única línea
+  que el equipo creativo se va a llevar (el Creative Spark). Una por escena y con aire alrededor; si
+  todo es negro, nada destaca.
+- **Coral** marca lo que frena. **Teal** marca lo que empuja y la cifra protagonista.
+
+### 4.3 Imágenes
+
+- **La evidencia** son posts, videos o anuncios reales, con su pie, por el Quality Gate y el Size Gate
+  de `LAYOUTS.md`.
+- **La atmósfera** puede fotografiarse o generarse con el método y el prompt de `HUMAN_SIGNALS.md`
+  (§VI, en 9:16 para video). Pasa su control de calidad (§VIII, sobre todo la integridad anatómica) y
+  nunca lleva texto, logos ni datos dentro.
+- Una imagen de atmósfera nunca va junto a una cita como si la ilustrara: la cita es de una persona real
+  y la imagen no lo es.
+
+### 4.4 Movimiento
+
+Los dos motores ya coinciden en lo básico, y esto es lo común (a 30 fps, un cuadro = 33.3 ms):
+
+| Movimiento | Valor |
+|---|---|
+| Entrada de un elemento (`rise`) | Resorte `damping 18, mass 0.7, stiffness 120`: desvanece y sube 40 px, llega en ~20 cuadros (670 ms) sin rebote |
+| Curva de entrada | `cubic-bezier(0.22, 1, 0.36, 1)`: rápida y con asentamiento largo |
+| Curva de trayecto (morph, viaje por una curva, fade de cierre) | `cubic-bezier(0.65, 0, 0.35, 1)` |
+| Palabras | Una por una, 3 cuadros entre palabras (2 en el takeaway), subiendo el 40% de su tamaño |
+| Cifras | De 0 a su valor en 26 a 34 cuadros con `1-(1-t)^3`, tabular-nums y formato del idioma |
+| Barras | El mismo resorte (damping 22), escalonadas 8 a 9 cuadros |
+| Entre escenas | Entrada en 12 cuadros (opacidad y 36 a 40 px desde abajo), salida en los últimos 10 hacia arriba. El blur de 8 px es opcional. Sin cortes duros ni barridos |
+| Pops con rebote | `damping 11 a 16, mass 0.6 a 0.8`. Solo para un énfasis puntual: el 0 del clímax, una burbuja que llega |
+| Líneas que se dibujan | 26 a 70 cuadros con `strokeDashoffset` |
+
+- **Barra de progreso arriba**, un segmento por escena (alto 6 a 8, radio 3 a 4, gap 8 a 10). En el
+  clip son iguales; en el estudio, proporcionales a la duración de cada escena.
+- **Cierre:** el logo real entra con fundido y escala de 0.92 a 1, y se sostiene de 1.8 s (clip) a
+  3.3 s (estudio).
+
+### 4.5 Tipografía y zonas seguras en 1080 × 1920
+
+| Elemento | Tamaño (px) |
+|---|---|
+| Gancho | 104 a 128 |
+| Titular de capítulo | 82 a 100 |
+| Cifra héroe | 150 a 300 (el 0 de un clímax, 360) |
+| Etiqueta de dato | 38 a 70 |
+| Cita | 62 a 84 según su largo |
+| Takeaway | 86 |
+| Subtítulos | 46, peso 700 |
+| Mínimo legible | 40 |
+
+**Zonas seguras:** 150 px arriba (barra y etiqueta), 84 px a los lados y **160 px a la derecha** para los
+botones de TikTok y Reels. Abajo, 360 px en el clip y **384 px (el 20%) en todo lo que se publica**, con
+los subtítulos por encima. El contenido importante vive entre y = 220 y y = 1500.
+
+## 5. Cada formato
+
+### 5.1 Clip · /insights y TikTok
+
+**Es el formato más cerrado, porque ya está construido.** Vive en `apps/website-next` del monorepo y
+cada historia nueva es un JSON, sin código.
+
+| Pieza | Ruta en `apps/website-next` |
+|---|---|
+| Motor: reloj de cuadros, `Stage`, `Sequence`, `AbsoluteFill`, `interpolate`, `spring`, `Easing` | `src/motion/runtime.tsx` |
+| Ayudas: `enter`, `rise`, `countUp`, `formatNumber` | `src/motion/util.ts` |
+| Tokens, lienzo, zonas seguras y duraciones | `src/motion/theme.ts` |
+| La composición de una historia | `src/motion/StoryComposition.tsx` |
+| Las 8 plantillas de escena | `src/motion/scenes.tsx` |
+| El esquema (zod) y sus pruebas | `src/content/stories/schema.ts`, `schema.test.ts` |
+| Historias publicadas | `src/content/stories/public/*.json` |
+| Exportador a MP4 | `scripts/export-story.mjs` |
+
+- **Escenas y cuadros:** hook 84, stat 108, compare 138, journey 156, split 120, tension 126, quote 156,
+  takeaway 108 y el cierre con logo 54. De 2 a 7 escenas; el patrón probado es
+  `hook → stat → (tension | split | segundo stat) → quote → takeaway`, unos 21 s.
+- **Límites de texto** (los aplica el esquema): hook 90 caracteres, etiqueta de stat 110, contexto 140,
+  cada lado de tension 90, quote 260, takeaway 140, título 90.
+- **Sin llamada a la acción dentro del video.** En el feed, "Leer el reporte" va fuera del lienzo.
+- **Dos modos:** `feed` (el título va fuera del lienzo, como HTML indexable) y `video` (el título va
+  dibujado a 56 px).
+- **MP4:** con el sitio levantado (`pnpm --filter @noisia/website-next dev`), desde `apps/website-next`:
+  `pnpm export:story <id> --locale es`. Captura cada cuadro con puppeteer y codifica con ffmpeg
+  (`libx264`, `crf 18`, `yuv420p`, `+faststart`). Una historia de 21 s pesa ~3.2 MB y tarda unos 2
+  minutos. `/render/<id>?frame=-1` da la hoja de contactos.
+
+### 5.2 Social · LinkedIn, Reels y TikTok
+
+Todavía no existe una pieza de este formato; la estructura es la que propuso el video de estudio y se
+valida con la primera.
+
+| Tiempo | Qué |
+|---|---|
+| 0 a 3 s | El gancho: la voz o la frase de una persona, en grande. Tiene que estar antes de 1.5 s |
+| 3 a 12 s | Un insight: una cifra con su gráfica y una frase |
+| 12 a 20 s | La tensión o el hallazgo de espacio vacío: lo más compartible |
+| 20 a 24 s | La línea para llevarse, a 72 px o más si no hay narrador |
+| 24 a 26 s | El logo |
+
+- **Se entiende sin sonido.** LinkedIn y los feeds arrancan mudos: los subtítulos o el texto en pantalla
+  cuentan todo.
+- **Una cifra por pantalla y como máximo una cita con voz.** Las demás citas pueden ir en un chat sin
+  voz.
+- Música más alta que en el estudio (~0.35 libre) y el narrador opcional.
+
+### 5.3 Estudio
+
+**El contrato con el deck:**
+1. Las cifras salen del builder del deck, que escribe un `data.json` (`build_deck.py --video-data`), y
+   el video solo lee de ahí. Si el corpus cambia, cambian los dos.
+2. Las citas llevan su assert literal, igual que en el deck.
+3. La narración interpola `data.json`; nada se teclea.
+
+**La estructura que funcionó** (130.3 s, 10 escenas, 28 slides de deck detrás):
+- **Cold open** (~15 s): la voz de una persona real, la lluvia de su vocabulario y el título con el
+  contador del corpus.
+- **Un capítulo por pregunta o tema** (10.5 a 16 s cada uno), todos con los mismos tres tiempos: el
+  insight, la prueba (el dato y una voz real) y el Creative Spark. Ninguno se queda solo descriptivo: el
+  feedback fue que "no todas las slides tienen la misma densidad".
+- **El clímax con el mejor hallazgo de espacio vacío** (~15 s): un contador baja a 0, la música cae y
+  aparece un chat de grupo con posts reales y el hueco de la marca escribiendo.
+- **El cierre** (~11 s): la apuesta en tres tiempos, el asset de portada y el logo.
+
+La duración la marca el contenido. Se planearon unos 90 s, el primer pase de audio dio 141 y se
+recortó a 120; el usuario pidió no cortarlo "si tiene sentido", y quedó en 130.3 s.
+
+**Timing desde el audio real.** Cambiar de voz cambia la duración (72 a 77 s al pasar a otra voz), así
+que ningún tiempo va fijo en la composición. `audio.py` genera las voces, mide cada palabra y escribe
+`scenes.json` con los marcadores en cuadros: `spark_at`, `zero_at`, `chat_at`, `logo_at`. Las reglas de
+un capítulo: la voz entra en el cuadro 6, la cita 6 cuadros después de que termina la voz, `spark_at` 8
+después, la voz del Spark en `spark_at + 6` y la escena cierra 20 cuadros después. Las animaciones se
+anclan a una palabra: el número arranca cuando el narrador la dice.
+
+**Audio:**
+- **Las voces del sistema no sirven para entregar** ("se escuchan súper feas"); sirven de borrador sin
+  key.
+- **ElevenLabs por API**, endpoint `/v1/text-to-speech/{voice}/with-timestamps`:
+  - narrador: `eleven_multilingual_v2`, una voz premade de narrador, `stability 0.42`,
+    `similarity_boost 0.8`, `style 0.35`, `use_speaker_boost`;
+  - voces del público: `eleven_v3` con `language_code` del mercado, voces nativas de la biblioteca
+    compartida, y un tag de emoción al inicio de cada cita (`[laughing]`, `[mocking]`, `[excited]`…).
+    Los tags llegan en la alineación como palabras y se filtran.
+- **Subtítulos palabra por palabra** desde los timestamps: solo la voz del narrador, una línea de hasta
+  30 caracteres a la vez, la palabra dicha en ink y la que viene en `#c3c5c8`. La cita tiene su propia
+  tarjeta y no se subtitula. El mapeo cita ↔ timestamps se hace por texto normalizado, no por índice:
+  por índice se desfasa con comillas anidadas o emojis.
+- **Música** con `/v1/music` (`force_instrumental`) y **efectos** con `/v1/sound-generation`. La pista
+  se pide redondeada hacia arriba a 5 s, para que un cambio chico de guion reuse la caché. **La licencia
+  de uso comercial se confirma en el plan de ElevenLabs antes de publicar fuera de una presentación
+  privada.**
+- **Mezcla:** narrador 0.95, citas 1.0, whoosh 0.45, pop 0.5, tick 0.22, hit 0.3 a 0.85. Música 0.26
+  libre, 0.09 bajo la voz y 0.02 en el clímax, **con rampas de 6 a 8 cuadros**, no escalones, y la
+  mezcla a -14 LUFS integrado (`ffmpeg -af ebur128` para medir).
+- **Caché por hash del spec** (texto, voz, modelo, ajustes): volver a correr solo regenera lo que cambió.
+
+**La key y el costo:**
+- La key es del usuario y cuesta dinero. Se crea el `.env` vacío del caso con su `.gitignore`, el usuario
+  la pega ahí, y nunca pasa por el chat ni por el repo.
+- El lector limpia comillas y espacios (`strip().strip('"\'').strip()`; una key pegada con comillas dio
+  401) y la valida contra `/v1/user/subscription` antes de generar.
+- **Antes de generar se dice el presupuesto en caracteres:** el video terminado usa ~750 por minuto, y
+  con tres pases de narración más las citas y pruebas se gastaron ~5,000. Música y efectos se cobran
+  aparte.
+
+**QA:** stills de cada escena en tres momentos: fin de la voz, fin de la cita y Spark completo. Así
+aparecieron todos los encimados (una etiqueta sobre la curva, una frase sobre el 0, el Spark sobre las
+barras). El audio solo lo puede aprobar una persona escuchándolo; se le pide al usuario.
+
+### 5.4 Motion de deck
+
+- **La composición mide exactamente su caja en la slide**, en px de la retícula de 1920 × 1080, y se
+  coloca con el mismo `x, y, w, h` sin escalar.
+- **Loops mudos de 10 a 16 s** que se ven mientras se habla: "puede ser un gif", para que no obligue a
+  la sala a callarse. Termina con un fundido al estado inicial (`loopFade`, los últimos 18 a 22 cuadros)
+  para que el loop no corte.
+- **El diagrama va en el GIF; título, explicación y pie van nativos en la slide**, editables. Las
+  etiquetas dentro del GIF son cortas y sin cifras, salvo un contador con su fuente.
+- **El GIF arranca en su cuadro completo** (la línea de tiempo rotada), porque el PDF que exporta Slides
+  solo muestra el primer cuadro. Ese cuadro se revisa como still: es lo que sale en el PDF.
+- **La slide que lleva un GIF va en blanco liso**: sobre el grano del bloom, un GIF blanco se ve como una
+  caja.
+- **Tipografía:** de 16 a 25 px en la caja; menos de 15 no se lee proyectado.
+- **Presupuesto:** 4 a 5 MB de GIF en un deck de ~9 MB.
+- La receta del GIF (secuencia PNG, paleta fija de 64 colores, mapeo exacto en numpy y gifsicle) está en
+  `commercial/COMMERCIAL.md` §9.
+
+**Patrones que ya existen** y se vuelven componentes con props:
+
+| Patrón | Qué muestra |
+|---|---|
+| Campo de partículas que se depura | El corpus llega, el ruido cae, los duplicados se fusionan y el núcleo se agrupa en temas |
+| Contador encadenado | Un número que se transforma en otro y cambia de etiqueta (recolectadas, únicas, analizadas) |
+| Stepper | Pasos con barra de progreso y paso activo |
+| Traza a la evidencia | Una curva une la respuesta con una mención concreta |
+| Morph entre vistas | El mismo corpus en grilla, temas, barras y taxonomía, con un segmented control |
+| Hub de fuentes | Nodos en anillo con partículas hacia el centro |
+| Ciclo | Etapas en un círculo con un indicador que lo recorre |
+| Ventana de entregable | Wireframe con la etiqueta "Illustrative layout" |
+
+## 6. Motores, versiones y licencias
+
+**Dos motores, con la misma interfaz** (`Sequence`, `AbsoluteFill`, `interpolate`, `spring`, `Easing`):
+- **El motor del website**, `apps/website-next/src/motion/runtime.tsx`: corre en vivo en el sitio y
+  exporta MP4 por captura de cuadros. Sin licencia y sin audio.
+- **Remotion 4.0.529**, con React 18.3.1, TypeScript 5.9.3 y Node 20.20.2: el estudio y el motion de deck.
+  Trae audio y render.
+
+Los componentes se escriben una sola vez contra esa interfaz, para que corran en los dos.
+
+**Licencia de Remotion** (verificado el 10 de noviembre de 2026 en remotion.pro/license): gratis para
+individuos y empresas de hasta 3 personas. Arriba de eso: $25 al mes por persona que escribe código de
+Remotion (Creators), o $0.01 por render con un mínimo de $100 al mes cuando el render es automático
+(Automators, que es lo que hace un builder que llama `npx remotion render`). Para entregables en MP4 a un
+cliente que no recibe el código, solo cuenta la plantilla de quien lo hace.
+
+**Render:**
+- Chrome: el `chrome-headless-shell` de Playwright, pasado con `--browser-executable`, para que Remotion
+  no baje el suyo.
+- ffmpeg: el que trae Remotion (`npx remotion ffmpeg`, n7.1) es mínimo. No trae `fps`, `setpts`,
+  `palettegen` ni `paletteuse`, y su `select` falla con muchos `eq(n,…)`. Para extraer stills se usa
+  `-ss` cuadro por cuadro.
+- MP4 final: `--codec=h264 --crf=22` para el estudio; `--crf=16` para el motion de deck; `--scale=0.5`
+  para QA rápido.
+
+## 7. Trampas
+
+- **Grano animado:** 415 MB contra 14.7 MB del mismo video con el grano estático.
+- **Fuente por red:** sin red, sale con la fuente del sistema y no avisa. Siempre local, y el render espera
+  `document.fonts.ready` o su `delayRender`.
+- **El blanco del GIF:** `quantize` de Pillow manda `#ffffff` a `(252, 252, 252)` y en la slide se ve una
+  caja gris. Mapeo exacto en numpy (`COMMERCIAL.md` §9).
+- **El codec GIF de Remotion** pesa 4 a 5 veces más que una secuencia PNG con paleta fija.
+- **Slides y el video:** un GIF anima en el editor y al presentar; un MP4 embebido llega como ícono de
+  audio y Slides lo quita; un video insertado desde Drive sí queda, pero a mano.
+- **Hooks dentro de `map`:** si un JSON cambia el número de nodos, cada nodo va en su propio componente.
+- **Comillas dobles:** si la cita ya trae comillas y la tarjeta agrega otras, sale `””`. Se quitan las
+  externas cuando la cita ya cierra con una.
+- **En el website:** un `container-type` no puede medirse a sí mismo (`cqw` deforma el marco); `Stage`
+  mide con `clientWidth`, no con `getBoundingClientRect`, o se escala dos veces; las duraciones viven en
+  `src/motion/sizes.ts` porque una constante importada de un módulo `"use client"` llega como referencia a
+  una página de servidor; toda animación de más de 5 s lleva botón de pausa (WCAG 2.2.2) y un póster fijo
+  con movimiento reducido.
+- **zsh** no parte `"Process 400"` en `$1 $2` dentro de un `for`: los scripts de render van con
+  `#!/bin/bash`.
+
+## 8. Lo que falta: el builder
+
+Hoy cada formato vive en su lugar: el clip en el website, el estudio y el motion de deck en las carpetas
+de sus casos. El plan:
+
+1. **`packages/motion`:** el motor, `theme.ts`, las ayudas y las escenas del website salen a un paquete
+   compartido, con los tokens leídos del engine. El website lo importa en lugar de tenerlo adentro.
+2. **Componentes de los cuatro formatos** contra la misma interfaz: las 8 escenas del clip; cold open,
+   capítulo, clímax y cierre del estudio; los patrones de §5.4; y las piezas comunes (barra de progreso,
+   subtítulos, fondo, cierre con logo).
+3. **Una librería de gráficas animadas:** anillo, barras, número grande con cuadrícula de puntos, curva
+   con barras de días, paneles enfrentados, tarjetas de marca, uno contra muchos.
+4. **`builders/build-video.mjs --format clip|social|study|deck --in pieza.json --out pieza.mp4`**, con
+   `--gif` para el motion de deck. El JSON declara escenas, gráficas, anclas a palabras y efectos.
+5. **`audio.py` genérico:** roles de voz en config, caché, timestamps con los tags filtrados y las reglas
+   de timing de §5.3 como constantes.
+6. **`qa.py`:** stills en los marcadores de `scenes.json` y hojas de contacto.
+
+Está en la deuda de `CANON.md` §9.
