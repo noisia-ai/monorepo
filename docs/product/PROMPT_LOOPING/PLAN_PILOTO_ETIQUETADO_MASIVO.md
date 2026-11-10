@@ -211,6 +211,8 @@ Lo demás se resuelve de forma autónoma y se anota en el registro de decisiones
 
 ## Progreso
 
+- [x] H7 · En UAT, la consulta revisada del PR #154 devolvió las tres guías del mapa en 44.145 s. En PostgreSQL, la prueba de 83,962 raíces comprobó la equivalencia de centroides, huellas de entrada y fragmentos. El PR #155 evita una segunda lectura de todas las guías para consultar el tamaño del corpus al iniciar el análisis.
+
 - [x] H7 · La consulta de «Datos recibidos» del PR #153 pasó revisión, CI y PostgreSQL antes y después de la fusión a `develop` en `23dc6f46`. La copia restaurada devolvió los mismos conteos y errores de reconciliación para tres workspaces.
 
 - [x] H7 · Los PR #148 y #149 pasaron CI y PostgreSQL antes y después de la fusión. En UAT, el cotejo de lecturas por lote de 500 candidatos bajó de 10.7–11.8 s a 0.11–1.41 s, con igual número de filas. La prueba sintética verificó igualdad de campos y aislamiento entre workspaces.
@@ -301,6 +303,8 @@ Lo demás se resuelve de forma autónoma y se anota en el registro de decisiones
 - [x] Hito 4 · Recibo, comparación y muestras ciegas verificados. Se entregan el recibo público de una página y, en custodia privada, el anexo comparativo, método/fuentes, 600 casos en 11 cohortes y la clave sellada por separado. Son 597 raíces distintas por los solapamientos entre cohortes; cada cohorte cumple sus cuotas de 50 raíces por tópico para los 10 tópicos mayores y 100 de triggers/barriers. Las cohortes no representan evaluación de precisión humana.
 
 ## Sorpresas y descubrimientos
+
+- H7 · En «Analizar conversaciones», las dos primeras variantes de la consulta de guías alcanzaron el límite de 55 s en las pruebas de lectura. Calcular una vez por texto los límites UTF-16 y reunir las huellas coincidentes antes de leer los vectores permitió obtener las tres guías dentro del límite. La versión anterior había agotado los 120 s de la ruta normal.
 
 - H7 · La lectura de «Datos recibidos» en UAT devolvió el mismo recibo antes y después del PR #153, con 50.7 s y 51.5 s respectivamente en las dos mediciones directas. El ahorro observado en la copia restaurada no se reprodujo en ese par de lecturas de UAT. La actualización del panel autenticado completó con HTTP 200 en 48.6 s.
 - H7 · La consulta que combina los textos de los fragmentos y sus vectores para calcular las guías del mapa seguía activa a los 118.4 s en UAT. Topics no pudo confirmar que el corpus estaba listo después de completar los vectores.
@@ -393,6 +397,8 @@ Lo demás se resuelve de forma autónoma y se anota en el registro de decisiones
 - Dos lotes devolvieron referencias válidas dentro de la muestra de 30 pero superaron el máximo de diez referencias por campo. La comprobación privada de las respuestas originales y de reparación encontró entre 11 y 30 referencias en los campos rechazados.
 
 ## Registro de decisiones
+
+- H7 · Para dimensionar el mapa se usa la cantidad de raíces del recibo de vectores que Studio envía al iniciar el estudio. La admisión revalida la revisión vigente, los permisos, la configuración y las guías dentro de la transacción. Las pruebas incluyen una repetición de la solicitud original después de crear otra corrida de vectores.
 
 - H7 · Programar el despliegue de la consulta entre el cierre de vectores y el inicio del mapa. Así el worker que custodia cada respuesta de Voyage termina su ejecución antes del relevo.
 
