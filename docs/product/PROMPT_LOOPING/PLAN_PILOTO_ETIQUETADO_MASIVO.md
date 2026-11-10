@@ -217,7 +217,8 @@ Lo demás se resuelve de forma autónoma y se anota en el registro de decisiones
 - [x] H7 · Los PR #132–#145 pasaron CI y PostgreSQL en la solicitud y tras la fusión a develop. Studio y workers de UAT arrancaron con Railpack en `966528b3`. Se comprobaron la salud de Studio, el latido del worker y que Railway tenía cero cambios preparados.
 - [x] H7 · En dev-test, seis lecturas de la vista general tardaron entre 1.516 y 1.704 s. Tres recargas en el navegador tardaron 2.406, 2.035 y 2.938 s. La primera observación dio un límite superior de 3.156 s. Los indicadores mostraron 30 ejemplos en 1.485–1.826 s.
 - [x] H7 · La marca y su Brand OS existen en UAT. Studio aceptó once archivos con 113,338 registros. El cotejo privado verificó los once SHA-256, tamaños y conteos contra los originales. El archivo de 95,100 filas tiene un recibo aceptado y conserva sus cuatro intentos fallidos. Studio y workers sirven el commit de integración `b9dbd456` del PR #150, con CI y PostgreSQL verdes antes y después de la fusión.
-- [ ] H7 · Preparar el texto y verificar las etapas posteriores en la interfaz del estudio nuevo.
+- [x] H7 · UAT completó la preparación el 9 de noviembre a las 18:01, hora de México. Procesó 96,150 raíces, con 83,962 elegibles y 12,188 excluidas. Generó 127,117 fragmentos, sin raíces pendientes ni bloqueadas por derechos.
+- [ ] H7 · Studio admitió el cálculo de vectores sobre los 127,117 fragmentos, todos pendientes al cotizar. Continuar por el mapa, la propuesta editorial y de léxico, la clasificación y la verificación de Signal.
 
 - [x] H7 · La lectura optimizada de Signal pasó la comprobación en los cuatro segmentos del estudio de dev-test. En seis mediciones intercaladas, la vista general tardó de 1.570 a 2.570 s y la evidencia de 1.027 a 1.621 s. La medición posterior de la página desplegada figura arriba. [PR de la consulta](https://github.com/noisia-ai/monorepo/pull/142)
 
@@ -384,6 +385,8 @@ Lo demás se resuelve de forma autónoma y se anota en el registro de decisiones
 - Dos lotes devolvieron referencias válidas dentro de la muestra de 30 pero superaron el máximo de diez referencias por campo. La comprobación privada de las respuestas originales y de reparación encontró entre 11 y 30 referencias en los campos rechazados.
 
 ## Registro de decisiones
+
+- H7 · El tope de vectores se fijó en el mínimo admitido por la cotización, USD 33.229264. Antes del envío, Voyage mostraba 124,071,546 tokens gratuitos disponibles para el modelo. Se contrastarán los tokens y el costo a tarifa del ledger con el uso efectivo de la cuenta al cierre.
 
 - H7 · Conservar la única importación aceptada por archivo. Investigar la consulta del resumen y usar los controles autorizados del producto para preparar el corpus.
 
