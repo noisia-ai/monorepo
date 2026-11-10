@@ -220,7 +220,8 @@ Lo demás se resuelve de forma autónoma y se anota en el registro de decisiones
 - [x] H7 · En dev-test, seis lecturas de la vista general tardaron entre 1.516 y 1.704 s. Tres recargas en el navegador tardaron 2.406, 2.035 y 2.938 s. La primera observación dio un límite superior de 3.156 s. Los indicadores mostraron 30 ejemplos en 1.485–1.826 s.
 - [x] H7 · La marca y su Brand OS existen en UAT. Studio aceptó once archivos con 113,338 registros. El cotejo privado verificó los once SHA-256, tamaños y conteos contra los originales. El archivo de 95,100 filas tiene un recibo aceptado y conserva sus cuatro intentos fallidos. Studio y workers sirven el commit de integración `b9dbd456` del PR #150, con CI y PostgreSQL verdes antes y después de la fusión.
 - [x] H7 · UAT completó la preparación el 9 de noviembre a las 18:01, hora de México. Procesó 96,150 raíces, con 83,962 elegibles y 12,188 excluidas. Generó 127,117 fragmentos, sin raíces pendientes ni bloqueadas por derechos.
-- [ ] H7 · Studio admitió el cálculo de vectores sobre los 127,117 fragmentos, todos pendientes al cotizar. Continuar por el mapa, la propuesta editorial y de léxico, la clasificación y la verificación de Signal.
+- [x] H7 · Studio y el ledger confirmaron los vectores de 83,962 de 83,962 raíces y de 127,117 de 127,117 fragmentos. Se liquidaron 998 respuestas con 25,591,524 tokens y USD 3.071449 a tarifa. Voyage mostraba USD 0.00 de costo en noviembre al cerrar esta etapa.
+- [ ] H7 · Iniciar el mapa desde Topics y completar la propuesta editorial y de léxico, la clasificación y Signal. La lectura de las guías superó el límite de tiempo de PostgreSQL al comprobar las condiciones de inicio.
 
 - [x] H7 · La lectura optimizada de Signal pasó la comprobación en los cuatro segmentos del estudio de dev-test. En seis mediciones intercaladas, la vista general tardó de 1.570 a 2.570 s y la evidencia de 1.027 a 1.621 s. La medición posterior de la página desplegada figura arriba. [PR de la consulta](https://github.com/noisia-ai/monorepo/pull/142)
 
@@ -300,6 +301,9 @@ Lo demás se resuelve de forma autónoma y se anota en el registro de decisiones
 - [x] Hito 4 · Recibo, comparación y muestras ciegas verificados. Se entregan el recibo público de una página y, en custodia privada, el anexo comparativo, método/fuentes, 600 casos en 11 cohortes y la clave sellada por separado. Son 597 raíces distintas por los solapamientos entre cohortes; cada cohorte cumple sus cuotas de 50 raíces por tópico para los 10 tópicos mayores y 100 de triggers/barriers. Las cohortes no representan evaluación de precisión humana.
 
 ## Sorpresas y descubrimientos
+
+- H7 · La lectura de «Datos recibidos» en UAT devolvió el mismo recibo antes y después del PR #153, con 50.7 s y 51.5 s respectivamente en las dos mediciones directas. El ahorro observado en la copia restaurada no se reprodujo en ese par de lecturas de UAT. La actualización del panel autenticado completó con HTTP 200 en 48.6 s.
+- H7 · La consulta que combina los textos de los fragmentos y sus vectores para calcular las guías del mapa seguía activa a los 118.4 s en UAT. Topics no pudo confirmar que el corpus estaba listo después de completar los vectores.
 
 - H7 · En la copia, 131,432 búsquedas por clave de mención consumieron 41 de los 42.5 s de la consulta de preparación. Leer las raíces una vez por workspace redujo la medición a 4.8 s. La lectura original se midió primero, por lo que la diferencia incluye el efecto de caché.
 
@@ -477,7 +481,7 @@ Lo demás se resuelve de forma autónoma y se anota en el registro de decisiones
 
 ## Resultado y retrospectiva
 
-El corte de base de datos de R15 terminó en UAT con el mismo catálogo que la copia ensayada. Los resultados y el acceso a evidencia de las marcas históricas coincidieron antes y después. Studio y workers ya sirven desde la misma revisión. Studio aceptó los once archivos y preparó el texto de 83,962 raíces elegibles. El recibo de preparación registra 127,117 fragmentos. La etapa de vectores está en curso.
+El corte de base de datos de R15 terminó en UAT con el mismo catálogo que la copia ensayada. Los resultados y el acceso a evidencia de las marcas históricas coincidieron antes y después. Studio y workers ya sirven desde la misma revisión. Studio aceptó los once archivos y preparó el texto de 83,962 raíces elegibles. El recibo de preparación registra 127,117 fragmentos. El worker completó los vectores de todo el corpus. Studio y workers quedaron en `23dc6f46` con Railpack y cero cambios preparados. La consulta previa al mapa alcanzó el límite de tiempo de PostgreSQL.
 
 ### Ronda 14
 
