@@ -211,6 +211,8 @@ Lo demás se resuelve de forma autónoma y se anota en el registro de decisiones
 
 ## Progreso
 
+- [x] H7 · La consulta de «Datos recibidos» del PR #153 pasó revisión, CI y PostgreSQL antes y después de la fusión a `develop` en `23dc6f46`. La copia restaurada devolvió los mismos conteos y errores de reconciliación para tres workspaces.
+
 - [x] H7 · Los PR #148 y #149 pasaron CI y PostgreSQL antes y después de la fusión. En UAT, el cotejo de lecturas por lote de 500 candidatos bajó de 10.7–11.8 s a 0.11–1.41 s, con igual número de filas. La prueba sintética verificó igualdad de campos y aislamiento entre workspaces.
 - [x] H7 · La migración 0291 se ensayó sobre la copia restaurada y se aplicó una vez en UAT. La repetición verificó los 59 asientos. Cambiaron las definiciones de dos funciones. Los permisos, los resultados históricos y el acceso a su evidencia coincidieron. GitHub midió 19.564 s para cerrar un lote sintético de 95,100 filas con una población semántica en borrador.
 
@@ -299,6 +301,8 @@ Lo demás se resuelve de forma autónoma y se anota en el registro de decisiones
 
 ## Sorpresas y descubrimientos
 
+- H7 · En la copia, 131,432 búsquedas por clave de mención consumieron 41 de los 42.5 s de la consulta de preparación. Leer las raíces una vez por workspace redujo la medición a 4.8 s. La lectura original se midió primero, por lo que la diferencia incluye el efecto de caché.
+
 - H7 · Después de aceptar los once archivos, la pantalla de importación mostró las 113,338 filas. El panel «Datos recibidos» falló al cargar en dos intentos y ocultó el botón para preparar el texto.
 
 - H7 · El cuarto intento leyó el CSV completo en unos 26 minutos. PostgreSQL alcanzó el límite de 120 s durante la verificación de una clave foránea al materializar las atribuciones de origen, antes de iniciar la reconciliación de poblaciones. Los cuatro cierres fallidos conservaron su historial.
@@ -386,6 +390,8 @@ Lo demás se resuelve de forma autónoma y se anota en el registro de decisiones
 
 ## Registro de decisiones
 
+- H7 · Programar el despliegue de la consulta entre el cierre de vectores y el inicio del mapa. Así el worker que custodia cada respuesta de Voyage termina su ejecución antes del relevo.
+
 - H7 · El tope de vectores se fijó en el mínimo admitido por la cotización, USD 33.229264. Antes del envío, Voyage mostraba 124,071,546 tokens gratuitos disponibles para el modelo. Se contrastarán los tokens y el costo a tarifa del ledger con el uso efectivo de la cuenta al cierre.
 
 - H7 · Conservar la única importación aceptada por archivo. Investigar la consulta del resumen y usar los controles autorizados del producto para preparar el corpus.
@@ -471,7 +477,7 @@ Lo demás se resuelve de forma autónoma y se anota en el registro de decisiones
 
 ## Resultado y retrospectiva
 
-El corte de base de datos de R15 terminó en UAT con el mismo catálogo que la copia ensayada. Los resultados y el acceso a evidencia de las marcas históricas coincidieron antes y después. Studio y workers ya sirven desde la misma revisión. El nuevo estudio llegó por la interfaz a diez archivos aceptados de once. El cierre del archivo restante es la etapa en curso.
+El corte de base de datos de R15 terminó en UAT con el mismo catálogo que la copia ensayada. Los resultados y el acceso a evidencia de las marcas históricas coincidieron antes y después. Studio y workers ya sirven desde la misma revisión. Studio aceptó los once archivos y preparó el texto de 83,962 raíces elegibles. El recibo de preparación registra 127,117 fragmentos. La etapa de vectores está en curso.
 
 ### Ronda 14
 
