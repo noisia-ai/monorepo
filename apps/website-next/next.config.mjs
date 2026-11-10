@@ -67,8 +67,9 @@ const nextConfig = {
     return [
       { source: "/:path*", headers: securityHeaders },
       // Email signature images (photos and logo). Public so Gmail and Outlook can load them, never
-      // linked from the site and kept out of search results.
-      { source: "/email/:path*", headers: [...publicAssetCache, { key: "X-Robots-Tag", value: "noindex, nofollow, noimageindex" }] },
+      // linked from the site and kept out of search results. Short cache: the header also applies
+      // to a 404, so a link opened before its file was deployed must not stay broken for a day.
+      { source: "/email/:path*", headers: [{ key: "Cache-Control", value: "public, max-age=600, stale-while-revalidate=3600" }, { key: "X-Robots-Tag", value: "noindex, nofollow, noimageindex" }] },
       ...["/brand/:path*", "/assets/:path*", "/fonts/:path*", "/favicon.ico", "/favicon.svg", "/apple-touch-icon.png", "/icon-192.png", "/icon-512.png", "/icon-maskable-512.png"].map((source) => ({ source, headers: publicAssetCache }))
     ];
   },
