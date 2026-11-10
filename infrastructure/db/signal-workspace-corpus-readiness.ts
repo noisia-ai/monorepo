@@ -46,20 +46,18 @@ export async function loadSignalWorkspaceCorpusReadinessStoreV1(args: {
         batch.provider_observation_count
       FROM import_batches batch
       WHERE batch.workspace_id=$1::uuid AND batch.status='completed'
+    ), workspace_roots AS MATERIALIZED (
+      -- A whole-corpus receipt needs each workspace root once. Resolving it per
+      -- import membership forces random heap reads and revisits overlapping roots.
+      SELECT id,inclusion_status,NULLIF(btrim(text_clean),'') IS NOT NULL has_text
+      FROM mentions WHERE workspace_id=$1::uuid AND canonical_mention_id=id
     ), links AS MATERIALIZED (
       SELECT membership.import_batch_id,membership.data_source_id,membership.mention_id,
         root.id root_id,root.inclusion_status root_inclusion_status,root.has_text root_has_text
       FROM signal_mention_import_memberships membership
       JOIN accepted batch ON batch.id=membership.import_batch_id
         AND batch.data_source_id=membership.data_source_id
-      -- Import membership integrity already requires mention_id to reference a canonical
-      -- root. Keep the PK planning boundary so stale workspace statistics cannot choose
-      -- a workspace scan per root, without resolving the canonical mention twice.
-      LEFT JOIN LATERAL (
-        SELECT id,workspace_id,canonical_mention_id,inclusion_status,
-          NULLIF(btrim(text_clean),'') IS NOT NULL has_text
-        FROM mentions WHERE id=membership.mention_id OFFSET 0
-      ) root ON root.workspace_id=$1::uuid AND root.canonical_mention_id=root.id
+      LEFT JOIN workspace_roots root ON root.id=membership.mention_id
       WHERE membership.workspace_id=$1::uuid
     ), roots AS MATERIALIZED (
       SELECT DISTINCT root_id id,root_inclusion_status inclusion_status,root_has_text has_text
