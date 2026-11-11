@@ -211,6 +211,8 @@ Lo demás se resuelve de forma autónoma y se anota en el registro de decisiones
 
 ## Progreso
 
+- [x] H7 · El worker de UAT confirmó el mapa el 11 de noviembre. Studio mostró 83,962 raíces y 111 tópicos. La comprobación privada encontró los mismos 138 grupos incluidos, 20 exclusiones, textos localizados y huellas que en el catálogo editorial. Los 57 recibos pagados permanecieron idénticos. Se completaron los 84 lotes con un promedio de 43.06 s y un máximo de 51.05 s por inserción.
+
 - [x] H7 · El PR #163 se integró en `50bf8f44` tras revisión independiente del código y de las pruebas. CI y PostgreSQL quedaron verdes en el PR y en el commit fusionado. En PostgreSQL 17, con 83,962 raíces y 129 términos, el cálculo y la escritura de los candidatos en 84 lotes tardaron 127.731 s con estadísticas representativas y 170.428 s con estadísticas frías. Las sentencias más largas tardaron 2.502 s y 3.239 s, respectivamente. Las nueve pruebas de la ruta nativa pasaron. Queda por medir la adopción real en UAT.
 
 - [x] H7 · Studio y workers de UAT sirven `004e4331` con Railpack. Se verificaron ambos procesos, el avance del heartbeat, HTTP 200 y cero cambios preparados. El cálculo de puntuaciones terminó en el octavo intento sobre el corpus real. La consulta que prepara los paquetes de candidatos agotó 120 s. PostgreSQL revirtió la transacción y los recibos editoriales siguen sumando USD 8.412135.
@@ -430,6 +432,8 @@ Lo demás se resuelve de forma autónoma y se anota en el registro de decisiones
 
 ## Registro de decisiones
 
+- H7 · Iniciar la prueba de 1,000 raíces con tope total USD 13.50 y saldo JEV observado de USD 14.53. La estimación nativa de USD 18.303339 incluye el paquete almacenado de ocho candidatos en tres idiomas. JEV recibe cuatro en el idioma elegido. La continuación se decidirá a partir del gasto real y de las métricas de la prueba.
+
 - H7 · Conservar la agregación global de vectores antes de dividir las distancias y los paquetes por rangos. Un ensayo con cancelaciones numéricas detectó cambios en 276 puntuaciones al aplicar antes el filtro de rango. La versión revisada conserva los bits del promedio y de las puntuaciones en los casos de paridad, y calcula el tamaño presupuestable a partir de las filas que se insertan.
 
 - H7 · Preparar y escribir cada lote de candidatos en la misma transacción, conservando un ordinal global por raíz. Se medirá el coste por sentencia además del tiempo total y se compararán los paquetes, huellas y empates con la consulta original.
@@ -537,7 +541,7 @@ Lo demás se resuelve de forma autónoma y se anota en el registro de decisiones
 
 ## Resultado y retrospectiva
 
-El corte de base de datos de R15 terminó en UAT con el mismo catálogo que la copia ensayada. Los resultados y el acceso a evidencia de las marcas históricas coincidieron antes y después. Studio y workers ya sirven desde la misma revisión. Studio aceptó los once archivos y preparó el texto de 83,962 raíces elegibles. El recibo de preparación registra 127,117 fragmentos. El worker completó los vectores de todo el corpus. Studio y workers pasaron a `3217854e` con Railpack y cero cambios preparados. Topics admitió un único mapa en la ruta normal de UAT. El worker de `3ceb6598` recogió ese asiento y completó el ajuste numérico con 158 grupos. La primera reserva quedó sin envío. En `57f3544d`, la interfaz reanudó la misma ejecución con su admisión vigente y su resultado numérico conservado. La interpretación completó los 158 grupos. Se liquidaron USD 8.412135 en total por la interpretación y la consolidación global. El motor recuperó el catálogo en UAT sin aumentar ese importe. Studio guardó la propuesta y la curación del léxico. Queda pendiente incorporar los ocho candidatos por raíz para JEV y verificar su lectura en Signal.
+El corte de base de datos de R15 terminó en UAT con el mismo catálogo que la copia ensayada. Los resultados y el acceso a evidencia de las marcas históricas coincidieron antes y después. Studio y workers ya sirven desde la misma revisión. Studio aceptó los once archivos y preparó el texto de 83,962 raíces elegibles. El recibo de preparación registra 127,117 fragmentos. El worker completó los vectores de todo el corpus. Studio y workers pasaron a `3217854e` con Railpack y cero cambios preparados. Topics admitió un único mapa en la ruta normal de UAT. El worker de `3ceb6598` recogió ese asiento y completó el ajuste numérico con 158 grupos. La primera reserva quedó sin envío. En `57f3544d`, la interfaz reanudó la misma ejecución con su admisión vigente y su resultado numérico conservado. La interpretación completó los 158 grupos. Se liquidaron USD 8.412135 en total por la interpretación y la consolidación global. El motor recuperó el catálogo en UAT sin aumentar ese importe. Studio guardó la propuesta y la curación del léxico. En `50bf8f44`, Studio muestra el mapa de las 83,962 raíces. Se comprobaron los candidatos y la configuración de analista y se solicitó la prueba inicial de JEV desde la interfaz.
 
 ### Ronda 14
 
