@@ -211,6 +211,8 @@ Lo demás se resuelve de forma autónoma y se anota en el registro de decisiones
 
 ## Progreso
 
+- [x] H7 · La prueba nativa de UAT terminó con 1,000 raíces, 1,000 solicitudes distintas y 1,000 resultados válidos por USD 0.068894. La lectura independiente cotejó los 1,000 cuerpos completos con el registro de llamadas. Studio registró la continuación de la misma corrida el 11 de noviembre a las 13:05 UTC. Quedan 82,962 raíces en esta etapa.
+
 - [x] H7 · CI y PostgreSQL pasaron también sobre el commit fusionado `df4c81d9`. UAT aplicó 0293 una sola vez y conservó el catálogo y los lectores de la copia ensayada. El worker recuperó la solicitud original y liquidó USD 0.000069. Las 199 llamadas y resultados hermanos mantuvieron sus huellas. El registro inmutable conservó la llamada incierta y el resultado de error originales. La primera página reúne 200 resultados y USD 0.013777 en uso tarifario.
 
 - [x] H7 · El PR #164 se integró en `df4c81d9` tras revisión independiente de `444a60d6`. CI y PostgreSQL del PR pasaron. En la copia restaurada se aplicó 0293 una vez; una segunda aplicación reconoció las 61 migraciones del ledger. National, Alexa+ y Laika conservaron sus lecturas. El ensayo aislado comprobó una primera página de 199 liquidaciones y una respuesta incierta, dos intereses y tres sesiones concurrentes. Tras la recuperación, la misma ejecución completó la prueba de 1,000 y necesitó continuación explícita para las últimas dos raíces del ensayo.
@@ -441,6 +443,8 @@ Lo demás se resuelve de forma autónoma y se anota en el registro de decisiones
 - Dos lotes devolvieron referencias válidas dentro de la muestra de 30 pero superaron el máximo de diez referencias por campo. La comprobación privada de las respuestas originales y de reparación encontró entre 11 y 30 referencias en los campos rechazados.
 
 ## Registro de decisiones
+
+- H7 · Continuar las 82,962 raíces restantes con la autorización acumulada de USD 13.50. Las primeras 1,000 dieron 638 raíces con tópico positivo, 221 intermedias, 141 sin tópico positivo ni intermedio y cero errores técnicos. Su uso permite proyectar USD 5.72 adicionales; el saldo visible de JEV era USD 14.53.
 
 - H7 · Reintentar de forma acotada sólo la operación de Storage al recibir 429. La conciliación nativa exige el cuerpo completo, la huella, la raíz, las preguntas y la tarifa originales. Registra el error anterior, liquida el uso medido y actualiza la proyección en una transacción. El botón de reanudar conserva la autorización inicial de 1,000 raíces.
 
