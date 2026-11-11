@@ -44,7 +44,7 @@ export function Clip({ title, scenes, locale, tag, showTitle }: ClipProps) {
       <Sequence from={from} durationInFrames={OUTRO_FRAMES}>
         <Outro locale={locale} />
       </Sequence>
-      <Chrome lengths={lengths.map(() => 1).concat(1)} tag={tag} />
+      <Chrome lengths={[...lengths, OUTRO_FRAMES]} tag={tag} equal />
       {showTitle ? <Title title={title} /> : null}
     </AbsoluteFill>
   );

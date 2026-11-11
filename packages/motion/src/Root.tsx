@@ -1,5 +1,6 @@
 import { Composition } from "remotion";
-import { deckSchema, socialSchema, storySchema, studySchema, timingSchema, type DeckPiece, type SocialPiece, type StudyPiece, type Timing } from "./schema";
+import { z } from "zod";
+import { deckSchema, sceneSchema, socialSchema, storySchema, studySchema, timingSchema, type DeckPiece, type SocialPiece, type StudyPiece, type Timing } from "./schema";
 import { VERTICAL } from "./brand/theme";
 import { Clip, clipDuration, type ClipProps } from "./clip/Clip";
 import { Social, socialDuration, type SocialProps } from "./social/Social";
@@ -26,7 +27,11 @@ export function Root() {
         {...VERTICAL}
         durationInFrames={1}
         defaultProps={{ title: parsedStory.es.title, scenes: parsedStory.es.scenes, locale: "es", tag: undefined, showTitle: true } as ClipProps}
-        calculateMetadata={({ props }) => ({ durationInFrames: clipDuration(props.scenes) })}
+        calculateMetadata={({ props }) => {
+          // Raw story scenes come from the CLI: parse them so optional fields get their defaults.
+          const scenes = z.array(sceneSchema).min(2).max(7).parse(props.scenes);
+          return { durationInFrames: clipDuration(scenes), props: { ...props, scenes } };
+        }}
       />
       <Composition
         id="Social"

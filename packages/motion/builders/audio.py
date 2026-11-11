@@ -6,7 +6,7 @@ audio.py: voices, music and timing for a Noisia video piece (rules in packages/p
     python3 builders/audio.py piece.json --estimate   # timing without audio, for a silent draft; no API call
     python3 builders/audio.py piece.json              # ElevenLabs voices + music, then the real timing
 
-Writes <piece>.timing.json next to the piece and the audio into <piece folder>/audio/.
+Writes <piece>.timing.json next to the piece and the audio into <piece folder>/audio/<piece>_*.mp3.
 
 - The key is the user's and costs money. It lives in the piece folder's .env (ELEVENLABS_API_KEY=...),
   ignored by git, and never goes through the chat or the repo. It is validated before generating.
@@ -42,8 +42,11 @@ def frames(seconds):
 
 
 class Voice:
-    def __init__(self, piece_dir, estimate):
+    def __init__(self, piece_dir, estimate, prefix):
         self.dir = piece_dir
+        # Files carry the piece's name: two pieces in one case folder can reuse scene ids
+        # (social scenes are s1, s2...) and must never overwrite each other's audio.
+        self.prefix = prefix
         self.estimate = estimate
         self.aud = os.path.join(piece_dir, "audio")
         self.man_p = os.path.join(self.aud, "manifest.json")
@@ -59,6 +62,7 @@ class Voice:
             raise SystemExit(f"ElevenLabs {path}: {e.code} {e.read()[:300]!r}")
 
     def cached(self, name, spec, make):
+        name = f"{self.prefix}_{name}"
         h = hashlib.sha1(json.dumps(spec, sort_keys=True).encode()).hexdigest()
         f = os.path.join(self.aud, name + ".mp3")
         if self.man.get(name, {}).get("hash") == h and os.path.exists(f):
@@ -88,7 +92,7 @@ class Voice:
             return {"dur": al["character_end_times_seconds"][-1], "words": split_words(al)}
 
         meta = self.cached(name, spec, make)
-        return {**meta, "file": f"audio/{name}.mp3"}
+        return {**meta, "file": f"audio/{self.prefix}_{name}.mp3"}
 
     def music(self, prompt, seconds):
         if self.estimate or not prompt:
@@ -100,7 +104,7 @@ class Voice:
             return {"dur": ms / 1000}
 
         self.cached("music", {"p": prompt, "ms": ms}, make)
-        return "audio/music.mp3"
+        return f"audio/{self.prefix}_music.mp3"
 
 
 def read_key(piece_dir):
@@ -266,7 +270,7 @@ def main():
     narrator = (piece.get("voices") or {}).get("narrator", "")
     if not a.estimate and (not narrator or narrator.endswith("_VOICE_ID")):
         raise SystemExit("Set voices.narrator (an ElevenLabs voice id) in the piece before generating.")
-    v = Voice(os.path.dirname(path), a.estimate)
+    v = Voice(os.path.dirname(path), a.estimate, os.path.splitext(os.path.basename(path))[0])
     scenes, total = time_piece(piece, v)
     music = v.music(piece.get("music"), total / FPS)
     out = os.path.splitext(path)[0] + ".timing.json"
