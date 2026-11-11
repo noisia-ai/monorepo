@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { loadMassLabelingProductEstimateWithClientV2, estimateMassLabelingProductV2 } from "../signal-mass-labeling-product-estimate";
 import { processingBatch } from "./signal-import-finalization.synthetic.fixture";
 import { getMassLabelingStudyPolicyV1, updateMassLabelingStudyPolicyV1 } from "../signal-mass-labeling-study-policy";
 import { randomUUID, createHash } from "node:crypto";
@@ -6,7 +7,7 @@ import test from "node:test";
 import type { PoolClient } from "pg";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { prepareMassLabelingMapScoresV1, insertMassLabelingMapItemsV1, MASS_LABELING_MAP_SCORES_SQL_V1 } from "../signal-mass-labeling-map-sql";
+import { prepareMassLabelingMapScoresV1, insertMassLabelingMapItemsV1, MASS_LABELING_MAP_SCORES_SQL_V1, MASS_LABELING_MAP_ITEM_INPUT_SQL_V1, MASS_LABELING_MAP_BATCH_CHUNKS_SQL_V1 } from "../signal-mass-labeling-map-sql";
 import { signalMfpLegacyWorkspaceFixtureV1 } from "./signal-mfp-legacy-workspace.synthetic.fixture";
 import { mapParitySetupSqlV1, mapOriginalScoresSqlV1, mapOriginalItemsSqlV1, withMapAdoptionPostgresFixtureV1 } from "./signal-mass-labeling-map.synthetic.fixture";
 
@@ -14,7 +15,7 @@ const enabled = process.env.NOISIA_MFP_PG_CI === "true";
 const sha = (value: string) => `sha256:${createHash("sha256").update(value).digest("hex")}`;
 const itemColumns = `workspace_id uuid,map_id uuid,root_id uuid,ordinal int,input_digest text,
   root_fingerprint text,chunk_index int,chunk_sha256 text,text text,candidates jsonb`;
-type Plan = { "Node Type": string; "Relation Name"?: string; "Actual Loops"?: number; Plans?: Plan[] };
+type Plan = { "Node Type": string; "Relation Name"?: string; "Actual Loops"?: number; "Actual Rows"?:number; "Index Cond"?:string; "Local Hit Blocks"?:number; Plans?: Plan[] };
 const nodes = (plan: Plan): Plan[] => [plan, ...(plan.Plans ?? []).flatMap(nodes)];
 
 if (process.env.NOISIA_MFP_MAP_ABORT_CHILD !== "true") test("map SQL preserves exact vector bits, top eight, ties, UTF-16 fragments, digests and multilingual candidates", {
@@ -25,13 +26,16 @@ if (process.env.NOISIA_MFP_MAP_ABORT_CHILD !== "true") test("map SQL preserves e
     await client.query(mapParitySetupSqlV1);
     const map = randomUUID(), workspace = randomUUID(), mapDigest = sha("synthetic parity map");
     await client.query("CREATE TEMP TABLE signal_mass_labeling_topics AS SELECT $1::uuid map_id,topic_key,centroid FROM topics", [map]);
-    await client.query(`CREATE TEMP TABLE signal_mass_labeling_items(${itemColumns}); CREATE TEMP TABLE items_original(${itemColumns})`);
+    await client.query(`CREATE TEMP TABLE signal_mass_labeling_items(${itemColumns}); CREATE TEMP TABLE items_original(${itemColumns}); CREATE TEMP TABLE signal_mass_labeling_product_estimates(workspace_id uuid,map_id uuid PRIMARY KEY,root_count int,input_characters bigint)`);
+    await client.query("CREATE TEMP TABLE root_avg_original AS SELECT root_id,avg(embedding) root_vector FROM mass_chunks GROUP BY root_id");
     await client.query(mapOriginalScoresSqlV1);
     const catalog = (await client.query("SELECT body FROM catalog")).rows[0].body;
     await client.query(mapOriginalItemsSqlV1, [workspace, map, JSON.stringify(catalog), mapDigest]);
     await prepareMassLabelingMapScoresV1(client, map);
-    await insertMassLabelingMapItemsV1(client, { workspace_id: workspace, map_id: map, catalog, map_digest: mapDigest, expected_roots: 32 });
+    await insertMassLabelingMapItemsV1(client, { workspace_id: workspace, map_id: map, catalog, map_digest: mapDigest, expected_roots: 2032 });
     const difference = (await client.query(`SELECT
+      (SELECT count(*)::int FROM ((SELECT root_id,vector_send(root_vector) FROM root_avg_original EXCEPT ALL SELECT root_id,vector_send(root_vector) FROM mass_root_vectors)
+        UNION ALL (SELECT root_id,vector_send(root_vector) FROM mass_root_vectors EXCEPT ALL SELECT root_id,vector_send(root_vector) FROM root_avg_original)) d) root_vectors,
       (SELECT count(*)::int FROM ((SELECT topic_key,vector_send(centroid) FROM topics EXCEPT ALL SELECT topic_key,vector_send(centroid) FROM mass_topic_vectors)
         UNION ALL (SELECT topic_key,vector_send(centroid) FROM mass_topic_vectors EXCEPT ALL SELECT topic_key,vector_send(centroid) FROM topics)) d) centroids,
       (SELECT count(*)::int FROM ((SELECT root_id,topic_key,float8send(similarity),position FROM scores_old EXCEPT ALL SELECT root_id,topic_key,float8send(similarity),position FROM mass_scores)
@@ -40,9 +44,14 @@ if (process.env.NOISIA_MFP_MAP_ABORT_CHILD !== "true") test("map SQL preserves e
         UNION ALL (TABLE signal_mass_labeling_items EXCEPT ALL TABLE items_original)) d) items,
       (SELECT count(*)::int FROM signal_mass_labeling_items) roots,
       (SELECT count(*)::int FROM mass_scores) scored`)).rows[0];
-    assert.deepEqual(difference, { centroids: 0, scores: 0, items: 0, roots: 32, scored: 256 });
-    const scoreSelect = MASS_LABELING_MAP_SCORES_SQL_V1.replace(/^CREATE TEMP TABLE mass_scores ON COMMIT DROP AS/u, "");
-    const plan = (await client.query(`EXPLAIN(ANALYZE,BUFFERS,FORMAT JSON) ${scoreSelect}`)).rows[0]["QUERY PLAN"][0].Plan as Plan;
+    const unicodeSize=(await client.query(`SELECT
+      (SELECT input_characters::text FROM signal_mass_labeling_product_estimates) cached,
+      (SELECT sum(length(text)+length(candidates::text))::text FROM items_original) original`)).rows[0];
+    assert.equal(unicodeSize.cached,unicodeSize.original,"the cache preserves PostgreSQL Unicode and JSONB character counts");
+    assert.deepEqual(difference, { root_vectors: 0, centroids: 0, scores: 0, items: 0, roots: 2032, scored: 16256 });
+    const scoreSelect = MASS_LABELING_MAP_SCORES_SQL_V1;
+    const range=(await client.query("SELECT min(root_id::text) first,max(root_id::text) last FROM mass_map_roots")).rows[0];
+    const plan = (await client.query(`EXPLAIN(ANALYZE,BUFFERS,FORMAT JSON) ${scoreSelect}`, [range.first,range.last])).rows[0]["QUERY PLAN"][0].Plan as Plan;
     const scans = nodes(plan).filter(node => node["Relation Name"] === "mass_topic_vectors");
     assert.equal(scans.length, 1);
     assert.equal(scans[0]!["Actual Loops"], 1, "all roots share one inline catalog, rather than re-reading toasted centroids");
@@ -63,7 +72,7 @@ if (process.env.NOISIA_MFP_MAP_ABORT_CHILD !== "true") test(`map adoption preser
     const f = await signalMfpLegacyWorkspaceFixtureV1({ transaction });
     const settings = await getMassLabelingStudyPolicyV1(f.access);
     await updateMassLabelingStudyPolicyV1({ ...f.access, ...settings, expected_revision: settings.revision,
-      category: "Synthetic category", lexicon_terms: Array.from({ length: 98 }, (_, index) => `synthetic term ${index}`) });
+      category: "Synthetic category", lexicon_terms: Array.from({ length: 129 }, (_, index) => `synthetic term ${index}`) });
     await f.query("SET LOCAL search_path=public,extensions,pg_temp; SET LOCAL work_mem='4MB'; SET LOCAL statement_timeout='90s'");
     await f.query(`CREATE TEMP TABLE map_vector_pool AS SELECT p,
       ('['||string_agg((sin(p*.173+j*.719)+cos(p*.317+j*.233))::real::text,',' ORDER BY j)||']')::vector(1024) embedding
@@ -71,10 +80,14 @@ if (process.env.NOISIA_MFP_MAP_ABORT_CHILD !== "true") test(`map adoption preser
     await f.query("CREATE UNIQUE INDEX ON map_vector_pool(p)");
     await f.query(`CREATE TEMP TABLE mass_chunks ON COMMIT DROP AS
       SELECT md5($1||':root:'||r)::uuid root_id,'sha256:'||md5('finger:'||r)||md5('finger2:'||r) fingerprint,
-        repeat(md5('text:'||r),24) full_text,chunk_index,md5(r::text||':'||chunk_index) chunk_sha256,0 start_offset,768 end_offset,
+        left(repeat(md5('text:'||r)||' ',970),size.length) full_text,chunk_index,md5(r::text||':'||chunk_index) chunk_sha256,0 start_offset,least(size.length,768) end_offset,
         (pool.embedding+array_fill(((r%10000)::real/1000000+chunk_index::real/10000000),ARRAY[1024])::vector)::vector(1024) embedding
       FROM (SELECT r,0 chunk_index FROM generate_series(1,$2::int) r UNION ALL SELECT r,1 FROM generate_series(1,$3::int-$2::int) r) roots
-      JOIN map_vector_pool pool ON pool.p=(r%512)+1`, [f.workspace_id, roots, chunks]);
+      JOIN map_vector_pool pool ON pool.p=(r%512)+1
+      CROSS JOIN LATERAL (SELECT ((r-1)::bigint*10000/$2::int)::int percentile) bucket
+      CROSS JOIN LATERAL (SELECT CASE WHEN r=$2 THEN 32001 WHEN bucket.percentile<=5000 THEN 194
+        WHEN bucket.percentile<9000 THEN 484 WHEN bucket.percentile<9500 THEN 4521
+        WHEN bucket.percentile<9890 THEN 7000 WHEN bucket.percentile<=9900 THEN 18180 ELSE 22000 END length) size`, [f.workspace_id, roots, chunks]);
     await f.query("CREATE UNIQUE INDEX mass_chunks_root ON mass_chunks(root_id,chunk_index)");
     const source = (await f.query("SELECT data_source_id FROM mentions WHERE workspace_id=$1 LIMIT 1", [f.workspace_id])).rows[0];
     const workspaceScope = (await f.query("SELECT organization_id,brand_id FROM signal_workspaces WHERE id=$1", [f.workspace_id])).rows[0];
@@ -109,16 +122,27 @@ if (process.env.NOISIA_MFP_MAP_ABORT_CHILD !== "true") test(`map adoption preser
       [f.workspace_id, map, sha("synthetic definitions"), topics]);
     await f.query("SET LOCAL statement_timeout='90s'");
     console.log("map_adoption_acceptance", JSON.stringify({ phase: "scoring", roots }));
+    const samples: Partial<Record<"scores"|"items"|"chunks",unknown[]>> = {};
+    let maximumStatementMs=0,statements=0;
+    const observed = {query: async(sql:string,values?:unknown[]) => {
+      const started=performance.now();
+      const result=await f.query(sql,values);
+      maximumStatementMs=Math.max(maximumStatementMs,performance.now()-started); statements++;
+      if(sql.startsWith("INSERT INTO mass_scores")) samples.scores=values;
+      if(sql.startsWith("INSERT INTO mass_batch_chunks")) samples.chunks=values;
+      if(sql.includes("INSERT INTO signal_mass_labeling_items(")) samples.items=values;
+      return result;
+    }} as unknown as Pick<PoolClient,"query">;
     const scoreStarted = performance.now();
-    await prepareMassLabelingMapScoresV1(f.database, map);
+    const scored = await prepareMassLabelingMapScoresV1(observed, map);
     const scoreMs = Math.round(performance.now()-scoreStarted);
     // A lost acknowledgement after two successful guarded INSERTs must not
     // leave any item or derived projection visible after transaction rollback.
     await f.query("SAVEPOINT interrupted_adoption");
     let writes = 0;
     const interrupted = { query: async (sql: string, values?: unknown[]) => {
-      const result = await f.query(sql, values);
-      if (sql.startsWith("INSERT INTO signal_mass_labeling_items(") && ++writes === 2)
+      const result = await observed.query(sql, values);
+      if (sql.includes("INSERT INTO signal_mass_labeling_items(") && ++writes === 2)
         throw new Error("synthetic_map_batch_acknowledgement_lost");
       return result;
     } } as unknown as Pick<PoolClient, "query">;
@@ -130,16 +154,42 @@ if (process.env.NOISIA_MFP_MAP_ABORT_CHILD !== "true") test(`map adoption preser
     const rolledBack = (await f.query(`SELECT
       (SELECT count(*)::int FROM signal_mass_labeling_items WHERE map_id=$1) items,
       (SELECT count(*)::int FROM signal_mass_labeling_root_segments WHERE map_id=$1) segments,
+      (SELECT count(*)::int FROM signal_mass_labeling_product_estimates WHERE map_id=$1) estimates,
       (SELECT count(*)::int FROM signal_mass_labeling_topic_probabilities WHERE map_id=$1) candidates,
       (SELECT count(*)::int FROM signal_mass_labeling_category_matches category JOIN mass_chunks chunk ON chunk.root_id=category.root_id
         AND chunk.chunk_index=0 WHERE category.workspace_id=$2) categories`, [map, f.workspace_id])).rows[0];
-    assert.deepEqual(rolledBack, { items: 0, segments: 0, candidates: 0, categories: 0 });
+    assert.deepEqual(rolledBack, { items: 0, segments: 0, estimates: 0, candidates: 0, categories: 0 });
     console.log("map_adoption_acceptance", JSON.stringify({ phase: "rollback_verified_then_insert", roots }));
     const insertStarted = performance.now();
-    const inserted = await insertMassLabelingMapItemsV1(f.database, { workspace_id: f.workspace_id, map_id: map,
+    const inserted = await insertMassLabelingMapItemsV1(observed, { workspace_id: f.workspace_id, map_id: map,
       catalog, map_digest: mapDigest, expected_roots: roots });
     const insertMs = Math.round(performance.now()-insertStarted);
+    assert.equal((await f.query("SELECT to_regclass('pg_temp.mass_map_items') relation")).rows[0].relation, null, "candidate JSON is prepared only inside bounded root INSERTs");
     assert.equal(inserted.root_count, roots);
+    assert.equal(scored.batch_count, Math.ceil(roots/1000));
+    assert.ok(scored.maximum_batch_ms<90_000);
+    assert.ok(inserted.maximum_prepare_ms<90_000);
+    const cache=(await f.query(`SELECT root_count,input_characters::text characters FROM signal_mass_labeling_product_estimates WHERE map_id=$1`,[map])).rows[0];
+    const cacheMissStarted=performance.now();
+    const exact=(await f.query(`SELECT sum(length(text)+length(candidates::text))::text characters FROM signal_mass_labeling_items WHERE map_id=$1`,[map])).rows[0];
+    const cacheMissMs=Math.round(performance.now()-cacheMissStarted);
+    assert.deepEqual(cache,{root_count:roots,characters:exact.characters});
+    assert.equal(inserted.input_characters,exact.characters);
+    let cacheHitQueries=0;
+    const hitClient={query:async(sql:string,values?:unknown[])=>{
+      assert.ok(!sql.includes("length(item.candidates::text)"),"a new map quote does not reread/serialize candidate packets");
+      cacheHitQueries++; return f.query(sql,values);
+    }} as unknown as Pick<PoolClient,"query">;
+    const configuration={category:"Synthetic category",candidate_language:"en" as const,interests:[]};
+    const hitStarted=performance.now();
+    const quote=await loadMassLabelingProductEstimateWithClientV2(hitClient,{workspace_id:f.workspace_id,map_id:map,configuration});
+    const cacheHitMs=Math.round(performance.now()-hitStarted);
+    assert.equal(cacheHitQueries,1);
+    assert.equal(quote,estimateMassLabelingProductV2({roots,characters:Number(exact.characters)},configuration));
+    const withInterest={...configuration,interests:[{key:"synthetic_interest",name:"Synthetic interest",definition:"A synthetic subject."}]};
+    const changed=await loadMassLabelingProductEstimateWithClientV2(hitClient,{workspace_id:f.workspace_id,map_id:map,configuration:withInterest});
+    assert.equal(changed,estimateMassLabelingProductV2({roots,characters:Number(exact.characters)},withInterest));
+    assert.equal(cacheHitQueries,2,"interests are recalculated outside the immutable input-size cache");
     assert.equal(inserted.batch_count, Math.ceil(roots/1000));
     assert.ok(inserted.batch_count>=3);
     assert.ok(inserted.maximum_batch_ms<90_000);
@@ -149,9 +199,33 @@ if (process.env.NOISIA_MFP_MAP_ABORT_CHILD !== "true") test(`map adoption preser
       (SELECT count(*)::int FROM signal_mass_labeling_root_segments WHERE map_id=$1) segments,
       (SELECT count(*)::int FROM signal_mass_labeling_topic_probabilities WHERE map_id=$1) candidates`, [map])).rows[0];
     assert.deepEqual(counts, { scores: roots*8, items: roots, segments: roots, candidates: roots*8 });
-    assert.ok(scoreMs<90_000 && insertMs<600_000, "adoption stays within the native ten-minute materialization lease");
-    t.diagnostic(JSON.stringify({ roots, chunks, topics, dimensions: 1024, work_mem: "4MB", statement_budget_ms: 90_000,
-      score_ms: scoreMs, insert_with_guards_and_projections_ms: insertMs, ...inserted, counts }));
+    assert.ok(scoreMs+insertMs<600_000, "adoption stays within the native ten-minute materialization lease");
+    const plans=[];
+    for(const [kind,sql,values] of [["chunks",MASS_LABELING_MAP_BATCH_CHUNKS_SQL_V1,samples.chunks],["scores",MASS_LABELING_MAP_SCORES_SQL_V1,samples.scores],
+      ["items",MASS_LABELING_MAP_ITEM_INPUT_SQL_V1,samples.items]] as const){
+      const explained=(await f.query(`EXPLAIN(ANALYZE,BUFFERS,FORMAT JSON) ${sql}`,values)).rows[0]["QUERY PLAN"][0];
+      const reads=nodes(explained.Plan as Plan).filter(node=>["mass_chunks","mass_root_vectors","mass_scores","mass_map_roots"].includes(node["Relation Name"]??""));
+      assert.ok(reads.length>0);
+      for(const read of reads){
+        if(fullScale) assert.match(read["Node Type"],/Index|Bitmap/u,"scale batches use indexed corpus ranges");
+        assert.ok((read["Actual Rows"]??0)*(read["Actual Loops"]??1)<=1000*8,"a batch does not rescan the full corpus");
+      }
+      plans.push({kind,execution_ms:explained["Execution Time"],reads:reads.map(read=>({
+        relation:read["Relation Name"],type:read["Node Type"],rows:read["Actual Rows"],loops:read["Actual Loops"],
+        local_hits:read["Local Hit Blocks"],condition:read["Index Cond"]}))});
+    }
+    const storage=(await f.query(`SELECT pg_total_relation_size('mass_root_vectors')::text root_vectors_bytes,
+      pg_total_relation_size('mass_map_roots')::text root_keys_bytes,
+      pg_total_relation_size('mass_batch_chunks')::text last_batch_chunks_bytes,
+      pg_total_relation_size('mass_candidate_catalog')::text catalog_bytes`)).rows[0];
+    const textLengths=(await f.query(`SELECT round(avg(length(full_text)),2)::text mean,
+      percentile_cont(ARRAY[.5,.95,.99]) WITHIN GROUP(ORDER BY length(full_text)) percentiles,max(length(full_text)) maximum
+      FROM mass_chunks WHERE chunk_index=0`)).rows[0];
+    assert.ok(maximumStatementMs<90_000);
+    t.diagnostic(JSON.stringify({ roots, chunks, topics, text_lengths:textLengths,lexicon_terms:129,storage, plans,
+      maximum_statement_ms:Math.round(maximumStatementMs),statements,cache_miss_aggregate_ms:cacheMissMs,cache_hit_ms:cacheHitMs,
+      adoption_roots_per_second:Math.round(roots/((scoreMs+insertMs)/1000)), dimensions: 1024, work_mem: "4MB", statement_budget_ms: 90_000,
+      score_ms: scoreMs, score_batches:scored.batch_count, maximum_score_ms:scored.maximum_batch_ms, root_aggregate_ms:scored.aggregate_ms, insert_with_guards_and_projections_ms: insertMs, ...inserted, counts }));
 }));
 
 

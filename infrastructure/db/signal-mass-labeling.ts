@@ -182,7 +182,7 @@ export async function createMassLabelingMapV1(args: {
     const replay = (await client.query<{id: string}>(`SELECT id FROM signal_mass_labeling_maps
       WHERE workspace_id=$1 AND map_digest=$2`, [args.workspace_id, mapDigest])).rows[0];
     if (replay) return {map_id: replay.id, map_digest: mapDigest, replayed: true};
-    await client.query("DROP TABLE IF EXISTS pg_temp.mass_chunks,pg_temp.mass_assignments,pg_temp.mass_scores,pg_temp.mass_topic_vectors,pg_temp.mass_map_items");
+    await client.query("DROP TABLE IF EXISTS pg_temp.mass_chunks,pg_temp.mass_assignments,pg_temp.mass_scores,pg_temp.mass_topic_vectors,pg_temp.mass_map_items,pg_temp.mass_map_roots,pg_temp.mass_batch_chunks,pg_temp.mass_root_vectors,pg_temp.mass_candidate_catalog");
     await client.query(`CREATE TEMP TABLE mass_chunks ON COMMIT DROP AS
       SELECT item.root_id,item.fingerprint,asset.full_text,(chunk.ordinality-1)::int chunk_index,
         chunk.value->>'sha256' chunk_sha256,(chunk.value->>'start')::int start_offset,(chunk.value->>'end')::int end_offset,
