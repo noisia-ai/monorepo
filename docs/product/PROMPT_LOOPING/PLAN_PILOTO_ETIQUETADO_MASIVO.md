@@ -211,6 +211,8 @@ Lo demás se resuelve de forma autónoma y se anota en el registro de decisiones
 
 ## Progreso
 
+- [x] H7 · Studio admitió la prueba inicial con una sola ejecución. De sus primeras 200 solicitudes, 199 quedaron liquidadas por USD 0.013708. La restante detuvo el worker. En lectura privada se verificaron los 948 bytes de la respuesta frente a su huella, las nueve preguntas congeladas y el analizador nativo. La liquidación de ese recibo y las otras 800 raíces de la prueba siguen pendientes.
+
 - [x] H7 · El worker de UAT confirmó el mapa el 11 de noviembre. Studio mostró 83,962 raíces y 111 tópicos. La comprobación privada encontró los mismos 138 grupos incluidos, 20 exclusiones, textos localizados y huellas que en el catálogo editorial. Los 57 recibos pagados permanecieron idénticos. Se completaron los 84 lotes con un promedio de 43.06 s y un máximo de 51.05 s por inserción.
 
 - [x] H7 · El PR #163 se integró en `50bf8f44` tras revisión independiente del código y de las pruebas. CI y PostgreSQL quedaron verdes en el PR y en el commit fusionado. En PostgreSQL 17, con 83,962 raíces y 129 términos, el cálculo y la escritura de los candidatos en 84 lotes tardaron 127.731 s con estadísticas representativas y 170.428 s con estadísticas frías. Las sentencias más largas tardaron 2.502 s y 3.239 s, respectivamente. Las nueve pruebas de la ruta nativa pasaron. Queda por medir la adopción real en UAT.
@@ -319,6 +321,8 @@ Lo demás se resuelve de forma autónoma y se anota en el registro de decisiones
 - [x] Hito 4 · Recibo, comparación y muestras ciegas verificados. Se entregan el recibo público de una página y, en custodia privada, el anexo comparativo, método/fuentes, 600 casos en 11 cohortes y la clave sellada por separado. Son 597 raíces distintas por los solapamientos entre cohortes; cada cohorte cumple sus cuotas de 50 raíces por tópico para los 10 tópicos mayores y 100 de triggers/barriers. Las cohortes no representan evaluación de precisión humana.
 
 ## Sorpresas y descubrimientos
+
+- H7 · El worker marcó una solicitud como incierta aun cuando Storage había guardado los bytes completos. Faltó el manifiesto. El prefijo corresponde a esa llamada y el SHA-256 del objeto coincide con el del contenido completo. La respuesta HTTP 200 contiene uso equivalente a USD 0.000069.
 
 - H7 · En el ensayo de estadísticas frías, el cálculo de coincidencia de categoría generó 83,964,001 filas intermedias para 1,000 raíces. El plan de ejecución atribuyó 38.91 s a ese trigger. El cambio probado redujo el intermedio a 83,965 filas con estadísticas frías y a 1,000 con estadísticas representativas. Se comprobó la restauración de la configuración de la conexión tanto al confirmar como al fallar.
 
@@ -432,6 +436,8 @@ Lo demás se resuelve de forma autónoma y se anota en el registro de decisiones
 
 ## Registro de decisiones
 
+- H7 · Recuperar la respuesta desde la parte privada ya verificada mediante el camino nativo del worker. Mantener la reserva hasta aplicar la liquidación y conservar la ejecución y la identidad de la raíz. Reanudar la prueba desde la interfaz una vez comprobado el comportamiento ante reintentos y respuestas ambiguas.
+
 - H7 · Iniciar la prueba de 1,000 raíces con tope total USD 13.50 y saldo JEV observado de USD 14.53. La estimación nativa de USD 18.303339 incluye el paquete almacenado de ocho candidatos en tres idiomas. JEV recibe cuatro en el idioma elegido. La continuación se decidirá a partir del gasto real y de las métricas de la prueba.
 
 - H7 · Conservar la agregación global de vectores antes de dividir las distancias y los paquetes por rangos. Un ensayo con cancelaciones numéricas detectó cambios en 276 puntuaciones al aplicar antes el filtro de rango. La versión revisada conserva los bits del promedio y de las puntuaciones en los casos de paridad, y calcula el tamaño presupuestable a partir de las filas que se insertan.
@@ -541,7 +547,7 @@ Lo demás se resuelve de forma autónoma y se anota en el registro de decisiones
 
 ## Resultado y retrospectiva
 
-El corte de base de datos de R15 terminó en UAT con el mismo catálogo que la copia ensayada. Los resultados y el acceso a evidencia de las marcas históricas coincidieron antes y después. Studio y workers ya sirven desde la misma revisión. Studio aceptó los once archivos y preparó el texto de 83,962 raíces elegibles. El recibo de preparación registra 127,117 fragmentos. El worker completó los vectores de todo el corpus. Studio y workers pasaron a `3217854e` con Railpack y cero cambios preparados. Topics admitió un único mapa en la ruta normal de UAT. El worker de `3ceb6598` recogió ese asiento y completó el ajuste numérico con 158 grupos. La primera reserva quedó sin envío. En `57f3544d`, la interfaz reanudó la misma ejecución con su admisión vigente y su resultado numérico conservado. La interpretación completó los 158 grupos. Se liquidaron USD 8.412135 en total por la interpretación y la consolidación global. El motor recuperó el catálogo en UAT sin aumentar ese importe. Studio guardó la propuesta y la curación del léxico. En `50bf8f44`, Studio muestra el mapa de las 83,962 raíces. Se comprobaron los candidatos y la configuración de analista y se solicitó la prueba inicial de JEV desde la interfaz.
+El corte de base de datos de R15 terminó en UAT con el mismo catálogo que la copia ensayada. Los resultados y el acceso a evidencia de las marcas históricas coincidieron antes y después. Studio y workers ya sirven desde la misma revisión. Studio aceptó los once archivos y preparó el texto de 83,962 raíces elegibles. El recibo de preparación registra 127,117 fragmentos. El worker completó los vectores de todo el corpus. Studio y workers pasaron a `3217854e` con Railpack y cero cambios preparados. Topics admitió un único mapa en la ruta normal de UAT. El worker de `3ceb6598` recogió ese asiento y completó el ajuste numérico con 158 grupos. La primera reserva quedó sin envío. En `57f3544d`, la interfaz reanudó la misma ejecución con su admisión vigente y su resultado numérico conservado. La interpretación completó los 158 grupos. Se liquidaron USD 8.412135 en total por la interpretación y la consolidación global. El motor recuperó el catálogo en UAT sin aumentar ese importe. Studio guardó la propuesta y la curación del léxico. En `50bf8f44`, Studio muestra el mapa de las 83,962 raíces. Se comprobaron los candidatos y la configuración de analista y se solicitó la prueba inicial de JEV desde la interfaz. La primera página dejó 199 recibos liquidados y una respuesta guardada cuyo manifiesto quedó pendiente. Se verificaron en privado su huella, su uso y las nueve respuestas contra la solicitud original.
 
 ### Ronda 14
 
