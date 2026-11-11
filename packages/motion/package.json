@@ -1,0 +1,32 @@
+{
+  "name": "@noisia/motion",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Noisia video builder: clip, social, study and deck motion from a JSON piece. Rules in packages/pitch-kit/VIDEO.md.",
+  "type": "module",
+  "engines": {
+    "node": "20.x"
+  },
+  "scripts": {
+    "studio": "remotion studio src/index.ts",
+    "build-video": "node builders/build-video.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test --import tsx src/schema.test.ts"
+  },
+  "dependencies": {
+    "@remotion/bundler": "4.0.529",
+    "@remotion/cli": "4.0.529",
+    "@remotion/renderer": "4.0.529",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "remotion": "4.0.529",
+    "simple-icons": "^15.22.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.10",
+    "@types/react": "18.3.31",
+    "tsx": "^4.19.2",
+    "typescript": "5.9.3"
+  }
+}

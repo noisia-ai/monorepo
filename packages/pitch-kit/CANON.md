@@ -405,7 +405,7 @@ Lo que sigue pendiente:
 | Un `builders/pdf-light.py` | Aligerar un PDF saltando las imágenes con transparencia (§6). Hoy cada caso trae su script | Media |
 | Una paleta oscura sin rojo en `gen-backgrounds.py` | Para temas sensibles, donde el rojo se lee como alarma (`LAYOUTS.md`) | Baja |
 | El núcleo de entrega de datos como builder | Streaming, id estable, zona horaria, baldes, vacío contra cero (`DATA_DELIVERY.md` §11). Se extrae cuando un segundo caso lo use igual; hoy está en el registro de un caso | Media |
-| El builder de video | `VIDEO.md` §8: el motor del website a `packages/motion`, componentes de los cuatro formatos contra la misma interfaz, `builders/build-video.mjs`, un `audio.py` genérico y `qa.py`. Hoy el clip vive en el website y el estudio y el motion de deck en carpetas de caso | Alta |
+| Lo que le falta al builder de video | `VIDEO.md` §8: que el website use las escenas de `packages/motion` en lugar de su copia, los efectos de sonido en la mezcla, cuatro patrones de deck y tres gráficas, y la primera pieza real de cada formato con voces escuchada por una persona | Media |
 | Un builder multimercado | Un estudio en tres mercados armó su propio builder por país, alimentado por un módulo de narrativa, más un builder del resumen transversal. La propuesta: un builder por familia con un JSON por mercado | Media |
 | Componentes de la card de recomendación, el mapa de calor día × tema y la marca de bandera | Se pidieron y gustaron en el estudio multimercado; viven como estilos inline de su builder | Media |
 | Fragmentos del embudo de corpus, la slide de subtemas y la galería | Salieron de un estudio multimercado y se describen en `LAYOUTS.md`; falta sanitizarlos como fragmentos | Media |

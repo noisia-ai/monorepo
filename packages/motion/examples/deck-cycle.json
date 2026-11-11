@@ -1,0 +1,2 @@
+{ "format": "deck", "pattern": "cycle", "box": { "w": 760, "h": 760 }, "seconds": 14, "locale": "es",
+  "stages": ["Escuchar", "Depurar", "Agrupar", "Interpretar", "Activar"], "center": "Cada mes" }

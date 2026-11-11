@@ -1,0 +1,210 @@
+{
+  "_source": "noisia.ai/insights, report The Mexican Home (editorial, public). Figures: apps/website-next/src/content/reports/noisia_mexican_home_master_handoff.json (corpus, platforms, period) and noisia_mexican_home_signal_evolution.ts (monthly mentions per signal). Quotes: the stories' evidence.",
+  "format": "study",
+  "locale": "es",
+  "tag": "The Mexican Home",
+  "background": {
+    "kind": "wash"
+  },
+  "voices": {
+    "narrator": "NARRATOR_VOICE_ID",
+    "quotes": {
+      "default": "QUOTE_VOICE_ID"
+    },
+    "quoteLanguage": "es"
+  },
+  "music": "Instrumental only. Warm minimal electronic track for a data-driven motion film about home and money in Mexico. Soft piano and a clean synth pulse, around 92 bpm, curious and calm, no vocals. Builds gently and resolves cleanly.",
+  "scenes": [
+    {
+      "type": "cold",
+      "id": "open",
+      "quote": {
+        "text": "mi corazón anhela tanto una casita propia...",
+        "platform": "TikTok",
+        "meta": "MX · ene 2026",
+        "verified": true,
+        "voiced": true
+      },
+      "words": [
+        "casa propia",
+        "Infonavit",
+        "crédito",
+        "no me alcanza",
+        "enganche",
+        "mi casita",
+        "renta",
+        "hipoteca",
+        "anticipo",
+        "fraude",
+        "refugio",
+        "prefiero estar en mi casa"
+      ],
+      "title": "Qué significa una casa en México hoy",
+      "vo": "Leímos lo que la gente en México dice sobre su casa. Para responder una pregunta: qué significa hoy tener un hogar."
+    },
+    {
+      "type": "chapter",
+      "id": "future",
+      "label": "el futuro",
+      "head": "Comprar casa es asegurar el futuro",
+      "chart": {
+        "kind": "number",
+        "value": 171,
+        "suffix": "%",
+        "label": "más menciones en mayo que en enero"
+      },
+      "quote": {
+        "text": "Revise mi Infonavit y quiero comprar casa me dice que tengo crédito por 2,250.000.",
+        "platform": "TikTok",
+        "meta": "MX · mar 2026",
+        "verified": true,
+        "voiced": true
+      },
+      "spark": {
+        "line": "Habla el idioma del Infonavit.",
+        "sub": "Muestra cifras reales: la gente ya está haciendo cuentas."
+      },
+      "vo": "Comprar casa es asegurar el futuro. Las menciones crecieron ciento setenta y uno por ciento de enero a mayo.",
+      "note": {
+        "mentions": 35385,
+        "what": "en mayo (13,079 en enero)",
+        "period": "ene–may 2026"
+      }
+    },
+    {
+      "type": "chapter",
+      "id": "gap",
+      "label": "la brecha",
+      "head": "El crédito llega y la casa no",
+      "chart": {
+        "kind": "ring",
+        "value": 65,
+        "label": "de la frustración financiera ocurre en TikTok"
+      },
+      "quote": {
+        "text": "Ya tengo mi crédito Infonavit pero aunque siento que es una buena cantidad no encuentro nada a ese precio.",
+        "platform": "TikTok",
+        "meta": "MX · ene–may 2026",
+        "verified": true,
+        "voiced": true
+      },
+      "spark": {
+        "line": "Reconoce la brecha.",
+        "sub": "Ofrece rutas con montos claros, entre el crédito y el precio."
+      },
+      "vo": "Pero el crédito llega y la casa no. Sesenta y cinco por ciento de esa frustración se cuenta en TikTok.",
+      "note": {
+        "mentions": 49080,
+        "what": "sobre frustración financiera",
+        "period": "ene–may 2026",
+        "channels": [
+          "tiktok"
+        ]
+      }
+    },
+    {
+      "type": "chapter",
+      "id": "refuge",
+      "label": "el refugio",
+      "head": "La casa se volvió el plan",
+      "chart": {
+        "kind": "number",
+        "value": 189,
+        "suffix": "%",
+        "label": "más menciones de la casa como refugio"
+      },
+      "quote": {
+        "text": "Yo, neta amo salir con mis amigos pero prefiero estar en mi casa, y si ya cancelan, no me quejo.",
+        "platform": "TikTok",
+        "meta": "MX · ene–may 2026",
+        "verified": true,
+        "voiced": true
+      },
+      "spark": {
+        "line": "Trata la casa como destino.",
+        "sub": "Silencio, café, cama y buena ventilación también son plan.",
+        "style": "dark"
+      },
+      "vo": "Y adentro, la casa se volvió el plan. Quedarse ya no necesita excusa.",
+      "note": {
+        "mentions": 9543,
+        "what": "en mayo (3,300 en enero)",
+        "period": "ene–may 2026"
+      }
+    },
+    {
+      "type": "chapter",
+      "id": "suspicion",
+      "label": "la sospecha",
+      "head": "Buscar depa empieza con sospecha",
+      "chart": {
+        "kind": "number",
+        "value": 11,
+        "suffix": "x",
+        "label": "más menciones de fraude inmobiliario, con volumen bajo"
+      },
+      "quote": {
+        "text": "A las cuantas horas me llamó para aceptarme, me pasó su número, transferí y me bloqueó.",
+        "platform": "TikTok",
+        "meta": "MX · ene–may 2026",
+        "verified": true,
+        "voiced": true
+      },
+      "spark": {
+        "line": "Protege antes del primer pago.",
+        "sub": "Verificación visible y alertas de fraude."
+      },
+      "vo": "Buscar depa empieza con sospecha. Las menciones de fraude se multiplicaron once veces.",
+      "note": {
+        "mentions": 219,
+        "what": "en mayo (20 en enero)",
+        "period": "ene–may 2026"
+      }
+    },
+    {
+      "type": "base",
+      "id": "base",
+      "vo": "La base: más de un millón de menciones en siete plataformas, de enero a mayo de 2026."
+    },
+    {
+      "type": "close",
+      "id": "close",
+      "bet": [
+        "Cifras reales.",
+        "La casa como destino.",
+        "Confianza antes del pago."
+      ],
+      "vo": "La apuesta: cifras reales, la casa como destino y confianza antes del primer pago."
+    }
+  ],
+  "base": {
+    "mentions": 1180000,
+    "plus": true,
+    "channels": [
+      {
+        "platform": "youtube"
+      },
+      {
+        "platform": "tiktok"
+      },
+      {
+        "platform": "facebook"
+      },
+      {
+        "platform": "x"
+      },
+      {
+        "platform": "instagram"
+      },
+      {
+        "platform": "reddit"
+      },
+      {
+        "platform": "reviews"
+      }
+    ],
+    "period": "ene–may 2026",
+    "market": "México",
+    "method": "Cultural Codes"
+  }
+}

@@ -1,0 +1,83 @@
+{
+  "_source": "noisia.ai/insights, report The Mexican Home (editorial, public). Figures: apps/website-next/src/content/reports/noisia_mexican_home_master_handoff.json (corpus, platforms, period) and noisia_mexican_home_signal_evolution.ts (monthly mentions per signal). Quotes: the stories' evidence.",
+  "format": "social",
+  "locale": "es",
+  "tag": "Hogar · MX",
+  "background": {
+    "kind": "wash"
+  },
+  "scenes": [
+    {
+      "type": "hook",
+      "text": "¿Cuánto tengo que ganar para tener casa propia?",
+      "background": {
+        "kind": "bloom",
+        "name": "v-bottom"
+      },
+      "vo": "¿Cuánto tengo que ganar para tener casa propia?"
+    },
+    {
+      "type": "stat",
+      "value": 171,
+      "suffix": "%",
+      "label": "más menciones sobre casa propia en mayo que en enero de 2026",
+      "vo": "Las menciones sobre casa propia crecieron ciento setenta y uno por ciento entre enero y mayo.",
+      "note": {
+        "mentions": 35385,
+        "what": "en mayo (13,079 en enero)",
+        "period": "ene–may 2026"
+      }
+    },
+    {
+      "type": "tension",
+      "want": "Rentar como gasto que no vuelve",
+      "but": "Comprar como estabilidad que sí",
+      "value": null,
+      "vo": "La renta se vive como dinero que no vuelve. Comprar, como la estabilidad que sí."
+    },
+    {
+      "type": "quote",
+      "text": "Lic cuánto tengo que ganar para que banco me preste 1 millón de pesos porque quiero comprar una casa pero yo tengo 800 mil de crédito en Infonavit",
+      "platform": "TikTok",
+      "meta": "MX · mar 2026"
+    },
+    {
+      "type": "base",
+      "vo": "Leímos más de un millón de menciones en siete plataformas, de enero a mayo."
+    },
+    {
+      "type": "takeaway",
+      "text": "Habla el idioma del Infonavit y muestra cifras reales. La gente ya está haciendo cuentas.",
+      "vo": "Habla el idioma del Infonavit. La gente ya está haciendo cuentas."
+    }
+  ],
+  "base": {
+    "mentions": 1180000,
+    "plus": true,
+    "channels": [
+      {
+        "platform": "youtube"
+      },
+      {
+        "platform": "tiktok"
+      },
+      {
+        "platform": "facebook"
+      },
+      {
+        "platform": "x"
+      },
+      {
+        "platform": "instagram"
+      },
+      {
+        "platform": "reddit"
+      },
+      {
+        "platform": "reviews"
+      }
+    ],
+    "period": "ene–may 2026",
+    "market": "México"
+  }
+}

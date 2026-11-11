@@ -1,0 +1,4 @@
+{ "_source": "noisia.ai/insights, The Mexican Home: monthly_pulse of casa_propia_futuro (story notes).",
+  "format": "deck", "pattern": "counter", "box": { "w": 720, "h": 420 }, "seconds": 10, "locale": "es",
+  "steps": [ { "value": 13079, "label": "menciones en enero" }, { "value": 35385, "label": "menciones en mayo" } ],
+  "source": "Noisia · The Mexican Home, 2026" }

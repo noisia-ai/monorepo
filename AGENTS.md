@@ -50,6 +50,7 @@ This repo separates **Canon** (current truth) from **History/Intent** (why thing
 - `docs/adr/` — **Architecture Decision Records** (numbered). Add a new one when you make a structural decision. Existing: monorepo structure, auth/Supabase boundary, external-service deltas, TS compat, methodology slug/version uniqueness, Kinde roles & Studio permissions.
 - `docs/api/` — public reporting API: `openapi.yaml`, `public-api-readme.md`.
 - `packages/pitch-kit/` — **Pitch Kit**: build Noisia sales/pitch decks (PDF + editable PPTX) from a shared engine, a slide library (`slides/catalog.json`) and deck recipes (`slides/recipes.json`). For the commercial team. Invoke the skill `.claude/skills/noisia-pitch/SKILL.md` (Claude Code auto-discovers it; in Codex, read `packages/pitch-kit/AGENTS.md`). To make a deck just ask, e.g. *"arma un pitch de qué es Noisia"* or *"haz una presentación de Triggers & Barriers"*.
+- `packages/motion/` — **the video builder**: one JSON piece in, one video out (clip, social, study, deck GIF), on Remotion with Noisia's company license. Rules in `packages/pitch-kit/VIDEO.md`; commands in `packages/motion/README.md`. License key and ElevenLabs keys live only in ignored `.env` files.
 - The nested `AGENTS.md` files (this directory tree).
 
 **History / intent — why (do NOT treat as current state):**

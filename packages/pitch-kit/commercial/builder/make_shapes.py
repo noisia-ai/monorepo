@@ -5,6 +5,7 @@ make_shapes.py — the Noisia bloom: abstract colour fields for commercial cover
     python3 commercial/builder/make_shapes.py --build            # writes assets/shapes/*.jpg
     python3 commercial/builder/make_shapes.py --build --only cover,closing
     python3 commercial/builder/make_shapes.py --sheet out.png    # every composition, to review
+    python3 commercial/builder/make_shapes.py --vertical ../motion/public/backgrounds   # 9:16, for video
 
 What it draws, as agreed with the brand (oct 2026): no outlined shape the eye can name, but a
 colour field that blooms and dissolves into the white canvas.
@@ -145,6 +146,21 @@ LINEAR = {
 }
 
 
+# Vertical 9:16 for video (VIDEO.md §4.1). Text lives in the middle of the frame, so the colour is
+# born on the top or bottom edge, or a corner, and leaves the reading zone (y 220 to 1500) clean.
+VERTICAL = {
+    "v-top":     dict(seed=71, fx=0.70, fy=-0.04, ang=100, reach=0.70, strength=1.0, depth=0.9, tilt=2.0,
+                      size=(1080, 1920)),
+    "v-bottom":  dict(seed=72, fx=0.25, fy=1.04, ang=-75, reach=0.66, strength=1.0, depth=0.9, tilt=-0.8,
+                      size=(1080, 1920)),
+    "v-corner":  dict(seed=73, fx=1.06, fy=1.02, ang=225, reach=0.80, strength=1.0, depth=1.0, tilt=-2.2,
+                      size=(1080, 1920)),
+    "v-soft":    dict(seed=74, fx=1.04, fy=0.06, ang=150, reach=0.55, strength=0.8, depth=0.35, tilt=1.8,
+                      size=(1080, 1920)),
+}
+LINEAR.update(VERTICAL)
+
+
 for _i in range(1, 7):
     _c = dict(LINEAR[f"cover-{_i}"])
     _c.pop("across_y", None)
@@ -215,7 +231,7 @@ def compose(name, mode=None):
 
 
 def sheet(path):
-    names = [n for n in LINEAR if n != "onepager"]
+    names = [n for n in LINEAR if n != "onepager" and n not in VERTICAL]
     tiles = [compose(n).resize((640, 360)) for n in names]
     out = Image.new("RGB", (3 * 650 + 10, ((len(tiles) + 2) // 3) * 370 + 10), "#444")
     for i, t in enumerate(tiles):
@@ -229,12 +245,23 @@ if __name__ == "__main__":
     ap.add_argument("--sheet")
     ap.add_argument("--build", action="store_true")
     ap.add_argument("--only")
+    ap.add_argument("--vertical", help="write the 9:16 video backgrounds (VERTICAL) to this folder")
     a = ap.parse_args()
+    if a.vertical:
+        os.makedirs(a.vertical, exist_ok=True)
+        for n in VERTICAL:
+            if a.only and n not in a.only.split(","):
+                continue
+            p = os.path.join(a.vertical, f"{n}.jpg")
+            compose(n).save(p, quality=86, optimize=True)
+            print(p)
     if a.sheet:
         print(sheet(a.sheet))
     if a.build:
         os.makedirs(OUT, exist_ok=True)
         for n in (LINEAR if MODE == "linear" else COMPOSITIONS):
+            if n in VERTICAL:
+                continue
             if a.only and n not in a.only.split(","):
                 continue
             p = os.path.join(OUT, f"{n}.jpg")

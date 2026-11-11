@@ -1,0 +1,2 @@
+{ "format": "deck", "pattern": "hub", "box": { "w": 800, "h": 600 }, "seconds": 12, "locale": "es",
+  "sources": ["tiktok", "instagram", "youtube", "x", "facebook", "reddit", "reviews"], "center": "un solo corpus" }

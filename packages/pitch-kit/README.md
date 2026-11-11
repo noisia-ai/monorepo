@@ -52,7 +52,7 @@ python3 builders/build-pptx.py examples/_local/mydeck/deck.json examples/_local/
 | `INTERNAL.md` | Decks for the team: status, operation, product and its state |
 | `DATA_DELIVERY.md` | The Data family: samples in the client's schema, data packages, what never goes out, the delivery gates |
 | `CONNECTORS.md` | Continuous feeds to a partner: isolation, cycle rules, gates, "in production", runbook |
-| `VIDEO.md` | The video family: clip (/insights, TikTok), social (LinkedIn, Reels), study video and deck motion. Brand rules, style options with their purpose, audio, engines and render |
+| `VIDEO.md` | The video family: clip (/insights, TikTok), social (LinkedIn, Reels), study video and deck motion. Brand rules, style options with their purpose, audio, engines and render. Built with `packages/motion` |
 | `HUMAN_SIGNALS.md` | Noisia's creative direction: the Human Signals method for scripting a story from a business question to a human moment, and Kinetic Cinema for atmosphere imagery |
 | `PROMPTS.md` | The parameterized prompt that starts a run |
 
