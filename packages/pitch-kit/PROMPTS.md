@@ -456,6 +456,9 @@ ANTES DE CONSTRUIR, escribe en el chat el guion con Human Signals y espera mi s�
 negocio y su reformulación humana, el hallazgo con su cifra, el insight, la tensión, la intención
 emocional en sus tres niveles y el momento humano que abre. Debajo, escena por escena: qué se ve, qué
 se dice, qué cifra y qué cita, y de qué fondo y tarjeta de VIDEO.md §4 sale cada una, con su porqué.
+Incluye la base (VIDEO.md §2): el total de menciones, el periodo, el mercado y las menciones por canal
+del corpus; la nota de cada cifra (cuántas menciones, qué periodo, qué canales); dónde va la escena de
+base, y la frase con la que el narrador la dice. Sin base no hay video.
 
 AL CONSTRUIR: con el builder de packages/motion (lee su README). El guion aprobado se vuelve una pieza
 JSON en la carpeta del caso, nunca en el repo, y sale con builders/build-video.mjs. Si lleva voces, corre

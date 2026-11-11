@@ -46,6 +46,16 @@ dentro de una slide 16:9.
   website). Nada de caracteres Unicode como `𝕏` o `▶` en lugar del logo.
 - **Las cifras salen de datos**, con su cálculo anotado (`notes` en el clip, `data.json` en el estudio).
   Ninguna se teclea en el video.
+- **Toda cifra dice sobre qué está parada.** Un video no puede dejar más dudas de las que resuelve:
+  - **Debajo de cada cifra va su nota** con cuántas menciones la sostienen, en qué periodo y, cuando
+    se sabe, en qué canales ("35,385 menciones en mayo (13,079 en enero) · ene–may 2026" y los logos).
+    El builder rechaza una pieza social o de estudio con una cifra sin nota.
+  - **Cada pieza lleva una escena de base:** el total de menciones leídas, el periodo, el mercado y los
+    canales. Si el estudio tiene el desglose por canal (un estudio siempre lo tiene), van rankeados con
+    barras ("dónde se habló más"); si no, sus logos. Va al final, antes del cierre, o justo después del
+    gancho, nunca antes: el gancho abre. El builder rechaza una pieza sin ella.
+  - **El narrador dice la base una vez** (en la apertura o en la escena de base): cuántas menciones,
+    cuántos canales y qué periodo.
 - **Las citas son literales y verificadas:** `assert fragmento in texto_verificado` antes de entrar, con
   plataforma y mes. Si se dramatiza, la etiqueta en pantalla lo dice: "verified post, voiced", "real fan
   posts, as a group chat".
@@ -78,6 +88,7 @@ Cómo cae en las escenas:
 | Tensión | `tension` | El clímax: el hallazgo de espacio vacío |
 | Evidencia | `quote` en burbuja | Tarjeta de post real |
 | Insight | `takeaway` | Creative Spark: la línea de copy que el creativo puede usar |
+| La base | `base`: menciones, canales y periodo | `base` antes del cierre, y el corpus con sus canales en la apertura |
 
 **La intención emocional decide el ritmo y el sonido:** curiosidad pide un gancho que deje algo sin
 explicar; complicidad, una cita con voz; extrañamiento, un silencio. En el estudio, el clímax corta la
@@ -176,6 +187,9 @@ cada historia nueva es un JSON, sin código.
   `hook → stat → (tension | split | segundo stat) → quote → takeaway`, unos 21 s.
 - **Límites de texto** (los aplica el esquema): hook 90 caracteres, etiqueta de stat 110, contexto 140,
   cada lado de tension 90, quote 260, takeaway 140, título 90.
+- **La base cierra el clip:** antes del logo, una tarjeta con los canales, el periodo y el mercado de la
+  historia (`sources`, `period`, `market`). Las historias del website no traen el conteo de menciones;
+  cuando lo traigan, entra.
 - **Sin llamada a la acción dentro del video.** En el feed, "Leer el reporte" va fuera del lienzo.
 - **Dos modos:** `feed` (el título va fuera del lienzo, como HTML indexable) y `video` (el título va
   dibujado a 56 px).
@@ -199,7 +213,8 @@ video de estudio y se valida con la primera pieza publicada.
 | 3 a 12 s | Un insight: una cifra con su gráfica y una frase |
 | 12 a 20 s | La tensión o el hallazgo de espacio vacío: lo más compartible |
 | 20 a 24 s | La línea para llevarse, a 72 px o más si no hay narrador |
-| 24 a 26 s | El logo |
+| 24 a 28 s | La base: menciones, canales y periodo (o justo después del gancho) |
+| 28 a 30 s | El logo |
 
 - **Se entiende sin sonido.** LinkedIn y los feeds arrancan mudos: los subtítulos o el texto en pantalla
   cuentan todo.
@@ -223,7 +238,12 @@ video de estudio y se valida con la primera pieza publicada.
   feedback fue que "no todas las slides tienen la misma densidad".
 - **El clímax con el mejor hallazgo de espacio vacío** (~15 s): un contador baja a 0, la música cae y
   aparece un chat de grupo con posts reales y el hueco de la marca escribiendo.
+- **La base** (~4 a 8 s): las menciones leídas, el periodo y los canales rankeados por menciones, con
+  la voz que la dice.
 - **El cierre** (~11 s): la apuesta en tres tiempos, el asset de portada y el logo.
+
+La apertura cuenta el mismo corpus de la base, con los logos de sus canales, y cada capítulo con
+gráfica lleva su nota (§2).
 
 La duración la marca el contenido. Se planearon unos 90 s, el primer pase de audio dio 141 y se
 recortó a 120; el usuario pidió no cortarlo "si tiene sentido", y quedó en 130.3 s.
