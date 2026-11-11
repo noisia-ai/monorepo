@@ -226,7 +226,8 @@ Lo demás se resuelve de forma autónoma y se anota en el registro de decisiones
 - [x] H7 · Studio y workers de UAT ejecutan `3217854e`, con Railpack, salud verificada y cero cambios preparados. Los PR #154 y #155 pasaron CI y PostgreSQL en la solicitud y en cada fusión. Topics consultó las guías en 43.332 s. El inicio desde el producto recibió HTTP 202 en 91.249 s con un único recibo para 83,962 raíces.
 - [x] H7 · El PR #157 pasó revisión, CI y PostgreSQL en la solicitud y tras fusionar a `3ceb6598`. El predicado del worker se comprobó sobre la cola de UAT en lectura. Coincidió una sola ejecución. Studio y workers arrancaron con Railpack en esa revisión y cero cambios preparados. El mismo recibo pasó de «En cola» a «Preparando conversaciones».
 - [x] H7 · El motor exportó 83,962 raíces y 127,117 fragmentos. El ajuste numérico terminó con 158 grupos y dejó un punto de recuperación antes de la interpretación.
-- [ ] H7 · Reanudar la interpretación desde el punto de recuperación y completar la propuesta de léxico, la clasificación y Signal. La primera reserva terminó como definitivamente no enviada, con cero tokens y cero gasto.
+- [x] H7 · Los PR #158 y #159 pasaron revisión, CI y PostgreSQL antes y después de integrarse. Studio y workers sirven `57f3544d` con Railpack, salud y cero cambios preparados. «Reanudar análisis» respondió HTTP 202 en 46.250 s. El worker recibió la segunda generación de la misma ejecución con su punto de recuperación.
+- [ ] H7 · Completar la interpretación, la propuesta de léxico, la clasificación y Signal. La primera reserva quedó definitivamente no enviada y conserva su recibo de cero gasto.
 
 - [x] H7 · La lectura optimizada de Signal pasó la comprobación en los cuatro segmentos del estudio de dev-test. En seis mediciones intercaladas, la vista general tardó de 1.570 a 2.570 s y la evidencia de 1.027 a 1.621 s. La medición posterior de la página desplegada figura arriba. [PR de la consulta](https://github.com/noisia-ai/monorepo/pull/142)
 
@@ -498,7 +499,7 @@ Lo demás se resuelve de forma autónoma y se anota en el registro de decisiones
 
 ## Resultado y retrospectiva
 
-El corte de base de datos de R15 terminó en UAT con el mismo catálogo que la copia ensayada. Los resultados y el acceso a evidencia de las marcas históricas coincidieron antes y después. Studio y workers ya sirven desde la misma revisión. Studio aceptó los once archivos y preparó el texto de 83,962 raíces elegibles. El recibo de preparación registra 127,117 fragmentos. El worker completó los vectores de todo el corpus. Studio y workers pasaron a `3217854e` con Railpack y cero cambios preparados. Topics admitió un único mapa en la ruta normal de UAT. El worker de `3ceb6598` recogió ese asiento y completó el ajuste numérico con 158 grupos. Se conservó su punto de recuperación al detenerse antes del primer envío editorial.
+El corte de base de datos de R15 terminó en UAT con el mismo catálogo que la copia ensayada. Los resultados y el acceso a evidencia de las marcas históricas coincidieron antes y después. Studio y workers ya sirven desde la misma revisión. Studio aceptó los once archivos y preparó el texto de 83,962 raíces elegibles. El recibo de preparación registra 127,117 fragmentos. El worker completó los vectores de todo el corpus. Studio y workers pasaron a `3217854e` con Railpack y cero cambios preparados. Topics admitió un único mapa en la ruta normal de UAT. El worker de `3ceb6598` recogió ese asiento y completó el ajuste numérico con 158 grupos. La primera reserva quedó sin envío. En `57f3544d`, la interfaz reanudó la misma ejecución con su admisión vigente y su resultado numérico conservado.
 
 ### Ronda 14
 
