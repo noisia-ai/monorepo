@@ -1,3 +1,4 @@
+import { prepareMassLabelingMapScoresV1, insertMassLabelingMapItemsV1 } from "./signal-mass-labeling-map-sql";
 import {loadMassLabelingStudyPolicyWithClientV1,massLabelingStudyInterestDigestV1} from "./signal-mass-labeling-study-policy";
 import {massLabelingConfigurationV2} from "@noisia/query-engine";
 import {MASS_LABELING_FUNDING_RECEIPT_SELECT_V1,type MassLabelingFundingReceiptV1} from "./signal-mass-labeling-funding";
@@ -181,7 +182,7 @@ export async function createMassLabelingMapV1(args: {
     const replay = (await client.query<{id: string}>(`SELECT id FROM signal_mass_labeling_maps
       WHERE workspace_id=$1 AND map_digest=$2`, [args.workspace_id, mapDigest])).rows[0];
     if (replay) return {map_id: replay.id, map_digest: mapDigest, replayed: true};
-    await client.query("DROP TABLE IF EXISTS pg_temp.mass_chunks,pg_temp.mass_assignments,pg_temp.mass_scores");
+    await client.query("DROP TABLE IF EXISTS pg_temp.mass_chunks,pg_temp.mass_assignments,pg_temp.mass_scores,pg_temp.mass_topic_vectors,pg_temp.mass_map_items");
     await client.query(`CREATE TEMP TABLE mass_chunks ON COMMIT DROP AS
       SELECT item.root_id,item.fingerprint,asset.full_text,(chunk.ordinality-1)::int chunk_index,
         chunk.value->>'sha256' chunk_sha256,(chunk.value->>'start')::int start_offset,(chunk.value->>'end')::int end_offset,
@@ -217,37 +218,10 @@ export async function createMassLabelingMapV1(args: {
       JOIN mass_chunks chunk USING(root_id,chunk_index)
       GROUP BY topic.topic_key,topic.definition_digest,topic.group_ids`, [args.workspace_id, mapId, JSON.stringify(catalog)]);
     if (topicCount.rowCount !== catalog.length) fail("mass_labeling_empty_topic");
-    // Centroids and root scores stay in the original Voyage space. UMAP coordinates are never used here.
-    await client.query("SET LOCAL enable_hashagg=off");
-    await client.query(`CREATE TEMP TABLE mass_scores ON COMMIT DROP AS
-      SELECT root.root_id,topic.topic_key,topic.similarity,topic.position
-      FROM (SELECT root_id,avg(embedding) root_vector FROM mass_chunks GROUP BY root_id) root
-      CROSS JOIN LATERAL (
-        SELECT ranked.topic_key,ranked.similarity,row_number() OVER(ORDER BY ranked.similarity DESC,ranked.topic_key)::int position
-        FROM (SELECT topic_key,greatest(-1.0,least(1.0,1-(centroid<=>root.root_vector))) similarity
-          FROM signal_mass_labeling_topics WHERE map_id=$1 ORDER BY centroid<=>root.root_vector,topic_key LIMIT 8) ranked
-      ) topic`, [mapId]);
-    await client.query("CREATE INDEX mass_scores_root ON mass_scores(root_id)");
-    await client.query(`INSERT INTO signal_mass_labeling_items(workspace_id,map_id,root_id,ordinal,input_digest,
-      root_fingerprint,chunk_index,chunk_sha256,text,candidates)
-      WITH best_chunk AS MATERIALIZED (
-        SELECT DISTINCT ON(chunk.root_id) chunk.root_id,chunk.chunk_index
-        FROM mass_chunks chunk JOIN mass_scores score ON score.root_id=chunk.root_id
-        JOIN signal_mass_labeling_topics topic ON topic.map_id=$2 AND topic.topic_key=score.topic_key
-        ORDER BY chunk.root_id,chunk.embedding<=>topic.centroid,chunk.chunk_index,topic.topic_key
-      ), candidates AS (
-        SELECT root_id,jsonb_agg(jsonb_build_object('topic_key',ranked.topic_key,
-          'name',COALESCE(catalog#>>'{localization,original,name}',catalog->>'name'),
-          'definition',COALESCE(catalog#>>'{localization,original,definition}',catalog->>'definition'),'similarity',similarity,
-          'localization',catalog->'localization') ORDER BY position) candidate_list
-        FROM mass_scores ranked CROSS JOIN LATERAL jsonb_array_elements($3::jsonb) catalog
-        WHERE catalog->>'topic_key'=ranked.topic_key GROUP BY root_id
-      ) SELECT $1,$2,chunk.root_id,row_number() OVER(ORDER BY chunk.root_id)::int,
-        signal_labeling_digest_v1(jsonb_build_object('root_fingerprint',chunk.fingerprint,'chunk_sha256',chunk.chunk_sha256,
-          'map_digest',$4::text)),chunk.fingerprint,chunk.chunk_index,chunk.chunk_sha256,
-        signal_topic_utf16_fragment_v1(chunk.full_text,chunk.start_offset,chunk.end_offset),candidates.candidate_list
-      FROM best_chunk best JOIN mass_chunks chunk USING(root_id,chunk_index) JOIN candidates USING(root_id)`,
-      [args.workspace_id, mapId, JSON.stringify(catalog), mapDigest]);
+    // Keep the original Voyage space, top-eight order and chunk tie breakers.
+    await prepareMassLabelingMapScoresV1(client, mapId);
+    await insertMassLabelingMapItemsV1(client, { workspace_id: args.workspace_id, map_id: mapId,
+      catalog, map_digest: mapDigest, expected_roots: c.roots });
     return {map_id: mapId, map_digest: mapDigest, replayed: false, root_count: c.roots, topic_count: catalog.length};
   });
 }
