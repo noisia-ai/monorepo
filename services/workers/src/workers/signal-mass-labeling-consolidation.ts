@@ -30,6 +30,7 @@ import type { WorkspaceEngineStorageV1 } from "./signal-workspace-engine-storage
 
 const stores = {
   verifySources: verifyMassLabelingSourceCheckpointsV1,
+  categoryContext: loadMassLabelingProductCategoryContextV2,
   reserve: reserveSignalWorkspaceEngineInterpretationV1,
   sent: markSignalWorkspaceEngineInterpretationSentV1,
   response: persistSignalWorkspaceEngineInterpretationResponseV1,
@@ -55,7 +56,7 @@ export async function consolidateMassLabelingGroupsV1(args: {
   expected_cluster_digests: Record<string, string>;
   directory: string;
   storage: WorkspaceEngineStorageV1;
-  stores?: Omit<typeof stores, "receiptDecision"> & Partial<Pick<typeof stores, "receiptDecision">>;
+  stores?: Omit<typeof stores, "receiptDecision" | "categoryContext"> & Partial<Pick<typeof stores, "receiptDecision" | "categoryContext">>;
   send?: typeof sendMassLabelingConsolidationV1;
   recovery_only?: boolean;
   recovery_call?: SignalWorkspaceEngineInterpretationCallV1;
@@ -99,7 +100,7 @@ export async function consolidateMassLabelingGroupsV1(args: {
     source_groups: verified.source_groups,
     configuration: parseSignalWorkspaceInterpretationConfigurationV1(config.call_configuration),
     ...("category_lexicon_contract_version" in config.call_configuration
-      ? { category_context: await loadMassLabelingProductCategoryContextV2({ database, workspace_id: lease.workspace_id, actor_user_id: args.actor_user_id }) } : {}),
+      ? { category_context: await (store.categoryContext ?? loadMassLabelingProductCategoryContextV2)({ database, workspace_id: lease.workspace_id, actor_user_id: args.actor_user_id }) } : {}),
   });
   if (verified.source_groups_digest !== batch.source_groups_digest)
     return invalid();

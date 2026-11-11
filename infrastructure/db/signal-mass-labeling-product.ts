@@ -1,3 +1,4 @@
+import {verifySignalWorkspaceMassLabelingGlobalReceiptRecoveryWithClientV1,type SignalWorkspaceMassLabelingOperatorReceiptRecoveryV1} from "./signal-mass-labeling-global-recovery";
 import {loadMassLabelingProductEstimateWithClientV2} from "./signal-mass-labeling-product-estimate";
 import type { PoolClient } from "pg";
 import { createHash, randomUUID } from "node:crypto";
@@ -151,29 +152,41 @@ export async function applyMassLabelingEditorialLexiconV1(args: {
   consolidation_artifact_id: string; consolidation_raw: string;
 }) {
   const proposal = JSON.parse(args.consolidation_raw) as { workspace_id: string; source_engine_execution_id: string;
-    source_groups: MassLabelingSourceGroupV1[]; configuration: SignalWorkspaceInterpretationConfigurationV1; category_context: MassLabelingCategoryContextV2 };
+    source_groups: MassLabelingSourceGroupV1[]; configuration: SignalWorkspaceInterpretationConfigurationV1; category_context: MassLabelingCategoryContextV2;
+    output: unknown; operator_receipt_recovery?:SignalWorkspaceMassLabelingOperatorReceiptRecoveryV1 };
   const batch = buildMassLabelingConsolidationRequestV1({ workspace_id: proposal.workspace_id, source_engine_execution_id: proposal.source_engine_execution_id,
     source_groups: proposal.source_groups, configuration: proposal.configuration, category_context: proposal.category_context });
   const parsed = JSON.parse(args.consolidation_raw) as { raw_response: string };
-  const output = parseMassLabelingConsolidationResponseV1(batch, parsed.raw_response).output;
-  const lexical = output.category_lexicon;
-  if (!lexical || proposal.workspace_id !== args.workspace_id || proposal.source_engine_execution_id !== args.source_engine_execution_id) fail("mass_labeling_editorial_lexicon_invalid");
+  const operator=proposal.operator_receipt_recovery;
+  if(operator&&(Object.keys(operator).sort().join(",")!=="contract_version,decision_digest,decision_id"
+    ||operator.contract_version!=="workspace-mass-labeling-global-receipt-decision-v1"))fail("mass_labeling_editorial_lexicon_invalid");
+  let output=operator?null:parseMassLabelingConsolidationResponseV1(batch,parsed.raw_response).output;
+  if (proposal.workspace_id !== args.workspace_id || proposal.source_engine_execution_id !== args.source_engine_execution_id) fail("mass_labeling_editorial_lexicon_invalid");
   const sha = `sha256:${createHash("sha256").update(args.consolidation_raw).digest("hex")}`;
-  const policy = await transaction(args.database, async client => {
+  const verified = await transaction(args.database, async client => {
     const caps = await loadSignalWorkspaceCapabilitiesStoreV1({ queryable: client, ...args });
     if (!caps.can_request_processing || !caps.can_edit_topics) fail("mass_labeling_forbidden", 403);
-    if (!(await client.query(`SELECT 1 FROM analysis_artifacts artifact JOIN engine_cost_events call
+    const receipt=(await client.query<{call_id:string;metadata:Record<string,unknown>}>(`SELECT call.id call_id,artifact.metadata FROM analysis_artifacts artifact JOIN engine_cost_events call
       ON call.id::text=artifact.metadata->>'call_id' AND call.workspace_id=artifact.workspace_id AND call.catalog_execution_id=artifact.engine_execution_id
       WHERE artifact.workspace_id=$1 AND artifact.engine_execution_id=$2 AND artifact.id=$3
         AND artifact.artifact_key='mass-labeling-consolidation.json' AND artifact.content->>'sha256'=$4
         AND call.call_state='settled' AND call.actor_user_id=$5 AND call.request_digest=$6
         AND call.response_sha256=artifact.metadata->>'response_sha256' AND call.response_sha256=$7`,
       [args.workspace_id, args.source_engine_execution_id, args.consolidation_artifact_id, sha, args.actor_user_id, batch.request_digest,
-        `sha256:${createHash("sha256").update(parsed.raw_response).digest("hex")}`])).rows.length) fail("mass_labeling_editorial_lexicon_receipt_required");
-    return loadMassLabelingStudyPolicyWithClientV1(client, args.workspace_id);
+        `sha256:${createHash("sha256").update(parsed.raw_response).digest("hex")}`])).rows[0];
+    if(!receipt)fail("mass_labeling_editorial_lexicon_receipt_required");
+    if(operator){
+      if(receipt.metadata.recovery_decision_id!==operator.decision_id||receipt.metadata.recovery_decision_digest!==operator.decision_digest)
+        fail("mass_labeling_editorial_lexicon_receipt_required");
+      output=(await verifySignalWorkspaceMassLabelingGlobalReceiptRecoveryWithClientV1(client,{workspace_id:args.workspace_id,
+        execution_id:args.source_engine_execution_id,actor_user_id:args.actor_user_id,call_id:receipt.call_id,
+        decision_id:operator.decision_id,decision_digest:operator.decision_digest,batch,raw_response:parsed.raw_response})).output;
+    }else if(receipt.metadata.recovery_decision_id||receipt.metadata.recovery_decision_digest)fail("mass_labeling_editorial_lexicon_receipt_required");
+    if(!output?.category_lexicon||digest(output)!==digest(proposal.output))fail("mass_labeling_editorial_lexicon_invalid");
+    return{policy:await loadMassLabelingStudyPolicyWithClientV1(client,args.workspace_id),lexical:output.category_lexicon};
   });
-  return proposeMassLabelingStudyLexiconV1({ ...args, expected_revision: policy.revision,
-    category: lexical.category, lexicon_terms: lexical.terms, source_digest: sha });
+  return proposeMassLabelingStudyLexiconV1({ ...args, expected_revision: verified.policy.revision,
+    category: verified.lexical.category, lexicon_terms: verified.lexical.terms, source_digest: sha });
 }
 
 /** Publish the first completed product map. Later analyst selections own revision changes. */
