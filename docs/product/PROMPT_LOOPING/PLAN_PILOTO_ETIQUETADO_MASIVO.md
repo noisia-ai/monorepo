@@ -200,6 +200,8 @@ Lo demás se resuelve de forma autónoma y se anota en el registro de decisiones
 
 **Prueba en vivo.** Signal del workspace del piloto, abierto en dev-test, con los tópicos y sus volúmenes.
 
+**Prueba en vivo de la ronda 15 en UAT.** Abrir el Signal del estudio desde una sesión autenticada. Contrastar los tópicos y volúmenes del mapa nuevo en Contenido total, Conversación, Publicidad y Hashtags. Verificar el inglés inicial, la vista de originales en portugués, ambos intereses, las muestras reproducibles y las sugerencias de motivadores y barreras. Registrar en el paquete privado el resultado de cada comprobación tras completar la clasificación.
+
 **Calidad.** Se mide por muestreo; no es requisito de aceptación.
 
 ## Idempotencia y recuperación
@@ -456,7 +458,7 @@ Lo demás se resuelve de forma autónoma y se anota en el registro de decisiones
 
 - H7 · Conservar las 600 muestras ciegas en su paquete sin clave. Para la comparación de causas, seleccionar otras 100 raíces mediante los lectores paginados de Signal. Verificar que las dos muestras provengan del mismo mapa y que sus raíces y textos normalizados sean disjuntos.
 
-- H7 · Para JEV v2, admitir hasta ocho raíces simultáneas y respetar un límite de proveedor menor cuando esté configurado. Ante HTTP 429, esperar al menos tres segundos antes del siguiente intento de Storage. El tope de gasto, la identidad de la llamada y su autorización se conservan.
+- H7 · Para JEV v2, admitir hasta ocho raíces simultáneas y respetar un límite de proveedor menor cuando esté configurado. En el adaptador nativo de Storage de JEV v2, un HTTP 429 sin `Retry-After` exige una espera mínima de tres segundos. Si llega el encabezado, se utiliza la ventana indicada dentro de los límites de reintento. El tope de gasto, la identidad de la llamada y su autorización se conservan.
 
 - H7 · Mantener detenida la misma ejecución hasta que el worker concilie el recibo. Limitar en el producto el número de solicitudes que pueden estar simultáneamente en evaluación, guardado o verificación. Probar el límite con una página completa y conservar el permiso y la identidad de cada raíz.
 
