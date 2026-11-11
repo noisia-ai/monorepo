@@ -211,7 +211,7 @@ Lo demás se resuelve de forma autónoma y se anota en el registro de decisiones
 
 ## Progreso
 
-- [x] H7 · En PostgreSQL 17, el cambio de adopción del PR #162 conservó los ocho candidatos de cada raíz, el orden de desempate, los fragmentos y sus huellas. Con 83,962 raíces, 127,117 fragmentos y 111 tópicos sintéticos, la puntuación tardó 6.568 s y la escritura con índices y proyecciones tardó 45.331 s. El revisor aceptó `799cd4f7`. La adopción real en UAT sigue pendiente.
+- [x] H7 · En PostgreSQL 17, el cambio de adopción del PR #162 conservó los ocho candidatos de cada raíz, el orden de desempate, los fragmentos y sus huellas. Con 83,962 raíces, 127,117 fragmentos y 111 tópicos sintéticos, la puntuación tardó 6.568 s y la escritura con índices y proyecciones tardó 45.331 s. El revisor aceptó el SQL y el ajuste posterior de las pruebas en `7a34dca4`. CI y PostgreSQL pasaron en el PR y en la fusión `004e4331`. La adopción real en UAT sigue pendiente.
 
 - [x] H7 · En UAT, la consulta revisada del PR #154 devolvió las tres guías del mapa en 44.145 s. En PostgreSQL, la prueba de 83,962 raíces comprobó la equivalencia de centroides, huellas de entrada y fragmentos. El PR #155 evita una segunda lectura de todas las guías para consultar el tamaño del corpus al iniciar el análisis.
 
@@ -313,6 +313,8 @@ Lo demás se resuelve de forma autónoma y se anota en el registro de decisiones
 - [x] Hito 4 · Recibo, comparación y muestras ciegas verificados. Se entregan el recibo público de una página y, en custodia privada, el anexo comparativo, método/fuentes, 600 casos en 11 cohortes y la clave sellada por separado. Son 597 raíces distintas por los solapamientos entre cohortes; cada cohorte cumple sus cuotas de 50 raíces por tópico para los 10 tópicos mayores y 100 de triggers/barriers. Las cohortes no representan evaluación de precisión humana.
 
 ## Sorpresas y descubrimientos
+
+- H7 · La corrida de 83,962 raíces del PR #162 en GitHub superó el límite de 600 s. En una base nueva con las 273 migraciones y las variables de CI, la misma revisión terminó en 84.48 s. La causa específica del tiempo del runner queda abierta. La nueva prueba ordinaria inserta tres lotes y verifica el rollback de cuatro proyecciones después de interrumpir dos lotes. El ensayo completo con 84 lotes sigue disponible y pasó en 85.73 s.
 
 - H7 · Al probar el volumen realista de texto localizado, una única inserción superó 90 s aun con las puntuaciones optimizadas. Con lotes de 1,000 raíces, el mayor tardó 655 ms en PostgreSQL local. Los 84 lotes se confirmaron en una sola transacción.
 
@@ -419,6 +421,8 @@ Lo demás se resuelve de forma autónoma y se anota en el registro de decisiones
 - Dos lotes devolvieron referencias válidas dentro de la muestra de 30 pero superaron el máximo de diez referencias por campo. La comprobación privada de las respuestas originales y de reparación encontró entre 11 y 30 referencias en los campos rechazados.
 
 ## Registro de decisiones
+
+- H7 · Mantener la comparación exacta, el rollback y la cancelación de la conexión en cada ejecución de PostgreSQL. Ejecutar también el volumen completo en una base desechable y guardar su recibo. El revisor comprobó ambas pruebas en `7a34dca4`.
 
 - H7 · Reutilizar los 111 centroides y dividir por ordinal la escritura de candidatos dentro de la misma transacción. El lector recibirá el mapa completo al confirmar. Se mantienen el límite de tiempo y las reglas de ordenación y de acceso.
 

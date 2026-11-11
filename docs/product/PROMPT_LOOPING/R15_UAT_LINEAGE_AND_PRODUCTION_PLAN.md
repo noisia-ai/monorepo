@@ -35,6 +35,8 @@ En el mismo corte, `git rev-list --left-right --count origin/main...origin/devel
 
 El 10 de noviembre de 2026 se repitió el conteo entre `main` en `6ff84434` y `develop` en `b9dbd456`. Git devolvió **75 exclusivos de main y 1,085 exclusivos de develop**. El inventario para producción deberá cubrir los 75 de este corte y los que se incorporen hasta la congelación de las ramas.
 
+El 11 de noviembre se repitió la lectura tras integrar el cálculo de candidatos de R15. Entre `main` en `c0ee9326` y `develop` en `004e4331` había 85 commits exclusivos de main y 1,105 exclusivos de develop. Entre las incorporaciones de main figuran cambios del kit de estudios y vídeo, del sitio y de las firmas de correo. Se volverá a calcular la diferencia al fijar el candidato de producción.
+
 ## Plan de producción · escrito, no ejecutado
 
 1. Congelar las referencias exactas de main y develop; enumerar commits de ambos lados, incluyendo todos los exclusivos de main del corte congelado. Asignar a cada cambio destino equivalente en develop, PR de portado con revisión y CI, o descarte documentado. Resolver conflictos de producto antes de formar el candidato.
