@@ -227,7 +227,8 @@ Lo demás se resuelve de forma autónoma y se anota en el registro de decisiones
 - [x] H7 · El PR #157 pasó revisión, CI y PostgreSQL en la solicitud y tras fusionar a `3ceb6598`. El predicado del worker se comprobó sobre la cola de UAT en lectura. Coincidió una sola ejecución. Studio y workers arrancaron con Railpack en esa revisión y cero cambios preparados. El mismo recibo pasó de «En cola» a «Preparando conversaciones».
 - [x] H7 · El motor exportó 83,962 raíces y 127,117 fragmentos. El ajuste numérico terminó con 158 grupos y dejó un punto de recuperación antes de la interpretación.
 - [x] H7 · Los PR #158 y #159 pasaron revisión, CI y PostgreSQL antes y después de integrarse. Studio y workers sirven `57f3544d` con Railpack, salud y cero cambios preparados. «Reanudar análisis» respondió HTTP 202 en 46.250 s. El worker recibió la segunda generación de la misma ejecución con su punto de recuperación.
-- [ ] H7 · Completar la interpretación, la propuesta de léxico, la clasificación y Signal. La primera reserva quedó definitivamente no enviada y conserva su recibo de cero gasto.
+- [x] H7 · Se completó la interpretación de los 158 grupos. Hay 52 puntos de control y 56 respuestas de grupo liquidadas por USD 7.257105. El recibo global añadió USD 1.155030. La primera reserva sin envío conserva gasto cero.
+- [ ] H7 · Recuperar desde Studio la respuesta global guardada, verificar la adopción del mapa, curar el léxico, completar JEV y comprobar Signal.
 
 - [x] H7 · La lectura optimizada de Signal pasó la comprobación en los cuatro segmentos del estudio de dev-test. En seis mediciones intercaladas, la vista general tardó de 1.570 a 2.570 s y la evidencia de 1.027 a 1.621 s. La medición posterior de la página desplegada figura arriba. [PR de la consulta](https://github.com/noisia-ai/monorepo/pull/142)
 
@@ -307,6 +308,8 @@ Lo demás se resuelve de forma autónoma y se anota en el registro de decisiones
 - [x] Hito 4 · Recibo, comparación y muestras ciegas verificados. Se entregan el recibo público de una página y, en custodia privada, el anexo comparativo, método/fuentes, 600 casos en 11 cohortes y la clave sellada por separado. Son 597 raíces distintas por los solapamientos entre cohortes; cada cohorte cumple sus cuotas de 50 raíces por tópico para los 10 tópicos mayores y 100 de triggers/barriers. Las cohortes no representan evaluación de precisión humana.
 
 ## Sorpresas y descubrimientos
+
+- H7 · La respuesta global llegó completa y pasó la verificación de integridad. El validador detectó dos grupos mixtos asignados tanto a un tópico individual como a una exclusión justificada. En otro tópico encontró dos versiones inglesas que diferían por tres caracteres. El worker se detuvo antes de materializar el mapa.
 
 - H7 · Tras el ajuste, Studio mostró «0 de 158 grupos» y USD 0.00 confirmados y reservados. La autoridad de procesamiento del estudio seguía vigente; el worker conservaba una fecha global del 9 de septiembre para la ruta histórica.
 
@@ -406,6 +409,8 @@ Lo demás se resuelve de forma autónoma y se anota en el registro de decisiones
 
 ## Registro de decisiones
 
+- H7 · Conservar las dos exclusiones justificadas. En ambos casos el tópico individual repetía el nombre y la definición del grupo mixto. Para la discrepancia inglesa se eligió la definición inglesa del bloque de localización del mismo recibo. La prueba sin proveedor conservó 138 grupos incluidos y 20 excluidos, con 111 tópicos y 98 términos de categoría. La respuesta original queda intacta y la adopción por Studio requiere la misma solicitud y los mismos puntos de control.
+
 - H7 · Recuperar la interpretación sobre la misma ejecución y su recibo de autorización vigente. Se conserva el límite histórico de las otras rutas y el resultado numérico ya calculado.
 
 - H7 · Conservar la ejecución creada en Topics y su recibo. El worker recogerá el asiento pendiente al reconocer el contrato de producto y su admisión. Los pilotos privados siguen su ruta de operador.
@@ -499,7 +504,7 @@ Lo demás se resuelve de forma autónoma y se anota en el registro de decisiones
 
 ## Resultado y retrospectiva
 
-El corte de base de datos de R15 terminó en UAT con el mismo catálogo que la copia ensayada. Los resultados y el acceso a evidencia de las marcas históricas coincidieron antes y después. Studio y workers ya sirven desde la misma revisión. Studio aceptó los once archivos y preparó el texto de 83,962 raíces elegibles. El recibo de preparación registra 127,117 fragmentos. El worker completó los vectores de todo el corpus. Studio y workers pasaron a `3217854e` con Railpack y cero cambios preparados. Topics admitió un único mapa en la ruta normal de UAT. El worker de `3ceb6598` recogió ese asiento y completó el ajuste numérico con 158 grupos. La primera reserva quedó sin envío. En `57f3544d`, la interfaz reanudó la misma ejecución con su admisión vigente y su resultado numérico conservado.
+El corte de base de datos de R15 terminó en UAT con el mismo catálogo que la copia ensayada. Los resultados y el acceso a evidencia de las marcas históricas coincidieron antes y después. Studio y workers ya sirven desde la misma revisión. Studio aceptó los once archivos y preparó el texto de 83,962 raíces elegibles. El recibo de preparación registra 127,117 fragmentos. El worker completó los vectores de todo el corpus. Studio y workers pasaron a `3217854e` con Railpack y cero cambios preparados. Topics admitió un único mapa en la ruta normal de UAT. El worker de `3ceb6598` recogió ese asiento y completó el ajuste numérico con 158 grupos. La primera reserva quedó sin envío. En `57f3544d`, la interfaz reanudó la misma ejecución con su admisión vigente y su resultado numérico conservado. La interpretación completó los 158 grupos. Se liquidaron USD 8.412135 en total por la interpretación y la consolidación global. La recuperación del catálogo pasó el validador fuera de línea y queda pendiente comprobar su adopción en UAT.
 
 ### Ronda 14
 
