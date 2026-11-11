@@ -12,6 +12,7 @@ import {
   signalWorkspaceMassLabelingConfigV1,
   buildMassLabelingConsolidationRequestV1,
 } from "@noisia/query-engine";
+import { SignalWorkspaceEngineInterpretationError } from "@noisia/db";
 import type {
   SignalWorkspaceEngineLeaseV1,
   SignalWorkspaceEngineInterpretationCallV1,
@@ -615,4 +616,22 @@ test("mass consolidation and its category lexicon use the dedicated credential w
     if (dedicated === undefined) delete process.env.NOISIA_MASS_LABELING_ANTHROPIC_API_KEY;
     else process.env.NOISIA_MASS_LABELING_ANTHROPIC_API_KEY = dedicated;
   }
+});
+
+test("native global consolidation rechecks DB authority before HTTP", async () => {
+  const f = await fixture();
+  let fetches = 0, authorizations = 0;
+  try {
+    f.args.lease.snapshot.mass_labeling_product = true;
+    f.args.stores = { ...f.args.stores!, sent: async () => {
+      authorizations++;
+      throw new SignalWorkspaceEngineInterpretationError("workspace_engine_interpretation_admission_revoked", 409);
+    } };
+    f.args.send = async args => sendMassLabelingConsolidationV1({ ...args,
+      fetch_impl: async () => { fetches++; return new Response("{}"); } });
+    await assert.rejects(consolidateMassLabelingGroupsV1(f.args), /admission_revoked/u);
+    assert.equal(authorizations, 1);
+    assert.equal(fetches, 0);
+    assert.equal(f.charges(), 0);
+  } finally { await f.cleanup(); }
 });

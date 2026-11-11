@@ -43,6 +43,7 @@ async function scenario(configuration: SignalWorkspaceInterpretationConfiguratio
   let failRepairReservationAck = false, failSettlementAck = false;
   let reserveFailure: string | null = null;
   let sendRejection: Error | null = null;
+  let rejectRepairOnly = false;
   let totalSettled = 0;
   let partialCompleted = 0;
   const exceptions: Array<{ unit_keys: string[] }> = [];
@@ -120,7 +121,7 @@ async function scenario(configuration: SignalWorkspaceInterpretationConfiguratio
       if (args.editorial_repair && failRepairReservationAck) { failRepairReservationAck = false; throw new Error("workspace_engine_worker_failed"); }
       return { ...call };
     },
-    sent: async () => { if (sendRejection) throw sendRejection;
+    sent: async () => { if (sendRejection && (!rejectRepairOnly || call!.editorial_repair)) throw sendRejection;
       const allowed = call!.state === "reserved"; if (allowed) call!.state = "in_flight";
       states.push("sent"); return { call, send_authorized: allowed }; },
     response: async (args: { response: NonNullable<SignalWorkspaceEngineInterpretationCallV1["response"]> }) => {
@@ -184,7 +185,7 @@ async function scenario(configuration: SignalWorkspaceInterpretationConfiguratio
       const context=await stores.context({database:args.database,lease});
       return executeWorkspaceInterpretationBatchV1({database:args.database,
         execution:{execution_id:lease.execution_id,workspace_id:lease.workspace_id,execution_token:lease.execution_token,
-          interpretation_revision_digest:lease.interpretation_revision_digest,interpretation_admission:lease.interpretation_admission},
+          interpretation_revision_digest:lease.interpretation_revision_digest,interpretation_admission:lease.interpretation_admission,snapshot:lease.snapshot},
         actor_user_id:context.actor_user_id,config:lease.snapshot.interpretation_config!,
         batch:buildSignalWorkspaceInterpretationBatchV1(context.context,[cluster],configuration),
         directory:args.directory,storage:args.storage,stores,send:args.send,api_key:args.api_key,
@@ -218,6 +219,7 @@ async function scenario(configuration: SignalWorkspaceInterpretationConfiguratio
     });
   };
   return { execute, executeBatchOnly:(expires?:string,recoveryOnly=false)=>execute(expires,true,recoveryOnly), cleanup: () => rm(directory, { recursive: true, force: true }),
+    nativeProduct: (value: unknown = true) => { lease.snapshot.mass_labeling_product = value as true; },
     admission: (receipt: SignalWorkspaceEngineLeaseV1["interpretation_admission"]) => { lease.interpretation_admission = receipt; },
     callAdmission: (receipt: SignalWorkspaceEngineInterpretationCallV1["admission"]) => { callAdmission = receipt; },
     providerEnabled: (value: boolean) => { providerEnabled = value; },
@@ -256,7 +258,7 @@ async function scenario(configuration: SignalWorkspaceInterpretationConfiguratio
       call.state = "terminal_confirmed";
     },
     rejectReserve: (code: string) => { reserveFailure = code; },
-    rejectSend: (error: Error) => { sendRejection = error; },
+    rejectSend: (error: Error, repairOnly = false) => { sendRejection = error; rejectRepairOnly = repairOnly; },
     repairDisabled: (value: boolean) => { disableRepair = value; }, repairCapBlocked: () => { denyRepairCap = true; },
     loseRepairReservationAcknowledgment: () => { failRepairReservationAck = true; },
     loseSettlementAcknowledgment: () => { failSettlementAck = true; },
@@ -915,4 +917,66 @@ test("mass editorial groups and repairs select their dedicated credential while 
     if (dedicated === undefined) delete process.env.NOISIA_MASS_LABELING_ANTHROPIC_API_KEY;
     else process.env.NOISIA_MASS_LABELING_ANTHROPIC_API_KEY = dedicated;
   }
+});
+
+for (const repair of [false, true]) test(`native product ${repair ? "repair" : "group"} uses DB send authority despite expired legacy deadline`, async () => {
+  const s = await scenario(); try {
+    s.nativeProduct();
+    if (repair) { s.mode("invalid"); s.repairMode("valid"); }
+    await s.execute("2000-01-01T00:00:00.000Z");
+    const result = s.get();
+    assert.equal(result.sends, repair ? 2 : 1);
+    assert.deepEqual(result.seenAuthorizations, repair ? [undefined, undefined] : [undefined]);
+    assert.equal(result.states.filter(value => value === "sent").length, result.sends);
+    assert.equal(result.completed, 1);
+  } finally { await s.cleanup(); }
+});
+for (const marker of [null, false, "true"]) test(`non-native marker ${String(marker)} preserves expired legacy send deadline`, async () => {
+  const s = await scenario(); try {
+    s.nativeProduct(marker);
+    await assert.rejects(s.execute("2000-01-01T00:00:00.000Z"), /daily_authority_expired/u);
+    assert.equal(s.get().sends, 0);
+    assert.equal(s.get().call?.state, "definitely_not_sent");
+  } finally { await s.cleanup(); }
+});
+for (const reason of ["daily_authority_expired", "admission_revoked", "admission_changed"] as const)
+  test(`native product DB ${reason} prevents provider HTTP despite ignoring legacy deadline`, async () => {
+    const s = await scenario(); try {
+      s.nativeProduct();
+      s.rejectSend(new SignalWorkspaceEngineInterpretationError(`workspace_engine_interpretation_${reason}`, 409));
+      await assert.rejects(s.execute("2000-01-01T00:00:00.000Z"), new RegExp(reason, "u"));
+      assert.equal(s.get().sends, 0);
+      assert.equal(s.get().call?.state, "definitely_not_sent");
+      assert.equal(s.get().totalSettled, 0);
+    } finally { await s.cleanup(); }
+  });
+
+test("native product repair rechecks DB authority after the first settled group response", async () => {
+  const s = await scenario(); try {
+    s.nativeProduct(); s.mode("invalid"); s.repairMode("valid");
+    s.rejectSend(new SignalWorkspaceEngineInterpretationError("workspace_engine_interpretation_admission_revoked", 409), true);
+    await assert.rejects(s.execute("2000-01-01T00:00:00.000Z"), /admission_revoked/u);
+    const result = s.get();
+    assert.equal(result.sends, 1);
+    assert.equal(result.calls[0]?.state, "settled");
+    assert.equal(result.calls[1]?.state, "definitely_not_sent");
+    assert.equal(result.completed, 0);
+  } finally { await s.cleanup(); }
+});
+
+test("native product resumes the proven unsent request with one successor and unchanged request bytes", async () => {
+  const s = await scenario(); try {
+    await assert.rejects(s.execute("2000-01-01T00:00:00.000Z"), /daily_authority_expired/u);
+    const before = structuredClone(s.get().call!);
+    s.nativeProduct();
+    await s.execute("2000-01-01T00:00:00.000Z");
+    const result = s.get();
+    assert.equal(result.sends, 1);
+    assert.equal(result.calls.length, 2);
+    assert.deepEqual(result.calls[0], before);
+    assert.equal(result.call!.retry_of_call_id, before.call_id);
+    assert.equal(result.call!.request_digest, before.request_digest);
+    assert.equal(result.seenBatches[0]!.request_body, result.seenBatches[1]!.request_body);
+    assert.equal(result.completed, 1);
+  } finally { await s.cleanup(); }
 });
