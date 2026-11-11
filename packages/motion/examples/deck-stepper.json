@@ -1,0 +1,2 @@
+{ "format": "deck", "pattern": "stepper", "box": { "w": 1600, "h": 360 }, "seconds": 12, "locale": "es",
+  "steps": [ { "label": "Pregunta", "icon": "search" }, { "label": "Corpus", "icon": "database" }, { "label": "Depuración", "icon": "filter" }, { "label": "Análisis", "icon": "brain" }, { "label": "Insight", "icon": "light-bulb" } ] }

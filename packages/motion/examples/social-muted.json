@@ -1,0 +1,14 @@
+{
+  "_source": "noisia.ai/insights, report The Mexican Home (editorial, public). Same story as social.json, without voice: it must read muted.",
+  "format": "social",
+  "locale": "en",
+  "tag": "Home · MX",
+  "background": { "kind": "bloom", "name": "v-soft" },
+  "scenes": [
+    { "type": "hook", "text": "Since when did staying home stop needing an excuse?", "background": { "kind": "bloom", "name": "v-top" } },
+    { "type": "stat", "value": 189, "suffix": "%", "label": "more mentions of home as a refuge in May than in January 2026" },
+    { "type": "tension", "want": "The street as the destination", "but": "Home as the destination", "value": null },
+    { "type": "quote", "text": "Yo, neta amo salir con mis amigos pero prefiero estar en mi casa, y si ya cancelan, no me quejo.", "translation": "Honestly, I love going out with my friends but I'd rather be at home, and if they cancel, I don't complain.", "platform": "TikTok", "meta": "MX · Jan–May 2026" },
+    { "type": "takeaway", "text": "Treat home as a destination. Silence, coffee and a good bed are a plan too." }
+  ]
+}
