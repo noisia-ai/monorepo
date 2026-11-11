@@ -229,7 +229,9 @@ Lo demás se resuelve de forma autónoma y se anota en el registro de decisiones
 - [x] H7 · Los PR #158 y #159 pasaron revisión, CI y PostgreSQL antes y después de integrarse. Studio y workers sirven `57f3544d` con Railpack, salud y cero cambios preparados. «Reanudar análisis» respondió HTTP 202 en 46.250 s. El worker recibió la segunda generación de la misma ejecución con su punto de recuperación.
 - [x] H7 · Se completó la interpretación de los 158 grupos. Hay 52 puntos de control y 56 respuestas de grupo liquidadas por USD 7.257105. El recibo global añadió USD 1.155030. La primera reserva sin envío conserva gasto cero.
 - [x] H7 · La cabeza revisada del PR #160 pasó CI y PostgreSQL y se integró en `99f8bcff`. En la copia restaurada, la migración 0292 cambió sólo el cuerpo de la función que verifica las decisiones de recuperación. Se conservaron sus permisos y los lectores históricos dieron los mismos resultados. La repetición verificó las 60 entradas del ledger sin aplicar DDL.
-- [ ] H7 · Recuperar desde Studio la respuesta global guardada, verificar la adopción del mapa, curar el léxico, completar JEV y comprobar Signal.
+- [x] H7 · La migración 0292 se aplicó una sola vez en UAT. El catálogo coincide con la copia, los lectores históricos conservaron sus resultados y CI y PostgreSQL quedaron verdes sobre la integración. Studio y workers sirven `99f8bcff` con Railpack y cero cambios preparados.
+- [x] H7 · Studio reanudó la misma ejecución con HTTP 202 en 54.230 s. El motor terminó con la respuesta global original. Los 57 recibos liquidados y su importe permanecieron idénticos. UAT conserva la propuesta editorial de 97 términos distintos y una revisión de analista con 129 términos, dos intereses activos, idioma inglés y umbral 0.85.
+- [ ] H7 · Materializar los candidatos por raíz, clasificar con JEV y comprobar Signal. Después se sellan la comparación de poblaciones y las muestras ciegas.
 
 - [x] H7 · La lectura optimizada de Signal pasó la comprobación en los cuatro segmentos del estudio de dev-test. En seis mediciones intercaladas, la vista general tardó de 1.570 a 2.570 s y la evidencia de 1.027 a 1.621 s. La medición posterior de la página desplegada figura arriba. [PR de la consulta](https://github.com/noisia-ai/monorepo/pull/142)
 
@@ -309,6 +311,8 @@ Lo demás se resuelve de forma autónoma y se anota en el registro de decisiones
 - [x] Hito 4 · Recibo, comparación y muestras ciegas verificados. Se entregan el recibo público de una página y, en custodia privada, el anexo comparativo, método/fuentes, 600 casos en 11 cohortes y la clave sellada por separado. Son 597 raíces distintas por los solapamientos entre cohortes; cada cohorte cumple sus cuotas de 50 raíces por tópico para los 10 tópicos mayores y 100 de triggers/barriers. Las cohortes no representan evaluación de precisión humana.
 
 ## Sorpresas y descubrimientos
+
+- H7 · Tras el cierre editorial, la consulta que ordena los ocho tópicos más próximos a cada raíz agotó el límite del servidor. PostgreSQL registró el código 57014 en la creación de la tabla temporal de puntuaciones. La transacción revirtió el mapa incompleto. La propuesta editorial ya estaba guardada en su propia revisión.
 
 - H7 · La revisión del control de recuperación detectó que la cola todavía exigía una admisión financiera vigente para despachar un recibo ya pagado. La prueba cubre ahora todo el recorrido tras revocar esa política. La prueba separada de expiración usa una admisión de corta duración. En la primera ejecución de CI el montaje tardó 57.6 s y agotó su ventana inicial de 30 s.
 
@@ -412,6 +416,8 @@ Lo demás se resuelve de forma autónoma y se anota en el registro de decisiones
 
 ## Registro de decisiones
 
+- H7 · Curar la propuesta editorial una vez persistida, mientras se resuelve el cálculo de candidatos. Las 98 entradas recibidas contenían 97 términos distintos. La configuración de analista incorpora 27 adiciones frente a los 102 términos de referencia. El catálogo editorial y sus recibos conservan sus huellas.
+
 - H7 · Permitir que el worker reciba una recuperación sin gasto cuando existe la decisión sellada del mismo actor y estudio, con el recibo y la fuente verificados. La ruta que sí puede enviar solicitudes sigue requiriendo autoridad financiera vigente. El recibo privado compara los registros monetarios antes y después.
 
 - H7 · Conservar las dos exclusiones justificadas. En ambos casos el tópico individual repetía el nombre y la definición del grupo mixto. Para la discrepancia inglesa se eligió la definición inglesa del bloque de localización del mismo recibo. La prueba sin proveedor conservó 138 grupos incluidos y 20 excluidos, con 111 tópicos y 98 términos de categoría. La respuesta original queda intacta y la adopción por Studio requiere la misma solicitud y los mismos puntos de control.
@@ -509,7 +515,7 @@ Lo demás se resuelve de forma autónoma y se anota en el registro de decisiones
 
 ## Resultado y retrospectiva
 
-El corte de base de datos de R15 terminó en UAT con el mismo catálogo que la copia ensayada. Los resultados y el acceso a evidencia de las marcas históricas coincidieron antes y después. Studio y workers ya sirven desde la misma revisión. Studio aceptó los once archivos y preparó el texto de 83,962 raíces elegibles. El recibo de preparación registra 127,117 fragmentos. El worker completó los vectores de todo el corpus. Studio y workers pasaron a `3217854e` con Railpack y cero cambios preparados. Topics admitió un único mapa en la ruta normal de UAT. El worker de `3ceb6598` recogió ese asiento y completó el ajuste numérico con 158 grupos. La primera reserva quedó sin envío. En `57f3544d`, la interfaz reanudó la misma ejecución con su admisión vigente y su resultado numérico conservado. La interpretación completó los 158 grupos. Se liquidaron USD 8.412135 en total por la interpretación y la consolidación global. La recuperación del catálogo pasó el validador fuera de línea y queda pendiente comprobar su adopción en UAT.
+El corte de base de datos de R15 terminó en UAT con el mismo catálogo que la copia ensayada. Los resultados y el acceso a evidencia de las marcas históricas coincidieron antes y después. Studio y workers ya sirven desde la misma revisión. Studio aceptó los once archivos y preparó el texto de 83,962 raíces elegibles. El recibo de preparación registra 127,117 fragmentos. El worker completó los vectores de todo el corpus. Studio y workers pasaron a `3217854e` con Railpack y cero cambios preparados. Topics admitió un único mapa en la ruta normal de UAT. El worker de `3ceb6598` recogió ese asiento y completó el ajuste numérico con 158 grupos. La primera reserva quedó sin envío. En `57f3544d`, la interfaz reanudó la misma ejecución con su admisión vigente y su resultado numérico conservado. La interpretación completó los 158 grupos. Se liquidaron USD 8.412135 en total por la interpretación y la consolidación global. El motor recuperó el catálogo en UAT sin aumentar ese importe. Studio guardó la propuesta y la curación del léxico. Queda pendiente incorporar los ocho candidatos por raíz para JEV y verificar su lectura en Signal.
 
 ### Ronda 14
 
