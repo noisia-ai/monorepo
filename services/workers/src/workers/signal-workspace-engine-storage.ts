@@ -42,7 +42,7 @@ const prefixFor = (workspace: string, execution: string) => {
 /** Existing private Supabase corpus bucket, deterministic immutable keys and
  * bounded parts. Models survive worker replacement; no local path becomes a receipt. */
 export function createWorkspaceEngineStorageV1(options: {
-  url?: string; service_role_key?: string; bucket?: string; fetch?: typeof fetch; timeout_ms?: number;
+  url?: string; service_role_key?: string; bucket?: string; fetch?: typeof fetch; timeout_ms?: number; retry_429_min_delay_ms?: number;
 } = {}): WorkspaceEngineStorageV1 {
   const url = (options.url ?? process.env.SUPABASE_URL ?? "").replace(/\/$/u, "");
   const key = options.service_role_key ?? process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
@@ -51,6 +51,8 @@ export function createWorkspaceEngineStorageV1(options: {
   const parsed = new URL(url);
   if (parsed.protocol !== "https:" && !["127.0.0.1", "localhost"].includes(parsed.hostname)) return fail("url_invalid");
   const transport = options.fetch ?? fetch;
+  const minimum429Delay = options.retry_429_min_delay_ms ?? 0;
+  if (!Number.isSafeInteger(minimum429Delay) || minimum429Delay < 0 || minimum429Delay > 30_000) return fail("retry_delay_invalid");
   const headers: Record<string, string> = { apikey: key, ...(key.startsWith("eyJ") ? { Authorization: `Bearer ${key}` } : {}) };
   const objectUrl = (path: string) => `${url}/storage/v1/object/authenticated/${encodeURIComponent(bucket)}/${path.split("/").map(encodeURIComponent).join("/")}`;
   async function request(endpoint: string, init: RequestInit = {}) {
@@ -70,7 +72,8 @@ export function createWorkspaceEngineStorageV1(options: {
         ? Number(retryAfter) * 1000 : Math.max(0, Date.parse(retryAfter) - Date.now());
       // A longer server window stays closed until the next storage recovery.
       if (!Number.isFinite(requestedDelay) || requestedDelay > 30_000) return fail("unavailable");
-      await delay(Math.max(requestedDelay, 250 * 2 ** attempt) + Math.floor(Math.random() * 250));
+      const minimumDelay = response.status === 429 && retryAfter === null ? minimum429Delay : 0;
+      await delay(Math.max(requestedDelay, minimumDelay, 250 * 2 ** attempt) + Math.floor(Math.random() * 250));
     }
     return fail("unavailable");
   }

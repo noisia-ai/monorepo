@@ -68,6 +68,8 @@ export function processMassLabelingJevV1(args: {
     ...args,
     hooks: {
       price: priceOf,
+      max_in_flight: run => run.identity.params.request_version === "mass-labeling-jev-v2"
+        ? Math.min(8, args.provider.max_concurrency ?? 8) : undefined,
       propose: (run, inputs) =>
         inputs.map((input) => {
           const request = run.identity.params.request_version === "mass-labeling-jev-v2"
@@ -132,8 +134,9 @@ export async function processMassLabelingProductPageV2(args: Parameters<typeof p
 
 export function createMassLabelingRuntimeStoreV1(
   database: Parameters<typeof createMassLabelingStoreV1>[0]["database"],
+  options: { product_v2?: boolean } = {},
 ) {
-  const storage = createWorkspaceEngineStorageV1();
+  const storage = createWorkspaceEngineStorageV1({ retry_429_min_delay_ms: options.product_v2 ? 3000 : undefined });
   return createMassLabelingStoreV1({
     database,
     storeRawVerified: true,
@@ -193,8 +196,10 @@ export async function signalMassLabelingJevJobV1(job: {
   });
   const pool = options.database ?? (await import("../db/client")).pool;
   const run = (
-    await pool.query<{ workspace_id: string }>(
-      "SELECT workspace_id FROM signal_labeling_runs WHERE id=$1::uuid AND kind='mass_labeling'",
+    await pool.query<{ workspace_id: string; request_version: string }>(
+      `SELECT run.workspace_id,labeler.identity#>>'{params,request_version}' request_version
+       FROM signal_labeling_runs run JOIN signal_labeler_versions labeler ON labeler.id=run.labeler_version_id
+       WHERE run.id=$1::uuid AND run.kind='mass_labeling'`,
       [job.data.run_id],
     )
   ).rows[0];
@@ -210,7 +215,7 @@ export async function signalMassLabelingJevJobV1(job: {
   if (!options.provider) runtimeProvider ??= createTypesafeJevClientV1({ enabled: process.env.NOISIA_JEV_PROVIDER_ENABLED !== "false" });
   const outcome = await processMassLabelingProductPageV2({
     database: pool, run_id: job.data.run_id,
-    store: options.store ?? createMassLabelingRuntimeStoreV1(pool),
+    store: options.store ?? createMassLabelingRuntimeStoreV1(pool, { product_v2: run.request_version === "mass-labeling-jev-v2" }),
     provider: options.provider ?? runtimeProvider!,
   });
   return outcome;

@@ -6,10 +6,10 @@ import test from "node:test";
 import { createWorkspaceEngineStorageV1 } from "./signal-workspace-engine-storage";
 import { hashWorkspaceEngineFileV1 } from "./signal-workspace-engine-files";
 const scope = { workspace_id: "00000000-0000-4000-8000-000000000001", execution_id: "00000000-0000-4000-8000-000000000002" };
-function server(allowedMimeTypes?: readonly string[]) {
+function server(allowedMimeTypes?: readonly string[], retry429Delay?: number) {
   const objects = new Map<string, Uint8Array>(), writes: number[] = [];
   let publicBucket = false, corrupt = false, rateLimit = false;
-  let rateLimitedReads = 0;
+  let rateLimitedReads = 0, includeRetryAfter = true;
   const transport: typeof fetch = async (input, init) => {
     const url = String(input);
     assert.equal((init?.headers as Record<string, string>).apikey, "unit-test-key");
@@ -31,14 +31,14 @@ function server(allowedMimeTypes?: readonly string[]) {
     if (rateLimit && path.includes(".part-")) {
       rateLimit = false; rateLimitedReads++;
       assert.ok(![...objects.keys()].some(key => key.endsWith(".parts.json")), "manifest waits for successful readback");
-      return new Response("", { status: 429, headers: { "retry-after": "0.001" } });
+      return new Response("", { status: 429, headers: includeRetryAfter ? { "retry-after": "0.001" } : {} });
     }
     const body = objects.get(path);
     if (!body) return new Response("", { status: 404 });
     return new Response(corrupt && path.includes(".part-") ? new Uint8Array(body.length).fill(9) : new Uint8Array(body));
   };
-  const storage = createWorkspaceEngineStorageV1({ url: "https://example.supabase.co", service_role_key: "unit-test-key", fetch: transport });
-  return { storage, objects, writes, rateLimitReadOnce: () => { rateLimit = true; }, rateLimitedReads: () => rateLimitedReads, makePublic: () => { publicBucket = true; }, corrupt: () => { corrupt = true; } };
+  const storage = createWorkspaceEngineStorageV1({ url: "https://example.supabase.co", service_role_key: "unit-test-key", fetch: transport, retry_429_min_delay_ms: retry429Delay });
+  return { storage, objects, writes, rateLimitReadOnce: (retryAfter = true) => { rateLimit = true; includeRetryAfter = retryAfter; }, rateLimitedReads: () => rateLimitedReads, makePublic: () => { publicBucket = true; }, corrupt: () => { corrupt = true; } };
 }
 test("JSON envelopes roundtrip in a private import bucket with binary-only artifact MIME permission", async () => {
   const directory = await mkdtemp(join(tmpdir(), "noisia-storage-mime-"));
@@ -142,3 +142,17 @@ for (const mode of ["missing_first_part", "extra_short_part", "truncated_bytes"]
     } finally { await rm(directory, { recursive: true, force: true }); }
   });
 }
+
+test("native receipt policy waits at least three seconds for a 429 without Retry-After", { timeout: 10000 }, async () => {
+  const directory = await mkdtemp(join(tmpdir(), "noisia-storage-receipt-backoff-"));
+  try {
+    const fixture = server(undefined, 3000), file = join(directory, "receipt.json");
+    await writeFile(file, "paid response");
+    fixture.rateLimitReadOnce(false);
+    const started = performance.now();
+    await fixture.storage.put({ ...scope, file, sha256: await hashWorkspaceEngineFileV1(file), size_bytes: 13, media_type: "application/json" });
+    assert.ok(performance.now() - started >= 3000);
+    assert.equal(fixture.rateLimitedReads(), 1);
+    assert.equal(fixture.objects.size, 2);
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
