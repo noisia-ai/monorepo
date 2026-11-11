@@ -309,6 +309,8 @@ Lo demás se resuelve de forma autónoma y se anota en el registro de decisiones
 
 ## Sorpresas y descubrimientos
 
+- H7 · La revisión del control de recuperación detectó que la cola todavía exigía una admisión financiera vigente para despachar un recibo ya pagado. La prueba cubre ahora todo el recorrido tras revocar esa política. La prueba separada de expiración usa una admisión de corta duración. En la primera ejecución de CI el montaje tardó 57.6 s y agotó su ventana inicial de 30 s.
+
 - H7 · La respuesta global llegó completa y pasó la verificación de integridad. El validador detectó dos grupos mixtos asignados tanto a un tópico individual como a una exclusión justificada. En otro tópico encontró dos versiones inglesas que diferían por tres caracteres. El worker se detuvo antes de materializar el mapa.
 
 - H7 · Tras el ajuste, Studio mostró «0 de 158 grupos» y USD 0.00 confirmados y reservados. La autoridad de procesamiento del estudio seguía vigente; el worker conservaba una fecha global del 9 de septiembre para la ruta histórica.
@@ -408,6 +410,8 @@ Lo demás se resuelve de forma autónoma y se anota en el registro de decisiones
 - Dos lotes devolvieron referencias válidas dentro de la muestra de 30 pero superaron el máximo de diez referencias por campo. La comprobación privada de las respuestas originales y de reparación encontró entre 11 y 30 referencias en los campos rechazados.
 
 ## Registro de decisiones
+
+- H7 · Permitir que el worker reciba una recuperación sin gasto cuando existe la decisión sellada del mismo actor y estudio, con el recibo y la fuente verificados. La ruta que sí puede enviar solicitudes sigue requiriendo autoridad financiera vigente. El recibo privado compara los registros monetarios antes y después.
 
 - H7 · Conservar las dos exclusiones justificadas. En ambos casos el tópico individual repetía el nombre y la definición del grupo mixto. Para la discrepancia inglesa se eligió la definición inglesa del bloque de localización del mismo recibo. La prueba sin proveedor conservó 138 grupos incluidos y 20 excluidos, con 111 tópicos y 98 términos de categoría. La respuesta original queda intacta y la adopción por Studio requiere la misma solicitud y los mismos puntos de control.
 
