@@ -211,6 +211,10 @@ Lo demás se resuelve de forma autónoma y se anota en el registro de decisiones
 
 ## Progreso
 
+- [x] H7 · El PR #163 se integró en `50bf8f44` tras revisión independiente del código y de las pruebas. CI y PostgreSQL quedaron verdes en el PR y en el commit fusionado. En PostgreSQL 17, con 83,962 raíces y 129 términos, el cálculo y la escritura de los candidatos en 84 lotes tardaron 127.731 s con estadísticas representativas y 170.428 s con estadísticas frías. Las sentencias más largas tardaron 2.502 s y 3.239 s, respectivamente. Las nueve pruebas de la ruta nativa pasaron. Queda por medir la adopción real en UAT.
+
+- [x] H7 · Studio y workers de UAT sirven `004e4331` con Railpack. Se verificaron ambos procesos, el avance del heartbeat, HTTP 200 y cero cambios preparados. El cálculo de puntuaciones terminó en el octavo intento sobre el corpus real. La consulta que prepara los paquetes de candidatos agotó 120 s. PostgreSQL revirtió la transacción y los recibos editoriales siguen sumando USD 8.412135.
+
 - [x] H7 · En PostgreSQL 17, el cambio de adopción del PR #162 conservó los ocho candidatos de cada raíz, el orden de desempate, los fragmentos y sus huellas. Con 83,962 raíces, 127,117 fragmentos y 111 tópicos sintéticos, la puntuación tardó 6.568 s y la escritura con índices y proyecciones tardó 45.331 s. El revisor aceptó el SQL y el ajuste posterior de las pruebas en `7a34dca4`. CI y PostgreSQL pasaron en el PR y en la fusión `004e4331`. La adopción real en UAT sigue pendiente.
 
 - [x] H7 · En UAT, la consulta revisada del PR #154 devolvió las tres guías del mapa en 44.145 s. En PostgreSQL, la prueba de 83,962 raíces comprobó la equivalencia de centroides, huellas de entrada y fragmentos. El PR #155 evita una segunda lectura de todas las guías para consultar el tamaño del corpus al iniciar el análisis.
@@ -313,6 +317,10 @@ Lo demás se resuelve de forma autónoma y se anota en el registro de decisiones
 - [x] Hito 4 · Recibo, comparación y muestras ciegas verificados. Se entregan el recibo público de una página y, en custodia privada, el anexo comparativo, método/fuentes, 600 casos en 11 cohortes y la clave sellada por separado. Son 597 raíces distintas por los solapamientos entre cohortes; cada cohorte cumple sus cuotas de 50 raíces por tópico para los 10 tópicos mayores y 100 de triggers/barriers. Las cohortes no representan evaluación de precisión humana.
 
 ## Sorpresas y descubrimientos
+
+- H7 · En el ensayo de estadísticas frías, el cálculo de coincidencia de categoría generó 83,964,001 filas intermedias para 1,000 raíces. El plan de ejecución atribuyó 38.91 s a ese trigger. El cambio probado redujo el intermedio a 83,965 filas con estadísticas frías y a 1,000 con estadísticas representativas. Se comprobó la restauración de la configuración de la conexión tanto al confirmar como al fallar.
+
+- H7 · En UAT, una vez calculadas las puntuaciones, el servidor identificó `CREATE TEMP TABLE mass_map_items` como la siguiente consulta que excedió el límite. El registro de PostgreSQL a las 07:54:22 UTC contiene el código 57014. Esa consulta todavía reunía en una tabla temporal los textos localizados de las 83,962 raíces antes de empezar las inserciones por lote.
 
 - H7 · La corrida de 83,962 raíces del PR #162 en GitHub superó el límite de 600 s. En una base nueva con las 273 migraciones y las variables de CI, la misma revisión terminó en 84.48 s. La causa específica del tiempo del runner queda abierta. La nueva prueba ordinaria inserta tres lotes y verifica el rollback de cuatro proyecciones después de interrumpir dos lotes. El ensayo completo con 84 lotes sigue disponible y pasó en 85.73 s.
 
@@ -421,6 +429,10 @@ Lo demás se resuelve de forma autónoma y se anota en el registro de decisiones
 - Dos lotes devolvieron referencias válidas dentro de la muestra de 30 pero superaron el máximo de diez referencias por campo. La comprobación privada de las respuestas originales y de reparación encontró entre 11 y 30 referencias en los campos rechazados.
 
 ## Registro de decisiones
+
+- H7 · Conservar la agregación global de vectores antes de dividir las distancias y los paquetes por rangos. Un ensayo con cancelaciones numéricas detectó cambios en 276 puntuaciones al aplicar antes el filtro de rango. La versión revisada conserva los bits del promedio y de las puntuaciones en los casos de paridad, y calcula el tamaño presupuestable a partir de las filas que se insertan.
+
+- H7 · Preparar y escribir cada lote de candidatos en la misma transacción, conservando un ordinal global por raíz. Se medirá el coste por sentencia además del tiempo total y se compararán los paquetes, huellas y empates con la consulta original.
 
 - H7 · Mantener la comparación exacta, el rollback y la cancelación de la conexión en cada ejecución de PostgreSQL. Ejecutar también el volumen completo en una base desechable y guardar su recibo. El revisor comprobó ambas pruebas en `7a34dca4`.
 
