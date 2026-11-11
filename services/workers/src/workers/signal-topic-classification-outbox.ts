@@ -23,6 +23,25 @@ type Options = { database?: Pick<Pool, "query" | "connect">; queue?: QueueLike; 
   numeric_cursor?: { after_workspace_id: string | null };
   schedule?: typeof scheduleSignalWorkspaceTopicComputationsV1 };
 
+// Shared with the isolated PostgreSQL expiration fixture: the financial
+// predicate is evaluated against real guarded admission/policy rows.
+export const MASS_LABELING_PAID_ADMISSION_GUARD_V1 = `EXISTS(
+        SELECT 1 FROM signal_processing_admissions admission
+        JOIN signal_processing_policy_versions policy ON policy.id=admission.policy_version_id
+          AND policy.organization_id=admission.organization_id AND policy.status='active'
+          AND policy.valid_from<=clock_timestamp() AND policy.valid_until>clock_timestamp()
+        JOIN signal_workspaces workspace ON workspace.id=pilot.workspace_id AND workspace.status='active'
+          AND workspace.organization_id=admission.organization_id AND workspace.brand_id=admission.brand_id
+        WHERE admission.id=pilot.processing_admission_id
+          AND admission.workspace_id=pilot.workspace_id AND admission.actor_user_id=pilot.actor_user_id
+          AND admission.target_id=pilot.id AND admission.request_digest=pilot.request_digest
+          AND admission.action='topic_interpretation' AND admission.provider='anthropic'
+          AND admission.model=pilot.input_snapshot#>>'{interpretation_config,call_configuration,model}'
+          AND signal_processing_configuration_allows_v1(admission.action,admission.configuration,
+            pilot.input_snapshot#>'{interpretation_config,call_configuration}')
+          AND admission.admission_not_after>clock_timestamp()
+      )`;
+
 // Historical paid pilots retain their private operator. Native product runs
 // cross this boundary only with the exact typed profile and their own current,
 // workspace/actor/target-bound admission, or an immutable receipt-only V2
@@ -38,22 +57,7 @@ const massLabelingDispatchGuard = `NOT EXISTS(
       AND pilot.status IN ('queued','running')
       AND signal_brand_context_processing_actor_v1(pilot.workspace_id,pilot.actor_user_id)
       AND pilot.workspace_id=signal_topic_classification_outbox.workspace_id
-      AND (EXISTS(
-        SELECT 1 FROM signal_processing_admissions admission
-        JOIN signal_processing_policy_versions policy ON policy.id=admission.policy_version_id
-          AND policy.organization_id=admission.organization_id AND policy.status='active'
-          AND policy.valid_from<=clock_timestamp() AND policy.valid_until>clock_timestamp()
-        JOIN signal_workspaces workspace ON workspace.id=pilot.workspace_id AND workspace.status='active'
-          AND workspace.organization_id=admission.organization_id AND workspace.brand_id=admission.brand_id
-        WHERE admission.id=pilot.processing_admission_id
-          AND admission.workspace_id=pilot.workspace_id AND admission.actor_user_id=pilot.actor_user_id
-          AND admission.target_id=pilot.id AND admission.request_digest=pilot.request_digest
-          AND admission.action='topic_interpretation' AND admission.provider='anthropic'
-          AND admission.model=pilot.input_snapshot#>>'{interpretation_config,call_configuration,model}'
-          AND signal_processing_configuration_allows_v1(admission.action,admission.configuration,
-            pilot.input_snapshot#>'{interpretation_config,call_configuration}')
-          AND admission.admission_not_after>clock_timestamp()
-      ) OR EXISTS(
+      AND (${MASS_LABELING_PAID_ADMISSION_GUARD_V1} OR EXISTS(
         SELECT 1 FROM signal_mass_labeling_global_receipt_decisions disposition
         JOIN engine_cost_events receipt ON receipt.id=disposition.call_id
           AND receipt.workspace_id=disposition.workspace_id AND receipt.catalog_execution_id=disposition.execution_id

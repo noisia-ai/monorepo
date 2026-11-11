@@ -21,6 +21,7 @@ import { signalWorkspaceEmbeddingsJobV1 } from "../../../services/workers/src/wo
 import { signalWorkspaceEngineJobV1 } from "../../../services/workers/src/workers/signal-workspace-engine";
 import { createBrandContextSyntheticVoyageProviderV1 } from "./signal-brand-context.synthetic.fixture";
 import { materializeMassLabelingProductMapV2 } from "../../../services/workers/src/workers/signal-mass-labeling-product-map";
+import {assertNativePaidAdmissionExpiryV2} from "./signal-mass-labeling-native-expiry.assertions";
 import {assertNativePaidReplayOutboxV2} from "./signal-mass-labeling-native-replay-outbox.assertions";
 import {drainSignalTopicClassificationOutboxV1} from "../../../services/workers/src/workers/signal-topic-classification-outbox";
 import { assertMassLabelingProductOutboxV1 } from "./signal-mass-labeling-product-outbox.assertions";
@@ -123,22 +124,6 @@ for (const variant of ["current", "legacy", "receipt_recovery"] as const) test(`
     const embeddingJob = (await database.query("SELECT worker_job_id FROM signal_workspace_embedding_runs WHERE id=$1", [embedded.run_id])).rows[0]!.worker_job_id;
     const voyage = createBrandContextSyntheticVoyageProviderV1();
     await signalWorkspaceEmbeddingsJobV1({ id: embeddingJob, data: { run_id: embedded.run_id }, updateProgress: async () => {} }, { database, provider: voyage.provider });
-    // Issue a real short-lived spending authority after source preparation.
-    // Its natural expiry must not revoke a later zero-cost sealed receipt replay.
-    let spendingDeadline: Date | null = null;
-    if(variant==="receipt_recovery") {
-      const previous=(await database.query("SELECT id FROM signal_processing_policy_versions WHERE organization_id=$1 AND status='active'",[organization])).rows[0].id;
-      const successor=randomUUID();await client.query("BEGIN");
-      try{
-        await client.query(`INSERT INTO signal_processing_policy_versions(id,organization_id,version,status,valid_from,valid_until,budget_timezone,daily_cap_micro_usd,created_by_user_id)
-          SELECT $1,organization_id,version+1,'draft',valid_from,clock_timestamp()+interval '30 seconds',budget_timezone,daily_cap_micro_usd,created_by_user_id FROM signal_processing_policy_versions WHERE id=$2`,[successor,previous]);
-        await client.query(`INSERT INTO signal_processing_policy_actions(policy_version_id,action,kind,provider,model,configuration,configuration_digest,max_execution_micro_usd,automatic_allowed)
-          SELECT $1,action,kind,provider,model,configuration,configuration_digest,max_execution_micro_usd,automatic_allowed FROM signal_processing_policy_actions WHERE policy_version_id=$2`,[successor,previous]);
-        await client.query("UPDATE signal_processing_policy_versions SET status='revoked' WHERE id=$1",[previous]);
-        spendingDeadline=(await client.query("UPDATE signal_processing_policy_versions SET status='active' WHERE id=$1 RETURNING valid_until",[successor])).rows[0].valid_until;
-        await client.query("COMMIT");
-      }catch(error){await client.query("ROLLBACK");throw error;}
-    }
     const preflight = await loadSignalWorkspaceEnginePreflightV1(access);
     assert.equal(preflight.engine_configuration?.profile_version, "workspace-bertopic-mass-labeling-v3");
     assert.equal(imported.roots.length, 80);
@@ -263,11 +248,11 @@ for (const variant of ["current", "legacy", "receipt_recovery"] as const) test(`
       const replayArgs={database,workspaceId:workspace,actorUserId:clientActor,executionId:started.execution_id,idempotencyKey:randomUUID()};
       await assert.rejects(resumeWorkspacePaidGlobalConsolidationV2({...replayArgs,actorUserId:systemActor},{readStored}),/forbidden|invalid/u);
       await assert.rejects(loadSignalWorkspaceMassLabelingGlobalReplaySourceV2({database,workspace_id:randomUUID(),actor_user_id:clientActor,execution_id:started.execution_id}));
-      assert.ok(spendingDeadline);
-      await new Promise(resolve=>setTimeout(resolve,Math.max(0,spendingDeadline!.getTime()-Date.now()+100)));
-      const expired=(await database.query(`SELECT admission.admission_not_after<=clock_timestamp() expired,policy.valid_until<=clock_timestamp() policy_expired
-        FROM signal_processing_admissions admission JOIN signal_processing_policy_versions policy ON policy.id=admission.policy_version_id WHERE admission.id=$1`,[queued.processing_admission_id])).rows[0];
-      assert.deepEqual(expired,{expired:true,policy_expired:true});
+      // Revoke spending only AFTER the exact paid raw is settled. The public
+      // guards remain enabled and all clients see the same authority row.
+      const spendingPolicy=(await database.query("SELECT policy_version_id FROM signal_processing_admissions WHERE id=$1",[queued.processing_admission_id])).rows[0].policy_version_id;
+      await database.query("UPDATE signal_processing_policy_versions SET status='revoked' WHERE id=$1",[spendingPolicy]);
+      assert.equal((await database.query("SELECT status FROM signal_processing_policy_versions WHERE id=$1",[spendingPolicy])).rows[0].status,'revoked');
       await resumeWorkspacePaidGlobalConsolidationV2(replayArgs,{readStored});
       await resumeWorkspacePaidGlobalConsolidationV2(replayArgs,{readStored});
       const decision=(await database.query("SELECT * FROM signal_mass_labeling_global_receipt_decisions WHERE execution_id=$1",[started.execution_id])).rows[0];assert.ok(decision);
@@ -309,6 +294,7 @@ for (const variant of ["current", "legacy", "receipt_recovery"] as const) test(`
     assert.equal(settings.lexicon_provenance, "editorial"); assert.equal(settings.category, "bicycles"); assert.ok(settings.lexicon_terms.includes("bicycle"));
     const map = (await database.query("SELECT created_by_user_id,root_count,catalog FROM signal_mass_labeling_maps WHERE id=$1", [materialized.map_id])).rows[0]!;
     assert.equal(map.created_by_user_id, clientActor); assert.equal(Number(map.root_count), 80); assert.equal(map.catalog.length, variant === "receipt_recovery" ? 2 : 4);
+    if(variant==="receipt_recovery") await assertNativePaidAdmissionExpiryV2({database,execution_id:started.execution_id});
     console.log("native_product_engine_signal_ready");
   } finally {
     globalThis.fetch = originalFetch;
