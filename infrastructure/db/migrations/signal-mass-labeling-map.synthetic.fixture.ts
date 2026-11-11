@@ -6,9 +6,9 @@ export const mapParitySetupSqlV1 = `CREATE TEMP TABLE mass_chunks AS
  '😀ABC🧪DEF漢é synthetic fragment for parity' full_text,c chunk_index,md5('chunk'||r||':'||c) chunk_sha256,
  CASE c WHEN 0 THEN 0 WHEN 1 THEN 2 WHEN 2 THEN 7 ELSE 10 END start_offset,
  CASE c WHEN 0 THEN 7 WHEN 1 THEN 10 WHEN 2 THEN 12 ELSE 16 END end_offset,
- (SELECT array_agg(CASE WHEN r=1 THEN 0 WHEN r=2 THEN -1 WHEN r=3 THEN 1 ELSE (sin((r*17+c*13+d*7)::float8)/10)::real END ORDER BY d)::vector
+ (SELECT array_agg(CASE WHEN r=1 THEN 0 WHEN r=2 THEN -1 WHEN r=3 THEN 1 WHEN r%17=0 THEN CASE c WHEN 0 THEN 1 WHEN 1 THEN 1e-20 WHEN 2 THEN -1 ELSE .5 END ELSE (sin((r*17+c*13+d*7)::float8)/10)::real END ORDER BY d)::vector
  FROM generate_series(1,1024) d) embedding
- FROM generate_series(1,32) r CROSS JOIN LATERAL generate_series(0,r%4) c;
+ FROM generate_series(1,2032) r CROSS JOIN LATERAL generate_series(0,r%4) c;
 CREATE UNIQUE INDEX ON mass_chunks(root_id,chunk_index);
 CREATE TEMP TABLE topics(topic_key text PRIMARY KEY,centroid vector(1024));
 INSERT INTO topics SELECT 'topic_'||lpad(t::text,3,'0'),
