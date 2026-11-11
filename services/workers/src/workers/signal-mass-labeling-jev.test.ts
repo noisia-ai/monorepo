@@ -1,3 +1,9 @@
+import { mkdtemp, writeFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { createHash } from "node:crypto";
+import { setTimeout as delay } from "node:timers/promises";
+import { createWorkspaceEngineStorageV1 } from "./signal-workspace-engine-storage";
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
@@ -10,7 +16,7 @@ import {
 } from "@noisia/query-engine";
 import type { LabelingRunV1, LabelingCallV1 } from "@noisia/db";
 import { processMassLabelingJevV1, signalMassLabelingJevJobV1 } from "./signal-mass-labeling-jev";
-import type { JevProviderV1, JevRequestV1 } from "../providers/typesafe-jev";
+import { createTypesafeJevClientV1, type JevProviderV1, type JevRequestV1 } from "../providers/typesafe-jev";
 
 type Store = Parameters<typeof processMassLabelingJevV1>[0]["store"];
 function fixture(count: number, product = false) {
@@ -315,7 +321,7 @@ for (const denial of ["none", "kill_switch", "provider", "workspace"] as const) 
   process.env.NOISIA_JEV_PROVIDER_ENABLED = "true";
   let preflights = 0;
   const query = async (sql: string, params?: unknown[]) => {
-    if (sql.startsWith("SELECT workspace_id FROM signal_labeling_runs")) { assert.deepEqual(params, [f.run.id]); return { rows: [{ workspace_id: f.run.workspace_id }] }; }
+    if (sql.startsWith("SELECT run.workspace_id,labeler.identity")) { assert.deepEqual(params, [f.run.id]); return { rows: [{ workspace_id: f.run.workspace_id, request_version: "mass-labeling-jev-v2" }] }; }
     if (sql.includes("FROM signal_workspace_features")) { assert.deepEqual(params, [f.run.workspace_id, "mass_labeling"]); return { rows: [{ enabled: denial !== "workspace" }] }; }
     if (sql.startsWith("SELECT run.workspace_id,run.actor_user_id")) return { rows: [] };
     throw new Error("unexpected_job_database_query");
@@ -338,4 +344,112 @@ for (const denial of ["none", "kill_switch", "provider", "workspace"] as const) 
     if (priorMass === undefined) delete process.env.NOISIA_MASS_LABELING_ENABLED; else process.env.NOISIA_MASS_LABELING_ENABLED = priorMass;
     if (priorJev === undefined) delete process.env.NOISIA_JEV_PROVIDER_ENABLED; else process.env.NOISIA_JEV_PROVIDER_ENABLED = priorJev;
   }
+});
+
+for (const limit of [2, 24] as const) test(`product keeps at most ${Math.min(limit, 8)} responses in flight through slow receipt persistence`, async () => {
+  const f = fixture(200, true);
+  const persist = f.store.persistRaw;
+  let active = 0, peak = 0;
+  const client = createTypesafeJevClientV1({ enabled: true, api_key: "synthetic-not-a-secret", concurrency: limit,
+    fetch: async (_input, init) => new Response((await f.provider.evaluate(JSON.parse(String(init?.body)))).body, { status: 200 }) });
+  const provider: JevProviderV1 = { ...client, async evaluate(request, options) {
+    active++; peak = Math.max(peak, active);
+    return client.evaluate(request, options);
+  } };
+  f.store.persistRaw = async (run, call, raw) => {
+    try { await delay(3); await persist(run, call, raw); }
+    finally { active--; }
+  };
+  const result = await processMassLabelingJevV1({ run_id: f.run.id, store: f.store, provider });
+  assert.equal(result.status, "completed");
+  assert.equal(peak, Math.min(limit, 8));
+  assert.equal(active, 0);
+  assert.equal(f.transports(), 200);
+  assert.equal(f.calls.length, 200);
+  assert.equal(new Set(f.calls.map(call => call.inputs[0]!.root_id)).size, 200);
+  assert.ok(f.calls.every(call => call.status === "settled" && call.results_applied));
+  await processMassLabelingJevV1({ run_id: f.run.id, store: f.store, provider });
+  assert.equal(f.transports(), 200);
+});
+
+test("legacy mass transport retains its existing page concurrency", async () => {
+  const f = fixture(200), persist = f.store.persistRaw;
+  let active = 0, peak = 0;
+  const provider: JevProviderV1 = { async evaluate(request) {
+    active++; peak = Math.max(peak, active); return f.provider.evaluate(request);
+  } };
+  f.store.persistRaw = async (run, call, raw) => {
+    try { await delay(3); await persist(run, call, raw); } finally { active--; }
+  };
+  assert.equal((await processMassLabelingJevV1({ run_id: f.run.id, store: f.store, provider })).status, "completed");
+  assert.equal(peak, 200); assert.equal(f.transports(), 200); assert.equal(active, 0);
+});
+
+for (const exhausted of [false, true]) test(`200 native requests retain their slots through private Storage readback (${exhausted ? "exhausted throttle" : "transient throttle"})`, { timeout: 15000 }, async () => {
+  const f = fixture(200, true), directory = await mkdtemp(join(tmpdir(), "noisia-receipt-pressure-"));
+  f.run.workspace_id = "00000000-0000-4000-8000-000000000001";
+  f.run.id = "00000000-0000-4000-8000-000000000002";
+  const objects = new Map<string, Uint8Array>();
+  const persist = f.store.persistRaw;
+  let active = 0, peak = 0, throttles = 0, verified = 0;
+  const storage = createWorkspaceEngineStorageV1({ url: "https://example.supabase.co", service_role_key: "synthetic-not-a-secret",
+    fetch: async (input, init) => {
+      const url = String(input);
+      if (url.includes("/bucket/")) return Response.json({ id: "corpus-files", public: false });
+      const key = url.split("/corpus-files/")[1]!;
+      if (init?.method === "POST") {
+        objects.set(key, Uint8Array.from(init.body as Uint8Array)); return Response.json({ Key: key });
+      }
+      await delay(2);
+      if (key.includes("response-call-0.json.") && key.endsWith(".parts.json") && (exhausted || throttles === 0)) {
+        throttles++; return new Response("", { status: 429, headers: { "retry-after": "0" } });
+      }
+      const body = objects.get(key);
+      if (!body) return new Response("", { status: 404 });
+      if (key.endsWith(".parts.json")) verified++;
+      return new Response(new Uint8Array(body));
+    } });
+  const provider: JevProviderV1 = { ...f.provider, max_concurrency: 24, async evaluate(request) {
+    active++; peak = Math.max(peak, active); return f.provider.evaluate(request);
+  } };
+  f.store.persistRaw = async (run, call, raw) => {
+    try {
+      const file = join(directory, `response-${call.id}.json`);
+      await writeFile(file, raw, { mode: 0o600 });
+      await storage.put({ workspace_id: run.workspace_id, execution_id: run.id, file,
+        sha256: `sha256:${createHash("sha256").update(raw).digest("hex")}`, size_bytes: Buffer.byteLength(raw), media_type: "application/json" });
+      await persist(run, call, raw);
+    } finally { active--; }
+  };
+  try {
+    const result = await processMassLabelingJevV1({ run_id: f.run.id, store: f.store, provider });
+    assert.equal(peak, 8); assert.equal(active, 0);
+    assert.equal(result.status, exhausted ? "failed" : "completed");
+    assert.equal(f.transports(), 200); assert.equal(f.calls.length, 200);
+    assert.equal(verified, exhausted ? 199 : 200); assert.equal(throttles, exhausted ? 4 : 1);
+    assert.equal(f.calls.filter(call => call.status === "unknown").length, exhausted ? 1 : 0);
+    assert.equal(f.calls.filter(call => call.status === "settled").length, exhausted ? 199 : 200);
+    assert.equal(objects.size, 400, "every paid body and its immutable manifest survives the final readback throttle");
+    await processMassLabelingJevV1({ run_id: f.run.id, store: f.store, provider });
+    assert.equal(f.transports(), 200, "a stopped or finished page never resends a paid root");
+    console.log(`# product receipt pressure ${JSON.stringify({ roots: 200, provider_limit: 24, peak_through_readback: peak, verified, throttles, unresolved: exhausted ? 1 : 0, external_provider_calls: 0 })}`);
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
+test("product lease loss keeps in-flight receipts and cancels unsent roots under the end-to-end limit", async () => {
+  const f = fixture(200, true), persist = f.store.persistRaw;
+  let httpSends = 0;
+  const provider = createTypesafeJevClientV1({ enabled: true, api_key: "synthetic-not-a-secret", concurrency: 24,
+    fetch: async (_input, init) => { httpSends++; return new Response(f.response(JSON.parse(String(init?.body))).body, { status: 200 }); } });
+  f.store.renew = async () => { throw new Error("labeling_lease_lost"); };
+  f.store.persistRaw = async (run, call, raw) => { await delay(20); await persist(run, call, raw); };
+  await assert.rejects(processMassLabelingJevV1({ run_id: f.run.id, store: f.store, provider, lease_renewal_ms: 5 }), /labeling_lease_lost/);
+  assert.equal(httpSends, 8);
+  assert.equal(f.calls.filter(call => call.raw_body !== null).length, 8);
+  assert.equal(f.calls.filter(call => call.status === "failed").length, 192);
+  assert.equal(f.results.length, 0);
+  assert.ok(!f.events.includes("settle"));
+  await processMassLabelingJevV1({ run_id: f.run.id, store: f.store, provider, recovery_only: true });
+  assert.equal(httpSends, 8);
+  assert.equal(f.results.length, 8);
 });
