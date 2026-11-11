@@ -1,6 +1,8 @@
 import { createHash } from "node:crypto";
-import { lstat, open } from "node:fs/promises";
-import { basename } from "node:path";
+import { lstat, open, mkdtemp, writeFile, rm } from "node:fs/promises";
+import { basename, join } from "node:path";
+import { tmpdir } from "node:os";
+import { setTimeout as delay } from "node:timers/promises";
 import { hashWorkspaceEngineFileV1 } from "./signal-workspace-engine-files";
 
 const PART_BYTES = 48 * 1024 * 1024;
@@ -15,6 +17,9 @@ type Envelope = { contract_version: "workspace-engine-parts-v1"; sha256: string;
 export type WorkspaceEngineStorageV1 = {
   /** Verify configured private storage before a new paid send. No artifact is written. */
   assertReady?(): Promise<void>;
+  /** Recover deterministic immutable receipt bytes only after checking their full hash. */
+  recoverIncomplete?(args: { workspace_id: string; execution_id: string; name: string; max_bytes: number }):
+    Promise<(StoredFile & { raw_text: string }) | null>;
   put(args: { workspace_id: string; execution_id: string; file: string; sha256: string; size_bytes: number;
     media_type: string }): Promise<StoredFile>;
   get(args: { workspace_id: string; execution_id: string; stored: StoredFile; destination: string }): Promise<void>;
@@ -49,13 +54,27 @@ export function createWorkspaceEngineStorageV1(options: {
   const headers: Record<string, string> = { apikey: key, ...(key.startsWith("eyJ") ? { Authorization: `Bearer ${key}` } : {}) };
   const objectUrl = (path: string) => `${url}/storage/v1/object/authenticated/${encodeURIComponent(bucket)}/${path.split("/").map(encodeURIComponent).join("/")}`;
   async function request(endpoint: string, init: RequestInit = {}) {
-    let response: Response;
-    try { response = await transport(endpoint, { ...init, headers: { ...headers, ...init.headers },
-      redirect: "error", signal: AbortSignal.timeout(options.timeout_ms ?? 120000) });
-    } catch { return fail("transport_failed"); }
-    if (response.status === 429 || response.status >= 500) { await response.body?.cancel(); return fail("unavailable"); }
-    return response;
+    for (let attempt = 0; attempt < 4; attempt++) {
+      let response: Response;
+      try { response = await transport(endpoint, { ...init, headers: { ...headers, ...init.headers },
+        redirect: "error", signal: AbortSignal.timeout(options.timeout_ms ?? 120000) });
+      } catch {
+        if (attempt === 3) return fail("transport_failed");
+        await delay(250 * 2 ** attempt + Math.floor(Math.random() * 250)); continue;
+      }
+      if (response.status !== 429 && response.status < 500) return response;
+      const retryAfter = response.headers.get("retry-after");
+      await response.body?.cancel();
+      if (attempt === 3) return fail("unavailable");
+      const requestedDelay = retryAfter === null ? 0 : /^\d+(?:\.\d+)?$/u.test(retryAfter)
+        ? Number(retryAfter) * 1000 : Math.max(0, Date.parse(retryAfter) - Date.now());
+      // A longer server window stays closed until the next storage recovery.
+      if (!Number.isFinite(requestedDelay) || requestedDelay > 30_000) return fail("unavailable");
+      await delay(Math.max(requestedDelay, 250 * 2 ** attempt) + Math.floor(Math.random() * 250));
+    }
+    return fail("unavailable");
   }
+
   let checked: Promise<void> | undefined;
   const privateBucket = () => checked ??= (async () => {
     const response = await request(`${url}/storage/v1/bucket/${encodeURIComponent(bucket)}`);
@@ -76,7 +95,51 @@ export function createWorkspaceEngineStorageV1(options: {
     const actual = await bytes(read, content.length);
     if (actual.length !== content.length || hash(actual) !== hash(content)) return fail("verification_failed");
   }
-  return {
+  const storage: WorkspaceEngineStorageV1 = {
+    async recoverIncomplete(args) {
+      await privateBucket();
+      const prefix = prefixFor(args.workspace_id, args.execution_id);
+      if (!/^response-[0-9a-f-]{36}\.json$/u.test(args.name)
+        || !Number.isSafeInteger(args.max_bytes) || args.max_bytes < 1 || args.max_bytes > 8 * 1024 * 1024) return fail("recovery_scope_invalid");
+      const response = await request(`${url}/storage/v1/object/list/${encodeURIComponent(bucket)}`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prefix: prefix.slice(0, -1), search: `${args.name}.`, limit: 1000, offset: 0,
+          sortBy: { column: "name", order: "asc" } }),
+      });
+      if (!response.ok) { await response.body?.cancel(); return fail("recovery_list_failed"); }
+      const objects: unknown = JSON.parse((await bytes(response, 1024 * 1024)).toString("utf8"));
+      if (!Array.isArray(objects) || objects.length >= 1000) return fail("recovery_list_invalid");
+      const names = objects.map(object => object?.name).filter((name): name is string => typeof name === "string" && name.startsWith(`${args.name}.`));
+      if (!names.length) return null;
+      const suffixes = names.map(name => name.slice(args.name.length + 1));
+      if (suffixes.some(suffix => !/^[0-9a-f]{64}\.(?:part-[0-9]{6}|parts\.json)$/u.test(suffix))) return fail("recovery_reference_invalid");
+      const hashes = [...new Set(suffixes.map(suffix => suffix.slice(0, 64)))];
+      if (hashes.length !== 1) return fail("recovery_ambiguous");
+      const fullSha = `sha256:${hashes[0]}`, base = `${args.name}.${hashes[0]}`;
+      const parts = names.filter(name => name.includes(".part-")).sort();
+      if (!parts.length) return fail("recovery_incomplete");
+      const chunks: Buffer[] = []; let size = 0;
+      for (const [index, part] of parts.entries()) {
+        if (part !== `${base}.part-${String(index).padStart(6, "0")}`) return fail("recovery_incomplete");
+        const read = await request(objectUrl(`${prefix}${part}`));
+        if (!read.ok) { await read.body?.cancel(); return fail("recovery_read_failed"); }
+        const content = await bytes(read, Math.min(PART_BYTES, args.max_bytes - size));
+        size += content.length;
+        if (!content.length || index < parts.length - 1 && content.length !== PART_BYTES) return fail("recovery_incomplete");
+        chunks.push(content);
+      }
+      const content = Buffer.concat(chunks, size);
+      if (hash(content) !== fullSha) return fail("recovery_digest_invalid");
+      const raw_text = new TextDecoder("utf-8", { fatal: true }).decode(content);
+      const directory = await mkdtemp(join(tmpdir(), "noisia-receipt-recovery-"));
+      try {
+        const file = join(directory, args.name);
+        await writeFile(file, content, { mode: 0o600 });
+        const stored = await storage.put({ workspace_id: args.workspace_id, execution_id: args.execution_id,
+          file, sha256: fullSha, size_bytes: size, media_type: "application/json" });
+        return { ...stored, raw_text };
+      } finally { await rm(directory, { recursive: true, force: true }); }
+    },
     assertReady: privateBucket,
     async put(args) {
       await privateBucket();
@@ -138,4 +201,5 @@ export function createWorkspaceEngineStorageV1(options: {
       } finally { await file.close(); }
     }
   };
+  return storage;
 }

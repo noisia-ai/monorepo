@@ -139,3 +139,5 @@ export * from "./signal-mass-labeling-editorial-policy";
 export * from "./signal-mass-labeling-product-finalization";
 
 export * from "./signal-mass-labeling-lexicon-suggestions";
+
+export * from "./signal-mass-labeling-jev-recovery";

@@ -1,3 +1,4 @@
+import { recoverMassLabelingJevReceiptsV1 } from "./signal-mass-labeling-jev-recovery";
 import { materializeMassLabelingProductMapV2 } from "./signal-mass-labeling-product-map";
 import {assertMassJevConsumerV1} from "../providers/mass-labeling-consumer";
 import { mkdtemp, writeFile, rm } from "node:fs/promises";
@@ -135,6 +136,7 @@ export function createMassLabelingRuntimeStoreV1(
   const storage = createWorkspaceEngineStorageV1();
   return createMassLabelingStoreV1({
     database,
+    storeRawVerified: true,
     assertRawReady: async () => {
       await storage.assertReady?.();
     },
@@ -236,6 +238,28 @@ export function startMassLabelingJevDrainerV1() {
     await drainMassLabelingProductFinalizationV2({ database: pool }).catch(() => {
       console.warn("[mass-labeling] product completion unavailable");
     });
+    const interrupted = (await pool.query<{ id: string }>(`SELECT run.id FROM signal_labeling_runs run
+      JOIN signal_labeler_versions labeler ON labeler.id=run.labeler_version_id
+      JOIN signal_processing_admissions admission ON admission.id=run.processing_admission_id
+        AND admission.workspace_id=run.workspace_id AND admission.target_id=run.id
+      WHERE labeler.provider='typesafe' AND labeler.identity#>>'{params,request_version}'='mass-labeling-jev-v2'
+        AND run.kind='mass_labeling' AND run.status='failed' AND run.error_code='labeling_outcome_unknown'
+        AND (run.lease_until IS NULL OR run.lease_until<now()) AND run.next_poll_at<=now()
+        AND EXISTS(SELECT 1 FROM signal_labeling_calls receipt WHERE receipt.run_id=run.id AND receipt.status='unknown')
+      ORDER BY run.updated_at LIMIT 1`)).rows;
+    for (const run of interrupted) {
+      try { await recoverMassLabelingJevReceiptsV1({ database: pool, run_id: run.id }); }
+      catch { console.warn("[mass-labeling] stored receipt recovery unavailable"); }
+      // Bounded storage-only reconciliation. An explicit native retry resumes
+      // the same run after recovery, preserving its original smoke limit.
+      await pool.query(`UPDATE signal_labeling_runs SET next_poll_at=now()+interval '10 minutes'
+        WHERE id=$1 AND status='failed' AND error_code='labeling_outcome_unknown'
+          AND EXISTS(SELECT 1 FROM signal_labeler_versions labeler
+            JOIN signal_processing_admissions admission ON admission.id=signal_labeling_runs.processing_admission_id
+              AND admission.workspace_id=signal_labeling_runs.workspace_id AND admission.target_id=signal_labeling_runs.id
+            WHERE labeler.id=signal_labeling_runs.labeler_version_id AND labeler.provider='typesafe'
+              AND labeler.identity#>>'{params,request_version}'='mass-labeling-jev-v2')`, [run.id]);
+    }
     if (process.env.NOISIA_JEV_PROVIDER_ENABLED === "false") return;
     const runs = (
       await pool.query<{

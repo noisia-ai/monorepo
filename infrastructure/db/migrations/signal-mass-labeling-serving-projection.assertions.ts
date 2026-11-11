@@ -30,6 +30,7 @@ export async function assertMassLabelingProjectionBackfillV1(query:PoolClient["q
  await query("SAVEPOINT projection_backfill_rehearsal");
  await query(`DROP TRIGGER mass_labeling_serving_items ON signal_mass_labeling_items;
    DROP TRIGGER mass_labeling_serving_results ON signal_mass_labeling_results;
+   DROP TRIGGER IF EXISTS mass_labeling_serving_recovered_results ON signal_mass_labeling_results;
    DROP TRIGGER mass_labeling_serving_text ON mentions;
    DROP FUNCTION materialize_signal_mass_labeling_serving_items_v1(),materialize_signal_mass_labeling_serving_results_v1(),refresh_signal_mass_labeling_serving_text_v1();
    DROP TABLE signal_mass_labeling_root_segments,signal_mass_labeling_topic_probabilities CASCADE`);
