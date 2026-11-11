@@ -98,9 +98,34 @@ export const MASS_LABELING_MAP_BATCH_CHUNKS_SQL_V1 = `SELECT * FROM mass_chunks
 /** Assemble and INSERT one packet batch, with all existing guards/projections,
  * in the caller's single transaction. Cache the exact PostgreSQL character sum
  * from inserted rows, avoiding a later read/serialization of the entire map. */
-export async function insertMassLabelingMapItemsV1(client: Client, args: {
+type ItemArguments = {
   workspace_id: string; map_id: string; catalog: unknown; map_digest: string; expected_roots: number;
-}) {
+};
+
+export async function insertMassLabelingMapItemsV1(client: Client, args: ItemArguments) {
+  const previous=(await client.query<{value:string}>("SELECT current_setting('enable_mergejoin') value")).rows[0]!.value;
+  await client.query("SAVEPOINT mass_map_item_plans_v1");
+  try {
+    // With cold statistics, the category projection can merge on workspace
+    // before checking root_id, materializing the whole corpus for every item.
+    // Keep its SQL/guards intact and plan the bounded INSERT with other joins.
+    // Invalidate backend-local SPI plans too: changing a planner GUC alone does
+    // not reliably replace a trigger's already cached plan.
+    await client.query("SET LOCAL enable_mergejoin=off; DISCARD PLANS");
+    const result=await insertMassLabelingMapItemBatchesV1(client,args);
+    await client.query("SELECT set_config('enable_mergejoin',$1,true)",[previous]);
+    await client.query("DISCARD PLANS; RELEASE SAVEPOINT mass_map_item_plans_v1");
+    return result;
+  } catch(error) {
+    // Recover an aborted SQL statement before restoring the plan environment.
+    // The outer authorized transaction still owns the final all-or-nothing map.
+    try { await client.query("ROLLBACK TO SAVEPOINT mass_map_item_plans_v1; DISCARD PLANS; RELEASE SAVEPOINT mass_map_item_plans_v1"); }
+    catch { /* A disconnected client is rolled back by the transaction owner. */ }
+    throw error;
+  }
+}
+
+async function insertMassLabelingMapItemBatchesV1(client: Client, args: ItemArguments) {
   const prepared = (await client.query<{count:number;last:number}>("SELECT count(*)::int count,COALESCE(max(ordinal),0)::int last FROM mass_map_roots")).rows[0]!;
   if (prepared.count !== args.expected_roots || prepared.last !== args.expected_roots)
     throw new SignalLabelingError("mass_labeling_map_items_incomplete");
