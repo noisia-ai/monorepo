@@ -51,6 +51,10 @@ SI LO QUE VOY A PEDIR SON SOLO DATOS (una muestra en el formato que el sistema d
 un paquete de datos, un feed o un conector para un socio), detente aquí también: no hay deck. Sigue
 el prompt de entregas de datos de PROMPTS.md.
 
+SI LO QUE VOY A PEDIR ES UN VIDEO (un clip para insights o TikTok, una pieza para LinkedIn, el video
+de un estudio o una animación para un deck), el cuestionario de abajo no aplica: sigue el bloque de
+video de PROMPTS.md.
+
 PREGÚNTAME ESTO ANTES DE EMPEZAR, y no asumas ninguna. Lo que se puede contestar investigando
 (contra qué se compara, qué tiene ya armado el cliente, el portafolio) no me lo preguntes en
 blanco: investiga y propónme la respuesta para que solo la confirme.
@@ -430,6 +434,34 @@ cierre con siguiente paso.
 
 Ante cliente final se muestra participación sobre la conversación depurada, no conteos crudos.
 Ver CANON.md, sección 5.3.
+```
+
+## Bloque · Video
+
+```text
+FAMILIA: video. Lee packages/pitch-kit/VIDEO.md completo y packages/pitch-kit/HUMAN_SIGNALS.md, etapas
+01 a 07, antes de proponer nada.
+
+PREGÚNTAME, una a la vez:
+1. ¿Qué formato? Clip (noisia.ai/insights o TikTok, ~21 s), social (LinkedIn o Reels, 15 a 30 s),
+   estudio (90 a 150 s, con voces) o motion para un deck (un loop dentro de una slide).
+2. ¿De qué sale? Un estudio o reporte aprobado (dame su carpeta y su data.json), un reporte editorial
+   del website, o nada todavía.
+3. ¿En qué idiomas?
+4. Si lleva voces: ¿ElevenLabs o voces del sistema como borrador? Si es ElevenLabs, crea el .env vacío
+   del caso con su .gitignore para que yo pegue la key ahí, nunca en el chat, y dime cuántos
+   caracteres vas a gastar antes de generar.
+
+ANTES DE CONSTRUIR, escribe en el chat el guion con Human Signals y espera mi sí: la pregunta de
+negocio y su reformulación humana, el hallazgo con su cifra, el insight, la tensión, la intención
+emocional en sus tres niveles y el momento humano que abre. Debajo, escena por escena: qué se ve, qué
+se dice, qué cifra y qué cita, y de qué fondo y tarjeta de VIDEO.md §4 sale cada una, con su porqué.
+
+AL CONSTRUIR: la marca de VIDEO.md §2 no se negocia; el estilo de §4 se elige por lo que pide la
+historia. Las cifras salen de datos y las citas llevan su assert. La evidencia es siempre un post real;
+una imagen de atmósfera con Kinetic Cinema pasa el control de calidad de HUMAN_SIGNALS.md §VIII y
+nunca va como si fuera la prueba. Revisa stills de cada escena en el fin de la voz, el fin de la cita y
+el cierre antes de darme el MP4, y pídeme que escuche el audio: nadie del lado de la máquina lo oye.
 ```
 
 ## Bloque · Comercial
