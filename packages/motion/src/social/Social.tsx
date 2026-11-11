@@ -9,6 +9,8 @@ import { Chrome } from "../common/Chrome";
 import { Mix } from "../common/Mix";
 import { Outro } from "../common/Outro";
 import { SceneView } from "../clip/scenes";
+import { BaseCard, DataNote } from "../common/Base";
+import { Shell } from "../common/text";
 
 /**
  * Format 2 · Social (VIDEO.md §5.2): LinkedIn, Reels, TikTok. It must work muted: the text on screen
@@ -48,7 +50,13 @@ export function Social({ piece, timing }: SocialProps) {
         return (
           <Sequence key={i} from={start} durationInFrames={lengths[i]}>
             {scene.background ? <SceneBackground bg={scene.background} /> : null}
-            <SceneView scene={scene} locale={piece.locale} bottomSafe={bottomSafe} />
+            {scene.type === "base" ? (
+              <Shell bottomSafe={bottomSafe}>
+                <BaseCard base={piece.base} locale={piece.locale} />
+              </Shell>
+            ) : (
+              <SceneView scene={scene} locale={piece.locale} bottomSafe={bottomSafe} footer={"note" in scene && scene.note ? <DataNote note={scene.note} locale={piece.locale} /> : undefined} />
+            )}
             {timing?.scenes[i] ? <Captions clips={timing.scenes[i].clips} /> : null}
           </Sequence>
         );

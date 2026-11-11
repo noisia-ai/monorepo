@@ -7,12 +7,17 @@ import { Background } from "../common/Background";
 import { Chrome } from "../common/Chrome";
 import { Outro } from "../common/Outro";
 import { SceneView } from "./scenes";
+import { BaseCard } from "../common/Base";
+import { Shell } from "../common/text";
 
 /** Format 1 · Clip (VIDEO.md §5.1): a noisia.ai/insights story, unchanged, as a 9:16 video. */
-export type ClipProps = { title: string; scenes: Scene[]; locale: "es" | "en"; tag?: string; showTitle: boolean };
+export type ClipBase = { channels: string[]; period?: string; market?: string; method?: string };
+export type ClipProps = { title: string; scenes: Scene[]; locale: "es" | "en"; tag?: string; showTitle: boolean; base?: ClipBase };
+export const CLIP_BASE_FRAMES = SCENE_FRAMES.base;
 
 export const sceneFrames = (scene: Scene) => SCENE_FRAMES[scene.type] ?? 110;
-export const clipDuration = (scenes: Scene[]) => scenes.reduce((sum, s) => sum + sceneFrames(s), 0) + OUTRO_FRAMES;
+export const clipDuration = (scenes: Scene[], base?: ClipBase) =>
+  scenes.reduce((sum, s) => sum + sceneFrames(s), 0) + (base ? CLIP_BASE_FRAMES : 0) + OUTRO_FRAMES;
 
 function Title({ title }: { title: string }) {
   const frame = useCurrentFrame();
@@ -25,13 +30,20 @@ function Title({ title }: { title: string }) {
   );
 }
 
-export function Clip({ title, scenes, locale, tag, showTitle }: ClipProps) {
-  const lengths = scenes.map(sceneFrames);
+export function Clip({ title, scenes, locale, tag, showTitle, base }: ClipProps) {
+  const lengths = [...scenes.map(sceneFrames), ...(base ? [CLIP_BASE_FRAMES] : [])];
   let from = 0;
   return (
     <AbsoluteFill style={{ width: VERTICAL.width, height: VERTICAL.height, background: color.canvas }}>
       <Fonts />
       <Background bg={{ kind: "wash" }} />
+      {base ? (
+        <Sequence from={lengths.slice(0, -1).reduce((a, b) => a + b, 0)} durationInFrames={CLIP_BASE_FRAMES}>
+          <Shell bottomSafe={SAFE.bottomClip}>
+            <BaseCard base={{ channels: base.channels.map((platform) => ({ platform })), period: base.period ?? "", market: base.market, method: base.method }} locale={locale} />
+          </Shell>
+        </Sequence>
+      ) : null}
       {scenes.map((scene, i) => {
         const start = from;
         from += lengths[i];
@@ -41,7 +53,7 @@ export function Clip({ title, scenes, locale, tag, showTitle }: ClipProps) {
           </Sequence>
         );
       })}
-      <Sequence from={from} durationInFrames={OUTRO_FRAMES}>
+      <Sequence from={from + (base ? CLIP_BASE_FRAMES : 0)} durationInFrames={OUTRO_FRAMES}>
         <Outro locale={locale} />
       </Sequence>
       <Chrome lengths={[...lengths, OUTRO_FRAMES]} tag={tag} equal />

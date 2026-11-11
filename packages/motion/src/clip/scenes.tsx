@@ -1,5 +1,6 @@
 // The eight clip templates. Ported from apps/website-next/src/motion/scenes.tsx with the same
 // timings and sizes, so a story looks the same on noisia.ai/insights and in the exported video.
+import type { ReactNode } from "react";
 import { interpolate, useCurrentFrame, useVideoConfig } from "../engine";
 import type { Scene } from "../schema";
 import { Icon, PlatformMark, platformLabel } from "../brand/marks";
@@ -8,25 +9,25 @@ import { clamp, countUp, enter, formatNumber, rise } from "../brand/util";
 import { Shell, Words, bare, text } from "../common/text";
 import { Bars } from "../charts/Bars";
 
-type SceneProps<T extends Scene["type"]> = { scene: Extract<Scene, { type: T }>; locale: string; bottomSafe: number };
+type SceneProps<T extends Scene["type"]> = { scene: Extract<Scene, { type: T }>; locale: string; bottomSafe: number; footer?: ReactNode };
 
-export function HookScene({ scene, bottomSafe }: SceneProps<"hook">) {
+export function HookScene({ scene, bottomSafe, footer }: SceneProps<"hook">) {
   const size = scene.text.length > 48 ? 104 : 128;
   return (
-    <Shell bottomSafe={bottomSafe}>
+    <Shell bottomSafe={bottomSafe} footer={footer}>
       <Words value={scene.text} size={size} />
     </Shell>
   );
 }
 
-export function StatScene({ scene, locale, bottomSafe }: SceneProps<"stat">) {
+export function StatScene({ scene, locale, bottomSafe, footer }: SceneProps<"stat">) {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
   const shown = countUp(frame, scene.value, 6, 34);
   const digits = formatNumber(shown, scene.value, locale).length + scene.suffix.length;
   const size = digits > 6 ? 230 : 300;
   return (
-    <Shell bottomSafe={bottomSafe}>
+    <Shell bottomSafe={bottomSafe} footer={footer}>
       <p style={text(size, 500, { lineHeight: 0.92, color: color.teal, fontVariantNumeric: "tabular-nums", ...rise(frame, fps, 0, 30) })}>
         {formatNumber(shown, scene.value, locale)}
         <span style={{ fontSize: size * 0.5 }}>{scene.suffix}</span>
@@ -37,21 +38,21 @@ export function StatScene({ scene, locale, bottomSafe }: SceneProps<"stat">) {
   );
 }
 
-export function CompareScene({ scene, locale, bottomSafe }: SceneProps<"compare">) {
+export function CompareScene({ scene, locale, bottomSafe, footer }: SceneProps<"compare">) {
   return (
-    <Shell bottomSafe={bottomSafe}>
+    <Shell bottomSafe={bottomSafe} footer={footer}>
       <Bars items={scene.items} unit={scene.unit} locale={locale} />
     </Shell>
   );
 }
 
-export function JourneyScene({ scene, locale, bottomSafe }: SceneProps<"journey">) {
+export function JourneyScene({ scene, locale, bottomSafe, footer }: SceneProps<"journey">) {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
   const max = Math.max(...scene.steps.map((step) => Math.abs(step.value)), 1);
   const diverging = scene.steps.some((step) => step.value < 0) && scene.steps.some((step) => step.value > 0);
   return (
-    <Shell bottomSafe={bottomSafe}>
+    <Shell bottomSafe={bottomSafe} footer={footer}>
       <div style={{ display: "flex", flexDirection: "column", gap: 34 }}>
         {scene.steps.map((step, i) => {
           const delay = 4 + i * 8;
@@ -93,7 +94,7 @@ export function JourneyScene({ scene, locale, bottomSafe }: SceneProps<"journey"
   );
 }
 
-export function SplitScene({ scene, locale, bottomSafe }: SceneProps<"split">) {
+export function SplitScene({ scene, locale, bottomSafe, footer }: SceneProps<"split">) {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
   const side = (item: typeof scene.left, delay: number, tone: string) => (
@@ -106,7 +107,7 @@ export function SplitScene({ scene, locale, bottomSafe }: SceneProps<"split">) {
     </div>
   );
   return (
-    <Shell bottomSafe={bottomSafe}>
+    <Shell bottomSafe={bottomSafe} footer={footer}>
       <div style={{ display: "flex", gap: 48, alignItems: "flex-start" }}>
         {side(scene.left, 4, color.teal)}
         <div style={{ width: 3, alignSelf: "stretch", background: color.line, transform: `scaleY(${enter(frame, fps, 10)})` }} />
@@ -145,11 +146,11 @@ function StruckWords({ value, size, delay, strikeAt }: { value: string; size: nu
   );
 }
 
-export function TensionScene({ scene, locale, bottomSafe }: SceneProps<"tension">) {
+export function TensionScene({ scene, locale, bottomSafe, footer }: SceneProps<"tension">) {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
   return (
-    <Shell bottomSafe={bottomSafe}>
+    <Shell bottomSafe={bottomSafe} footer={footer}>
       <div style={{ display: "flex", flexDirection: "column", gap: 36 }}>
         <StruckWords value={scene.want} size={100} delay={2} strikeAt={44} />
         <Words value={scene.but} size={100} delay={30} tone={color.coral} />
@@ -164,12 +165,12 @@ export function TensionScene({ scene, locale, bottomSafe }: SceneProps<"tension"
 }
 
 /** A mention as it was posted: chat bubble, then the platform's logo and when it was said. */
-export function QuoteScene({ scene, locale, bottomSafe }: SceneProps<"quote">) {
+export function QuoteScene({ scene, locale, bottomSafe, footer }: SceneProps<"quote">) {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
   const size = scene.text.length > 150 ? 62 : scene.text.length > 90 ? 72 : 84;
   return (
-    <Shell bottomSafe={bottomSafe}>
+    <Shell bottomSafe={bottomSafe} footer={footer}>
       <div style={{ display: "flex", flexDirection: "column", gap: 30 }}>
         <div style={{ position: "relative", marginLeft: 22, ...rise(frame, fps, 0, 30) }}>
           <svg width={44} height={40} viewBox="0 0 18 16" style={{ position: "absolute", left: -21, bottom: 0 }} aria-hidden>
@@ -197,12 +198,12 @@ export function QuoteScene({ scene, locale, bottomSafe }: SceneProps<"quote">) {
   );
 }
 
-export function TakeawayScene({ scene, bottomSafe }: SceneProps<"takeaway">) {
+export function TakeawayScene({ scene, bottomSafe, footer }: SceneProps<"takeaway">) {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
   const p = enter(frame, fps, 0, 22);
   return (
-    <Shell bottomSafe={bottomSafe}>
+    <Shell bottomSafe={bottomSafe} footer={footer}>
       <div style={{ padding: "64px 60px", borderRadius: 48, background: color.tealSoft, transform: `scale(${0.94 + p * 0.06})`, opacity: p }}>
         <Words value={scene.text} size={86} delay={6} stagger={2} />
       </div>
@@ -210,8 +211,8 @@ export function TakeawayScene({ scene, bottomSafe }: SceneProps<"takeaway">) {
   );
 }
 
-export function SceneView({ scene, locale, bottomSafe }: { scene: Scene; locale: string; bottomSafe: number }) {
-  const p = { locale, bottomSafe };
+export function SceneView({ scene, locale, bottomSafe, footer }: { scene: Scene; locale: string; bottomSafe: number; footer?: ReactNode }) {
+  const p = { locale, bottomSafe, footer };
   switch (scene.type) {
     case "hook":
       return <HookScene scene={scene} {...p} />;

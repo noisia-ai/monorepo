@@ -75,7 +75,10 @@ if (format === "clip") {
   const story = opt.story ? stories.find((s) => s.id === opt.story) : stories[0];
   if (!story) fail(`story "${opt.story}" not found in ${input}. Ids: ${stories.map((s) => s.id).join(", ")}`);
   const locale = opt.locale === "en" ? "en" : "es";
-  inputProps = { title: story[locale].title, scenes: story[locale].scenes, locale, tag: opt.tag, showTitle: !opt["no-title"] };
+  // The base card closes every clip: the story's channels, period and market (VIDEO.md §2).
+  const base = story.sources?.length ? { channels: story.sources, period: story.period, market: story.market, method: story.method } : undefined;
+  if (!base) console.warn("build-video: this story has no sources; the clip goes out without its base card.");
+  inputProps = { title: story[locale].title, scenes: story[locale].scenes, locale, tag: opt.tag, showTitle: !opt["no-title"], base };
 } else if (format === "deck") {
   inputProps = { piece: raw, rotate: 0 };
 } else {
@@ -121,17 +124,18 @@ function markersOf(comp) {
   }
   if (format === "clip") {
     let from = 0;
-    const len = { hook: 84, stat: 108, compare: 138, journey: 156, split: 120, tension: 126, quote: 156, takeaway: 108 };
+    const len = { hook: 84, stat: 108, compare: 138, journey: 156, split: 120, tension: 126, quote: 156, takeaway: 108, base: 120 };
     props.scenes.forEach((s, i) => {
       from += len[s.type] ?? 110;
       at.push([`${i + 1}-${s.type}`, from - 14]);
     });
+    if (props.base) at.push(["base", from + 100]);
     at.push(["logo", comp.durationInFrames - 4]);
     return at;
   }
   if (!props.timing) {
     let from = 0;
-    const len = { hook: 84, stat: 108, compare: 138, journey: 156, split: 120, tension: 126, quote: 156, takeaway: 108 };
+    const len = { hook: 84, stat: 108, compare: 138, journey: 156, split: 120, tension: 126, quote: 156, takeaway: 108, base: 120 };
     props.piece.scenes.forEach((s, i) => {
       from += len[s.type] ?? 110;
       at.push([`${i + 1}-${s.type}`, from - 14]);

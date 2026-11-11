@@ -26,11 +26,11 @@ export function Root() {
         component={Clip}
         {...VERTICAL}
         durationInFrames={1}
-        defaultProps={{ title: parsedStory.es.title, scenes: parsedStory.es.scenes, locale: "es", tag: undefined, showTitle: true } as ClipProps}
+        defaultProps={{ title: parsedStory.es.title, scenes: parsedStory.es.scenes, locale: "es", tag: undefined, showTitle: true, base: { channels: (parsedStory.sources as string[]) ?? [], period: parsedStory.period as string, market: parsedStory.market as string, method: parsedStory.method as string } } as ClipProps}
         calculateMetadata={({ props }) => {
           // Raw story scenes come from the CLI: parse them so optional fields get their defaults.
           const scenes = z.array(sceneSchema).min(2).max(7).parse(props.scenes);
-          return { durationInFrames: clipDuration(scenes), props: { ...props, scenes } };
+          return { durationInFrames: clipDuration(scenes, props.base), props: { ...props, scenes } };
         }}
       />
       <Composition

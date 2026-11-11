@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { AbsoluteFill, Sequence, useCurrentFrame, useVideoConfig } from "../engine";
-import type { Background as Bg, StudyPiece, StudyScene, TimedScene, Timing } from "../schema";
+import type { Background as Bg, Base, StudyPiece, StudyScene, TimedScene, Timing } from "../schema";
+import { BaseCard, DataNote, mentionsLabel } from "../common/Base";
 import { Fonts } from "../brand/Fonts";
 import { Logo } from "../brand/Logo";
 import { PlatformMark } from "../brand/marks";
@@ -51,7 +52,7 @@ function SceneBg({ bg }: { bg?: Bg }) {
 }
 
 // ---------------------------------------------------------------- cold open
-function Cold({ sc, t, locale }: { sc: Extract<StudyScene, { type: "cold" }>; t: TimedScene; locale: string }) {
+function Cold({ sc, t, locale, base }: { sc: Extract<StudyScene, { type: "cold" }>; t: TimedScene; locale: string; base: Base }) {
   const f = useCurrentFrame();
   const q = clipOf(t, "quote");
   const v = clipOf(t, "vo");
@@ -90,8 +91,16 @@ function Cold({ sc, t, locale }: { sc: Extract<StudyScene, { type: "cold" }>; t:
           <div style={{ marginTop: 200 }}>
             <Words value={sc.title} size={96} delay={voAt + 14} />
             <div style={{ marginTop: 60, ...rise(f, 30, voAt + 40) }}>
-              <p style={text(150, 500, { color: color.teal, fontVariantNumeric: "tabular-nums", lineHeight: 1 })}>{formatNumber(countUp(f, sc.corpus.value, voAt + 40, 34), sc.corpus.value, locale)}</p>
-              <p style={text(44, 400, { color: color.muted, marginTop: 12 })}>{sc.corpus.label}</p>
+              {/* The corpus is the piece's base: the same number the base scene breaks down. */}
+              <p style={text(150, 500, { color: color.teal, fontVariantNumeric: "tabular-nums", lineHeight: 1 })}>{mentionsLabel(Math.round(countUp(f, base.mentions, voAt + 40, 34)), locale, base.plus)}</p>
+              <p style={text(44, 400, { color: color.muted, marginTop: 12 })}>
+                {locale === "en" ? "mentions" : "menciones"} · {base.period}
+              </p>
+              <div style={{ display: "flex", gap: 14, marginTop: 20, ...rise(f, 30, voAt + 52) }}>
+                {base.channels.map((c) => (
+                  <PlatformMark key={c.platform} platform={c.platform} size={44} />
+                ))}
+              </div>
             </div>
           </div>
         </Top>
@@ -117,6 +126,11 @@ function Chapter({ sc, t, n, total, locale }: { sc: Extract<StudyScene, { type: 
       {sc.chart ? (
         <div style={{ position: "absolute", left: SAFE.side, right: SAFE.side, top: 560 }}>
           <Chart chart={sc.chart} locale={locale} delay={t.marks.chart_at ?? 20} />
+          {sc.note ? (
+            <div style={{ marginTop: 26 }}>
+              <DataNote note={sc.note} locale={locale} delay={(t.marks.chart_at ?? 20) + 26} />
+            </div>
+          ) : null}
         </div>
       ) : null}
       <div style={{ position: "absolute", left: SAFE.side, right: SAFE.side, top: CARD_TOP }}>
@@ -148,6 +162,9 @@ function Climax({ sc, t, n, total, locale }: { sc: Extract<StudyScene, { type: "
       </Top>
       <div style={{ position: "absolute", left: SAFE.side, right: SAFE.side, top: 640, opacity: 1 - countOut }}>
         <BigNumber value={0} from={sc.count.from} label={sc.count.label} locale={locale} delay={Math.max(8, zeroAt - 34)} tone={color.coral} />
+        <div style={{ marginTop: 26 }}>
+          <DataNote note={sc.note} locale={locale} delay={zeroAt} />
+        </div>
       </div>
       <div style={{ position: "absolute", left: SAFE.side, right: SAFE.side, top: 560, display: "flex", flexDirection: "column", gap: 22, opacity: 1 - chatOut }}>
         {sc.chat.map((p, i) => {
@@ -220,7 +237,15 @@ export function Study({ piece, timing }: StudyProps) {
         return (
           <Sequence key={sc.id} from={t.from} durationInFrames={t.len}>
             <Fade>
-              {sc.type === "cold" ? <Cold sc={sc} t={t} locale={piece.locale} /> : null}
+              {sc.type === "cold" ? <Cold sc={sc} t={t} locale={piece.locale} base={piece.base} /> : null}
+              {sc.type === "base" ? (
+                <>
+                  <SceneBg bg={sc.background} />
+                  <div style={{ position: "absolute", left: SAFE.side, right: SAFE.side, top: 300 }}>
+                    <BaseCard base={piece.base} locale={piece.locale} />
+                  </div>
+                </>
+              ) : null}
               {sc.type === "chapter" ? <Chapter sc={sc} t={t} n={n} total={chapters.length} locale={piece.locale} /> : null}
               {sc.type === "climax" ? <Climax sc={sc} t={t} n={n} total={chapters.length} locale={piece.locale} /> : null}
               {sc.type === "close" ? <Close sc={sc} t={t} locale={piece.locale} /> : null}

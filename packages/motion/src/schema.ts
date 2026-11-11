@@ -62,6 +62,36 @@ const storyLocale = z.object({
 /** A website story file (src/content/stories/public/*.json). Only what the clip needs is checked. */
 export const storySchema = z.object({ id: z.string(), es: storyLocale, en: storyLocale }).passthrough();
 
+// ---------------------------------------------------------------- the data base (VIDEO.md §2)
+// A video never shows a figure without saying what it stands on: how many mentions, where and when.
+
+/** The corpus behind the whole piece. Channels ranked by mentions when the study has the breakdown. */
+export const baseSchema = z
+  .object({
+    mentions: z.number().int().positive(),
+    // "+1.18 M" when the source only gives a floor.
+    plus: z.boolean().default(false),
+    channels: z.array(z.object({ platform: z.string().min(1).max(30), mentions: z.number().int().nonnegative().optional() })).min(1).max(8),
+    period: z.string().min(1).max(40),
+    market: z.string().max(30).optional(),
+    method: z.string().max(60).optional()
+  })
+  .refine((b) => b.channels.every((c) => c.mentions != null) || b.channels.every((c) => c.mentions == null), {
+    message: "channels: give mentions for every channel or for none"
+  });
+export type Base = z.infer<typeof baseSchema>;
+
+/** The line under a figure: the mentions it stands on, its period and, when known, its channels. */
+export const noteSchema = z.object({
+  mentions: z.number().int().nonnegative(),
+  what: z.string().max(60).optional(),
+  period: z.string().min(1).max(40),
+  channels: z.array(z.string().min(1).max(30)).max(4).optional()
+});
+export type Note = z.infer<typeof noteSchema>;
+
+const baseScene = z.object({ type: z.literal("base"), id: z.string().optional(), vo: z.string().max(400).optional(), background: z.lazy(() => backgroundSchema).optional() });
+
 // ---------------------------------------------------------------- shared pieces
 export const backgroundSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("bloom"), name: z.enum(["v-top", "v-bottom", "v-corner", "v-soft"]).default("v-bottom") }),
@@ -132,16 +162,29 @@ const common = {
 };
 
 // ---------------------------------------------------------------- social
-export const socialSceneSchema = z.intersection(
-  sceneSchema,
-  z.object({ vo: z.string().max(400).optional(), background: backgroundSchema.optional() })
-);
-export const socialSchema = z.object({
-  format: z.literal("social"),
-  ...common,
-  scenes: z.array(socialSceneSchema).min(2).max(7)
-});
+export const socialSceneSchema = z.union([
+  baseScene,
+  z.intersection(sceneSchema, z.object({ vo: z.string().max(400).optional(), background: backgroundSchema.optional(), note: noteSchema.optional() }))
+]);
+const FIGURES = ["stat", "compare", "journey", "split"];
+export const socialSchema = z
+  .object({
+    format: z.literal("social"),
+    ...common,
+    base: baseSchema,
+    scenes: z.array(socialSceneSchema).min(3).max(8)
+  })
+  .superRefine((piece, ctx) => {
+    if (piece.scenes.filter((s) => s.type === "base").length !== 1)
+      ctx.addIssue({ code: "custom", path: ["scenes"], message: "a social piece carries exactly one base scene (mentions, channels, period)" });
+    piece.scenes.forEach((s, i) => {
+      const figure = FIGURES.includes(s.type) || (s.type === "tension" && s.value != null);
+      if (figure && !("note" in s && s.note))
+        ctx.addIssue({ code: "custom", path: ["scenes", i, "note"], message: `scene ${i + 1} (${s.type}) shows a figure without its note: mentions, period, channels` });
+    });
+  });
 export type SocialPiece = z.infer<typeof socialSchema>;
+export type SocialScene = SocialPiece["scenes"][number];
 
 // ---------------------------------------------------------------- study
 export const studySceneSchema = z.discriminatedUnion("type", [
@@ -151,7 +194,6 @@ export const studySceneSchema = z.discriminatedUnion("type", [
     quote: quoteSchema,
     words: z.array(z.string().max(30)).min(4).max(24),
     title: z.string().max(90),
-    corpus: z.object({ value: z.number(), label: z.string().max(60) }),
     vo: z.string().max(400),
     background: backgroundSchema.optional()
   }),
@@ -161,6 +203,7 @@ export const studySceneSchema = z.discriminatedUnion("type", [
     label: z.string().max(40),
     head: z.string().max(110),
     chart: chartSchema.optional(),
+    note: noteSchema.optional(),
     quote: quoteSchema.optional(),
     spark: sparkSchema,
     vo: z.string().max(400),
@@ -172,6 +215,7 @@ export const studySceneSchema = z.discriminatedUnion("type", [
     label: z.string().max(40),
     head: z.string().max(110),
     count: z.object({ from: z.number(), label: z.string().max(80) }),
+    note: noteSchema,
     chat: z.array(quoteSchema).min(2).max(5),
     empty: z.string().max(60),
     spark: sparkSchema,
@@ -179,6 +223,7 @@ export const studySceneSchema = z.discriminatedUnion("type", [
     vo2: z.string().max(200).optional(),
     background: backgroundSchema.optional()
   }),
+  z.object({ type: z.literal("base"), id: z.string(), vo: z.string().max(400).optional(), background: backgroundSchema.optional() }),
   z.object({
     type: z.literal("close"),
     id: z.string(),
@@ -188,11 +233,21 @@ export const studySceneSchema = z.discriminatedUnion("type", [
   })
 ]);
 export type StudyScene = z.infer<typeof studySceneSchema>;
-export const studySchema = z.object({
-  format: z.literal("study"),
-  ...common,
-  scenes: z.array(studySceneSchema).min(3).max(14)
-});
+export const studySchema = z
+  .object({
+    format: z.literal("study"),
+    ...common,
+    base: baseSchema,
+    scenes: z.array(studySceneSchema).min(3).max(15)
+  })
+  .superRefine((piece, ctx) => {
+    if (piece.scenes.filter((s) => s.type === "base").length !== 1)
+      ctx.addIssue({ code: "custom", path: ["scenes"], message: "a study carries exactly one base scene (mentions, channels, period)" });
+    piece.scenes.forEach((s, i) => {
+      if (s.type === "chapter" && s.chart && !s.note)
+        ctx.addIssue({ code: "custom", path: ["scenes", i, "note"], message: `chapter "${s.id}" shows a chart without its note: mentions, period, channels` });
+    });
+  });
 export type StudyPiece = z.infer<typeof studySchema>;
 
 // ---------------------------------------------------------------- deck motion

@@ -15,7 +15,7 @@ export const text = (size: number, weight = 500, extra: CSSProperties = {}): CSS
 });
 
 /** Fades a scene in (12 frames, from 36 px below) and out (last 10, upwards) inside the safe area. */
-export function Shell({ bottomSafe, align = "center", children }: { bottomSafe: number; align?: "center" | "start"; children: ReactNode }) {
+export function Shell({ bottomSafe, align = "center", footer, children }: { bottomSafe: number; align?: "center" | "start"; footer?: ReactNode; children: ReactNode }) {
   const frame = useCurrentFrame();
   const { durationInFrames: d } = useVideoConfig();
   const opacity = interpolate(frame, [0, 8, d - 8, d], [0, 1, 1, 0], clamp);
@@ -35,6 +35,7 @@ export function Shell({ bottomSafe, align = "center", children }: { bottomSafe: 
       }}
     >
       {children}
+      {footer}
     </div>
   );
 }

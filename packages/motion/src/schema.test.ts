@@ -51,6 +51,24 @@ test("the study timing matches its piece", () => {
   timing.scenes.forEach((t, i) => assert.equal(t.id, piece.scenes[i].id));
 });
 
+test("a figure without its base note is rejected (VIDEO.md §2)", () => {
+  const social = ex("social.json");
+  delete social.scenes[1].note;
+  assert.throws(() => socialSchema.parse(social), /without its note/);
+  const study = ex("study.json");
+  delete study.scenes[1].note;
+  assert.throws(() => studySchema.parse(study), /without its note/);
+});
+
+test("a piece without its base scene is rejected", () => {
+  for (const file of ["social.json", "study.json"]) {
+    const piece = ex(file);
+    piece.scenes = piece.scenes.filter((s: { type: string }) => s.type !== "base");
+    const schema = file.startsWith("social") ? socialSchema : studySchema;
+    assert.throws(() => schema.parse(piece), /base scene/);
+  }
+});
+
 test("a quote that was not verified is rejected", () => {
   const piece = ex("study.json");
   piece.scenes[1].quote.verified = false;

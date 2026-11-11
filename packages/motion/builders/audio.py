@@ -34,7 +34,8 @@ UNVOICED_QUOTE = lambda text: int(FPS * (2.2 + 0.045 * len(text)))   # reading t
 CHAT_STEP = 16            # one post every 16 frames in the climax chat
 
 # Clip lengths of the social scenes without voice (the website's SCENE_FRAMES).
-SCENE_FRAMES = {"hook": 84, "stat": 108, "compare": 138, "journey": 156, "split": 120, "tension": 126, "quote": 156, "takeaway": 108}
+SCENE_FRAMES = {"hook": 84, "stat": 108, "compare": 138, "journey": 156, "split": 120, "tension": 126, "quote": 156, "takeaway": 108, "base": 120}
+BASE_FRAMES = SCENE_FRAMES["base"]   # the base scene: mentions, channels, period (VIDEO.md §2)
 
 
 def frames(seconds):
@@ -198,6 +199,12 @@ def time_piece(piece, v):
             c = clip("vo", vo(f"{sid}_vo", sc["vo"]), cur)
             clips.append(c)
             cur = c["at"] + c["len"] + 36
+        elif typ == "base":
+            cur = BASE_FRAMES
+            if sc.get("vo"):
+                c = clip("vo", vo(f"{sid}_vo", sc["vo"]), VO_AT)
+                clips.append(c)
+                cur = max(BASE_FRAMES, c["at"] + c["len"] + 30)
         elif typ == "close":
             c = clip("vo", vo(f"{sid}_vo", sc["vo"]), 8)
             clips.append(c)

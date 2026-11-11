@@ -45,6 +45,7 @@ export const SCENE_FRAMES: Record<string, number> = {
   split: 120,
   tension: 126,
   quote: 156,
-  takeaway: 108
+  takeaway: 108,
+  base: 120
 };
 export const OUTRO_FRAMES = 54;

@@ -16,6 +16,11 @@ contradice a VIDEO.md, manda VIDEO.md y se corrige el código.
 El esquema de cada pieza, con sus límites de texto, vive en [`src/schema.ts`](src/schema.ts). Una pieza
 que no valida no renderiza.
 
+**La base es obligatoria** (VIDEO.md §2). Una pieza social o de estudio trae `base` (menciones totales,
+canales con sus menciones, periodo, mercado) y exactamente una escena `{ "type": "base" }`; cada cifra
+trae su `note` (`mentions`, `what`, `period`, `channels`). Sin eso, el esquema la rechaza. El clip
+cierra con la base de la historia (`sources`, `period`, `market`).
+
 ## Comandos (desde `packages/motion`)
 
 ```bash
