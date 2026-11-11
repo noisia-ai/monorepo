@@ -1,3 +1,4 @@
+import { workspacePaidGlobalReplayAvailabilityV2, resumeWorkspacePaidGlobalConsolidationV2 } from "./workspace-paid-global-replay";
 import { shareWorkspaceAnalysisRead } from "./workspace-analysis-read-sharing";
 import { readWorkspaceAnalysis } from "./mfp-population-read";
 import { createHash } from "node:crypto";
@@ -216,9 +217,14 @@ async function loadAuthorizedWorkspaceAnalysisV1(args: Access & { idempotencyKey
   const view = (run: SignalWorkspaceEngineStatusV1["latest_run"]) => workspaceAnalysisRunViewV1(run, run ? budgets.get(run.execution_id) : undefined);
   const admission = loadedAdmission ? { ...loadedAdmission, provider_available: workspaceAnalysisAdmissionProviderAvailableV1(process.env, access.massEnabled) } : null;
   const latest = view(raw.latest_run);
+  const global_receipt_replay = access.massEnabled && latest?.status === "failed" && latest.is_current
+    && latest.error_code === "workspace_engine_worker_failed" && !latest.outcome_unknown
+    && latest.expected_interpretation_units > 0 && latest.interpreted_units === latest.expected_interpretation_units
+    ? await workspacePaidGlobalReplayAvailabilityV2({ database: access.database, workspaceId: args.workspaceId,
+      actorUserId: args.actorUserId, executionId: latest.execution_id }) : null;
   const result: WorkspaceAnalysisStatus = { ...raw, update, numeric_readiness, admission, incremental_editorial, contract_version: "signal-workspace-analysis-v1",
     request_scope: workspaceAnalysisRequestScopeV1(args.workspaceId, args.actorUserId), can_execute: access.governedEnabled ? access.capabilities.can_request_processing : access.capabilities.can_execute_topics, discovery_enabled: discoveryEnabled, governed_enabled: access.governedEnabled,
-    latest_run: latest, active_run: workspaceAnalysisActiveRunV1(latest),
+    global_receipt_replay, latest_run: latest, active_run: workspaceAnalysisActiveRunV1(latest),
     latest_complete: view(raw.latest_complete), request_run: view(raw.request_run),
     preflight: {
       state: preflightRead.state ?? workspaceAnalysisPreflightStateV1({ received, prepared: preparation.is_current,
@@ -312,6 +318,9 @@ export async function requestWorkspaceAnalysisForActorV1(args: Access & { idempo
   } else if (args.body.action === "revoke_interpretation") {
     await revokeSignalWorkspaceInterpretationAdmissionV1({ ...access, execution_id: args.body.run_id, idempotency_key: args.idempotencyKey,
       expected_admission_operation_id: args.body.expected_admission_operation_id });
+  } else if (args.body.action === "replay_global_consolidation") {
+    await resumeWorkspacePaidGlobalConsolidationV2({ database: access.database, workspaceId: args.workspaceId,
+      actorUserId: args.actorUserId, executionId: args.body.run_id, idempotencyKey: args.idempotencyKey });
   } else if (args.body.action === "retry_incremental_delivery") {
     // The store selects the existing derivation/projection phase; no numeric or editorial execution is restarted.
     await retrySignalWorkspaceIncrementalDeliveryV1({ ...access, execution_id: args.body.run_id, idempotency_key: args.idempotencyKey });

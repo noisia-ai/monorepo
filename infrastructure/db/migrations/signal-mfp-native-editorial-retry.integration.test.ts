@@ -85,6 +85,8 @@ test("native product resumes a definitely-unsent editorial expiry under its orig
     const ledger = (await f.query("SELECT * FROM engine_cost_events WHERE catalog_execution_id=$1 ORDER BY id", [started.execution_id])).rows;
     const status = await engine.loadSignalWorkspaceEngineStatusV1(access);
     assert.equal(status.latest_run?.native_interpretation_retry_eligible, true);
+    assert.deepEqual(await engine.assertSignalWorkspaceMassLabelingRecoveryReadyV1({ ...access, ...started }), { pilot: true },
+      "native replay accepts its frozen nullable cap without creating provider authority");
 
     const negative = async (work: () => Promise<void>) => {
       await f.query("SAVEPOINT native_retry_negative");

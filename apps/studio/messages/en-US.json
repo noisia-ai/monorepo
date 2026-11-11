@@ -2941,6 +2941,7 @@
         "receipt": "Recorded: {settled} · Reserved: {reserved}.",
         "unknownAmount": "Amount awaiting confirmation: {amount}.",
         "terminalAmount": "Of the reserved amount, {amount} is still awaiting billing reconciliation for an interrupted request.",
+        "paidGlobalReplay": "Resume the map using the responses already paid for. This does not authorize or send new provider calls.",
         "transportRetry": "Resuming requires a separate reservation for the next attempt, within the same interpretation cap.",
         "pending": "Checking whether the request was saved. Refreshing status does not start another analysis.",
         "unknown": "A call's outcome and cost have not been confirmed. The request is preserved; another call will not be sent automatically.",

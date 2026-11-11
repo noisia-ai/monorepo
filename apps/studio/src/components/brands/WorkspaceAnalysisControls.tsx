@@ -198,6 +198,7 @@ export function WorkspaceAnalysisControls({ brandId, workspaceId, catalogVersion
       {status && analysis.pending && (isWorkspaceIncrementalEditorialAction(analysis.pending.body) ? !workspaceIncrementalEditorialHasReceipt(status, analysis.pending.body) : isWorkspaceAdmissionAction(analysis.pending.body) ? !status?.admission?.request : analysis.pending.body.action === "retry_incremental_delivery" ? !status?.update?.request_delivery : analysis.pending.body.action === "retry_numeric" ? !status?.update?.request_numeric : !status?.request_run) ? <p role="status">{t("pending")}</p> : null}
       {analysis.error ? <p role="alert" className="team-msg team-msg--error">{t(`errors.${workspaceAnalysisErrorKey(analysis.error)}`)}</p> : null}
       {disabled ? <p>{t("saveFirst")}</p> : status && !status.can_execute ? <p>{t("readOnly")}</p> : null}
+      {analysis.canRetry && status?.global_receipt_replay?.execution_id === run?.execution_id ? <p className="admin-drawer-form__hint">{t("paidGlobalReplay")}</p> : null}
       {analysis.canRetry && run?.transport_recovery_eligible ? <p className="admin-drawer-form__hint">{t("transportRetry")}</p> : null}
       {analysis.canRetryNumeric || analysis.canReplay && analysis.pending?.body.action === "retry_numeric" ? <p className="admin-drawer-form__hint">{t("update.retryBody")}</p> : null}
       <div className="admin-form-actions">

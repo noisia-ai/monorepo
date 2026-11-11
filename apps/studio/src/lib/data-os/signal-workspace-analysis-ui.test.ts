@@ -750,3 +750,35 @@ for (const locale of ["es-MX", "en-US"]) {
     assert.ok(legacy.includes(copy.admissionGrant.budgetUnavailable));
   });
 }
+
+
+test("paid global replay persists only its same-run intent and rejects client supplied decisions or money", () => {
+  const request = { version: 1 as const, workspace_id: id, request_scope: status.request_scope,
+    key: "paid-global-replay-test", body: { action: "replay_global_consolidation", run_id: id } };
+  assert.deepEqual(parsePendingWorkspaceAnalysis(request, id, status.request_scope), request);
+  for (const injected of [{ decision: {} }, { raw_response: "private" }, { call_id: id },
+    { actor_user_id: id }, { cap_micro_usd: 1 }, { provider_enabled: true }])
+    assert.equal(parsePendingWorkspaceAnalysis({ ...request, body: { ...request.body, ...injected } }, id, status.request_scope), null);
+  assert.equal(parsePendingWorkspaceAnalysis(request, id, "another-actor"), null);
+});
+
+
+for (const locale of ["es-MX", "en-US"]) test(`${locale}: same-run paid global recovery explains its zero-provider boundary`, async () => {
+  const messages = JSON.parse(await readFile(new URL(`../../../messages/${locale}.json`, import.meta.url), "utf8"));
+  const failed: WorkspaceAnalysisRun = { ...ready, status: "failed", phase: "failed",
+    error_code: "workspace_engine_worker_failed", retryable: true, expected_interpretation_units: 158, interpreted_units: 158 };
+  const value: WorkspaceAnalysisStatus = { ...status, latest_run: failed,
+    global_receipt_replay: { execution_id: id, call_id: id } };
+  assert.equal(validWorkspaceAnalysisStatus(value), true);
+  assert.equal(validWorkspaceAnalysisStatus({ ...value, global_receipt_replay: { execution_id: id, call_id: "foreign" } }), false);
+  const request = { version: 1 as const, workspace_id: id, request_scope: value.request_scope,
+    key: "paid-global-replay-confirmed", body: { action: "replay_global_consolidation" as const, run_id: id } };
+  assert.equal(workspaceAnalysisCanReplay(value, request), true);
+  assert.equal(workspaceAnalysisCanReplay({ ...value, active_run: { ...failed, status: "running" } }, request), false);
+  assert.equal(workspaceAnalysisCanReplay({ ...value, latest_run: { ...failed, outcome_unknown: true } }, request), false);
+  const html = renderToStaticMarkup(createElement(NextIntlClientProvider,
+    { locale, messages, timeZone: "UTC" } as ComponentProps<typeof NextIntlClientProvider>,
+    createElement(WorkspaceAnalysisControls, { workspaceId: id, brandId: id, catalogVersion: "paid-replay", initial: value })));
+  assert.ok(html.includes(messages.AdminWorkspace.topics.analysis.paidGlobalReplay));
+  assert.ok(html.includes(`>${messages.AdminWorkspace.topics.analysis.retry}</button>`));
+});

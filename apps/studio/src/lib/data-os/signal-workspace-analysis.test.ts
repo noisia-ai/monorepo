@@ -23,7 +23,7 @@ function authorityDatabase(authority: unknown) {
 test("analysis status and mutation enforce DB authority before reading corpus or execution", async () => {
   for (const authority of [null, { ...granted, workspace_status: "archived" }, { ...granted, actor_status: "suspended" },
     { ...granted, same_organization: false }, { ...granted, brand_access_level: null }]) {
-    for (const action of ["load", "start", "retry", "retry_progress", "retry_numeric", "retry_incremental_delivery"]) {
+    for (const action of ["load", "start", "retry", "retry_progress", "retry_numeric", "retry_incremental_delivery", "replay_global_consolidation"]) {
       const args = { database: authorityDatabase(authority), workspaceId: id, actorUserId: "actor" };
       await assert.rejects(action === "load" ? loadWorkspaceAnalysisForActorV1(args) : requestWorkspaceAnalysisForActorV1({ ...args,
         idempotencyKey: "analysis-test-request", body: action === "start" ? body : { action, run_id: id } }),

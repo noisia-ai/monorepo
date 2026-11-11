@@ -21,7 +21,8 @@ test('real outbox SQL preserves failed editorial owners and recovers only an adm
     // Session-local shadows only. No migration, public fixture, provider or Redis.
     await client.query(`CREATE TEMP TABLE signal_topic_catalog_executions(
       id uuid PRIMARY KEY,workspace_id uuid,actor_user_id uuid,input_contract text,status text,
-      input_snapshot jsonb DEFAULT '{}',processing_admission_id uuid,request_digest text,
+      input_snapshot jsonb DEFAULT '{}',processing_admission_id uuid,request_digest text,input_digest text,
+      input_revision bigint,result_summary jsonb DEFAULT '{}',policy_valid_until timestamptz,
       error_code text,completed_at timestamptz,updated_at timestamptz DEFAULT now());
       CREATE TEMP TABLE signal_topic_classification_outbox(
       id uuid PRIMARY KEY DEFAULT gen_random_uuid(),execution_id uuid,workspace_id uuid,worker_job_id text,

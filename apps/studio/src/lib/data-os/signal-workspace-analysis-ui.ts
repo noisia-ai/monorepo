@@ -15,6 +15,7 @@ export type WorkspaceAnalysisRun = NonNullable<SignalWorkspaceEngineStatusV1["la
 export type WorkspaceAnalysisStatus = Omit<SignalWorkspaceEngineStatusV1, "latest_run" | "latest_complete"> & {
   contract_version: "signal-workspace-analysis-v1";
   request_scope: string; execution_mode?: "operator_cli"; can_execute: boolean; discovery_enabled?: boolean; governed_enabled?: boolean;
+  global_receipt_replay?: { execution_id: string; call_id: string } | null;
   update?: WorkspaceAnalysisUpdate | null;
   numeric_readiness?: WorkspaceNumericReadiness | null;
   admission?: WorkspaceInterpretationAdmission | null;
@@ -30,6 +31,7 @@ export type WorkspaceAnalysisRequest = { action: "start"; embedding_run_id: stri
   expected_context_digest: string; expected_catalog_digest: string; claude_cap_micro_usd?: number | null;
   discovery_sample_cap?: number | null; discovery_sample_seed?: string }
   | { action: "retry"; run_id: string }
+  | { action: "replay_global_consolidation"; run_id: string }
   | { action: "retry_progress"; run_id: string }
   | { action: "retry_numeric"; run_id: string }
   | { action: "retry_incremental_delivery"; run_id: string }
@@ -121,6 +123,8 @@ export function validWorkspaceAnalysisStatus(value: unknown): value is Workspace
     && ["active_run", "latest_run", "latest_complete", "request_run"].every((key) => validWorkspaceAnalysisRun(value[key]))
     && (!value.active_run || ["queued", "running"].includes((value.active_run as WorkspaceAnalysisRun).status))
     && (!value.latest_complete || (value.latest_complete as WorkspaceAnalysisRun).status === "ready")
+    && (value.global_receipt_replay == null || object(value.global_receipt_replay)
+      && uuid(value.global_receipt_replay.execution_id) && uuid(value.global_receipt_replay.call_id))
     && nullable(value.latest_complete_execution_id, uuid) && validWorkspaceAnalysisUpdate(value.update) && validWorkspaceNumericReadiness(value.numeric_readiness, value.workspace_id as string)
     && validWorkspaceInterpretationAdmission(value.admission, value.workspace_id)
     && validWorkspaceIncrementalEditorial(value.incremental_editorial, value.workspace_id);
@@ -145,7 +149,7 @@ export function parsePendingWorkspaceAnalysis(value: unknown, workspaceId: strin
     || body.discovery_sample_cap != null && (!integer(body.discovery_sample_cap) || Number(body.discovery_sample_cap) < 1)
     || body.discovery_sample_seed !== undefined && (typeof body.discovery_sample_seed !== "string" || body.discovery_sample_seed.length < 1 || body.discovery_sample_seed.length > 120)
     || !uuid(body.embedding_run_id) || !digest(body.expected_catalog_digest) || !digest(body.expected_context_digest) || body.claude_cap_micro_usd !== undefined && !nullable(body.claude_cap_micro_usd,integer)
-    : !["retry", "retry_progress", "retry_numeric", "retry_incremental_delivery"].includes(String(body.action)) || Object.keys(body).sort().join(",") !== "action,run_id" || !uuid(body.run_id)) return null;
+    : !["retry", "retry_progress", "retry_numeric", "retry_incremental_delivery", "replay_global_consolidation"].includes(String(body.action)) || Object.keys(body).sort().join(",") !== "action,run_id" || !uuid(body.run_id)) return null;
   return value as PendingWorkspaceAnalysis;
 }
 export function workspaceAnalysisUnknown(status: WorkspaceAnalysisStatus | null) {
@@ -244,7 +248,7 @@ export function workspaceAnalysisCanReplay(status: WorkspaceAnalysisStatus, requ
   if (request.body.action === "retry_progress") return status.latest_run?.execution_id === request.body.run_id
     && workspaceAnalysisCanRetryProgress(status, status.latest_run);
   if (status.active_run || workspaceAnalysisUnknown(status)) return false;
-  return request.body.action === "retry"
+  return request.body.action === "retry" || request.body.action === "replay_global_consolidation"
     ? status.latest_run?.execution_id === request.body.run_id && workspaceAnalysisCanRetry(status, status.latest_run)
     : status.preflight.embedding_run_id === request.body.embedding_run_id
       && status.preflight.context_digest === request.body.expected_context_digest && status.preflight.catalog_digest === request.body.expected_catalog_digest
