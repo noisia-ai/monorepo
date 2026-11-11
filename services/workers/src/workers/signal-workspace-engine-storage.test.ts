@@ -119,3 +119,26 @@ test("429 during part verification retries storage before creating the manifest"
     assert.equal(await readFile(join(directory, "readback.json"), "utf8"), "paid response");
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
+
+for (const mode of ["missing_first_part", "extra_short_part", "truncated_bytes"] as const) {
+  test(`orphan recovery rejects incomplete multipart receipts (${mode})`, async () => {
+    const directory = await mkdtemp(join(tmpdir(), "noisia-orphan-incomplete-"));
+    try {
+      const fixture = server(), name = "response-00000000-0000-4000-8000-000000000003.json";
+      const file = join(directory, name), payload = Buffer.from("complete immutable receipt");
+      await writeFile(file, payload);
+      const stored = await fixture.storage.put({ ...scope, file, sha256: await hashWorkspaceEngineFileV1(file), size_bytes: payload.length, media_type: "application/json" });
+      fixture.objects.delete(stored.storage_key);
+      const first = stored.storage_key.replace(".parts.json", ".part-000000");
+      if (mode === "missing_first_part") {
+        fixture.objects.delete(first);
+        fixture.objects.set(first.replace(/part-000000$/u, "part-000001"), payload);
+      } else if (mode === "extra_short_part") fixture.objects.set(stored.storage_key.replace(".parts.json", ".part-000001"), payload);
+      else fixture.objects.set(first, payload.subarray(0, -1));
+      const writes = fixture.writes.length;
+      await assert.rejects(fixture.storage.recoverIncomplete!({ ...scope, name, max_bytes: 8388608 }), /recovery_(?:incomplete|digest_invalid)/);
+      assert.equal(fixture.objects.has(stored.storage_key), false);
+      assert.equal(fixture.writes.length, writes, "incomplete evidence never produces a manifest");
+    } finally { await rm(directory, { recursive: true, force: true }); }
+  });
+}

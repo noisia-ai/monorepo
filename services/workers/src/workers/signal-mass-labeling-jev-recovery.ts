@@ -51,11 +51,11 @@ export async function recoverMassLabelingJevReceiptsV1(args: {
     const parsed = validateJevResponseV1(request, JSON.parse(stored.raw_text) as JevRawResponseV1);
     const result = mapMassLabelingJevResponseV2(input, run.context, configuration, parsed);
     const usage = jevUsageV1(parsed.usage);
-    await reconcileMassLabelingJevReceiptV1({ database: args.database, run_id: run.id, workspace_id: run.workspace_id,
+    const settlement = await reconcileMassLabelingJevReceiptV1({ database: args.database, run_id: run.id, workspace_id: run.workspace_id,
       actor_user_id: run.actor_user_id, call_id: call.id, request_digest: call.request_digest,
       raw_sha256: stored.sha256, raw_storage_key: stored.storage_key, raw_size_bytes: stored.size_bytes,
       usage, settled_micro_usd: llmCostMicroUsdV1(usage, llmPriceV1("typesafe", run.identity.model, "sync", Number(run.identity.params.input_usd_per_mtok))), result });
-    recovered++;
+    if (!settlement.replayed) recovered++;
   }
   return { recovered };
 }
