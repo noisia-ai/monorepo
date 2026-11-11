@@ -21,6 +21,8 @@ import { signalWorkspaceEmbeddingsJobV1 } from "../../../services/workers/src/wo
 import { signalWorkspaceEngineJobV1 } from "../../../services/workers/src/workers/signal-workspace-engine";
 import { createBrandContextSyntheticVoyageProviderV1 } from "./signal-brand-context.synthetic.fixture";
 import { materializeMassLabelingProductMapV2 } from "../../../services/workers/src/workers/signal-mass-labeling-product-map";
+import {assertNativePaidReplayOutboxV2} from "./signal-mass-labeling-native-replay-outbox.assertions";
+import {drainSignalTopicClassificationOutboxV1} from "../../../services/workers/src/workers/signal-topic-classification-outbox";
 import { assertMassLabelingProductOutboxV1 } from "./signal-mass-labeling-product-outbox.assertions";
 import type { WorkspaceEngineStorageV1 } from "../../../services/workers/src/workers/signal-workspace-engine-storage";
 import { SIGNAL_WORKSPACE_EMBEDDING_PROFILE_V1, SIGNAL_WORKSPACE_MASS_LABELING_PRODUCT_CONFIGURATION_V2 as currentConfiguration,
@@ -121,6 +123,22 @@ for (const variant of ["current", "legacy", "receipt_recovery"] as const) test(`
     const embeddingJob = (await database.query("SELECT worker_job_id FROM signal_workspace_embedding_runs WHERE id=$1", [embedded.run_id])).rows[0]!.worker_job_id;
     const voyage = createBrandContextSyntheticVoyageProviderV1();
     await signalWorkspaceEmbeddingsJobV1({ id: embeddingJob, data: { run_id: embedded.run_id }, updateProgress: async () => {} }, { database, provider: voyage.provider });
+    // Issue a real short-lived spending authority after source preparation.
+    // Its natural expiry must not revoke a later zero-cost sealed receipt replay.
+    let spendingDeadline: Date | null = null;
+    if(variant==="receipt_recovery") {
+      const previous=(await database.query("SELECT id FROM signal_processing_policy_versions WHERE organization_id=$1 AND status='active'",[organization])).rows[0].id;
+      const successor=randomUUID();await client.query("BEGIN");
+      try{
+        await client.query(`INSERT INTO signal_processing_policy_versions(id,organization_id,version,status,valid_from,valid_until,budget_timezone,daily_cap_micro_usd,created_by_user_id)
+          SELECT $1,organization_id,version+1,'draft',valid_from,clock_timestamp()+interval '30 seconds',budget_timezone,daily_cap_micro_usd,created_by_user_id FROM signal_processing_policy_versions WHERE id=$2`,[successor,previous]);
+        await client.query(`INSERT INTO signal_processing_policy_actions(policy_version_id,action,kind,provider,model,configuration,configuration_digest,max_execution_micro_usd,automatic_allowed)
+          SELECT $1,action,kind,provider,model,configuration,configuration_digest,max_execution_micro_usd,automatic_allowed FROM signal_processing_policy_actions WHERE policy_version_id=$2`,[successor,previous]);
+        await client.query("UPDATE signal_processing_policy_versions SET status='revoked' WHERE id=$1",[previous]);
+        spendingDeadline=(await client.query("UPDATE signal_processing_policy_versions SET status='active' WHERE id=$1 RETURNING valid_until",[successor])).rows[0].valid_until;
+        await client.query("COMMIT");
+      }catch(error){await client.query("ROLLBACK");throw error;}
+    }
     const preflight = await loadSignalWorkspaceEnginePreflightV1(access);
     assert.equal(preflight.engine_configuration?.profile_version, "workspace-bertopic-mass-labeling-v3");
     assert.equal(imported.roots.length, 80);
@@ -245,6 +263,11 @@ for (const variant of ["current", "legacy", "receipt_recovery"] as const) test(`
       const replayArgs={database,workspaceId:workspace,actorUserId:clientActor,executionId:started.execution_id,idempotencyKey:randomUUID()};
       await assert.rejects(resumeWorkspacePaidGlobalConsolidationV2({...replayArgs,actorUserId:systemActor},{readStored}),/forbidden|invalid/u);
       await assert.rejects(loadSignalWorkspaceMassLabelingGlobalReplaySourceV2({database,workspace_id:randomUUID(),actor_user_id:clientActor,execution_id:started.execution_id}));
+      assert.ok(spendingDeadline);
+      await new Promise(resolve=>setTimeout(resolve,Math.max(0,spendingDeadline!.getTime()-Date.now()+100)));
+      const expired=(await database.query(`SELECT admission.admission_not_after<=clock_timestamp() expired,policy.valid_until<=clock_timestamp() policy_expired
+        FROM signal_processing_admissions admission JOIN signal_processing_policy_versions policy ON policy.id=admission.policy_version_id WHERE admission.id=$1`,[queued.processing_admission_id])).rows[0];
+      assert.deepEqual(expired,{expired:true,policy_expired:true});
       await resumeWorkspacePaidGlobalConsolidationV2(replayArgs,{readStored});
       await resumeWorkspacePaidGlobalConsolidationV2(replayArgs,{readStored});
       const decision=(await database.query("SELECT * FROM signal_mass_labeling_global_receipt_decisions WHERE execution_id=$1",[started.execution_id])).rows[0];assert.ok(decision);
@@ -252,10 +275,16 @@ for (const variant of ["current", "legacy", "receipt_recovery"] as const) test(`
       await assert.rejects(database.query("UPDATE signal_mass_labeling_global_receipt_decisions SET decision='{}' WHERE id=$1",[decision.id]),/append-only/u);
       await assert.rejects(database.query("DELETE FROM signal_mass_labeling_global_receipt_decisions WHERE id=$1",[decision.id]),/append-only/u);
       await assert.rejects(database.query(`INSERT INTO engine_cost_events SELECT (jsonb_populate_record(NULL::engine_cost_events,to_jsonb(c)||jsonb_build_object('id',$2::uuid,'idempotency_key',$3::text,'call_state','reserved','attempt_token',$4::uuid))).*
-        FROM engine_cost_events c WHERE catalog_execution_id=$1 AND metadata#>>'{mass_labeling_stage,stage}'='global-consolidation-v1'`,[started.execution_id,randomUUID(),randomUUID(),randomUUID()]),/global_receipt_recovery_no_send/u);
+        FROM engine_cost_events c WHERE catalog_execution_id=$1 AND metadata#>>'{mass_labeling_stage,stage}'='global-consolidation-v1'`,[started.execution_id,randomUUID(),randomUUID(),randomUUID()]),/global_receipt_recovery_no_send|processing_policy_expired/u);
       const paid=groupRequests+consolidationRequests;
       globalThis.fetch=async()=>{throw Error("receipt_replay_must_not_send");};
       const outbox=(await database.query("SELECT worker_job_id FROM signal_topic_classification_outbox WHERE execution_id=$1",[started.execution_id])).rows[0];
+      await assertNativePaidReplayOutboxV2({database,client,execution_id:started.execution_id});
+      const dispatched:Array<{name:string;execution_id:string;job_id:unknown}>=[];
+      const drained=await drainSignalTopicClassificationOutboxV1({database,schedule:async()=>({requeued:0}),queue:{getJob:async()=>null,
+        add:async(name,data,options)=>{dispatched.push({name,execution_id:(data as {execution_id:string}).execution_id,job_id:options.jobId});return{};}}});
+      assert.deepEqual(drained,{claimed:1,dispatched:1,failed:0,dead_lettered:0});
+      assert.equal(dispatched[0]!.execution_id,started.execution_id);assert.equal(dispatched[0]!.job_id,outbox.worker_job_id);
       result=await signalWorkspaceEngineJobV1({...job,id:outbox.worker_job_id},{...runOptions,process:async()=>{throw Error("receipt_replay_must_not_fit");}});
       assert.equal(groupRequests+consolidationRequests,paid);
       assert.deepEqual((await database.query("SELECT to_jsonb(c) body FROM engine_cost_events c WHERE catalog_execution_id=$1 ORDER BY id",[started.execution_id])).rows,before);

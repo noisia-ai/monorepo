@@ -25,7 +25,8 @@ type Options = { database?: Pick<Pool, "query" | "connect">; queue?: QueueLike; 
 
 // Historical paid pilots retain their private operator. Native product runs
 // cross this boundary only with the exact typed profile and their own current,
-// workspace/actor/target-bound admission. The consumer revalidates authority.
+// workspace/actor/target-bound admission, or an immutable receipt-only V2
+// disposition. The consumer derives replay mode again; the DB forbids sends.
 const massLabelingDispatchGuard = `NOT EXISTS(
   SELECT 1 FROM signal_topic_catalog_executions pilot
   WHERE pilot.id=signal_topic_classification_outbox.execution_id
@@ -36,7 +37,8 @@ const massLabelingDispatchGuard = `NOT EXISTS(
       signal_mass_labeling_product_engine_v2(pilot.workspace_id,pilot.input_contract,pilot.input_snapshot)
       AND pilot.status IN ('queued','running')
       AND signal_brand_context_processing_actor_v1(pilot.workspace_id,pilot.actor_user_id)
-      AND EXISTS(
+      AND pilot.workspace_id=signal_topic_classification_outbox.workspace_id
+      AND (EXISTS(
         SELECT 1 FROM signal_processing_admissions admission
         JOIN signal_processing_policy_versions policy ON policy.id=admission.policy_version_id
           AND policy.organization_id=admission.organization_id AND policy.status='active'
@@ -51,7 +53,38 @@ const massLabelingDispatchGuard = `NOT EXISTS(
           AND signal_processing_configuration_allows_v1(admission.action,admission.configuration,
             pilot.input_snapshot#>'{interpretation_config,call_configuration}')
           AND admission.admission_not_after>clock_timestamp()
-      )
+      ) OR EXISTS(
+        SELECT 1 FROM signal_mass_labeling_global_receipt_decisions disposition
+        JOIN engine_cost_events receipt ON receipt.id=disposition.call_id
+          AND receipt.workspace_id=disposition.workspace_id AND receipt.catalog_execution_id=disposition.execution_id
+          AND receipt.actor_user_id=disposition.created_by_user_id
+        JOIN signal_corpus_preparation_input_state source ON source.workspace_id=pilot.workspace_id
+          AND source.input_revision=pilot.input_revision
+        JOIN signal_workspaces workspace ON workspace.id=pilot.workspace_id AND workspace.status='active'
+        WHERE disposition.id::text=pilot.result_summary->>'global_receipt_recovery_decision_id'
+          AND disposition.workspace_id=pilot.workspace_id AND disposition.execution_id=pilot.id
+          AND disposition.created_by_user_id=pilot.actor_user_id
+          AND disposition.input_digest=pilot.input_digest
+          AND disposition.fit_checkpoint_digest=pilot.result_summary#>>'{fit_checkpoint,checkpoint_digest}'
+          AND (pilot.policy_valid_until IS NULL OR pilot.policy_valid_until>clock_timestamp())
+          AND disposition.decision->>'contract_version'='workspace-mass-labeling-receipt-recovery-v2'
+          AND disposition.decision->>'workspace_id'=pilot.workspace_id::text
+          AND disposition.decision->>'execution_id'=pilot.id::text
+          AND disposition.decision->>'call_id'=receipt.id::text
+          AND disposition.decision->>'request_digest'=receipt.request_digest
+          AND disposition.decision->>'response_sha256'=receipt.response_sha256
+          AND disposition.decision->>'source_groups_digest'=disposition.source_groups_digest
+          AND disposition.decision_digest='sha256:'||encode(sha256(convert_to(signal_semantic_context_canonical_json_v1(disposition.decision),'UTF8')),'hex')
+          AND receipt.workspace_contract='workspace-engine-interpretation-v1' AND receipt.call_state='settled'
+          AND receipt.settled_micro_usd IS NOT NULL AND receipt.response_http_status=200
+          AND receipt.response_storage_key IS NOT NULL AND receipt.response_size_bytes>0
+          AND COALESCE((receipt.metadata->>'response_complete')::boolean,true)
+          AND receipt.request_digest=disposition.request_digest AND receipt.response_sha256=disposition.response_sha256
+          AND receipt.metadata#>>'{mass_labeling_stage,stage}'='global-consolidation-v1'
+          AND receipt.metadata#>>'{mass_labeling_stage,source_groups_digest}'=disposition.source_groups_digest
+          AND NOT receipt.metadata ? 'editorial_repair'
+          AND receipt.call_configuration=workspace_engine_interpretation_configuration_v1(pilot.id,receipt.metadata->>'interpretation_revision_digest')
+      ))
     )
 )`;
 
