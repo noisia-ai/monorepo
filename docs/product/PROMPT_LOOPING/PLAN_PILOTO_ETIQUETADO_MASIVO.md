@@ -211,6 +211,8 @@ Lo demás se resuelve de forma autónoma y se anota en el registro de decisiones
 
 ## Progreso
 
+- [x] H7 · El PR #164 se integró en `df4c81d9` tras revisión independiente de `444a60d6`. CI y PostgreSQL del PR pasaron. En la copia restaurada se aplicó 0293 una vez; una segunda aplicación reconoció las 61 migraciones del ledger. National, Alexa+ y Laika conservaron sus lecturas. El ensayo aislado comprobó una primera página de 199 liquidaciones y una respuesta incierta, dos intereses y tres sesiones concurrentes. Tras la recuperación, la misma ejecución completó la prueba de 1,000 y necesitó continuación explícita para las últimas dos raíces del ensayo.
+
 - [x] H7 · Studio admitió la prueba inicial con una sola ejecución. De sus primeras 200 solicitudes, 199 quedaron liquidadas por USD 0.013708. La restante detuvo el worker. En lectura privada se verificaron los 948 bytes de la respuesta frente a su huella, las nueve preguntas congeladas y el analizador nativo. La liquidación de ese recibo y las otras 800 raíces de la prueba siguen pendientes.
 
 - [x] H7 · El worker de UAT confirmó el mapa el 11 de noviembre. Studio mostró 83,962 raíces y 111 tópicos. La comprobación privada encontró los mismos 138 grupos incluidos, 20 exclusiones, textos localizados y huellas que en el catálogo editorial. Los 57 recibos pagados permanecieron idénticos. Se completaron los 84 lotes con un promedio de 43.06 s y un máximo de 51.05 s por inserción.
@@ -321,6 +323,8 @@ Lo demás se resuelve de forma autónoma y se anota en el registro de decisiones
 - [x] Hito 4 · Recibo, comparación y muestras ciegas verificados. Se entregan el recibo público de una página y, en custodia privada, el anexo comparativo, método/fuentes, 600 casos en 11 cohortes y la clave sellada por separado. Son 597 raíces distintas por los solapamientos entre cohortes; cada cohorte cumple sus cuotas de 50 raíces por tópico para los 10 tópicos mayores y 100 de triggers/barriers. Las cohortes no representan evaluación de precisión humana.
 
 ## Sorpresas y descubrimientos
+
+- H7 · Los registros de Storage de la llamada identifican la operación que se interrumpió. La escritura de la parte devolvió HTTP 200; su lectura de verificación devolvió HTTP 429 antes de crear el manifiesto. Los 199 cuerpos liquidados se verificaron por lectura independiente y sumaron USD 0.013708.
 
 - H7 · El worker marcó una solicitud como incierta aun cuando Storage había guardado los bytes completos. Faltó el manifiesto. El prefijo corresponde a esa llamada y el SHA-256 del objeto coincide con el del contenido completo. La respuesta HTTP 200 contiene uso equivalente a USD 0.000069.
 
@@ -435,6 +439,8 @@ Lo demás se resuelve de forma autónoma y se anota en el registro de decisiones
 - Dos lotes devolvieron referencias válidas dentro de la muestra de 30 pero superaron el máximo de diez referencias por campo. La comprobación privada de las respuestas originales y de reparación encontró entre 11 y 30 referencias en los campos rechazados.
 
 ## Registro de decisiones
+
+- H7 · Reintentar de forma acotada sólo la operación de Storage al recibir 429. La conciliación nativa exige el cuerpo completo, la huella, la raíz, las preguntas y la tarifa originales. Registra el error anterior, liquida el uso medido y actualiza la proyección en una transacción. El botón de reanudar conserva la autorización inicial de 1,000 raíces.
 
 - H7 · Recuperar la respuesta desde la parte privada ya verificada mediante el camino nativo del worker. Mantener la reserva hasta aplicar la liquidación y conservar la ejecución y la identidad de la raíz. Reanudar la prueba desde la interfaz una vez comprobado el comportamiento ante reintentos y respuestas ambiguas.
 
