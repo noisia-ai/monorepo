@@ -457,11 +457,14 @@ negocio y su reformulación humana, el hallazgo con su cifra, el insight, la ten
 emocional en sus tres niveles y el momento humano que abre. Debajo, escena por escena: qué se ve, qué
 se dice, qué cifra y qué cita, y de qué fondo y tarjeta de VIDEO.md §4 sale cada una, con su porqué.
 
-AL CONSTRUIR: la marca de VIDEO.md §2 no se negocia; el estilo de §4 se elige por lo que pide la
+AL CONSTRUIR: con el builder de packages/motion (lee su README). El guion aprobado se vuelve una pieza
+JSON en la carpeta del caso, nunca en el repo, y sale con builders/build-video.mjs. Si lleva voces, corre
+primero builders/audio.py --budget y dime el gasto; sin key, --estimate da un borrador mudo. La marca de
+VIDEO.md §2 no se negocia; el estilo de §4 se elige por lo que pide la
 historia. Las cifras salen de datos y las citas llevan su assert. La evidencia es siempre un post real;
 una imagen de atmósfera con Kinetic Cinema pasa el control de calidad de HUMAN_SIGNALS.md §VIII y
-nunca va como si fuera la prueba. Revisa stills de cada escena en el fin de la voz, el fin de la cita y
-el cierre antes de darme el MP4, y pídeme que escuche el audio: nadie del lado de la máquina lo oye.
+nunca va como si fuera la prueba. Revisa la hoja de contactos de --qa (stills de cada escena en el fin de la voz, el fin de la cita y
+el Spark) antes de darme el MP4, y pídeme que escuche el audio: nadie del lado de la máquina lo oye.
 ```
 
 ## Bloque · Comercial
