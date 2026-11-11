@@ -211,6 +211,8 @@ Lo demás se resuelve de forma autónoma y se anota en el registro de decisiones
 
 ## Progreso
 
+- [x] H7 · Se integró el PR #165 en `b2a81a0c` tras la revisión de `95aabe7c`. Pasaron CI y PostgreSQL del PR, 29 pruebas focales y las seis pruebas de PostgreSQL de esta corrección. El worker conserva el turno de una raíz hasta persistir su resultado. La verificación del commit integrado y el despliegue en UAT están pendientes.
+
 - [x] H7 · La continuación alcanzó 27,400 solicitudes. Se liquidaron 27,399 por USD 1.892166 y una quedó pendiente de conciliación. La respuesta y su manifiesto se verificaron frente a la solicitud de nueve preguntas. El analizador confirmó 1,588 tokens de entrada, 294 de salida y USD 0.000067 de uso. Se sellaron las huellas del resto de la corrida antes de la recuperación.
 
 - [x] H7 · La prueba nativa de UAT terminó con 1,000 raíces, 1,000 solicitudes distintas y 1,000 resultados válidos por USD 0.068894. La lectura independiente cotejó los 1,000 cuerpos completos con el registro de llamadas. Studio registró la continuación de la misma corrida el 11 de noviembre a las 13:05 UTC. Quedan 82,962 raíces en esta etapa.
@@ -330,6 +332,8 @@ Lo demás se resuelve de forma autónoma y se anota en el registro de decisiones
 
 ## Sorpresas y descubrimientos
 
+- H7 · Con un límite aplicado sólo a las solicitudes del proveedor, las respuestas de una página podían pasar juntas a Storage. La prueba de una página retuvo los turnos hasta completar la persistencia, tanto con dos turnos configurados como con ocho.
+
 - H7 · En la nueva parada, Storage ya tenía tanto la parte como el manifiesto. La lectura de verificación del manifiesto recibió HTTP 429 cuatro veces. En los 32 segundos inspeccionados, Storage registró 90 lecturas y 27 escrituras rechazadas con 429. El límite del proveedor deja de contar una solicitud cuando entrega la respuesta, antes de que termine su guardado.
 
 - H7 · Los registros de Storage de la llamada identifican la operación que se interrumpió. La escritura de la parte devolvió HTTP 200; su lectura de verificación devolvió HTTP 429 antes de crear el manifiesto. Los 199 cuerpos liquidados se verificaron por lectura independiente y sumaron USD 0.013708.
@@ -448,6 +452,8 @@ Lo demás se resuelve de forma autónoma y se anota en el registro de decisiones
 
 ## Registro de decisiones
 
+- H7 · Para JEV v2, admitir hasta ocho raíces simultáneas y respetar un límite de proveedor menor cuando esté configurado. Ante HTTP 429, esperar al menos tres segundos antes del siguiente intento de Storage. El tope de gasto, la identidad de la llamada y su autorización se conservan.
+
 - H7 · Mantener detenida la misma ejecución hasta que el worker concilie el recibo. Limitar en el producto el número de solicitudes que pueden estar simultáneamente en evaluación, guardado o verificación. Probar el límite con una página completa y conservar el permiso y la identidad de cada raíz.
 
 - H7 · Continuar las 82,962 raíces restantes con la autorización acumulada de USD 13.50. Las primeras 1,000 dieron 638 raíces con tópico positivo, 221 intermedias, 141 sin tópico positivo ni intermedio y cero errores técnicos. Su uso permite proyectar USD 5.72 adicionales; el saldo visible de JEV era USD 14.53.
@@ -564,6 +570,8 @@ Lo demás se resuelve de forma autónoma y se anota en el registro de decisiones
 | 2026-11-07 | Ruta canónica ADR 015 con JEV como clasificador por mención; Claude sólo por grupo | Costo < USD 100 por estudio y alcance sobre el corpus completo | Fundador y auditor |
 
 ## Resultado y retrospectiva
+
+En la continuación en UAT, una lectura del manifiesto dejó pendiente una de 27,400 solicitudes. Se verificaron los bytes originales y se registró el importe que el worker debe conciliar, USD 0.000067. El PR #165 acota la concurrencia durante la persistencia de cada raíz.
 
 El corte de base de datos de R15 terminó en UAT con el mismo catálogo que la copia ensayada. Los resultados y el acceso a evidencia de las marcas históricas coincidieron antes y después. Studio y workers ya sirven desde la misma revisión. Studio aceptó los once archivos y preparó el texto de 83,962 raíces elegibles. El recibo de preparación registra 127,117 fragmentos. El worker completó los vectores de todo el corpus. Studio y workers pasaron a `3217854e` con Railpack y cero cambios preparados. Topics admitió un único mapa en la ruta normal de UAT. El worker de `3ceb6598` recogió ese asiento y completó el ajuste numérico con 158 grupos. La primera reserva quedó sin envío. En `57f3544d`, la interfaz reanudó la misma ejecución con su admisión vigente y su resultado numérico conservado. La interpretación completó los 158 grupos. Se liquidaron USD 8.412135 en total por la interpretación y la consolidación global. El motor recuperó el catálogo en UAT sin aumentar ese importe. Studio guardó la propuesta y la curación del léxico. En `50bf8f44`, Studio muestra el mapa de las 83,962 raíces. Se comprobaron los candidatos y la configuración de analista y se solicitó la prueba inicial de JEV desde la interfaz. La primera página dejó 199 recibos liquidados y una respuesta guardada cuyo manifiesto quedó pendiente. Se verificaron en privado su huella, su uso y las nueve respuestas contra la solicitud original. En UAT, la recuperación nativa liquidó ese mismo recibo y conservó íntegros sus 199 hermanos.
 

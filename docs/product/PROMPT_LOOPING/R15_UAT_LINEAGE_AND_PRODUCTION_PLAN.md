@@ -37,7 +37,7 @@ El 10 de noviembre de 2026 se repitió el conteo entre `main` en `6ff84434` y `d
 
 El 11 de noviembre se repitió la lectura tras integrar el cálculo de candidatos de R15. Entre `main` en `c0ee9326` y `develop` en `004e4331` había 85 commits exclusivos de main y 1,105 exclusivos de develop. Entre las incorporaciones de main figuran cambios del kit de estudios y vídeo, del sitio y de las firmas de correo. Se volverá a calcular la diferencia al fijar el candidato de producción.
 
-El corte del 11 de noviembre posterior al PR #164 conserva `main` en `c0ee9326` y lleva `develop` a `df4c81d9`. Hay 85 commits exclusivos de main y 1,111 de develop.
+El corte del 11 de noviembre posterior al PR #164 conserva `main` en `c0ee9326` y lleva `develop` a `df4c81d9`. Hay 85 commits exclusivos de main y 1,111 de develop. El PR #165 lleva `develop` a `b2a81a0c`, con 1,113 commits exclusivos frente a los mismos 85 de `main`. Sus cambios afectan al worker y sus pruebas. El catálogo aplicable sigue en 0293.
 
 ## Plan de producción · escrito, no ejecutado
 
