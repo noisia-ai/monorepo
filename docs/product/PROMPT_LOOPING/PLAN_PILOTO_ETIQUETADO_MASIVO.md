@@ -211,6 +211,8 @@ Lo demás se resuelve de forma autónoma y se anota en el registro de decisiones
 
 ## Progreso
 
+- [x] H7 · La continuación alcanzó 27,400 solicitudes. Se liquidaron 27,399 por USD 1.892166 y una quedó pendiente de conciliación. La respuesta y su manifiesto se verificaron frente a la solicitud de nueve preguntas. El analizador confirmó 1,588 tokens de entrada, 294 de salida y USD 0.000067 de uso. Se sellaron las huellas del resto de la corrida antes de la recuperación.
+
 - [x] H7 · La prueba nativa de UAT terminó con 1,000 raíces, 1,000 solicitudes distintas y 1,000 resultados válidos por USD 0.068894. La lectura independiente cotejó los 1,000 cuerpos completos con el registro de llamadas. Studio registró la continuación de la misma corrida el 11 de noviembre a las 13:05 UTC. Quedan 82,962 raíces en esta etapa.
 
 - [x] H7 · CI y PostgreSQL pasaron también sobre el commit fusionado `df4c81d9`. UAT aplicó 0293 una sola vez y conservó el catálogo y los lectores de la copia ensayada. El worker recuperó la solicitud original y liquidó USD 0.000069. Las 199 llamadas y resultados hermanos mantuvieron sus huellas. El registro inmutable conservó la llamada incierta y el resultado de error originales. La primera página reúne 200 resultados y USD 0.013777 en uso tarifario.
@@ -328,6 +330,8 @@ Lo demás se resuelve de forma autónoma y se anota en el registro de decisiones
 
 ## Sorpresas y descubrimientos
 
+- H7 · En la nueva parada, Storage ya tenía tanto la parte como el manifiesto. La lectura de verificación del manifiesto recibió HTTP 429 cuatro veces. En los 32 segundos inspeccionados, Storage registró 90 lecturas y 27 escrituras rechazadas con 429. El límite del proveedor deja de contar una solicitud cuando entrega la respuesta, antes de que termine su guardado.
+
 - H7 · Los registros de Storage de la llamada identifican la operación que se interrumpió. La escritura de la parte devolvió HTTP 200; su lectura de verificación devolvió HTTP 429 antes de crear el manifiesto. Los 199 cuerpos liquidados se verificaron por lectura independiente y sumaron USD 0.013708.
 
 - H7 · El worker marcó una solicitud como incierta aun cuando Storage había guardado los bytes completos. Faltó el manifiesto. El prefijo corresponde a esa llamada y el SHA-256 del objeto coincide con el del contenido completo. La respuesta HTTP 200 contiene uso equivalente a USD 0.000069.
@@ -443,6 +447,8 @@ Lo demás se resuelve de forma autónoma y se anota en el registro de decisiones
 - Dos lotes devolvieron referencias válidas dentro de la muestra de 30 pero superaron el máximo de diez referencias por campo. La comprobación privada de las respuestas originales y de reparación encontró entre 11 y 30 referencias en los campos rechazados.
 
 ## Registro de decisiones
+
+- H7 · Mantener detenida la misma ejecución hasta que el worker concilie el recibo. Limitar en el producto el número de solicitudes que pueden estar simultáneamente en evaluación, guardado o verificación. Probar el límite con una página completa y conservar el permiso y la identidad de cada raíz.
 
 - H7 · Continuar las 82,962 raíces restantes con la autorización acumulada de USD 13.50. Las primeras 1,000 dieron 638 raíces con tópico positivo, 221 intermedias, 141 sin tópico positivo ni intermedio y cero errores técnicos. Su uso permite proyectar USD 5.72 adicionales; el saldo visible de JEV era USD 14.53.
 
