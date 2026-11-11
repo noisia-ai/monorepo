@@ -225,7 +225,8 @@ Lo demás se resuelve de forma autónoma y se anota en el registro de decisiones
 - [x] H7 · Studio y el ledger confirmaron los vectores de 83,962 de 83,962 raíces y de 127,117 de 127,117 fragmentos. Se liquidaron 998 respuestas con 25,591,524 tokens y USD 3.071449 a tarifa. Voyage mostraba USD 0.00 de costo en noviembre al cerrar esta etapa.
 - [x] H7 · Studio y workers de UAT ejecutan `3217854e`, con Railpack, salud verificada y cero cambios preparados. Los PR #154 y #155 pasaron CI y PostgreSQL en la solicitud y en cada fusión. Topics consultó las guías en 43.332 s. El inicio desde el producto recibió HTTP 202 en 91.249 s con un único recibo para 83,962 raíces.
 - [x] H7 · El PR #157 pasó revisión, CI y PostgreSQL en la solicitud y tras fusionar a `3ceb6598`. El predicado del worker se comprobó sobre la cola de UAT en lectura. Coincidió una sola ejecución. Studio y workers arrancaron con Railpack en esa revisión y cero cambios preparados. El mismo recibo pasó de «En cola» a «Preparando conversaciones».
-- [ ] H7 · Completar el mapa numérico, la propuesta editorial y de léxico, la clasificación y Signal.
+- [x] H7 · El motor exportó 83,962 raíces y 127,117 fragmentos. El ajuste numérico terminó con 158 grupos y dejó un punto de recuperación antes de la interpretación.
+- [ ] H7 · Reanudar la interpretación desde el punto de recuperación y completar la propuesta de léxico, la clasificación y Signal. La primera reserva terminó como definitivamente no enviada, con cero tokens y cero gasto.
 
 - [x] H7 · La lectura optimizada de Signal pasó la comprobación en los cuatro segmentos del estudio de dev-test. En seis mediciones intercaladas, la vista general tardó de 1.570 a 2.570 s y la evidencia de 1.027 a 1.621 s. La medición posterior de la página desplegada figura arriba. [PR de la consulta](https://github.com/noisia-ai/monorepo/pull/142)
 
@@ -305,6 +306,8 @@ Lo demás se resuelve de forma autónoma y se anota en el registro de decisiones
 - [x] Hito 4 · Recibo, comparación y muestras ciegas verificados. Se entregan el recibo público de una página y, en custodia privada, el anexo comparativo, método/fuentes, 600 casos en 11 cohortes y la clave sellada por separado. Son 597 raíces distintas por los solapamientos entre cohortes; cada cohorte cumple sus cuotas de 50 raíces por tópico para los 10 tópicos mayores y 100 de triggers/barriers. Las cohortes no representan evaluación de precisión humana.
 
 ## Sorpresas y descubrimientos
+
+- H7 · Tras el ajuste, Studio mostró «0 de 158 grupos» y USD 0.00 confirmados y reservados. La autoridad de procesamiento del estudio seguía vigente; el worker conservaba una fecha global del 9 de septiembre para la ruta histórica.
 
 - H7 · El motor quedó «En cola» con cero intentos de despacho. La guarda del worker para los pilotos privados excluía también la ejecución creada por Studio. El cotejo en UAT encontró un solo trabajo de producto afectado, con admisión y actor vigentes.
 
@@ -402,6 +405,8 @@ Lo demás se resuelve de forma autónoma y se anota en el registro de decisiones
 
 ## Registro de decisiones
 
+- H7 · Recuperar la interpretación sobre la misma ejecución y su recibo de autorización vigente. Se conserva el límite histórico de las otras rutas y el resultado numérico ya calculado.
+
 - H7 · Conservar la ejecución creada en Topics y su recibo. El worker recogerá el asiento pendiente al reconocer el contrato de producto y su admisión. Los pilotos privados siguen su ruta de operador.
 
 - H7 · Para dimensionar el mapa se usa la cantidad de raíces del recibo de vectores que Studio envía al iniciar el estudio. La admisión revalida la revisión vigente, los permisos, la configuración y las guías dentro de la transacción. Las pruebas incluyen una repetición de la solicitud original después de crear otra corrida de vectores.
@@ -493,7 +498,7 @@ Lo demás se resuelve de forma autónoma y se anota en el registro de decisiones
 
 ## Resultado y retrospectiva
 
-El corte de base de datos de R15 terminó en UAT con el mismo catálogo que la copia ensayada. Los resultados y el acceso a evidencia de las marcas históricas coincidieron antes y después. Studio y workers ya sirven desde la misma revisión. Studio aceptó los once archivos y preparó el texto de 83,962 raíces elegibles. El recibo de preparación registra 127,117 fragmentos. El worker completó los vectores de todo el corpus. Studio y workers pasaron a `3217854e` con Railpack y cero cambios preparados. Topics admitió un único mapa en la ruta normal de UAT. El worker de `3ceb6598` recogió ese mismo asiento y comenzó a exportar el corpus.
+El corte de base de datos de R15 terminó en UAT con el mismo catálogo que la copia ensayada. Los resultados y el acceso a evidencia de las marcas históricas coincidieron antes y después. Studio y workers ya sirven desde la misma revisión. Studio aceptó los once archivos y preparó el texto de 83,962 raíces elegibles. El recibo de preparación registra 127,117 fragmentos. El worker completó los vectores de todo el corpus. Studio y workers pasaron a `3217854e` con Railpack y cero cambios preparados. Topics admitió un único mapa en la ruta normal de UAT. El worker de `3ceb6598` recogió ese asiento y completó el ajuste numérico con 158 grupos. Se conservó su punto de recuperación al detenerse antes del primer envío editorial.
 
 ### Ronda 14
 
