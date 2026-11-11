@@ -21,6 +21,7 @@ import { signalWorkspaceEmbeddingsJobV1 } from "../../../services/workers/src/wo
 import { signalWorkspaceEngineJobV1 } from "../../../services/workers/src/workers/signal-workspace-engine";
 import { createBrandContextSyntheticVoyageProviderV1 } from "./signal-brand-context.synthetic.fixture";
 import { materializeMassLabelingProductMapV2 } from "../../../services/workers/src/workers/signal-mass-labeling-product-map";
+import { assertMassLabelingProductOutboxV1 } from "./signal-mass-labeling-product-outbox.assertions";
 import type { WorkspaceEngineStorageV1 } from "../../../services/workers/src/workers/signal-workspace-engine-storage";
 import { SIGNAL_WORKSPACE_EMBEDDING_PROFILE_V1, SIGNAL_WORKSPACE_MASS_LABELING_PRODUCT_CONFIGURATION_V2 as currentConfiguration,
   SIGNAL_WORKSPACE_MASS_LABELING_PRODUCT_LEGACY_CONFIGURATION_V2 as legacyConfiguration,
@@ -135,6 +136,7 @@ for (const variant of ["current", "legacy"] as const) test(`the native product e
     const queued = (await database.query("SELECT execution.status,execution.actor_user_id,outbox.worker_job_id,execution.input_snapshot,execution.processing_admission_id FROM signal_topic_catalog_executions execution JOIN signal_topic_classification_outbox outbox ON outbox.execution_id=execution.id WHERE execution.id=$1", [started.execution_id])).rows[0]!;
     assert.equal(queued.status, "queued"); assert.equal(queued.actor_user_id, clientActor); assert.ok(queued.processing_admission_id);
     assert.equal(queued.input_snapshot.mass_labeling_product, true); assert.equal(queued.input_snapshot.discovery_population, undefined);
+    await assertMassLabelingProductOutboxV1({ database,client,execution_id:started.execution_id });
     for (const [candidate, expected] of [[currentConfiguration, true], [legacyConfiguration, true],
       [{ ...configuration, consolidation_prompt_digest: hash("unapproved editorial prompt") }, false],
       [{ ...configuration, max_output_tokens: configuration.max_output_tokens + 1 }, false]] as const) {

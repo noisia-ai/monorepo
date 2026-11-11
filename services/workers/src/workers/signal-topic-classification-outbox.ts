@@ -23,6 +23,38 @@ type Options = { database?: Pick<Pool, "query" | "connect">; queue?: QueueLike; 
   numeric_cursor?: { after_workspace_id: string | null };
   schedule?: typeof scheduleSignalWorkspaceTopicComputationsV1 };
 
+// Historical paid pilots retain their private operator. Native product runs
+// cross this boundary only with the exact typed profile and their own current,
+// workspace/actor/target-bound admission. The consumer revalidates authority.
+const massLabelingDispatchGuard = `NOT EXISTS(
+  SELECT 1 FROM signal_topic_catalog_executions pilot
+  WHERE pilot.id=signal_topic_classification_outbox.execution_id
+    AND ((pilot.input_snapshot#>>'{engine_config,profile_version}' IN
+      ('workspace-bertopic-mass-labeling-v1','workspace-bertopic-mass-labeling-v2','workspace-bertopic-mass-labeling-v3')
+      AND pilot.input_snapshot ? 'interpretation_config') OR pilot.input_snapshot ? 'mass_labeling_product')
+    AND NOT (
+      signal_mass_labeling_product_engine_v2(pilot.workspace_id,pilot.input_contract,pilot.input_snapshot)
+      AND pilot.status IN ('queued','running')
+      AND signal_brand_context_processing_actor_v1(pilot.workspace_id,pilot.actor_user_id)
+      AND EXISTS(
+        SELECT 1 FROM signal_processing_admissions admission
+        JOIN signal_processing_policy_versions policy ON policy.id=admission.policy_version_id
+          AND policy.organization_id=admission.organization_id AND policy.status='active'
+          AND policy.valid_from<=clock_timestamp() AND policy.valid_until>clock_timestamp()
+        JOIN signal_workspaces workspace ON workspace.id=pilot.workspace_id AND workspace.status='active'
+          AND workspace.organization_id=admission.organization_id AND workspace.brand_id=admission.brand_id
+        WHERE admission.id=pilot.processing_admission_id
+          AND admission.workspace_id=pilot.workspace_id AND admission.actor_user_id=pilot.actor_user_id
+          AND admission.target_id=pilot.id AND admission.request_digest=pilot.request_digest
+          AND admission.action='topic_interpretation' AND admission.provider='anthropic'
+          AND admission.model=pilot.input_snapshot#>>'{interpretation_config,call_configuration,model}'
+          AND signal_processing_configuration_allows_v1(admission.action,admission.configuration,
+            pilot.input_snapshot#>'{interpretation_config,call_configuration}')
+          AND admission.admission_not_after>clock_timestamp()
+      )
+    )
+)`;
+
 export async function drainSignalTopicClassificationOutboxV1(options: Options = {}) {
   const database = options.database ?? (await import("../db/client")).pool;
   const queue = options.queue ?? (await import("../queues/data-os")).dataOsProducer;
@@ -51,10 +83,7 @@ export async function drainSignalTopicClassificationOutboxV1(options: Options = 
       UPDATE signal_topic_classification_outbox
       SET status='dead_letter',error_code=COALESCE(error_code,'dispatch_attempts_exhausted'),
         lease_token=NULL,lease_expires_at=NULL,updated_at=now()
-      WHERE NOT EXISTS(SELECT 1 FROM signal_topic_catalog_executions pilot
-        WHERE pilot.id=signal_topic_classification_outbox.execution_id
-          AND pilot.input_snapshot#>>'{engine_config,profile_version}' IN ('workspace-bertopic-mass-labeling-v1','workspace-bertopic-mass-labeling-v2','workspace-bertopic-mass-labeling-v3')
-          AND pilot.input_snapshot ? 'interpretation_config')
+      WHERE ${massLabelingDispatchGuard}
         AND attempt_count >= $1 AND status IN('pending','failed','dispatching')
         AND (dispatch_kind<>'incremental_editorial_evidence' OR preparation_token IS NULL)
         AND (status<>'dispatching' OR lease_expires_at<=now())
@@ -74,10 +103,7 @@ export async function drainSignalTopicClassificationOutboxV1(options: Options = 
     source_projection: boolean; source_projection_contract: string | null; dispatch_kind: string; actor_user_id: string }>(`
     WITH candidates AS(
       SELECT id FROM signal_topic_classification_outbox
-      WHERE NOT EXISTS(SELECT 1 FROM signal_topic_catalog_executions pilot
-        WHERE pilot.id=signal_topic_classification_outbox.execution_id
-          AND pilot.input_snapshot#>>'{engine_config,profile_version}' IN ('workspace-bertopic-mass-labeling-v1','workspace-bertopic-mass-labeling-v2','workspace-bertopic-mass-labeling-v3')
-          AND pilot.input_snapshot ? 'interpretation_config')
+      WHERE ${massLabelingDispatchGuard}
         AND attempt_count<$1
         AND NOT EXISTS(SELECT 1 FROM signal_topic_catalog_executions editorial
           WHERE editorial.id=signal_topic_classification_outbox.execution_id
