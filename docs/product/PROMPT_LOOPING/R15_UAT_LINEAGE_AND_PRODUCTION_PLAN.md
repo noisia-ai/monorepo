@@ -37,6 +37,8 @@ El 10 de noviembre de 2026 se repitió el conteo entre `main` en `6ff84434` y `d
 
 El 11 de noviembre se repitió la lectura tras integrar el cálculo de candidatos de R15. Entre `main` en `c0ee9326` y `develop` en `004e4331` había 85 commits exclusivos de main y 1,105 exclusivos de develop. Entre las incorporaciones de main figuran cambios del kit de estudios y vídeo, del sitio y de las firmas de correo. Se volverá a calcular la diferencia al fijar el candidato de producción.
 
+El corte del 11 de noviembre posterior al PR #164 conserva `main` en `c0ee9326` y lleva `develop` a `df4c81d9`. Hay 85 commits exclusivos de main y 1,111 de develop.
+
 ## Plan de producción · escrito, no ejecutado
 
 1. Congelar las referencias exactas de main y develop; enumerar commits de ambos lados, incluyendo todos los exclusivos de main del corte congelado. Asignar a cada cambio destino equivalente en develop, PR de portado con revisión y CI, o descarte documentado. Resolver conflictos de producto antes de formar el candidato.
@@ -63,3 +65,5 @@ En la integración `13b6330c` se cotejaron también los cinco archivos 0286–02
 La integración `704da339` añade la migración 0291. La consulta de catálogo en producción encontró las tablas de importaciones y menciones. Las dos funciones que reemplaza 0291, sus siete funciones auxiliares comprobadas y cuatro relaciones de Signal estaban ausentes. El recibo privado vincula esa observación a los bytes de SQL del commit integrado, con SHA-256 `4d41edda4c506453dfaf29cea4a68d6033f2f569ad77501e87ceaea0b410667e`. El ensayo de producción deberá preparar primero esas dependencias y comprobar el cierre transaccional con un archivo de tamaño representativo.
 
 La integración `99f8bcff` añade la migración 0292 para recuperar una consolidación pagada. En la consulta de catálogo del 11 de noviembre a las 03:48 UTC, PostgreSQL confirmó una transacción de sólo lectura. Producción tenía la tabla de costes. Faltaban la función que verifica la decisión de recuperación y las tablas de decisiones, ejecuciones de tópicos y admisiones de procesamiento. El ensayo de un futuro corte deberá incorporar las dependencias históricas antes de comprobar la recuperación sin gasto sobre una copia. El SHA-256 del SQL integrado es `a5ec78835b3a22bc5aca0113965de0d2ea67d34337da722d861390f8aa52167e`.
+
+La integración `df4c81d9` añade 0293 para recuperar una respuesta JEV cuyos bytes llegaron a Storage. La consulta de catálogo de producción a las 11:48 UTC confirmó la ausencia de las dos funciones de guarda, la tabla histórica de recuperaciones y las tres relaciones inspeccionadas de resultados, llamadas y admisiones. El SHA-256 del SQL revisado es `d9330bd74728d8e0684277bd30bd712a0e36dc04492af7f2ebd2029b7d89edff`. En la copia restaurada de UAT se comprobó que el historial y los permisos quedaban protegidos y que repetir la migración conservaba el catálogo. El ensayo de producción deberá verificar esos mismos controles con su propio respaldo.
