@@ -211,6 +211,8 @@ Lo demás se resuelve de forma autónoma y se anota en el registro de decisiones
 
 ## Progreso
 
+- [x] H7 · En PostgreSQL 17, el cambio de adopción del PR #162 conservó los ocho candidatos de cada raíz, el orden de desempate, los fragmentos y sus huellas. Con 83,962 raíces, 127,117 fragmentos y 111 tópicos sintéticos, la puntuación tardó 6.568 s y la escritura con índices y proyecciones tardó 45.331 s. El revisor aceptó `799cd4f7`. La adopción real en UAT sigue pendiente.
+
 - [x] H7 · En UAT, la consulta revisada del PR #154 devolvió las tres guías del mapa en 44.145 s. En PostgreSQL, la prueba de 83,962 raíces comprobó la equivalencia de centroides, huellas de entrada y fragmentos. El PR #155 evita una segunda lectura de todas las guías para consultar el tamaño del corpus al iniciar el análisis.
 
 - [x] H7 · La consulta de «Datos recibidos» del PR #153 pasó revisión, CI y PostgreSQL antes y después de la fusión a `develop` en `23dc6f46`. La copia restaurada devolvió los mismos conteos y errores de reconciliación para tres workspaces.
@@ -311,6 +313,8 @@ Lo demás se resuelve de forma autónoma y se anota en el registro de decisiones
 - [x] Hito 4 · Recibo, comparación y muestras ciegas verificados. Se entregan el recibo público de una página y, en custodia privada, el anexo comparativo, método/fuentes, 600 casos en 11 cohortes y la clave sellada por separado. Son 597 raíces distintas por los solapamientos entre cohortes; cada cohorte cumple sus cuotas de 50 raíces por tópico para los 10 tópicos mayores y 100 de triggers/barriers. Las cohortes no representan evaluación de precisión humana.
 
 ## Sorpresas y descubrimientos
+
+- H7 · Al probar el volumen realista de texto localizado, una única inserción superó 90 s aun con las puntuaciones optimizadas. Con lotes de 1,000 raíces, el mayor tardó 655 ms en PostgreSQL local. Los 84 lotes se confirmaron en una sola transacción.
 
 - H7 · Tras el cierre editorial, la consulta que ordena los ocho tópicos más próximos a cada raíz agotó el límite del servidor. PostgreSQL registró el código 57014 en la creación de la tabla temporal de puntuaciones. La transacción revirtió el mapa incompleto. La propuesta editorial ya estaba guardada en su propia revisión.
 
@@ -415,6 +419,8 @@ Lo demás se resuelve de forma autónoma y se anota en el registro de decisiones
 - Dos lotes devolvieron referencias válidas dentro de la muestra de 30 pero superaron el máximo de diez referencias por campo. La comprobación privada de las respuestas originales y de reparación encontró entre 11 y 30 referencias en los campos rechazados.
 
 ## Registro de decisiones
+
+- H7 · Reutilizar los 111 centroides y dividir por ordinal la escritura de candidatos dentro de la misma transacción. El lector recibirá el mapa completo al confirmar. Se mantienen el límite de tiempo y las reglas de ordenación y de acceso.
 
 - H7 · Curar la propuesta editorial una vez persistida, mientras se resuelve el cálculo de candidatos. Las 98 entradas recibidas contenían 97 términos distintos. La configuración de analista incorpora 27 adiciones frente a los 102 términos de referencia. El catálogo editorial y sus recibos conservan sus huellas.
 
