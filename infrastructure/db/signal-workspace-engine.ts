@@ -31,14 +31,15 @@ export const SIGNAL_WORKSPACE_ENGINE_RETRYABLE_ERRORS_V1 = [
 ] as const;
 export const isSignalWorkspaceEngineRetryableErrorV1 = (code: string | null,
   evidence?: { storage_recovery_eligible?: boolean; interpretation_evidence_recovery_eligible?: boolean; editorial_repair_recovery_eligible?: boolean;
-    interpretation_exception_recovery_eligible?:boolean; interpretation_capacity_recovery_eligible?:boolean; transport_recovery_eligible?: boolean }) =>
+    interpretation_exception_recovery_eligible?:boolean; interpretation_capacity_recovery_eligible?:boolean; transport_recovery_eligible?: boolean; native_interpretation_retry_eligible?: boolean }) =>
   (SIGNAL_WORKSPACE_ENGINE_RETRYABLE_ERRORS_V1 as readonly string[]).includes(code ?? "")
   || code === "workspace_engine_interpretation_batch_capacity_exceeded" && evidence?.interpretation_capacity_recovery_eligible === true
   || code === "workspace_engine_storage_verification_failed" && evidence?.storage_recovery_eligible === true
   || code === "workspace_engine_interpretation_cluster_invalid" && evidence?.interpretation_evidence_recovery_eligible === true
   || code === "workspace_engine_interpretation_output_invalid" && evidence?.editorial_repair_recovery_eligible === true
   || code === "workspace_engine_interpretation_repair_invalid" && evidence?.interpretation_exception_recovery_eligible === true
-  || code === "workspace_engine_interpretation_transport_terminal_confirmed" && evidence?.transport_recovery_eligible === true;
+  || code === "workspace_engine_interpretation_transport_terminal_confirmed" && evidence?.transport_recovery_eligible === true
+  || code === "workspace_engine_interpretation_daily_authority_expired" && evidence?.native_interpretation_retry_eligible === true;
 export type SignalWorkspaceEngineDatabaseV1 = Pick<Pool, "query" | "connect">;
 export class SignalWorkspaceEngineError extends Error {
   constructor(readonly code: string, readonly status = 409) { super(code); this.name = "SignalWorkspaceEngineError"; }
@@ -121,6 +122,7 @@ export type SignalWorkspaceEngineStatusV1 = {
     materialization_pending?:boolean;materialization_error_code?:string|null;materialization_retry_available?:boolean;
     fit_completed: boolean; expected_interpretation_units: number; interpreted_units: number; materialized_topics: number;
     storage_recovery_eligible?: boolean;
+    native_interpretation_retry_eligible?: boolean;
     interpretation_capacity_recovery_eligible?:boolean;
     interpretation_evidence_recovery_eligible?: boolean;
     editorial_repair_recovery_eligible?: boolean; interpretation_exception_recovery_eligible?:boolean; transport_recovery_eligible?: boolean;
@@ -131,6 +133,37 @@ const sha = (value: string) => `sha256:${createHash("sha256").update(value, "utf
 const digestPattern = /^sha256:[0-9a-f]{64}$/u;
 const natural = (value: unknown): number => { const n = Number(value); if (!Number.isSafeInteger(n) || n < 0) return fail("workspace_engine_count_invalid", 503); return n; };
 const limitOf = (value?: number) => { const n = value ?? 128; if (!Number.isInteger(n) || n < 1 || n > 200) return fail("workspace_engine_page_invalid", 422); return n; };
+// A legacy temporal override may stop a native product before its first send.
+// Recovery consumes the same live native approval and preserves the frozen caps.
+const nativeInterpretationRetryPredicate = `execution.status='failed'
+ AND execution.error_code='workspace_engine_interpretation_daily_authority_expired'
+ AND execution.interpretation_revision IS NULL AND execution.interpretation_admission_operation_id IS NULL
+ AND signal_mass_labeling_product_engine_v2(execution.workspace_id,execution.input_contract,execution.input_snapshot)
+ AND workspace_interpretation_admission_eligible_v1(execution.id)
+ AND signal_workspace_engine_actor_v1(execution,execution.actor_user_id)
+ AND NOT EXISTS(SELECT 1 FROM engine_cost_events call WHERE call.catalog_execution_id=execution.id
+   AND (call.call_state<>'definitely_not_sent' OR call.sent_at IS NOT NULL
+     OR call.response_storage_key IS NOT NULL OR call.response_sha256 IS NOT NULL
+     OR call.response_size_bytes IS NOT NULL OR call.response_http_status IS NOT NULL
+     OR call.provider_request_id IS NOT NULL OR COALESCE(call.settled_micro_usd,0)<>0))
+ AND EXISTS(SELECT 1 FROM signal_processing_admissions admission
+   JOIN signal_workspaces workspace ON workspace.id=execution.workspace_id
+   JOIN signal_processing_policy_versions policy ON policy.id=admission.policy_version_id
+     AND policy.organization_id=workspace.organization_id AND policy.status='active'
+     AND policy.valid_from<=clock_timestamp() AND policy.valid_until>clock_timestamp()
+   JOIN signal_processing_policy_actions action ON action.policy_version_id=policy.id AND action.action=admission.action
+   WHERE admission.id=execution.processing_admission_id AND admission.workspace_id=execution.workspace_id
+     AND admission.organization_id=workspace.organization_id AND admission.target_id=execution.id
+     AND admission.actor_user_id=execution.actor_user_id AND admission.action='topic_interpretation'
+     AND admission.provider='anthropic' AND admission.model='claude-sonnet-4-6'
+     AND admission.admission_not_after>clock_timestamp()
+     AND admission.configuration_digest=action.configuration_digest
+     AND signal_processing_configuration_allows_v1(admission.action,admission.configuration,
+       execution.input_snapshot#>'{interpretation_config,call_configuration}')
+     AND admission.execution_cap_micro_usd IS NOT DISTINCT FROM (execution.input_snapshot->>'claude_cap_micro_usd')::bigint
+     AND (admission.execution_cap_micro_usd IS NULL OR admission.execution_cap_micro_usd>0)
+     AND (action.max_execution_micro_usd IS NULL OR action.max_execution_micro_usd>0)
+     AND (policy.daily_cap_micro_usd IS NULL OR policy.daily_cap_micro_usd>0))`;
 // An explicit retry may rerun numerical fit after repairing storage only before
 // any durable fit/model/provider evidence exists. Every upload/hash is verified
 // again; a verification error never enters the unconditional retry allowlist.
@@ -1115,6 +1148,17 @@ export async function retrySignalWorkspaceEngineV1(args:{database:SignalWorkspac
   if(!/^[A-Za-z0-9._:-]{8,200}$/u.test(args.idempotency_key))return fail('workspace_engine_request_invalid',422);
   const executionId=args.numeric_only?args.execution_id.toLowerCase():args.execution_id;
   return transaction(args.database,async client=>{await authorize(client,args.workspace_id,args.actor_user_id,false);
+    // Native approval locks follow the processing-policy/day/actor order before
+    // taxonomy and preparation locks. This checks capacity without reserving money.
+    const nativeRetry = !args.numeric_only && (await client.query(`SELECT signal_processing_capacity_v1(
+      execution.workspace_id,execution.actor_user_id,execution.id,execution.processing_admission_id,
+      ARRAY['topic_interpretation'],'anthropic','claude-sonnet-4-6',
+      execution.input_snapshot#>'{interpretation_config,call_configuration}',
+      (execution.input_snapshot->>'claude_cap_micro_usd')::bigint)
+      FROM signal_topic_catalog_executions execution WHERE execution.id=$1::uuid
+        AND execution.workspace_id=$2::uuid AND execution.actor_user_id=$3::uuid
+        AND (${nativeInterpretationRetryPredicate})`,
+    [executionId,args.workspace_id,args.actor_user_id])).rows.length === 1;
     await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))",[`signal-taxonomy:${args.workspace_id}:topic`]);
     const retryDigest=signalWorkspaceEmbeddingDigestV1({action:args.numeric_only?'retry_numeric':'retry',execution_id:executionId});
     const prior=(await client.query<{id:string;alias:{actor_user_id:string;request_digest:string}|null}>("SELECT id,engine_request_keys->$2 alias FROM signal_topic_catalog_executions WHERE workspace_id=$1::uuid AND (idempotency_key=$2 OR engine_request_keys ? $2)",[args.workspace_id,args.idempotency_key])).rows[0];
@@ -1156,7 +1200,8 @@ export async function retrySignalWorkspaceEngineV1(args:{database:SignalWorkspac
     if(run.status!=='failed'||!pilotRecovery&&!(args.numeric_only?numericRecovery?.retry_available:isSignalWorkspaceEngineRetryableErrorV1(run.error_code,{storage_recovery_eligible:storageRecovery,
       interpretation_evidence_recovery_eligible:evidenceRecovery,editorial_repair_recovery_eligible:editorialRecovery,
       interpretation_exception_recovery_eligible:exceptionRecovery,
-      interpretation_capacity_recovery_eligible:capacityRecovery,transport_recovery_eligible:transportRecovery})))return fail('workspace_engine_retry_unavailable');
+      interpretation_capacity_recovery_eligible:capacityRecovery,transport_recovery_eligible:transportRecovery,
+      native_interpretation_retry_eligible:nativeRetry})))return fail('workspace_engine_retry_unavailable');
     const generation=(await client.query<{dispatch_generation:number}>(`UPDATE signal_topic_catalog_executions SET status='queued',error_code=NULL,completed_at=NULL,
       execution_token=NULL,execution_expires_at=NULL,dispatch_generation=dispatch_generation+1,
       result_summary=result_summary||'{"phase":"queued"}'::jsonb||$2::jsonb,updated_at=clock_timestamp() WHERE id=$1::uuid RETURNING dispatch_generation`,
@@ -1175,7 +1220,7 @@ export async function loadSignalWorkspaceEngineStatusV1(args:{database:SignalWor
     const callerCapability=await loadSignalWorkspaceCapabilitiesStoreV1({queryable:client,workspace_id:args.workspace_id,actor_user_id:args.actor_user_id});
     const rows=(await client.query<{id:string;status:'queued'|'running'|'ready'|'failed';progress:number;denominator:number;expected_chunks:string;
       processed_roots:number;processed_chunks:string;error_code:string|null;result_summary:Record<string,unknown>;input_snapshot:Run['input_snapshot'];progress_dispatch:{status:string;worker_job_id:string;attempt_count:number;error_code:string|null}|null;progress_coverage:SignalWorkspaceEngineUnitManifestV1;latest_catalog_profile_id:string|null;latest_materialization_progress:import('./signal-workspace-engine-progress').SignalWorkspaceEngineProgressCheckpointV1|null;
-      progress_owner:boolean;revision_live:boolean;policy_live:boolean;artifact_count:string;is_latest:boolean;is_request:boolean;actor_user_id:string;storage_recovery_eligible:boolean;interpretation_evidence_recovery_eligible:boolean;editorial_repair_recovery_eligible:boolean;interpretation_exception_recovery_eligible:boolean;interpretation_capacity_recovery_eligible:boolean;transport_recovery_eligible:boolean}>(`
+      progress_owner:boolean;revision_live:boolean;policy_live:boolean;artifact_count:string;is_latest:boolean;is_request:boolean;actor_user_id:string;storage_recovery_eligible:boolean;interpretation_evidence_recovery_eligible:boolean;editorial_repair_recovery_eligible:boolean;interpretation_exception_recovery_eligible:boolean;interpretation_capacity_recovery_eligible:boolean;transport_recovery_eligible:boolean;native_interpretation_retry_eligible:boolean}>(`
       WITH selected AS MATERIALIZED (
        (SELECT id,true is_latest,false is_request FROM signal_topic_catalog_executions WHERE workspace_id=$1::uuid AND input_contract='workspace-topic-engine-v1' AND NOT input_snapshot ? 'numeric_descriptor' ORDER BY created_at DESC,id DESC LIMIT 1)
        UNION ALL (SELECT id,false,true FROM signal_topic_catalog_executions WHERE workspace_id=$1::uuid AND input_contract='workspace-topic-engine-v1' AND NOT input_snapshot ? 'numeric_descriptor'
@@ -1209,7 +1254,9 @@ export async function loadSignalWorkspaceEngineStatusV1(args:{database:SignalWor
           AND (NOT execution.result_summary ? 'interpretation_context_contract'
             OR execution.result_summary->>'interpretation_context_contract'='legacy-full-v1'))
           interpretation_capacity_recovery_eligible,
-        (${transportRecoveryPredicate}) transport_recovery_eligible,selected.is_latest,selected.is_request
+        (${transportRecoveryPredicate}) transport_recovery_eligible,
+        COALESCE(execution.actor_user_id=$2::uuid AND (${nativeInterpretationRetryPredicate}),false) native_interpretation_retry_eligible,
+        selected.is_latest,selected.is_request
         FROM selected JOIN signal_topic_catalog_executions execution USING(id) JOIN signal_corpus_preparation_input_state state USING(workspace_id)`,
       [args.workspace_id,args.actor_user_id,args.idempotency_key??null])).rows;
     const view=async(row:typeof rows[number]):Promise<NonNullable<SignalWorkspaceEngineStatusV1['latest_run']>>=>{
@@ -1235,6 +1282,7 @@ export async function loadSignalWorkspaceEngineStatusV1(args:{database:SignalWor
         is_current:isCurrent,
         model_version_id:typeof row.result_summary.model_version_id==='string'?row.result_summary.model_version_id:null,artifact_count:natural(row.artifact_count),
         storage_recovery_eligible:row.storage_recovery_eligible,
+        native_interpretation_retry_eligible:isCurrent&&row.native_interpretation_retry_eligible,
         interpretation_evidence_recovery_eligible:row.interpretation_evidence_recovery_eligible,
         editorial_repair_recovery_eligible:row.editorial_repair_recovery_eligible,
         interpretation_exception_recovery_eligible:row.interpretation_exception_recovery_eligible,

@@ -215,7 +215,7 @@ export function WorkspaceAnalysisControls({ brandId, workspaceId, catalogVersion
         <button className="admin-button" type="button" disabled={analysis.reading || analysis.submitting} onClick={() => void analysis.read()}>
           <ArrowClockwise aria-hidden size={15} />{t(analysis.pending ? "recover" : "refresh")}</button>
       </div>
-      {status?.admission && (!hideLegacyActions || status.admission.current?.action === "authorize_interpretation"
+      {status?.admission && !run?.native_interpretation_retry_eligible && (!hideLegacyActions || status.admission.current?.action === "authorize_interpretation"
         || analysis.pending && isWorkspaceAdmissionAction(analysis.pending.body)) ? <WorkspaceInterpretationAdmissionControls
         status={status} canAuthorize={analysis.canAuthorizeAdmission && !hideLegacyActions}
         canRevoke={analysis.canRevokeAdmission} submitting={analysis.submitting} receiptsAlreadyVisible={admissionReceiptAlreadyVisible}

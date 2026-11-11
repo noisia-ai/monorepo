@@ -715,3 +715,38 @@ test("MFP nullable estimate and strict cap stay distinct; blank input cannot rai
   const saved = { ...pending, body: { ...pending.body, claude_cap_micro_usd: null } };
   assert.deepEqual(parsePendingWorkspaceAnalysis(saved, id, status.request_scope), saved);
 });
+
+for (const locale of ["es-MX", "en-US"]) {
+  test(`${locale}: native approval resumes an unsent expired override on the same execution`, async () => {
+    const messages = JSON.parse(await readFile(new URL(`../../../messages/${locale}.json`, import.meta.url), "utf8"));
+    const copy = messages.AdminWorkspace.topics.analysis;
+    const failed: WorkspaceAnalysisRun = { ...ready, status: "failed", phase: "failed",
+      error_code: "workspace_engine_interpretation_daily_authority_expired", retryable: true,
+      native_interpretation_retry_eligible: true, interpreted_units: 0, expected_interpretation_units: 158,
+      claude_cap_micro_usd: null, claude_cost: { hard_cap_micro_usd: null, settled_micro_usd: 0,
+        reserved_micro_usd: 0, unknown_reserved_micro_usd: 0, terminal_reserved_micro_usd: 0 } };
+    const value: WorkspaceAnalysisStatus = { ...status, governed_enabled: true, latest_run: failed,
+      admission: { execution_id: id, is_current: true, requires_authorization: true, can_authorize: false, can_revoke: false,
+        blocked_reason: "workspace_engine_interpretation_admission_cap_exceeded", current: null, request: null,
+        model: "claude-sonnet-4-6", budget_timezone: "UTC", budget_date: "2026-11-10",
+        maximum_admission_not_after: "2026-11-11T00:00:00.000Z", confirmed_micro_usd: 0, reserved_micro_usd: 0,
+        terminal_reserved_micro_usd: 0, run_cap_micro_usd: 0, daily_cap_micro_usd: 0, maximum_grant_micro_usd: 0,
+        provider_available: true },
+    };
+    assert.equal(validWorkspaceAnalysisStatus(value), true);
+    assert.equal(workspaceAnalysisCanRetry(value, failed), true);
+    assert.equal(workspaceAnalysisCanStart(value, ""), false);
+    assert.equal(workspaceAnalysisCanRetry(value, { ...failed, native_interpretation_retry_eligible: false }), false);
+    assert.equal(workspaceAnalysisCanRetry(value, { ...failed, is_current: false }), false);
+    assert.equal(workspaceAnalysisCanRetry(value, { ...failed, outcome_unknown: true }), false);
+    const render = (initial: WorkspaceAnalysisStatus) => renderToStaticMarkup(createElement(NextIntlClientProvider,
+      { locale, messages, timeZone: "UTC" } as ComponentProps<typeof NextIntlClientProvider>,
+      createElement(WorkspaceAnalysisControls, { workspaceId: id, brandId: id, catalogVersion: "native-retry", initial })));
+    const native = render(value);
+    assert.ok(native.includes(`>${copy.retry}</button>`));
+    assert.ok(!native.includes(copy.admissionGrant.budgetUnavailable));
+    const legacy = render({ ...value, latest_run: { ...failed, native_interpretation_retry_eligible: false } });
+    assert.ok(!legacy.includes(`>${copy.retry}</button>`));
+    assert.ok(legacy.includes(copy.admissionGrant.budgetUnavailable));
+  });
+}

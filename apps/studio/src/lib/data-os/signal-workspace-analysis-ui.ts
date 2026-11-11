@@ -81,6 +81,7 @@ export function validWorkspaceAnalysisRun(value: unknown): value is WorkspaceAna
     && validWorkspaceAnalysisMaterialization(value.materialization_progress)
     && (!object(value.materialization_progress) || value.materialization_progress.expected_interpretation_unit_count === value.expected_interpretation_units
       && Number(value.materialization_progress.interpreted_unit_count) <= Number(value.interpreted_units))
+    && (value.native_interpretation_retry_eligible === undefined || typeof value.native_interpretation_retry_eligible === "boolean")
     && (value.materialization_pending === undefined || typeof value.materialization_pending === "boolean")
     && (value.materialization_error_code === undefined || nullable(value.materialization_error_code, (code) => typeof code === "string"))
     && (value.materialization_retry_available === undefined || typeof value.materialization_retry_available === "boolean")
@@ -187,10 +188,10 @@ export function workspaceAnalysisCanStart(status: WorkspaceAnalysisStatus | null
 export function workspaceAnalysisCanRetry(status: WorkspaceAnalysisStatus | null, run: WorkspaceAnalysisRun | null) {
   return Boolean(status?.can_execute && !status.active_run && !workspaceAnalysisUnknown(status)
     && (!(status?.admission?.requires_authorization && status.admission.execution_id === run?.execution_id)
-      || run?.interpretation_exception_recovery_eligible === true)
+      || run?.interpretation_exception_recovery_eligible === true || run?.native_interpretation_retry_eligible === true)
     && run?.status === "failed" && run.retryable && run.is_current && !run.outcome_unknown
     && run.error_code !== "workspace_engine_interpretation_transport_retry_exhausted"
-    && run.error_code !== "workspace_engine_interpretation_daily_authority_expired"
+    && (run.error_code !== "workspace_engine_interpretation_daily_authority_expired" || run.native_interpretation_retry_eligible === true)
     && (run.error_code !== "workspace_engine_interpretation_transport_terminal_confirmed" || run.transport_recovery_eligible));
 }
 /** Delivery of already paid results has its own server authority; it never resumes interpretation. */
