@@ -8,12 +8,17 @@ import { hashWorkspaceEngineFileV1 } from "./signal-workspace-engine-files";
 const scope = { workspace_id: "00000000-0000-4000-8000-000000000001", execution_id: "00000000-0000-4000-8000-000000000002" };
 function server(allowedMimeTypes?: readonly string[]) {
   const objects = new Map<string, Uint8Array>(), writes: number[] = [];
-  let publicBucket = false, corrupt = false;
+  let publicBucket = false, corrupt = false, rateLimit = false;
+  let rateLimitedReads = 0;
   const transport: typeof fetch = async (input, init) => {
     const url = String(input);
     assert.equal((init?.headers as Record<string, string>).apikey, "unit-test-key");
     assert.equal(init?.redirect, "error");
     if (url.includes("/bucket/")) return Response.json({ id: "corpus-files", public: publicBucket });
+    if (url.includes("/object/list/")) {
+      const prefix = JSON.parse(String(init?.body)).prefix;
+      return Response.json([...objects.keys()].filter(key => key.startsWith(prefix)).map(key => ({ name: key.split("/").at(-1), metadata: { size: objects.get(key)!.length } })));
+    }
     const path = url.split("/corpus-files/")[1]!;
     if (init?.method === "POST") {
       const body = init.body as Uint8Array; writes.push(body.byteLength);
@@ -23,12 +28,17 @@ function server(allowedMimeTypes?: readonly string[]) {
       if (objects.has(path)) return Response.json({ error: "Duplicate" }, { status: 400 });
       objects.set(path, Uint8Array.from(body)); return Response.json({ Key: path });
     }
+    if (rateLimit && path.includes(".part-")) {
+      rateLimit = false; rateLimitedReads++;
+      assert.ok(![...objects.keys()].some(key => key.endsWith(".parts.json")), "manifest waits for successful readback");
+      return new Response("", { status: 429, headers: { "retry-after": "0.001" } });
+    }
     const body = objects.get(path);
     if (!body) return new Response("", { status: 404 });
     return new Response(corrupt && path.includes(".part-") ? new Uint8Array(body.length).fill(9) : new Uint8Array(body));
   };
   const storage = createWorkspaceEngineStorageV1({ url: "https://example.supabase.co", service_role_key: "unit-test-key", fetch: transport });
-  return { storage, objects, writes, makePublic: () => { publicBucket = true; }, corrupt: () => { corrupt = true; } };
+  return { storage, objects, writes, rateLimitReadOnce: () => { rateLimit = true; }, rateLimitedReads: () => rateLimitedReads, makePublic: () => { publicBucket = true; }, corrupt: () => { corrupt = true; } };
 }
 test("JSON envelopes roundtrip in a private import bucket with binary-only artifact MIME permission", async () => {
   const directory = await mkdtemp(join(tmpdir(), "noisia-storage-mime-"));
@@ -73,5 +83,39 @@ test("public buckets and foreign artifact references are rejected before model d
     await assert.rejects(f.storage.get({ ...scope, workspace_id: "00000000-0000-4000-8000-000000000003", stored,
       destination: join(directory, "foreign.json") }), /reference_invalid/u);
     await assert.rejects(readFile(join(directory, "foreign.json")), { code: "ENOENT" });
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
+test("incomplete paid receipt recovers only complete unambiguous hashed parts", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "noisia-orphan-"));
+  try {
+    const fixture = server(), file = join(directory, "response-00000000-0000-4000-8000-000000000003.json");
+    const payload = JSON.stringify({ body: "paid-response", http_status: 200, latency_ms: 1 });
+    await writeFile(file, payload);
+    const args = { ...scope, file, sha256: await hashWorkspaceEngineFileV1(file), size_bytes: Buffer.byteLength(payload), media_type: "application/json" };
+    const stored = await fixture.storage.put(args);
+    fixture.objects.delete(stored.storage_key);
+    const recovered = await fixture.storage.recoverIncomplete!({ ...scope, name: "response-00000000-0000-4000-8000-000000000003.json", max_bytes: 8 * 1024 * 1024 });
+    assert.equal(recovered?.raw_text, payload);
+    assert.equal(recovered?.sha256, args.sha256);
+    assert.equal(fixture.objects.has(stored.storage_key), true);
+    assert.equal(await fixture.storage.recoverIncomplete!({ ...scope, name: "response-00000000-0000-4000-8000-000000000004.json", max_bytes: 8388608 }), null);
+    const part = [...fixture.objects.keys()].find(key => key.endsWith(".part-000000"))!;
+    fixture.objects.set(part.replace(args.sha256.slice(7), "a".repeat(64)), Buffer.from(payload));
+    await assert.rejects(fixture.storage.recoverIncomplete!({ ...scope, name: "response-00000000-0000-4000-8000-000000000003.json", max_bytes: 8388608 }), /ambiguous/);
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
+test("429 during part verification retries storage before creating the manifest", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "noisia-storage-429-"));
+  try {
+    const fixture = server(), file = join(directory, "receipt.json");
+    await writeFile(file, "paid response");
+    fixture.rateLimitReadOnce();
+    const stored = await fixture.storage.put({ ...scope, file, sha256: await hashWorkspaceEngineFileV1(file), size_bytes: 13, media_type: "application/json" });
+    assert.equal(fixture.rateLimitedReads(), 1);
+    assert.equal(fixture.objects.size, 2);
+    await fixture.storage.get({ ...scope, stored, destination: join(directory, "readback.json") });
+    assert.equal(await readFile(join(directory, "readback.json"), "utf8"), "paid response");
   } finally { await rm(directory, { recursive: true, force: true }); }
 });

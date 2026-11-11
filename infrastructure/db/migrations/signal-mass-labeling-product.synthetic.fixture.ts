@@ -1,3 +1,8 @@
+import { reconcileMassLabelingJevReceiptV1 } from "../signal-mass-labeling-jev-recovery";
+import { createHash } from "node:crypto";
+import { recoverMassLabelingJevReceiptsV1 } from "../../../services/workers/src/workers/signal-mass-labeling-jev-recovery";
+import { retryMassLabelingProductV2 } from "../signal-mass-labeling-product";
+import { assertMassLabelingServingProjectionV1 } from "./signal-mass-labeling-serving-projection.assertions";
 import {estimateMassLabelingProductV2} from "../signal-mass-labeling-product-estimate";
 import {massLabelingConfigurationV2} from "@noisia/query-engine";
 import assert from "node:assert/strict";
@@ -45,8 +50,15 @@ export async function assertMassLabelingProductNativeV2(args: {
   assert.equal(recorded.identity.params.interests.length, 1);
   await args.query("SET CONSTRAINTS ALL IMMEDIATE"); await args.query("SET CONSTRAINTS ALL DEFERRED");
   const raw = new Map<string, string>();
+  let interrupted: { call_id: string; raw_text: string; raw_sha256: string } | undefined;
+  let simulateStorageFailure = true;
   const store = createMassLabelingStoreV1({ database: args.database,
-    async storeRaw(receipt) { const key = `synthetic/${receipt.call_id}`; raw.set(key, receipt.raw_text); return key; },
+    async storeRaw(receipt) {
+      const key = `workspace-engine/${receipt.workspace_id}/${receipt.run_id}/response-${receipt.call_id}.json.${receipt.raw_sha256.slice(7)}.parts.json`;
+      if (!interrupted) interrupted = receipt;
+      if (simulateStorageFailure && receipt.call_id === interrupted.call_id) throw new Error("workspace_engine_storage_unavailable");
+      raw.set(key, receipt.raw_text); return key;
+    },
     async loadRaw(receipt) { return raw.get(receipt.storage_key)!; } });
   let sends = 0;
   const provider = { async evaluate(body: JevRequestV1) {
@@ -61,6 +73,62 @@ export async function assertMassLabelingProductNativeV2(args: {
           probabilities: Object.fromEntries(Object.keys(question.criteria).map(option => [option,
             option === (key === "voice" ? "individual" : "none") ? .9 : .1 / (Object.keys(question.criteria).length - 1)])) }])) }), http_status: 200, latency_ms: 1 };
   } };
+  const failed = await processMassLabelingJevV1({ run_id: admitted.run_id, store, provider });
+  assert.equal(failed.status, "failed");
+  assert.ok(interrupted);
+  const failedStatus = await loadMassLabelingProductStatusV2(args);
+  assert.equal(failedStatus.run?.status, "failed");
+  await assert.rejects(retryMassLabelingProductV2({ ...args, run_id: admitted.run_id }), /receipt_recovery_required/);
+  const root = (await args.query("SELECT inputs->0->>'root_id' root_id FROM signal_labeling_calls WHERE id=$1", [interrupted.call_id])).rows[0].root_id;
+  const oldCall = (await args.query("SELECT to_jsonb(c) snapshot FROM signal_labeling_calls c WHERE id=$1", [interrupted.call_id])).rows[0].snapshot;
+  const oldResult = (await args.query("SELECT to_jsonb(r) snapshot FROM signal_mass_labeling_results r WHERE call_id=$1", [interrupted.call_id])).rows[0].snapshot;
+  const siblings = (await args.query("SELECT jsonb_agg(to_jsonb(c) ORDER BY c.id) snapshot FROM signal_labeling_calls c WHERE run_id=$1 AND id<>$2", [admitted.run_id, interrupted.call_id])).rows[0].snapshot;
+  assert.equal((await args.query("SELECT probability FROM signal_mass_labeling_topic_probabilities WHERE map_id=$1 AND root_id=$2", [args.map_id, root])).rows[0].probability, null);
+  const sha = `sha256:${createHash("sha256").update(interrupted.raw_text).digest("hex")}`;
+  assert.equal(sha, interrupted.raw_sha256);
+  const stored = { storage_key: `workspace-engine/${args.workspace_id}/${admitted.run_id}/response-${interrupted.call_id}.json.${sha.slice(7)}.parts.json`,
+    sha256: sha, size_bytes: Buffer.byteLength(interrupted.raw_text), media_type: "application/json", raw_text: interrupted.raw_text };
+  const storage = { async put() { throw new Error("unexpected storage write in mocked recovery"); }, async get() { throw new Error("unexpected storage read in mocked recovery"); },
+    async recoverIncomplete() { return stored; } };
+  const sendsBeforeRecovery = sends;
+  await assert.rejects(recoverMassLabelingJevReceiptsV1({ database: args.database, run_id: admitted.run_id,
+    storage: { ...storage, async recoverIncomplete() { return { ...stored, raw_text: "corrupt" }; } } }), /recovery_raw_invalid/);
+  await args.query("SAVEPOINT recovery_frozen_request");
+  await args.query("UPDATE signal_labeling_calls SET request=jsonb_set(request,'{model}',to_jsonb('foreign-model'::text)) WHERE id=$1", [interrupted.call_id]);
+  await assert.rejects(recoverMassLabelingJevReceiptsV1({ database: args.database, run_id: admitted.run_id, storage }), /recovery_request_invalid/);
+  await args.query("ROLLBACK TO SAVEPOINT recovery_frozen_request"); await args.query("RELEASE SAVEPOINT recovery_frozen_request");
+  await args.query("SAVEPOINT recovery_revoked_actor");
+  await args.query("UPDATE users SET status='suspended' WHERE id=$1", [args.actor_user_id]);
+  await assert.rejects(recoverMassLabelingJevReceiptsV1({ database: args.database, run_id: admitted.run_id, storage }), /forbidden/);
+  await args.query("ROLLBACK TO SAVEPOINT recovery_revoked_actor"); await args.query("RELEASE SAVEPOINT recovery_revoked_actor");
+  assert.deepEqual((await args.query("SELECT to_jsonb(c) snapshot FROM signal_labeling_calls c WHERE id=$1", [interrupted.call_id])).rows[0].snapshot, oldCall);
+  const recovery = await recoverMassLabelingJevReceiptsV1({ database: args.database, run_id: admitted.run_id, storage });
+  assert.equal(recovery.recovered, 1);
+  assert.equal(sends, sendsBeforeRecovery);
+  assert.equal((await loadMassLabelingProductStatusV2(args)).run?.status, "failed", "operator explicitly retries the same run after reconciliation");
+  const audit = (await args.query("SELECT * FROM signal_mass_labeling_jev_receipt_recoveries WHERE call_id=$1", [interrupted.call_id])).rows[0];
+  assert.deepEqual(audit.original_call, oldCall);
+  assert.deepEqual(audit.original_result, oldResult);
+  assert.equal((await args.query("SELECT probability FROM signal_mass_labeling_topic_probabilities WHERE map_id=$1 AND root_id=$2", [args.map_id, root])).rows[0].probability, .9);
+  assert.equal((await args.query("SELECT promotion_probability FROM signal_mass_labeling_root_segments WHERE map_id=$1 AND root_id=$2", [args.map_id, root])).rows[0].promotion_probability, .1);
+  assert.equal((await args.query("SELECT count(*)::int n FROM signal_mass_labeling_study_interest_results WHERE map_id=$1 AND root_id=$2", [args.map_id, root])).rows[0].n, 1);
+  assert.deepEqual((await args.query("SELECT jsonb_agg(to_jsonb(c) ORDER BY c.id) snapshot FROM signal_labeling_calls c WHERE run_id=$1 AND id<>$2", [admitted.run_id, interrupted.call_id])).rows[0].snapshot, siblings);
+  const beforeReplay = (await args.query("SELECT to_jsonb(c) snapshot FROM signal_labeling_calls c WHERE id=$1", [interrupted.call_id])).rows[0].snapshot;
+  assert.equal((await recoverMassLabelingJevReceiptsV1({ database: args.database, run_id: admitted.run_id, storage })).recovered, 0);
+  const replayArgs = { ...args, run_id: admitted.run_id, call_id: interrupted.call_id, request_digest: audit.request_digest,
+    raw_sha256: audit.raw_sha256, raw_storage_key: audit.raw_storage_key, raw_size_bytes: Number(audit.raw_size_bytes),
+    result: audit.recovered_result, usage: audit.usage, settled_micro_usd: Number(audit.settled_micro_usd) };
+  assert.equal((await reconcileMassLabelingJevReceiptV1(replayArgs)).replayed, true);
+  await assert.rejects(reconcileMassLabelingJevReceiptV1({ ...replayArgs, raw_sha256: `sha256:${"f".repeat(64)}` }), /recovery_conflict/);
+  await assert.rejects(reconcileMassLabelingJevReceiptV1({ ...replayArgs, settled_micro_usd: replayArgs.settled_micro_usd + 1 }), /recovery_conflict/);
+  await assert.rejects(reconcileMassLabelingJevReceiptV1({ ...replayArgs, actor_user_id: randomUUID() }), /forbidden/);
+  await args.query("SAVEPOINT immutable_recovery_history");
+  await assert.rejects(args.query("DELETE FROM signal_mass_labeling_jev_receipt_recoveries WHERE call_id=$1", [interrupted.call_id]), /history_is_immutable/);
+  await args.query("ROLLBACK TO SAVEPOINT immutable_recovery_history"); await args.query("RELEASE SAVEPOINT immutable_recovery_history");
+  assert.deepEqual((await args.query("SELECT to_jsonb(c) snapshot FROM signal_labeling_calls c WHERE id=$1", [interrupted.call_id])).rows[0].snapshot, beforeReplay);
+  await assertMassLabelingServingProjectionV1(args.query, args.workspace_id, args.map_id);
+  await retryMassLabelingProductV2({ ...args, run_id: admitted.run_id });
+  simulateStorageFailure = false;
   for (let page = 0; page < 4; page++) {
     const outcome = await processMassLabelingJevV1({ run_id: admitted.run_id, store, provider });
     if (outcome.status === "completed") break;
