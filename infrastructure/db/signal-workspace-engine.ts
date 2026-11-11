@@ -1476,9 +1476,11 @@ export async function assertSignalWorkspaceMassLabelingRecoveryReadyV1(args:{dat
   if(!row)return fail('workspace_engine_not_found',404);
   if(args.workspace_id&&args.workspace_id!==row.workspace_id||args.actor_user_id&&args.actor_user_id!==row.actor_user_id)return fail('workspace_engine_forbidden',403);
   if(!isMassLabelingRecoveryProfileV1(row.input_snapshot.engine_config?.profile_version))return{pilot:false};
-  await authorize(client,row.workspace_id,row.actor_user_id,true);
+  const native=(await client.query<{native:boolean}>(`SELECT signal_mass_labeling_product_engine_v2(workspace_id,input_contract,input_snapshot) native
+    FROM signal_topic_catalog_executions WHERE id=$1`,[row.id])).rows[0]?.native===true;
+  await authorize(client,row.workspace_id,row.actor_user_id,true,native);
   if(row.input_contract!=='workspace-topic-engine-v1'||!row.input_snapshot.interpretation_config
-    ||!(Number(row.input_snapshot.claude_cap_micro_usd)>0)||!row.result_summary.fit_checkpoint||!row.bundle_valid
+    ||!(Number(row.input_snapshot.claude_cap_micro_usd)>0||native&&row.input_snapshot.claude_cap_micro_usd===null)||!row.result_summary.fit_checkpoint||!row.bundle_valid
     ||!row.revision_live||!row.policy_live)return fail('workspace_engine_interpretation_recovery_fit_required');
   const identity=await loadSignalWorkspaceEngineInputIdentityV1({queryable:client,workspace_id:row.workspace_id,actor_user_id:row.actor_user_id,
     taxonomy_profile_id:row.input_snapshot.taxonomy_profile_id,discovery:!!row.input_snapshot.discovery_population});

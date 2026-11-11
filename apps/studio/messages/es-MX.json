@@ -2941,6 +2941,7 @@
         "receipt": "Registrado: {settled} · Reservado: {reserved}.",
         "unknownAmount": "Importe pendiente de confirmación: {amount}.",
         "terminalAmount": "Del importe reservado, {amount} sigue pendiente de conciliación por una solicitud interrumpida.",
+        "paidGlobalReplay": "Reanuda el mapa con las respuestas ya pagadas. No autoriza ni envía nuevas llamadas al proveedor.",
         "transportRetry": "Al reanudar, el siguiente intento tendrá una reserva adicional dentro del mismo tope de interpretación.",
         "pending": "Estamos comprobando si la solicitud se guardó. Actualizar el estado no inicia otro análisis.",
         "unknown": "Hay una llamada cuyo resultado y costo aún no se han confirmado. Se conserva la solicitud; no se enviará otra automáticamente.",
