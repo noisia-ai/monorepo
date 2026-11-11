@@ -1,3 +1,5 @@
+import assert from "node:assert/strict";
+
 /** Invented PostgreSQL inputs and the former exact SQL as a parity oracle. */
 export const mapParitySetupSqlV1 = `CREATE TEMP TABLE mass_chunks AS
  SELECT md5('root'||r)::uuid root_id,'sha256:'||md5('finger'||r)||md5('finger2'||r) fingerprint,
@@ -38,3 +40,53 @@ export const mapOriginalItemsSqlV1 = `INSERT INTO items_original(workspace_id,ma
  chunk.fingerprint,chunk.chunk_index,chunk.chunk_sha256,signal_topic_utf16_fragment_v1(chunk.full_text,chunk.start_offset,chunk.end_offset) text,
  candidates.candidate_list FROM best_chunk best JOIN mass_chunks chunk USING(root_id,chunk_index) JOIN candidates USING(root_id);
 `;
+
+/** Own the physical connection before building any nested fixture. A Node test
+ * deadline alone does not cancel PostgreSQL or close its transaction. */
+export async function withMapAdoptionPostgresFixtureV1<T>(
+  signal: AbortSignal,
+  work: (fixture: import("./signal-client-workspace-entry.synthetic.fixture").SyntheticTransactionV1) => Promise<T>,
+): Promise<T> {
+  assert.equal(process.env.GITHUB_ACTIONS, "true");
+  assert.equal(process.env.NOISIA_MFP_PG_CI, "true");
+  const target = new URL(process.env.DATABASE_URL ?? "");
+  assert.equal(target.search, ""); assert.equal(target.hash, "");
+  const { openDatabase } = await import(new URL("../../../scripts/dev-corpus/guard.mjs", import.meta.url).href);
+  const pool: import("pg").Pool = await openDatabase();
+  let client: import("pg").PoolClient | undefined;
+  let released = false, sequence = 0;
+  const stack: string[] = [];
+  const abort = () => { if (client && !released) { released = true; client.release(true); } };
+  signal.addEventListener("abort", abort, { once: true });
+  try {
+    client = await pool.connect();
+    const physical = client;
+    if (signal.aborted) { abort(); throw new Error("synthetic_map_test_aborted"); }
+    await physical.query("BEGIN ISOLATION LEVEL READ COMMITTED");
+    await physical.query("SET LOCAL search_path=public,extensions,pg_temp; SET LOCAL statement_timeout='90s'; SET LOCAL lock_timeout='5s'; SET LOCAL client_connection_check_interval='100ms'");
+    const query = async (sql: string, values?: unknown[]) => {
+      if (sql.startsWith("BEGIN")) {
+        const key = `map_fixture_${++sequence}`; stack.push(key);
+        await physical.query(`SAVEPOINT ${key}`);
+        const separator = sql.indexOf(";"), remainder = separator < 0 ? "" : sql.slice(separator + 1).trim();
+        return remainder ? physical.query(remainder, values) : { rows: [], rowCount: null };
+      }
+      if (sql === "COMMIT") return physical.query(`RELEASE SAVEPOINT ${stack.pop()!}`);
+      if (sql === "ROLLBACK") {
+        const key = stack.pop()!; await physical.query(`ROLLBACK TO SAVEPOINT ${key}`);
+        return physical.query(`RELEASE SAVEPOINT ${key}`);
+      }
+      return physical.query(sql, values);
+    };
+    const scoped = Object.assign(Object.create(physical), { query, release() {} }) as import("pg").PoolClient;
+    const database = Object.assign(Object.create(pool), { query, connect: async () => scoped }) as import("pg").Pool;
+    return await work({ database, scoped, query: query as never, cleanup: async () => {} });
+  } finally {
+    try {
+      if (client && !released) {
+        try { await client.query("ROLLBACK"); }
+        finally { if (!released) { released = true; client.release(); } }
+      }
+    } finally { signal.removeEventListener("abort", abort); await pool.end(); }
+  }
+}

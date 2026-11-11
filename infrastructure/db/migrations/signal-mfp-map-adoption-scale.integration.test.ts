@@ -3,10 +3,12 @@ import { processingBatch } from "./signal-import-finalization.synthetic.fixture"
 import { getMassLabelingStudyPolicyV1, updateMassLabelingStudyPolicyV1 } from "../signal-mass-labeling-study-policy";
 import { randomUUID, createHash } from "node:crypto";
 import test from "node:test";
-import type { Pool } from "pg";
+import type { PoolClient } from "pg";
+import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import { prepareMassLabelingMapScoresV1, insertMassLabelingMapItemsV1, MASS_LABELING_MAP_SCORES_SQL_V1 } from "../signal-mass-labeling-map-sql";
 import { signalMfpLegacyWorkspaceFixtureV1 } from "./signal-mfp-legacy-workspace.synthetic.fixture";
-import { mapParitySetupSqlV1, mapOriginalScoresSqlV1, mapOriginalItemsSqlV1 } from "./signal-mass-labeling-map.synthetic.fixture";
+import { mapParitySetupSqlV1, mapOriginalScoresSqlV1, mapOriginalItemsSqlV1, withMapAdoptionPostgresFixtureV1 } from "./signal-mass-labeling-map.synthetic.fixture";
 
 const enabled = process.env.NOISIA_MFP_PG_CI === "true";
 const sha = (value: string) => `sha256:${createHash("sha256").update(value).digest("hex")}`;
@@ -15,13 +17,10 @@ const itemColumns = `workspace_id uuid,map_id uuid,root_id uuid,ordinal int,inpu
 type Plan = { "Node Type": string; "Relation Name"?: string; "Actual Loops"?: number; Plans?: Plan[] };
 const nodes = (plan: Plan): Plan[] => [plan, ...(plan.Plans ?? []).flatMap(nodes)];
 
-test("map SQL preserves exact vector bits, top eight, ties, UTF-16 fragments, digests and multilingual candidates", {
+if (process.env.NOISIA_MFP_MAP_ABORT_CHILD !== "true") test("map SQL preserves exact vector bits, top eight, ties, UTF-16 fragments, digests and multilingual candidates", {
   skip: !enabled, timeout: 60_000,
-}, async () => {
-  const { openDatabase } = await import(new URL("../../../scripts/dev-corpus/guard.mjs", import.meta.url).href);
-  const pool: Pool = await openDatabase(), client = await pool.connect();
-  try {
-    await client.query("BEGIN");
+}, async t => withMapAdoptionPostgresFixtureV1(t.signal, async fixture => {
+    const client = fixture.scoped;
     await client.query("SET LOCAL search_path=pg_temp,public,extensions; SET LOCAL statement_timeout='30s'; SET LOCAL work_mem='4MB'; SET LOCAL enable_hashagg=off");
     await client.query(mapParitySetupSqlV1);
     const map = randomUUID(), workspace = randomUUID(), mapDigest = sha("synthetic parity map");
@@ -47,22 +46,25 @@ test("map SQL preserves exact vector bits, top eight, ties, UTF-16 fragments, di
     const scans = nodes(plan).filter(node => node["Relation Name"] === "mass_topic_vectors");
     assert.equal(scans.length, 1);
     assert.equal(scans[0]!["Actual Loops"], 1, "all roots share one inline catalog, rather than re-reading toasted centroids");
-  } finally { await client.query("ROLLBACK"); client.release(); await pool.end(); }
-});
+}));
 
 /** Exercise the exact production INSERT, including its migrated foreign keys,
  * indexes, category and serving projections. Corpus/provenance proof is tested
  * by the native worker acceptance; this fixture isolates adoption arithmetic. */
-test("map adoption computes 83,962 roots and inserts all eight candidates within a bounded PostgreSQL statement budget", {
+// The regular workflow validates three real guarded batches. Reproduce the
+// complete receipt with the same workflow environment plus
+// NOISIA_MFP_MAP_ADOPTION_FULL_SCALE_PG_TEST=true and this test file.
+const fullScale = process.env.NOISIA_MFP_MAP_ADOPTION_FULL_SCALE_PG_TEST === "true";
+if (process.env.NOISIA_MFP_MAP_ABORT_CHILD !== "true") test(`map adoption preserves atomicity across guarded batches (${fullScale ? "83,962-root full scale" : "3,000-root CI regression"})`, {
   skip: !enabled, timeout: 600_000,
-}, async t => {
-  const f = await signalMfpLegacyWorkspaceFixtureV1();
-  try {
-    const roots = 83_962, chunks = 127_117, topics = 111;
+}, async t => withMapAdoptionPostgresFixtureV1(t.signal, async transaction => {
+    const roots = fullScale ? 83_962 : 3_000, chunks = fullScale ? 127_117 : 4_500, topics = 111;
+    console.log("map_adoption_acceptance", JSON.stringify({ phase: "fixture", roots, chunks, topics, full_scale: fullScale }));
+    const f = await signalMfpLegacyWorkspaceFixtureV1({ transaction });
     const settings = await getMassLabelingStudyPolicyV1(f.access);
     await updateMassLabelingStudyPolicyV1({ ...f.access, ...settings, expected_revision: settings.revision,
       category: "Synthetic category", lexicon_terms: Array.from({ length: 98 }, (_, index) => `synthetic term ${index}`) });
-    await f.query("SET LOCAL search_path=public,extensions,pg_temp; SET LOCAL work_mem='4MB'; SET LOCAL statement_timeout='180s'");
+    await f.query("SET LOCAL search_path=public,extensions,pg_temp; SET LOCAL work_mem='4MB'; SET LOCAL statement_timeout='90s'");
     await f.query(`CREATE TEMP TABLE map_vector_pool AS SELECT p,
       ('['||string_agg((sin(p*.173+j*.719)+cos(p*.317+j*.233))::real::text,',' ORDER BY j)||']')::vector(1024) embedding
       FROM generate_series(1,512) p CROSS JOIN generate_series(1,1024) j GROUP BY p`);
@@ -106,15 +108,40 @@ test("map adoption computes 83,962 roots and inserts all eight candidates within
       SELECT $1,$2,'topic_'||lpad(p::text,3,'0'),$3,ARRAY['guided:'||p],embedding FROM map_vector_pool WHERE p<=$4`,
       [f.workspace_id, map, sha("synthetic definitions"), topics]);
     await f.query("SET LOCAL statement_timeout='90s'");
+    console.log("map_adoption_acceptance", JSON.stringify({ phase: "scoring", roots }));
     const scoreStarted = performance.now();
     await prepareMassLabelingMapScoresV1(f.database, map);
     const scoreMs = Math.round(performance.now()-scoreStarted);
+    // A lost acknowledgement after two successful guarded INSERTs must not
+    // leave any item or derived projection visible after transaction rollback.
+    await f.query("SAVEPOINT interrupted_adoption");
+    let writes = 0;
+    const interrupted = { query: async (sql: string, values?: unknown[]) => {
+      const result = await f.query(sql, values);
+      if (sql.startsWith("INSERT INTO signal_mass_labeling_items(") && ++writes === 2)
+        throw new Error("synthetic_map_batch_acknowledgement_lost");
+      return result;
+    } } as unknown as Pick<PoolClient, "query">;
+    await assert.rejects(insertMassLabelingMapItemsV1(interrupted, { workspace_id: f.workspace_id, map_id: map,
+      catalog, map_digest: mapDigest, expected_roots: roots }), /synthetic_map_batch_acknowledgement_lost/u);
+    assert.equal(writes, 2);
+    await f.query("ROLLBACK TO SAVEPOINT interrupted_adoption");
+    await f.query("RELEASE SAVEPOINT interrupted_adoption");
+    const rolledBack = (await f.query(`SELECT
+      (SELECT count(*)::int FROM signal_mass_labeling_items WHERE map_id=$1) items,
+      (SELECT count(*)::int FROM signal_mass_labeling_root_segments WHERE map_id=$1) segments,
+      (SELECT count(*)::int FROM signal_mass_labeling_topic_probabilities WHERE map_id=$1) candidates,
+      (SELECT count(*)::int FROM signal_mass_labeling_category_matches category JOIN mass_chunks chunk ON chunk.root_id=category.root_id
+        AND chunk.chunk_index=0 WHERE category.workspace_id=$2) categories`, [map, f.workspace_id])).rows[0];
+    assert.deepEqual(rolledBack, { items: 0, segments: 0, candidates: 0, categories: 0 });
+    console.log("map_adoption_acceptance", JSON.stringify({ phase: "rollback_verified_then_insert", roots }));
     const insertStarted = performance.now();
     const inserted = await insertMassLabelingMapItemsV1(f.database, { workspace_id: f.workspace_id, map_id: map,
       catalog, map_digest: mapDigest, expected_roots: roots });
     const insertMs = Math.round(performance.now()-insertStarted);
     assert.equal(inserted.root_count, roots);
-    assert.equal(inserted.batch_count, 84);
+    assert.equal(inserted.batch_count, Math.ceil(roots/1000));
+    assert.ok(inserted.batch_count>=3);
     assert.ok(inserted.maximum_batch_ms<90_000);
     const counts = (await f.query(`SELECT
       (SELECT count(*)::int FROM mass_scores) scores,
@@ -125,5 +152,37 @@ test("map adoption computes 83,962 roots and inserts all eight candidates within
     assert.ok(scoreMs<90_000 && insertMs<600_000, "adoption stays within the native ten-minute materialization lease");
     t.diagnostic(JSON.stringify({ roots, chunks, topics, dimensions: 1024, work_mem: "4MB", statement_budget_ms: 90_000,
       score_ms: scoreMs, insert_with_guards_and_projections_ms: insertMs, ...inserted, counts }));
-  } finally { await f.cleanup(); }
+}));
+
+
+if (process.env.NOISIA_MFP_MAP_ABORT_CHILD === "true") {
+  test("map adoption abort witness", { timeout: 300 }, async t => withMapAdoptionPostgresFixtureV1(t.signal,
+    async fixture => {
+      console.log("map_abort_backend", (await fixture.query("SELECT pg_backend_pid() pid")).rows[0].pid);
+      await fixture.query("SELECT pg_sleep(60)");
+    }));
+} else test("map test timeout destroys its owned PostgreSQL connection and exits without hanging cleanup", {
+  skip: !enabled, timeout: 15_000,
+}, async () => {
+  const started = performance.now();
+  const env: NodeJS.ProcessEnv = { ...process.env, NOISIA_MFP_MAP_ABORT_CHILD: "true" };
+  delete env.NODE_TEST_CONTEXT;
+  const child = spawnSync(process.execPath, ["--test", "--import", "tsx", fileURLToPath(import.meta.url)],
+    { env, encoding: "utf8", timeout: 8_000, maxBuffer: 1_000_000 });
+  assert.equal(child.error, undefined, "the child exits naturally; no process timeout hides a leaked pool");
+  assert.equal(child.status, 1);
+  assert.match(child.stdout, /testTimeoutFailure/u);
+  assert.ok(performance.now()-started<5_000);
+  const backend = Number(child.stdout.match(/map_abort_backend (\d+)/u)?.[1]);
+  assert.ok(Number.isInteger(backend) && backend>0);
+  const { openDatabase } = await import(new URL("../../../scripts/dev-corpus/guard.mjs", import.meta.url).href);
+  const observer = await openDatabase();
+  try {
+    let exists = true;
+    for (let attempt=0; attempt<40 && exists; attempt++) {
+      exists = (await observer.query("SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE pid=$1) alive", [backend])).rows[0].alive;
+      if (exists) await new Promise(resolve => setTimeout(resolve,50));
+    }
+    assert.equal(exists,false,"the disconnected backend exits too; no sleeping transaction survives the test");
+  } finally { await observer.end(); }
 });
