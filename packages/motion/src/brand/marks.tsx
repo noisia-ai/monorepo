@@ -27,7 +27,8 @@ const GENERIC: Record<string, { es: string; en: string; icon: string }> = {
   forums: { es: "Foros", en: "Forums", icon: "chat-bubble" },
   press: { es: "Prensa", en: "Press", icon: "reports" },
   search: { es: "Búsqueda", en: "Search", icon: "search" },
-  news: { es: "Noticias", en: "News", icon: "reports" }
+  news: { es: "Noticias", en: "News", icon: "reports" },
+  blogs: { es: "Blogs", en: "Blogs", icon: "book" }
 };
 
 const IC = (kitIcons as { ic: Record<string, string> }).ic;

@@ -22,7 +22,8 @@ export function ProofCard({ quote, clip, at, outAt, locale, big = false }: { quo
     <div
       style={{
         opacity: Math.min(1, s * 1.4) * (1 - out),
-        transform: `translate(${-out * 160}px, ${(1 - s) * 80}px) rotate(${(1 - s) * -2}deg)`,
+        // A short rise: from 80 px below, the card crossed the captions while it came in.
+        transform: `translate(${-out * 160}px, ${(1 - s) * 28}px) rotate(${(1 - s) * -2}deg)`,
         background: "#fff",
         border: `2px solid ${color.line}`,
         borderRadius: 28,

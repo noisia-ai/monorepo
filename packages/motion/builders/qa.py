@@ -9,7 +9,7 @@ The stills come from build-video.mjs --qa, which renders every scene at its mark
 voice, end of the quote, the spark complete. That is where every overlap showed up before. The audio
 can only be approved by a person listening to it: ask the user.
 """
-import glob, json, os, re, subprocess, sys
+import shutil, glob, json, os, re, subprocess, sys
 from PIL import Image, ImageDraw, ImageFont
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -36,10 +36,18 @@ def sheet(folder, out, cols=6, width=270):
 
 
 def ff(tool, *a):
-    """The ffmpeg/ffprobe that ship with Remotion's compositor (no system install needed)."""
+    """The ffmpeg/ffprobe that ship with Remotion's compositor (no system install needed).
+
+    Looked up from the repo's pnpm store and, for a patched copy of this package outside the repo,
+    next to the package's own @remotion/renderer (its node_modules is a link). Then the system PATH.
+    """
+    renderer = os.path.realpath(os.path.join(PKG, "node_modules", "@remotion", "renderer"))
     found = glob.glob(os.path.join(PKG, "..", "..", "node_modules", ".pnpm", "@remotion+compositor-*", "node_modules", "@remotion", "compositor-*", tool))
+    found += glob.glob(os.path.join(os.path.dirname(renderer), "compositor-*", tool))
+    if not found and shutil.which(tool):
+        return subprocess.run([shutil.which(tool), *a], capture_output=True, text=True)
     if not found:
-        raise SystemExit(f"{tool} not found: run pnpm install")
+        raise SystemExit(f"{tool} not found: run pnpm install in the repo, or install ffmpeg")
     d = os.path.dirname(found[0])
     env = {**os.environ, "DYLD_LIBRARY_PATH": d, "LD_LIBRARY_PATH": d}
     return subprocess.run([found[0], *a], capture_output=True, text=True, env=env)

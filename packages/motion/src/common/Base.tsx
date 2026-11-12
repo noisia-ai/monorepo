@@ -27,19 +27,24 @@ export function DataNote({ note, locale, delay = 30, size = 40 }: { note: Note; 
   const words =
     note.mentions != null ? `${mentionsLabel(note.mentions, locale)} ${en ? "mentions" : "menciones"}${note.what ? ` ${note.what}` : ""}` : (note.source ?? "");
   return (
-    <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", columnGap: 14, rowGap: 10, ...text(size, 400, { color: color.muted, lineHeight: 1.25 }), ...rise(frame, fps, delay, 20) }}>
+    // Two lines on purpose: what the figure stands on, then when and where. Wrapping by accident left
+    // the icon alone on a line.
+    <div style={{ display: "grid", gridTemplateColumns: `${size}px 1fr`, columnGap: 14, rowGap: 0, alignItems: "center", ...text(size, 400, { color: color.muted, lineHeight: 1.25 }), ...rise(frame, fps, delay, 20) }}>
       <Icon name="database" size={size} stroke={color.muted} width={1.7} />
       <span style={{ color: color.fg, fontWeight: 500 }}>{words}</span>
-      <span>· {note.period}</span>
-      {note.mentions != null && note.source ? <span>· {note.source}</span> : null}
-      {note.channels?.length ? (
-        <span style={{ display: "inline-flex", gap: 10, alignItems: "center" }}>
-          ·{" "}
-          {note.channels.map((c) => (
-            <PlatformMark key={c} platform={c} size={size} />
-          ))}
-        </span>
-      ) : null}
+      <span />
+      <span style={{ display: "inline-flex", flexWrap: "wrap", alignItems: "center", gap: 10 }}>
+        {note.period}
+        {note.mentions != null && note.source ? <span>· {note.source}</span> : null}
+        {note.channels?.length ? (
+          <span style={{ display: "inline-flex", gap: 10, alignItems: "center" }}>
+            ·{" "}
+            {note.channels.map((c) => (
+              <PlatformMark key={c} platform={c} size={size} />
+            ))}
+          </span>
+        ) : null}
+      </span>
     </div>
   );
 }

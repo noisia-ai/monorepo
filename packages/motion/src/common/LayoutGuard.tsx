@@ -12,6 +12,9 @@ import { cancelRender, continueRender, delayRender, useCurrentFrame } from "../e
  */
 const MIN_OVERLAP = 6; // px on the 1080 canvas: a touch of anti-aliasing is not an overlap
 const VISIBLE = 0.05;
+// Leaving the frame only counts while the block still reads: an exit that slides out as it fades is
+// a gesture, not a layout problem.
+const LEGIBLE = 0.6;
 
 const alpha = (n: Element) => parseFloat(getComputedStyle(n).opacity || "1");
 
@@ -26,7 +29,7 @@ function opacityOf(el: Element, root: Element): number {
   return o;
 }
 
-export function LayoutGuard({ on, width, height, children }: { on: boolean; width: number; height: number; children: ReactNode }) {
+export function LayoutGuard({ on, width, height, bottom, children }: { on: boolean; width: number; height: number; bottom?: number; children: ReactNode }) {
   const ref = useRef<HTMLDivElement>(null);
   const frame = useCurrentFrame();
   useLayoutEffect(() => {
@@ -39,13 +42,26 @@ export function LayoutGuard({ on, width, height, children }: { on: boolean; widt
       const k = width / box.width; // stills render at a scale; compare on the canvas
       const els = Array.from(root.querySelectorAll<HTMLElement>("[data-qa]"))
         .map((el) => {
-          const r = el.getBoundingClientRect();
-          return { el, name: el.dataset.qa!, x0: (r.left - box.left) * k, y0: (r.top - box.top) * k, x1: (r.right - box.left) * k, y1: (r.bottom - box.top) * k };
+          // A card animates its own child (translate, scale), and the tag's box does not move with
+          // it: measure the union of the tag and its single-child chain, where the eye sees it.
+          let r = el.getBoundingClientRect();
+          let [x0, y0, x1, y1] = [r.left, r.top, r.right, r.bottom];
+          for (let n: Element = el; n.children.length === 1; ) {
+            n = n.children[0];
+            r = n.getBoundingClientRect();
+            [x0, y0, x1, y1] = [Math.min(x0, r.left), Math.min(y0, r.top), Math.max(x1, r.right), Math.max(y1, r.bottom)];
+          }
+          return { el, name: el.dataset.qa!, x0: (x0 - box.left) * k, y0: (y0 - box.top) * k, x1: (x1 - box.left) * k, y1: (y1 - box.top) * k };
         })
-        .filter((b) => b.x1 - b.x0 > 1 && b.y1 - b.y0 > 1 && opacityOf(b.el, root) > VISIBLE);
+        .map((b) => ({ ...b, o: opacityOf(b.el, root) }))
+        .filter((b) => b.x1 - b.x0 > 1 && b.y1 - b.y0 > 1 && b.o > VISIBLE);
       const problems: string[] = [];
       for (const b of els) {
-        if (b.x0 < -MIN_OVERLAP || b.y0 < -MIN_OVERLAP || b.x1 > width + MIN_OVERLAP || b.y1 > height + MIN_OVERLAP) problems.push(`${b.name} leaves the frame`);
+        const out = b.x0 < -MIN_OVERLAP || b.y0 < -MIN_OVERLAP || b.x1 > width + MIN_OVERLAP || b.y1 > height + MIN_OVERLAP;
+        if (out && b.o >= LEGIBLE) problems.push(`${b.name} leaves the frame`);
+        // The caption band is kept free even when nobody speaks: a card that reaches it collides as
+        // soon as the voice comes back.
+        else if (bottom != null && b.name !== "captions" && b.y1 > bottom + MIN_OVERLAP) problems.push(`${b.name} reaches the caption band (bottom ${Math.round(b.y1)} > ${bottom})`);
       }
       for (let i = 0; i < els.length; i++)
         for (let j = i + 1; j < els.length; j++) {

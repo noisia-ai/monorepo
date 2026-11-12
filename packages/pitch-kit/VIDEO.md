@@ -53,8 +53,10 @@ dentro de una slide 16:9.
     escena se sintió aburrido. Sin esa apertura, la nota es obligatoria en cada gráfica.
   - **Una nota va debajo de la cifra** cuando hace falta: cuántas menciones la sostienen, en qué periodo
     y, cuando se sabe, en qué canales ("35,385 menciones en mayo (13,079 en enero) · ene–may 2026" y los
-    logos). En una pieza social es obligatoria en cada cifra. Una cifra oficial (un censo, un cómputo
-    electoral) no tiene menciones: su nota lleva `source`.
+    logos). En una pieza social es obligatoria en cada cifra. `note.mentions` es **un conteo exacto**
+    (menciones distintas del tópico en el periodo), nunca una estimación ponderada como "voces
+    pertinentes". Una cifra oficial (un censo, un cómputo electoral) no tiene menciones: su nota lleva
+    `source`.
   - **Con menos de 5,000 menciones analizadas, la cifra va en porcentaje** o en "de cada 100", y la nota
     dice el universo del que salió (en una muestra al azar, el universo muestreado). "126 menciones"
     bajo un 65% se leyó como estudio superficial aunque el corpus fuera de 332 mil. El conteo leído no
@@ -285,13 +287,24 @@ anclan a una palabra: el número arranca cuando el narrador la dice.
 - **Las voces del sistema no sirven para entregar** ("se escuchan súper feas"); sirven de borrador sin
   key.
 - **ElevenLabs por API**, endpoint `/v1/text-to-speech/{voice}/with-timestamps`:
-  - narrador: por defecto `eleven_multilingual_v2`, una voz premade de narrador, `stability 0.42`,
-    `similarity_boost 0.8`, `style 0.35`, `use_speaker_boost`. La pieza los cambia con `voices.model`,
-    `voices.quoteModel` y `voices.settings`: Eleven v4 solo acepta `stability` y `similarity_boost`;
+  - narrador: **una voz profesional de la biblioteca compartida, poco usada, elegida con muestras;
+    nunca una premade.** Una premade popular se rechazó como "la voz que anda circulando en todos los
+    videos de internet". Se busca en `/v1/shared-voices` con `category=professional`, el idioma y el
+    género, un uso anual moderado (entre unos 300 mil y 6 millones de caracteres) y una descripción de
+    narración o documental; se generan tres muestras con una línea del guion y elige el usuario. Las
+    voces compartidas funcionan por `voice_id` sin agregarlas a la cuenta. Modelo por defecto
+    `eleven_multilingual_v2` con `stability 0.42`, `similarity_boost 0.8`, `style 0.35`,
+    `use_speaker_boost`; la pieza los cambia con `voices.model`, `voices.quoteModel` y
+    `voices.settings` (Eleven v4 solo acepta `stability` y `similarity_boost`);
+  - la voz de la apertura se elige también **por ritmo**: la cita del cold open no debería pasar de unos
+    10 s. Una de 13 s fue "muy lenta"; la misma cita con otras voces duró de 9.3 a 11.9 s;
   - voces del público: `eleven_v3` con `language_code` del mercado, voces nativas de la biblioteca
     compartida, y un tag de emoción al inicio de cada cita (`[laughing]`, `[mocking]`, `[excited]`…).
     Los tags llegan en la alineación como palabras y se filtran. Si la cita trae ortografía de la calle
-    ("eh votado", "asen"), su `say` dice lo que lee la voz y la tarjeta sigue mostrando el texto literal;
+    ("eh votado", "asen"), su `say` dice lo que lee la voz y la tarjeta sigue mostrando el texto literal.
+    Una cita en otro idioma lleva su `translation`, en la tarjeta y en el chat del clímax, y **la
+    traducción se revisa contra el fragmento citado, no contra el post completo**: dos lecturas del deck
+    agregaban una frase o una palabra que el fragmento no dice;
   - voces diseñadas (Voice Design): el API solo acepta `eleven_multilingual_ttv_v2` y `eleven_ttv_v3`
     para diseñar (`eleven_ttv_v4` da 422), y la voz se usa después con el modelo que se quiera. El plan
     de pago por uso permite 3 voces propias y un clon ocupa una: revisar el cupo antes de diseñar y
@@ -325,7 +338,10 @@ anclan a una palabra: el número arranca cuando el narrador la dice.
 arranque de la escena y el cuadro justo antes de cada marca): los encimados que vio el usuario estaban en
 las transiciones. **Un encimado bloquea la entrega**, y lo detecta el builder, no una persona: con
 `--qa`, cada bloque marcado con `data-qa` se mide en cada still y la QA truena si dos se cruzan o uno se
-sale del cuadro, con el nombre de los dos y el cuadro (`src/common/LayoutGuard.tsx`). La tarjeta de la
+sale del cuadro, con el nombre de los dos y el cuadro (`src/common/LayoutGuard.tsx`). También truena
+si un bloque baja a la franja de los subtítulos (60 px sobre ella), aunque en ese cuadro nadie hable, y
+mide la caja ya animada, no el contenedor: una tarjeta que entraba subiendo desde 80 px pisaba los
+subtítulos y la primera versión de la guardia no lo vio. La tarjeta de la
 cita y el Spark van debajo de la gráfica y su nota, en la misma columna, así que una gráfica alta los
 empuja hacia abajo en lugar de quedar debajo de ellos. El audio solo lo puede aprobar una persona
 escuchándolo; se le pide al usuario.
@@ -456,5 +472,9 @@ las fases en fila, la base por canales y la seña.
 - Cuatro patrones de deck (§5.4) y tres gráficas: curva con barras de días, tarjetas de marca, uno contra
   muchos.
 - La primera pieza real de cada formato con voces de ElevenLabs, escuchada por una persona.
+- Un `builders/voices.py` que liste voces profesionales por idioma y género, genere muestras y revise
+  el cupo antes de diseñar.
+- `--estimate` mide todo a 15 caracteres por segundo y puede inflar las citas en otro alfabeto; el
+  audio real lo corrige.
 - La loudness: el ffmpeg que trae Remotion no tiene `ebur128`; la medición a -14 LUFS necesita uno
   completo.

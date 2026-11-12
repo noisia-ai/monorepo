@@ -28,7 +28,7 @@ export type StudyProps = { piece: StudyPiece; timing: Timing; qa?: boolean };
 // still does not fit, the layout guard catches in --qa (VIDEO.md §7).
 const BODY_TOP = 560;
 const CARD_TOP = 1010;
-const CARD_GAP = 40;
+const CARD_GAP = 24;
 const clipOf = (t: TimedScene, kind: "vo" | "quote" | "spark", i = 0) => t.clips.filter((c) => c.kind === kind)[i];
 
 function Fade({ children }: { children: ReactNode }) {
@@ -148,7 +148,7 @@ function Chapter({ sc, t, n, total, locale }: { sc: Extract<StudyScene, { type: 
             </div>
           ) : null}
           {sc.chart && sc.note ? (
-            <div data-qa={`${sc.id}.note`} style={{ marginTop: 26 }}>
+            <div data-qa={`${sc.id}.note`} style={{ marginTop: 18 }}>
               <DataNote note={sc.note} locale={locale} delay={(t.marks.chart_at ?? 20) + 26} />
             </div>
           ) : null}
@@ -274,7 +274,11 @@ function Climax({ sc, t, n, total, locale }: { sc: Extract<StudyScene, { type: "
           const mine = i % 2 === 1;
           return (
             <div key={i} style={{ alignSelf: mine ? "flex-end" : "flex-start", maxWidth: "82%", opacity: s, transform: `translateY(${(1 - s) * 40}px) scale(${0.9 + 0.1 * s})` }}>
-              <div style={{ background: mine ? color.tealSoft : color.bubble, borderRadius: 34, padding: "22px 28px", ...text(36, 400, { lineHeight: 1.25 }) }}>{bare(p.text)}</div>
+              <div style={{ background: mine ? color.tealSoft : color.bubble, borderRadius: 34, padding: "22px 28px", ...text(36, 400, { lineHeight: 1.25 }) }}>
+                {bare(p.text)}
+                {/* In another language the chat is unreadable without it, as in ProofCard. */}
+                {p.translation ? <div style={text(26, 400, { color: color.muted, lineHeight: 1.3, marginTop: 8 })}>{p.translation}</div> : null}
+              </div>
               <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 8, justifyContent: mine ? "flex-end" : "flex-start", ...text(22, 500, { color: color.muted }) }}>
                 <PlatformMark platform={p.platform} size={26} />
                 {p.meta}
@@ -334,7 +338,7 @@ export function Study({ piece, timing, qa = false }: StudyProps) {
     <AbsoluteFill style={{ width: VERTICAL.width, height: VERTICAL.height, background: color.canvas }}>
       <Fonts />
       <Background bg={piece.background} />
-      <LayoutGuard on={qa} width={VERTICAL.width} height={VERTICAL.height}>
+      <LayoutGuard on={qa} width={VERTICAL.width} height={VERTICAL.height} bottom={VERTICAL.height - SAFE.bottomPublish - 60}>
       {piece.scenes.map((sc, i) => {
         const t = timing.scenes[i];
         const n = chapters.indexOf(sc.id) + 1;
