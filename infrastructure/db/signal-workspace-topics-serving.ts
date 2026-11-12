@@ -1044,15 +1044,20 @@ async function evidenceWithin(client: PoolClient, args: EvidenceArgs, ctx: Conte
       afterSample=decoded.sample_key;
     }
     const rows=(await client.query<SignalWorkspaceTopicEvidencePageV1["items"][number]&{sample_key:string}>(
-      `${populationSql(true,false,false,true,false,undefined,true,ctx.filters.conversation_segment)}
-       SELECT root.root_id mention_id,mention.text_clean text,NULL::text quote,'[]'::jsonb forced_abstentions,
+      `${populationSql(true,false,false,true,false,undefined,true,ctx.filters.conversation_segment)},
+       selected_topic_roots AS MATERIALIZED (
+        SELECT root.root_id,md5($11::text||root.root_id::text) sample_key
+        FROM period_roots root JOIN mfp_memberships member ON member.root_id=root.root_id AND member.concept_key=$7
+        WHERE root.evidence AND ($8::uuid IS NULL OR (md5($11::text||root.root_id::text),root.root_id)>($9::text,$8::uuid))
+        ORDER BY sample_key,root.root_id LIMIT $10
+       ) SELECT selected.root_id mention_id,mention.text_clean text,NULL::text quote,'[]'::jsonb forced_abstentions,
          NULL::jsonb evidence_fragment,mention.platform,
-         to_char(mention.published_at,'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') occurred_at,mention.url,
-         md5($11::text||root.root_id::text) sample_key
-       FROM period_roots root JOIN mfp_memberships member ON member.root_id=root.root_id AND member.concept_key=$7
-       JOIN mentions mention ON mention.id=root.root_id AND mention.workspace_id=$1::uuid
-       WHERE root.evidence AND ($8::uuid IS NULL OR (md5($11::text||root.root_id::text),root.root_id)>($9::text,$8::uuid))
-       ORDER BY sample_key,root.root_id LIMIT $10`,
+         to_char(mention.published_at,'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') occurred_at,mention.url,selected.sample_key
+       FROM selected_topic_roots selected JOIN LATERAL (
+         SELECT text_clean,platform,published_at,url FROM mentions
+         WHERE workspace_id=$1::uuid AND id=selected.root_id OFFSET 0
+       ) mention ON true
+       ORDER BY selected.sample_key,selected.root_id`,
       [...populationParams(args,ctx),args.term_key,after,afterSample,limit+1,view.scope_digest+args.term_key])).rows;
     const page=rows.slice(0,limit),last=page.at(-1);
     return {contract_version:"signal-workspace-topic-evidence-v1",workspace_id:args.workspace_id,

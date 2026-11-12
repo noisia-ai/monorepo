@@ -87,9 +87,9 @@ for(const authorization of ["rotation","scoped","scoped-scale","scoped-funding",
         assert.doesNotMatch(sql,/signal_mass_labeling_category_(?:pattern|matches)_/u,"Signal joins materialized lexical matches");
         assert.match(sql,/signal_mass_labeling_category_matches lexical/u);
       }
-      if (sql.includes("selected_consumers AS MATERIALIZED")) {
-        assert.doesNotMatch(sql.split("selected_consumers AS MATERIALIZED")[0]!, /mention\.text_clean/u,
-          "consumer sampling must choose root IDs before loading mention text");
+      if (sql.includes("selected_consumers AS MATERIALIZED") || sql.includes("selected_topic_roots AS MATERIALIZED")) {
+        assert.doesNotMatch(sql.split(/selected_(?:consumers|topic_roots) AS MATERIALIZED/u)[0]!, /mention\.text_clean/u,
+          "sampling must choose root IDs before loading mention text");
         assert.match(sql, /id=selected\.root_id OFFSET 0/u,
           "the final text lookup remains bounded when the serving transaction disables nested loops");
       }
