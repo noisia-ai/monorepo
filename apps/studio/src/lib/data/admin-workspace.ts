@@ -242,8 +242,7 @@ export async function loadAdminDashboardCorpus(
 function buildAdminDashboard(brands: AdminBrandWorkspaceRow[]) {
   const priorities = brands
     .flatMap((brand) => brandPriorities(brand))
-    .sort((left, right) => priorityRank(left.state) - priorityRank(right.state))
-    .slice(0, 12);
+    .sort((left, right) => priorityRank(left.state) - priorityRank(right.state));
   return {
     brands,
     totals: {

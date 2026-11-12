@@ -2341,6 +2341,8 @@
         "brands": "Brands",
         "brandsHint": "Internal workspaces in scope",
         "mentions": "Received mentions",
+        "mentionsSubtotal": "Received mentions subtotal",
+        "mentionsSubtotalHint": "Count for the requested workspace.",
         "mentionsHint": "Sum across brands; receipt does not mean analysis is complete.",
         "sources": "Source issues",
         "sourcesHint": "Stale or failed sources",

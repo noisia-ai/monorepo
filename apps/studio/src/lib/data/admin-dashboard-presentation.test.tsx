@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import test, { mock } from "node:test";
 import { readFile } from "node:fs/promises";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -101,6 +101,47 @@ for (const locale of ["es-MX", "en-US"]) {
     const noWorkspace = render([{ ...brand, workspaceId: null, workspaceSlug: null, corpus: null }], false, null);
     assert.ok(noWorkspace.includes(`/studio/brands/${id}`));
     assert.ok(!noWorkspace.includes('/signal/'));
+  });
+  test(`${locale}: the sixteenth requested workspace retains its priority after unrequested receipts are filtered`, async () => {
+    process.env.DATABASE_URL ??= "postgresql://test@127.0.0.1:1/noisia_test";
+    const { getAdminDashboard } = await import("./admin-workspace");
+    const { pool } = await import("../db");
+    const rows = Array.from({ length: 16 }, (_, index) => ({
+      brand_id: `00000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`,
+      brand_name: `Workspace ${index + 1}`, brand_slug: `workspace-${index + 1}`, brand_status: "active",
+      organization_id: id, organization_name: "Example organization", industry: null,
+      workspace_id: `00000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`,
+      workspace_slug: `workspace-${index + 1}`, workspace_status: "active", timezone: "UTC",
+      population_id: null, population_version: null, coverage_from: null, coverage_through: null,
+      freshness_state: null, current_report_status: null, current_report_revision: null,
+      latest_activity_at: null
+    }));
+    const query = mock.method(pool, "query", async () => ({ rows }));
+    let actual: Awaited<ReturnType<typeof getAdminDashboard>>;
+    try {
+      actual = await getAdminDashboard({ id, userType: "noisia_internal" }, { includeCorpus: false });
+      assert.equal(actual.priorities.length, 16);
+    } finally {
+      query.mock.restore();
+    }
+    const html = renderToStaticMarkup(<NextIntlClientProvider locale={locale} messages={messages} timeZone="UTC">
+      <AdminDashboard dashboard={actual} corpusRequested={rows[15]!.workspace_id} />
+    </NextIntlClientProvider>);
+    const priorities = html.match(/<ol class="admin-priority-list">([\s\S]*?)<\/ol>/u)?.[1] ?? "";
+    assert.ok(priorities.includes("Workspace 16"));
+    assert.equal((priorities.match(/<li>/gu) ?? []).length, 1);
+    assert.ok(priorities.includes(t.dashboard.priority.receipt_unavailable));
+    assert.ok(!html.includes(t.dashboard.priorities.emptyTitle));
+    assert.ok(html.includes(t.dashboard.summary.mentionsSubtotal));
+    assert.ok(html.includes(t.dashboard.summary.mentionsSubtotalHint));
+    assert.ok(!html.includes(t.dashboard.summary.mentionsHint));
+    const measured = actual.brands.map((item, index) => index === 15
+      ? { ...item, corpus: { ...received, workspace_id: item.workspaceId! } } : item);
+    const measuredHtml = render(measured, false, rows[15]!.workspace_id);
+    assert.ok(measuredHtml.includes(t.dashboard.summary.mentionsSubtotal));
+    assert.match(measuredHtml, /<dd>421<\/dd>/u);
+    assert.ok(measuredHtml.includes(t.dashboard.summary.receiptCounts.replace('{files, number}', '7').replace('{rows, number}', '600')));
+    assert.ok(!measuredHtml.includes(locale === "es-MX" ? "15 marcas" : "15 brands"));
   });
   test(`${locale}: partial and unavailable remain distinct from a brand with no received files`, () => {
     const partial = { ...brand, corpus: { ...received, measurement_state: "partial" as const, unmeasured_sources: 1 } };

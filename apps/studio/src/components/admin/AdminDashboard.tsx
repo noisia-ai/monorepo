@@ -16,7 +16,10 @@ export function AdminDashboard({ dashboard, corpusLoading = false, corpusRequest
     || corpusRequested !== null && dashboard.brands.some(brand => brand.brandId === brandId && brand.workspaceId === corpusRequested);
   const pendingCorpus = corpusLoading || corpusRequested === null;
   const priorities = dashboard.priorities.filter(priority => !priority.code.startsWith("receipt_")
-    || !pendingCorpus && receiptRequested(priority.brandId));
+    || !pendingCorpus && receiptRequested(priority.brandId)).slice(0, 12);
+  const subtotal = corpusRequested !== null && corpusRequested !== "all";
+  const incompleteReceipts = dashboard.brands.filter(brand => receiptRequested(brand.brandId)
+    && brand.corpus?.measurement_state !== "complete").length;
   const attentionBrands = dashboard.brands
     .filter(adminDashboardNeedsAttention)
     .slice(0, 12);
@@ -54,15 +57,15 @@ export function AdminDashboard({ dashboard, corpusLoading = false, corpusRequest
           <small>{t("dashboard.summary.brandsHint")}</small>
         </div>
         <div>
-          <dt>{t("dashboard.summary.mentions")}</dt>
+          <dt>{t(subtotal ? "dashboard.summary.mentionsSubtotal" : "dashboard.summary.mentions")}</dt>
           <dd>{dashboard.totals.receivedMentions === null ? "—" : formatAdminNumber(dashboard.totals.receivedMentions, locale)}</dd>
-          <small>{t("dashboard.summary.mentionsHint")}</small>
+          <small>{t(subtotal ? "dashboard.summary.mentionsSubtotalHint" : "dashboard.summary.mentionsHint")}</small>
           {pendingCorpus
             ? <small role={corpusLoading ? "status" : undefined}>{t(corpusLoading ? "dashboard.receiptsLoading" : "dashboard.receiptsIdle")}</small>
             : <small>{dashboard.totals.receivedMentions === null
               ? t("corpusSummary.states.unavailable")
               : t("dashboard.summary.receiptCounts", { files: dashboard.totals.acceptedFiles, rows: dashboard.totals.recordsRead })}</small>}
-          {!pendingCorpus && dashboard.totals.incompleteReceiptBrands > 0 ? <small>{t("dashboard.summary.partialReceipt", { count: dashboard.totals.incompleteReceiptBrands })}</small> : null}
+          {!pendingCorpus && incompleteReceipts > 0 ? <small>{t("dashboard.summary.partialReceipt", { count: incompleteReceipts })}</small> : null}
         </div>
         <div>
           <dt>{t("dashboard.summary.sources")}</dt>

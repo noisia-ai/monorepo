@@ -2341,6 +2341,8 @@
         "brands": "Marcas",
         "brandsHint": "Workspaces internos en alcance",
         "mentions": "Menciones recibidas",
+        "mentionsSubtotal": "Subtotal de menciones recibidas",
+        "mentionsSubtotalHint": "Recuento del workspace consultado.",
         "mentionsHint": "Suma por marca; recibirlas no implica análisis completo.",
         "sources": "Problemas de fuentes",
         "sourcesHint": "Fuentes desactualizadas o fallidas",
