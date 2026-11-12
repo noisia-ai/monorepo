@@ -1,3 +1,4 @@
+import { prepareMassLabelingMapScoresV1, insertMassLabelingMapItemsV1 } from "./signal-mass-labeling-map-sql";
 import {loadMassLabelingStudyPolicyWithClientV1,massLabelingStudyInterestDigestV1} from "./signal-mass-labeling-study-policy";
 import {massLabelingConfigurationV2} from "@noisia/query-engine";
 import {MASS_LABELING_FUNDING_RECEIPT_SELECT_V1,type MassLabelingFundingReceiptV1} from "./signal-mass-labeling-funding";
@@ -12,7 +13,7 @@ import {loadSignalWorkspaceCapabilitiesStoreV1} from "./signal-workspace-capabil
 import {signalWorkspaceFeatureEnabledV1} from "./signal-workspace-features";
 import {inspectFacetContextChangeV1, type LabelingDatabaseV1} from "./signal-mention-facets";
 import {createSignalLabelingStoreV1, requestMentionFacetsV1, SignalLabelingError,
-  type LabelingRunV1} from "./signal-labeling-runs";
+  type LabelingRunV1, type LabelingCallV1} from "./signal-labeling-runs";
 import {verifyMassLabelingSourceCheckpointsWithClientV1,type MassLabelingSourceCheckpointV1} from "./signal-mass-labeling-source";
 import {verifySignalWorkspaceMassLabelingGlobalReceiptRecoveryWithClientV1,MASS_LABELING_GLOBAL_RECEIPT_DECISION_SELECT_V1,type SignalWorkspaceMassLabelingOperatorReceiptRecoveryV1} from "./signal-mass-labeling-global-recovery";
 import {readClassicPolicyActiveWorkV1} from "./signal-classic-policy-completion";
@@ -181,7 +182,7 @@ export async function createMassLabelingMapV1(args: {
     const replay = (await client.query<{id: string}>(`SELECT id FROM signal_mass_labeling_maps
       WHERE workspace_id=$1 AND map_digest=$2`, [args.workspace_id, mapDigest])).rows[0];
     if (replay) return {map_id: replay.id, map_digest: mapDigest, replayed: true};
-    await client.query("DROP TABLE IF EXISTS pg_temp.mass_chunks,pg_temp.mass_assignments,pg_temp.mass_scores");
+    await client.query("DROP TABLE IF EXISTS pg_temp.mass_chunks,pg_temp.mass_assignments,pg_temp.mass_scores,pg_temp.mass_topic_vectors,pg_temp.mass_map_items,pg_temp.mass_map_roots,pg_temp.mass_batch_chunks,pg_temp.mass_root_vectors,pg_temp.mass_candidate_catalog");
     await client.query(`CREATE TEMP TABLE mass_chunks ON COMMIT DROP AS
       SELECT item.root_id,item.fingerprint,asset.full_text,(chunk.ordinality-1)::int chunk_index,
         chunk.value->>'sha256' chunk_sha256,(chunk.value->>'start')::int start_offset,(chunk.value->>'end')::int end_offset,
@@ -217,37 +218,10 @@ export async function createMassLabelingMapV1(args: {
       JOIN mass_chunks chunk USING(root_id,chunk_index)
       GROUP BY topic.topic_key,topic.definition_digest,topic.group_ids`, [args.workspace_id, mapId, JSON.stringify(catalog)]);
     if (topicCount.rowCount !== catalog.length) fail("mass_labeling_empty_topic");
-    // Centroids and root scores stay in the original Voyage space. UMAP coordinates are never used here.
-    await client.query("SET LOCAL enable_hashagg=off");
-    await client.query(`CREATE TEMP TABLE mass_scores ON COMMIT DROP AS
-      SELECT root.root_id,topic.topic_key,topic.similarity,topic.position
-      FROM (SELECT root_id,avg(embedding) root_vector FROM mass_chunks GROUP BY root_id) root
-      CROSS JOIN LATERAL (
-        SELECT ranked.topic_key,ranked.similarity,row_number() OVER(ORDER BY ranked.similarity DESC,ranked.topic_key)::int position
-        FROM (SELECT topic_key,greatest(-1.0,least(1.0,1-(centroid<=>root.root_vector))) similarity
-          FROM signal_mass_labeling_topics WHERE map_id=$1 ORDER BY centroid<=>root.root_vector,topic_key LIMIT 8) ranked
-      ) topic`, [mapId]);
-    await client.query("CREATE INDEX mass_scores_root ON mass_scores(root_id)");
-    await client.query(`INSERT INTO signal_mass_labeling_items(workspace_id,map_id,root_id,ordinal,input_digest,
-      root_fingerprint,chunk_index,chunk_sha256,text,candidates)
-      WITH best_chunk AS MATERIALIZED (
-        SELECT DISTINCT ON(chunk.root_id) chunk.root_id,chunk.chunk_index
-        FROM mass_chunks chunk JOIN mass_scores score ON score.root_id=chunk.root_id
-        JOIN signal_mass_labeling_topics topic ON topic.map_id=$2 AND topic.topic_key=score.topic_key
-        ORDER BY chunk.root_id,chunk.embedding<=>topic.centroid,chunk.chunk_index,topic.topic_key
-      ), candidates AS (
-        SELECT root_id,jsonb_agg(jsonb_build_object('topic_key',ranked.topic_key,
-          'name',COALESCE(catalog#>>'{localization,original,name}',catalog->>'name'),
-          'definition',COALESCE(catalog#>>'{localization,original,definition}',catalog->>'definition'),'similarity',similarity,
-          'localization',catalog->'localization') ORDER BY position) candidate_list
-        FROM mass_scores ranked CROSS JOIN LATERAL jsonb_array_elements($3::jsonb) catalog
-        WHERE catalog->>'topic_key'=ranked.topic_key GROUP BY root_id
-      ) SELECT $1,$2,chunk.root_id,row_number() OVER(ORDER BY chunk.root_id)::int,
-        signal_labeling_digest_v1(jsonb_build_object('root_fingerprint',chunk.fingerprint,'chunk_sha256',chunk.chunk_sha256,
-          'map_digest',$4::text)),chunk.fingerprint,chunk.chunk_index,chunk.chunk_sha256,
-        signal_topic_utf16_fragment_v1(chunk.full_text,chunk.start_offset,chunk.end_offset),candidates.candidate_list
-      FROM best_chunk best JOIN mass_chunks chunk USING(root_id,chunk_index) JOIN candidates USING(root_id)`,
-      [args.workspace_id, mapId, JSON.stringify(catalog), mapDigest]);
+    // Keep the original Voyage space, top-eight order and chunk tie breakers.
+    await prepareMassLabelingMapScoresV1(client, mapId);
+    await insertMassLabelingMapItemsV1(client, { workspace_id: args.workspace_id, map_id: mapId,
+      catalog, map_digest: mapDigest, expected_roots: c.roots });
     return {map_id: mapId, map_digest: mapDigest, replayed: false, root_count: c.roots, topic_count: catalog.length};
   });
 }
@@ -354,62 +328,65 @@ export function createMassLabelingStoreV1(options: Omit<Parameters<typeof create
       WHERE mass.run_id=$1 AND mass.workspace_id=$2 AND (mass.smoke_root_limit IS NULL OR item.ordinal<=mass.smoke_root_limit)
       AND NOT EXISTS(SELECT 1 FROM signal_mass_labeling_results result WHERE result.map_id=item.map_id AND result.root_id=item.root_id)`,
       [run.id, run.workspace_id])).rows[0]!.count,
-    write: async (client, run, pages) => {
-      const rows = pages.map(page => {
-        const input = page.call.inputs[0], result = page.results[0];
-        if (page.call.inputs.length !== 1 || page.results.length !== 1 || !input || !result
-          || result.root_id !== input.root_id || result.input_digest !== input.input_digest
-          || result.entity_context_digest !== run.entity_context_digest) fail("mass_labeling_result_lineage_invalid");
-        return {map_id: input.map_id, root_id: input.root_id, call_id: page.call.id, status: result.status,
-          probabilities: result.probabilities ?? {}, error_code: result.error_code ?? null};
-      });
-      await client.query(`INSERT INTO signal_mass_labeling_results(workspace_id,map_id,root_id,run_id,call_id,status,probabilities,error_code)
-        SELECT $1,value.map_id,value.root_id,$2,value.call_id,value.status,value.probabilities,value.error_code
-        FROM jsonb_to_recordset($3::jsonb) value(map_id uuid,root_id uuid,call_id uuid,status text,probabilities jsonb,error_code text)
-        ON CONFLICT(map_id,root_id) DO NOTHING`, [run.workspace_id, run.id, JSON.stringify(rows)]);
-      const inconsistent = await client.query(`SELECT 1 FROM jsonb_to_recordset($3::jsonb)
-        value(map_id uuid,root_id uuid,call_id uuid,status text,probabilities jsonb,error_code text)
-        LEFT JOIN signal_mass_labeling_results result ON result.map_id=value.map_id AND result.root_id=value.root_id
-        WHERE result.workspace_id IS DISTINCT FROM $1::uuid OR result.run_id IS DISTINCT FROM $2::uuid
-          OR ROW(result.call_id,result.status,result.probabilities,result.error_code)
-             IS DISTINCT FROM ROW(value.call_id,value.status,value.probabilities,value.error_code) LIMIT 1`,
-        [run.workspace_id, run.id, JSON.stringify(rows)]);
-      if (inconsistent.rows.length) fail("mass_labeling_result_conflict");
-      if(run.identity.params.request_version==="mass-labeling-jev-v2"){
-        const configuration=massLabelingConfigurationV2(run.identity.params);
-        const interests=pages.flatMap(page=>{
-          const input=page.call.inputs[0]!,result=page.results[0]!;
-          if(result.status!=="labeled")return [];
-          return configuration.interests.map(interest=>{
-            const answer=result.probabilities?.[`interest_${interest.key}`];
-            if(answer?.type!=="noul")fail("mass_labeling_interest_answer_invalid");
-            return {root_id:input.root_id,map_id:input.map_id,input_digest:input.input_digest,interest_key:interest.key,
-              definition_digest:massLabelingStudyInterestDigestV1(interest),probability:answer.noul,call_id:page.call.id};
-          });
-        });
-        if(interests.length)await client.query(`INSERT INTO signal_mass_labeling_study_interest_results(workspace_id,map_id,
-          interest_key,definition_digest,root_id,input_digest,probability,request_digest,response_digest,usage,created_by_user_id)
-          SELECT $1,r.map_id,r.interest_key,r.definition_digest,r.root_id,r.input_digest,r.probability,
-            receipt.request_digest,receipt.raw_sha256,receipt.usage,$3
-          FROM jsonb_to_recordset($2::jsonb) r(map_id uuid,interest_key text,definition_digest text,root_id uuid,
-            input_digest text,probability double precision,call_id uuid)
-          JOIN signal_labeling_calls receipt ON receipt.id=r.call_id AND receipt.workspace_id=$1 AND receipt.run_id=$4
-            AND receipt.status='settled' AND receipt.results_applied
-          ON CONFLICT DO NOTHING`,[run.workspace_id,JSON.stringify(interests),run.actor_user_id,run.id]);
-        if(interests.length){
-          const conflict=await client.query(`SELECT 1 FROM jsonb_to_recordset($2::jsonb) r(map_id uuid,interest_key text,
-            definition_digest text,root_id uuid,input_digest text,probability double precision,call_id uuid)
-            JOIN signal_labeling_calls receipt ON receipt.id=r.call_id AND receipt.workspace_id=$1 AND receipt.run_id=$3
-            LEFT JOIN signal_mass_labeling_study_interest_results stored ON stored.workspace_id=$1 AND stored.map_id=r.map_id
-              AND stored.interest_key=r.interest_key AND stored.definition_digest=r.definition_digest AND stored.root_id=r.root_id
-            WHERE ROW(stored.input_digest,stored.probability,stored.request_digest,stored.response_digest,stored.usage)
-              IS DISTINCT FROM ROW(r.input_digest,r.probability,receipt.request_digest,receipt.raw_sha256,receipt.usage) LIMIT 1`,
-            [run.workspace_id,JSON.stringify(interests),run.id]);
-          if(conflict.rowCount)fail("mass_labeling_interest_result_conflict");
-        }
-      }
-    },
+    write: writeMassLabelingResultsV1,
   }});
+}
+
+export async function writeMassLabelingResultsV1(client: PoolClient, run: LabelingRunV1,
+  pages: Array<{ call: LabelingCallV1<MassLabelingInputV1>; results: MassLabelingResultV1[] }>) {
+  const rows = pages.map(page => {
+    const input = page.call.inputs[0], result = page.results[0];
+    if (page.call.inputs.length !== 1 || page.results.length !== 1 || !input || !result
+      || result.root_id !== input.root_id || result.input_digest !== input.input_digest
+      || result.entity_context_digest !== run.entity_context_digest) fail("mass_labeling_result_lineage_invalid");
+    return {map_id: input.map_id, root_id: input.root_id, call_id: page.call.id, status: result.status,
+      probabilities: result.probabilities ?? {}, error_code: result.error_code ?? null};
+  });
+  await client.query(`INSERT INTO signal_mass_labeling_results(workspace_id,map_id,root_id,run_id,call_id,status,probabilities,error_code)
+    SELECT $1,value.map_id,value.root_id,$2,value.call_id,value.status,value.probabilities,value.error_code
+    FROM jsonb_to_recordset($3::jsonb) value(map_id uuid,root_id uuid,call_id uuid,status text,probabilities jsonb,error_code text)
+    ON CONFLICT(map_id,root_id) DO NOTHING`, [run.workspace_id, run.id, JSON.stringify(rows)]);
+  const inconsistent = await client.query(`SELECT 1 FROM jsonb_to_recordset($3::jsonb)
+    value(map_id uuid,root_id uuid,call_id uuid,status text,probabilities jsonb,error_code text)
+    LEFT JOIN signal_mass_labeling_results result ON result.map_id=value.map_id AND result.root_id=value.root_id
+    WHERE result.workspace_id IS DISTINCT FROM $1::uuid OR result.run_id IS DISTINCT FROM $2::uuid
+      OR ROW(result.call_id,result.status,result.probabilities,result.error_code)
+         IS DISTINCT FROM ROW(value.call_id,value.status,value.probabilities,value.error_code) LIMIT 1`,
+    [run.workspace_id, run.id, JSON.stringify(rows)]);
+  if (inconsistent.rows.length) fail("mass_labeling_result_conflict");
+  if(run.identity.params.request_version==="mass-labeling-jev-v2"){
+    const configuration=massLabelingConfigurationV2(run.identity.params);
+    const interests=pages.flatMap(page=>{
+      const input=page.call.inputs[0]!,result=page.results[0]!;
+      if(result.status!=="labeled")return [];
+      return configuration.interests.map(interest=>{
+        const answer=result.probabilities?.[`interest_${interest.key}`];
+        if(answer?.type!=="noul")fail("mass_labeling_interest_answer_invalid");
+        return {root_id:input.root_id,map_id:input.map_id,input_digest:input.input_digest,interest_key:interest.key,
+          definition_digest:massLabelingStudyInterestDigestV1(interest),probability:answer.noul,call_id:page.call.id};
+      });
+    });
+    if(interests.length)await client.query(`INSERT INTO signal_mass_labeling_study_interest_results(workspace_id,map_id,
+      interest_key,definition_digest,root_id,input_digest,probability,request_digest,response_digest,usage,created_by_user_id)
+      SELECT $1,r.map_id,r.interest_key,r.definition_digest,r.root_id,r.input_digest,r.probability,
+        receipt.request_digest,receipt.raw_sha256,receipt.usage,$3
+      FROM jsonb_to_recordset($2::jsonb) r(map_id uuid,interest_key text,definition_digest text,root_id uuid,
+        input_digest text,probability double precision,call_id uuid)
+      JOIN signal_labeling_calls receipt ON receipt.id=r.call_id AND receipt.workspace_id=$1 AND receipt.run_id=$4
+        AND receipt.status='settled' AND receipt.results_applied
+      ON CONFLICT DO NOTHING`,[run.workspace_id,JSON.stringify(interests),run.actor_user_id,run.id]);
+    if(interests.length){
+      const conflict=await client.query(`SELECT 1 FROM jsonb_to_recordset($2::jsonb) r(map_id uuid,interest_key text,
+        definition_digest text,root_id uuid,input_digest text,probability double precision,call_id uuid)
+        JOIN signal_labeling_calls receipt ON receipt.id=r.call_id AND receipt.workspace_id=$1 AND receipt.run_id=$3
+        LEFT JOIN signal_mass_labeling_study_interest_results stored ON stored.workspace_id=$1 AND stored.map_id=r.map_id
+          AND stored.interest_key=r.interest_key AND stored.definition_digest=r.definition_digest AND stored.root_id=r.root_id
+        WHERE ROW(stored.input_digest,stored.probability,stored.request_digest,stored.response_digest,stored.usage)
+          IS DISTINCT FROM ROW(r.input_digest,r.probability,receipt.request_digest,receipt.raw_sha256,receipt.usage) LIMIT 1`,
+        [run.workspace_id,JSON.stringify(interests),run.id]);
+      if(conflict.rowCount)fail("mass_labeling_interest_result_conflict");
+    }
+  }
 }
 
 /** Selection is an explicit publication of a completed full-population map. */

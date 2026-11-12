@@ -1,3 +1,4 @@
+import { createMassLabelingConcurrencyDatabaseV1 } from "./signal-mass-labeling-concurrent.synthetic.fixture";
 import {assertMassLabelingOverviewProvenanceV1} from "./signal-mass-labeling-overview-provenance.assertions";
 import {assertMassLabelingServingProjectionV1,assertMassLabelingProjectionBackfillV1} from "./signal-mass-labeling-serving-projection.assertions";
 import {assertMassLabelingProductNativeV2} from "./signal-mass-labeling-product.synthetic.fixture";
@@ -23,19 +24,25 @@ import {persistSignalWorkspaceEngineArtifactV1,failSignalWorkspaceEngineV1,retry
 import {jevUsageV1} from "../../../services/workers/src/workers/signal-jev-labeling-page";
 import {validateJevResponseV1} from "../../../services/workers/src/providers/typesafe-jev";
 
-for(const authorization of ["rotation","scoped","scoped-scale","scoped-funding","product"] as const) test(`mass labeling seals full population, bills once, and serves probability pages with live tenant/rights fences (${authorization})`, {
+for(const authorization of ["rotation","scoped","scoped-scale","scoped-funding","product","product-recovery"] as const) test(`mass labeling seals full population, bills once, and serves probability pages with live tenant/rights fences (${authorization})`, {
   skip: process.env.NOISIA_MFP_PG_CI !== "true", timeout: 600_000,
 }, async () => {
-  const localization=(authorization==="rotation"||authorization==="product")?{original_language:"pt-BR",
+  const localization=(authorization==="rotation"||authorization==="product"||authorization==="product-recovery")?{original_language:"pt-BR",
     original:{name:"Reparos de bicicletas",definition:"Experiências reparando bicicletas."},
     en:{name:"Bicycle repairs",definition:"Experiences repairing bicycles."},
     es:{name:"Reparaciones de bicicletas",definition:"Experiencias reparando bicicletas."}}:undefined;
-  const scopedMode=authorization!=="rotation"&&authorization!=="product",rootCount=authorization==="scoped-funding"?1002:authorization==="scoped-scale"?200:3;
+  const scaledRecovery=authorization==="product-recovery";
+  const scopedMode=authorization!=="rotation"&&authorization!=="product"&&!scaledRecovery,rootCount=authorization==="scoped-funding"||scaledRecovery?1002:authorization==="scoped-scale"?200:3;
   const {openDatabase} = await import(new URL("../../../scripts/dev-corpus/guard.mjs", import.meta.url).href);
-  const pool: Pool = await openDatabase(), raw = await pool.connect();
+  const admin: Pool = await openDatabase();
+  let isolated: Awaited<ReturnType<typeof createMassLabelingConcurrencyDatabaseV1>> | null = null;
+  let releaseRaw = async () => {};
   const flag = process.env.NOISIA_MASS_LABELING_ENABLED;
   process.env.NOISIA_MASS_LABELING_ENABLED = "true";
   try {
+    isolated=scaledRecovery?await createMassLabelingConcurrencyDatabaseV1(admin):null;
+    const pool:Pool=isolated?.pool??admin, raw = await pool.connect();
+    releaseRaw=async()=>{await raw.query("ROLLBACK").catch(()=>undefined);raw.release();};
     await raw.query("BEGIN");
     let sequence = 0; const stack: string[] = [];
     let massPlanChecked = false,readQueries=0;
@@ -58,6 +65,10 @@ for(const authorization of ["rotation","scoped","scoped-scale","scoped-funding",
           const nodes = (plan: Plan): Plan[] => [plan, ...(plan.Plans ?? []).flatMap(nodes)];
           const roots = nodes(explained).find(node => node["Subplan Name"] === "CTE all_roots");
           assert.ok(roots);
+          assert.match(sql, /mass_mentions AS MATERIALIZED/u,
+            "mass readers share the narrow current mention metadata");
+          assert.doesNotMatch(sql, /FROM signal_classification_assignments|FROM signal_topic_consolidation_snapshot_memberships_v1/u,
+            "a mass map cannot traverse unrelated classification or consolidation memberships");
           assert.equal(nodes(roots).some(node => node["Node Type"] === "Function Scan"), false,
             "candidate arrays must be expanded outside the per-root resolution plan");
           assert.equal(nodes(roots).some(node => node["Subplan Name"]?.startsWith("SubPlan")), false,
@@ -75,6 +86,12 @@ for(const authorization of ["rotation","scoped","scoped-scale","scoped-funding",
       if (sql.includes("consumer_indicators") || sql.includes("reviewed_consumers AS MATERIALIZED")) {
         assert.doesNotMatch(sql,/signal_mass_labeling_category_(?:pattern|matches)_/u,"Signal joins materialized lexical matches");
         assert.match(sql,/signal_mass_labeling_category_matches lexical/u);
+      }
+      if (sql.includes("selected_consumers AS MATERIALIZED") || sql.includes("selected_topic_roots AS MATERIALIZED")) {
+        assert.doesNotMatch(sql.split(/selected_(?:consumers|topic_roots) AS MATERIALIZED/u)[0]!, /mention\.text_clean/u,
+          "sampling must choose root IDs before loading mention text");
+        assert.match(sql, /id=selected\.root_id OFFSET 0/u,
+          "the final text lookup remains bounded when the serving transaction disables nested loops");
       }
       return raw.query(sql, values);
     };
@@ -225,7 +242,14 @@ for(const authorization of ["rotation","scoped","scoped-scale","scoped-funding",
     await assert.rejects(createMassLabelingMapV1({...mapArgs,source_checkpoints:[]}),/mass_labeling_source_checkpoint_invalid/);
     const map = await createMassLabelingMapV1(mapArgs);
     await assertMassLabelingServingProjectionV1(scoped.query,access.workspace_id,map.map_id);
-    if(authorization==="product"){await assertMassLabelingProductNativeV2({...access,query:scoped.query,map_id:map.map_id});await assertMassLabelingServingProjectionV1(scoped.query,access.workspace_id,map.map_id);return;}
+    if(authorization==="product"||scaledRecovery){
+      if(scaledRecovery){
+        assert.equal(stack.length,0);
+        await raw.query("COMMIT");
+        await assertMassLabelingProductNativeV2({...access,database:pool,query:pool.query.bind(pool),map_id:map.map_id,concurrent_recovery:true,foreign_actor_id:foreignActor});
+      }else await assertMassLabelingProductNativeV2({...access,query:scoped.query,map_id:map.map_id});
+      await assertMassLabelingServingProjectionV1(scaledRecovery?pool.query.bind(pool):scoped.query,access.workspace_id,map.map_id);return;
+    }
     const candidateSample=(await query("SELECT candidates FROM signal_mass_labeling_items WHERE map_id=$1 ORDER BY ordinal LIMIT 1",[map.map_id])).rows[0]!.candidates[0];
     assert.equal(candidateSample.name,localization?.original.name??"Bicycle repairs");
     assert.equal(candidateSample.definition,localization?.original.definition??"Experiences repairing bicycles.");
@@ -892,7 +916,13 @@ for(const authorization of ["rotation","scoped","scoped-scale","scoped-funding",
     await query("UPDATE users SET status='suspended' WHERE id=$1", [access.actor_user_id]);
     await assert.rejects(loadSignalWorkspaceTopicsOverviewV1(access), /workspace_topics_forbidden/);
   } finally {
-    await raw.query("ROLLBACK").catch(() => undefined); raw.release(); await pool.end();
-    if (flag === undefined) delete process.env.NOISIA_MASS_LABELING_ENABLED; else process.env.NOISIA_MASS_LABELING_ENABLED = flag;
+    try { await releaseRaw(); }
+    finally {
+      try { if(isolated)await isolated.cleanup(); }
+      finally {
+        await admin.end();
+        if (flag === undefined) delete process.env.NOISIA_MASS_LABELING_ENABLED; else process.env.NOISIA_MASS_LABELING_ENABLED = flag;
+      }
+    }
   }
 });

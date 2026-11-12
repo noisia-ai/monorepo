@@ -1,3 +1,4 @@
+import { workspacePaidGlobalReplayAvailabilityV2, resumeWorkspacePaidGlobalConsolidationV2 } from "./workspace-paid-global-replay";
 import { shareWorkspaceAnalysisRead } from "./workspace-analysis-read-sharing";
 import { readWorkspaceAnalysis } from "./mfp-population-read";
 import { createHash } from "node:crypto";
@@ -14,7 +15,7 @@ import { provisionMassLabelingProductEditorialPolicyV2, getMassLabelingStudyPoli
   loadSignalWorkspaceEngineInterpretationBudgetV1,
   SignalTopicCatalogError,
   type SignalWorkspaceEngineInterpretationBudgetV1, type SignalWorkspaceEngineStatusV1, type SignalWorkspaceIncrementalEditorialStatusV1 } from "@noisia/db";
-import { assertAnthropicProviderAccessV1, signalWorkspaceEmbeddingDigestV1, SIGNAL_WORKSPACE_ENGINE_CONFIG_V1, SIGNAL_WORKSPACE_INTERPRETATION_MULTILINGUAL_CONFIGURATION_V1, SIGNAL_WORKSPACE_MASS_LABELING_PRODUCT_CONFIGURATION_V2 } from "@noisia/query-engine";
+import { assertAnthropicProviderAccessV1, signalWorkspaceEmbeddingDigestV1, signalWorkspaceMassLabelingConfigV3, SIGNAL_WORKSPACE_ENGINE_CONFIG_V1, SIGNAL_WORKSPACE_INTERPRETATION_MULTILINGUAL_CONFIGURATION_V1, SIGNAL_WORKSPACE_MASS_LABELING_PRODUCT_CONFIGURATION_V2 } from "@noisia/query-engine";
 import { parsePendingWorkspaceAnalysis, validWorkspaceAnalysisStatus,
   type WorkspaceAnalysisRequest, type WorkspaceAnalysisRun, type WorkspaceAnalysisStatus } from "./signal-workspace-analysis-ui";
 import type { WorkspaceIncrementalEditorial } from "./signal-workspace-incremental-editorial-ui";
@@ -216,9 +217,14 @@ async function loadAuthorizedWorkspaceAnalysisV1(args: Access & { idempotencyKey
   const view = (run: SignalWorkspaceEngineStatusV1["latest_run"]) => workspaceAnalysisRunViewV1(run, run ? budgets.get(run.execution_id) : undefined);
   const admission = loadedAdmission ? { ...loadedAdmission, provider_available: workspaceAnalysisAdmissionProviderAvailableV1(process.env, access.massEnabled) } : null;
   const latest = view(raw.latest_run);
+  const global_receipt_replay = access.massEnabled && latest?.status === "failed" && latest.is_current
+    && latest.error_code === "workspace_engine_worker_failed" && !latest.outcome_unknown
+    && latest.expected_interpretation_units > 0 && latest.interpreted_units === latest.expected_interpretation_units
+    ? await workspacePaidGlobalReplayAvailabilityV2({ database: access.database, workspaceId: args.workspaceId,
+      actorUserId: args.actorUserId, executionId: latest.execution_id }) : null;
   const result: WorkspaceAnalysisStatus = { ...raw, update, numeric_readiness, admission, incremental_editorial, contract_version: "signal-workspace-analysis-v1",
     request_scope: workspaceAnalysisRequestScopeV1(args.workspaceId, args.actorUserId), can_execute: access.governedEnabled ? access.capabilities.can_request_processing : access.capabilities.can_execute_topics, discovery_enabled: discoveryEnabled, governed_enabled: access.governedEnabled,
-    latest_run: latest, active_run: workspaceAnalysisActiveRunV1(latest),
+    global_receipt_replay, latest_run: latest, active_run: workspaceAnalysisActiveRunV1(latest),
     latest_complete: view(raw.latest_complete), request_run: view(raw.request_run),
     preflight: {
       state: preflightRead.state ?? workspaceAnalysisPreflightStateV1({ received, prepared: preparation.is_current,
@@ -260,8 +266,15 @@ export async function requestWorkspaceAnalysisForActorV1(args: Access & { idempo
     try { effectiveCap = discoveryStrictCapV1(args.body.claude_cap_micro_usd,policy.maximum_cap_micro_usd); }
     catch { throw new SignalWorkspaceEngineError("workspace_analysis_interpretation_cap_invalid",422); }
     const massEnabled = access.massEnabled;
-    const enginePreflight = massEnabled ? await loadSignalWorkspaceEnginePreflightV1(access) : null;
-    if (enginePreflight?.engine_configuration) {
+    let engineConfiguration: Record<string, unknown> = SIGNAL_WORKSPACE_ENGINE_CONFIG_V1;
+    if (massEnabled) {
+      // Configuration depends on the requested receipt, including on replay.
+      // Admission rechecks its current revision, rights and guides under lock.
+      const embedded = (await access.database.query<{ counts: { eligible_roots: number } }>(`SELECT run.counts FROM signal_workspace_embedding_runs run
+        WHERE run.id=$1::uuid AND run.workspace_id=$2::uuid AND run.input_contract='corpus'`,
+      [args.body.embedding_run_id, args.workspaceId])).rows[0];
+      if (!embedded) throw new SignalWorkspaceEngineError("workspace_engine_complete_embeddings_required");
+      engineConfiguration = signalWorkspaceMassLabelingConfigV3(embedded.counts.eligible_roots);
       try { await assertAnthropicProviderAccessV1({api_key:workspaceAnalysisAnthropicApiKeyV1(access.massEnabled),enabled:policy.available}); }
       catch { throw new SignalWorkspaceEngineError("workspace_analysis_interpretation_unavailable",422); }
     }
@@ -270,8 +283,8 @@ export async function requestWorkspaceAnalysisForActorV1(args: Access & { idempo
       expected_catalog_digest: args.body.expected_catalog_digest, claude_cap_micro_usd: effectiveCap,
       discovery_request_intent_digest: intentDigest,
       discovery_sample_cap: args.body.discovery_sample_cap, discovery_sample_seed: args.body.discovery_sample_seed,
-      engine_config: enginePreflight?.engine_configuration ?? SIGNAL_WORKSPACE_ENGINE_CONFIG_V1, interpretation_config: {
-        call_configuration: enginePreflight?.engine_configuration ? productConfiguration : SIGNAL_WORKSPACE_INTERPRETATION_MULTILINGUAL_CONFIGURATION_V1,
+      engine_config: engineConfiguration, interpretation_config: {
+        call_configuration: massEnabled ? productConfiguration : SIGNAL_WORKSPACE_INTERPRETATION_MULTILINGUAL_CONFIGURATION_V1,
         budget_timezone: policy.budget_timezone, daily_cap_micro_usd: policy.daily_cap_micro_usd } });
   } else if (args.body.action === "prepare_incremental_editorial") {
     await requestSignalWorkspaceIncrementalEditorialPreparationV1({ ...access, numeric_execution_id: args.body.run_id,
@@ -305,6 +318,9 @@ export async function requestWorkspaceAnalysisForActorV1(args: Access & { idempo
   } else if (args.body.action === "revoke_interpretation") {
     await revokeSignalWorkspaceInterpretationAdmissionV1({ ...access, execution_id: args.body.run_id, idempotency_key: args.idempotencyKey,
       expected_admission_operation_id: args.body.expected_admission_operation_id });
+  } else if (args.body.action === "replay_global_consolidation") {
+    await resumeWorkspacePaidGlobalConsolidationV2({ database: access.database, workspaceId: args.workspaceId,
+      actorUserId: args.actorUserId, executionId: args.body.run_id, idempotencyKey: args.idempotencyKey });
   } else if (args.body.action === "retry_incremental_delivery") {
     // The store selects the existing derivation/projection phase; no numeric or editorial execution is restarted.
     await retrySignalWorkspaceIncrementalDeliveryV1({ ...access, execution_id: args.body.run_id, idempotency_key: args.idempotencyKey });

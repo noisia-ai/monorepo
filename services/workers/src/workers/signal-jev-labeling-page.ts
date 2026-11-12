@@ -7,7 +7,7 @@ import { validateJevResponseV1, jevProviderErrorV1, type JevProviderV1, type Jev
 export const jevUsageV1 = (usage:JevResponseV1["usage"]):LlmUsageV1 => ({...usage,cache_read_input_tokens:0,
   cache_creation_input_tokens:0,cache_creation:{ephemeral_5m_input_tokens:0,ephemeral_1h_input_tokens:0}});
 /** Shared page transport: one lease, durable raw before settlement, multi-row application.
- * JEV requests remain individual; its existing provider owns concurrency/cancellation. */
+ * JEV requests remain individual. A consumer may bound work through durable persistence. */
 export async function processJevLabelingPageV1<Input extends FacetInput,Result>(args:{
   run_id:string;store:ReturnType<typeof createSignalLabelingStoreV1<Input,Result>>;provider:JevProviderV1;
   lease_renewal_ms?:number;hooks:{
@@ -20,6 +20,7 @@ export async function processJevLabelingPageV1<Input extends FacetInput,Result>(
     fail_on_error?:boolean;
     durable_raw_per_response?:boolean;
     recovery_only?:boolean;
+    max_in_flight?(run:LabelingRunV1):number|undefined;
   };
 }){
   const {store,provider,hooks}=args,run=await store.claim(args.run_id);
@@ -34,6 +35,8 @@ export async function processJevLabelingPageV1<Input extends FacetInput,Result>(
   },interval);heartbeat.unref?.();
   try{
     const price=hooks.price(run);
+    const maxInFlight=hooks.max_in_flight?.(run);
+    if(maxInFlight!==undefined&&(!Number.isSafeInteger(maxInFlight)||maxInFlight<1||maxInFlight>200))throw new Error("jev_page_concurrency_invalid");
     const pending=(await store.calls(run)).filter(call=>!call.results_applied);
     if(hooks.fail_on_error&&pending.some(call=>call.status==="unknown"&&!call.raw_body)){
       await store.fail(run,"labeling_outcome_unknown");return {status:"outcome_unknown"};
@@ -48,12 +51,18 @@ export async function processJevLabelingPageV1<Input extends FacetInput,Result>(
     if(reserved.length)await store.markSubmitting(run,reserved);
     const rawPage:Array<{call:LabelingCallV1<Input>;raw:string}>=[];
     const errors:Array<{call:LabelingCallV1<Input>;unknown:boolean;code:string;transport?:boolean}>=[];
-    await Promise.all(reserved.map(async call=>{
-      try{const raw=await provider.evaluate(call.request as JevRequestV1,{signal:cancellation.signal});
-        const encoded=JSON.stringify(raw);
-        if(hooks.durable_raw_per_response)await store.persistRaw(run,call,encoded);
-        rawPage.push({call,raw:encoded});}
-      catch(error){const failure=jevProviderErrorV1(error);errors.push({call,unknown:failure.outcome!=="definitely_not_sent",code:failure.code,transport:true});}
+    let nextCall=0;
+    const workerCount=Math.min(reserved.length,maxInFlight??reserved.length);
+    await Promise.all(Array.from({length:workerCount},async()=>{
+      for(;;){
+        const call=reserved[nextCall++];
+        if(!call)return;
+        try{const raw=await provider.evaluate(call.request as JevRequestV1,{signal:cancellation.signal});
+          const encoded=JSON.stringify(raw);
+          if(hooks.durable_raw_per_response)await store.persistRaw(run,call,encoded);
+          rawPage.push({call,raw:encoded});}
+        catch(error){const failure=jevProviderErrorV1(error);errors.push({call,unknown:failure.outcome!=="definitely_not_sent",code:failure.code,transport:true});}
+      }
     }));
     try{if(rawPage.length&&!hooks.durable_raw_per_response)await store.persistRawPage(run,rawPage);}
     catch(error){if(hooks.fail_on_error){await store.markFailed(run,rawPage.map(page=>page.call),true);

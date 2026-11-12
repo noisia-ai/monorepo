@@ -23,7 +23,7 @@ function authorityDatabase(authority: unknown) {
 test("analysis status and mutation enforce DB authority before reading corpus or execution", async () => {
   for (const authority of [null, { ...granted, workspace_status: "archived" }, { ...granted, actor_status: "suspended" },
     { ...granted, same_organization: false }, { ...granted, brand_access_level: null }]) {
-    for (const action of ["load", "start", "retry", "retry_progress", "retry_numeric", "retry_incremental_delivery"]) {
+    for (const action of ["load", "start", "retry", "retry_progress", "retry_numeric", "retry_incremental_delivery", "replay_global_consolidation"]) {
       const args = { database: authorityDatabase(authority), workspaceId: id, actorUserId: "actor" };
       await assert.rejects(action === "load" ? loadWorkspaceAnalysisForActorV1(args) : requestWorkspaceAnalysisForActorV1({ ...args,
         idempotencyKey: "analysis-test-request", body: action === "start" ? body : { action, run_id: id } }),
@@ -566,4 +566,135 @@ test("mass study preflight and availability select the dedicated key without cha
     assert.equal(workspaceAnalysisInterpretationPolicyV1(massOnly).available, false);
   }
   assert.equal(workspaceAnalysisAdmissionProviderAvailableV1({ ...env, NOISIA_WORKSPACE_INTERPRETATION_ENABLED: "false" }, true), false);
+});
+
+test("mass start derives its profile from the exact requested embedding receipt before locked admission", async t => {
+  const { signalWorkspaceMassLabelingConfigV3, signalWorkspaceEmbeddingDigestV1,
+    SIGNAL_WORKSPACE_MASS_LABELING_PRODUCT_CONFIGURATION_V2 } = await import("@noisia/query-engine");
+  const previous = {
+    NOISIA_WORKSPACE_INTERPRETATION_ENABLED: process.env.NOISIA_WORKSPACE_INTERPRETATION_ENABLED,
+    NOISIA_MASS_LABELING_ANTHROPIC_API_KEY: process.env.NOISIA_MASS_LABELING_ANTHROPIC_API_KEY,
+    NOISIA_MASS_LABELING_ENABLED: process.env.NOISIA_MASS_LABELING_ENABLED,
+  };
+  Object.assign(process.env, {
+    NOISIA_WORKSPACE_INTERPRETATION_ENABLED: "true",
+    NOISIA_MASS_LABELING_ANTHROPIC_API_KEY: "synthetic-admission-credential",
+    NOISIA_MASS_LABELING_ENABLED: "true",
+  });
+  t.after(() => {
+    for (const [name, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+  });
+  const newerRun = "00000000-0000-4000-8000-000000000002";
+  const foreignWorkspace = "00000000-0000-4000-8000-000000000003";
+  const authority = { ...granted, user_type: "noisia_internal", primary_role: "noisia_admin",
+    organization_status: "active", brand_same_organization: true };
+  let providerAllowed = true;
+  let probes = 0;
+  t.mock.method(globalThis, "fetch", async (url: string, init: RequestInit) => {
+    assert.equal(url, "https://api.anthropic.com/v1/models");
+    assert.equal(init.method, "GET");
+    assert.equal((init.headers as Record<string, string>)["x-api-key"], "synthetic-admission-credential");
+    probes++;
+    return new Response(null, { status: providerAllowed ? 200 : 401 });
+  });
+
+  async function request(input: {
+    workspace?: string; run?: string; changed?: boolean; revoked?: boolean; provider?: boolean;
+  } = {}) {
+    const workspace = input.workspace ?? id;
+    const runId = input.run ?? id;
+    const counts = new Map([[id, 83_962], [newerRun, 250_000]]);
+    const finished = new Error("Mutation reached the unchanged status reader");
+    const unexpected = (sql: string) => new Error("Unexpected admission SQL: " + sql.slice(0, 240));
+    let receiptReads = 0;
+    let admitted = false;
+    let stateLocked = false;
+    let lockedEmbeddingReads = 0;
+    let guideReads = 0;
+    const observedProbes = probes;
+    providerAllowed = input.provider !== false;
+    const digest = signalWorkspaceEmbeddingDigestV1({
+      embedding_run_id: runId, context_digest: hash, catalog_digest: hash, claude_cap_micro_usd: 1_000_000,
+      engine_config: signalWorkspaceMassLabelingConfigV3(counts.get(runId)!),
+      interpretation_config: { call_configuration: SIGNAL_WORKSPACE_MASS_LABELING_PRODUCT_CONFIGURATION_V2,
+        budget_timezone: "UTC", daily_cap_micro_usd: 2_000_000 },
+      parent_selection: "latest-compatible-complete-v1",
+    });
+    const query = async (sql: string, params?: unknown[]) => {
+      if (/^(BEGIN|SET LOCAL|COMMIT|ROLLBACK)/u.test(sql)) return { rows: [] };
+      if (sql.includes("workspace.status workspace_status")) {
+        if (admitted) throw finished;
+        return { rows: [{ ...authority, actor_status: receiptReads > 0 && input.revoked ? "suspended" : "active" }] };
+      }
+      if (sql.includes("FROM signal_workspace_features")) return { rows: [{ enabled: params?.[1] === "mass_labeling" }] };
+      if (sql.includes("FOR SHARE OF") || sql.includes("pg_advisory_xact_lock") || sql.includes("signal_processing_lock_v1"))
+        return { rows: [] };
+      if (sql.includes("FROM signal_mass_labeling_study_policies"))
+        return { rows: [{ workspace_id: workspace, revision: 1, category: "beer", lexicon_terms: ["beer"],
+          candidate_language: "en", interest_threshold: 0.85, interests: [], lexicon_provenance: "brand_os" }] };
+      if (sql.includes("FROM signal_mass_labeling_selections selected")) return { rows: [] };
+      if (sql === "SELECT organization_id FROM signal_workspaces WHERE id=$1") return { rows: [{ organization_id: id }] };
+      if (sql.includes("SELECT id,budget_timezone FROM signal_processing_policy_versions"))
+        return { rows: [{ id, budget_timezone: "UTC" }] };
+      if (sql.includes("FROM signal_processing_policy_actions WHERE policy_version_id"))
+        return { rows: [{ configuration: SIGNAL_WORKSPACE_MASS_LABELING_PRODUCT_CONFIGURATION_V2 }] };
+      if (sql.includes("SELECT policy.id,action.max_execution_micro_usd"))
+        return { rows: [{ id, cap: "1000000", daily: "2000000", budget_timezone: "UTC" }] };
+      if (sql.includes("SELECT run.counts FROM signal_workspace_embedding_runs run")) {
+        assert.match(sql, /run\.id=\$1::uuid/u);
+        assert.match(sql, /run\.workspace_id=\$2::uuid/u);
+        assert.deepEqual(params, [runId, workspace]);
+        receiptReads++;
+        return { rows: workspace === id ? [{ counts: { eligible_roots: counts.get(runId)! } }] : [] };
+      }
+      if (sql.startsWith("SELECT name FROM pg_timezone_names")) return { rows: [{ name: "UTC" }] };
+      if (sql.includes("SELECT id,actor_user_id,request_digest,input_contract FROM signal_topic_catalog_executions")) {
+        assert.equal(receiptReads, 1, "the POST must read its exact run before beginning admission");
+        assert.deepEqual(params, [workspace, "mass-admission-request"]);
+        if (input.changed) return { rows: [] };
+        admitted = true;
+        return { rows: [{ id, actor_user_id: id, request_digest: digest, input_contract: "workspace-topic-engine-v1" }] };
+      }
+      if (sql.includes("FROM signal_taxonomy_profiles WHERE workspace_id=$1::uuid AND kind='topic'"))
+        return { rows: [{ id, version: 1, catalog_role: "working" }] };
+      if (sql.startsWith("SELECT workspace_id FROM signal_corpus_preparation_input_state")) {
+        stateLocked = true;
+        return { rows: [{ workspace_id: workspace }] };
+      }
+      if (sql.includes("run.input_revision::text,run.profile,run.counts")) {
+        assert.equal(stateLocked, true);
+        assert.deepEqual(params, [runId, workspace]);
+        lockedEmbeddingReads++;
+        // The native locked lookup rejects a changed input revision, even though
+        // the cheap preliminary receipt still exists and retains its old counts.
+        return { rows: [] };
+      }
+      guideReads++;
+      throw unexpected(sql);
+    };
+    const database = { query, connect: async () => ({ query, release() {} }) } as unknown as Pick<Pool, "query" | "connect">;
+    let matchesError = (error: unknown) => error === finished;
+    if (workspace !== id || input.changed)
+      matchesError = (error: unknown) => error instanceof SignalWorkspaceEngineError && error.code === "workspace_engine_complete_embeddings_required";
+    if (input.revoked)
+      matchesError = (error: unknown) => error instanceof SignalWorkspaceEngineError && error.code === "workspace_engine_forbidden";
+    if (input.provider === false)
+      matchesError = (error: unknown) => error instanceof SignalWorkspaceEngineError && error.code === "workspace_analysis_interpretation_unavailable";
+    await assert.rejects(requestWorkspaceAnalysisForActorV1({ database, workspaceId: workspace, actorUserId: id,
+      idempotencyKey: "mass-admission-request", body: { ...body, embedding_run_id: runId, claude_cap_micro_usd: 1_000_000 } }),
+    matchesError);
+    assert.equal(receiptReads, 1);
+    assert.equal(guideReads, 0, "the preliminary POST must not compile corpus guides");
+    assert.equal(lockedEmbeddingReads, input.changed ? 1 : 0);
+    assert.equal(probes - observedProbes, workspace === id ? 1 : 0);
+  }
+  await t.test("replay uses the requested older run while a newer completed run exists", () => request());
+  await t.test("a different requested run derives its own population-scaled configuration", () => request({ run: newerRun }));
+  await t.test("an exact run id from another workspace cannot supply a profile", () => request({ workspace: foreignWorkspace }));
+  await t.test("changed inputs are rejected by the definitive locked embedding lookup", () => request({ changed: true }));
+  await t.test("revocation after the cheap read still prevents locked admission", () => request({ revoked: true }));
+  await t.test("provider availability remains required before beginning", () => request({ provider: false }));
 });

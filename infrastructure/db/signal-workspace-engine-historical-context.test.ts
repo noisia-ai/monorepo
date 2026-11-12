@@ -58,7 +58,7 @@ function fixture(identityError:Error,denied=false){
       status:'ready',complete:true,source_current:true,identity:{},correction_digest:sha,generation_version:1,denominator:9,processed_roots:9}]};
     if(sql.includes('SELECT dispatch.status,dispatch.error_code'))return{rows:[{status:'failed',error_code:'workspace_incremental_projection_transport_unavailable',attempt_count:8,profile_current:true}]};
     if(sql.includes('FROM signal_classification_generations WHERE id='))return{rows:[{input_revision:'2',interpretation_coverage:{interpreted_units:4},discovery_coverage:null}]};
-    if(sql.includes('workspace_interpretation_admission_eligible_v1'))return{rows:[{id:owner,actor_user_id:actor,input_digest:sha,
+    if(sql.includes('workspace_interpretation_admission_required_v1(execution.id) requires_authorization'))return{rows:[{id:owner,actor_user_id:actor,input_digest:sha,
       input_snapshot:{taxonomy_profile_id:operation,context_digest:sha,catalog_digest:sha,claude_cap_micro_usd:900},config:{budget_timezone:'UTC',daily_cap_micro_usd:2000,call_configuration:{model:'claude-sonnet-4-6'}},
       eligible:true,requires_authorization:true,is_current:true,is_admin:true,receipt:admission}]};
     if(sql.startsWith('SELECT actor_user_id FROM signal_topic_catalog_executions'))return{rows:[{actor_user_id:actor}]};

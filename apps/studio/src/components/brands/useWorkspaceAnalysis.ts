@@ -190,8 +190,9 @@ export function useWorkspaceAnalysis({ workspaceId, catalogVersion, disabled = f
       expected_context_digest: data.preflight.context_digest!, expected_catalog_digest: data.preflight.catalog_digest!, claude_cap_micro_usd: amount });
   }, [canStart, cap, data, submit]);
   const retry = useCallback(async () => {
-    if (canRetry && retryRun) await submit({ action: "retry", run_id: retryRun.execution_id });
-  }, [canRetry, retryRun, submit]);
+    if (canRetry && retryRun) await submit({ action: data?.global_receipt_replay?.execution_id === retryRun.execution_id
+      ? "replay_global_consolidation" : "retry", run_id: retryRun.execution_id });
+  }, [canRetry, data, retryRun, submit]);
   const retryProgress = useCallback(async () => {
     if (canRetryProgress && data?.latest_run) await submit({ action: "retry_progress", run_id: data.latest_run.execution_id });
   }, [canRetryProgress, data, submit]);

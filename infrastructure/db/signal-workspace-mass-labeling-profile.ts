@@ -44,25 +44,54 @@ export async function loadSignalWorkspaceMassLabelingGuidesV1(args: {
         AND run.input_revision=state.input_revision AND run.config_digest=$2
         AND (run.policy_valid_until IS NULL OR run.policy_valid_until>clock_timestamp())
       ORDER BY run.completed_at DESC,run.id DESC LIMIT 1
-    ), fragments AS MATERIALIZED (
-      SELECT DISTINCT chunk.value->>'sha256' chunk_sha256,
-        signal_topic_utf16_fragment_v1(asset.full_text,(chunk.value->>'start')::int,(chunk.value->>'end')::int) text,
-        cache.embedding
+    ), eligible_assets AS MATERIALIZED (
+      -- Roots can share an immutable text asset. Expand and decode it once,
+      -- before any 1024-dimensional vectors enter a sort or materialized CTE.
+      SELECT DISTINCT item.asset_sha256,item.chunk_policy_version
       FROM embedded JOIN signal_corpus_preparation_items item ON item.run_id=embedded.preparation_run_id
         AND item.workspace_id=$1::uuid AND item.disposition='eligible'
-      JOIN signal_corpus_text_assets asset ON asset.workspace_id=item.workspace_id
+    ), asset_offsets AS MATERIALIZED (
+      -- Each supplementary code point adds one extra UTF-16 unit. Compute
+      -- its end position once per asset, rather than rescanning the complete
+      -- text and counting characters again for every fragment.
+      SELECT item.asset_sha256,item.chunk_policy_version,char_length(asset.full_text) character_count,
+        ARRAY(SELECT (sum(char_length(piece)) OVER (ORDER BY ordinal)+2*ordinal)::int
+          FROM unnest(parts.pieces) WITH ORDINALITY segment(piece,ordinal)
+          WHERE ordinal<cardinality(parts.pieces) ORDER BY ordinal) astral_ends
+      FROM eligible_assets item
+      JOIN signal_corpus_text_assets asset ON asset.workspace_id=$1::uuid
         AND asset.text_sha256=item.asset_sha256 AND asset.chunk_policy_version=item.chunk_policy_version
+      CROSS JOIN LATERAL (SELECT regexp_split_to_array(asset.full_text,U&'[\\+010000-\\+10FFFF]') pieces OFFSET 0) parts
+    ), fragments AS MATERIALIZED (
+      SELECT DISTINCT chunk.value->>'sha256' chunk_sha256,
+        CASE WHEN bounds.start0>=0 AND bounds.end0>=bounds.start0 AND bounds.end0::bigint-bounds.start0<=1400
+          AND bounds.end0::bigint<=offsets.character_count::bigint+cardinality(offsets.astral_ends)
+          AND array_position(offsets.astral_ends,bounds.start0::bigint+1) IS NULL
+          AND array_position(offsets.astral_ends,bounds.end0::bigint+1) IS NULL
+          THEN substring(asset.full_text FROM bounds.start0-width_bucket(bounds.start0,offsets.astral_ends)+1
+            FOR bounds.end0-width_bucket(bounds.end0,offsets.astral_ends)
+              -(bounds.start0-width_bucket(bounds.start0,offsets.astral_ends)))
+          ELSE signal_topic_utf16_fragment_v1(asset.full_text,(chunk.value->>'start')::int,(chunk.value->>'end')::int)
+        END text
+      FROM asset_offsets offsets
+      JOIN signal_corpus_text_assets asset ON asset.workspace_id=$1::uuid
+        AND asset.text_sha256=offsets.asset_sha256 AND asset.chunk_policy_version=offsets.chunk_policy_version
       CROSS JOIN LATERAL jsonb_array_elements(asset.chunks->'chunks') chunk(value)
-      JOIN signal_workspace_chunk_embeddings cache ON cache.workspace_id=$1::uuid
-        AND cache.config_digest=embedded.config_digest AND cache.chunk_sha256=chunk.value->>'sha256'
-    ), matched AS (
-      SELECT seed.scope,fragment.chunk_sha256,fragment.embedding
+      CROSS JOIN LATERAL (SELECT (chunk.value->>'start')::int start0,(chunk.value->>'end')::int end0) bounds
+    ), matched AS MATERIALIZED (
+      SELECT seed.scope,fragment.chunk_sha256,fragment.text
       FROM jsonb_to_recordset($3::jsonb) seed(scope text,names text[]) CROSS JOIN fragments fragment
       WHERE EXISTS(SELECT 1 FROM unnest(seed.names) name WHERE length(name)>=3
         AND strpos(lower(fragment.text),lower(name))>0)
-    ) SELECT scope,avg(embedding)::text vector,
-      'sha256:'||encode(sha256(convert_to(string_agg(chunk_sha256,'' ORDER BY chunk_sha256),'UTF8')),'hex') members_digest
-      FROM matched GROUP BY scope ORDER BY scope`,
+    ) SELECT matched.scope,avg(cache.embedding ORDER BY matched.chunk_sha256,matched.text)::text vector,
+      'sha256:'||encode(sha256(convert_to(string_agg(matched.chunk_sha256,'' ORDER BY matched.chunk_sha256),'UTF8')),'hex') members_digest
+      FROM matched
+      -- matched is already narrow and filtered. Keep the vector lookup after
+      -- that boundary even when a new workspace has stale cache statistics.
+      JOIN LATERAL (SELECT embedding FROM signal_workspace_chunk_embeddings cache
+        WHERE cache.workspace_id=$1::uuid AND cache.config_digest=$2 AND cache.chunk_sha256=matched.chunk_sha256
+        OFFSET 0) cache ON true
+      GROUP BY matched.scope ORDER BY matched.scope`,
     [args.workspace_id, SIGNAL_WORKSPACE_EMBEDDING_PROFILE_V1.config_digest, JSON.stringify(seeds.seeds)])).rows;
   const guides = rows.map(row => {
     const vector = JSON.parse(row.vector) as number[];

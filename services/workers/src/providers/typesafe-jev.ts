@@ -33,7 +33,7 @@ async function readBounded(response: Response): Promise<string> {
   for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
   return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
 }
-export type JevProviderV1 = { evaluate(request: JevRequestV1, options?: { signal?: AbortSignal }): Promise<JevRawResponseV1> };
+export type JevProviderV1 = { readonly max_concurrency?: number; evaluate(request: JevRequestV1, options?: { signal?: AbortSignal }): Promise<JevRawResponseV1> };
 /** One attempt only. Callers persist submitting before invoking this client. Raw responses
  * are returned without JSON parsing so the shared ledger can persist them first. */
 export function createTypesafeJevClientV1(options: {
@@ -41,7 +41,7 @@ export function createTypesafeJevClientV1(options: {
 } = {}): JevProviderV1 {
   const concurrency = options.concurrency ?? Number(process.env.NOISIA_JEV_CONCURRENCY ?? '2');
   let active = 0; const waiting: Array<() => void> = [];
-  return { async evaluate(request, cancellation = {}) {
+  return { max_concurrency: concurrency, async evaluate(request, cancellation = {}) {
     const key = options.api_key ?? process.env.TYPESAFE_API_KEY;
     const timeout = options.timeout_ms ?? 60_000;
     if (!(options.enabled ?? process.env.NOISIA_JEV_PROVIDER_ENABLED === 'true')) throw new JevProviderErrorV1('jev_disabled', 'definitely_not_sent');

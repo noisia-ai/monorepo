@@ -21,6 +21,10 @@ import { signalWorkspaceEmbeddingsJobV1 } from "../../../services/workers/src/wo
 import { signalWorkspaceEngineJobV1 } from "../../../services/workers/src/workers/signal-workspace-engine";
 import { createBrandContextSyntheticVoyageProviderV1 } from "./signal-brand-context.synthetic.fixture";
 import { materializeMassLabelingProductMapV2 } from "../../../services/workers/src/workers/signal-mass-labeling-product-map";
+import {assertNativePaidAdmissionExpiryV2} from "./signal-mass-labeling-native-expiry.assertions";
+import {assertNativePaidReplayOutboxV2} from "./signal-mass-labeling-native-replay-outbox.assertions";
+import {drainSignalTopicClassificationOutboxV1} from "../../../services/workers/src/workers/signal-topic-classification-outbox";
+import { assertMassLabelingProductOutboxV1 } from "./signal-mass-labeling-product-outbox.assertions";
 import type { WorkspaceEngineStorageV1 } from "../../../services/workers/src/workers/signal-workspace-engine-storage";
 import { SIGNAL_WORKSPACE_EMBEDDING_PROFILE_V1, SIGNAL_WORKSPACE_MASS_LABELING_PRODUCT_CONFIGURATION_V2 as currentConfiguration,
   SIGNAL_WORKSPACE_MASS_LABELING_PRODUCT_LEGACY_CONFIGURATION_V2 as legacyConfiguration,
@@ -30,7 +34,7 @@ const hash = (value: string | Buffer) => `sha256:${createHash("sha256").update(v
 
 /** Runs in its own process so Studio aliases resolve exactly as they do in the
  * normal brand-creation service, and every external transport is synthetic. */
-for (const variant of ["current", "legacy"] as const) test(`the native product engine worker admits a new client study without a private operator (${variant})`, {
+for (const variant of ["current", "legacy", "receipt_recovery"] as const) test(`the native product engine worker admits a new client study without a private operator (${variant})`, {
   skip: process.env.NOISIA_MFP_PG_CI !== "true", timeout: 600_000,
 }, async () => {
   if (process.env.NOISIA_MFP_NATIVE_ENGINE_CHILD !== "true") {
@@ -39,7 +43,7 @@ for (const variant of ["current", "legacy"] as const) test(`the native product e
     for (const key of ["NODE_TEST_CONTEXT", "REDIS_URL", "UPSTASH_REDIS_REST_URL", "UPSTASH_REDIS_REST_TOKEN", "ANTHROPIC_API_KEY", "VOYAGE_API_KEY", "TYPESAFE_API_KEY", "NOISIA_MASS_LABELING_ENABLED"]) delete env[key];
     const child = spawnSync(process.execPath, ["--test", "--test-name-pattern", `\\(${variant}\\)$`, "--import", "tsx", fileURLToPath(import.meta.url)], { env, encoding: "utf8", timeout: 540_000, maxBuffer: 2_000_000 });
     assert.equal(child.status, 0, child.stdout + child.stderr);
-    assert.match(child.stdout, /# pass 1\b/u); assert.match(child.stdout, /# skipped 1\b/u); assert.match(child.stdout, /native_product_engine_signal_ready/u);
+    assert.match(child.stdout, /# pass 1\b/u); assert.match(child.stdout, /# skipped 2\b/u); assert.match(child.stdout, /native_product_engine_signal_ready/u);
     return;
   }
   const configuration = variant === "legacy" ? legacyConfiguration : currentConfiguration;
@@ -135,6 +139,7 @@ for (const variant of ["current", "legacy"] as const) test(`the native product e
     const queued = (await database.query("SELECT execution.status,execution.actor_user_id,outbox.worker_job_id,execution.input_snapshot,execution.processing_admission_id FROM signal_topic_catalog_executions execution JOIN signal_topic_classification_outbox outbox ON outbox.execution_id=execution.id WHERE execution.id=$1", [started.execution_id])).rows[0]!;
     assert.equal(queued.status, "queued"); assert.equal(queued.actor_user_id, clientActor); assert.ok(queued.processing_admission_id);
     assert.equal(queued.input_snapshot.mass_labeling_product, true); assert.equal(queued.input_snapshot.discovery_population, undefined);
+    await assertMassLabelingProductOutboxV1({ database,client,execution_id:started.execution_id });
     for (const [candidate, expected] of [[currentConfiguration, true], [legacyConfiguration, true],
       [{ ...configuration, consolidation_prompt_digest: hash("unapproved editorial prompt") }, false],
       [{ ...configuration, max_output_tokens: configuration.max_output_tokens + 1 }, false]] as const) {
@@ -171,13 +176,19 @@ for (const variant of ["current", "legacy"] as const) test(`the native product e
           assert.equal(new Set(group.representatives.map(ref => ref.root_id)).size, 20);
           assert.ok(!interpretedGroups.has(group.cluster_id)); interpretedGroups.add(group.cluster_id);
           const loc = localization(index);
-          return { cluster_id: group.cluster_id, cluster_digest: group.cluster_digest, status: "coherent", ...loc.en,
+          return { cluster_id: group.cluster_id, cluster_digest: group.cluster_digest, status: variant === "receipt_recovery" ? "mixed" : "coherent", ...loc.en,
             localization: loc, inclusion: [{ text: "Bicycle repairs and maintenance.", citations: [group.representatives[0]!.ref_id] }], exclusion: [], citations: [group.representatives[0]!.ref_id] };
         }) };
       } else {
         consolidationRequests++;
         assert.equal(packet.groups.length, 4); assert.equal(packet.category_context.category, "bicycles");
-        output = { topics: packet.groups.map((group: { group_id: string }, index: number) => {
+        if (variant === "receipt_recovery") {
+          const groups=packet.groups as Array<{group_id:string;name:string;definition:string;localization:ReturnType<typeof localization>}>;
+          output={topics:groups.map((g,index)=>({topic_key:`bicycle_${index}`,name:g.name,
+            definition:index===2?`as ${g.definition}`:g.definition,localization:g.localization,group_ids:[g.group_id]})),
+            excluded_groups:groups.slice(0,2).map(g=>({group_id:g.group_id,reason:"Mixed group with limited representation and redundant coverage."})),
+            category_lexicon:{category:"bicycles",terms:["bicycle","bicycles","bike"]}};
+        } else output = { topics: packet.groups.map((group: { group_id: string }, index: number) => {
           const loc = localization(index); return { topic_key: `bicycle_${index}`, ...loc.en, localization: loc, group_ids: [group.group_id] };
         }), excluded_groups: [], category_lexicon: { category: "bicycles", terms: ["bicycle", "bicycles", "bike"] } };
       }
@@ -187,7 +198,7 @@ for (const variant of ["current", "legacy"] as const) test(`the native product e
     };
     // Only the Python numerical boundary is synthetic. The job's authorization,
     // export, evidence join, ledger, HTTP transports, checkpoints and finish are real.
-    const result = await signalWorkspaceEngineJobV1({ id: queued.worker_job_id, data: { execution_id: started.execution_id }, updateProgress: async () => {} }, {
+    const runOptions: Parameters<typeof signalWorkspaceEngineJobV1>[1] = {
       database, storage, storage_root: directory, process: async args => {
         processes++;
         const manifestBytes = await readFile(join(args.input_directory, "manifest.json"));
@@ -223,7 +234,47 @@ for (const variant of ["current", "legacy"] as const) test(`the native product e
           counts: { occurrences: 80, roots: 80, guides: input.guides.rows, common_unchanged_roots: 0 }, lanes,
           artifacts: Object.entries(files).map(([file, body]) => ({ file, sha256: hash(body), bytes: Buffer.byteLength(body) })), quality: "uncalibrated", approval_policy: "none" }));
       },
-    });
+    };
+    const job={id:queued.worker_job_id,data:{execution_id:started.execution_id},updateProgress:async()=>{}};
+    let result:Awaited<ReturnType<typeof signalWorkspaceEngineJobV1>>;
+    if(variant!=="receipt_recovery") result=await signalWorkspaceEngineJobV1(job,runOptions);
+    else {
+      await assert.rejects(signalWorkspaceEngineJobV1(job,runOptions),/workspace_engine_worker_failed/u);
+      const before=(await database.query("SELECT to_jsonb(c) body FROM engine_cost_events c WHERE catalog_execution_id=$1 ORDER BY id",[started.execution_id])).rows;
+      const fit=(await database.query("SELECT input_digest,result_summary->'fit_checkpoint' fit FROM signal_topic_catalog_executions WHERE id=$1",[started.execution_id])).rows[0];
+      const {resumeWorkspacePaidGlobalConsolidationV2}=await import("../../../apps/studio/src/lib/data-os/workspace-paid-global-replay");
+      const {loadSignalWorkspaceMassLabelingGlobalReplaySourceV2}=await import("../signal-mass-labeling-global-recovery");
+      const readStored=async(args:{stored:{storage_key:string}})=>{const bytes=bodies.get(args.stored.storage_key);assert.ok(bytes);return bytes.toString('utf8');};
+      const replayArgs={database,workspaceId:workspace,actorUserId:clientActor,executionId:started.execution_id,idempotencyKey:randomUUID()};
+      await assert.rejects(resumeWorkspacePaidGlobalConsolidationV2({...replayArgs,actorUserId:systemActor},{readStored}),/forbidden|invalid/u);
+      await assert.rejects(loadSignalWorkspaceMassLabelingGlobalReplaySourceV2({database,workspace_id:randomUUID(),actor_user_id:clientActor,execution_id:started.execution_id}));
+      // Revoke spending only AFTER the exact paid raw is settled. The public
+      // guards remain enabled and all clients see the same authority row.
+      const spendingPolicy=(await database.query("SELECT policy_version_id FROM signal_processing_admissions WHERE id=$1",[queued.processing_admission_id])).rows[0].policy_version_id;
+      await database.query("UPDATE signal_processing_policy_versions SET status='revoked' WHERE id=$1",[spendingPolicy]);
+      assert.equal((await database.query("SELECT status FROM signal_processing_policy_versions WHERE id=$1",[spendingPolicy])).rows[0].status,'revoked');
+      await resumeWorkspacePaidGlobalConsolidationV2(replayArgs,{readStored});
+      await resumeWorkspacePaidGlobalConsolidationV2(replayArgs,{readStored});
+      const decision=(await database.query("SELECT * FROM signal_mass_labeling_global_receipt_decisions WHERE execution_id=$1",[started.execution_id])).rows[0];assert.ok(decision);
+      assert.equal(decision.created_by_user_id,clientActor);assert.equal(decision.decision.contract_version,"workspace-mass-labeling-receipt-recovery-v2");
+      await assert.rejects(database.query("UPDATE signal_mass_labeling_global_receipt_decisions SET decision='{}' WHERE id=$1",[decision.id]),/append-only/u);
+      await assert.rejects(database.query("DELETE FROM signal_mass_labeling_global_receipt_decisions WHERE id=$1",[decision.id]),/append-only/u);
+      await assert.rejects(database.query(`INSERT INTO engine_cost_events SELECT (jsonb_populate_record(NULL::engine_cost_events,to_jsonb(c)||jsonb_build_object('id',$2::uuid,'idempotency_key',$3::text,'call_state','reserved','attempt_token',$4::uuid))).*
+        FROM engine_cost_events c WHERE catalog_execution_id=$1 AND metadata#>>'{mass_labeling_stage,stage}'='global-consolidation-v1'`,[started.execution_id,randomUUID(),randomUUID(),randomUUID()]),/global_receipt_recovery_no_send|processing_policy_expired/u);
+      const paid=groupRequests+consolidationRequests;
+      globalThis.fetch=async()=>{throw Error("receipt_replay_must_not_send");};
+      const outbox=(await database.query("SELECT worker_job_id FROM signal_topic_classification_outbox WHERE execution_id=$1",[started.execution_id])).rows[0];
+      await assertNativePaidReplayOutboxV2({database,client,execution_id:started.execution_id});
+      const dispatched:Array<{name:string;execution_id:string;job_id:unknown}>=[];
+      const drained=await drainSignalTopicClassificationOutboxV1({database,schedule:async()=>({requeued:0}),queue:{getJob:async()=>null,
+        add:async(name,data,options)=>{dispatched.push({name,execution_id:(data as {execution_id:string}).execution_id,job_id:options.jobId});return{};}}});
+      assert.deepEqual(drained,{claimed:1,dispatched:1,failed:0,dead_lettered:0});
+      assert.equal(dispatched[0]!.execution_id,started.execution_id);assert.equal(dispatched[0]!.job_id,outbox.worker_job_id);
+      result=await signalWorkspaceEngineJobV1({...job,id:outbox.worker_job_id},{...runOptions,process:async()=>{throw Error("receipt_replay_must_not_fit");}});
+      assert.equal(groupRequests+consolidationRequests,paid);
+      assert.deepEqual((await database.query("SELECT to_jsonb(c) body FROM engine_cost_events c WHERE catalog_execution_id=$1 ORDER BY id",[started.execution_id])).rows,before);
+      assert.deepEqual((await database.query("SELECT input_digest,result_summary->'fit_checkpoint' fit FROM signal_topic_catalog_executions WHERE id=$1",[started.execution_id])).rows[0],fit);
+    }
     assert.ok(!("operator_required" in result)); assert.equal(processes, 1); assert.equal(interpretedGroups.size, 4);
     assert.ok(groupRequests >= 1); assert.equal(consolidationRequests, 1);
     const finished = (await database.query("SELECT status,actor_user_id FROM signal_topic_catalog_executions WHERE id=$1", [started.execution_id])).rows[0]!;
@@ -242,7 +293,8 @@ for (const variant of ["current", "legacy"] as const) test(`the native product e
     const settings = await getMassLabelingStudyPolicyV1(access);
     assert.equal(settings.lexicon_provenance, "editorial"); assert.equal(settings.category, "bicycles"); assert.ok(settings.lexicon_terms.includes("bicycle"));
     const map = (await database.query("SELECT created_by_user_id,root_count,catalog FROM signal_mass_labeling_maps WHERE id=$1", [materialized.map_id])).rows[0]!;
-    assert.equal(map.created_by_user_id, clientActor); assert.equal(Number(map.root_count), 80); assert.equal(map.catalog.length, 4);
+    assert.equal(map.created_by_user_id, clientActor); assert.equal(Number(map.root_count), 80); assert.equal(map.catalog.length, variant === "receipt_recovery" ? 2 : 4);
+    if(variant==="receipt_recovery") await assertNativePaidAdmissionExpiryV2({database,execution_id:started.execution_id});
     console.log("native_product_engine_signal_ready");
   } finally {
     globalThis.fetch = originalFetch;

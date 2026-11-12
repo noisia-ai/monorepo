@@ -542,6 +542,8 @@ export function createSignalLabelingStoreV1<
   database: LabelingDatabaseV1;
   /** Runtime preflight, cached by the existing private storage adapter. */
   assertRawReady?: () => Promise<void>;
+  /** True only for a runtime writer that authenticates a byte-for-byte readback. */
+  storeRawVerified?: boolean;
   storeRaw: (args: {
     workspace_id: string;
     run_id: string;
@@ -910,8 +912,10 @@ export function createSignalLabelingStoreV1<
         raw_sha256: sha,
       });
       const result = await db.query(
-        `UPDATE signal_labeling_calls SET raw_sha256=$3,raw_storage_key=$4,raw_size_bytes=$5,updated_at=now() WHERE run_id=$1 AND id=$2 AND (raw_sha256 IS NULL OR raw_sha256=$3 AND raw_storage_key=$4 AND raw_size_bytes=$5) RETURNING id`,
-        [run.id, call.id, sha, key, Buffer.byteLength(raw)],
+        `UPDATE signal_labeling_calls SET raw_sha256=$3,raw_storage_key=$4,raw_size_bytes=$5,
+          raw_storage_verified_at=CASE WHEN $6 THEN COALESCE(raw_storage_verified_at,now()) ELSE raw_storage_verified_at END,
+          raw_storage_verified_key=CASE WHEN $6 THEN $4 ELSE raw_storage_verified_key END,updated_at=now() WHERE run_id=$1 AND id=$2 AND (raw_sha256 IS NULL OR raw_sha256=$3 AND raw_storage_key=$4 AND raw_size_bytes=$5) RETURNING id`,
+        [run.id, call.id, sha, key, Buffer.byteLength(raw), options.storeRawVerified === true],
       );
       if (!result.rows.length) fail("labeling_raw_conflict");
       call.raw_body = raw;

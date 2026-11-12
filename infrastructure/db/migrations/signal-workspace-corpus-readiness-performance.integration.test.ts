@@ -56,12 +56,12 @@ test("representative corpus readiness bounds materialized paths and mention look
     assert.ok(Math.max(0, ...repeatedCteRows) <= workBudget,
       "a materialized corpus relation was rescanned quadratically");
     // A new workspace can be absent from table statistics. Count actual mention
-    // lookup work as well: a workspace index scan per id was ~27M rows for 7,396 roots.
-    // Membership integrity makes mention_id canonical, so one bounded PK lookup per
-    // membership is sufficient. A second lookup is redundant; a workspace scan is unsafe.
+    // work as well: a workspace scan repeated per id visited ~27M rows for 7,396 roots.
+    // Materializing canonical workspace roots gives every import membership the same
+    // single root scan, including when accepted imports overlap.
     assert.equal(mentionScanRows.length, 1, "the plan must resolve each canonical mention once");
     assert.ok(mentionScanRows.reduce((total, rows) => total + rows, 0) <= workBudget,
-      "canonical mention lookup repeatedly scanned the workspace instead of resolving individual ids");
+      "canonical mention lookup repeatedly scanned the workspace instead of sharing one root scan");
   } finally {
     await client.query("ROLLBACK").catch(() => undefined);
     await client.end();

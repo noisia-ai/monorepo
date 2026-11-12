@@ -324,10 +324,22 @@ const receiptRecoveryDecision = z.object({
       suffix_length: z.number().int().positive().max(1200) }).strict(),
   }).strict(),
 }).strict();
-export type MassLabelingConsolidationRecoveryDecisionV1 = z.infer<typeof receiptRecoveryDecision>;
+const receiptRecoveryDecisionV2 = z.object({
+  contract_version: z.literal("workspace-mass-labeling-receipt-recovery-v2"),
+  workspace_id: z.string().uuid(), execution_id: z.string().uuid(), call_id: z.string().uuid(),
+  request_digest: sha, response_sha256: sha, source_groups_digest: sha,
+  singleton_exclusions: z.array(z.object({ group_id: groupId,
+    topic_key: catalog.shape.topics.element.shape.topic_key, reason_sha256: sha }).strict()).min(1).max(2),
+  english_definition_reconciliations: z.array(z.object({
+    topic_key: catalog.shape.topics.element.shape.topic_key,
+    original_definition_sha256: sha, english_definition_sha256: sha,
+  }).strict()).length(1),
+}).strict();
+export type MassLabelingConsolidationRecoveryDecisionV2 = z.infer<typeof receiptRecoveryDecisionV2>;
+export type MassLabelingConsolidationRecoveryDecisionV1 = z.infer<typeof receiptRecoveryDecision> | MassLabelingConsolidationRecoveryDecisionV2;
 
 export function parseMassLabelingConsolidationRecoveryDecisionV1(value: unknown): MassLabelingConsolidationRecoveryDecisionV1 {
-  const parsed = receiptRecoveryDecision.safeParse(value);
+  const parsed = z.union([receiptRecoveryDecision, receiptRecoveryDecisionV2]).safeParse(value);
   if (!parsed.success) return fail();
   return parsed.data;
 }
@@ -338,6 +350,11 @@ export function recoverMassLabelingConsolidationResponseV1(
   batch: MassLabelingConsolidationBatchV1, raw: string, decisionValue: unknown,
 ): { output: MassLabelingConsolidationOutputV1; usage: SignalWorkspaceInterpretationUsageV1 } {
   const decision = parseMassLabelingConsolidationRecoveryDecisionV1(decisionValue);
+  if (decision.contract_version === "workspace-mass-labeling-receipt-recovery-v2") {
+    const expected = buildMassLabelingConsolidationRecoveryDecisionV2({ batch, raw_response: raw, call_id: decision.call_id });
+    if (digest(expected) !== digest(decision)) return fail();
+    return recoverNativeConsolidationV2(batch, raw).parsed;
+  }
   const rebuilt = buildMassLabelingConsolidationRequestV1({ workspace_id: batch.workspace_id,
     source_engine_execution_id: batch.source_engine_execution_id, source_groups: batch.source_groups });
   if (digest(rebuilt) !== digest(batch) || decision.workspace_id !== batch.workspace_id
@@ -382,4 +399,79 @@ export function recoverMassLabelingConsolidationResponseV1(
   remove.group_ids = remove.group_ids.filter(group => group !== resolution.group_id);
   for (const topic of output.topics) topic.topic_key = changes.get(topic.topic_key) ?? topic.topic_key;
   return { output: validateMassLabelingConsolidationOutputV1(batch.source_groups, output), usage: parsed.usage };
+}
+
+const receiptShaV2 = (text: string) => `sha256:${createHash("sha256").update(text).digest("hex")}`;
+
+/** This bounded rule uses only already-paid wording and explicit exclusions.
+ * It cannot add a topic, group, reason, translation or provider authority. */
+function recoverNativeConsolidationV2(batch: MassLabelingConsolidationBatchV1, raw: string) {
+  const rebuilt = buildMassLabelingConsolidationRequestV1({ workspace_id: batch.workspace_id,
+    source_engine_execution_id: batch.source_engine_execution_id, source_groups: batch.source_groups,
+    configuration: batch.configuration, category_context: batch.category_context });
+  if (digest(rebuilt) !== digest(batch) || !("category_lexicon_contract_version" in batch.configuration)) return fail();
+  const envelope = parseMassLabelingConsolidationEnvelopeV1(raw);
+  const checked = catalog.safeParse(envelope.value);
+  if (!checked.success) return fail();
+  const output = checked.data;
+  const original = structuredClone(output);
+  if (new Set(output.topics.map(t => t.topic_key)).size !== output.topics.length
+    || new Set(output.excluded_groups.map(g => g.group_id)).size !== output.excluded_groups.length) return fail();
+  const exclusions: MassLabelingConsolidationRecoveryDecisionV2["singleton_exclusions"] = [];
+  for (const excluded of output.excluded_groups) {
+    const overlapping = output.topics.filter(topic => topic.group_ids.includes(excluded.group_id));
+    if (!overlapping.length) continue;
+    const topic = overlapping[0]!;
+    const source = batch.source_groups.find(group => group.group_id === excluded.group_id);
+    if (overlapping.length !== 1 || topic.group_ids.length !== 1 || source?.status !== "mixed"
+      || source.name !== topic.name || source.definition !== topic.definition
+      || !/\bmix(?:ed|es|ture)?\b/iu.test(excluded.reason)
+      || !/overlap|already|redundan|limited|weak|thin|sparse|fragment|insufficien|few/iu.test(excluded.reason)) return fail();
+    exclusions.push({ group_id: excluded.group_id, topic_key: topic.topic_key, reason_sha256: receiptShaV2(excluded.reason) });
+  }
+  if (exclusions.length < 1 || exclusions.length > 2) return fail();
+  const reconciliations: MassLabelingConsolidationRecoveryDecisionV2["english_definition_reconciliations"] = [];
+  for (const topic of output.topics) {
+    if (!topic.localization || topic.name !== topic.localization.en.name) return fail();
+    const english = topic.localization.en.definition;
+    if (topic.definition === english) continue;
+    const a = Array.from(topic.definition), b = Array.from(english);
+    let prefix = 0; while (prefix < b.length && a[prefix] === b[prefix]) prefix++;
+    // A single pre-existing role/comparison marker may be absent in the paid
+    // English localization. Negation, arbitrary edits and insertions fail closed.
+    if (a.length - b.length !== 3 || a.slice(prefix, prefix + 3).join("") !== "as "
+      || a.slice(prefix + 3).join("") !== b.slice(prefix).join("")) return fail();
+    reconciliations.push({ topic_key: topic.topic_key, original_definition_sha256: receiptShaV2(topic.definition),
+      english_definition_sha256: receiptShaV2(english) });
+    topic.definition = english;
+  }
+  if (reconciliations.length !== 1) return fail();
+  const removedKeys = new Set(exclusions.map(e => e.topic_key));
+  if (reconciliations.some(r => removedKeys.has(r.topic_key))) return fail();
+  output.topics = output.topics.filter(topic => !removedKeys.has(topic.topic_key));
+  const validated = validateMassLabelingConsolidationOutputV1(batch.source_groups, output);
+  if (!validated.category_lexicon || validated.category_lexicon.category !== batch.category_context?.category) return fail();
+  // Strict envelope parsing is shared with the ordinary path; the original raw
+  // is retained by callers, while this candidate is validated and never sent.
+  const normalizedEnvelope = JSON.parse(raw);
+  normalizedEnvelope.content.find((block: {type:string}) => block.type === "text").text = JSON.stringify(validated);
+  const parsed = parseMassLabelingConsolidationResponseV1(batch, JSON.stringify(normalizedEnvelope));
+  if (digest(parsed.output.excluded_groups) !== digest(original.excluded_groups.sort((a,b) => a.group_id.localeCompare(b.group_id)))) return fail();
+  return { parsed, exclusions: exclusions.sort((a,b) => a.group_id.localeCompare(b.group_id)),
+    reconciliations: reconciliations.sort((a,b) => a.topic_key.localeCompare(b.topic_key)) };
+}
+
+/** A server derives this disposition from the exact signed inputs. There are no
+ * user-supplied editorial choices or replacement strings in the decision. */
+export function buildMassLabelingConsolidationRecoveryDecisionV2(args: {
+  batch: MassLabelingConsolidationBatchV1; raw_response: string; call_id: string;
+}): MassLabelingConsolidationRecoveryDecisionV2 {
+  const recovered = recoverNativeConsolidationV2(args.batch, args.raw_response);
+  const decision = { contract_version: "workspace-mass-labeling-receipt-recovery-v2" as const,
+    workspace_id: args.batch.workspace_id, execution_id: args.batch.source_engine_execution_id, call_id: args.call_id,
+    request_digest: args.batch.request_digest, response_sha256: receiptShaV2(args.raw_response), source_groups_digest: args.batch.source_groups_digest,
+    singleton_exclusions: recovered.exclusions, english_definition_reconciliations: recovered.reconciliations };
+  const checked = receiptRecoveryDecisionV2.safeParse(decision);
+  if (!checked.success) return fail();
+  return checked.data;
 }
