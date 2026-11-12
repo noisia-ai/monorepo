@@ -556,6 +556,8 @@ const massMembershipsSql = `mass_memberships AS MATERIALIZED (
 ), mass_roots_with_concept AS MATERIALIZED (
   SELECT DISTINCT root_id FROM mass_memberships
 ), `;
+// Mass readers share current mention metadata across provenance and canonical
+// eligibility. Text is hydrated only for the evidence page selected below.
 const populationSql = (imported = false, definedInterest = false, consolidated = false, membership = false, facetEnabled = false,
   checkedProjectionSource?: boolean, massLabeling = false, segment: SignalConversationSegmentV1 = "all", includeMemberships = true, massOverview = false) => `WITH source_generation AS MATERIALIZED (
   SELECT generation.id,generation.workspace_id,generation.preparation_run_id,generation.input_snapshot
@@ -566,7 +568,10 @@ const populationSql = (imported = false, definedInterest = false, consolidated =
   SELECT snapshot.id,snapshot.workspace_id,snapshot.preparation_run_id,'{}'::jsonb
     FROM signal_topic_consolidation_snapshots snapshot WHERE snapshot.id=$2::uuid AND snapshot.workspace_id=$1::uuid
     AND signal_topic_consolidation_snapshot_current_v1(snapshot.id)
-), received_imports AS MATERIALIZED (
+), ${massLabeling ? `mass_mentions AS MATERIALIZED (
+  SELECT id,workspace_id,canonical_mention_id,inclusion_status,published_at
+  FROM mentions WHERE workspace_id=$1::uuid
+), ` : ""}received_imports AS MATERIALIZED (
   SELECT batch.id,batch.data_source_id FROM import_batches batch
   JOIN data_sources source ON source.id=batch.data_source_id AND source.workspace_id=$1::uuid AND source.status='active'
   WHERE batch.workspace_id=$1::uuid AND batch.status='completed'
@@ -594,16 +599,16 @@ const populationSql = (imported = false, definedInterest = false, consolidated =
   SELECT origin.canonical_mention_id root_id,bool_or(rights.metrics) metrics,bool_or(rights.metrics AND rights.evidence) evidence
   FROM authorized_imports rights JOIN signal_mention_import_memberships path ON path.import_batch_id=rights.id
     AND path.data_source_id=rights.data_source_id AND path.workspace_id=$1::uuid
-  JOIN mentions origin ON origin.id=path.mention_id AND origin.workspace_id=$1::uuid
+  JOIN ${massLabeling ? "mass_mentions" : "mentions"} origin ON origin.id=path.mention_id AND origin.workspace_id=$1::uuid
   GROUP BY origin.canonical_mention_id
 ), received_roots AS MATERIALIZED (
-  SELECT ${massOverview ? `origin.canonical_mention_id root_id,
+  SELECT ${massLabeling ? `origin.canonical_mention_id root_id,
     bool_or(COALESCE(rights.metrics,false)) metrics,
     bool_or(COALESCE(rights.metrics AND rights.evidence,false)) evidence` : "DISTINCT origin.canonical_mention_id root_id"}
   FROM received_imports batch JOIN signal_mention_import_memberships path ON path.import_batch_id=batch.id
     AND path.data_source_id=batch.data_source_id AND path.workspace_id=$1::uuid
-  JOIN mentions origin ON origin.id=path.mention_id AND origin.workspace_id=$1::uuid
-  ${massOverview ? `LEFT JOIN authorized_imports rights ON rights.id=batch.id AND rights.data_source_id=batch.data_source_id
+  JOIN ${massLabeling ? "mass_mentions" : "mentions"} origin ON origin.id=path.mention_id AND origin.workspace_id=$1::uuid
+  ${massLabeling ? `LEFT JOIN authorized_imports rights ON rights.id=batch.id AND rights.data_source_id=batch.data_source_id
   GROUP BY origin.canonical_mention_id` : ""}
 ), ${massLabeling && includeMemberships ? massMembershipsSql : ""}all_roots AS MATERIALIZED (
   ${imported ? `SELECT mention.id root_id,${massLabeling ? `CASE WHEN mass_outcome.status='labeled' THEN
@@ -615,15 +620,15 @@ const populationSql = (imported = false, definedInterest = false, consolidated =
         WHEN (mass_outcome.probabilities#>>'{relevance,noul}')::double precision>0.7 THEN 'relevant'
         WHEN (mass_outcome.probabilities#>>'{relevance,noul}')::double precision<0.3 THEN 'unrelated' ELSE 'unknown' END
       ELSE 'unknown' END relevance,(mass_concept.root_id IS NOT NULL) has_concept,` : ""}
-    COALESCE(${massOverview ? "received.metrics" : "rights.metrics"},false) metrics,
-    COALESCE(${massOverview ? "received.evidence" : "rights.evidence"},false) evidence
-  FROM received_roots received JOIN mentions mention ON mention.id=received.root_id AND mention.workspace_id=$1::uuid
+    COALESCE(${massLabeling ? "received.metrics" : "rights.metrics"},false) metrics,
+    COALESCE(${massLabeling ? "received.evidence" : "rights.evidence"},false) evidence
+  FROM received_roots received JOIN ${massLabeling ? "mass_mentions" : "mentions"} mention ON mention.id=received.root_id AND mention.workspace_id=$1::uuid
     AND mention.canonical_mention_id=mention.id AND mention.inclusion_status='included'
   ${massLabeling ? `JOIN signal_mass_labeling_items frozen ON frozen.map_id=$2::uuid AND frozen.workspace_id=$1::uuid AND frozen.root_id=mention.id
     LEFT JOIN signal_mass_labeling_results mass_outcome ON mass_outcome.map_id=frozen.map_id AND mass_outcome.root_id=frozen.root_id
     JOIN signal_mass_labeling_root_segments segment ON segment.map_id=frozen.map_id AND segment.root_id=frozen.root_id AND segment.workspace_id=$1::uuid
     ${includeMemberships ? "LEFT JOIN mass_roots_with_concept mass_concept ON mass_concept.root_id=mention.id" : ""}` : ""}
-  ${massOverview ? "" : "LEFT JOIN root_rights rights ON rights.root_id=mention.id"}` : `SELECT item.canonical_root_id root_id,item.resolution_state,mention.published_at,
+  ${massLabeling ? "" : "LEFT JOIN root_rights rights ON rights.root_id=mention.id"}` : `SELECT item.canonical_root_id root_id,item.resolution_state,mention.published_at,
     COALESCE((item.outcome_metadata->>'has_unresolved_topics')::boolean,false) has_unresolved_topics,
     COALESCE(rights.metrics,false) AND mention.inclusion_status='included' AND mention.canonical_mention_id=mention.id metrics,
     COALESCE(rights.evidence,false) AND mention.inclusion_status='included' AND mention.canonical_mention_id=mention.id evidence
@@ -662,7 +667,7 @@ const populationSql = (imported = false, definedInterest = false, consolidated =
 ), mfp_roots_with_concept AS MATERIALIZED (
   ${massLabeling ? "SELECT root_id FROM mass_roots_with_concept" : "SELECT DISTINCT root_id FROM mfp_memberships"}
 ), ` : ""}legacy_memberships AS MATERIALIZED (
-  SELECT DISTINCT ON(assignment.canonical_root_id,term.term_key) assignment.canonical_root_id root_id,term.term_key,visible.visible,
+  ${massLabeling ? "SELECT NULL::uuid root_id,NULL::text term_key,false visible,NULL::jsonb evidence_fragment WHERE false" : `SELECT DISTINCT ON(assignment.canonical_root_id,term.term_key) assignment.canonical_root_id root_id,term.term_key,visible.visible,
     CASE WHEN assignment.membership_basis='computed_cluster' THEN assignment.membership_metadata->'evidence_fragment' ELSE NULL END evidence_fragment
   FROM signal_classification_assignments assignment JOIN taxonomy_terms term ON term.id=assignment.taxonomy_term_id
   JOIN visible_terms visible ON visible.term_key=term.term_key AND visible.definition_digest=assignment.definition_digest
@@ -683,7 +688,7 @@ const populationSql = (imported = false, definedInterest = false, consolidated =
       AND correction.resolution_method='human' AND correction.disposition='rejected'
       AND signal_workspace_classification_assignment_current_v1(correction,generation))
   ORDER BY assignment.canonical_root_id,term.term_key,(assignment.resolution_method='human') DESC,assignment.created_at DESC,assignment.id DESC
-), ${definedInterest ? `defined_interest_memberships AS MATERIALIZED (
+`}), ${definedInterest ? `defined_interest_memberships AS MATERIALIZED (
   SELECT DISTINCT ON(assignment.canonical_root_id,visible.term_key)
     assignment.canonical_root_id root_id,visible.term_key,visible.visible,
     NULL::jsonb evidence_fragment
@@ -722,7 +727,11 @@ const populationSql = (imported = false, definedInterest = false, consolidated =
   ORDER BY assignment.canonical_root_id,visible.term_key,
     (assignment.resolution_method='human') DESC,assignment.created_at DESC,assignment.id DESC
 ), ` : ""}all_memberships AS MATERIALIZED (
-  SELECT * FROM legacy_memberships
+  ${massLabeling ? (includeMemberships && membership ? `SELECT member.root_id,member.concept_key term_key,visible.visible,NULL::jsonb evidence_fragment
+    FROM mass_memberships member
+    JOIN visible_terms visible ON visible.term_key=member.concept_key AND visible.definition_digest=member.definition_digest AND visible.membership_concept
+    JOIN period_roots root ON root.root_id=member.root_id AND root.metrics`
+    : "SELECT NULL::uuid root_id,NULL::text term_key,false visible,NULL::jsonb evidence_fragment WHERE false") : `SELECT * FROM legacy_memberships
   UNION ALL
   SELECT member.root_id,member.term_key,visible.visible,NULL::jsonb evidence_fragment
   FROM signal_topic_consolidation_snapshot_memberships_v1 member
@@ -735,7 +744,7 @@ const populationSql = (imported = false, definedInterest = false, consolidated =
     FROM mfp_memberships current JOIN visible_terms visible ON visible.term_key=current.concept_key AND visible.definition_digest=current.definition_digest AND visible.membership_concept
     JOIN period_roots root ON root.root_id=current.root_id AND root.metrics
     ` : ""}
-  ${definedInterest ? "UNION ALL SELECT root_id,term_key,visible,evidence_fragment FROM defined_interest_memberships" : ""}
+  ${definedInterest ? "UNION ALL SELECT root_id,term_key,visible,evidence_fragment FROM defined_interest_memberships" : ""}`}
 ), memberships AS MATERIALIZED (SELECT root_id,term_key,evidence_fragment FROM all_memberships WHERE visible),
 root_membership AS MATERIALIZED (SELECT root_id,bool_or(visible) visible FROM all_memberships GROUP BY root_id),
 population AS MATERIALIZED (
@@ -1035,15 +1044,20 @@ async function evidenceWithin(client: PoolClient, args: EvidenceArgs, ctx: Conte
       afterSample=decoded.sample_key;
     }
     const rows=(await client.query<SignalWorkspaceTopicEvidencePageV1["items"][number]&{sample_key:string}>(
-      `${populationSql(true,false,false,true,false,undefined,true,ctx.filters.conversation_segment)}
-       SELECT root.root_id mention_id,mention.text_clean text,NULL::text quote,'[]'::jsonb forced_abstentions,
+      `${populationSql(true,false,false,true,false,undefined,true,ctx.filters.conversation_segment)},
+       selected_topic_roots AS MATERIALIZED (
+        SELECT root.root_id,md5($11::text||root.root_id::text) sample_key
+        FROM period_roots root JOIN mfp_memberships member ON member.root_id=root.root_id AND member.concept_key=$7
+        WHERE root.evidence AND ($8::uuid IS NULL OR (md5($11::text||root.root_id::text),root.root_id)>($9::text,$8::uuid))
+        ORDER BY sample_key,root.root_id LIMIT $10
+       ) SELECT selected.root_id mention_id,mention.text_clean text,NULL::text quote,'[]'::jsonb forced_abstentions,
          NULL::jsonb evidence_fragment,mention.platform,
-         to_char(mention.published_at,'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') occurred_at,mention.url,
-         md5($11::text||root.root_id::text) sample_key
-       FROM period_roots root JOIN mfp_memberships member ON member.root_id=root.root_id AND member.concept_key=$7
-       JOIN mentions mention ON mention.id=root.root_id AND mention.workspace_id=$1::uuid
-       WHERE root.evidence AND ($8::uuid IS NULL OR (md5($11::text||root.root_id::text),root.root_id)>($9::text,$8::uuid))
-       ORDER BY sample_key,root.root_id LIMIT $10`,
+         to_char(mention.published_at,'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') occurred_at,mention.url,selected.sample_key
+       FROM selected_topic_roots selected JOIN LATERAL (
+         SELECT text_clean,platform,published_at,url FROM mentions
+         WHERE workspace_id=$1::uuid AND id=selected.root_id OFFSET 0
+       ) mention ON true
+       ORDER BY selected.sample_key,selected.root_id`,
       [...populationParams(args,ctx),args.term_key,after,afterSample,limit+1,view.scope_digest+args.term_key])).rows;
     const page=rows.slice(0,limit),last=page.at(-1);
     return {contract_version:"signal-workspace-topic-evidence-v1",workspace_id:args.workspace_id,
@@ -1177,18 +1191,27 @@ export async function loadMassLabelingConsumerEvidenceV1(args:Omit<Args,"include
     const rows=(await client.query<MassLabelingConsumerEvidencePageV1["items"][number]&{sample_key:string}>(
       `${populationSql(true,false,false,false,false,undefined,true,ctx.filters.conversation_segment,false)},
        reviewed_consumers AS MATERIALIZED(
-        SELECT root.root_id,mention.text_clean text,mention.platform,mention.published_at,mention.url,
+        SELECT root.root_id,
           (COALESCE(${ctx.mass_consumer_category_current?"review.trigger_barrier":"NULL::jsonb"},${ctx.mass_product&&ctx.mass_consumer_category_current?"prior.probabilities->'trigger_barrier'":"NULL::jsonb"})->'probabilities'->>$7)::double precision probability
-        FROM period_roots root JOIN mentions mention ON mention.workspace_id=$1::uuid AND mention.id=root.root_id
+        FROM period_roots root
         JOIN signal_mass_labeling_category_matches lexical ON lexical.workspace_id=$1::uuid AND lexical.policy_revision=$11::int AND lexical.root_id=root.root_id AND lexical.matched
         JOIN signal_mass_labeling_results prior ON prior.map_id=$2::uuid AND prior.root_id=root.root_id
         LEFT JOIN signal_mass_labeling_r13_results review ON review.workspace_id=$1::uuid AND review.map_id=$2::uuid AND review.root_id=root.root_id
         WHERE root.metrics AND root.evidence AND root.conversation_segment='conversation'
           AND prior.probabilities#>>'{voice,choice}'='individual' AND (prior.probabilities#>>'{promotion,noul}')::double precision<=0.7
           AND COALESCE(${ctx.mass_consumer_category_current?"review.trigger_barrier":"NULL::jsonb"},${ctx.mass_product&&ctx.mass_consumer_category_current?"prior.probabilities->'trigger_barrier'":"NULL::jsonb"})->>'choice'=$7
-       ) SELECT root_id mention_id,text,platform,to_char(published_at,'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') occurred_at,url,md5($12::text||root_id::text) sample_key
-       FROM reviewed_consumers WHERE probability>0.7 AND ($8::uuid IS NULL OR (md5($12::text||root_id::text),root_id)>($9::text,$8::uuid))
-       ORDER BY sample_key,root_id LIMIT $10`,
+       ), selected_consumers AS MATERIALIZED (
+        SELECT root_id,md5($12::text||root_id::text) sample_key
+        FROM reviewed_consumers WHERE probability>0.7 AND ($8::uuid IS NULL OR (md5($12::text||root_id::text),root_id)>($9::text,$8::uuid))
+        ORDER BY sample_key,root_id LIMIT $10
+       ) SELECT selected.root_id mention_id,mention.text_clean text,mention.platform,
+         to_char(mention.published_at,'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') occurred_at,mention.url,selected.sample_key
+       FROM selected_consumers selected JOIN LATERAL (
+         SELECT text_clean,platform,published_at,url FROM mentions
+         -- Keep the bounded lookup after LIMIT even with nested loops disabled.
+         WHERE workspace_id=$1::uuid AND id=selected.root_id OFFSET 0
+       ) mention ON true
+       ORDER BY selected.sample_key,selected.root_id`,
       [...populationParams(args,ctx),args.choice,after,sample,limit+1,ctx.mass_study_policy?.revision??0,view.scope_digest+args.choice])).rows;
     const page=rows.slice(0,limit),last=page.at(-1);
     return {contract_version:"mass-labeling-consumer-evidence-v1",workspace_id:args.workspace_id,scope_digest:view.scope_digest,choice:args.choice,
