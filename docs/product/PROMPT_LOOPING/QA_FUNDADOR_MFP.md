@@ -4,10 +4,11 @@
 
 Inicia sesión en [Studio UAT](https://studio-uat-uat.up.railway.app) y abre [Topics y narrativas de Signal](https://studio-uat-uat.up.railway.app/signal/estudio-real-a-cerveza-brasil/topics-narratives).
 
-1. Compara el nombre y la definición de un tópico en inglés con su original en portugués. Si no aparecen datos o la página marca que el workspace no está listo, registra el estado y vuelve a consultar más tarde.
-2. Cambia **Contenido** entre conversación, publicidad, sólo hashtags y todo el contenido. Espera a que cada vista termine de cargar antes de revisar los denominadores y los indicadores.
-3. Abre evidencia de un motivador y una barrera. Repite la consulta con los mismos filtros y comprueba que muestre las mismas menciones.
-4. Coteja los denominadores, el mapa, el léxico y las definiciones de intereses con los recibos privados de R15. Documenta sólo las causas que respalden esos recibos y conserva ejemplos e identificadores en el canal privado del estudio.
+1. Si tu cuenta abre en español, anota el idioma y elige inglés en los ajustes personales de Studio. En Signal, abre **View details and examples** en un tópico del mapa. Comprueba que carguen los ejemplos y compara el nombre y la definición de un tópico con su original en portugués. Al terminar, restaura tu idioma.
+2. Cambia **Content** entre conversación, publicidad, sólo hashtags y todo el contenido. Comprueba el segmento que efectivamente se muestra y su denominador. Los tres segmentos suman el total. Si aparece un aviso de que se conservó la lectura anterior, esa vista aún corresponde al filtro previo.
+3. En conversación, abre la evidencia de motivadores y la de barreras. Cierra cada panel y vuelve a abrirlo con los mismos filtros. Compara las 30 menciones y su orden en cada muestra.
+4. En Studio, abre el léxico del estudio para consultar las sugerencias gratuitas de palabras y bigramas. En R15 hay 100 sugerencias a partir de resultados con probabilidad de al menos 0.90. Consultarlas conserva la selección de términos del estudio.
+5. Coteja los volúmenes, el mapa, el léxico y las dos definiciones de intereses con los recibos privados de R15. Conserva ejemplos e identificadores en el anexo privado.
 
 ## Dev-test · referencia de R14
 

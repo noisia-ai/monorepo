@@ -200,6 +200,8 @@ Lo demás se resuelve de forma autónoma y se anota en el registro de decisiones
 
 **Prueba en vivo.** Signal del workspace del piloto, abierto en dev-test, con los tópicos y sus volúmenes.
 
+**Prueba en vivo de la ronda 15 en UAT.** Abrir el Signal del estudio desde una sesión autenticada. Contrastar los tópicos y volúmenes del mapa nuevo en Contenido total, Conversación, Publicidad y Hashtags. Verificar el inglés inicial, la vista de originales en portugués, ambos intereses, las muestras reproducibles y las sugerencias de motivadores y barreras. Registrar en el paquete privado el resultado de cada comprobación tras completar la clasificación.
+
 **Calidad.** Se mide por muestreo; no es requisito de aceptación.
 
 ## Idempotencia y recuperación
@@ -211,7 +213,67 @@ Lo demás se resuelve de forma autónoma y se anota en el registro de decisiones
 
 ## Progreso
 
-- [x] H7 · La lectura optimizada de Signal pasó la comprobación en los cuatro segmentos del estudio de dev-test. En seis mediciones intercaladas, la vista general tardó de 1.570 a 2.570 s y la evidencia de 1.027 a 1.621 s. La comprobación de la página completa desplegada sigue pendiente. [PR de la consulta](https://github.com/noisia-ai/monorepo/pull/142)
+- [x] H7 · Los once archivos de origen coincidieron por SHA-256. Con 83,962 raíces en cada entorno, dev-test y UAT comparten 83,958 identidades. Sus textos exactos coincidieron en todos los casos comunes. El anexo conserva los cruces entre los cuatro segmentos y la comparación del léxico, los intereses y las poblaciones de consumidores.
+
+- [x] H7 · Se sellaron 600 casos ciegos para el auditor. Las diez cohortes de tópicos aportan 50 cada una y las de motivadores y barreras aportan otras 100. Son 598 raíces distintas por el solapamiento entre cohortes. Para cotejar las 22 causas del estudio de referencia se obtuvieron otras 100 raíces distintas, 50 por dirección, sin compartir raíz ni texto normalizado con las muestras ciegas. Las claves permanecen bajo custodia separada.
+
+- [x] H7 · Studio y workers sirven `e043ffe4` en UAT, ambos con Railpack, salud verificada y cero cambios preparados. Desde el enlace habitual, los cuatro filtros mostraron 61,975 raíces de conversación, 21,716 de publicidad, 271 de sólo hashtags y 83,962 de contenido total. La acción «View details and examples» cargó 25 ejemplos. El nombre y la definición en inglés aparecieron junto a su fuente portuguesa.
+
+- [x] H7 · El lector revisado del PR #166, integrado en `6c7e83c9` con CI y PostgreSQL verdes, reprodujo en dev-test los conteos y las etiquetas de R14 en los cuatro segmentos. En la primera serie, la primera consulta de conversación tardó 4.827 s. En la repetición registrada, tres pasadas por segmento dieron máximos de 1.437 s para el resumen y 0.754 s para evidencia. El anexo conserva ambas series.
+
+- [x] H7 · El cotejo independiente terminó el 11 de noviembre a las 20:03 de Ciudad de México. Verificó los 83,962 cuerpos originales de JEV contra los recibos y las solicitudes por raíz en el mismo mapa. Coincidieron los 83,962 resultados y USD 5.796879, con cero discrepancias. La huella del ledger se mantuvo entre la primera y la última lectura.
+
+- [x] H7 · Se ensayó el lector del PR #166 con el estudio terminado y el operador autorizado, en transacciones de sólo lectura de UAT. La consulta de resumen tardó 32.309 s para las 21,716 raíces de publicidad y 33.691 s para las 61,975 de conversación. La consulta de evidencia de motivadores tardó 30.160 s y entregó 30 filas.
+
+- [x] H7 · La conversación mostró 61,975 raíces y ambos intereses. En la interfaz se obtuvieron 30 motivadores y 30 barreras. La segunda consulta de cada muestra reprodujo sus 30 filas en el mismo orden. La herramienta gratuita presentó 100 sugerencias de palabras o bigramas a partir de los resultados guardados, con umbral de 0.90.
+
+- [x] H7 · Studio confirmó el cierre de JEV en UAT el 11 de noviembre a las 18:48 de Ciudad de México. Se liquidaron 83,962 solicitudes distintas por USD 5.796879 y se aplicaron 83,962 resultados a otras tantas raíces. El saldo de JEV pasó de USD 14.53 a USD 8.77 entre las observaciones de cuenta. La revisión independiente de cuerpos completos continúa.
+
+- [x] H7 · El 11 de noviembre a las 17:24 UTC el worker recuperó la llamada original por USD 0.000067. El cotejo posterior conservó los hashes de las 27,399 llamadas y resultados anteriores y del error archivado. La misma ejecución alcanzó USD 1.892233 en las primeras 27,400 raíces. Studio confirmó la reanudación con 56,562 pendientes.
+
+- [x] H7 · Se integró el PR #165 en `b2a81a0c` tras la revisión de `95aabe7c`. Pasaron CI y PostgreSQL del PR, 29 pruebas focales y las seis pruebas de PostgreSQL de esta corrección. El worker conserva el turno de una raíz hasta persistir su resultado. CI y PostgreSQL pasaron también sobre el commit fusionado. Studio y workers quedaron saludables en esa revisión con Railpack y cero cambios preparados.
+
+- [x] H7 · La continuación alcanzó 27,400 solicitudes. Se liquidaron 27,399 por USD 1.892166 y una quedó pendiente de conciliación. La respuesta y su manifiesto se verificaron frente a la solicitud de nueve preguntas. El analizador confirmó 1,588 tokens de entrada, 294 de salida y USD 0.000067 de uso. Se sellaron las huellas del resto de la corrida antes de la recuperación.
+
+- [x] H7 · La prueba nativa de UAT terminó con 1,000 raíces, 1,000 solicitudes distintas y 1,000 resultados válidos por USD 0.068894. La lectura independiente cotejó los 1,000 cuerpos completos con el registro de llamadas. Studio registró la continuación de la misma corrida el 11 de noviembre a las 13:05 UTC. Quedan 82,962 raíces en esta etapa.
+
+- [x] H7 · CI y PostgreSQL pasaron también sobre el commit fusionado `df4c81d9`. UAT aplicó 0293 una sola vez y conservó el catálogo y los lectores de la copia ensayada. El worker recuperó la solicitud original y liquidó USD 0.000069. Las 199 llamadas y resultados hermanos mantuvieron sus huellas. El registro inmutable conservó la llamada incierta y el resultado de error originales. La primera página reúne 200 resultados y USD 0.013777 en uso tarifario.
+
+- [x] H7 · El PR #164 se integró en `df4c81d9` tras revisión independiente de `444a60d6`. CI y PostgreSQL del PR pasaron. En la copia restaurada se aplicó 0293 una vez; una segunda aplicación reconoció las 61 migraciones del ledger. National, Alexa+ y Laika conservaron sus lecturas. El ensayo aislado comprobó una primera página de 199 liquidaciones y una respuesta incierta, dos intereses y tres sesiones concurrentes. Tras la recuperación, la misma ejecución completó la prueba de 1,000 y necesitó continuación explícita para las últimas dos raíces del ensayo.
+
+- [x] H7 · Studio admitió la prueba inicial con una sola ejecución. De sus primeras 200 solicitudes, 199 quedaron liquidadas por USD 0.013708. La restante detuvo el worker. En lectura privada se verificaron los 948 bytes de la respuesta frente a su huella, las nueve preguntas congeladas y el analizador nativo. La liquidación de ese recibo y las otras 800 raíces de la prueba siguen pendientes.
+
+- [x] H7 · El worker de UAT confirmó el mapa el 11 de noviembre. Studio mostró 83,962 raíces y 111 tópicos. La comprobación privada encontró los mismos 138 grupos incluidos, 20 exclusiones, textos localizados y huellas que en el catálogo editorial. Los 57 recibos pagados permanecieron idénticos. Se completaron los 84 lotes con un promedio de 43.06 s y un máximo de 51.05 s por inserción.
+
+- [x] H7 · El PR #163 se integró en `50bf8f44` tras revisión independiente del código y de las pruebas. CI y PostgreSQL quedaron verdes en el PR y en el commit fusionado. En PostgreSQL 17, con 83,962 raíces y 129 términos, el cálculo y la escritura de los candidatos en 84 lotes tardaron 127.731 s con estadísticas representativas y 170.428 s con estadísticas frías. Las sentencias más largas tardaron 2.502 s y 3.239 s, respectivamente. Las nueve pruebas de la ruta nativa pasaron. Queda por medir la adopción real en UAT.
+
+- [x] H7 · Studio y workers de UAT sirven `004e4331` con Railpack. Se verificaron ambos procesos, el avance del heartbeat, HTTP 200 y cero cambios preparados. El cálculo de puntuaciones terminó en el octavo intento sobre el corpus real. La consulta que prepara los paquetes de candidatos agotó 120 s. PostgreSQL revirtió la transacción y los recibos editoriales siguen sumando USD 8.412135.
+
+- [x] H7 · En PostgreSQL 17, el cambio de adopción del PR #162 conservó los ocho candidatos de cada raíz, el orden de desempate, los fragmentos y sus huellas. Con 83,962 raíces, 127,117 fragmentos y 111 tópicos sintéticos, la puntuación tardó 6.568 s y la escritura con índices y proyecciones tardó 45.331 s. El revisor aceptó el SQL y el ajuste posterior de las pruebas en `7a34dca4`. CI y PostgreSQL pasaron en el PR y en la fusión `004e4331`. La adopción real en UAT sigue pendiente.
+
+- [x] H7 · En UAT, la consulta revisada del PR #154 devolvió las tres guías del mapa en 44.145 s. En PostgreSQL, la prueba de 83,962 raíces comprobó la equivalencia de centroides, huellas de entrada y fragmentos. El PR #155 evita una segunda lectura de todas las guías para consultar el tamaño del corpus al iniciar el análisis.
+
+- [x] H7 · La consulta de «Datos recibidos» del PR #153 pasó revisión, CI y PostgreSQL antes y después de la fusión a `develop` en `23dc6f46`. La copia restaurada devolvió los mismos conteos y errores de reconciliación para tres workspaces.
+
+- [x] H7 · Los PR #148 y #149 pasaron CI y PostgreSQL antes y después de la fusión. En UAT, el cotejo de lecturas por lote de 500 candidatos bajó de 10.7–11.8 s a 0.11–1.41 s, con igual número de filas. La prueba sintética verificó igualdad de campos y aislamiento entre workspaces.
+- [x] H7 · La migración 0291 se ensayó sobre la copia restaurada y se aplicó una vez en UAT. La repetición verificó los 59 asientos. Cambiaron las definiciones de dos funciones. Los permisos, los resultados históricos y el acceso a su evidencia coincidieron. GitHub midió 19.564 s para cerrar un lote sintético de 95,100 filas con una población semántica en borrador.
+
+- [x] H7 · Los PR #132–#145 pasaron CI y PostgreSQL en la solicitud y tras la fusión a develop. Studio y workers de UAT arrancaron con Railpack en `966528b3`. Se comprobaron la salud de Studio, el latido del worker y que Railway tenía cero cambios preparados.
+- [x] H7 · En dev-test, seis lecturas de la vista general tardaron entre 1.516 y 1.704 s. Tres recargas en el navegador tardaron 2.406, 2.035 y 2.938 s. La primera observación dio un límite superior de 3.156 s. Los indicadores mostraron 30 ejemplos en 1.485–1.826 s.
+- [x] H7 · La marca y su Brand OS existen en UAT. Studio aceptó once archivos con 113,338 registros. El cotejo privado verificó los once SHA-256, tamaños y conteos contra los originales. El archivo de 95,100 filas tiene un recibo aceptado y conserva sus cuatro intentos fallidos. Studio y workers sirven el commit de integración `b9dbd456` del PR #150, con CI y PostgreSQL verdes antes y después de la fusión.
+- [x] H7 · UAT completó la preparación el 9 de noviembre a las 18:01, hora de México. Procesó 96,150 raíces, con 83,962 elegibles y 12,188 excluidas. Generó 127,117 fragmentos, sin raíces pendientes ni bloqueadas por derechos.
+- [x] H7 · Studio y el ledger confirmaron los vectores de 83,962 de 83,962 raíces y de 127,117 de 127,117 fragmentos. Se liquidaron 998 respuestas con 25,591,524 tokens y USD 3.071449 a tarifa. Voyage mostraba USD 0.00 de costo en noviembre al cerrar esta etapa.
+- [x] H7 · Studio y workers de UAT ejecutan `3217854e`, con Railpack, salud verificada y cero cambios preparados. Los PR #154 y #155 pasaron CI y PostgreSQL en la solicitud y en cada fusión. Topics consultó las guías en 43.332 s. El inicio desde el producto recibió HTTP 202 en 91.249 s con un único recibo para 83,962 raíces.
+- [x] H7 · El PR #157 pasó revisión, CI y PostgreSQL en la solicitud y tras fusionar a `3ceb6598`. El predicado del worker se comprobó sobre la cola de UAT en lectura. Coincidió una sola ejecución. Studio y workers arrancaron con Railpack en esa revisión y cero cambios preparados. El mismo recibo pasó de «En cola» a «Preparando conversaciones».
+- [x] H7 · El motor exportó 83,962 raíces y 127,117 fragmentos. El ajuste numérico terminó con 158 grupos y dejó un punto de recuperación antes de la interpretación.
+- [x] H7 · Los PR #158 y #159 pasaron revisión, CI y PostgreSQL antes y después de integrarse. Studio y workers sirven `57f3544d` con Railpack, salud y cero cambios preparados. «Reanudar análisis» respondió HTTP 202 en 46.250 s. El worker recibió la segunda generación de la misma ejecución con su punto de recuperación.
+- [x] H7 · Se completó la interpretación de los 158 grupos. Hay 52 puntos de control y 56 respuestas de grupo liquidadas por USD 7.257105. El recibo global añadió USD 1.155030. La primera reserva sin envío conserva gasto cero.
+- [x] H7 · La cabeza revisada del PR #160 pasó CI y PostgreSQL y se integró en `99f8bcff`. En la copia restaurada, la migración 0292 cambió sólo el cuerpo de la función que verifica las decisiones de recuperación. Se conservaron sus permisos y los lectores históricos dieron los mismos resultados. La repetición verificó las 60 entradas del ledger sin aplicar DDL.
+- [x] H7 · La migración 0292 se aplicó una sola vez en UAT. El catálogo coincide con la copia, los lectores históricos conservaron sus resultados y CI y PostgreSQL quedaron verdes sobre la integración. Studio y workers sirven `99f8bcff` con Railpack y cero cambios preparados.
+- [x] H7 · Studio reanudó la misma ejecución con HTTP 202 en 54.230 s. El motor terminó con la respuesta global original. Los 57 recibos liquidados y su importe permanecieron idénticos. UAT conserva la propuesta editorial de 97 términos distintos y una revisión de analista con 129 términos, dos intereses activos, idioma inglés y umbral 0.85.
+- [x] H7 · Se materializaron los candidatos por raíz, se completó JEV, se verificaron los cuatro filtros de Signal y se sellaron la comparación de poblaciones y las muestras ciegas.
+
+- [x] H7 · La lectura optimizada de Signal pasó la comprobación en los cuatro segmentos del estudio de dev-test. En seis mediciones intercaladas, la vista general tardó de 1.570 a 2.570 s y la evidencia de 1.027 a 1.621 s. La medición posterior de la página desplegada figura arriba. [PR de la consulta](https://github.com/noisia-ai/monorepo/pull/142)
 
 - [x] H7 · UAT aplicó las 58 migraciones ensayadas desde 0221 hasta 0290, una vez cada una. La comprobación antes de la primera escritura cubrió 371 tablas y 2,611,029 filas. PostgreSQL confirmó que seguían coincidiendo con el respaldo. Al terminar, la huella del catálogo y las nueve vistas coincidían con la copia ensayada. Los lectores históricos conservaron sus datos y se verificó la repetición del sello de dos generaciones. CI y PostgreSQL pasaron para el PR y la integración 13b6330c.
 
@@ -225,10 +287,10 @@ Lo demás se resuelve de forma autónoma y se anota en el registro de decisiones
 
 - [x] H7 · El respaldo completo de UAT se restauró en una copia con PostgreSQL 17.6, la misma distribución, locale y permisos efectivos. Coincidieron las huellas de datos de las 371 tablas comprobadas (2,611,029 filas). La primera tanda de 53 migraciones pasó en la copia. Una segunda ejecución verificó los 53 recibos sin volver a aplicar DDL.
 - [x] H7 · El inventario separó los 17 commits exclusivos del Studio desplegado en UAT del recibo posterior en la rama. El plan de producción documenta 69 commits exclusivos de main y 1,034 de develop al corte R14, además del cotejo del catálogo real en una transacción de sólo lectura. Véase [línea de UAT y plan de producción](R15_UAT_LINEAGE_AND_PRODUCTION_PLAN.md).
-- [ ] H7 · La migración 0286 ya materializa el léxico en dev-test. En conversación, la evidencia de motivador bajó de 40.280 s a 4.701 s y la de barrera de 39.586 s a 4.352 s. La vista general aún tardó 19.411 s. Las metas siguen abiertas.
+- [x] H7 · La migración 0286 ya materializa el léxico en dev-test. En conversación, la evidencia de motivador bajó de 40.280 s a 4.701 s y la de barrera de 39.586 s a 4.352 s. La vista general aún tardó 19.411 s. Las consultas y la página se volvieron a medir después de optimizar el lector.
 
 - [x] H7 · Se leyó la auditoría R15, se identificaron los destinos de Railway y Supabase y se midió la referencia en dev-test. Conversación tardó 18.925 s en la vista, 40.280 s en evidencia de motivador y 39.586 s en barrera. Con todo el contenido tardaron 24.036, 33.646 y 37.632 s respectivamente.
-- [ ] H7 · Respaldar, restaurar y ensayar en una copia, preservar las tres marcas históricas, aplicar una vez en UAT, verificar el producto y entregar la comparación con sus recibos.
+- [x] H7 · Se respaldó UAT y se ensayaron las migraciones en copia. La aplicación y su repetición verificaron el ledger. Se conservaron las lecturas de las tres marcas históricas y se verificaron el producto, la comparación y los recibos.
 
 - [x] H6 · El despliegue de Studio y del worker de dev-test desde `0c33eb05` sirvió los resultados desde el dominio habitual. Se probaron los cuatro filtros, cinco ejemplos por indicador y ambos intereses. Se dio de alta una marca ficticia en su propia organización desde el formulario normal, con el etiquetado activo y umbral inicial de 0.85.
 
@@ -289,6 +351,53 @@ Lo demás se resuelve de forma autónoma y se anota en el registro de decisiones
 - [x] Hito 4 · Recibo, comparación y muestras ciegas verificados. Se entregan el recibo público de una página y, en custodia privada, el anexo comparativo, método/fuentes, 600 casos en 11 cohortes y la clave sellada por separado. Son 597 raíces distintas por los solapamientos entre cohortes; cada cohorte cumple sus cuotas de 50 raíces por tópico para los 10 tópicos mayores y 100 de triggers/barriers. Las cohortes no representan evaluación de precisión humana.
 
 ## Sorpresas y descubrimientos
+
+- H7 · El total de raíces elegibles coincide entre entornos aunque hay cuatro identidades exclusivas en cada uno. Entre las comunes, 1,005 pasaron de publicidad en dev-test a conversación en UAT y 556 hicieron el recorrido contrario. Los 271 casos de sólo hashtags permanecieron en ese segmento. Para las cuatro identidades exclusivas por entorno, los registros de importación acreditan cuatro pares de versiones de texto que comparten un identificador de proveedor. Los dos entornos cargaron los archivos en orden contrario. El importador conservó la primera versión y registró la posterior como duplicada.
+
+- H7 · El cambio de filtro devolvió HTTP 500. Studio agotó en diez segundos la espera por una conexión mientras consultaba el rol del usuario. La interfaz también solicitaba detalles de tópicos en segundo plano al recibir un resumen nuevo. El cierre de esa petición en el navegador podía dejar la consulta en curso en PostgreSQL.
+
+- H7 · Al cambiar de conversación a publicidad, Signal conservó el segmento anterior y mostró un error. Las tres consultas de resumen observadas en PostgreSQL tardaron entre sí una media de 75.7 s y un máximo de 107.6 s. El plan estimaba una raíz en una etapa que debía atender 83,962. Los lectores esperaban páginas de datos. Las observaciones no mostraron un bloqueo de otra transacción.
+
+- H7 · La primera navegación completa a Signal perdió la conexión mientras cargaba. El enlace de Studio abrió después la conversación con 61,975 raíces, 111 tópicos y dos intereses. La preferencia explícita del operador era español. Con la preferencia en inglés, el detalle mostró el nombre y la definición inglesa junto al original portugués.
+
+- H7 · Con un límite aplicado sólo a las solicitudes del proveedor, las respuestas de una página podían pasar juntas a Storage. La prueba de una página retuvo los turnos hasta completar la persistencia, tanto con dos turnos configurados como con ocho.
+
+- H7 · En la nueva parada, Storage ya tenía tanto la parte como el manifiesto. La lectura de verificación del manifiesto recibió HTTP 429 cuatro veces. En los 32 segundos inspeccionados, Storage registró 90 lecturas y 27 escrituras rechazadas con 429. El límite del proveedor deja de contar una solicitud cuando entrega la respuesta, antes de que termine su guardado.
+
+- H7 · Los registros de Storage de la llamada identifican la operación que se interrumpió. La escritura de la parte devolvió HTTP 200; su lectura de verificación devolvió HTTP 429 antes de crear el manifiesto. Los 199 cuerpos liquidados se verificaron por lectura independiente y sumaron USD 0.013708.
+
+- H7 · El worker marcó una solicitud como incierta aun cuando Storage había guardado los bytes completos. Faltó el manifiesto. El prefijo corresponde a esa llamada y el SHA-256 del objeto coincide con el del contenido completo. La respuesta HTTP 200 contiene uso equivalente a USD 0.000069.
+
+- H7 · En el ensayo de estadísticas frías, el cálculo de coincidencia de categoría generó 83,964,001 filas intermedias para 1,000 raíces. El plan de ejecución atribuyó 38.91 s a ese trigger. El cambio probado redujo el intermedio a 83,965 filas con estadísticas frías y a 1,000 con estadísticas representativas. Se comprobó la restauración de la configuración de la conexión tanto al confirmar como al fallar.
+
+- H7 · En UAT, una vez calculadas las puntuaciones, el servidor identificó `CREATE TEMP TABLE mass_map_items` como la siguiente consulta que excedió el límite. El registro de PostgreSQL a las 07:54:22 UTC contiene el código 57014. Esa consulta todavía reunía en una tabla temporal los textos localizados de las 83,962 raíces antes de empezar las inserciones por lote.
+
+- H7 · La corrida de 83,962 raíces del PR #162 en GitHub superó el límite de 600 s. En una base nueva con las 273 migraciones y las variables de CI, la misma revisión terminó en 84.48 s. La causa específica del tiempo del runner queda abierta. La nueva prueba ordinaria inserta tres lotes y verifica el rollback de cuatro proyecciones después de interrumpir dos lotes. El ensayo completo con 84 lotes sigue disponible y pasó en 85.73 s.
+
+- H7 · Al probar el volumen realista de texto localizado, una única inserción superó 90 s aun con las puntuaciones optimizadas. Con lotes de 1,000 raíces, el mayor tardó 655 ms en PostgreSQL local. Los 84 lotes se confirmaron en una sola transacción.
+
+- H7 · Tras el cierre editorial, la consulta que ordena los ocho tópicos más próximos a cada raíz agotó el límite del servidor. PostgreSQL registró el código 57014 en la creación de la tabla temporal de puntuaciones. La transacción revirtió el mapa incompleto. La propuesta editorial ya estaba guardada en su propia revisión.
+
+- H7 · La revisión del control de recuperación detectó que la cola todavía exigía una admisión financiera vigente para despachar un recibo ya pagado. La prueba cubre ahora todo el recorrido tras revocar esa política. La prueba separada de expiración usa una admisión de corta duración. En la primera ejecución de CI el montaje tardó 57.6 s y agotó su ventana inicial de 30 s.
+
+- H7 · La respuesta global llegó completa y pasó la verificación de integridad. El validador detectó dos grupos mixtos asignados tanto a un tópico individual como a una exclusión justificada. En otro tópico encontró dos versiones inglesas que diferían por tres caracteres. El worker se detuvo antes de materializar el mapa.
+
+- H7 · Tras el ajuste, Studio mostró «0 de 158 grupos» y USD 0.00 confirmados y reservados. La autoridad de procesamiento del estudio seguía vigente; el worker conservaba una fecha global del 9 de septiembre para la ruta histórica.
+
+- H7 · El motor quedó «En cola» con cero intentos de despacho. La guarda del worker para los pilotos privados excluía también la ejecución creada por Studio. El cotejo en UAT encontró un solo trabajo de producto afectado, con admisión y actor vigentes.
+
+- H7 · En «Analizar conversaciones», las dos primeras variantes de la consulta de guías alcanzaron el límite de 55 s en las pruebas de lectura. Calcular una vez por texto los límites UTF-16 y reunir las huellas coincidentes antes de leer los vectores permitió obtener las tres guías dentro del límite. La versión anterior había agotado los 120 s de la ruta normal.
+
+- H7 · La lectura de «Datos recibidos» en UAT devolvió el mismo recibo antes y después del PR #153, con 50.7 s y 51.5 s respectivamente en las dos mediciones directas. El ahorro observado en la copia restaurada no se reprodujo en ese par de lecturas de UAT. La actualización del panel autenticado completó con HTTP 200 en 48.6 s.
+- H7 · La consulta que combina los textos de los fragmentos y sus vectores para calcular las guías del mapa seguía activa a los 118.4 s en UAT. Topics no pudo confirmar que el corpus estaba listo después de completar los vectores.
+
+- H7 · En la copia, 131,432 búsquedas por clave de mención consumieron 41 de los 42.5 s de la consulta de preparación. Leer las raíces una vez por workspace redujo la medición a 4.8 s. La lectura original se midió primero, por lo que la diferencia incluye el efecto de caché.
+
+- H7 · Después de aceptar los once archivos, la pantalla de importación mostró las 113,338 filas. El panel «Datos recibidos» falló al cargar en dos intentos y ocultó el botón para preparar el texto.
+
+- H7 · El cuarto intento leyó el CSV completo en unos 26 minutos. PostgreSQL alcanzó el límite de 120 s durante la verificación de una clave foránea al materializar las atribuciones de origen, antes de iniciar la reconciliación de poblaciones. Los cuatro cierres fallidos conservaron su historial.
+
+- H7 · El archivo de mayor tamaño falló dos veces al esperar una conexión. Tras desplegar el PR #144, el worker leyó el archivo completo. Durante el cierre, PostgreSQL devolvió `57014` al reconciliar por raíz la pertenencia a poblaciones semánticas. Studio conservó el archivo y los tres intentos.
 
 - H7 · La ruta autenticada de la versión de referencia tardó 19.537 s en mostrar la lista de tópicos. En los cuatro filtros, las consultas SQL original y optimizada devolvieron los mismos datos dentro de una misma lectura de PostgreSQL. En todo el contenido, la consulta optimizada tardó 2.545 s en la primera medición y entre 1.352 y 1.490 s en tres repeticiones.
 
@@ -371,6 +480,60 @@ Lo demás se resuelve de forma autónoma y se anota en el registro de decisiones
 
 ## Registro de decisiones
 
+- H7 · El cotejo usa dos instantáneas de sólo lectura y la procedencia que consulta Signal en cada entorno. Se informa por separado si coincide la identidad de una raíz, el texto exacto y el segmento que el lector le asigna. La comparación de causas mantiene su muestra independiente de la reservada al auditor.
+
+- H7 · El anexo mide la cobertura sobre las 83,962 solicitudes ya cotejadas. Leer el ledger con páginas ordenadas por UUID repetía el recorrido de datos. En una página de 128 llamadas, pedir sus identificadores verificados devolvió exactamente las mismas filas y huellas en 0.396 s frente a 17.827 s. La validación conserva los permisos, los resultados y la huella completa del ledger.
+
+- H7 · Mantener el esquema ya ensayado hasta 0293. Con una proporción de páginas visibles comparable a UAT, la consulta especializada bajó de 148,084 a 43,021 bloques en la prueba local. Añadir un índice de procedencia dio el mismo resultado. Se optó por corregir la lectura y la solicitud automática de detalles.
+
+- H7 · Corregir la consulta que impide cambiar de segmento desde la interfaz. El ensayo local debe conservar los permisos por raíz, el universo de cada segmento, los intereses y el orden de las muestras al reducir las lecturas. Se mantiene el resultado pagado ya liquidado.
+
+- H7 · Conservar las 600 muestras ciegas en su paquete sin clave. Para la comparación de causas, seleccionar otras 100 raíces mediante los lectores paginados de Signal. Verificar que las dos muestras provengan del mismo mapa y que sus raíces y textos normalizados sean disjuntos.
+
+- H7 · Para JEV v2, admitir hasta ocho raíces simultáneas y respetar un límite de proveedor menor cuando esté configurado. En el adaptador nativo de Storage de JEV v2, un HTTP 429 sin `Retry-After` exige una espera mínima de tres segundos. Si llega el encabezado, se utiliza la ventana indicada dentro de los límites de reintento. El tope de gasto, la identidad de la llamada y su autorización se conservan.
+
+- H7 · Mantener detenida la misma ejecución hasta que el worker concilie el recibo. Limitar en el producto el número de solicitudes que pueden estar simultáneamente en evaluación, guardado o verificación. Probar el límite con una página completa y conservar el permiso y la identidad de cada raíz.
+
+- H7 · Continuar las 82,962 raíces restantes con la autorización acumulada de USD 13.50. Las primeras 1,000 dieron 638 raíces con tópico positivo, 221 intermedias, 141 sin tópico positivo ni intermedio y cero errores técnicos. Su uso permite proyectar USD 5.72 adicionales; el saldo visible de JEV era USD 14.53.
+
+- H7 · Reintentar de forma acotada sólo la operación de Storage al recibir 429. La conciliación nativa exige el cuerpo completo, la huella, la raíz, las preguntas y la tarifa originales. Registra el error anterior, liquida el uso medido y actualiza la proyección en una transacción. El botón de reanudar conserva la autorización inicial de 1,000 raíces.
+
+- H7 · Recuperar la respuesta desde la parte privada ya verificada mediante el camino nativo del worker. Mantener la reserva hasta aplicar la liquidación y conservar la ejecución y la identidad de la raíz. Reanudar la prueba desde la interfaz una vez comprobado el comportamiento ante reintentos y respuestas ambiguas.
+
+- H7 · Iniciar la prueba de 1,000 raíces con tope total USD 13.50 y saldo JEV observado de USD 14.53. La estimación nativa de USD 18.303339 incluye el paquete almacenado de ocho candidatos en tres idiomas. JEV recibe cuatro en el idioma elegido. La continuación se decidirá a partir del gasto real y de las métricas de la prueba.
+
+- H7 · Conservar la agregación global de vectores antes de dividir las distancias y los paquetes por rangos. Un ensayo con cancelaciones numéricas detectó cambios en 276 puntuaciones al aplicar antes el filtro de rango. La versión revisada conserva los bits del promedio y de las puntuaciones en los casos de paridad, y calcula el tamaño presupuestable a partir de las filas que se insertan.
+
+- H7 · Preparar y escribir cada lote de candidatos en la misma transacción, conservando un ordinal global por raíz. Se medirá el coste por sentencia además del tiempo total y se compararán los paquetes, huellas y empates con la consulta original.
+
+- H7 · Mantener la comparación exacta, el rollback y la cancelación de la conexión en cada ejecución de PostgreSQL. Ejecutar también el volumen completo en una base desechable y guardar su recibo. El revisor comprobó ambas pruebas en `7a34dca4`.
+
+- H7 · Reutilizar los 111 centroides y dividir por ordinal la escritura de candidatos dentro de la misma transacción. El lector recibirá el mapa completo al confirmar. Se mantienen el límite de tiempo y las reglas de ordenación y de acceso.
+
+- H7 · Curar la propuesta editorial una vez persistida, mientras se resuelve el cálculo de candidatos. Las 98 entradas recibidas contenían 97 términos distintos. La configuración de analista incorpora 27 adiciones frente a los 102 términos de referencia. El catálogo editorial y sus recibos conservan sus huellas.
+
+- H7 · Permitir que el worker reciba una recuperación sin gasto cuando existe la decisión sellada del mismo actor y estudio, con el recibo y la fuente verificados. La ruta que sí puede enviar solicitudes sigue requiriendo autoridad financiera vigente. El recibo privado compara los registros monetarios antes y después.
+
+- H7 · Conservar las dos exclusiones justificadas. En ambos casos el tópico individual repetía el nombre y la definición del grupo mixto. Para la discrepancia inglesa se eligió la definición inglesa del bloque de localización del mismo recibo. La prueba sin proveedor conservó 138 grupos incluidos y 20 excluidos, con 111 tópicos y 98 términos de categoría. La respuesta original queda intacta y la adopción por Studio requiere la misma solicitud y los mismos puntos de control.
+
+- H7 · Recuperar la interpretación sobre la misma ejecución y su recibo de autorización vigente. Se conserva el límite histórico de las otras rutas y el resultado numérico ya calculado.
+
+- H7 · Conservar la ejecución creada en Topics y su recibo. El worker recogerá el asiento pendiente al reconocer el contrato de producto y su admisión. Los pilotos privados siguen su ruta de operador.
+
+- H7 · Para dimensionar el mapa se usa la cantidad de raíces del recibo de vectores que Studio envía al iniciar el estudio. La admisión revalida la revisión vigente, los permisos, la configuración y las guías dentro de la transacción. Las pruebas incluyen una repetición de la solicitud original después de crear otra corrida de vectores.
+
+- H7 · Programar el despliegue de la consulta entre el cierre de vectores y el inicio del mapa. Así el worker que custodia cada respuesta de Voyage termina su ejecución antes del relevo.
+
+- H7 · El tope de vectores se fijó en el mínimo admitido por la cotización, USD 33.229264. Antes del envío, Voyage mostraba 124,071,546 tokens gratuitos disponibles para el modelo. Se contrastarán los tokens y el costo a tarifa del ledger con el uso efectivo de la cuenta al cierre.
+
+- H7 · Conservar la única importación aceptada por archivo. Investigar la consulta del resumen y usar los controles autorizados del producto para preparar el corpus.
+
+- H7 · El PR #150 reserva un cliente de PostgreSQL únicamente para cerrar lotes verificados de al menos 50,000 registros. El tiempo local de ejecución se calcula a 12 ms por registro, con mínimo de 15 min y máximo de 25 min. La espera de locks se limita a 15 s. Si se pierde la confirmación, el worker consulta y reconcilia el resultado durable antes de habilitar la recuperación. Los archivos pequeños siguen la ruta previa. La prueba utiliza la misma autenticación SCRAM que CI.
+
+- H7 · El timeout del worker de UAT es 120 s. La prueba de escala conserva las 95,100 filas, un borrador semántico y los controles de derechos. Se fijó un límite de 90 s para GitHub después de que la primera ejecución agotara su límite sintético de 30 s. El tiempo observado se guarda con el perfil de PostgreSQL. El cierre del archivo real se acredita mediante su propio recibo.
+
+- H7 · Conservar los recibos fallidos y recuperar el archivo desde el historial de Studio. Ensayar el cierre en PostgreSQL con un lote de tamaño comparable, verificar la semántica de la reconciliación y confirmar los once recibos antes de iniciar las etapas con proveedor.
+
 - H7 · El corte de UAT se fijó en el último commit ensayado que incluye DDL. La optimización SQL de lectura pudo integrarse en paralelo una vez verdes los dos checks de ese corte, porque el manifiesto de migraciones permanecía idéntico.
 
 - H7 · Ajustar la solicitud sintética al cierre de la política y probar el borde de medianoche con un reloj controlado. La caducidad que aplica el producto sigue vigente. Antes de desplegar la consulta optimizada se verifican el alcance de permisos, los cuatro segmentos y la página autenticada completa.
@@ -446,7 +609,13 @@ Lo demás se resuelve de forma autónoma y se anota en el registro de decisiones
 
 ## Resultado y retrospectiva
 
-El corte de base de datos de R15 terminó en UAT con el mismo catálogo que la copia ensayada. Los resultados y el acceso a evidencia de las marcas históricas coincidieron antes y después. El despliegue de los dos servicios y el estudio nuevo por la interfaz son los siguientes hitos de aceptación.
+En el cotejo R14–R15, los once archivos de entrada coinciden, las 83,958 raíces comunes conservan el mismo texto exacto y hay cuatro exclusivas de cada entorno. El mapa pasó de 98 a 111 tópicos. La configuración curada de UAT conserva los 102 términos previos y suma 27. Los dos intereses conservan su definición y umbral de 0.85. Para contrastar la calidad del resultado se sellaron las 600 muestras ciegas y se reservó una segunda muestra de 100 para contrastar las causas documentadas por el estudio humano.
+
+La clasificación completa de R15 produjo 83,962 resultados en una corrida desde Studio UAT. Las 1,000 raíces iniciales y su continuación sumaron USD 5.796879. El cotejo de los cuerpos originales verificó ese importe y cada resultado. El uso total a tarifa fue USD 17.280463. Signal abrió el mapa de 111 tópicos y mostró los cuatro segmentos. La cobertura, los tiempos y los volúmenes están en el [recibo público de R15](DELIVERY_PILOTO_ETIQUETADO_ESTUDIO_A_R15_2026-11-11.md).
+
+En la continuación en UAT, una lectura del manifiesto dejó pendiente una de 27,400 solicitudes. Se verificaron los bytes originales y se registró el importe que el worker debe conciliar, USD 0.000067. El worker liquidó ese recibo y Studio reanudó la misma ejecución con las 56,562 raíces restantes. La versión `b2a81a0c` acota la concurrencia hasta persistir cada raíz.
+
+El corte de base de datos de R15 terminó en UAT con el mismo catálogo que la copia ensayada. Los resultados y el acceso a evidencia de las marcas históricas coincidieron antes y después. Studio y workers ya sirven desde la misma revisión. Studio aceptó los once archivos y preparó el texto de 83,962 raíces elegibles. El recibo de preparación registra 127,117 fragmentos. El worker completó los vectores de todo el corpus. Studio y workers pasaron a `3217854e` con Railpack y cero cambios preparados. Topics admitió un único mapa en la ruta normal de UAT. El worker de `3ceb6598` recogió ese asiento y completó el ajuste numérico con 158 grupos. La primera reserva quedó sin envío. En `57f3544d`, la interfaz reanudó la misma ejecución con su admisión vigente y su resultado numérico conservado. La interpretación completó los 158 grupos. Se liquidaron USD 8.412135 en total por la interpretación y la consolidación global. El motor recuperó el catálogo en UAT sin aumentar ese importe. Studio guardó la propuesta y la curación del léxico. En `50bf8f44`, Studio muestra el mapa de las 83,962 raíces. Se comprobaron los candidatos y la configuración de analista y se solicitó la prueba inicial de JEV desde la interfaz. La primera página dejó 199 recibos liquidados y una respuesta guardada cuyo manifiesto quedó pendiente. Se verificaron en privado su huella, su uso y las nueve respuestas contra la solicitud original. En UAT, la recuperación nativa liquidó ese mismo recibo y conservó íntegros sus 199 hermanos.
 
 ### Ronda 14
 
