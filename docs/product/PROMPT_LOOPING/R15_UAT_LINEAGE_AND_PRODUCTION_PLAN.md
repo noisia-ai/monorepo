@@ -39,6 +39,8 @@ El 11 de noviembre se repitió la lectura tras integrar el cálculo de candidato
 
 El corte del 11 de noviembre posterior al PR #164 conserva `main` en `c0ee9326` y lleva `develop` a `df4c81d9`. Hay 85 commits exclusivos de main y 1,111 de develop. El PR #165 lleva `develop` a `b2a81a0c`, con 1,113 commits exclusivos frente a los mismos 85 de `main`. Sus cambios afectan al worker y sus pruebas. El catálogo aplicable sigue en 0293.
 
+El corte funcional de Signal en `e043ffe4` incorpora los PR #166 y #167. La lectura de las ramas encontró 85 commits exclusivos de `main` y 1,118 de `develop`. Los cambios reducen las lecturas de procedencia y sirven el detalle del tópico bajo petición. El inventario de migraciones de UAT conserva los 61 archivos ensayados hasta 0293. El PR de documentación de cierre se contabilizará en el siguiente cotejo de ramas, antes de preparar un candidato de producción.
+
 ## Plan de producción · escrito, no ejecutado
 
 1. Congelar las referencias exactas de main y develop; enumerar commits de ambos lados, incluyendo todos los exclusivos de main del corte congelado. Asignar a cada cambio destino equivalente en develop, PR de portado con revisión y CI, o descarte documentado. Resolver conflictos de producto antes de formar el candidato.

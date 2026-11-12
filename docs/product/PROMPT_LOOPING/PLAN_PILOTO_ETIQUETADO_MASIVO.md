@@ -213,6 +213,10 @@ Lo demás se resuelve de forma autónoma y se anota en el registro de decisiones
 
 ## Progreso
 
+- [x] H7 · El lector revisado del PR #166, integrado en `6c7e83c9` con CI y PostgreSQL verdes, reprodujo en dev-test los conteos y las etiquetas de R14 en los cuatro segmentos. En la primera serie, la primera consulta de conversación tardó 4.827 s. En la repetición registrada, tres pasadas por segmento dieron máximos de 1.437 s para el resumen y 0.754 s para evidencia. El anexo conserva ambas series.
+
+- [x] H7 · El cotejo independiente terminó el 11 de noviembre a las 20:03 de Ciudad de México. Verificó los 83,962 cuerpos originales de JEV contra los recibos y las solicitudes por raíz en el mismo mapa. Coincidieron los 83,962 resultados y USD 5.796879, con cero discrepancias. La huella del ledger se mantuvo entre la primera y la última lectura.
+
 - [x] H7 · Se ensayó el lector del PR #166 con el estudio terminado y el operador autorizado, en transacciones de sólo lectura de UAT. La consulta de resumen tardó 32.309 s para las 21,716 raíces de publicidad y 33.691 s para las 61,975 de conversación. La consulta de evidencia de motivadores tardó 30.160 s y entregó 30 filas.
 
 - [x] H7 · La conversación mostró 61,975 raíces y ambos intereses. En la interfaz se obtuvieron 30 motivadores y 30 barreras. La segunda consulta de cada muestra reprodujo sus 30 filas en el mismo orden. La herramienta gratuita presentó 100 sugerencias de palabras o bigramas a partir de los resultados guardados, con umbral de 0.90.
@@ -468,6 +472,8 @@ Lo demás se resuelve de forma autónoma y se anota en el registro de decisiones
 
 ## Registro de decisiones
 
+- H7 · El anexo mide la cobertura sobre las 83,962 solicitudes ya cotejadas. Leer el ledger con páginas ordenadas por UUID repetía el recorrido de datos. En una página de 128 llamadas, pedir sus identificadores verificados devolvió exactamente las mismas filas y huellas en 0.396 s frente a 17.827 s. La validación conserva los permisos, los resultados y la huella completa del ledger.
+
 - H7 · Mantener el esquema ya ensayado hasta 0293. Con una proporción de páginas visibles comparable a UAT, la consulta especializada bajó de 148,084 a 43,021 bloques en la prueba local. Añadir un índice de procedencia dio el mismo resultado. Se optó por corregir la lectura y la solicitud automática de detalles.
 
 - H7 · Corregir la consulta que impide cambiar de segmento desde la interfaz. El ensayo local debe conservar los permisos por raíz, el universo de cada segmento, los intereses y el orden de las muestras al reducir las lecturas. Se mantiene el resultado pagado ya liquidado.
@@ -593,7 +599,7 @@ Lo demás se resuelve de forma autónoma y se anota en el registro de decisiones
 
 ## Resultado y retrospectiva
 
-La clasificación completa de R15 produjo 83,962 resultados en una corrida desde Studio UAT. Las 1,000 raíces iniciales y su continuación sumaron USD 5.796879. La vista de Signal abrió el mapa con sus 111 tópicos. El recibo de entrega se cerrará con el cotejo independiente, los cuatro segmentos, las muestras ciegas y la comparación.
+La clasificación completa de R15 produjo 83,962 resultados en una corrida desde Studio UAT. Las 1,000 raíces iniciales y su continuación sumaron USD 5.796879. El cotejo de los cuerpos originales verificó ese importe y cada resultado. La vista de Signal abrió el mapa con sus 111 tópicos. El recibo de entrega se cerrará con los cuatro segmentos, las muestras ciegas y la comparación.
 
 En la continuación en UAT, una lectura del manifiesto dejó pendiente una de 27,400 solicitudes. Se verificaron los bytes originales y se registró el importe que el worker debe conciliar, USD 0.000067. El worker liquidó ese recibo y Studio reanudó la misma ejecución con las 56,562 raíces restantes. La versión `b2a81a0c` acota la concurrencia hasta persistir cada raíz.
 
