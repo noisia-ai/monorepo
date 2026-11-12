@@ -2325,6 +2325,9 @@
     "quality": { "good": "Saludable", "warning": "Requiere revisión", "danger": "Requiere acción", "not_available": "No disponible" },
     "coverage": { "good": "Con cobertura", "warning": "Parcial", "danger": "Requiere acción", "not_available": "No disponible", "notAvailable": "Sin cobertura", "noMentions": "Sin menciones gobernadas", "mentions": "{count} menciones gobernadas" },
     "dashboard": {
+      "receiptsIdle": "Recepción sin consultar",
+      "loadReceipts": "Comprobar recepción",
+      "receiptsLoading": "Comprobando recepción…",
       "eyebrow": "Operación",
       "title": "Dashboard",
       "subtitle": "Datos recibidos y seguimiento de la operación de tus marcas.",

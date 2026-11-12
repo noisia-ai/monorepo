@@ -1,26 +1,38 @@
 import Link from "next/link";
-import { ArrowRight, Buildings, Database, Warning } from "@phosphor-icons/react/dist/ssr";
+import { ArrowRight, ArrowSquareOut, Buildings, Database, Warning } from "@phosphor-icons/react/dist/ssr";
 import { useLocale, useTranslations } from "next-intl";
 import { AdminResourceSection, AdminStatus, AdminWorkspaceHeader, formatAdminDate, formatAdminNumber } from "./AdminWorkspacePrimitives";
 import { AdminCorpusReceipt, AdminCorpusCoverage, AdminCorpusStatus } from "./AdminCorpusSummary";
 import { adminDashboardNeedsAttention } from "@/lib/data/admin-dashboard-presentation";
 import type { getAdminDashboard } from "@/lib/data/admin-workspace";
 
-export function AdminDashboard({ dashboard }: { dashboard: Awaited<ReturnType<typeof getAdminDashboard>> }) {
+export function AdminDashboard({ dashboard, corpusLoading = false, corpusRequested = "all" }: {
+  dashboard: Awaited<ReturnType<typeof getAdminDashboard>>;
+  corpusLoading?: boolean;
+  corpusRequested?: string | null;
+}) {
   const t = useTranslations("AdminWorkspace"), locale = useLocale();
+  const receiptRequested = (brandId: string) => corpusRequested === "all"
+    || corpusRequested !== null && dashboard.brands.some(brand => brand.brandId === brandId && brand.workspaceId === corpusRequested);
+  const pendingCorpus = corpusLoading || corpusRequested === null;
+  const priorities = dashboard.priorities.filter(priority => !priority.code.startsWith("receipt_")
+    || !pendingCorpus && receiptRequested(priority.brandId));
   const attentionBrands = dashboard.brands
     .filter(adminDashboardNeedsAttention)
     .slice(0, 12);
   const workspaceOverview = [
     ...attentionBrands,
     ...dashboard.brands.filter((brand) => !attentionBrands.some((attention) => attention.brandId === brand.brandId))
-  ].slice(0, 12);
+  ];
 
   return (
     <div className="admin-workspace-page">
       <AdminWorkspaceHeader
         actions={(
           <>
+            <form action="/studio" method="get">
+              <button className="admin-button" name="receipts" type="submit" value="all">{t("dashboard.loadReceipts")}</button>
+            </form>
             <Link className="admin-button" href="/studio/data" prefetch={false}>
               <Database aria-hidden size={15} />{t("dashboard.actions.data")}
             </Link>
@@ -45,8 +57,12 @@ export function AdminDashboard({ dashboard }: { dashboard: Awaited<ReturnType<ty
           <dt>{t("dashboard.summary.mentions")}</dt>
           <dd>{dashboard.totals.receivedMentions === null ? "—" : formatAdminNumber(dashboard.totals.receivedMentions, locale)}</dd>
           <small>{t("dashboard.summary.mentionsHint")}</small>
-          <small>{t("dashboard.summary.receiptCounts", { files: dashboard.totals.acceptedFiles, rows: dashboard.totals.recordsRead })}</small>
-          {dashboard.totals.incompleteReceiptBrands > 0 ? <small>{t("dashboard.summary.partialReceipt", { count: dashboard.totals.incompleteReceiptBrands })}</small> : null}
+          {pendingCorpus
+            ? <small role={corpusLoading ? "status" : undefined}>{t(corpusLoading ? "dashboard.receiptsLoading" : "dashboard.receiptsIdle")}</small>
+            : <small>{dashboard.totals.receivedMentions === null
+              ? t("corpusSummary.states.unavailable")
+              : t("dashboard.summary.receiptCounts", { files: dashboard.totals.acceptedFiles, rows: dashboard.totals.recordsRead })}</small>}
+          {!pendingCorpus && dashboard.totals.incompleteReceiptBrands > 0 ? <small>{t("dashboard.summary.partialReceipt", { count: dashboard.totals.incompleteReceiptBrands })}</small> : null}
         </div>
         <div>
           <dt>{t("dashboard.summary.sources")}</dt>
@@ -65,14 +81,15 @@ export function AdminDashboard({ dashboard }: { dashboard: Awaited<ReturnType<ty
           subtitle={t("dashboard.priorities.subtitle")}
           title={t("dashboard.priorities.title")}
         >
-          {dashboard.priorities.length === 0 ? (
+          {priorities.length === 0 ? (
             <div className="admin-empty">
-              <strong>{t("dashboard.priorities.emptyTitle")}</strong>
-              <p>{t("dashboard.priorities.emptyBody")}</p>
+              {pendingCorpus
+                ? <p role={corpusLoading ? "status" : undefined}>{t(corpusLoading ? "dashboard.receiptsLoading" : "dashboard.receiptsIdle")}</p>
+                : <><strong>{t("dashboard.priorities.emptyTitle")}</strong><p>{t("dashboard.priorities.emptyBody")}</p></>}
             </div>
           ) : (
             <ol className="admin-priority-list">
-              {dashboard.priorities.map((priority) => (
+              {priorities.map((priority) => (
                 <li key={`${priority.brandId}:${priority.code}`}>
                   <span aria-hidden className={`admin-priority-list__marker admin-priority-list__marker--${priority.state}`} />
                   <div>
@@ -127,21 +144,37 @@ export function AdminDashboard({ dashboard }: { dashboard: Awaited<ReturnType<ty
                 <th>{t("brands.columns.activity")}</th>
               </tr></thead>
               <tbody>
-                {workspaceOverview.map((brand) => (
-                  <tr key={brand.brandId}>
+                {workspaceOverview.map((brand) => {
+                  const requested = receiptRequested(brand.brandId);
+                  const pending = corpusLoading || !requested;
+                  return <tr key={brand.brandId}>
                     <td>
                       <div className="admin-table__primary">
                         <Link href={`/studio/brands/${brand.brandId}`} prefetch={false}>{brand.brandName}</Link>
                         <small>{brand.organizationName}</small>
+                        {brand.workspaceSlug ? (
+                          <Link
+                            className="admin-button admin-button--compact"
+                            href={`/signal/${encodeURIComponent(brand.workspaceSlug)}/topics-narratives`}
+                            prefetch={false}
+                          >
+                            {t("corpusSummary.openSignal")}<ArrowSquareOut aria-hidden size={14} />
+                          </Link>
+                        ) : null}
+                        {brand.workspaceId ? <form action="/studio" method="get">
+                          <button className="admin-button admin-button--compact" name="receipts" type="submit" value={brand.workspaceId}>
+                            {t("dashboard.loadReceipts")}
+                          </button>
+                        </form> : null}
                       </div>
                     </td>
-                    <td><AdminCorpusReceipt corpus={brand.corpus} /></td>
-                    <td><AdminCorpusCoverage corpus={brand.corpus} /></td>
-                    <td><AdminCorpusStatus corpus={brand.corpus} /></td>
+                    <td>{pending ? <span role={corpusLoading && requested ? "status" : undefined}>{t(corpusLoading && requested ? "dashboard.receiptsLoading" : "dashboard.receiptsIdle")}</span> : <AdminCorpusReceipt corpus={brand.corpus} />}</td>
+                    <td>{pending ? "—" : <AdminCorpusCoverage corpus={brand.corpus} />}</td>
+                    <td>{pending ? "—" : <AdminCorpusStatus corpus={brand.corpus} />}</td>
                     <td><AdminStatus state={reportStateTone(brand.reportState)}>{t(`reports.states.${brand.reportState}`)}</AdminStatus></td>
                     <td className="admin-table__muted">{formatAdminDate(brand.latestActivityAt, locale, { dateStyle: "medium", timeZone: brand.timezone ?? "UTC" })}</td>
-                  </tr>
-                ))}
+                  </tr>;
+                })}
               </tbody>
             </table>
           </div>
