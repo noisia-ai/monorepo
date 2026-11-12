@@ -213,6 +213,8 @@ Lo demás se resuelve de forma autónoma y se anota en el registro de decisiones
 
 ## Progreso
 
+- [x] H7 · La conversación mostró 61,975 raíces y ambos intereses. En la interfaz se obtuvieron 30 motivadores y 30 barreras. La segunda consulta de cada muestra reprodujo sus 30 filas en el mismo orden. La herramienta gratuita presentó 100 sugerencias de palabras o bigramas a partir de los resultados guardados, con umbral de 0.90.
+
 - [x] H7 · Studio confirmó el cierre de JEV en UAT el 11 de noviembre a las 18:48 de Ciudad de México. Se liquidaron 83,962 solicitudes distintas por USD 5.796879 y se aplicaron 83,962 resultados a otras tantas raíces. El saldo de JEV pasó de USD 14.53 a USD 8.77 entre las observaciones de cuenta. La revisión independiente de cuerpos completos continúa.
 
 - [x] H7 · El 11 de noviembre a las 17:24 UTC el worker recuperó la llamada original por USD 0.000067. El cotejo posterior conservó los hashes de las 27,399 llamadas y resultados anteriores y del error archivado. La misma ejecución alcanzó USD 1.892233 en las primeras 27,400 raíces. Studio confirmó la reanudación con 56,562 pendientes.
@@ -338,7 +340,9 @@ Lo demás se resuelve de forma autónoma y se anota en el registro de decisiones
 
 ## Sorpresas y descubrimientos
 
-- H7 · La primera navegación completa a Signal perdió la conexión mientras cargaba. El enlace de Studio abrió después la conversación con 61,975 raíces, 111 tópicos y dos intereses. La preferencia explícita del operador era español; al elegir inglés, el detalle mostró el nombre y la definición inglesa junto al original portugués.
+- H7 · Al cambiar de conversación a publicidad, Signal conservó el segmento anterior y mostró un error. Las tres consultas de resumen observadas en PostgreSQL tardaron entre sí una media de 75.7 s y un máximo de 107.6 s. El plan estimaba una raíz en una etapa que debía atender 83,962. Los lectores esperaban páginas de datos. Las observaciones no mostraron un bloqueo de otra transacción.
+
+- H7 · La primera navegación completa a Signal perdió la conexión mientras cargaba. El enlace de Studio abrió después la conversación con 61,975 raíces, 111 tópicos y dos intereses. La preferencia explícita del operador era español. Con la preferencia en inglés, el detalle mostró el nombre y la definición inglesa junto al original portugués.
 
 - H7 · Con un límite aplicado sólo a las solicitudes del proveedor, las respuestas de una página podían pasar juntas a Storage. La prueba de una página retuvo los turnos hasta completar la persistencia, tanto con dos turnos configurados como con ocho.
 
@@ -459,6 +463,8 @@ Lo demás se resuelve de forma autónoma y se anota en el registro de decisiones
 - Dos lotes devolvieron referencias válidas dentro de la muestra de 30 pero superaron el máximo de diez referencias por campo. La comprobación privada de las respuestas originales y de reparación encontró entre 11 y 30 referencias en los campos rechazados.
 
 ## Registro de decisiones
+
+- H7 · Corregir la consulta que impide cambiar de segmento desde la interfaz. El ensayo local debe conservar los permisos por raíz, el universo de cada segmento, los intereses y el orden de las muestras al reducir las lecturas. Se mantiene el resultado pagado ya liquidado.
 
 - H7 · Conservar las 600 muestras ciegas en su paquete sin clave. Para la comparación de causas, seleccionar otras 100 raíces mediante los lectores paginados de Signal. Verificar que las dos muestras provengan del mismo mapa y que sus raíces y textos normalizados sean disjuntos.
 
