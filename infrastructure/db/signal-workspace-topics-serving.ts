@@ -917,12 +917,27 @@ async function overview(client: PoolClient, args: Args, ctx: Context): Promise<S
     limitations: ["classification_required", "current_display_rights_only"] };
 }
 
-export function loadSignalWorkspaceTopicsOverviewV1(args: Args & { imported_fallback: true }): Promise<SignalWorkspaceOverviewV1 | null>;
-export function loadSignalWorkspaceTopicsOverviewV1(args: Args & { imported_fallback?: false }): Promise<SignalWorkspaceTopicsOverviewV1 | null>;
-export function loadSignalWorkspaceTopicsOverviewV1(args: Args): Promise<SignalWorkspaceOverviewV1 | null>;
-export async function loadSignalWorkspaceTopicsOverviewV1(args: Args): Promise<SignalWorkspaceOverviewV1 | null> {
+export function loadSignalWorkspaceTopicsOverviewV1(args: Args & { imported_fallback: true }, options?: { surface: "monitoring" }): Promise<SignalWorkspaceOverviewV1 | null>;
+export function loadSignalWorkspaceTopicsOverviewV1(args: Args & { imported_fallback?: false }, options?: { surface: "monitoring" }): Promise<SignalWorkspaceTopicsOverviewV1 | null>;
+export function loadSignalWorkspaceTopicsOverviewV1(args: Args, options?: { surface: "monitoring" }): Promise<SignalWorkspaceOverviewV1 | null>;
+export async function loadSignalWorkspaceTopicsOverviewV1(args: Args, options?: { surface: "monitoring" }): Promise<SignalWorkspaceOverviewV1 | null> {
   return transaction(args.database, async client => {
-    const ctx = await context(client, args); return ctx.native ? overview(client, args, ctx) : null;
+    const ctx = await context(client, args);
+    if (!ctx.native) return null;
+    if (options?.surface !== "monitoring" || !ctx.mass_labeling) return overview(client, args, ctx);
+    // The mass map covers a large workspace fraction. Reading its randomly keyed
+    // mention metadata in heap order avoids repeated cold-page visits in UAT.
+    // Apply this plan preference only after authorization and only to this read.
+    const setting = (await client.query<{ enable_indexscan: string }>("SHOW enable_indexscan")).rows[0]!.enable_indexscan;
+    await client.query("SET LOCAL enable_indexscan=off");
+    try {
+      const result = await overview(client, args, ctx);
+      await client.query("SELECT set_config('enable_indexscan',$1,true)", [setting]);
+      return result;
+    } catch (error) {
+      await client.query("SELECT set_config('enable_indexscan',$1,true)", [setting]).catch(() => undefined);
+      throw error;
+    }
   });
 }
 
