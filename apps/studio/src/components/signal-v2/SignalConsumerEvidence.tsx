@@ -23,13 +23,20 @@ export function SignalConsumerEvidence({ data, loading, workspaceTimezone, onOpe
   const [reading, setReading] = useState(false), [error, setError] = useState(false);
   const request = useRef<AbortController | null>(null);
   const sequence = useRef(0);
+  const readBlocked = useRef(loading || !data.is_current); readBlocked.current = loading || !data.is_current;
   const scopeKey = `${data.workspace_id}:${data.scope_digest}`;
   useEffect(() => {
+    const fence = sequence;
     setChoice(null); setPage(null); setError(false); setReading(false);
     request.current?.abort(); sequence.current++;
-    return () => { request.current?.abort(); sequence.current++; };
+    return () => { request.current?.abort(); fence.current++; };
   }, [scopeKey]);
+  useEffect(() => {
+    if (!loading) return;
+    request.current?.abort(); sequence.current++; setReading(false);
+  }, [loading]);
   const read = useCallback(async (selected: Choice, cursor?: string) => {
+    if (readBlocked.current || !data.is_current) return;
     request.current?.abort(); const controller = new AbortController(); request.current = controller;
     const ticket = ++sequence.current; setReading(true); setError(false);
     const params = new URLSearchParams({ choice: selected, scope_digest: data.scope_digest, timezone: workspaceTimezone, limit: "30" });
@@ -53,7 +60,7 @@ export function SignalConsumerEvidence({ data, loading, workspaceTimezone, onOpe
     } catch {
       if (!controller.signal.aborted && ticket === sequence.current) setError(true);
     } finally { if (!controller.signal.aborted && ticket === sequence.current) setReading(false); }
-  }, [data.filters.conversation_segment, data.filters.date_from, data.filters.date_to, data.scope_digest, data.workspace_id, workspaceTimezone]);
+  }, [data.filters.conversation_segment, data.filters.date_from, data.filters.date_to, data.is_current, data.scope_digest, data.workspace_id, workspaceTimezone]);
   if (!data.consumer_indicators) return null;
   const close = () => { request.current?.abort(); sequence.current++; setChoice(null); setReading(false); };
   return <>

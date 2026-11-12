@@ -103,8 +103,7 @@ function SignalComputedWorkspaceTopics({ initialBundle, brandName, data, loading
   const refreshCallback = useRef(onRefresh); refreshCallback.current = onRefresh;
   const initial = validInitialTopicBundle(initialBundle, data);
   const [drawer, setDrawer] = useState(false);
-  const [reading, setReading] = useState(() => Boolean(data.population_segments && data.is_current && surface !== "consumers"
-    && !initial && workspaceTermsForSectionV1(data, "topics").length));
+  const [reading, setReading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [page, setPage] = useState<SignalWorkspaceTopicEvidencePageV1 | null>(initial?.evidence ?? null);
   const [detail, setDetail] = useState<SignalWorkspaceTopicDetailV1 | null>(initial?.detail ?? null);
@@ -119,6 +118,12 @@ function SignalComputedWorkspaceTopics({ initialBundle, brandName, data, loading
     .map(item => localizedSignalTopic(item, locale)), [data, section, locale]);
   const term = sectionTerms.find(item => item.term_key === selectedKey) ?? sectionTerms[0] ?? null;
   const termGeneration = term?.interest_generation_id ?? data.generation_id;
+  const termKey = term?.term_key ?? null;
+  const massPopulation = Boolean(data.population_segments);
+  const canReadTerm = Boolean(term && (termGeneration || term.basis === "concept_membership" || massPopulation));
+  const readBlocked = useRef(loading || refreshFailed || !data.is_current);
+  readBlocked.current = loading || refreshFailed || !data.is_current;
+  const inspectionSnapshot = massPopulation ? null : data.observed_at;
   const evidence = page?.scope_digest === data.scope_digest && page.kind === sectionKind && page.term_key === term?.term_key
     && page.workspace_id === data.workspace_id && data.is_current ? page : null;
   const dateFrom = data.filters.date_from ?? data.available_dates.date_from;
@@ -129,7 +134,7 @@ function SignalComputedWorkspaceTopics({ initialBundle, brandName, data, loading
   const share = (value: number | null) => value === null ? "—" : new Intl.NumberFormat(locale,
     { style: "percent", maximumFractionDigits: 1 }).format(value);
   const read = useCallback(async (cursor?: string) => {
-    if (!term || !data.is_current || (!termGeneration && term.basis !== "concept_membership" && !data.population_segments)) return;
+    if (!termKey || !canReadTerm || !data.is_current || readBlocked.current || request.current?.signal.aborted === false) return;
     request.current?.abort(); const controller = new AbortController(); request.current = controller;
     const version = ++sequence.current; setReading(true); setError(null);
     const params = new URLSearchParams({ view: "all_conversations", scope_digest: data.scope_digest, limit: "25" });
@@ -138,7 +143,7 @@ function SignalComputedWorkspaceTopics({ initialBundle, brandName, data, loading
     if (data.filters.date_to) params.set("date_to", data.filters.date_to);
     if (cursor) params.set("cursor", cursor);
     try {
-      const response = await fetch(`/api/data-os/signal/${data.workspace_id}/topics-narratives/${sectionKind}/${encodeURIComponent(term.term_key)}/${cursor ? "evidence" : "inspection"}?${params}`,
+      const response = await fetch(`/api/data-os/signal/${data.workspace_id}/topics-narratives/${sectionKind}/${encodeURIComponent(termKey)}/${cursor ? "evidence" : "inspection"}?${params}`,
         { cache: "no-store", signal: controller.signal });
       if (controller.signal.aborted || version !== sequence.current) return;
       if (!response.ok) {
@@ -150,14 +155,14 @@ function SignalComputedWorkspaceTopics({ initialBundle, brandName, data, loading
       const inspected = cursor ? null : payload as SignalWorkspaceTopicReadBundleV1;
       if (controller.signal.aborted || version !== sequence.current) return;
       if (!body || body.contract_version !== "signal-workspace-topic-evidence-v1" || body.workspace_id !== data.workspace_id
-        || body.generation_id !== termGeneration || body.scope_digest !== data.scope_digest || body.kind !== sectionKind || body.term_key !== term.term_key) {
+        || body.generation_id !== termGeneration || body.scope_digest !== data.scope_digest || body.kind !== sectionKind || body.term_key !== termKey) {
         setPage(null); throw new Error("evidenceStale");
       }
       if (inspected) {
         if (inspected.contract_version !== "signal-workspace-topic-read-bundle-v1"
           || inspected.overview.workspace_id !== data.workspace_id || inspected.overview.scope_digest !== data.scope_digest
           || !inspected.overview.is_current || !validNativeTopicDetail(inspected.detail, {
-            workspace_id: data.workspace_id, generation_id: termGeneration, scope_digest: data.scope_digest, kind: sectionKind, term_key: term.term_key })) {
+            workspace_id: data.workspace_id, generation_id: termGeneration, scope_digest: data.scope_digest, kind: sectionKind, term_key: termKey })) {
           setDetail(null); setPage(null); throw new Error("evidenceStale");
         }
         setDetail(inspected.detail);
@@ -167,19 +172,27 @@ function SignalComputedWorkspaceTopics({ initialBundle, brandName, data, loading
         : body);
     } catch (cause) {
       if (!controller.signal.aborted && version === sequence.current) setError(cause instanceof Error ? cause.message : "evidenceError");
-    } finally { if (!controller.signal.aborted && version === sequence.current) setReading(false); }
-  }, [data.filters.conversation_segment, data.filters.date_from, data.filters.date_to, data.is_current, data.population_segments, data.scope_digest, data.workspace_id, sectionKind, term, termGeneration]);
+    } finally {
+      if (!controller.signal.aborted && version === sequence.current) setReading(false);
+      if (request.current === controller) request.current = null;
+    }
+  }, [canReadTerm, data.filters.conversation_segment, data.filters.date_from, data.filters.date_to, data.is_current, data.scope_digest, data.workspace_id, sectionKind, termKey, termGeneration]);
   useEffect(() => {
     const fence = sequence;
-    sequence.current++; request.current?.abort(); setError(null); setReading(false);
-    if (initial !== consumedInitial.current && initial?.detail && initial.detail.term_key === term?.term_key && initial.detail.kind === sectionKind) {
+    sequence.current++; request.current?.abort(); setError(null); setReading(false); setDrawer(false);
+    if (initial !== consumedInitial.current && initial?.detail && initial.detail.term_key === termKey && initial.detail.kind === sectionKind) {
       consumedInitial.current = initial; setPage(initial.evidence); setDetail(initial.detail);
     } else {
       setPage(null); setDetail(null);
-      if (surface !== "consumers" && (section === "topics" || section === "interests" || section === "narratives" || surface === "summary") && data.is_current) void read();
+      // Mass pages load detail and examples from their explicit action.
+      if (!massPopulation && surface !== "consumers" && (section === "topics" || section === "interests" || section === "narratives" || surface === "summary") && data.is_current) void read();
     }
     return () => { fence.current++; request.current?.abort(); };
-  }, [read, data.observed_at, section, surface, initial, term, sectionKind, data.is_current]);
+  }, [read, inspectionSnapshot, section, surface, initial, termKey, sectionKind, data.is_current, massPopulation]);
+  useEffect(() => {
+    if (!loading && !refreshFailed) return;
+    request.current?.abort(); sequence.current++; setReading(false);
+  }, [loading, refreshFailed]);
   useEffect(() => {
     if (!data.is_processing || loading || refreshFailed || !onRefresh) return;
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -290,14 +303,14 @@ function SignalComputedWorkspaceTopics({ initialBundle, brandName, data, loading
         <div className="signal-v2-tn__evidence-intro"><p>{t(sectionKind === "narrative" ? "narrativeMembership"
           : term?.basis === "concept_membership" ? "mfp.membership" : term?.basis === "defined_interest" ? "definedMembership" : "membership", { count: term?.mention_count ?? 0 })}</p>
           <p>{term?.basis === "concept_membership" ? t("mfp.quality") : term?.basis === "defined_interest" ? t("definedQuality") : t("traceability")}</p></div>
-        <div className="signal-v2-tn__detail-actions"><button className="signal-v2-tn__button" type="button" disabled={!term || term.evidence_available === false || !data.is_current}
-          onClick={() => { setDrawer(true); if (!evidence && !reading) void read(); }}><Quotes size={15} />{t("evidence")}</button></div>
+        <div className="signal-v2-tn__detail-actions"><button className="signal-v2-tn__button" type="button" disabled={loading || refreshFailed || !term || term.evidence_available === false || !data.is_current}
+          onClick={() => { if (readBlocked.current) return; setDrawer(true); if (!evidence && !reading) void read(); }}><Quotes size={15} />{t(massPopulation ? "detailsAndEvidence" : "evidence")}</button></div>
         {term?.evidence_available === false ? <p className="signal-v2-tn__evidence-intro">{t("definedEvidencePending")}</p> : null}
-        {term ? <>{error ? <p role="alert">{t("detailMetrics.error")} <button className="signal-v2-filter" type="button" onClick={() => void read()}>{t("detailMetrics.retry")}</button></p> : null}
+        {term && (!massPopulation || detail || reading || error) ? <>{error ? <p role="alert">{t("detailMetrics.error")} <button className="signal-v2-filter" type="button" onClick={() => void read()}>{t("detailMetrics.retry")}</button></p> : null}
           <SignalWorkspaceTopicDetailMetrics terms={data.terms} detail={data.is_current && detail && validNativeTopicDetail(detail, {
             workspace_id: data.workspace_id, generation_id: termGeneration, scope_digest: data.scope_digest, kind: sectionKind, term_key: term.term_key }) ? detail : null}
             loading={reading && !error} onSelect={select} /></> : null}
-        {term?.evidence_available !== false ? <div className="signal-v2-tn__preview"><strong>{t(term?.basis !== "computed_cluster" ? "membershipEvidence" : "detailMetrics.evidence")}</strong>
+        {term?.evidence_available !== false && (!massPopulation || evidence || reading || error) ? <div className="signal-v2-tn__preview"><strong>{t(term?.basis !== "computed_cluster" ? "membershipEvidence" : "detailMetrics.evidence")}</strong>
           {evidence?.items.slice(0, 5).map(item => <button key={item.mention_id} type="button" onClick={() => setDrawer(true)}>
             <span><SignalSourceIcon label={item.platform} platform={item.platform} size={15} />{item.platform}</span><p>{item.text}</p>
           </button>)}

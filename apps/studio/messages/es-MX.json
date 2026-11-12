@@ -680,6 +680,7 @@
         },
         "rootUnit": "Menciones únicas"
       },
+      "detailsAndEvidence": "Ver detalle y ejemplos",
       "detailMetrics": {
         "presence": "Presencia de este concepto",
         "mentions": "Menciones",
