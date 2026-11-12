@@ -5,6 +5,10 @@ sheets so a deck gets reviewed in blocks instead of one slide at a time.
 
     python3 builders/qa-render.py <deck-dir> <total-slides> [--force]
 
+A slide is rendered again whenever the deck changed after its PNG (index.html, its CSS, JS or images
+at the top of the deck folder): a second render that silently returned old PNGs once made a V01
+look fixed. --force renders everything regardless.
+
 CANON.md says every slide gets rendered and looked at before a deck is called done. This is
 the tool for it. In the case that produced it, it caught three defects that would have
 shipped: real overflow onto the footer, KPI cards left transparent over the background blob,
@@ -26,9 +30,15 @@ DARK = 120         # umbral de luminancia para contar un pixel como tinta
 LIMIT = 400        # pixeles de tinta en la banda a partir de los cuales se marca la slide
 
 
-def render(deck, n, out, force=False):
+def deck_mtime(deck):
+    """Newest change among the files the page loads from the deck folder."""
+    names = [f for f in os.listdir(deck) if f.endswith((".html", ".css", ".js", ".svg", ".png", ".jpg", ".jpeg", ".webp"))]
+    return max((os.path.getmtime(os.path.join(deck, f)) for f in names), default=0)
+
+
+def render(deck, n, out, force=False, changed=0):
     png = os.path.join(out, f"slide-{n:02d}.png")
-    if os.path.exists(png) and not force:
+    if os.path.exists(png) and not force and os.path.getmtime(png) >= changed:
         return png
     subprocess.run([CHROME, "--headless=new", "--disable-gpu", "--hide-scrollbars",
                     "--force-device-scale-factor=1", "--window-size=1920,1080",
@@ -72,8 +82,9 @@ def main():
     os.makedirs(out, exist_ok=True)
 
     flagged, pngs = {}, []
+    changed = deck_mtime(deck)
     for n in range(1, total + 1):
-        p = render(deck, n, out, force)
+        p = render(deck, n, out, force, changed)
         pngs.append(p)
         ink = edge_ink(p)
         if ink["top"] > LIMIT or ink["bottom"] > LIMIT:

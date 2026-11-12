@@ -182,11 +182,19 @@ funnel does appear, it is drawn as a real funnel, decreasing width and centred, 
 ### Paid or freebie: the size and the density change
 
 Ask it at the start; it decides the deck. Freebies (a sample, a pilot given away, a pitch study)
-land at **10 to 15 slides** and stop at the diagnosis. A **paid** study, regular size, lands at
+land at **15 to 20 slides** and stop at the diagnosis. The freebie's ceiling is on the findings, not
+on the panorama: the "all at once" layer below goes in every study. A **paid** study, regular size, lands at
 **25 to 40** on the multi-question skeleton below: the October paid studies shipped at 41, 33 and
 30 slides, each with its reason in the record. "The sequence is a ceiling" is a rule for freebies
 and thin bases; a paid study is measured by whether every question got its full block, not by
 being short.
+
+**The "all at once" layer is the floor of every study, freebie included.** Right after the answers
+and the frame: the panorama (the funnel, channel share and month by month per network), **all** the
+topics with their size and curve (a grid of small multiples reads well), and a heatmap of topic by
+channel or by moment. A 15-slide freebie that cut this layer as "paid only" came back "below the
+quality" of the two recent studies, which open with it; the four slides that fixed it were exactly
+these. Point 2 of the paid floor below is the same layer at full depth.
 
 **Images are not a paid-only feature.** Every study and every sample carries real images from the
 first cut: at least the top finding and the top barrier get their "in real life" slide (posts,
@@ -263,10 +271,13 @@ visible: with the name written, language, country, people, voice, relevant. "Wer
 shows. "I don't understand the context at all" was said of a slide of ads with no caption. If it
 cannot be said in one line, the image does not go.
 
-**Before writing the builder, a density table against the reference.** For each slide of each paid
-reference deck, note what it carries: time series, channel cut, images, logos, quotes, implication.
+**Before writing the builder, a density table against the reference, in every study.** Render the
+two most recent approved studies of `examples/_local/INDEX.md`, paid or freebie, and for each of
+their slides note what it carries: time series, channel cut, images, logos, quotes, implication.
 The first cut is checked against that table, not against the sequence of chapters. Reading one
-reference and taking its skeleton without its density is how the thin cut happened.
+reference and taking its skeleton without its density is how the thin cut happened, twice: once in a
+paid study and once in a freebie that read the table as paid-only and took its code from the
+counter-example of the index.
 
 **The visual review measures fill, not only overflow.** A card more than a quarter empty asks for a
 chart or more evidence. `qa-render.py` does not catch it, so each slide is looked at, at 1280px and
@@ -377,9 +388,11 @@ any slide uses it. Never introduce a frame and use it in the same breath.
 
 One slide, near the end, that makes the whole deck defensible. What goes on it:
 
-- **A strip of hard facts across the top**, one cell each: period, market, original corpus,
-  de-noised corpus, and the coverage of the coding (how many mentions actually got a label). The
-  original and the de-noised figure side by side are what give the discard its dimension.
+- **A strip of hard facts across the top**, one cell each, in plain words: period, market, original
+  corpus, de-noised corpus, mentions analyzed, channels. The original and the de-noised figure side by
+  side are what give the discard its dimension. Coding agreement (κ), coverage of the coding, models
+  and batches live in `PROVENANCE_AND_CHANGELOG.md`, never on the slide: "why do you put coding
+  agreement there, it's too technical" was the note, and `leak-check.py` now looks for those words.
 - Four `.irow` blocks: what was listened to, what was left out and roughly how much, how it was
   read, and what the evidence is.
 - **A sources row**: each platform's mark with its own count. It is the line that lets someone
