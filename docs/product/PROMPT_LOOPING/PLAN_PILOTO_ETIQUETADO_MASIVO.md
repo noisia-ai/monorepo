@@ -213,6 +213,8 @@ Lo demás se resuelve de forma autónoma y se anota en el registro de decisiones
 
 ## Progreso
 
+- [x] H7 · Se ensayó el lector del PR #166 con el estudio terminado y el operador autorizado, en transacciones de sólo lectura de UAT. La consulta de resumen tardó 32.309 s para las 21,716 raíces de publicidad y 33.691 s para las 61,975 de conversación. La consulta de evidencia de motivadores tardó 30.160 s y entregó 30 filas.
+
 - [x] H7 · La conversación mostró 61,975 raíces y ambos intereses. En la interfaz se obtuvieron 30 motivadores y 30 barreras. La segunda consulta de cada muestra reprodujo sus 30 filas en el mismo orden. La herramienta gratuita presentó 100 sugerencias de palabras o bigramas a partir de los resultados guardados, con umbral de 0.90.
 
 - [x] H7 · Studio confirmó el cierre de JEV en UAT el 11 de noviembre a las 18:48 de Ciudad de México. Se liquidaron 83,962 solicitudes distintas por USD 5.796879 y se aplicaron 83,962 resultados a otras tantas raíces. El saldo de JEV pasó de USD 14.53 a USD 8.77 entre las observaciones de cuenta. La revisión independiente de cuerpos completos continúa.
@@ -340,6 +342,8 @@ Lo demás se resuelve de forma autónoma y se anota en el registro de decisiones
 
 ## Sorpresas y descubrimientos
 
+- H7 · El cambio de filtro devolvió HTTP 500. Studio agotó en diez segundos la espera por una conexión mientras consultaba el rol del usuario. La interfaz también solicitaba detalles de tópicos en segundo plano al recibir un resumen nuevo. El cierre de esa petición en el navegador podía dejar la consulta en curso en PostgreSQL.
+
 - H7 · Al cambiar de conversación a publicidad, Signal conservó el segmento anterior y mostró un error. Las tres consultas de resumen observadas en PostgreSQL tardaron entre sí una media de 75.7 s y un máximo de 107.6 s. El plan estimaba una raíz en una etapa que debía atender 83,962. Los lectores esperaban páginas de datos. Las observaciones no mostraron un bloqueo de otra transacción.
 
 - H7 · La primera navegación completa a Signal perdió la conexión mientras cargaba. El enlace de Studio abrió después la conversación con 61,975 raíces, 111 tópicos y dos intereses. La preferencia explícita del operador era español. Con la preferencia en inglés, el detalle mostró el nombre y la definición inglesa junto al original portugués.
@@ -463,6 +467,8 @@ Lo demás se resuelve de forma autónoma y se anota en el registro de decisiones
 - Dos lotes devolvieron referencias válidas dentro de la muestra de 30 pero superaron el máximo de diez referencias por campo. La comprobación privada de las respuestas originales y de reparación encontró entre 11 y 30 referencias en los campos rechazados.
 
 ## Registro de decisiones
+
+- H7 · Mantener el esquema ya ensayado hasta 0293. Con una proporción de páginas visibles comparable a UAT, la consulta especializada bajó de 148,084 a 43,021 bloques en la prueba local. Añadir un índice de procedencia dio el mismo resultado. Se optó por corregir la lectura y la solicitud automática de detalles.
 
 - H7 · Corregir la consulta que impide cambiar de segmento desde la interfaz. El ensayo local debe conservar los permisos por raíz, el universo de cada segmento, los intereses y el orden de las muestras al reducir las lecturas. Se mantiene el resultado pagado ya liquidado.
 
