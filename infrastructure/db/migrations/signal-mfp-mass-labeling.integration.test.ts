@@ -744,6 +744,30 @@ for(const authorization of ["rotation","scoped","scoped-scale","scoped-funding",
     await assertMassLabelingServingProjectionV1(scoped.query,access.workspace_id,map.map_id);
     const view = await loadSignalWorkspaceTopicsOverviewV1(access); assert.ok(view?.is_current);
     assert.equal(massPlanChecked,true,"the actual mass-labeling reader was planned and checked");
+    const initialIndexScan = (await query("SHOW enable_indexscan")).rows[0]!.enable_indexscan;
+    for (const setting of ["on", "off"]) {
+      await query("SELECT set_config('enable_indexscan',$1,true)", [setting]);
+      const monitoring = await loadSignalWorkspaceTopicsOverviewV1(access, { surface: "monitoring" });
+      assert.deepEqual({ ...monitoring, observed_at: null }, { ...view, observed_at: null },
+        "monitoring keeps every native aggregate, consumer indicator, scope digest and selected term");
+      assert.equal((await query("SHOW enable_indexscan")).rows[0]!.enable_indexscan, setting,
+        "the monitoring statement restores the incoming planner setting");
+    }
+    await query("SELECT set_config('enable_indexscan',$1,true)", [initialIndexScan]);
+    const failingMonitoring = Object.assign(Object.create(database), { connect: async () => Object.assign(Object.create(scoped), {
+      query: async (sql: string, values?: unknown[]) => {
+        if (sql.includes("WITH source_generation AS MATERIALIZED") && sql.includes("consumer_indicators")) {
+          throw new Error("monitoring aggregate unavailable");
+        }
+        return query(sql, values);
+      }
+    }) }) as Pool;
+    await assert.rejects(loadSignalWorkspaceTopicsOverviewV1({ ...access, database: failingMonitoring },
+      { surface: "monitoring" }), /monitoring aggregate unavailable/);
+    assert.equal((await query("SHOW enable_indexscan")).rows[0]!.enable_indexscan, initialIndexScan,
+      "a failed monitoring read restores the plan setting before the caller reuses its connection");
+    await assert.rejects(loadSignalWorkspaceTopicsOverviewV1({ ...access, actor_user_id: foreignActor },
+      { surface: "monitoring" }), /workspace_topics_forbidden/);
     assert.equal(view.denominator, 3);
     assert.equal(view.terms[0]!.mention_count, 2, "an exact 0.7 probability remains unclassified");
     if(authorization==="rotation"||authorization==="scoped"){

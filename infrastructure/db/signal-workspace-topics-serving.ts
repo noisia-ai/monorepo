@@ -556,10 +556,10 @@ const massMembershipsSql = `mass_memberships AS MATERIALIZED (
 ), mass_roots_with_concept AS MATERIALIZED (
   SELECT DISTINCT root_id FROM mass_memberships
 ), `;
-// Mass readers share current mention metadata across provenance and canonical
-// eligibility. Text is hydrated only for the evidence page selected below.
+// Population readers can share narrow mention metadata across provenance and
+// canonical eligibility. Complete text is fetched for search or the bounded page.
 const populationSql = (imported = false, definedInterest = false, consolidated = false, membership = false, facetEnabled = false,
-  checkedProjectionSource?: boolean, massLabeling = false, segment: SignalConversationSegmentV1 = "all", includeMemberships = true, massOverview = false) => `WITH source_generation AS MATERIALIZED (
+  checkedProjectionSource?: boolean, massLabeling = false, segment: SignalConversationSegmentV1 = "all", includeMemberships = true, massOverview = false, compactProvenance = false) => `WITH source_generation AS MATERIALIZED (
   SELECT generation.id,generation.workspace_id,generation.preparation_run_id,generation.input_snapshot
     FROM signal_classification_generations generation WHERE generation.id=$2::uuid
     AND generation.workspace_id=$1::uuid AND ${checkedProjectionSource === undefined
@@ -568,8 +568,8 @@ const populationSql = (imported = false, definedInterest = false, consolidated =
   SELECT snapshot.id,snapshot.workspace_id,snapshot.preparation_run_id,'{}'::jsonb
     FROM signal_topic_consolidation_snapshots snapshot WHERE snapshot.id=$2::uuid AND snapshot.workspace_id=$1::uuid
     AND signal_topic_consolidation_snapshot_current_v1(snapshot.id)
-), ${massLabeling ? `mass_mentions AS MATERIALIZED (
-  SELECT id,workspace_id,canonical_mention_id,inclusion_status,published_at
+), ${massLabeling || compactProvenance ? `mass_mentions AS MATERIALIZED (
+  SELECT id,workspace_id,canonical_mention_id,inclusion_status,published_at${compactProvenance ? ",resolved_platform,platform,text_clean_sha256" : ""}
   FROM mentions WHERE workspace_id=$1::uuid
 ), ` : ""}received_imports AS MATERIALIZED (
   SELECT batch.id,batch.data_source_id FROM import_batches batch
@@ -599,16 +599,16 @@ const populationSql = (imported = false, definedInterest = false, consolidated =
   SELECT origin.canonical_mention_id root_id,bool_or(rights.metrics) metrics,bool_or(rights.metrics AND rights.evidence) evidence
   FROM authorized_imports rights JOIN signal_mention_import_memberships path ON path.import_batch_id=rights.id
     AND path.data_source_id=rights.data_source_id AND path.workspace_id=$1::uuid
-  JOIN ${massLabeling ? "mass_mentions" : "mentions"} origin ON origin.id=path.mention_id AND origin.workspace_id=$1::uuid
+  JOIN ${massLabeling || compactProvenance ? "mass_mentions" : "mentions"} origin ON origin.id=path.mention_id AND origin.workspace_id=$1::uuid
   GROUP BY origin.canonical_mention_id
 ), received_roots AS MATERIALIZED (
-  SELECT ${massLabeling ? `origin.canonical_mention_id root_id,
+  SELECT ${massLabeling || compactProvenance ? `origin.canonical_mention_id root_id,
     bool_or(COALESCE(rights.metrics,false)) metrics,
     bool_or(COALESCE(rights.metrics AND rights.evidence,false)) evidence` : "DISTINCT origin.canonical_mention_id root_id"}
   FROM received_imports batch JOIN signal_mention_import_memberships path ON path.import_batch_id=batch.id
     AND path.data_source_id=batch.data_source_id AND path.workspace_id=$1::uuid
-  JOIN ${massLabeling ? "mass_mentions" : "mentions"} origin ON origin.id=path.mention_id AND origin.workspace_id=$1::uuid
-  ${massLabeling ? `LEFT JOIN authorized_imports rights ON rights.id=batch.id AND rights.data_source_id=batch.data_source_id
+  JOIN ${massLabeling || compactProvenance ? "mass_mentions" : "mentions"} origin ON origin.id=path.mention_id AND origin.workspace_id=$1::uuid
+  ${massLabeling || compactProvenance ? `LEFT JOIN authorized_imports rights ON rights.id=batch.id AND rights.data_source_id=batch.data_source_id
   GROUP BY origin.canonical_mention_id` : ""}
 ), ${massLabeling && includeMemberships ? massMembershipsSql : ""}all_roots AS MATERIALIZED (
   ${imported ? `SELECT mention.id root_id,${massLabeling ? `CASE WHEN mass_outcome.status='labeled' THEN
@@ -620,15 +620,15 @@ const populationSql = (imported = false, definedInterest = false, consolidated =
         WHEN (mass_outcome.probabilities#>>'{relevance,noul}')::double precision>0.7 THEN 'relevant'
         WHEN (mass_outcome.probabilities#>>'{relevance,noul}')::double precision<0.3 THEN 'unrelated' ELSE 'unknown' END
       ELSE 'unknown' END relevance,(mass_concept.root_id IS NOT NULL) has_concept,` : ""}
-    COALESCE(${massLabeling ? "received.metrics" : "rights.metrics"},false) metrics,
-    COALESCE(${massLabeling ? "received.evidence" : "rights.evidence"},false) evidence
-  FROM received_roots received JOIN ${massLabeling ? "mass_mentions" : "mentions"} mention ON mention.id=received.root_id AND mention.workspace_id=$1::uuid
+    COALESCE(${massLabeling || compactProvenance ? "received.metrics" : "rights.metrics"},false) metrics,
+    COALESCE(${massLabeling || compactProvenance ? "received.evidence" : "rights.evidence"},false) evidence
+  FROM received_roots received JOIN ${massLabeling || compactProvenance ? "mass_mentions" : "mentions"} mention ON mention.id=received.root_id AND mention.workspace_id=$1::uuid
     AND mention.canonical_mention_id=mention.id AND mention.inclusion_status='included'
   ${massLabeling ? `JOIN signal_mass_labeling_items frozen ON frozen.map_id=$2::uuid AND frozen.workspace_id=$1::uuid AND frozen.root_id=mention.id
     LEFT JOIN signal_mass_labeling_results mass_outcome ON mass_outcome.map_id=frozen.map_id AND mass_outcome.root_id=frozen.root_id
     JOIN signal_mass_labeling_root_segments segment ON segment.map_id=frozen.map_id AND segment.root_id=frozen.root_id AND segment.workspace_id=$1::uuid
     ${includeMemberships ? "LEFT JOIN mass_roots_with_concept mass_concept ON mass_concept.root_id=mention.id" : ""}` : ""}
-  ${massLabeling ? "" : "LEFT JOIN root_rights rights ON rights.root_id=mention.id"}` : `SELECT item.canonical_root_id root_id,item.resolution_state,mention.published_at,
+  ${massLabeling || compactProvenance ? "" : "LEFT JOIN root_rights rights ON rights.root_id=mention.id"}` : `SELECT item.canonical_root_id root_id,item.resolution_state,mention.published_at,
     COALESCE((item.outcome_metadata->>'has_unresolved_topics')::boolean,false) has_unresolved_topics,
     COALESCE(rights.metrics,false) AND mention.inclusion_status='included' AND mention.canonical_mention_id=mention.id metrics,
     COALESCE(rights.evidence,false) AND mention.inclusion_status='included' AND mention.canonical_mention_id=mention.id evidence
@@ -917,12 +917,27 @@ async function overview(client: PoolClient, args: Args, ctx: Context): Promise<S
     limitations: ["classification_required", "current_display_rights_only"] };
 }
 
-export function loadSignalWorkspaceTopicsOverviewV1(args: Args & { imported_fallback: true }): Promise<SignalWorkspaceOverviewV1 | null>;
-export function loadSignalWorkspaceTopicsOverviewV1(args: Args & { imported_fallback?: false }): Promise<SignalWorkspaceTopicsOverviewV1 | null>;
-export function loadSignalWorkspaceTopicsOverviewV1(args: Args): Promise<SignalWorkspaceOverviewV1 | null>;
-export async function loadSignalWorkspaceTopicsOverviewV1(args: Args): Promise<SignalWorkspaceOverviewV1 | null> {
+export function loadSignalWorkspaceTopicsOverviewV1(args: Args & { imported_fallback: true }, options?: { surface: "monitoring" }): Promise<SignalWorkspaceOverviewV1 | null>;
+export function loadSignalWorkspaceTopicsOverviewV1(args: Args & { imported_fallback?: false }, options?: { surface: "monitoring" }): Promise<SignalWorkspaceTopicsOverviewV1 | null>;
+export function loadSignalWorkspaceTopicsOverviewV1(args: Args, options?: { surface: "monitoring" }): Promise<SignalWorkspaceOverviewV1 | null>;
+export async function loadSignalWorkspaceTopicsOverviewV1(args: Args, options?: { surface: "monitoring" }): Promise<SignalWorkspaceOverviewV1 | null> {
   return transaction(args.database, async client => {
-    const ctx = await context(client, args); return ctx.native ? overview(client, args, ctx) : null;
+    const ctx = await context(client, args);
+    if (!ctx.native) return null;
+    if (options?.surface !== "monitoring" || !ctx.mass_labeling) return overview(client, args, ctx);
+    // The mass map covers a large workspace fraction. Reading its randomly keyed
+    // mention metadata in heap order avoids repeated cold-page visits in UAT.
+    // Apply this plan preference only after authorization and only to this read.
+    const setting = (await client.query<{ enable_indexscan: string }>("SHOW enable_indexscan")).rows[0]!.enable_indexscan;
+    await client.query("SET LOCAL enable_indexscan=off");
+    try {
+      const result = await overview(client, args, ctx);
+      await client.query("SELECT set_config('enable_indexscan',$1,true)", [setting]);
+      return result;
+    } catch (error) {
+      await client.query("SELECT set_config('enable_indexscan',$1,true)", [setting]).catch(() => undefined);
+      throw error;
+    }
   });
 }
 
@@ -1302,13 +1317,13 @@ function mentionsRequest(args: SignalWorkspaceMentionsArgsV1) {
  * exact digest constraint installed in SQL0167–0169; no prepared artifact exists.
  * Text rights are checked before searching or returning canonical content.
  * Only root metadata is materialized; complete document bodies stay in Postgres. */
-const mentionsPopulationSql = (imported = false,facetEnabled = false) => `${populationSql(imported,false,false,false,facetEnabled)}, mention_roots AS MATERIALIZED (
+const mentionsPopulationSql = (imported = false,facetEnabled = false,search = false) => `${populationSql(imported,false,false,false,facetEnabled,undefined,false,"all",false,false,true)}, mention_roots AS MATERIALIZED (
   SELECT checked.*,hashtextextended(ROW(checked.root_id,checked.metrics,checked.evidence,
     checked.text_valid,checked.text_digest,extract(epoch FROM checked.published_at),checked.platform)::text,0::bigint) population_hash
   FROM (
     SELECT root.*,COALESCE(mention.resolved_platform,mention.platform) platform,mention.text_clean_sha256 text_digest,
       CASE WHEN root.evidence THEN ${imported ? "mention.text_clean_sha256 IS NOT NULL" : "COALESCE(prepared.asset_sha256=mention.text_clean_sha256,false)"} ELSE false END text_valid
-    FROM period_roots root JOIN mentions mention ON mention.id=root.root_id AND mention.workspace_id=$1::uuid
+    FROM period_roots root JOIN mass_mentions mention ON mention.id=root.root_id AND mention.workspace_id=$1::uuid
     ${imported ? "" : `JOIN source_generation generation ON true
     LEFT JOIN signal_corpus_preparation_items prepared ON prepared.workspace_id=$1::uuid
       AND prepared.run_id=generation.preparation_run_id AND prepared.root_id=root.root_id`}
@@ -1316,8 +1331,8 @@ const mentionsPopulationSql = (imported = false,facetEnabled = false) => `${popu
 ), visible_mentions AS MATERIALIZED (
   SELECT root.* FROM mention_roots root WHERE root.metrics AND root.evidence AND root.text_valid
 ), filtered_mentions AS MATERIALIZED (
-  SELECT root.* FROM visible_mentions root JOIN mentions mention ON mention.id=root.root_id AND mention.workspace_id=$1::uuid
-  WHERE ($7::text IS NULL OR strpos(lower(mention.text_clean),lower($7::text))>0)
+  SELECT root.* FROM visible_mentions root ${search ? "JOIN mentions mention ON mention.id=root.root_id AND mention.workspace_id=$1::uuid" : ""}
+  WHERE ${search ? "strpos(lower(mention.text_clean),lower($7::text))>0" : "$7::text IS NULL"}
     AND (cardinality($8::text[])=0 OR lower(btrim(root.platform))=ANY($8::text[]))
 )`;
 type MentionsSummary = {
@@ -1350,7 +1365,7 @@ export async function loadSignalWorkspaceMentionsV1(args: SignalWorkspaceMention
     const direction = request.direction === "asc" ? "ASC" : "DESC", operator = request.direction === "asc" ? ">" : "<";
     const before = request.direction === "asc" ? "<" : ">";
     const facetEnabled=await signalWorkspaceFeatureEnabledV1({queryable:client,workspace_id:access.workspace_id,feature:"mention_facets"});
-    const result = await client.query<MentionsSummary & { item: SignalWorkspaceMentionV1 | null; focus_only: boolean | null }>(`${mentionsPopulationSql(Boolean(ctx.imported),facetEnabled)},
+    const result = await client.query<MentionsSummary & { item: SignalWorkspaceMentionV1 | null; focus_only: boolean | null }>(`${mentionsPopulationSql(Boolean(ctx.imported),facetEnabled,Boolean(request.filters.search_query))},
       summary AS MATERIALIZED (
       SELECT count(*) FILTER(WHERE root.metrics)::int metric_denominator,
         count(*) FILTER(WHERE root.metrics AND root.evidence AND root.text_valid)::int evidence_visible_total,
@@ -1394,7 +1409,12 @@ export async function loadSignalWorkspaceMentionsV1(args: SignalWorkspaceMention
         'resolution_state',root.resolution_state,'has_unresolved_topics',root.has_unresolved_topics) END item,
       root.focus_only
       FROM summary LEFT JOIN selected root ON true
-      LEFT JOIN mentions mention ON mention.id=root.root_id AND mention.workspace_id=$1::uuid
+      -- OFFSET 0 keeps the text lookup correlated to the already bounded page.
+      -- A global hash/merge join would scan the full text relation for 51 rows.
+      LEFT JOIN LATERAL (
+        SELECT mention.* FROM mentions mention
+        WHERE mention.id=root.root_id AND mention.workspace_id=$1::uuid OFFSET 0
+      ) mention ON true
       ORDER BY root.focus_only NULLS LAST,root.published_at ${direction} NULLS LAST,root.root_id ASC`,
       [...params, request.cursor?.root_id ?? null, request.cursor?.occurred_at ?? null, request.focus, request.limit + 1]);
     const summary = result.rows[0]!;

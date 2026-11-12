@@ -47,7 +47,7 @@ export async function loadNativeSignalTopicsV1(scope: ActorScope & { imported_fa
 export async function loadNativeSignalTopicsPageV1(
   scope: ActorScope & { imported_fallback?: boolean },
   params = new URLSearchParams(),
-  options: { defer_mass_inspection?: boolean } = {}
+  options: { defer_mass_inspection?: boolean; surface?: "monitoring" } = {}
 ) {
   if (!nativeTopicsViewV1(params)) return null;
   let filter: ReturnType<typeof nativeTopicsQueryV1> = {}, invalid: unknown = null;
@@ -61,6 +61,13 @@ export async function loadNativeSignalTopicsPageV1(
     }
     filter = nativeTopicsQueryV1(filterParams);
   } catch (error) { invalid = error; }
+  if (options.surface === "monitoring") {
+    const native = await loadSignalWorkspaceTopicsOverviewV1({ database: pool, ...scope,
+      timezone: scope.timezone ?? "UTC", ...filter }, { surface: "monitoring" });
+    if (native && invalid) throw invalid;
+    return native ? { contract_version: "signal-workspace-topic-read-bundle-v1" as const,
+      overview: native, detail: null, evidence: null } : null;
+  }
   const native = await loadSignalWorkspaceTopicsPageV1({ database: pool, ...scope, timezone: scope.timezone ?? "UTC", ...filter,
     defer_mass_inspection: options.defer_mass_inspection ?? params.get("initial_inspection") === "deferred" });
   if (native && invalid) throw invalid;

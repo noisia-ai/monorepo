@@ -2325,6 +2325,9 @@
     "quality": { "good": "Healthy", "warning": "Needs review", "danger": "Action required", "not_available": "Not available" },
     "coverage": { "good": "Covered", "warning": "Partial", "danger": "Action required", "not_available": "Not available", "notAvailable": "No coverage", "noMentions": "No governed mentions", "mentions": "{count} governed mentions" },
     "dashboard": {
+      "receiptsIdle": "Receipt not checked",
+      "loadReceipts": "Check received data",
+      "receiptsLoading": "Checking received data…",
       "eyebrow": "Operations",
       "title": "Dashboard",
       "subtitle": "Received data and operational follow-up for your brands.",
@@ -2338,6 +2341,8 @@
         "brands": "Brands",
         "brandsHint": "Internal workspaces in scope",
         "mentions": "Received mentions",
+        "mentionsSubtotal": "Received mentions subtotal",
+        "mentionsSubtotalHint": "Count for the requested workspace.",
         "mentionsHint": "Sum across brands; receipt does not mean analysis is complete.",
         "sources": "Source issues",
         "sourcesHint": "Stale or failed sources",

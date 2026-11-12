@@ -70,3 +70,97 @@ test("page bundle route scopes the first detail and evidence before exposing a f
     if (!denied) assert.equal(response.headers.get("Cache-Control"), "private, no-store");
   }
 });
+
+function monitoringRouteFixture(denied = 0, failure = false, native = true) {
+  const calls: string[] = [];
+  const nativeOverview = { contract_version: "signal-workspace-topics-serving-v1", workspace_id: "workspace", denominator: 3 };
+  const dependencies: Record<string, unknown> = {
+    "@/lib/data-os/signal-imported-serving": { allowImportedSignalFallbackV1: () => true },
+    "@/lib/data-os/signal-workspace-topics-native": {
+      nativeTopicsViewV1: (params: URLSearchParams) => !params.has("view") || params.get("view") === "all_conversations",
+      loadNativeSignalTopicsPageV1: async (scope: unknown, params: URLSearchParams, options: unknown) => {
+        calls.push("native");
+        assert.deepEqual(scope, { workspace_id: "workspace", actor_user_id: "actor", timezone: "America/Mexico_City", imported_fallback: true });
+        assert.deepEqual(options, { surface: "monitoring" });
+        assert.equal(params.get("conversation_segment"), "conversation");
+        if (failure) throw new Error("private database detail");
+        return native ? { overview: nativeOverview } : null;
+      }
+    },
+    "../../topics/_lib": {
+      loadSignalWorkspaceContextForTopics: async () => {
+        calls.push("access");
+        return denied ? { response: Response.json({ error: "denied" }, { status: denied }) }
+          : { workspace: { id: "workspace", timezone: "America/Mexico_City" }, session: { appUser: { id: "actor" } } };
+      },
+      topicResponse: (body: unknown, status = 200) => Response.json(body, { status, headers: { "Cache-Control": "private, no-store" } }),
+      topicError: () => Response.json({ error: "workspace_monitoring_unavailable" }, { status: 503 })
+    },
+    "@/app/api/data-os/_lib/load": { loadSignalWorkspaceModuleContext: async () => {
+      calls.push("legacy"); return { response: Response.json({ legacy: true }) };
+    } },
+    "@noisia/query-engine": {}, "next/server": {},
+    "@/lib/data-os/signal-workspace-serving": {}, "@/lib/signal-v2/brand-monitoring": {},
+    "@/lib/data-os/signal-operational-module-shadow": {}, "@/lib/data-os/signal-module-serving-scope": {}
+  };
+  const source = readFileSync(new URL("../../app/api/data-os/signal/[workspaceId]/topics-narratives/monitoring/route.ts", import.meta.url), "utf8");
+  const exports: Record<string, unknown> = {};
+  new Function("require", "exports", ts.transpileModule(source, { compilerOptions: {
+    module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022
+  } }).outputText)((name: string) => { assert.ok(name in dependencies, name); return dependencies[name]; }, exports);
+  const get = exports.GET as (request: Request, context: { params: Promise<{ workspaceId: string }> }) => Promise<Response>;
+  return { calls, nativeOverview, read: (view = "all_conversations") => get(new Request(`https://noisia.invalid/monitoring?view=${view}`),
+    { params: Promise.resolve({ workspaceId: "workspace" }) }) };
+}
+
+test("native monitoring revalidates authority and requests its own complete overview", async () => {
+  const f = monitoringRouteFixture(), response = await f.read();
+  assert.deepEqual(f.calls, ["access", "native"]);
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get("Cache-Control"), "private, no-store");
+  assert.deepEqual(await response.json(), f.nativeOverview);
+});
+
+test("native monitoring fails closed on revoked authority and sanitizes read errors", async () => {
+  for (const status of [401, 403, 404]) {
+    const f = monitoringRouteFixture(status);
+    assert.equal((await f.read()).status, status);
+    assert.deepEqual(f.calls, ["access"]);
+  }
+  const f = monitoringRouteFixture(0, true), response = await f.read();
+  assert.equal(response.status, 503);
+  assert.deepEqual(await response.json(), { error: "workspace_monitoring_unavailable" });
+});
+
+test("native monitoring has an explicit route and requires the native view", async () => {
+  const absent = monitoringRouteFixture(0, false, false);
+  assert.equal((await absent.read()).status, 404);
+  assert.deepEqual(absent.calls, ["access", "native"]);
+  const governed = monitoringRouteFixture();
+  assert.equal((await governed.read("brand")).status, 404);
+  assert.deepEqual(governed.calls, []);
+});
+
+test("standard brand-monitoring keeps its module scope for requests with no view and all_conversations", async () => {
+  for (const query of ["", "?view=all_conversations"]) {
+    const calls: string[] = [], exports: Record<string, unknown> = {};
+    const source = readFileSync(new URL("../../app/api/data-os/signal/[workspaceId]/brand-monitoring/route.ts", import.meta.url), "utf8");
+    const dependencies: Record<string, unknown> = {
+      "@/app/api/data-os/_lib/load": { loadSignalWorkspaceModuleContext: async (id: string, module: string) => {
+        calls.push("module-scope"); assert.equal(id, "workspace"); assert.equal(module, "brand-monitoring");
+        return { response: Response.json({ contract_version: "signal-brand-monitoring-v1" }) };
+      } },
+      "@noisia/query-engine": {}, "next/server": {}, "@/lib/data-os/signal-workspace-serving": {},
+      "@/lib/signal-v2/brand-monitoring": {}, "@/lib/data-os/signal-operational-module-shadow": {},
+      "@/lib/data-os/signal-module-serving-scope": {}
+    };
+    new Function("require", "exports", ts.transpileModule(source, { compilerOptions: {
+      module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022
+    } }).outputText)((name: string) => { assert.ok(name in dependencies, name); return dependencies[name]; }, exports);
+    const get = exports.GET as (request: Request, context: { params: Promise<{ workspaceId: string }> }) => Promise<Response>;
+    const response = await get(new Request(`https://noisia.invalid/brand-monitoring${query}`),
+      { params: Promise.resolve({ workspaceId: "workspace" }) });
+    assert.deepEqual(await response.json(), { contract_version: "signal-brand-monitoring-v1" });
+    assert.deepEqual(calls, ["module-scope"]);
+  }
+});
