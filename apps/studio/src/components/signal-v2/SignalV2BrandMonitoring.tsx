@@ -1305,9 +1305,7 @@ export function SignalV2BrandMonitoring({
         className={`signal-v2-main${loading ? " signal-v2-main--loading" : ""}${pendingModule ? " signal-v2-main--updating" : ""}`}
         id="signal-v2-content"
       >
-        {pendingModule && currentModule !== pendingModule
-          && !(topicsNarrativesData?.contract_version === "signal-workspace-topics-serving-v1"
-            && ["monitoring", "topics"].includes(currentModule) && ["monitoring", "topics"].includes(pendingModule)) ? (
+        {pendingModule && currentModule !== pendingModule ? (
           <SignalV2ModuleSkeleton
             brandName={brandName}
             showBody={showPendingModuleBody}

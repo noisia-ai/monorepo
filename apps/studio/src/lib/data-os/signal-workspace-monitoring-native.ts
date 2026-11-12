@@ -65,7 +65,7 @@ export function buildNativeSignalMonitoringV1(
     filter: start && end ? {
       ...base.filter,
       date_range: { start, end },
-      timezone: "UTC",
+      timezone: base.workspace.timezone,
       granularity: "day",
       dimensions: {},
       search_query: undefined
