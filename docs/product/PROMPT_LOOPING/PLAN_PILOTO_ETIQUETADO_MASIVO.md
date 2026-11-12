@@ -213,6 +213,8 @@ Lo demás se resuelve de forma autónoma y se anota en el registro de decisiones
 
 ## Progreso
 
+- [x] H7 · Studio confirmó el cierre de JEV en UAT el 11 de noviembre a las 18:48 de Ciudad de México. Se liquidaron 83,962 solicitudes distintas por USD 5.796879 y se aplicaron 83,962 resultados a otras tantas raíces. El saldo de JEV pasó de USD 14.53 a USD 8.77 entre las observaciones de cuenta. La revisión independiente de cuerpos completos continúa.
+
 - [x] H7 · El 11 de noviembre a las 17:24 UTC el worker recuperó la llamada original por USD 0.000067. El cotejo posterior conservó los hashes de las 27,399 llamadas y resultados anteriores y del error archivado. La misma ejecución alcanzó USD 1.892233 en las primeras 27,400 raíces. Studio confirmó la reanudación con 56,562 pendientes.
 
 - [x] H7 · Se integró el PR #165 en `b2a81a0c` tras la revisión de `95aabe7c`. Pasaron CI y PostgreSQL del PR, 29 pruebas focales y las seis pruebas de PostgreSQL de esta corrección. El worker conserva el turno de una raíz hasta persistir su resultado. CI y PostgreSQL pasaron también sobre el commit fusionado. Studio y workers quedaron saludables en esa revisión con Railpack y cero cambios preparados.
@@ -335,6 +337,8 @@ Lo demás se resuelve de forma autónoma y se anota en el registro de decisiones
 - [x] Hito 4 · Recibo, comparación y muestras ciegas verificados. Se entregan el recibo público de una página y, en custodia privada, el anexo comparativo, método/fuentes, 600 casos en 11 cohortes y la clave sellada por separado. Son 597 raíces distintas por los solapamientos entre cohortes; cada cohorte cumple sus cuotas de 50 raíces por tópico para los 10 tópicos mayores y 100 de triggers/barriers. Las cohortes no representan evaluación de precisión humana.
 
 ## Sorpresas y descubrimientos
+
+- H7 · La primera navegación completa a Signal perdió la conexión mientras cargaba. El enlace de Studio abrió después la conversación con 61,975 raíces, 111 tópicos y dos intereses. La preferencia explícita del operador era español; al elegir inglés, el detalle mostró el nombre y la definición inglesa junto al original portugués.
 
 - H7 · Con un límite aplicado sólo a las solicitudes del proveedor, las respuestas de una página podían pasar juntas a Storage. La prueba de una página retuvo los turnos hasta completar la persistencia, tanto con dos turnos configurados como con ocho.
 
@@ -576,6 +580,8 @@ Lo demás se resuelve de forma autónoma y se anota en el registro de decisiones
 | 2026-11-07 | Ruta canónica ADR 015 con JEV como clasificador por mención; Claude sólo por grupo | Costo < USD 100 por estudio y alcance sobre el corpus completo | Fundador y auditor |
 
 ## Resultado y retrospectiva
+
+La clasificación completa de R15 produjo 83,962 resultados en una corrida desde Studio UAT. Las 1,000 raíces iniciales y su continuación sumaron USD 5.796879. La vista de Signal abrió el mapa con sus 111 tópicos. El recibo de entrega se cerrará con el cotejo independiente, los cuatro segmentos, las muestras ciegas y la comparación.
 
 En la continuación en UAT, una lectura del manifiesto dejó pendiente una de 27,400 solicitudes. Se verificaron los bytes originales y se registró el importe que el worker debe conciliar, USD 0.000067. El worker liquidó ese recibo y Studio reanudó la misma ejecución con las 56,562 raíces restantes. La versión `b2a81a0c` acota la concurrencia hasta persistir cada raíz.
 
