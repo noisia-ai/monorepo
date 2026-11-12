@@ -85,8 +85,8 @@ caro.
 | Familia | Pregunta que responde | Arranca de | Largo típico | Secuencia canónica |
 |---|---|---|---|---|
 | **Reporte** | Qué está pasando y qué cambió contra el periodo anterior | Un tablero y un periodo | 9 a 10 slides | `LAYOUTS.md` |
-| **Estudio** | Por qué la gente se acerca o se aleja, y dónde se puede actuar | Una pregunta de investigación | Pagado: 25 a 40 slides, multipregunta. Freebie o base chica: 10 a 15 | `LAYOUTS.md` |
-| **Muestra** | Qué tan buena es la lectura de Noisia, con alcance recortado | Una pregunta corta y un corpus acotado | 10 a 14 slides | `LAYOUTS.md`, variante de Estudio |
+| **Estudio** | Por qué la gente se acerca o se aleja, y dónde se puede actuar | Una pregunta de investigación | Pagado: 25 a 40 slides, multipregunta. Freebie o base chica: 15 a 20, con la capa "todo a la vez" como piso | `LAYOUTS.md` |
+| **Muestra** | Qué tan buena es la lectura de Noisia, con alcance recortado | Una pregunta corta y un corpus acotado | 12 a 16 slides, con la capa "todo a la vez" | `LAYOUTS.md`, variante de Estudio |
 | **Comercial** | Qué es Noisia para este cliente, qué proponemos, qué cuesta y qué no incluye | Un lead o un workshop | 1 a 11 slides | `commercial/COMMERCIAL.md` |
 | **Interno** | Qué existe, cómo funciona y qué falta | Una necesidad del equipo | Las que haga falta | `INTERNAL.md` |
 | **Data** | Los datos mismos, en el formato que el cliente o el socio ingiere | Un archivo de referencia del cliente, o el template de importación del socio | No es un deck: archivos, mapeo, LEEME, manifiesto y mail técnico; o un feed continuo | `DATA_DELIVERY.md`, `CONNECTORS.md` |
@@ -239,8 +239,9 @@ brief y alcance  →  desk research  →  datos (DATA.md)  →  hallazgos y verb
 **Al terminar, el PDF vigente sube a la carpeta del cliente en Drive**, `Leads/<Cliente>`. Si hay más
 de una carpeta con ese nombre, se pregunta cuál; si no hay ninguna, se pregunta antes de crearla. Se
 sube con su nombre versionado y la liga se anota en `VERSIONS.md`. El conector de Drive manda el
-archivo dentro de la llamada y no sirve para PDFs de varios MB: se sube por el navegador, que acepta
-hasta 10 MB, así que un PDF más pesado primero se aligera recomprimiendo solo sus imágenes **opacas**
+archivo dentro de la llamada, en base64, que crece un tercio: el payload no pasa de 10 MB, así que por
+el conector el tope práctico es un PDF de unos 7 MB (uno de 8.5 MB falló y aligerado a 3.8 MB subió).
+Por el navegador acepta hasta 10 MB. Se aligera siempre antes de subir, así que un PDF más pesado primero se aligera recomprimiendo solo sus imágenes **opacas**
 (las que tienen transparencia, PNG o con máscara, se saltan: recomprimirlas convirtió el mapa T&B en
 un rectángulo negro) y guardando con `garbage=4, deflate=True` en PyMuPDF, que llevó un PDF de
 17.8 MB a 8.3 MB sin tocar nada, y
@@ -365,6 +366,9 @@ Y la revisión técnica pasa:
       Gate y el Size Gate (`LAYOUTS.md`). En todo estudio y toda muestra, no solo en un pagado.
 - [ ] Cada marca nombrada lleva su logo real, y cada hallazgo principal su serie en el tiempo y su
       corte por canal.
+- [ ] Antes del builder se llenó la tabla de densidad contra los dos estudios aprobados más recientes
+      del índice, sea pagado o freebie, y el estudio abre con la capa "todo a la vez": panorama,
+      todos los temas con su curva y un mapa de calor (`LAYOUTS.md`).
 - [ ] La retrospectiva del caso (`CAMBIOS_PROPUESTOS_AL_PITCH_KIT.md`) se escribió con el prompt de
       retrospectiva de `PROMPTS.md`.
 - [ ] Ningún dato de cliente entró a este repo.

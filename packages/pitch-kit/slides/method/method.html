@@ -14,10 +14,10 @@
     <div class="mid">
       <span class="eb"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><!-- iconoir inner paths, see ICONS.md --></svg>{{EYEBROW}}</span>
       <h2 class="hl">{{TITLE}}</h2>
-      <!-- Tira de datos duros. Seis celdas: periodo, mercado, corpus original, corpus depurado, y
-           la cobertura de la codificación. El original junto al depurado es lo que le da dimensión
-           al descarte, y la cobertura evita que un porcentaje sobre una base chica se lea como si
-           fuera sobre el corpus completo. -->
+      <!-- Tira de datos duros, en palabras llanas. Seis celdas: periodo, mercado, corpus original,
+           corpus depurado, menciones analizadas y canales. El original junto al depurado es lo que le
+           da dimensión al descarte. El acuerdo entre codificadores (κ), la cobertura de la
+           codificación y los modelos van al registro, nunca aquí (LAYOUTS.md, method slide). -->
       <div style="display:grid; grid-template-columns:repeat(6,1fr); gap:14px; margin:20px 0 8px;">
         <div class="card" style="padding:16px 18px;"><div class="ph" style="margin-bottom:6px;">{{FACT_1_LABEL}}</div><b style="font-size:20px;color:var(--ink);">{{FACT_1_VALUE}}</b></div>
         <div class="card" style="padding:16px 18px;"><div class="ph" style="margin-bottom:6px;">{{FACT_2_LABEL}}</div><b style="font-size:20px;color:var(--ink);">{{FACT_2_VALUE}}</b></div>
@@ -29,7 +29,7 @@
       <div style="display:grid; grid-template-columns:1fr 1fr; gap:24px 44px; margin-top:18px;">
         <div class="irow">
           <div class="icobox t-teal"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><!-- iconoir inner paths --></svg></div>
-          <div><div class="il">qué se escuchó</div><div class="id">{{SCOPE}}</div></div>
+          <div><div class="il">qué se analizó</div><div class="id">{{SCOPE}}</div></div>
         </div>
         <div class="irow">
           <div class="icobox t-teal"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><!-- iconoir inner paths --></svg></div>

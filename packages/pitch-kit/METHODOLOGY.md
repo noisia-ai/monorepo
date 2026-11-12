@@ -76,8 +76,15 @@ Hard rules, learned the hard way:
   of a category query in Portuguese), so the ETL resolves language and market every time; and the
   gate C check in the ETL stays as the net. A "with and without country" capture does not catch
   this, since both give the same total; the language and country profile of the first export does.
-  (In another case, with `rawText:` in Advanced Query, 99% came back in the right language. Until a
-  controlled test settles it, profile the first export every time.)
+  (In another case, with `rawText:` in Advanced Query, 99% came back in the right language. And in a
+  study in a Cyrillic-script language the **language** filter did apply with Advanced Query: a topic
+  went from 8,105 to 2,523 mentions with the language ticked, keeping 99.3% of the forms that exist
+  only in that language, while the
+  **country** filter stayed greyed out with no effect.) The evidence is mixed, so test it per study
+  in the preview, which costs nothing: run one anchor with and without the language ticked. If the
+  total drops and the sample is in the right language, the filter works and the query does not need
+  language anchors; if it does not move, anchor the language in the query. Country is never trusted
+  to the filter. Profile the first export every time either way.
 - **Every query in two versions:** without `rawText:` for the total volume, with it for the analysis.
   One query brought 1,019,192 mentions in the first and 173,214 in the second, with the subject in the
   post's own text in over 99%. The client needed to see the total; the analysis needed the clean one.

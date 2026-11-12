@@ -108,8 +108,10 @@ advisor para cerrar el alcance
   → LAS TRES FRASES, escritas completas en el chat, y esperas mi sí: las tres cosas que el cliente va a repetir en su siguiente
     junta, cada una con su cifra; la prueba de lo obvio para cada una (¿la pudo escribir antes
     del estudio?); y lo que esta base no da. Ver LAYOUTS.md, "Before the sequence"
-  → si es pagado, la tabla de densidad: qué lleva cada slide de cada deck pagado de referencia
-    (serie, canal, imágenes, logos, citas, implicación), y el primer corte se mide contra ella
+  → la tabla de densidad, en todo estudio: qué lleva cada slide de los dos estudios aprobados más
+    recientes del índice (serie, canal, imágenes, logos, citas, implicación), y el primer corte se
+    mide contra ella. Todo estudio, también freebie, abre con la capa "todo a la vez": panorama,
+    todos los temas con su curva y un mapa de calor (LAYOUTS.md)
   → slides sobre el engine, con los fragmentos de slides/ y un fondo propio por slide
     con builders/gen-backgrounds.py. Si falta Pillow, instálalo; no portes los builders
   → render slide por slide con builders/qa-render.py, y los miras. Si es pagado, pon cada render
@@ -386,7 +388,7 @@ y no deben volverse regla.
 ## Bloque · Estudio de Triggers y Barriers
 
 ```text
-FAMILIA: estudio T&B. Freebie o base chica: 10 a 15 slides. Pagado: 25 a 40, con el esqueleto
+FAMILIA: estudio T&B. Freebie o base chica: 15 a 20 slides. Pagado: 25 a 40, con el esqueleto
 multipregunta (una subportada, su análisis y su recomendación por pregunta; si el brief trae
 hipótesis, cada una se vuelve pregunta). Secuencia en LAYOUTS.md.
 
@@ -426,9 +428,10 @@ reporte.
 ## Bloque · Muestra o freebie
 
 ```text
-FAMILIA: muestra, variante corta del estudio, 10 a 14 slides.
+FAMILIA: muestra, variante corta del estudio, 12 a 16 slides.
 
-Sirve para enseñar el nivel de lectura con un alcance recortado. Se detiene en el diagnóstico: las
+Sirve para enseñar el nivel de lectura con un alcance recortado, y lleva la capa "todo a la vez"
+(panorama, todos los temas con su curva, mapa de calor). Se detiene en el diagnóstico: las
 slides de oportunidades, plan de acción y qué vigilar se colapsan en un solo bloque de teaser y un
 cierre con siguiente paso.
 
