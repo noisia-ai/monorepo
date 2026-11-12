@@ -31,6 +31,16 @@ export function Mix({ timing, quiet = [], musicFree }: { timing: Timing; quiet?:
           </Sequence>
         ) : null
       )}
+      {/* The insight cue: the same short sound every time a Spark lands, so the ear learns it (sfx.insight). */}
+      {timing.sfx.insight
+        ? timing.scenes.map((sc, i) =>
+            sc.marks.spark_at != null ? (
+              <Sequence key={`cue-${i}`} from={sc.from + sc.marks.spark_at} durationInFrames={20}>
+                <Audio src={staticFile(timing.sfx.insight === "kit" ? "sfx/insight.wav" : `piece/${timing.sfx.insight}`)} volume={0.6} />
+              </Sequence>
+            ) : null
+          )
+        : null}
       {timing.music ? <Audio src={staticFile(`piece/${timing.music}`)} volume={(f) => musicLevel(f, voiced, quiet, musicFree)} /> : null}
     </>
   );

@@ -9,6 +9,7 @@ export {
   Easing,
   Img,
   Sequence,
+  cancelRender,
   continueRender,
   delayRender,
   interpolate,

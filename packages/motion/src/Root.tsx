@@ -55,7 +55,7 @@ export function Root() {
           const piece = studySchema.parse(props.piece);
           const timing = timingSchema.parse(props.timing);
           if (timing.scenes.length !== piece.scenes.length) throw new Error("timing.json does not match the piece: run builders/audio.py again");
-          return { durationInFrames: timing.total, props: { piece, timing } };
+          return { durationInFrames: timing.total, props: { piece, timing, qa: props.qa === true } };
         }}
       />
       <Composition

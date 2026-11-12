@@ -82,12 +82,16 @@ export const baseSchema = z
 export type Base = z.infer<typeof baseSchema>;
 
 /** The line under a figure: the mentions it stands on, its period and, when known, its channels. */
-export const noteSchema = z.object({
-  mentions: z.number().int().nonnegative(),
-  what: z.string().max(60).optional(),
-  period: z.string().min(1).max(40),
-  channels: z.array(z.string().min(1).max(30)).max(4).optional()
-});
+// An official figure (a census, an electoral count) has no mentions: it carries its `source` instead.
+export const noteSchema = z
+  .object({
+    mentions: z.number().int().nonnegative().optional(),
+    what: z.string().max(60).optional(),
+    period: z.string().min(1).max(40),
+    channels: z.array(z.string().min(1).max(30)).max(4).optional(),
+    source: z.string().max(60).optional()
+  })
+  .refine((n) => n.mentions != null || n.source, { message: "a note gives the mentions it stands on, or the source of an official figure" });
 export type Note = z.infer<typeof noteSchema>;
 
 const baseScene = z.object({ type: z.literal("base"), id: z.string().optional(), vo: z.string().max(400).optional(), background: z.lazy(() => backgroundSchema).optional() });
@@ -111,7 +115,10 @@ export const quoteSchema = z.object({
   verified: z.literal(true),
   voiced: z.boolean().default(false),
   // eleven_v3 emotion tag said before the quote, e.g. "[laughing]". Filtered out of the timestamps.
-  emotion: z.string().regex(/^\[[a-z ]+\]$/).optional()
+  emotion: z.string().regex(/^\[[a-z ]+\]$/).optional(),
+  // What the voice reads when the literal spelling would be read wrong ("eh votado" → "he votado").
+  // The card always shows `text`, literal.
+  say: z.string().max(260).optional()
 });
 export type Quote = z.infer<typeof quoteSchema>;
 
@@ -149,17 +156,51 @@ export const sparkSchema = z.object({
 const voicesSchema = z.object({
   narrator: z.string(),
   quotes: z.record(z.string()).default({}),
-  quoteLanguage: z.string().optional()
+  quoteLanguage: z.string().optional(),
+  // ElevenLabs models and narrator settings; audio.py has defaults (VIDEO.md §5.3). Newer models
+  // accept fewer settings, so the piece says which ones it sends.
+  model: z.string().optional(),
+  quoteModel: z.string().optional(),
+  settings: z.record(z.union([z.number(), z.boolean()])).optional()
 });
 
 const common = {
   voices: voicesSchema.optional(),
   // Prompt for an instrumental bed from ElevenLabs /v1/music. Without it, no music.
   music: z.string().max(600).optional(),
+  // An approved track is kept while it lasts as long as the video (audio.py never regenerates it).
+  musicLock: z.boolean().optional(),
+  // The insight cue played on every Spark: "kit" for the kit's own sound, or a file in the piece folder.
+  sfx: z.object({ insight: z.string().optional() }).optional(),
   locale: locale.default("es"),
   tag: z.string().max(40).optional(),
   background: backgroundSchema.default({ kind: "wash" })
 };
+
+// ---------------------------------------------------------------- copy rules on what is said and shown
+// Noisia works after the listening: the verb is "analizamos", never "escuchamos" (COPY_RULES §0.5).
+// No reveal colons in the narration ("La base:"), they read as a slide, not as speech.
+const SAID = ["vo", "vo2", "title", "head", "text"] as const;
+function copyRules(scenes: Record<string, unknown>[], ctx: z.RefinementCtx) {
+  scenes.forEach((s, i) => {
+    const spark = (s.spark ?? {}) as { line?: string; say?: string };
+    // A quote scene's text is a real post, literal: the rule is for Noisia's own words.
+    const said = SAID.filter((k) => !(k === "text" && s.type === "quote"));
+    const fields: [string, unknown][] = [...said.map((k) => [k, s[k]] as [string, unknown]), ["spark.line", spark.line], ["spark.say", spark.say]];
+    for (const [k, v] of fields) {
+      if (typeof v !== "string") continue;
+      if (/escuch|listen/i.test(v)) ctx.addIssue({ code: "custom", path: ["scenes", i, k], message: `scene ${i + 1} ${k}: say "analizamos" (we analyze), never "escuchamos" (we listen)` });
+      if ((k === "vo" || k === "vo2") && /:/.test(v)) ctx.addIssue({ code: "custom", path: ["scenes", i, k], message: `scene ${i + 1} ${k}: no reveal colon in the narration` });
+    }
+  });
+}
+
+/** Under 5,000 analyzed mentions the absolute count reads as a thin study: the figure goes in %. */
+const THIN = 5000;
+function thinNote(note: { mentions?: number } | undefined, i: number, ctx: z.RefinementCtx) {
+  if (note?.mentions != null && note.mentions < THIN)
+    ctx.addIssue({ code: "custom", path: ["scenes", i, "note", "mentions"], message: `scene ${i + 1}: ${note.mentions} mentions reads as a thin study; show the figure as a % and give the universe it comes from (5,000 or more), or a source` });
+}
 
 // ---------------------------------------------------------------- social
 export const socialSceneSchema = z.union([
@@ -181,7 +222,9 @@ export const socialSchema = z
       const figure = FIGURES.includes(s.type) || (s.type === "tension" && s.value != null);
       if (figure && !("note" in s && s.note))
         ctx.addIssue({ code: "custom", path: ["scenes", i, "note"], message: `scene ${i + 1} (${s.type}) shows a figure without its note: mentions, period, channels` });
+      if ("note" in s) thinNote(s.note, i, ctx);
     });
+    copyRules(piece.scenes as Record<string, unknown>[], ctx);
   });
 export type SocialPiece = z.infer<typeof socialSchema>;
 export type SocialScene = SocialPiece["scenes"][number];
@@ -215,7 +258,7 @@ export const studySceneSchema = z.discriminatedUnion("type", [
     label: z.string().max(40),
     head: z.string().max(110),
     count: z.object({ from: z.number(), label: z.string().max(80) }),
-    note: noteSchema,
+    note: noteSchema.optional(),
     chat: z.array(quoteSchema).min(2).max(5),
     empty: z.string().max(60),
     spark: sparkSchema,
@@ -223,7 +266,18 @@ export const studySceneSchema = z.discriminatedUnion("type", [
     vo2: z.string().max(200).optional(),
     background: backgroundSchema.optional()
   }),
-  z.object({ type: z.literal("base"), id: z.string(), vo: z.string().max(400).optional(), background: backgroundSchema.optional() }),
+  z.object({
+    type: z.literal("base"),
+    id: z.string(),
+    vo: z.string().max(400).optional(),
+    background: backgroundSchema.optional(),
+    // Closing by channels: the corpus was said in the cold open, so the base scene tells where people talk and about what.
+    head: z.string().max(60).optional(),
+    channelTopics: z
+      .array(z.object({ platform: z.string().min(1).max(30), items: z.array(z.object({ label: z.string().max(40), value: z.number(), vs: z.string().max(30).optional() })).min(1).max(3) }))
+      .max(3)
+      .optional()
+  }),
   z.object({
     type: z.literal("close"),
     id: z.string(),
@@ -243,10 +297,16 @@ export const studySchema = z
   .superRefine((piece, ctx) => {
     if (piece.scenes.filter((s) => s.type === "base").length !== 1)
       ctx.addIssue({ code: "custom", path: ["scenes"], message: "a study carries exactly one base scene (mentions, channels, period)" });
+    // A cold open already states the base (total, period, channels), so after it chapters may drop
+    // their note; without a cold open the note stays mandatory. A note that is shown needs 5,000
+    // mentions or more: under that the absolute count reads as a thin study, so the figure goes in %.
+    const opensWithBase = piece.scenes[0]?.type === "cold";
     piece.scenes.forEach((s, i) => {
-      if (s.type === "chapter" && s.chart && !s.note)
+      if (s.type === "chapter" && s.chart && !s.note && !opensWithBase)
         ctx.addIssue({ code: "custom", path: ["scenes", i, "note"], message: `chapter "${s.id}" shows a chart without its note: mentions, period, channels` });
+      if (s.type === "chapter" || s.type === "climax") thinNote(s.note, i, ctx);
     });
+    copyRules(piece.scenes as Record<string, unknown>[], ctx);
   });
 export type StudyPiece = z.infer<typeof studySchema>;
 

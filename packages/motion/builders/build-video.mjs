@@ -100,7 +100,8 @@ if (format === "clip") {
 // ---------------------------------------------------------------- public folder: brand assets + the piece's own files
 const work = mkdtempSync(join(tmpdir(), "noisia-motion-"));
 const publicDir = join(work, "public");
-cpSync(join(PKG, "public"), publicDir, { recursive: true });
+// dereference: a symlinked public/ would otherwise make the piece files below land inside the kit.
+cpSync(join(PKG, "public"), publicDir, { recursive: true, dereference: true });
 for (const sub of ["audio", "images"]) {
   const from = join(dirname(input), sub);
   if (existsSync(from)) cpSync(from, join(publicDir, "piece", sub), { recursive: true });
@@ -152,10 +153,15 @@ function markersOf(comp) {
     if (q) at.push([`${name}-quote-end`, t.from + q.at + q.len]);
     if (t.marks.words_at != null) at.push([`${name}-words`, t.from + t.marks.words_at + 30]);
     if (t.marks.zero_at != null) at.push([`${name}-zero`, t.from + t.marks.zero_at + 6]);
-    if (t.marks.chat_at != null) at.push([`${name}-chat`, t.from + (t.marks.spark_at ?? t.len) - 6]);
+    if (t.marks.chat_at != null) at.push([`${name}-chat`, t.from + (t.marks.spark_at ?? t.len) - 10]);
     if (t.marks.spark_at != null) at.push([`${name}-spark`, t.from + t.marks.spark_at + 30]);
     if (t.marks.logo_at != null) at.push([`${name}-logo`, t.from + t.marks.logo_at + 30]);
     if (!vo && !q) at.push([`${name}-${sc.type}`, t.from + t.len - 14]);
+    // Transitions too: the scene's first beat and the frame just before each mark, where the phase
+    // going out and the one coming in can overlap.
+    at.push([`${name}-in`, t.from + 24]);
+    for (const [k, v] of Object.entries(t.marks)) if (v != null && v > 30) at.push([`${name}-pre-${k.replace(/_at$/, "")}`, t.from + v - 4]);
+    if (q) at.push([`${name}-pre-quote`, t.from + q.at + 6]);
   });
   if (format === "social") at.push(["logo", comp.durationInFrames - 4]);
   return at.filter(([, f]) => f < comp.durationInFrames);
@@ -165,15 +171,35 @@ if (opt.qa) {
   const dir = resolve(opt.qa);
   rmSync(dir, { recursive: true, force: true });
   mkdirSync(dir, { recursive: true });
-  const comp = await composition(inputProps);
-  const marks = markersOf(comp);
+  // The study turns its layout guard on: a still where two blocks cross fails with their names
+  // (src/common/LayoutGuard.tsx). The still is then rendered again without the guard, so the contact
+  // sheet still shows the problem.
+  const guarded = format === "study";
+  const comp = await composition(guarded ? { ...inputProps, qa: true } : inputProps);
+  const marks = [...new Map(markersOf(comp).map(([n, f]) => [f, [n, f]])).values()].sort((a, b) => a[1] - b[1]);
+  const problems = [];
   for (const [name, frame] of marks) {
-    await renderStill({ ...common, composition: comp, frame, output: join(dir, `${String(frame).padStart(5, "0")}-${name}.png`), inputProps: comp.props, scale: 0.5, licenseKey });
+    const output = join(dir, `${String(frame).padStart(5, "0")}-${name}.png`);
+    try {
+      await renderStill({ ...common, composition: comp, frame, output, inputProps: comp.props, scale: 0.5, licenseKey });
+    } catch (e) {
+      const m = String(e?.message ?? e).match(/layout guard, frame \d+: [^\n]*/);
+      if (!m) throw e;
+      problems.push(`${name}: ${m[0]}`);
+      const plain = { ...comp.props, qa: false };
+      await renderStill({ ...common, composition: { ...comp, props: plain }, frame, output, inputProps: plain, scale: 0.5, licenseKey });
+    }
   }
   const r = spawnSync("python3", [join(HERE, "qa.py"), "sheet", dir, join(dir, "_contact-sheet.png")], { stdio: "inherit" });
   if (r.status !== 0) fail("qa.py sheet failed");
   console.log(`${marks.length} stills → ${dir}`);
   rmSync(work, { recursive: true, force: true });
+  if (problems.length) {
+    console.error(`\nQA failed: ${problems.length} still(s) with overlapping blocks. An overlap blocks delivery (VIDEO.md §7).`);
+    for (const p of problems) console.error(`  ${p}`);
+    process.exit(1);
+  }
+  if (guarded) console.log("Layout guard: no block crosses another in any still.");
   process.exit(0);
 }
 

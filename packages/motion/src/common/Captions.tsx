@@ -27,7 +27,7 @@ export function Captions({ clips, bottom = SAFE.bottomPublish }: { clips: Clip[]
   const t = frame - clip.at;
   const line = lines.find((l) => t <= l[l.length - 1][2] + 3) ?? lines[lines.length - 1];
   return (
-    <div style={{ position: "absolute", left: SAFE.side, right: SAFE.side, bottom, textAlign: "center", fontFamily: font, fontSize: 46, lineHeight: 1.25, fontWeight: 700 }}>
+    <div data-qa="captions" style={{ position: "absolute", left: SAFE.side, right: SAFE.side, bottom, textAlign: "center", fontFamily: font, fontSize: 46, lineHeight: 1.25, fontWeight: 700 }}>
       <span style={{ background: "rgba(255,255,255,.9)", padding: "8px 18px", borderRadius: 14, boxDecorationBreak: "clone", WebkitBoxDecorationBreak: "clone" }}>
         {line.map((w, i) => (
           <span key={i} style={{ color: t >= w[1] ? color.ink : color.upcoming }}>
