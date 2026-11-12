@@ -65,6 +65,10 @@ for(const authorization of ["rotation","scoped","scoped-scale","scoped-funding",
           const nodes = (plan: Plan): Plan[] => [plan, ...(plan.Plans ?? []).flatMap(nodes)];
           const roots = nodes(explained).find(node => node["Subplan Name"] === "CTE all_roots");
           assert.ok(roots);
+          assert.match(sql, /mass_mentions AS MATERIALIZED/u,
+            "mass readers share the narrow current mention metadata");
+          assert.doesNotMatch(sql, /FROM signal_classification_assignments|FROM signal_topic_consolidation_snapshot_memberships_v1/u,
+            "a mass map cannot traverse unrelated classification or consolidation memberships");
           assert.equal(nodes(roots).some(node => node["Node Type"] === "Function Scan"), false,
             "candidate arrays must be expanded outside the per-root resolution plan");
           assert.equal(nodes(roots).some(node => node["Subplan Name"]?.startsWith("SubPlan")), false,
@@ -82,6 +86,12 @@ for(const authorization of ["rotation","scoped","scoped-scale","scoped-funding",
       if (sql.includes("consumer_indicators") || sql.includes("reviewed_consumers AS MATERIALIZED")) {
         assert.doesNotMatch(sql,/signal_mass_labeling_category_(?:pattern|matches)_/u,"Signal joins materialized lexical matches");
         assert.match(sql,/signal_mass_labeling_category_matches lexical/u);
+      }
+      if (sql.includes("selected_consumers AS MATERIALIZED")) {
+        assert.doesNotMatch(sql.split("selected_consumers AS MATERIALIZED")[0]!, /mention\.text_clean/u,
+          "consumer sampling must choose root IDs before loading mention text");
+        assert.match(sql, /id=selected\.root_id OFFSET 0/u,
+          "the final text lookup remains bounded when the serving transaction disables nested loops");
       }
       return raw.query(sql, values);
     };

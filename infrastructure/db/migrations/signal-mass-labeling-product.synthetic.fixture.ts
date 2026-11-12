@@ -15,6 +15,7 @@ import { getMassLabelingStudyPolicyV1, updateMassLabelingStudyPolicyV1 } from ".
 import { createMassLabelingStoreV1, continueMassLabelingV1, measureMassLabelingSmokeV1 } from "../signal-mass-labeling";
 import type { LabelingDatabaseV1 } from "../signal-mention-facets";
 import { processMassLabelingJevV1 } from "../../../services/workers/src/workers/signal-mass-labeling-jev";
+import { loadMassLabelingConsumerEvidenceV1, loadSignalWorkspaceTopicsOverviewV1 } from "../signal-workspace-topics-serving";
 
 /** Exercises the normal native admission and unified transport over a real,
  * invented-data map supplied by the existing migrated PostgreSQL fixture. */
@@ -207,5 +208,15 @@ export async function assertMassLabelingProductNativeV2(args: {
     count(DISTINCT inputs->0->>'root_id')::int roots FROM signal_labeling_calls WHERE run_id=$1`, [admitted.run_id])).rows[0],
     { calls: 1002, roots: 1002 });
   assert.equal((await publishMassLabelingProductResultV2({ database: args.database, run_id: admitted.run_id })).published, false);
+  const overview = await loadSignalWorkspaceTopicsOverviewV1({ ...args, conversation_segment: "all" });
+  assert.ok(overview?.is_current);
+  assert.equal(overview.denominator, status.map!.root_count);
+  assert.equal(overview.terms.filter(term => term.basis === "defined_interest").length, interests.length);
+  for (const segment of ["conversation", "advertising", "hashtags"] as const) {
+    const filtered = await loadSignalWorkspaceTopicsOverviewV1({ ...args, conversation_segment: segment });
+    assert.equal(filtered!.denominator, overview.population_segments![segment], "native product filters use the same frozen population");
+  }
+  const examples = { ...args, conversation_segment: "conversation" as const, choice: "trigger" as const };
+  assert.deepEqual((await loadMassLabelingConsumerEvidenceV1(examples)).items, [], "the native fixture answered none for every consumer");
   await args.query("SET CONSTRAINTS ALL IMMEDIATE"); await args.query("SET CONSTRAINTS ALL DEFERRED");
 }
