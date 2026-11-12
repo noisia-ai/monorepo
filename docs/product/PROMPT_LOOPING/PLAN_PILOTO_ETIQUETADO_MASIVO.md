@@ -213,6 +213,12 @@ Lo demás se resuelve de forma autónoma y se anota en el registro de decisiones
 
 ## Progreso
 
+- [x] H7 · Los once archivos de origen coincidieron por SHA-256. Con 83,962 raíces en cada entorno, dev-test y UAT comparten 83,958 identidades. Sus textos exactos coincidieron en todos los casos comunes. El anexo conserva los cruces entre los cuatro segmentos y la comparación del léxico, los intereses y las poblaciones de consumidores.
+
+- [x] H7 · Se sellaron 600 casos ciegos para el auditor. Las diez cohortes de tópicos aportan 50 cada una y las de motivadores y barreras aportan otras 100. Son 598 raíces distintas por el solapamiento entre cohortes. Para cotejar las 22 causas del estudio de referencia se obtuvieron otras 100 raíces distintas, 50 por dirección, sin compartir raíz ni texto normalizado con las muestras ciegas. Las claves permanecen bajo custodia separada.
+
+- [x] H7 · Studio y workers sirven `e043ffe4` en UAT, ambos con Railpack, salud verificada y cero cambios preparados. Desde el enlace habitual, los cuatro filtros mostraron 61,975 raíces de conversación, 21,716 de publicidad, 271 de sólo hashtags y 83,962 de contenido total. La acción «View details and examples» cargó 25 ejemplos. El nombre y la definición en inglés aparecieron junto a su fuente portuguesa.
+
 - [x] H7 · El lector revisado del PR #166, integrado en `6c7e83c9` con CI y PostgreSQL verdes, reprodujo en dev-test los conteos y las etiquetas de R14 en los cuatro segmentos. En la primera serie, la primera consulta de conversación tardó 4.827 s. En la repetición registrada, tres pasadas por segmento dieron máximos de 1.437 s para el resumen y 0.754 s para evidencia. El anexo conserva ambas series.
 
 - [x] H7 · El cotejo independiente terminó el 11 de noviembre a las 20:03 de Ciudad de México. Verificó los 83,962 cuerpos originales de JEV contra los recibos y las solicitudes por raíz en el mismo mapa. Coincidieron los 83,962 resultados y USD 5.796879, con cero discrepancias. La huella del ledger se mantuvo entre la primera y la última lectura.
@@ -265,7 +271,7 @@ Lo demás se resuelve de forma autónoma y se anota en el registro de decisiones
 - [x] H7 · La cabeza revisada del PR #160 pasó CI y PostgreSQL y se integró en `99f8bcff`. En la copia restaurada, la migración 0292 cambió sólo el cuerpo de la función que verifica las decisiones de recuperación. Se conservaron sus permisos y los lectores históricos dieron los mismos resultados. La repetición verificó las 60 entradas del ledger sin aplicar DDL.
 - [x] H7 · La migración 0292 se aplicó una sola vez en UAT. El catálogo coincide con la copia, los lectores históricos conservaron sus resultados y CI y PostgreSQL quedaron verdes sobre la integración. Studio y workers sirven `99f8bcff` con Railpack y cero cambios preparados.
 - [x] H7 · Studio reanudó la misma ejecución con HTTP 202 en 54.230 s. El motor terminó con la respuesta global original. Los 57 recibos liquidados y su importe permanecieron idénticos. UAT conserva la propuesta editorial de 97 términos distintos y una revisión de analista con 129 términos, dos intereses activos, idioma inglés y umbral 0.85.
-- [ ] H7 · Materializar los candidatos por raíz, clasificar con JEV y comprobar Signal. Después se sellan la comparación de poblaciones y las muestras ciegas.
+- [x] H7 · Se materializaron los candidatos por raíz, se completó JEV, se verificaron los cuatro filtros de Signal y se sellaron la comparación de poblaciones y las muestras ciegas.
 
 - [x] H7 · La lectura optimizada de Signal pasó la comprobación en los cuatro segmentos del estudio de dev-test. En seis mediciones intercaladas, la vista general tardó de 1.570 a 2.570 s y la evidencia de 1.027 a 1.621 s. La medición posterior de la página desplegada figura arriba. [PR de la consulta](https://github.com/noisia-ai/monorepo/pull/142)
 
@@ -284,7 +290,7 @@ Lo demás se resuelve de forma autónoma y se anota en el registro de decisiones
 - [x] H7 · La migración 0286 ya materializa el léxico en dev-test. En conversación, la evidencia de motivador bajó de 40.280 s a 4.701 s y la de barrera de 39.586 s a 4.352 s. La vista general aún tardó 19.411 s. Las consultas y la página se volvieron a medir después de optimizar el lector.
 
 - [x] H7 · Se leyó la auditoría R15, se identificaron los destinos de Railway y Supabase y se midió la referencia en dev-test. Conversación tardó 18.925 s en la vista, 40.280 s en evidencia de motivador y 39.586 s en barrera. Con todo el contenido tardaron 24.036, 33.646 y 37.632 s respectivamente.
-- [ ] H7 · Respaldar, restaurar y ensayar en una copia, preservar las tres marcas históricas, aplicar una vez en UAT, verificar el producto y entregar la comparación con sus recibos.
+- [x] H7 · Se respaldó UAT y se ensayaron las migraciones en copia. La aplicación y su repetición verificaron el ledger. Se conservaron las lecturas de las tres marcas históricas y se verificaron el producto, la comparación y los recibos.
 
 - [x] H6 · El despliegue de Studio y del worker de dev-test desde `0c33eb05` sirvió los resultados desde el dominio habitual. Se probaron los cuatro filtros, cinco ejemplos por indicador y ambos intereses. Se dio de alta una marca ficticia en su propia organización desde el formulario normal, con el etiquetado activo y umbral inicial de 0.85.
 
@@ -345,6 +351,8 @@ Lo demás se resuelve de forma autónoma y se anota en el registro de decisiones
 - [x] Hito 4 · Recibo, comparación y muestras ciegas verificados. Se entregan el recibo público de una página y, en custodia privada, el anexo comparativo, método/fuentes, 600 casos en 11 cohortes y la clave sellada por separado. Son 597 raíces distintas por los solapamientos entre cohortes; cada cohorte cumple sus cuotas de 50 raíces por tópico para los 10 tópicos mayores y 100 de triggers/barriers. Las cohortes no representan evaluación de precisión humana.
 
 ## Sorpresas y descubrimientos
+
+- H7 · El total de raíces elegibles coincide entre entornos aunque hay cuatro identidades exclusivas en cada uno. Entre las comunes, 1,005 pasaron de publicidad en dev-test a conversación en UAT y 556 hicieron el recorrido contrario. Los 271 casos de sólo hashtags permanecieron en ese segmento. Para las cuatro identidades exclusivas por entorno, los registros de importación acreditan cuatro pares de versiones de texto que comparten un identificador de proveedor. Los dos entornos cargaron los archivos en orden contrario. El importador conservó la primera versión y registró la posterior como duplicada.
 
 - H7 · El cambio de filtro devolvió HTTP 500. Studio agotó en diez segundos la espera por una conexión mientras consultaba el rol del usuario. La interfaz también solicitaba detalles de tópicos en segundo plano al recibir un resumen nuevo. El cierre de esa petición en el navegador podía dejar la consulta en curso en PostgreSQL.
 
@@ -471,6 +479,8 @@ Lo demás se resuelve de forma autónoma y se anota en el registro de decisiones
 - Dos lotes devolvieron referencias válidas dentro de la muestra de 30 pero superaron el máximo de diez referencias por campo. La comprobación privada de las respuestas originales y de reparación encontró entre 11 y 30 referencias en los campos rechazados.
 
 ## Registro de decisiones
+
+- H7 · El cotejo usa dos instantáneas de sólo lectura y la procedencia que consulta Signal en cada entorno. Se informa por separado si coincide la identidad de una raíz, el texto exacto y el segmento que el lector le asigna. La comparación de causas mantiene su muestra independiente de la reservada al auditor.
 
 - H7 · El anexo mide la cobertura sobre las 83,962 solicitudes ya cotejadas. Leer el ledger con páginas ordenadas por UUID repetía el recorrido de datos. En una página de 128 llamadas, pedir sus identificadores verificados devolvió exactamente las mismas filas y huellas en 0.396 s frente a 17.827 s. La validación conserva los permisos, los resultados y la huella completa del ledger.
 
@@ -599,7 +609,9 @@ Lo demás se resuelve de forma autónoma y se anota en el registro de decisiones
 
 ## Resultado y retrospectiva
 
-La clasificación completa de R15 produjo 83,962 resultados en una corrida desde Studio UAT. Las 1,000 raíces iniciales y su continuación sumaron USD 5.796879. El cotejo de los cuerpos originales verificó ese importe y cada resultado. La vista de Signal abrió el mapa con sus 111 tópicos. El recibo de entrega se cerrará con los cuatro segmentos, las muestras ciegas y la comparación.
+En el cotejo R14–R15, los once archivos de entrada coinciden, las 83,958 raíces comunes conservan el mismo texto exacto y hay cuatro exclusivas de cada entorno. El mapa pasó de 98 a 111 tópicos. La configuración curada de UAT conserva los 102 términos previos y suma 27. Los dos intereses conservan su definición y umbral de 0.85. Para contrastar la calidad del resultado se sellaron las 600 muestras ciegas y se reservó una segunda muestra de 100 para contrastar las causas documentadas por el estudio humano.
+
+La clasificación completa de R15 produjo 83,962 resultados en una corrida desde Studio UAT. Las 1,000 raíces iniciales y su continuación sumaron USD 5.796879. El cotejo de los cuerpos originales verificó ese importe y cada resultado. El uso total a tarifa fue USD 17.280463. Signal abrió el mapa de 111 tópicos y mostró los cuatro segmentos. La cobertura, los tiempos y los volúmenes están en el [recibo público de R15](DELIVERY_PILOTO_ETIQUETADO_ESTUDIO_A_R15_2026-11-11.md).
 
 En la continuación en UAT, una lectura del manifiesto dejó pendiente una de 27,400 solicitudes. Se verificaron los bytes originales y se registró el importe que el worker debe conciliar, USD 0.000067. El worker liquidó ese recibo y Studio reanudó la misma ejecución con las 56,562 raíces restantes. La versión `b2a81a0c` acota la concurrencia hasta persistir cada raíz.
 

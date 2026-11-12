@@ -31,7 +31,7 @@ El uso a tarifa sumó **USD 17.280463**. Equivale a USD 0.205813 por mil raíces
 | JEV · prueba inicial | 1 h 28 min 22 s |
 | JEV · continuación | 11 h 43 min 41 s |
 
-Los intervalos de importación y mapa incluyen reintentos y esperas. Los 56 recibos de grupo sumaron USD 7.257105. La respuesta global costó USD 1.155030 e incluyó la propuesta del léxico. La recuperación del mapa reutilizó los mismos 57 recibos.
+Los intervalos de importación y mapa incluyen reintentos y esperas. «Mapa disponible» mide desde la admisión hasta la confirmación final e incluye la preparación editorial, la editorial y la escritura final. Sumar esas filas duplicaría tiempo de reloj. Los 56 recibos de grupo sumaron USD 7.257105. La respuesta global costó USD 1.155030 e incluyó la propuesta del léxico. La recuperación del mapa reutilizó los mismos 57 recibos.
 
 ## Cobertura
 
