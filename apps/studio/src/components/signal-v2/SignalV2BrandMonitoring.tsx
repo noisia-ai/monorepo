@@ -394,13 +394,20 @@ export function SignalV2BrandMonitoring({
     const requestParams = new URLSearchParams(params);
     if (topicsNarrativesData.population_segments) requestParams.set("initial_inspection", "deferred");
     try {
-      const response = await fetch(`/api/data-os/signal/${data.workspace.id}/topics-narratives/page?${requestParams}`, { cache: "no-store", signal: controller.signal });
+      const monitoringRead = currentModule === "monitoring";
+      const endpoint = monitoringRead ? "topics-narratives/monitoring" : "topics-narratives/page";
+      if (monitoringRead) requestParams.delete("initial_inspection");
+      const response = await fetch(`/api/data-os/signal/${data.workspace.id}/${endpoint}?${requestParams}`, { cache: "no-store", signal: controller.signal });
       if (controller.signal.aborted || ticket !== filterSequenceRef.current) return false;
       if (!response.ok) {
         if ([401, 403, 404, 409].includes(response.status)) invalidateNativeTopicEvidence();
         throw new Error(t("errors.load"));
       }
-      const bundle = await response.json() as SignalWorkspaceTopicReadBundleV1;
+      const loaded = await response.json() as SignalWorkspaceTopicReadBundleV1 | SignalWorkspaceOverviewV1;
+      const bundle: SignalWorkspaceTopicReadBundleV1 = monitoringRead
+        ? { contract_version: "signal-workspace-topic-read-bundle-v1", overview: loaded as SignalWorkspaceOverviewV1,
+          detail: null, evidence: null }
+        : loaded as SignalWorkspaceTopicReadBundleV1;
       const payload = bundle.overview;
       if (controller.signal.aborted || ticket !== filterSequenceRef.current) return false;
       if (bundle.contract_version !== "signal-workspace-topic-read-bundle-v1" || !payload || payload.contract_version !== "signal-workspace-topics-serving-v1" || payload.workspace_id !== data.workspace.id) {
@@ -595,9 +602,11 @@ export function SignalV2BrandMonitoring({
     try {
       const endpoint = target === "mentions"
         ? `/api/data-os/signal/${data.workspace.id}/mentions`
-        : target === "topics" || nativeTarget
+        : target === "topics"
           ? `/api/data-os/signal/${data.workspace.id}/topics-narratives`
-          : `/api/data-os/signal/${data.workspace.id}/brand-monitoring`;
+          : nativeTarget
+            ? `/api/data-os/signal/${data.workspace.id}/topics-narratives/monitoring`
+            : `/api/data-os/signal/${data.workspace.id}/brand-monitoring`;
       const requestQuery = new URLSearchParams(query);
       const focus = nativeTarget && target === "mentions" ? requestQuery.get("mention") : null;
       const response = await fetch(`${endpoint}?${requestQuery}`, {
@@ -1305,9 +1314,7 @@ export function SignalV2BrandMonitoring({
         className={`signal-v2-main${loading ? " signal-v2-main--loading" : ""}${pendingModule ? " signal-v2-main--updating" : ""}`}
         id="signal-v2-content"
       >
-        {pendingModule && currentModule !== pendingModule
-          && !(topicsNarrativesData?.contract_version === "signal-workspace-topics-serving-v1"
-            && ["monitoring", "topics"].includes(currentModule) && ["monitoring", "topics"].includes(pendingModule)) ? (
+        {pendingModule && currentModule !== pendingModule ? (
           <SignalV2ModuleSkeleton
             brandName={brandName}
             showBody={showPendingModuleBody}

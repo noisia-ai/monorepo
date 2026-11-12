@@ -52,6 +52,7 @@ test("native workspace data enters the shared Signal dashboard without inventing
   assert.equal(result.contract_version, "signal-brand-monitoring-v1");
   assert.equal(result.coverage.mentions, 43_159);
   assert.equal(result.volume.current_value, 43_159);
+  assert.equal(result.filter.timezone, workspace.timezone);
   assert.equal(result.freshness.data.unit, "canonical_mention");
   assert.equal(result.conversation_structure.state, "not_available");
   assert.deepEqual(result.conversation_structure.points, []);
