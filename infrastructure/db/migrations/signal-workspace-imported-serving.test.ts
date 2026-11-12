@@ -97,21 +97,43 @@ test("no accepted receipt stays unavailable and a stale generation never falls b
   await assert.rejects(loadSignalWorkspaceMentionsV1(f.imported), /workspace_mentions_stale/u);
   assert.equal(f.statements.some(sql => sql.includes("HAVING count(*)>0")), false);
 });
-test("imported SQL reuses complete-path rights precedence and canonical root dedup", async () => {
-  const f = fixture(); await loadSignalWorkspaceMentionsV1(f.imported);
-  const sql = f.statements.find(query => query.includes("mention_roots AS MATERIALIZED"))!;
-  assert.match(sql, /batch.status='completed'/u); assert.match(sql, /source.status='active'/u);
-  assert.match(sql, /SELECT DISTINCT origin.canonical_mention_id root_id/u);
-  assert.match(sql, /mention.canonical_mention_id=mention.id AND mention.inclusion_status='included'/u);
-  assert.match(sql, /ORDER BY \(candidate.import_batch_id IS NOT NULL\) DESC,candidate.binding_version DESC,candidate.id LIMIT 1/u);
-  assert.match(sql, /bool_or\(rights.metrics AND rights.evidence\) evidence/u);
-  assert.match(sql, /retention.retain_until>now\(\)/u); assert.doesNotMatch(sql, /llm-processing/u);
-  assert.doesNotMatch(sql, /prepared.asset_sha256=mention.text_clean_sha256/u);
-  assert.match(sql, /mention.text_clean_sha256 IS NOT NULL/u);
-  const identity = f.statements.find(query => query.includes("HAVING count(*)>0"))!;
-  assert.match(identity, /NOT EXISTS\(SELECT 1 FROM signal_classification_generations prior/u);
-  assert.match(identity, /NOT EXISTS\(SELECT 1 FROM signal_topic_consolidation_bindings prior/u);
-});
+for (const reader of ["topics", "mentions"] as const) {
+  test(`imported ${reader} SQL reuses complete-path rights precedence and canonical root dedup`, async () => {
+    const f = fixture();
+    if (reader === "mentions") await loadSignalWorkspaceMentionsV1(f.imported);
+    else await loadSignalWorkspaceTopicsOverviewV1(f.imported);
+    const sql = f.statements.find(query => query.includes("WITH source_generation AS MATERIALIZED"))!;
+    const received = sql.slice(sql.indexOf("received_roots AS MATERIALIZED ("), sql.indexOf("), all_roots AS MATERIALIZED ("));
+    const population = sql.slice(sql.indexOf("all_roots AS MATERIALIZED ("), sql.indexOf("), period_all_roots AS"));
+    assert.match(sql, /batch.status='completed'/u); assert.match(sql, /source.status='active'/u);
+    assert.match(received, /path.import_batch_id=batch.id\s+AND path.data_source_id=batch.data_source_id AND path.workspace_id=\$1::uuid/u);
+    assert.match(received, /origin.id=path.mention_id AND origin.workspace_id=\$1::uuid/u);
+    if (reader === "mentions") {
+      assert.match(received, /GROUP BY origin.canonical_mention_id/u);
+      assert.match(received, /bool_or\(COALESCE\(rights.metrics,false\)\) metrics/u);
+      assert.match(received, /bool_or\(COALESCE\(rights.metrics AND rights.evidence,false\)\) evidence/u);
+      assert.match(received, /LEFT JOIN authorized_imports rights ON rights.id=batch.id AND rights.data_source_id=batch.data_source_id/u);
+      assert.match(population, /COALESCE\(received.metrics,false\) metrics/u);
+      assert.match(population, /COALESCE\(received.evidence,false\) evidence/u);
+    } else {
+      assert.match(received, /SELECT DISTINCT origin.canonical_mention_id root_id/u);
+      assert.match(sql, /bool_or\(rights.metrics AND rights.evidence\) evidence/u);
+      assert.match(population, /LEFT JOIN root_rights rights ON rights.root_id=mention.id/u);
+      assert.match(population, /COALESCE\(rights.metrics,false\) metrics/u);
+      assert.match(population, /COALESCE\(rights.evidence,false\) evidence/u);
+    }
+    assert.match(population, /mention.canonical_mention_id=mention.id AND mention.inclusion_status='included'/u);
+    assert.match(sql, /ORDER BY \(candidate.import_batch_id IS NOT NULL\) DESC,candidate.binding_version DESC,candidate.id LIMIT 1/u);
+    assert.match(sql, /retention.retain_until>now\(\)/u); assert.doesNotMatch(sql, /llm-processing/u);
+    if (reader === "mentions") {
+      assert.doesNotMatch(sql, /prepared.asset_sha256=mention.text_clean_sha256/u);
+      assert.match(sql, /mention.text_clean_sha256 IS NOT NULL/u);
+    }
+    const identity = f.statements.find(query => query.includes("HAVING count(*)>0"))!;
+    assert.match(identity, /NOT EXISTS\(SELECT 1 FROM signal_classification_generations prior/u);
+    assert.match(identity, /NOT EXISTS\(SELECT 1 FROM signal_topic_consolidation_bindings prior/u);
+  });
+}
 
 test("an available generation enriches the same roots without selecting imported fallback", async () => {
   const f = fixture(), imported = await loadSignalWorkspaceMentionsV1(f.imported);
