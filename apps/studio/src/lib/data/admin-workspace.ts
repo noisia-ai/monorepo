@@ -195,19 +195,54 @@ export async function loadAdminBrandWorkspacePageCorpus(user: AdminUser, workspa
   return loadAdminWorkspaceCorpusSummariesV1({ queryable: pool, actor_user_id: user.id, workspace_ids: workspaceIds });
 }
 
-async function loadAdminBrandWorkspaceRows(user: AdminUser, brandLookup: string | null = null) {
-  const result = await pool.query<AdminBrandSqlRow>(ADMIN_BRAND_WORKSPACES_SQL, [brandLookup]);
-  const corpus = await loadAdminWorkspaceCorpusSummariesV1({ queryable: pool, actor_user_id: user.id,
-    workspace_ids: result.rows.flatMap(row => row.workspace_id ? [row.workspace_id] : []) });
+async function loadAdminBrandWorkspaceRows(
+  user: AdminUser,
+  brandLookup: string | null = null,
+  options: { omitLegacyCoverage?: boolean; includeCorpus?: boolean } = {}
+) {
+  const result = await pool.query<AdminBrandSqlRow>(adminBrandWorkspacesSql(options), [brandLookup]);
+  const corpus = options.includeCorpus === false ? new Map<string, AdminWorkspaceCorpusSummaryV1>()
+    : await loadAdminWorkspaceCorpusSummariesV1({ queryable: pool, actor_user_id: user.id,
+      workspace_ids: result.rows.flatMap(row => row.workspace_id ? [row.workspace_id] : []) });
   return result.rows.map(row => ({ ...mapBrandWorkspaceRow(row), corpus: row.workspace_id ? corpus.get(row.workspace_id) ?? null : null }));
 }
 
-export async function getAdminDashboard(user: AdminUser) {
-  const brands = await listAdminBrandWorkspaces(user);
+export async function getAdminDashboard(user: AdminUser, options: { includeCorpus?: boolean } = {}) {
+  // Dashboard counts and coverage come from canonical workspace import receipts.
+  // Computing the unused legacy population coverage also scans every workspace.
+  const brands = user.userType === "noisia_internal"
+    ? await loadAdminBrandWorkspaceRows(user, null, { omitLegacyCoverage: true, includeCorpus: options.includeCorpus })
+    : [];
+  return buildAdminDashboard(brands);
+}
+
+export async function loadAdminDashboardCorpus(
+  user: AdminUser,
+  dashboard: ReturnType<typeof buildAdminDashboard>,
+  scope: string
+) {
+  const ids = dashboard.brands.flatMap(brand => brand.workspaceId && (scope === "all" || scope === brand.workspaceId)
+    ? [brand.workspaceId] : []);
+  if (user.userType !== "noisia_internal" || !ids.length) return dashboard;
+  const client = await pool.connect();
+  let destroy = false;
+  try {
+    await client.query("BEGIN READ ONLY");
+    await client.query("SET LOCAL statement_timeout = '20s'");
+    await client.query("SET LOCAL lock_timeout = '2s'");
+    const corpus = await loadAdminWorkspaceCorpusSummariesV1({ queryable: client, actor_user_id: user.id, workspace_ids: ids });
+    return buildAdminDashboard(dashboard.brands.map(brand => ({ ...brand,
+      corpus: brand.workspaceId ? corpus.get(brand.workspaceId) ?? null : null })));
+  } finally {
+    try { await client.query("ROLLBACK"); } catch { destroy = true; }
+    client.release(destroy);
+  }
+}
+
+function buildAdminDashboard(brands: AdminBrandWorkspaceRow[]) {
   const priorities = brands
     .flatMap((brand) => brandPriorities(brand))
-    .sort((left, right) => priorityRank(left.state) - priorityRank(right.state))
-    .slice(0, 12);
+    .sort((left, right) => priorityRank(left.state) - priorityRank(right.state));
   return {
     brands,
     totals: {
@@ -714,8 +749,6 @@ function adminBrandWorkspacesSql(options: { restrictIds?: boolean; omitLegacyCov
   ORDER BY lower(COALESCE(brand.display_name, brand.name)), brand.id
 `;
 }
-
-const ADMIN_BRAND_WORKSPACES_SQL = adminBrandWorkspacesSql();
 
 const ADMIN_BRAND_WORKSPACE_PAGE_INDEX_SQL = `
   WITH filtered AS MATERIALIZED (
