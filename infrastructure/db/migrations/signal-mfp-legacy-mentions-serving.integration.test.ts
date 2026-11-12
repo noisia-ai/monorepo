@@ -71,6 +71,12 @@ test("native mentions reads the complete real generation, pages/focus/filter in 
           assert.deepEqual(settings, { jit: "off", nestloop: "off" });
           const plan = (await client.query(`EXPLAIN (FORMAT JSON) ${sql}`, params)).rows[0]!["QUERY PLAN"][0].Plan;
           corpusPlanCosts.push(plan["Total Cost"]);
+          const nodes = (node: Record<string, unknown>): Array<Record<string, unknown>> => [node,
+            ...((node.Plans ?? []) as Array<Record<string, unknown>>).flatMap(nodes)];
+          assert.ok(nodes(plan).some(node => node["Relation Name"] === "mentions"
+            && ["Index Scan", "Index Only Scan"].includes(String(node["Node Type"]))
+            && typeof node["Index Cond"] === "string" && /id = root(?:_\d+)?\.root_id/u.test(node["Index Cond"])),
+          "hydrate each selected excerpt by its root key after the page limit");
         }
         return client.query(sql, params);
       }) as PoolClient["query"];
