@@ -682,6 +682,7 @@
         },
         "rootUnit": "Unique mentions"
       },
+      "detailsAndEvidence": "View details and examples",
       "detailMetrics": {
         "presence": "This concept over time",
         "mentions": "Mentions",

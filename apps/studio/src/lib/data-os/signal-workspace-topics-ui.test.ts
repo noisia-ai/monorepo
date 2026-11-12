@@ -92,7 +92,7 @@ test("consolidated Signal separates Topics and narratives and exposes real edito
 
 test("native Topic and Narrative panels request evidence through their matching kind route", async () => {
   const source = await readFile(new URL("../../components/signal-v2/SignalV2WorkspaceTopics.tsx", import.meta.url), "utf8");
-  assert.match(source, /topics-narratives\/\$\{sectionKind\}\/\$\{encodeURIComponent\(term\.term_key\)\}\/\$\{cursor \? "evidence" : "inspection"\}/u);
+  assert.match(source, /topics-narratives\/\$\{sectionKind\}\/\$\{encodeURIComponent\(termKey\)\}\/\$\{cursor \? "evidence" : "inspection"\}/u);
   assert.match(source, /body\.kind !== sectionKind/u);
   assert.match(source, /page\.kind === sectionKind/u);
 });
@@ -457,9 +457,10 @@ test("relationship selection changes section before selecting an interest or top
 });
 
 
-test("mass overview SSR shows loading and original topic copy while consumers and stale views avoid inspection",async()=>{
+test("mass overview SSR shows original topic copy and an explicit details action before inspection",async()=>{
  const html=await render("en-US",localizedPilot);
- assert.match(html,/Meeting friends/);assert.match(html,/Encontros com amigos/);assert.match(html,/Loading/);
+ assert.match(html,/Meeting friends/);assert.match(html,/Encontros com amigos/);assert.match(html,/View details and examples/);
+ assert.doesNotMatch(html,/Loading…|Loading\.\.\./);
  assert.doesNotMatch(html,/No evidence available/);
  const stale=await render("en-US",{...localizedPilot,is_current:false});
  assert.doesNotMatch(stale,/Loading…|Loading\.\.\./);
@@ -467,94 +468,251 @@ test("mass overview SSR shows loading and original topic copy while consumers an
  assert.doesNotMatch(consumers,/Loading…|Loading\.\.\./);
 });
 
-type InspectionElement={type:unknown;props:Record<string,unknown>};
-type InspectionSlot={initial:unknown;value:unknown};
-/** Execute the component's own mount effect with controlled hooks and transport. */
-async function initialInspectionFixture(payload:SignalWorkspaceTopicsOverviewV1,bundle:SignalWorkspaceTopicReadBundleV1|null=null,surface="topics"){
- const effects:Array<()=>void|(()=>void)>=[],slots:InspectionSlot[]=[];
- const jsx=(type:unknown,props:Record<string,unknown>):InspectionElement=>({type,props});
- const hooks={
-  useId:()=>"synthetic-tabs",useMemo:(value:()=>unknown)=>value(),useCallback:(value:unknown)=>value,
-  useRef:(value:unknown)=>({current:value}),useEffect:(effect:()=>void|(()=>void))=>effects.push(effect),
-  useState:(initial:unknown)=>{
-   const value=typeof initial==="function"?initial():initial,slot={initial:value,value};slots.push(slot);
-   return [value,(next:unknown)=>{slot.value=typeof next==="function"?next(slot.value):next;}];
+type InspectionElement = { type: unknown; props: Record<string, unknown> };
+type InspectionSlot = { initial: unknown; value: unknown };
+/** Run the production component with persistent hooks and controlled transport. */
+async function initialInspectionFixture(payload: SignalWorkspaceTopicsOverviewV1,
+  bundle: SignalWorkspaceTopicReadBundleV1 | null = null, surface = "topics", consumer = false) {
+  type Hook = { value?: unknown; dependencies?: readonly unknown[]; cleanup?: () => void };
+  const cells: Hook[] = [], slots: InspectionSlot[] = [];
+  const effects: Array<{ cell: Hook; effect: () => void | (() => void) }> = [];
+  let position = 0, dirty = false, tree: InspectionElement;
+  const cell = () => cells[position++] ?? (cells[position - 1] = {});
+  const equal = (left: readonly unknown[] | undefined, right: readonly unknown[]) =>
+    Boolean(left && left.length === right.length && left.every((value, index) => Object.is(value, right[index])));
+  const memo = (build: () => unknown, dependencies: readonly unknown[]) => {
+    const current = cell();
+    if (!equal(current.dependencies, dependencies)) {
+      current.value = build(); current.dependencies = dependencies;
+    }
+    return current.value;
+  };
+  const jsx = (type: unknown, props: Record<string, unknown>): InspectionElement => ({ type, props });
+  const hooks = {
+    useId: () => "synthetic-tabs", useMemo: memo,
+    useCallback: (value: unknown, dependencies: readonly unknown[]) => memo(() => value, dependencies),
+    useRef: (value: unknown) => {
+      const current = cell();
+      if (!current.value) current.value = { current: value };
+      return current.value;
+    },
+    useEffect: (effect: () => void | (() => void), dependencies: readonly unknown[]) => {
+      const current = cell();
+      if (!equal(current.dependencies, dependencies)) {
+        effects.push({ cell: current, effect }); current.dependencies = dependencies;
+      }
+    },
+    useState: (initial: unknown) => {
+      const current = cell();
+      if (!current.value) {
+        const value = typeof initial === "function" ? initial() : initial;
+        const slot = { initial: value, value }; slots.push(slot); current.value = slot;
+      }
+      const slot = current.value as InspectionSlot;
+      return [slot.value, (next: unknown) => {
+        const value = typeof next === "function" ? next(slot.value) : next;
+        if (!Object.is(value, slot.value)) { slot.value = value; dirty = true; }
+      }];
+    }
+  };
+  const presentation = new Set(["next/link", "@phosphor-icons/react", "./SignalV2ModuleHeader", "./SignalAnalyticsFilter",
+    "./SignalDataScopeFilter", "./SignalEChart", "./SignalSourceIcon", "./SignalEvidenceDrawer", "./SignalConsumerEvidence",
+    "./SignalTopicsPrimitives", "./SignalTopicChartOptions"]);
+  const dependencies: Record<string, unknown> = {
+    "react": hooks, "react/jsx-runtime": { jsx, jsxs: jsx, Fragment: "fragment" },
+    "next-intl": { useLocale: () => "en-US", useTranslations: () => (key: string) => key },
+    "./signal-topic-localization": { localizedSignalTopic }, "./SignalWorkspaceTopicDetail": { validNativeTopicDetail }
+  };
+  const exports: Record<string, unknown> = {};
+  const source = await readFile(new URL(`../../components/signal-v2/${consumer ? "SignalConsumerEvidence" : "SignalV2WorkspaceTopics"}.tsx`, import.meta.url), "utf8");
+  new Function("require", "exports", ts.transpileModule(source, { compilerOptions: {
+    module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX
+  } }).outputText)((name: string) => {
+    if (name in dependencies) return dependencies[name];
+    assert.ok(presentation.has(name), name);
+    return new Proxy({}, { get: (_target, key) => String(key) });
+  }, exports);
+  let props = { brandName: "Synthetic QA", data: payload, initialBundle: bundle, surface,
+    loading: false, refreshFailed: false, workspaceTimezone: "UTC", onOpenMentions: () => {} };
+  const component = exports[consumer ? "SignalConsumerEvidence" : "SignalV2WorkspaceTopics"] as (value: typeof props) => InspectionElement;
+  const render = () => {
+    position = 0; dirty = false;
+    const root = component(props);
+    tree = typeof root.type === "function" ? root.type(root.props) : root;
+  };
+  const flush = () => {
+    for (let turn = 0; turn < 20; turn++) {
+      if (dirty) render();
+      for (const pending of effects.splice(0)) {
+        pending.cell.cleanup?.();
+        pending.cell.cleanup = pending.effect() || undefined;
+      }
+      if (!dirty && !effects.length) return;
+    }
+    throw Error("component failed to settle");
+  };
+  render();
+  return { slots, get tree() { return tree; }, start: flush, flush,
+    update(next: Partial<typeof props>) { props = { ...props, ...next }; render(); flush(); },
+    cleanup() { for (const current of cells) current.cleanup?.(); }
+  };
+}
+function inspectionElement(value: unknown, match: (element: InspectionElement) => boolean): InspectionElement | undefined {
+  if (!value || typeof value !== "object") return;
+  const element = value as InspectionElement, children = element.props?.children;
+  if (match(element)) return element;
+  for (const child of Array.isArray(children) ? children.flat() : [children]) {
+    const found = inspectionElement(child, match); if (found) return found;
   }
- };
- const presentation=new Set(["next/link","@phosphor-icons/react","./SignalV2ModuleHeader","./SignalAnalyticsFilter",
-  "./SignalDataScopeFilter","./SignalEChart","./SignalSourceIcon","./SignalEvidenceDrawer","./SignalConsumerEvidence",
-  "./SignalTopicsPrimitives","./SignalTopicChartOptions"]);
- const dependencies:Record<string,unknown>={
-  "react":hooks,"react/jsx-runtime":{jsx,jsxs:jsx,Fragment:"fragment"},
-  "next-intl":{useLocale:()=>"en-US",useTranslations:()=>(key:string)=>key},
-  "./signal-topic-localization":{localizedSignalTopic},"./SignalWorkspaceTopicDetail":{validNativeTopicDetail}
- };
- const exports:Record<string,unknown>={},source=await readFile(new URL("../../components/signal-v2/SignalV2WorkspaceTopics.tsx",import.meta.url),"utf8");
- new Function("require","exports",ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText)(
-  (name:string)=>{if(name in dependencies)return dependencies[name];assert.ok(presentation.has(name),name);return new Proxy({},{get:()=>()=>null});},exports);
- const props={brandName:"Synthetic QA",data:payload,initialBundle:bundle,surface,loading:false,workspaceTimezone:"UTC",onOpenMentions:()=>{}};
- const render=exports.SignalV2WorkspaceTopics as (value:typeof props)=>InspectionElement;
- const element=render(props),tree=(element.type as (value:Record<string,unknown>)=>InspectionElement)(element.props);
- const cleanup:Array<()=>void>=[];
- return {slots,tree,start(){for(const effect of effects){const dispose=effect();if(dispose)cleanup.push(dispose);}},
-  cleanup(){for(const dispose of cleanup)dispose();}};
 }
-function inspectionAction(value:unknown):InspectionElement|undefined{
- if(!value||typeof value!=="object")return;
- const element=value as InspectionElement,children=element.props?.children;
- if(element.type==="button"&&Array.isArray(children)&&children.includes("evidence"))return element;
- for(const child of Array.isArray(children)?children:[children]){const found=inspectionAction(child);if(found)return found;}
+function inspectionAction(tree: InspectionElement, label = "detailsAndEvidence") {
+  const action = inspectionElement(tree, element => element.type === "button"
+    && (element.props.children === label || Array.isArray(element.props.children) && element.props.children.includes(label)));
+  assert.ok(action, `missing action ${label}`);
+  return action;
 }
-const deferredMassData:SignalWorkspaceTopicsOverviewV1={...localizedPilot,generation_id:null,
- terms:localizedPilot.terms.map((term,index)=>index===0?{...term,basis:"concept_membership"}:term)};
-const inspectedMassBundle:SignalWorkspaceTopicReadBundleV1={...initialBundle,overview:deferredMassData,
- detail:{...initialBundle.detail!,generation_id:null},evidence:{...initialBundle.evidence!,generation_id:null}};
+function pressInspection(tree: InspectionElement, label = "detailsAndEvidence") {
+  const action = inspectionAction(tree, label);
+  assert.equal(action.props.disabled, false);
+  (action.props.onClick as () => void)();
+}
+const nextInspectionTick = () => new Promise(resolve => setImmediate(resolve));
+const deferredMassData: SignalWorkspaceTopicsOverviewV1 = { ...localizedPilot, generation_id: null,
+  terms: localizedPilot.terms.map((term, index) => index === 0 ? { ...term, basis: "concept_membership" } : term) };
+const inspectedMassBundle: SignalWorkspaceTopicReadBundleV1 = { ...initialBundle, overview: deferredMassData,
+  detail: { ...initialBundle.detail!, generation_id: null }, evidence: { ...initialBundle.evidence!, generation_id: null } };
 
-test("deferred mass mount issues one scoped inspection, hydrates both responses and avoids an early drawer duplicate",async()=>{
- const prior=globalThis.fetch,calls:Array<{url:string;signal:AbortSignal|null|undefined}>=[];
- let respond!:(value:Response)=>void;
- globalThis.fetch=(async(url,options)=>{calls.push({url:String(url),signal:options?.signal});return new Promise<Response>(resolve=>{respond=resolve;});}) as typeof fetch;
- const fixture=await initialInspectionFixture(deferredMassData);
- try{
-  assert.equal(calls.length,0);
-  const button=inspectionAction(fixture.tree);assert.ok(button);(button.props.onClick as ()=>void)();
-  fixture.start();assert.equal(calls.length,1);
-  const url=new URL(calls[0]!.url,"https://synthetic.invalid");
-  assert.match(url.pathname,/topic\/topic0\/inspection$/u);assert.equal(url.searchParams.get("scope_digest"),deferredMassData.scope_digest);
-  assert.equal(url.searchParams.get("conversation_segment"),"conversation");
-  respond(Response.json(inspectedMassBundle));await new Promise(resolve=>setImmediate(resolve));
-  assert.ok(fixture.slots.some(slot=>JSON.stringify(slot.value)===JSON.stringify(inspectedMassBundle.detail)));
-  assert.ok(fixture.slots.some(slot=>JSON.stringify(slot.value)===JSON.stringify(inspectedMassBundle.evidence)));
-  assert.equal(calls.length,1);
- }finally{fixture.cleanup();globalThis.fetch=prior;}
+test("mass mount, overview refresh and topic selection wait for explicit details interaction", async () => {
+  const prior = globalThis.fetch, calls: Array<{ url: string; signal: AbortSignal | null | undefined }> = [];
+  let respond!: (value: Response) => void;
+  globalThis.fetch = (async (url, options) => {
+    calls.push({ url: String(url), signal: options?.signal });
+    return new Promise<Response>(resolve => { respond = resolve; });
+  }) as typeof fetch;
+  const fixture = await initialInspectionFixture(deferredMassData);
+  try {
+    fixture.start(); assert.equal(calls.length, 0);
+    fixture.update({ data: { ...deferredMassData, observed_at: "2026-11-12T00:00:00Z",
+      terms: deferredMassData.terms.map(term => ({ ...term })) } });
+    assert.equal(calls.length, 0);
+    const ranking = inspectionElement(fixture.tree, element => element.type === "SignalTopicsRankingList"); assert.ok(ranking);
+    (ranking.props.onSelect as (key: string) => void)("topic1"); fixture.flush();
+    assert.equal(calls.length, 0);
+    (ranking.props.onSelect as (key: string) => void)("topic0"); fixture.flush();
+    assert.equal(calls.length, 0);
+    pressInspection(fixture.tree); pressInspection(fixture.tree); fixture.flush();
+    assert.equal(calls.length, 1, "rapid repeated clicks share the pending inspection");
+    const url = new URL(calls[0]!.url, "https://synthetic.invalid");
+    assert.match(url.pathname, /topic\/topic0\/inspection$/u);
+    assert.equal(url.searchParams.get("scope_digest"), deferredMassData.scope_digest);
+    assert.equal(url.searchParams.get("conversation_segment"), "conversation");
+    respond(Response.json(inspectedMassBundle)); await nextInspectionTick(); fixture.flush();
+    assert.ok(fixture.slots.some(slot => JSON.stringify(slot.value) === JSON.stringify(inspectedMassBundle.detail)));
+    assert.ok(fixture.slots.some(slot => JSON.stringify(slot.value) === JSON.stringify(inspectedMassBundle.evidence)));
+    fixture.update({ data: { ...deferredMassData, observed_at: "2026-11-12T00:01:00Z" } });
+    assert.equal(calls.length, 1, "a new overview observation must not repeat an inspection for the same scope");
+  } finally { fixture.cleanup(); globalThis.fetch = prior; }
 });
-test("complete initial bundles, consumers, stale views and empty mass selections do not fetch inspection",async()=>{
- const prior=globalThis.fetch;let calls=0;
- globalThis.fetch=(async()=>{calls++;throw Error("unexpected inspection");}) as typeof fetch;
- try{
-  const cases:Array<[SignalWorkspaceTopicsOverviewV1,SignalWorkspaceTopicReadBundleV1|null,string]>=[
-   [deferredMassData,inspectedMassBundle,"topics"],[deferredMassData,null,"consumers"],
-   [{...deferredMassData,is_current:false},null,"topics"],[{...deferredMassData,terms:[]},null,"topics"]];
-  for(const [payload,bundle,surface] of cases){
-   const fixture=await initialInspectionFixture(payload,bundle,surface);fixture.start();fixture.cleanup();
-  }
-  assert.equal(calls,0);
- }finally{globalThis.fetch=prior;}
+test("complete bundles hydrate without fetching and legacy computed views retain automatic inspection", async () => {
+  const prior = globalThis.fetch; let calls = 0;
+  globalThis.fetch = (async () => { calls++; return Response.json(initialBundle); }) as typeof fetch;
+  try {
+    for (const [payload, bundle, surface] of [
+      [deferredMassData, inspectedMassBundle, "topics"], [deferredMassData, null, "consumers"],
+      [{ ...deferredMassData, is_current: false }, null, "topics"], [{ ...deferredMassData, terms: [] }, null, "topics"]
+    ] as Array<[SignalWorkspaceTopicsOverviewV1, SignalWorkspaceTopicReadBundleV1 | null, string]>) {
+      const fixture = await initialInspectionFixture(payload, bundle, surface); fixture.start();
+      assert.equal(calls, 0); fixture.cleanup();
+    }
+    const legacy = await initialInspectionFixture(data); legacy.start();
+    await nextInspectionTick(); legacy.flush(); assert.equal(calls, 1); legacy.cleanup();
+  } finally { globalThis.fetch = prior; }
 });
-test("deferred inspection clears revoked or mismatched responses and aborts on cleanup",async()=>{
- const prior=globalThis.fetch;
- try{
-  for(const outcome of [403,"foreign-scope","aborted"] as const){
-   let respond!:(value:Response)=>void,signal:AbortSignal|null|undefined;
-   globalThis.fetch=(async(_url,options)=>{signal=options?.signal;return new Promise<Response>(resolve=>{respond=resolve;});}) as typeof fetch;
-   const fixture=await initialInspectionFixture(deferredMassData);fixture.start();
-   if(outcome==="aborted"){fixture.cleanup();assert.equal(signal?.aborted,true);}
-   respond(outcome===403?Response.json({},{status:403}):Response.json({...inspectedMassBundle,
-    evidence:{...inspectedMassBundle.evidence!,scope_digest:outcome==="foreign-scope"?"foreign":deferredMassData.scope_digest}}));
-   await new Promise(resolve=>setImmediate(resolve));
-   assert.equal(fixture.slots.some(slot=>typeof slot.value==="object"&&slot.value!==null&&"contract_version" in slot.value),false);
-   if(outcome!=="aborted")assert.ok(fixture.slots.some(slot=>slot.value==="evidenceStale"));
-   fixture.cleanup();
-  }
- }finally{globalThis.fetch=prior;}
+test("filter loading aborts inspection, blocks retained handlers and discards the late response", async () => {
+  const prior = globalThis.fetch; let calls = 0, respond!: (value: Response) => void, signal: AbortSignal | null | undefined;
+  globalThis.fetch = (async (_url, options) => {
+    calls++; signal = options?.signal; return new Promise<Response>(resolve => { respond = resolve; });
+  }) as typeof fetch;
+  const fixture = await initialInspectionFixture(deferredMassData);
+  try {
+    fixture.start(); const previousButton = inspectionAction(fixture.tree);
+    pressInspection(fixture.tree); fixture.flush(); assert.equal(calls, 1);
+    fixture.update({ loading: true }); assert.equal(signal?.aborted, true);
+    (previousButton.props.onClick as () => void)(); assert.equal(calls, 1);
+    respond(Response.json(inspectedMassBundle)); await nextInspectionTick(); fixture.flush();
+    assert.equal(fixture.slots.some(slot => slot.value && typeof slot.value === "object" && "contract_version" in slot.value), false);
+    fixture.update({ loading: false, refreshFailed: true });
+    assert.equal(inspectionAction(fixture.tree).props.disabled, true);
+    fixture.update({ refreshFailed: false }); assert.equal(calls, 1);
+    pressInspection(fixture.tree); assert.equal(calls, 2);
+  } finally { fixture.cleanup(); globalThis.fetch = prior; }
+});
+test("a changed segment fences the old scope and sends no inspection until requested", async () => {
+  const prior = globalThis.fetch, calls: Array<{ url: string; signal: AbortSignal | null | undefined; resolve: (value: Response) => void }> = [];
+  globalThis.fetch = (async (url, options) => new Promise<Response>(resolve => {
+    calls.push({ url: String(url), signal: options?.signal, resolve });
+  })) as typeof fetch;
+  const fixture = await initialInspectionFixture(deferredMassData);
+  try {
+    fixture.start(); pressInspection(fixture.tree); fixture.flush();
+    const changed = { ...deferredMassData, scope_digest: "sha256:advertising", filters: { ...deferredMassData.filters, conversation_segment: "advertising" as const } };
+    fixture.update({ data: changed }); assert.equal(calls[0]!.signal?.aborted, true); assert.equal(calls.length, 1);
+    calls[0]!.resolve(Response.json(inspectedMassBundle)); await nextInspectionTick(); fixture.flush();
+    assert.equal(fixture.slots.some(slot => slot.value && typeof slot.value === "object" && "contract_version" in slot.value), false);
+    pressInspection(fixture.tree); assert.equal(calls.length, 2);
+    const url = new URL(calls[1]!.url, "https://synthetic.invalid");
+    assert.equal(url.searchParams.get("scope_digest"), changed.scope_digest);
+    assert.equal(url.searchParams.get("conversation_segment"), "advertising");
+  } finally { fixture.cleanup(); globalThis.fetch = prior; }
+});
+test("explicit inspections reject revocation or foreign scope and allow retry after a transient error", async () => {
+  const prior = globalThis.fetch;
+  try {
+    for (const outcome of [403, "foreign-scope", "aborted", 500] as const) {
+      let respond!: (value: Response) => void, signal: AbortSignal | null | undefined, calls = 0;
+      globalThis.fetch = (async (_url, options) => {
+        calls++; signal = options?.signal; return new Promise<Response>(resolve => { respond = resolve; });
+      }) as typeof fetch;
+      const fixture = await initialInspectionFixture(deferredMassData); fixture.start(); pressInspection(fixture.tree); fixture.flush();
+      if (outcome === "aborted") { fixture.cleanup(); assert.equal(signal?.aborted, true); }
+      respond(typeof outcome === "number" ? Response.json({}, { status: outcome }) : Response.json({ ...inspectedMassBundle,
+        evidence: { ...inspectedMassBundle.evidence!, scope_digest: outcome === "foreign-scope" ? "foreign" : deferredMassData.scope_digest } }));
+      await nextInspectionTick(); fixture.flush();
+      assert.equal(fixture.slots.some(slot => slot.value && typeof slot.value === "object" && "contract_version" in slot.value), false);
+      if (outcome !== "aborted") assert.ok(fixture.slots.some(slot => slot.value === (outcome === 500 ? "evidenceError" : "evidenceStale")));
+      if (outcome === 500) {
+        const retry = inspectionAction(fixture.tree, "detailMetrics.retry"); (retry.props.onClick as () => void)();
+        assert.equal(calls, 2);
+        respond(Response.json(inspectedMassBundle)); await nextInspectionTick(); fixture.flush();
+        assert.ok(fixture.slots.some(slot => JSON.stringify(slot.value) === JSON.stringify(inspectedMassBundle.evidence)));
+      }
+      fixture.cleanup();
+    }
+  } finally { globalThis.fetch = prior; }
+});
+test("consumer examples abort during filtering and retained pagination cannot start another read", async () => {
+  const prior = globalThis.fetch, requests: Array<{ signal: AbortSignal | null | undefined; resolve: (value: Response) => void }> = [];
+  globalThis.fetch = (async (_url, options) => new Promise<Response>(resolve => {
+    requests.push({ signal: options?.signal, resolve });
+  })) as typeof fetch;
+  const fixture = await initialInspectionFixture(deferredMassData, null, "consumers", true);
+  try {
+    fixture.start(); pressInspection(fixture.tree, "consumers.triggerExamples"); fixture.flush();
+    assert.equal(requests.length, 1);
+    fixture.update({ loading: true }); assert.equal(requests[0]!.signal?.aborted, true);
+    const drawer = inspectionElement(fixture.tree, element => element.type === "SignalEvidenceDrawer"); assert.ok(drawer);
+    requests[0]!.resolve(Response.json({ contract_version: "mass-labeling-consumer-evidence-v1", workspace_id: deferredMassData.workspace_id,
+      scope_digest: deferredMassData.scope_digest, choice: "trigger", items: [{ mention_id: "too-late", text: "late" }], next_cursor: "next" }));
+    await nextInspectionTick(); fixture.flush();
+    assert.equal(fixture.slots.some(slot => slot.value && typeof slot.value === "object" && "contract_version" in slot.value), false);
+    fixture.update({ loading: false }); pressInspection(fixture.tree, "consumers.triggerExamples");
+    assert.equal(requests.length, 2);
+    requests[1]!.resolve(Response.json({ contract_version: "mass-labeling-consumer-evidence-v1", workspace_id: deferredMassData.workspace_id,
+      scope_digest: deferredMassData.scope_digest, choice: "trigger", items: [{ mention_id: "first", text: "current" }], next_cursor: "next" }));
+    await nextInspectionTick(); fixture.flush();
+    const loadedDrawer = inspectionElement(fixture.tree, element => element.type === "SignalEvidenceDrawer"); assert.ok(loadedDrawer);
+    assert.equal(typeof loadedDrawer.props.onLoadMore, "function");
+    fixture.update({ loading: true });
+    (loadedDrawer.props.onLoadMore as () => void)(); assert.equal(requests.length, 2);
+  } finally { fixture.cleanup(); globalThis.fetch = prior; }
 });
