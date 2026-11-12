@@ -186,6 +186,13 @@ datos o de intuición.
 - **El color separa lecturas, no series**: diverge, coinciden en lo negativo, coinciden en lo
   positivo. La leyenda a la derecha explica cada grupo en una frase.
 
+**La gráfica protagonista tiene tamaño mínimo.** Si una matriz (o cualquier gráfica) es el visual
+principal del estudio, ocupa el ancho del frame (unos 1,700 px de 1,920), sus rótulos van a 15 px o
+más a escala del canvas, los cuadrantes van sombreados y nombrados con una línea de qué significan, y
+los ejes se dicen en palabras ("crece más rápido que la conversación →"), además de su escala. Una de
+1,450 px con rótulos de 13 px y los cuadrantes como texto gris en las esquinas regresó con "no se
+entiende, está muy chiquita".
+
 Si la matriz es el visual principal, la portada lleva su versión simple: cuadrada, a la derecha,
 solo puntos, diagonal y dos o tres nombres.
 

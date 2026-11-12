@@ -453,6 +453,15 @@ versión, prompt y fecha, se valida que regresó exactamente una respuesta por f
 muestra humana por etiqueta, y las menciones sin clasificar se quedan sin clasificar en lugar de
 inventarles categoría. Los conteos salen de la tabla resultante, nunca del texto de síntesis.
 
+**Sin llave de API, con agentes.** Un estudio etiquetó 5,046 menciones con 36 agentes, en olas de 8
+y lotes de 150, más un piloto doble a ciegas de 300. Lo que funcionó y lo que falló:
+- Cada agente trabaja en su propia carpeta temporal. Dos lotes compartieron un ayudante temporal y uno
+  se reescribió.
+- Un validador de una línea por id al cerrar cada lote, y después de cada ola una muestra de texto
+  contra glosa, para ver que la etiqueta corresponde a esa mención.
+- El kappa entre dos agentes del mismo modelo se declara como **consistencia del libro de códigos**, no
+  como acuerdo entre personas, y vive en el registro.
+
 ## 16. Verbatims
 
 Son evidencia, no decoración. Texto real y legible, liga conservada, fecha y canal, hilo
@@ -468,6 +477,12 @@ falla si no lo encuentra.
 Un score puede ordenar candidatos combinando reglas activadas, claridad de la dirección, longitud
 legible y diversidad de canal, fecha e hilo. **El score ordena. Una persona verifica la cita en su
 fuente antes de que entre a una slide.**
+
+**Cómo se verifica, por plataforma** (para elegir citas verificables desde el principio y no
+reemplazarlas al final): en X, por el título de la página del post, que trae el texto; en foros y
+medios, por el texto en la página. Reddit bloquea al navegador y responde 403 a su JSON, y los
+comentarios de TikTok y de Facebook no se pueden ubicar desde su liga: en un estudio cuatro citas
+salieron por eso. Si no se puede verificar, no entra.
 
 ## 17. Tiempo, picos y eventos
 
@@ -685,9 +700,15 @@ Salió de tres estudios de un mismo tema en tres países, con idiomas locales me
 - **No se filtra por idioma.** Las lenguas locales salen etiquetadas como inglés u otra cosa. Se
   capturan con palabras locales en la query.
 - **Una query por pregunta de negocio**, no una general. En el mercado chico así se pasó de unas
-  cien menciones a varios miles.
+  cien menciones a varios miles. La excepción probada: cuando el filtro de idioma sí funciona
+  (`METHODOLOGY.md` §1), una sola query universo con las anclas de todos los tópicos recupera lo
+  mismo y da una sola definición por tópico; en un estudio de 45 tópicos evitó 45 pares de queries.
+  Sin un filtro de idioma confiable, no aplica.
 - **Se baja por momentos, no por volumen.** Si una exportación pasa del límite de la herramienta se
   parte por momento (torneo, eliminatorias, liga), y se revisa que el rango de fechas sea el acordado.
+  Si el tablero pasa de 50 mil menciones, se baja **por mes desde el principio**: una exportación de
+  216 mil filas se cortó sin aviso a los 40 MB, y las mensuales salieron completas. Cada archivo se
+  verifica contra su conteo del tablero.
 - **Antes de bajar un pico raro, se pregunta si es ruido.** Un pico de tres meses era una liga de otro
   deporte y otro país con la misma sigla. Se corrigió la query con el nombre actual de la liga.
 
