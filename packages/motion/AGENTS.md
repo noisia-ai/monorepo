@@ -8,6 +8,10 @@
   solo lleva datos de reportes ya publicados en noisia.ai.
 - Secretos: `packages/motion/.env` (licencia de Remotion) y el `.env` del caso (ElevenLabs). Nunca en
   git, nunca en el chat. Generar voces cuesta dinero: `audio.py --budget` y decir el gasto antes.
-- Antes de entregar: `--qa` y revisar la hoja de contactos; `qa.py check` sobre el MP4; pedirle al
-  usuario que escuche el audio.
+- Antes de entregar: `--qa` (truena si dos bloques se cruzan; un encimado bloquea la entrega) y revisar
+  la hoja de contactos; `qa.py check` sobre el MP4; pedirle al usuario que escuche el audio.
+- Un componente nuevo marca sus bloques con `data-qa="<escena>.<elemento>"` para que la guardia de
+  layout los mida (`src/common/LayoutGuard.tsx`).
+- Una sesión de caso no edita este paquete: si el kit produce un defecto, lo corrige en una copia
+  parchada en la carpeta del caso y deja el parche para integrarlo (`packages/pitch-kit/VIDEO.md` §8).
 - Hecho = `pnpm --filter @noisia/motion typecheck` y `test` en verde.

@@ -440,7 +440,8 @@ Ver CANON.md, sección 5.3.
 
 ```text
 FAMILIA: video. Lee packages/pitch-kit/VIDEO.md completo y packages/pitch-kit/HUMAN_SIGNALS.md, etapas
-01 a 07, antes de proponer nada.
+01 a 07, antes de proponer nada. Antes de escribir la voz, lee también COPY_RULES.md y LEARNINGS.md:
+"analizamos", nunca "escuchamos", y sin dos puntos de revelación en la narración.
 
 PREGÚNTAME, una a la vez:
 1. ¿Qué formato? Clip (noisia.ai/insights o TikTok, ~21 s), social (LinkedIn o Reels, 15 a 30 s),
@@ -457,8 +458,9 @@ negocio y su reformulación humana, el hallazgo con su cifra, el insight, la ten
 emocional en sus tres niveles y el momento humano que abre. Debajo, escena por escena: qué se ve, qué
 se dice, qué cifra y qué cita, y de qué fondo y tarjeta de VIDEO.md §4 sale cada una, con su porqué.
 Incluye la base (VIDEO.md §2): el total de menciones, el periodo, el mercado y las menciones por canal
-del corpus; la nota de cada cifra (cuántas menciones, qué periodo, qué canales); dónde va la escena de
-base, y la frase con la que el narrador la dice. Sin base no hay video.
+del corpus, y la frase con la que el narrador la dice una sola vez (en un estudio, al abrir). Si una cifra
+está parada sobre menos de 5,000 menciones analizadas, va en % con su universo. En un estudio, la escena
+de base cuenta los canales: de qué se habla en los que nombra la voz. Sin base no hay video.
 
 AL CONSTRUIR: con el builder de packages/motion (lee su README). El guion aprobado se vuelve una pieza
 JSON en la carpeta del caso, nunca en el repo, y sale con builders/build-video.mjs. Si lleva voces, corre
@@ -466,8 +468,11 @@ primero builders/audio.py --budget y dime el gasto; sin key, --estimate da un bo
 VIDEO.md §2 no se negocia; el estilo de §4 se elige por lo que pide la
 historia. Las cifras salen de datos y las citas llevan su assert. La evidencia es siempre un post real;
 una imagen de atmósfera con Kinetic Cinema pasa el control de calidad de HUMAN_SIGNALS.md §VIII y
-nunca va como si fuera la prueba. Revisa la hoja de contactos de --qa (stills de cada escena en el fin de la voz, el fin de la cita y
-el Spark) antes de darme el MP4, y pídeme que escuche el audio: nadie del lado de la máquina lo oye.
+nunca va como si fuera la prueba. Corre --qa: si truena por un encimado, no se entrega, se corrige. Revisa la hoja de contactos (marcas y
+transiciones de cada escena) antes de darme el MP4, y pídeme que escuche el audio: nadie del lado de
+la máquina lo oye. No edites el kit: si el kit produce un defecto, corrígelo en una copia parchada de
+packages/motion en la carpeta del caso (VIDEO.md §8), entrega bien y deja el parche explicado para
+integrarlo.
 ```
 
 ## Bloque · Comercial

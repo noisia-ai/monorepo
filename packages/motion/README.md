@@ -34,7 +34,8 @@ node builders/build-video.mjs --format study --in examples/study.json --out out/
 # Motion de deck: GIF que arranca en el diagrama completo, con blanco exacto
 node builders/build-video.mjs --format deck --in examples/deck-hub.json --out out/hub.gif --gif
 
-# QA: stills en cada marcador de escena y hoja de contactos, en lugar del video
+# QA: stills en cada marcador y transición de escena y hoja de contactos, en lugar del video.
+# En el estudio truena (exit 1) si dos bloques se cruzan, con sus nombres y el cuadro.
 node builders/build-video.mjs --format study --in examples/study.json --qa out/qa-study
 python3 builders/qa.py check out/study.mp4 --format study
 
@@ -61,6 +62,12 @@ python3 builders/audio.py pieza.json              # voces y música con ElevenLa
 - Las reglas de tiempo de §5.3 (la voz en el cuadro 6, la cita 6 cuadros después, el Spark 8 después,
   la escena cierra 20 después) son constantes al inicio de `audio.py`: un solo lugar.
 - La carpeta del caso puede traer `images/` (atmósfera); la pieza las nombra como `images/x.jpg`.
+- Modelos y ajustes de voz: `voices.model`, `voices.quoteModel` y `voices.settings` en la pieza; si
+  no, los defaults de `audio.py`. Una cita con `say` se lee así y se muestra literal.
+- La música aprobada se bloquea con `"musicLock": true`. Ningún audio se sobrescribe sin guardar el
+  anterior como `_prev_<fecha>`.
+- La seña del insight (`builders/cue.py` → `public/sfx/insight.wav`) suena en cada Spark del estudio
+  por defecto; `"sfx": {}` la quita y `"sfx": {"insight": "audio/otra.wav"}` la cambia.
 
 ## Licencia de Remotion
 

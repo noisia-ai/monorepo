@@ -17,7 +17,7 @@ Complementan `COPY_RULES.md` y `AGENTS.md`. **Léelo antes de armar un deck.**
 | rivales | **contrincantes** |
 | prueba de mensajes | **sugerencias de mensaje** (tono de recomendación; nunca "cambiamos la opinión pública" — protección legal, solo sugerimos) |
 | índice de apoyo digital | **índice de intención de voto** |
-| escucha 24/7 | **escucha en vivo** |
+| escucha 24/7, escucha en vivo | **monitoreo en vivo** ("escucha" es lenguaje de social listening; nosotros analizamos) |
 | setup | **primer mes / arranque** (el cliente no entiende "setup") |
 | el estratega "traduce" | el estratega **interpreta** |
 
