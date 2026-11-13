@@ -6,8 +6,9 @@
   componente va en `src/` contra `src/engine.ts` y el esquema en `src/schema.ts`.
 - Las piezas de un caso viven en la carpeta del caso, nunca en este repo (es público). `examples/`
   solo lleva datos de reportes ya publicados en noisia.ai.
-- Secretos: `packages/motion/.env` (licencia de Remotion) y el `.env` del caso (ElevenLabs). Nunca en
-  git, nunca en el chat. Generar voces cuesta dinero: `audio.py --budget` y decir el gasto antes.
+- Secretos: todas las llaves de herramientas (Remotion, ElevenLabs) viven en el `.env.local` de la
+  raíz del repo y los builders las leen de ahí. No se le piden al usuario si ya están. Nunca en git,
+  nunca en el chat, y nunca se imprimen sus valores. Generar voces cuesta dinero: `audio.py --budget` y decir el gasto antes.
 - Antes de entregar: `--qa` (truena si dos bloques se cruzan; un encimado bloquea la entrega) y revisar
   la hoja de contactos; `qa.py check` sobre el MP4; pedirle al usuario que escuche el audio.
 - Un componente nuevo marca sus bloques con `data-qa="<escena>.<elemento>"` para que la guardia de

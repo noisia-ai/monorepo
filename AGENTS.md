@@ -50,13 +50,28 @@ This repo separates **Canon** (current truth) from **History/Intent** (why thing
 - `docs/adr/` — **Architecture Decision Records** (numbered). Add a new one when you make a structural decision. Existing: monorepo structure, auth/Supabase boundary, external-service deltas, TS compat, methodology slug/version uniqueness, Kinde roles & Studio permissions.
 - `docs/api/` — public reporting API: `openapi.yaml`, `public-api-readme.md`.
 - `packages/pitch-kit/` — **Pitch Kit**: build Noisia sales/pitch decks (PDF + editable PPTX) from a shared engine, a slide library (`slides/catalog.json`) and deck recipes (`slides/recipes.json`). For the commercial team. Invoke the skill `.claude/skills/noisia-pitch/SKILL.md` (Claude Code auto-discovers it; in Codex, read `packages/pitch-kit/AGENTS.md`). To make a deck just ask, e.g. *"arma un pitch de qué es Noisia"* or *"haz una presentación de Triggers & Barriers"*.
-- `packages/motion/` — **the video builder**: one JSON piece in, one video out (clip, social, study, deck GIF), on Remotion with Noisia's company license. Rules in `packages/pitch-kit/VIDEO.md`; commands in `packages/motion/README.md`. License key and ElevenLabs keys live only in ignored `.env` files.
+- `packages/motion/` — **the video builder**: one JSON piece in, one video out (clip, social, study, deck GIF), on Remotion with Noisia's company license. Rules in `packages/pitch-kit/VIDEO.md`; commands in `packages/motion/README.md`. License key and ElevenLabs keys live only in ignored `.env` files: the tool keys in the repo root's `.env.local` (see "Local keys" below).
 - The nested `AGENTS.md` files (this directory tree).
 
 **History / intent — why (do NOT treat as current state):**
 - `docs/HISTORY.md` — narrated history of every shipped commit on `main`, plus hard-won lessons.
 - `docs/BRANCHES.md` — the two big unmerged branches (`live-intelligence-store`, `signal-pulse`) and how they relate.
 - **GitHub Issues** (`noisia-ai/website`) — running context: `#1` Live Corpus/Sephora research, `#2` Engine multimétodo **PAUSED** runbook, `#4` Signal Pulse pre-prod checklist. Issues are the source of truth for *paused/in-flight* work.
+
+## 🔑 Local keys
+
+Every tool key for working on this repo (Remotion, ElevenLabs, and whatever comes next) lives in **one
+file, `.env.local` at the root of the user's development copy of the repo** (ignored by git). The
+builders read it directly: `packages/motion` looks in the repo root's `.env.local`, and so does
+`builders/audio.py`. App runtime keys stay where each app loads them (`apps/studio/.env.local`,
+`services/workers/.env`).
+
+- **Do not ask the user for a key that is already there.** If you work in another copy, a worktree or
+  a case folder, the path to the development copy is in the user's global instructions; read from
+  there, or link `.env.local` into your copy.
+- **Never print, log, paste or commit a value.** Check a key by its name, its prefix or a hash.
+- A new key goes into that file, under a comment saying what uses it, and its name goes into the
+  matching `.env.example`.
 
 ## 🔒 Safety guardrails (read `docs/AGENT_GUARDRAILS.md`)
 

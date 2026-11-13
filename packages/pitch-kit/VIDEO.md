@@ -325,8 +325,9 @@ anclan a una palabra: el número arranca cuando el narrador la dice.
 - **Caché por hash del spec** (texto, voz, modelo, ajustes): volver a correr solo regenera lo que cambió.
 
 **La key y el costo:**
-- La key es del usuario y cuesta dinero. Se crea el `.env` vacío del caso con su `.gitignore`, el usuario
-  la pega ahí, y nunca pasa por el chat ni por el repo.
+- La key cuesta dinero. Vive en el `.env.local` de la raíz del repo, con las demás llaves de
+  herramientas, y `audio.py` la lee de ahí: no se le pide al usuario. Nunca pasa por el chat ni por el
+  repo.
 - El lector limpia comillas y espacios (`strip().strip('"\'').strip()`; una key pegada con comillas dio
   401), revisa que empiece con `sk_` (64 caracteres hex son el ID de la key, no la key) y la valida
   contra `/v1/user/subscription` antes de generar.
@@ -395,13 +396,13 @@ GIF arrancando en el cuadro completo, con paleta fija, blanco exacto y gifsicle:
 Los componentes se escriben una sola vez contra esa interfaz, para que corran en los dos.
 
 **Licencia de Remotion:** Noisia tiene licencia de empresa desde el 10 de noviembre de 2026. La key
-secreta y la pública viven en `packages/motion/.env` (ignorado por git, plantilla en `.env.example`), nunca
+secreta y la pública viven en el `.env.local` de la raíz del repo (ignorado por git, plantilla en `packages/motion/.env.example`), nunca
 en el repo ni en el chat. `build-video.mjs` pasa la secreta a cada render; el Studio usa la pública y sus
 renders no se cobran. Cada render automático cuenta ($0.01 por render en el plan de automatización): se
 itera con `--qa` y el Studio, y el MP4 completo se hace al final.
 
 **Render:**
-- Chrome: el `chrome-headless-shell` de Playwright, en `CHROME_EXECUTABLE` del `.env` del builder, para que
+- Chrome: el `chrome-headless-shell` de Playwright, en `CHROME_EXECUTABLE` del `.env.local` de la raíz, para que
   Remotion no baje el suyo.
 - ffmpeg: el que trae Remotion (`npx remotion ffmpeg`, n7.1) es mínimo. No trae `fps`, `setpts`,
   `palettegen` ni `paletteuse`, y su `select` falla con muchos `eq(n,…)`. Para extraer stills se usa

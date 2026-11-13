@@ -505,9 +505,9 @@ PREGÚNTAME, una a la vez:
 2. ¿De qué sale? Un estudio o reporte aprobado (dame su carpeta y su data.json), un reporte editorial
    del website, o nada todavía.
 3. ¿En qué idiomas?
-4. Si lleva voces: ¿ElevenLabs o voces del sistema como borrador? Si es ElevenLabs, crea el .env vacío
-   del caso con su .gitignore para que yo pegue la key ahí, nunca en el chat, y dime cuántos
-   caracteres vas a gastar antes de generar.
+4. Si lleva voces: ¿ElevenLabs o voces del sistema como borrador? La key de ElevenLabs ya está en el
+   .env.local de la raíz del repo y audio.py la lee de ahí: no me la pidas. Si no está, dímelo y yo la
+   pongo ahí, nunca en el chat. Dime cuántos caracteres vas a gastar antes de generar.
 
 ANTES DE CONSTRUIR, escribe en el chat el guion con Human Signals y espera mi sí: la pregunta de
 negocio y su reformulación humana, el hallazgo con su cifra, el insight, la tensión, la intención

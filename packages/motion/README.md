@@ -56,9 +56,9 @@ python3 builders/audio.py pieza.json              # voces y música con ElevenLa
 
 - Escribe `pieza.timing.json` junto a la pieza y el audio en `audio/` de la carpeta de la pieza. Si
   falta el timing, `build-video` corre `--estimate` solo.
-- La key de ElevenLabs es del usuario y cuesta dinero: va en el `.env` de la carpeta del caso
-  (`ELEVENLABS_API_KEY=`), ignorado por git, nunca en el chat ni en el repo. Antes de generar se
-  corre `--budget` y se dice el gasto.
+- La key de ElevenLabs cuesta dinero. Vive en el `.env.local` de la raíz del repo
+  (`ELEVENLABS_API_KEY=`), ignorado por git, nunca en el chat ni en el repo; `audio.py` la busca
+  ahí solo. Antes de generar se corre `--budget` y se dice el gasto.
 - Las reglas de tiempo de §5.3 (la voz en el cuadro 6, la cita 6 cuadros después, el Spark 8 después,
   la escena cierra 20 después) son constantes al inicio de `audio.py`: un solo lugar.
 - La carpeta del caso puede traer `images/` (atmósfera); la pieza las nombra como `images/x.jpg`.
@@ -71,8 +71,9 @@ python3 builders/audio.py pieza.json              # voces y música con ElevenLa
 
 ## Licencia de Remotion
 
-Noisia tiene licencia de empresa. La key secreta y la pública van en `packages/motion/.env`
-(ignorado por git; plantilla en `.env.example`). `build-video` pasa la secreta a cada `renderMedia`
+Noisia tiene licencia de empresa. La key secreta y la pública van en el `.env.local` de la raíz del
+repo, con las demás llaves de herramientas (ignorado por git; plantilla en `.env.example`).
+`packages/motion/.env` también se lee, si existe. `build-video` pasa la secreta a cada `renderMedia`
 y `renderStill`; el Studio usa la pública. Cada render automático cuenta para la facturación: para
 iterar se usan `--qa` (stills a media resolución) y el Studio, y el MP4 completo al final.
 
