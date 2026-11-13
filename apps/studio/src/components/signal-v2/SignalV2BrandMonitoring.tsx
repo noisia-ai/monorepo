@@ -1807,13 +1807,13 @@ export function SignalV2BrandMonitoring({
               <ConversationColumn
                 empty={t("cards.conversations.emptyPositive")}
                 items={data.highlights.positive}
-                label={t("cards.conversations.positive")}
+                label={t("cards.conversations.positive", { count: data.highlights.positive.length })}
                 tone="positive"
               />
               <ConversationColumn
                 empty={t("cards.conversations.emptyNegative")}
                 items={data.highlights.negative}
-                label={t("cards.conversations.negative")}
+                label={t("cards.conversations.negative", { count: data.highlights.negative.length })}
                 tone="negative"
               />
             </div>}
