@@ -23,10 +23,12 @@ const view = {
   authorization: { can_request: true, provider_available: true, blocked_reason: null, max_budget_micro_usd: 2_000_000 }, run: null
 } as NativeMonitoringInsightsView;
 const quote = { contract_version: "signal-workspace-monitoring-insights-quote-v1", workspace_id: "workspace", request_scope: "sha256:scope", quote_digest: "sha256:quote",
-  packet_digest: "sha256:packet", scope_digest: "sha256:scope", expires_at: new Date(Date.now() + 60_000).toISOString(), reserved_micro_usd: 100_000, budget_cap_micro_usd: 2_000_000 };
+  packet_digest: "sha256:packet", scope_digest: "sha256:scope", expires_at: new Date(Date.now() + 60_000).toISOString(), reserved_micro_usd: 100_000, budget_cap_micro_usd: 2_000_000,
+  monthly_insights: { ...view.monthly_insights, candidate_hash: "sha256:packet", interpretation_state: "deterministic" } };
 function Harness({ workspaceId, segment, locale }: { workspaceId: string; segment: SignalConversationSegmentV1; locale: "es-MX" | "en-US" }) {
   const insights = useNativeMonitoringInsights(workspaceId, true, "Could not load insights", segment, locale);
-  return createElement(NativeMonitoringInsightControls, { insights });
+  return createElement(React.Fragment, null, createElement(NativeMonitoringInsightControls, { insights }),
+    createElement("output", null, insights.view?.monthly_insights.candidate_hash ?? "no-preview"));
 }
 async function mount() {
   const element = document.createElement("div"); document.body.appendChild(element); const root = createRoot(element);
@@ -66,6 +68,8 @@ test("native paid action previews an exact quote and requires confirmation befor
     await until(() => mounted.element.textContent!.includes("up to USD 2"));
     assert.equal(posts.length, 0); await click("Analyze insights");
     await until(() => mounted.element.textContent!.includes("Maximum: USD 2.00")); assert.equal(posts.length, 0);
+    assert.equal(mounted.element.querySelector("output")?.textContent, quote.packet_digest,
+      "the governed deterministic packet reaches the carousel before any paid confirmation");
     await click("Confirm analysis"); await until(() => posts.length === 1);
     assert.deepEqual(JSON.parse(posts[0]!.body as string), { quote_digest: quote.quote_digest, budget_cap_micro_usd: 2_000_000 });
     assert.ok((posts[0]!.headers as Record<string, string>)["Idempotency-Key"]);
@@ -138,7 +142,10 @@ test("changing language aborts the previous scope and requests matching editoria
 });
 test("a quote outside the capability scope or cap cannot create a paid intent", async () => {
   for (const invalid of [{ ...quote, request_scope: "sha256:another" }, { ...quote, budget_cap_micro_usd: 3_000_000 },
-    { ...quote, reserved_micro_usd: 2_000_001 }, { ...quote, expires_at: "invalid" }]) {
+    { ...quote, reserved_micro_usd: 2_000_001 }, { ...quote, expires_at: "invalid" },
+    { ...quote, monthly_insights: { ...quote.monthly_insights, scope_segment: "advertising" } },
+    { ...quote, monthly_insights: { ...quote.monthly_insights, editorial_locale: "en-US" } },
+    { ...quote, monthly_insights: { ...quote.monthly_insights, candidate_hash: "sha256:another" } }]) {
     let posts = 0; globalThis.fetch = async (url, options) => {
       if (options?.method === "POST") posts++;
       return Response.json(String(url).includes("/quote?") ? invalid : view);
@@ -148,6 +155,7 @@ test("a quote outside the capability scope or cap cannot create a paid intent", 
       await until(() => mounted.element.textContent!.includes("up to USD 2")); await click("Analyze insights");
       await until(() => mounted.element.textContent!.includes("Could not load insights"));
       assert.ok(!mounted.element.textContent!.includes("Confirm analysis")); assert.equal(posts, 0);
+      assert.equal(mounted.element.querySelector("output")?.textContent, "no-preview");
     } finally { await mounted.close(); }
   }
 });
