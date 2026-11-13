@@ -11,12 +11,12 @@ export type MonitoringInsightContextV1={workspace_id:string;actor_user_id:string
 export type MonitoringInsightProofV1={input_revision:string;metadata_revision:string;enabled:boolean;timezone:string;map_identity:string;observed_at:string};
 export type MonitoringInsightSnapshotV1={packet:WorkspaceMonitoringInsightPacketV1|null;proof:MonitoringInsightProofV1;not_after:string|null};
 export async function readMonitoringInsightProofV1(client:Pick<PoolClient,'query'>,workspace:string):Promise<MonitoringInsightProofV1>{
- const row=(await client.query<MonitoringInsightProofV1>(`SELECT state.input_revision::text,
+ const row=(await client.query<MonitoringInsightProofV1>(`SELECT COALESCE(state.input_revision,0)::text input_revision,
   COALESCE(epoch.revision,0)::text metadata_revision,w.timezone,
   signal_monitoring_insights_map_identity_v1(w.id) map_identity,
   EXISTS(SELECT 1 FROM signal_workspace_features WHERE workspace_id=w.id AND feature='monitoring_insights') enabled,
   clock_timestamp()::text observed_at
-  FROM signal_workspaces w JOIN signal_corpus_preparation_input_state state ON state.workspace_id=w.id
+  FROM signal_workspaces w LEFT JOIN signal_corpus_preparation_input_state state ON state.workspace_id=w.id
   LEFT JOIN signal_monitoring_insight_input_state epoch ON epoch.workspace_id=w.id WHERE w.id=$1`,[workspace])).rows[0];
  if(!row)throw Error('monitoring_insights_workspace_unavailable');return row;
 }

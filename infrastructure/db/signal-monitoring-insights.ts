@@ -107,7 +107,7 @@ type Run={id:string;workspace_id:string;actor_user_id:string;admission_id:string
 export type MonitoringInsightLeaseV1={run_id:string;workspace_id:string;execution_token:string;packet:WorkspaceMonitoringInsightPacketV1;request:WorkspaceMonitoringInsightRequestV1};
 export type MonitoringInsightCallV1={id:string;attempt_token:string;state:'reserved'|'in_flight'|'response_persisted'|'settled'|'outcome_unknown'|'definitely_not_sent';
  response_body:Buffer|null;response_http_status:number|null;response_complete:boolean|null};
-type Call=MonitoringInsightCallV1&{run_id:string;workspace_id:string;settled_micro_usd:string|null;usage:unknown};
+type Call=MonitoringInsightCallV1&{run_id:string;workspace_id:string;settled_micro_usd:string|null;usage:unknown;provider_request_id:string|null};
 const caches=new WeakMap<object,Map<string,MonitoringInsightSnapshotV1>>();
 function cache(database:Database){let entries=caches.get(database);if(!entries){entries=new Map();caches.set(database,entries);}return entries;}
 function requestScope(args:Access,current:Policy,proof:MonitoringInsightProofV1){return digest({contract_version:'workspace-monitoring-insights-access-v1',
@@ -227,19 +227,33 @@ export async function listMonitoringInsightRunsV1(args:{database:Database;limit?
  LEFT JOIN signal_monitoring_insight_calls c ON c.run_id=r.id
  WHERE (r.status IN('queued','running') AND (r.execution_expires_at IS NULL OR r.execution_expires_at<=clock_timestamp())
    AND ($2 OR c.state IN('response_persisted','settled','in_flight','outcome_unknown')))
- OR (r.status='failed' AND c.state IN('response_persisted','settled')
+ OR (r.status IN('failed','outcome_unknown') AND c.state IN('response_persisted','settled')
    AND r.error_code IS DISTINCT FROM 'monitoring_insights_response_invalid')
  ORDER BY r.available_at,r.id LIMIT $1`,[limit,args.enabled===true]);
  return rows.rows.map(row=>row.id);
 }
 export async function claimMonitoringInsightRunV1(args:{database:Database;run_id:string}):Promise<MonitoringInsightLeaseV1|null>{
  return transaction(args.database,'write',async client=>{
+  // Expiry is not proof that HTTP was unsent. Serialize on the original money
+  // day before the owner row, then quarantine an abandoned physical attempt.
+  const money=(await client.query<{organization_id:string;budget_date:string}>(`SELECT a.organization_id,a.budget_date::text
+   FROM signal_monitoring_insight_runs r JOIN signal_processing_admissions a ON a.id=r.admission_id WHERE r.id=$1`,[args.run_id])).rows[0];
+  if(!money)return null;
+  await client.query('SELECT signal_processing_lock_v1($1,$2::date)',[money.organization_id,money.budget_date]);
   const row=(await client.query<Run>(`SELECT r.* FROM signal_monitoring_insight_runs r WHERE r.id=$1
    AND ((r.status IN('queued','running') AND (r.execution_expires_at IS NULL OR r.execution_expires_at<=clock_timestamp()))
-    OR (r.status='failed' AND r.error_code IS DISTINCT FROM 'monitoring_insights_response_invalid'
+    OR (r.status IN('failed','outcome_unknown') AND r.error_code IS DISTINCT FROM 'monitoring_insights_response_invalid'
      AND EXISTS(SELECT 1 FROM signal_monitoring_insight_calls c WHERE c.run_id=r.id AND c.state IN('response_persisted','settled'))))
    FOR UPDATE OF r SKIP LOCKED`,[args.run_id])).rows[0];
   if(!row)return null;
+  const call=(await client.query<Call>('SELECT * FROM signal_monitoring_insight_calls WHERE run_id=$1 FOR UPDATE',[row.id])).rows[0];
+  if(call&&['in_flight','outcome_unknown'].includes(call.state)){
+   if(call.state==='in_flight')await client.query(`UPDATE signal_monitoring_insight_calls SET state='outcome_unknown',
+    error_code='monitoring_insights_lease_expired_after_send',updated_at=clock_timestamp() WHERE id=$1 AND attempt_token=$2 AND state='in_flight'`,[call.id,call.attempt_token]);
+   await client.query(`UPDATE signal_monitoring_insight_runs SET status='outcome_unknown',execution_token=NULL,
+    execution_expires_at=NULL,error_code='monitoring_insights_lease_expired_after_send',updated_at=clock_timestamp() WHERE id=$1`,[row.id]);
+   return null;
+  }
   const request=requestFromRun(row),token=randomUUID();
   await client.query(`UPDATE signal_monitoring_insight_runs SET status='running',execution_token=$2,
    execution_expires_at=clock_timestamp()+interval '300 seconds',updated_at=clock_timestamp(),error_code=NULL WHERE id=$1`,[row.id,token]);
@@ -258,6 +272,8 @@ export async function reserveMonitoringInsightCallV1(args:{database:Database;lea
    conversation_segment:owner.packet.scope_segment,locale:owner.packet.locale});
   await financialLock(client,context);await lockMonitoringInsightInputsV1(client,owner.workspace_id);
   const row=await lockedLease(client,args.lease);
+  const prior=(await client.query<Call>('SELECT * FROM signal_monitoring_insight_calls WHERE run_id=$1',[row.id])).rows[0];
+  if(prior)return prior;
   return(await client.query<Call>(`INSERT INTO signal_monitoring_insight_calls(workspace_id,run_id,organization_id,packet_digest,
    request_digest,budget_date,budget_timezone,reserved_micro_usd)
    SELECT r.workspace_id,r.id,a.organization_id,r.packet_digest,r.request_digest,a.budget_date,a.budget_timezone,r.reservation_micro_usd
@@ -292,7 +308,7 @@ export async function persistMonitoringInsightRawV1(args:{database:Database;call
   const row=(await client.query<Call>('SELECT * FROM signal_monitoring_insight_calls WHERE id=$1 AND attempt_token=$2',[args.call_id,args.attempt_token])).rows[0];
   if(!row)fail('monitoring_insights_call_scope_invalid');
   if(row.response_body){
-   if(!row.response_body.equals(bytes)||row.response_http_status!==args.receipt.http_status||row.response_complete!==args.receipt.complete)
+   if(!row.response_body.equals(bytes)||row.response_http_status!==args.receipt.http_status||row.response_complete!==args.receipt.complete||row.provider_request_id!==args.receipt.provider_request_id)
     fail('monitoring_insights_receipt_conflict');
    return{call_id:row.id,replayed:true};
   }
@@ -317,9 +333,10 @@ export async function settleMonitoringInsightCallV1(args:{database:Database;call
    await client.query(`UPDATE signal_monitoring_insight_calls SET state='outcome_unknown',error_code='monitoring_insights_usage_invalid',updated_at=clock_timestamp()
     WHERE id=$1 AND state='response_persisted'`,[row.id]);return null;
   }
-  await client.query(`UPDATE signal_monitoring_insight_calls SET state='settled',usage=$3,settled_micro_usd=$4,
-   settled_at=clock_timestamp(),updated_at=clock_timestamp() WHERE id=$1 AND attempt_token=$2 AND state='response_persisted'`,
+  const updated=await client.query(`UPDATE signal_monitoring_insight_calls SET state='settled',usage=$3,settled_micro_usd=$4,
+   settled_at=clock_timestamp(),updated_at=clock_timestamp() WHERE id=$1 AND attempt_token=$2 AND state='response_persisted' RETURNING id`,
   [row.id,args.attempt_token,JSON.stringify(measured.value.usage),measured.cost_micro_usd]);
+  if(updated.rows.length!==1)fail('monitoring_insights_usage_unresolved');
   return{usage:measured.usage,cost_micro_usd:measured.cost_micro_usd};
  });
  if(!result)fail('monitoring_insights_usage_unresolved');return result;
@@ -330,7 +347,9 @@ export async function completeMonitoringInsightRunV1(args:{database:Database;lea
   const call=(await client.query<Call>(`SELECT * FROM signal_monitoring_insight_calls WHERE id=$1 AND run_id=$2
    AND workspace_id=$3 AND state='settled'`,[args.call_id,row.id,row.workspace_id])).rows[0];
   if(!call?.response_body)fail('monitoring_insights_receipt_required');
-  const parsed=parseWorkspaceMonitoringInsightReceiptV1(requestFromRun(row),call.response_body.toString('utf8'));
+  let parsed:ReturnType<typeof parseWorkspaceMonitoringInsightReceiptV1>;
+  try{parsed=parseWorkspaceMonitoringInsightReceiptV1(requestFromRun(row),call.response_body.toString('utf8'));}
+  catch{throw new MonitoringInsightsError('monitoring_insights_response_invalid');}
   await client.query(`UPDATE signal_monitoring_insight_runs SET status='completed',result=$2,result_call_id=$3,
    execution_token=NULL,execution_expires_at=NULL,error_code=NULL,completed_at=clock_timestamp(),updated_at=clock_timestamp() WHERE id=$1`,
   [row.id,JSON.stringify(parsed.editorial),call.id]);

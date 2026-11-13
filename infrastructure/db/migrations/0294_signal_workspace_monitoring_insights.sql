@@ -327,7 +327,7 @@ DO $$ DECLARE relation_name text; BEGIN
   'signal_mass_labeling_overrides','signal_mass_labeling_root_segments','signal_mass_labeling_topic_probabilities',
   'signal_mass_labeling_study_policies','signal_mass_labeling_selections','signal_provenance_policy_bindings',
   'signal_retention_policies','signal_licensing_policies','signal_licensing_policy_usages','import_batches','data_sources',
-  'signal_mass_labeling_maps','signal_topic_catalog_executions','analysis_artifacts','signal_corpus_preparation_runs','record_feature_values'] LOOP
+  'signal_mass_labeling_maps','signal_topic_catalog_executions','signal_classification_generations','analysis_artifacts','signal_corpus_preparation_runs','record_feature_values'] LOOP
   -- Alphabetically AFTER existing corpus revision triggers: payment also locks
   -- corpus input_state before this counter. Never introduce the reverse order.
   EXECUTE format('CREATE TRIGGER zz_monitoring_epoch_insert AFTER INSERT ON %I REFERENCING NEW TABLE AS new_rows
