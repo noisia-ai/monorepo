@@ -17,6 +17,12 @@ const router = { back() {}, forward() {}, refresh() {}, push() {}, replace() {},
 const imageModule = require("next/image");
 Object.assign(imageModule, imageModule.default);
 const { SignalV2BrandMonitoring, readSignalModule } = await import("../../components/signal-v2/SignalV2BrandMonitoring");
+// Compile the real lazy modules before measuring navigation under concurrent CI load.
+await Promise.all([
+  import("../../components/signal-v2/SignalV2Mentions"),
+  import("../../components/signal-v2/SignalV2WorkspaceTopics"),
+  import("../../components/signal-v2/SignalV2TriggersBarriers")
+]);
 const messages = JSON.parse(await readFile(new URL("../../../messages/en-US.json", import.meta.url), "utf8"));
 const unavailable = { state: "not_available", reason: "workspace_has_no_sources" } as const;
 const attention = { root_posts: 0, total_interactions: 0, median_interactions: 0, p90_interactions: 0,
@@ -74,7 +80,8 @@ async function mount(module: "monitoring" | "mentions" | "topics" = "mentions", 
 }
 async function settle() { await act(async () => { await new Promise(resolve => setTimeout(resolve, 30)); }); }
 async function until(ready: () => boolean) {
-  for (let attempt = 0; attempt < 40 && !ready(); attempt++) await settle();
+  const deadline = performance.now() + 30_000;
+  while (!ready() && performance.now() < deadline) await settle();
   assert.ok(ready(), document.body.textContent?.slice(-500));
 }
 async function click(element: Element | null) {
