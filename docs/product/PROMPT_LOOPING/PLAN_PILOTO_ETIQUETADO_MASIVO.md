@@ -213,9 +213,12 @@ Lo demás se resuelve de forma autónoma y se anota en el registro de decisiones
 
 ## Progreso
 
+- [ ] Restauración de Monitoreo completo (2026-11-13): conectar sentimiento, estructura, plataformas, atención, drivers y destacados con la misma población nativa autorizada, y restablecer el carrusel y la generación de insights del workspace. Aceptación mediante datos reales y widgets visibles en UAT.
+- Restauración · La lectura real confirma cobertura de sentimiento, roles, conversaciones, plataformas e interacciones en la población nativa. Los agregados pasan pruebas con PostgreSQL. El adaptador y los componentes pasan las pruebas focales en español e inglés y distinguen valores ausentes de ceros observados. PR181 permanece en revisión; no se ha desplegado este cambio. El ledger editorial y la comparación mensual siguen en construcción. Se preparó un PostgreSQL 17 sintético aislado, migrado hasta 0293, para ensayar 0294 sin afectar UAT.
+
 - [x] Corrección posterior a R15 · En UAT `2c2f688e`, el recorrido autenticado Dashboard → estudio → Menciones mostró las 83,962 raíces y abrió una ficha sin recargar el documento. La navegación atrás y adelante y la entrada a Monitoreo desde la barra lateral mostraron el segmento de conversación de 61,975 raíces. La primera apertura directa de Monitoreo continúa pendiente de verificación tras la recuperación de red.
 
-- [ ] Corrección posterior a R15 (2026-11-12): resolver la apertura inicial de Menciones y el bloqueo del shell de Monitoreo. La aceptación exige Dashboard → estudio → Menciones → ficha, sin recargar, y abrir el enlace de Monitoreo con filtros.
+- [x] Corrección posterior a R15 (2026-11-12): verificado en UAT el recorrido Dashboard → estudio → Menciones → ficha, sin recargar ni reintentar manualmente. Verificada también una visita nueva al enlace directo de Monitoreo con filtros, con navegación funcional y volumen visible. Corte de producto ea0c6e38 (PR175 y PR177); evidencia privada de aceptación bajo studio-uat-navigation/first-load. Los checks posteriores a la fusión se registran en el recibo privado de integración.
 
 - [x] H7 · Los once archivos de origen coincidieron por SHA-256. Con 83,962 raíces en cada entorno, dev-test y UAT comparten 83,958 identidades. Sus textos exactos coincidieron en todos los casos comunes. El anexo conserva los cruces entre los cuatro segmentos y la comparación del léxico, los intereses y las poblaciones de consumidores.
 
@@ -356,6 +359,11 @@ Lo demás se resuelve de forma autónoma y se anota en el registro de decisiones
 
 ## Sorpresas y descubrimientos
 
+- 2026-11-13: el adaptador nativo sólo llena volumen y tópicos sobre una plantilla vacía, declara estructura no disponible y deja sentimiento, plataformas, atención e insights sin conectar. Los accesos nativos fijan canRefreshInsights=false; la acción anterior depende de un output legado. Los vacíos de la interfaz no demuestran por sí mismos ausencia de datos importados.
+- Restauración · Las observaciones del proveedor se repiten entre importaciones; sumarlas directamente inflaría las métricas. La primera consulta completa rozó los 60 segundos. Reutilizar la metadata canónica ya leída y evitar un fallback sin candidatos redujo el tiempo a 36 segundos conservando los valores. La comparación editorial requiere calcular ambas ventanas en una misma población materializada. No existen clasificaciones de emociones ni recibos editoriales mensuales previos de este workspace.
+
+- Verificación final posterior a R15: las 50 primeras filas de Menciones y su ficha abrieron sin recargar. La visita directa de Monitoreo también completó con métricas. Las interrupciones transitorias exigían una pausa entre intentos; una espera inmediata repetía el fallo durante el cambio de red.
+
 - Corrección posterior a R15 · La apertura directa sufrió `ERR_NETWORK_CHANGED` durante el documento. Dos solicitudes de Monitoreo finalizaron como HTTP 499 en 552 ms y 2,129 ms. Sus duraciones distinguen esa interrupción de una consulta que agota su plazo. La prueba montada también necesitó separar la compilación inicial de los módulos del tiempo dedicado al recorrido.
 
 - 2026-11-12: la pantalla de Monitoreo vacía reportada corresponde al fallback de ruta, con navegación decorativa todavía sin enlaces. Chrome registró ERR_NETWORK_CHANGED en el documento. El flujo SPA de Menciones convierte una excepción de transporte en no disponible y no tiene recuperación automática. El éxito tras recargar documentado anteriormente no satisface la apertura inicial requerida.
@@ -487,6 +495,9 @@ Lo demás se resuelve de forma autónoma y se anota en el registro de decisiones
 - Dos lotes devolvieron referencias válidas dentro de la muestra de 30 pero superaron el máximo de diez referencias por campo. La comprobación privada de las respuestas originales y de reparación encontró entre 11 y 30 referencias en los campos rechazados.
 
 ## Registro de decisiones
+
+- 2026-11-13: restaurar los widgets existentes con agregados del mismo ámbito nativo y sus derechos, evitando unir métricas de una población legada distinta. Medir disponibilidad de cada fuente antes de mostrarla y adaptar la generación editorial al workspace con presupuesto, idempotencia y permisos.
+- Restauración · Mantener disponibles por separado las métricas de conversaciones y roles; la ausencia de cobertura produce un valor nulo y «—». Los insights conservarán idioma y segmento, con ventanas reales de treinta días independientes del periodo de página, una sola llamada y un tope visible de USD 2 por paquete. El saldo verificado fue USD 6.07, con recarga automática desactivada. La lectura y el polling no llaman al proveedor ni recalculan toda la población. ADR032 documenta el owner nativo y su contabilidad durable.
 
 - Corrección posterior a R15 · Esperar 1.5 s antes del segundo intento permitido para una lectura afectada por un fallo de transporte o HTTP 502, 503 o 504. La espera se cancela al abandonar el recorrido. Cada intento conserva su límite de 60 s y los errores de permisos, alcance o filtros se devuelven inmediatamente. La aceptación de la apertura directa se confirmará desde el navegador de UAT.
 
@@ -620,6 +631,8 @@ Lo demás se resuelve de forma autónoma y se anota en el registro de decisiones
 | 2026-11-07 | Ruta canónica ADR 015 con JEV como clasificador por mención; Claude sólo por grupo | Costo < USD 100 por estudio y alcance sobre el corpus completo | Fundador y auditor |
 
 ## Resultado y retrospectiva
+
+- Reparación de apertura inicial posterior a R15: aceptados el recorrido desde Dashboard, ficha de Menciones, historial nativo Atrás/Adelante y enlace directo de Monitoreo. Las lecturas conservan permisos y alcance y tienen reintentos acotados. Las consultas siguen tardando decenas de segundos en UAT; la corrección evita depender de la recarga manual.
 
 En el cotejo R14–R15, los once archivos de entrada coinciden, las 83,958 raíces comunes conservan el mismo texto exacto y hay cuatro exclusivas de cada entorno. El mapa pasó de 98 a 111 tópicos. La configuración curada de UAT conserva los 102 términos previos y suma 27. Los dos intereses conservan su definición y umbral de 0.85. Para contrastar la calidad del resultado se sellaron las 600 muestras ciegas y se reservó una segunda muestra de 100 para contrastar las causas documentadas por el estudio humano.
 
