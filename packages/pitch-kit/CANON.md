@@ -129,7 +129,7 @@ Lee solo lo que tu entregable necesita:
 | Criterio | `METHODOLOGY.md` | Qué se puede afirmar y con qué fuerza |
 | Ejecución de datos | `DATA.md` | Inventario, ETL, gates de calidad, contratos de salida |
 | Notificaciones | `NOTIFICATIONS.md` | Los correos automáticos del Data API: los cuatro tipos, el sistema visual, las reglas |
-| Comercial | `commercial/COMMERCIAL.md` | Openers, overview, oferta, propuesta y one-pager; la entrevista, el copy canónico y los precios en XXX |
+| Comercial | `commercial/COMMERCIAL.md` | Openers, overview, oferta, propuesta y one-pager; entrevista, copy y precios en XXX. §15: outbound SDR, conciliación Drive–Instantly, HTML/firma, QA y prompt para agentes |
 | Interno | `INTERNAL.md` | Decks para el equipo: status, operación, producto y su estado |
 | Arranque | `PROMPTS.md` | El prompt con el que empieza cualquier corrida |
 | Campo | `LEARNINGS.md` | Lo que enseñó un deck real antes de volverse regla |
