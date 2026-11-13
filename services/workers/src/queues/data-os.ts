@@ -77,6 +77,7 @@ import { SIGNAL_WORKSPACE_INTEREST_DECISION_MATERIALIZATION_JOB_V2,
   signalWorkspaceInterestDecisionMaterializationJobV2,
   startSignalWorkspaceInterestDecisionMaterializationDrainerV2 } from "../workers/signal-workspace-interest-decision-materialization-runtime-v2";
 import { startSignalWorkspaceInterestDecisionRetryDrainerV2 } from "../workers/signal-workspace-interest-decision-retry-runtime-v2";
+import { SIGNAL_WORKSPACE_MONITORING_INSIGHTS_JOB_NAME, signalWorkspaceMonitoringInsightsJobV1 } from "../workers/signal-workspace-monitoring-insights";
 
 export { redisConnection };
 
@@ -93,6 +94,7 @@ export function startDataOsWorker() {
     dataOsQueueName,
     async (job) => {
       assertSignalTaxonomyJobNotRetiredV1(job.name);
+      if (job.name === SIGNAL_WORKSPACE_MONITORING_INSIGHTS_JOB_NAME) return signalWorkspaceMonitoringInsightsJobV1(job);
       if (job.name === SIGNAL_WORKSPACE_CORPUS_PREPARATION_JOB_NAME) return signalWorkspaceCorpusPreparationJobV1(job);
       if (job.name === SIGNAL_WORKSPACE_EMBEDDINGS_JOB_NAME) return signalWorkspaceEmbeddingsJobV1(job);
       if (job.name === SIGNAL_WORKSPACE_TOPIC_COMPUTATION_JOB_NAME) return signalWorkspaceTopicComputationJobV1(job);
