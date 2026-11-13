@@ -123,7 +123,9 @@ conector está en producción cuando además tiene:
 - [ ] un entorno de staging contra un destino de prueba;
 - [ ] la señal de importación del socio (regla 12);
 - [ ] el tope por feed configurado, no vigilado a mano;
-- [ ] una segunda persona que sabe operarlo, además de cualquier agente de guardia.
+- [ ] una segunda persona que sabe operarlo, además de cualquier agente de guardia;
+- [ ] los correos al cliente (welcome, delivery status, metrics update e incidentes) con el sistema y
+      las reglas de `NOTIFICATIONS.md`, probados en Gmail y Outlook.
 
 El primer conector cumplía cero de seis al cumplir una semana en vivo. Se escribe como lista para
 que el siguiente arranque con ella.
