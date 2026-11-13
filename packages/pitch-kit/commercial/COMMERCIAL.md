@@ -750,7 +750,7 @@ pedir solo lo imprescindible; no inventarlas. Este prompt prepara borradores, no
 
 ```text
 Trabaja con noisia-ai/monorepo. Lee AGENTS.md, packages/pitch-kit/AGENTS.md,
-CANON.md y packages/pitch-kit/commercial/COMMERCIAL.md §15 antes de actuar.
+packages/pitch-kit/CANON.md y packages/pitch-kit/commercial/COMMERCIAL.md §15 antes de actuar.
 
 Grupo: [GRUPO]. Archivo/carpeta Drive original: [URL PRIVADA].
 Campaña exacta Instantly: [URL/ID PRIVADO]. Plantilla HTML aprobada: [UBICACIÓN PRIVADA].
