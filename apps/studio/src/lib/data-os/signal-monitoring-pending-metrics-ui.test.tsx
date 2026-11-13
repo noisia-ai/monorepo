@@ -228,6 +228,53 @@ async function render(locale: string, data = computed()) {
       workspaceOptions: [], workspaceSubjectId: "synthetic-brand", viewKey: "all_conversations" })));
 }
 for (const locale of ["es-MX", "en-US"]) {
+  for (const [knownThreads, knownRoles] of [[0, 0], [0, 3], [3, 0]] as const) {
+    test(`${locale}: thread coverage ${knownThreads} and role coverage ${knownRoles} independently govern numbers and series`, async () => {
+      const source = structuredClone(fullNative);
+      source.monitoring!.source_coverage.thread_id_known = knownThreads;
+      source.monitoring!.source_coverage.content_type_known = knownRoles;
+      if (!knownThreads && !knownRoles) {
+        source.monitoring!.summary = { mentions: 3, conversations: 0, root_posts: 0, comments: 0, unknown_roles: 3, classified_sentiment: 0 };
+        source.monitoring!.series = [{ period_start: "2026-09-01", mentions: 3, conversations: 0, root_posts: 0, comments: 0,
+          sentiment: { positive: 0, negative: 0, neutral: 0, classified: 0 } }];
+        source.monitoring!.sentiment = { positive: 0, negative: 0, neutral: 0, unclassified: 3 };
+        source.monitoring!.source_coverage.sentiment_known = 0;
+        source.monitoring!.source_coverage.engagement_known_root_posts = 0;
+        source.monitoring!.source_coverage.views_known_root_posts = 0;
+        source.monitoring!.drivers = [];
+        source.monitoring!.highlights = { positive: [], negative: [] };
+      }
+      const data = buildNativeSignalMonitoringV1(structuredClone(base), source);
+      assert.equal(data.conversation_structure.summary.conversations, knownThreads ? 2 : null);
+      assert.equal(data.conversation_structure.summary.root_posts, knownRoles ? 1 : null);
+      assert.equal(data.conversation_structure.summary.comments, knownRoles ? 2 : null);
+      assert.equal(data.conversation_structure.points[0]!.conversations, knownThreads ? 2 : null);
+      assert.equal(data.conversation_structure.points[0]!.root_posts, knownRoles ? 1 : null);
+      assert.equal(data.conversation_structure.points[0]!.comments, knownRoles ? 2 : null);
+      const html = await render(locale, data);
+      const kpis = html.match(/<section aria-label="[^"]*" class="signal-v2-kpi-strip">[\s\S]*?<\/section>/)?.[0];
+      assert.ok(kpis);
+      assert.deepEqual([...kpis.matchAll(/<strong>(.*?)<\/strong>/gu)].map(match => match[1]),
+        ["3", knownThreads ? "2" : "—", knownRoles ? "1" : "—", knownRoles ? "2" : "—"]);
+      const switches = html.match(/<div aria-label="[^"]*" class="signal-v2-metric-switch" role="group">[\s\S]*?<\/div>/)?.[0];
+      assert.ok(switches);
+      assert.deepEqual([...switches.matchAll(/<button([^>]*)>/gu)].map(match => match[1]!.includes("disabled")),
+        [false, !knownThreads, !knownRoles, !knownRoles]);
+      const noRoleSource = locale === "es-MX" ? "La fuente no incluye tipos de publicación o comentario" : "The source does not include post or comment types";
+      assert.equal(html.includes(noRoleSource), !knownRoles);
+    });
+  }
+  test(`${locale}: an observed zero remains a zero when its source is known`, async () => {
+    const source = structuredClone(fullNative);
+    source.monitoring!.summary.root_posts = 0; source.monitoring!.summary.comments = 3;
+    source.monitoring!.series[0]!.root_posts = 0; source.monitoring!.series[0]!.comments = 3;
+    const data = buildNativeSignalMonitoringV1(structuredClone(base), source);
+    assert.equal(data.conversation_structure.summary.root_posts, 0);
+    assert.equal(data.conversation_structure.points[0]!.root_posts, 0);
+    const html = await render(locale, data);
+    const kpis = html.match(/<section aria-label="[^"]*" class="signal-v2-kpi-strip">[\s\S]*?<\/section>/)?.[0];
+    assert.ok(kpis); assert.match(kpis, /<strong>0<\/strong>/);
+  });
   test(`${locale}: native source metrics restore all proven dashboard widgets without enabling unsupported comparison`, async () => {
     const data = buildNativeSignalMonitoringV1(structuredClone(base), fullNative);
     assert.deepEqual(data.conversation_structure.summary, fullNative.monitoring!.summary);

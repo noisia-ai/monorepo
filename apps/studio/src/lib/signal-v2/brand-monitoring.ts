@@ -206,6 +206,14 @@ type BrandMonitoringConversationWindow = {
   attention: BrandMonitoringAttention;
 };
 
+/** Native sources may omit thread or post-role metadata independently. Null
+ * measurements are unavailable; numeric zero always means an observed count. */
+type ConversationMeasurements<T> = Omit<T, "conversations" | "root_posts" | "comments"> & {
+  conversations: number | null;
+  root_posts: number | null;
+  comments: number | null;
+};
+
 export type SignalBrandMonitoringV1 = {
   contract_version: "signal-brand-monitoring-v1";
   workspace: {
@@ -238,9 +246,11 @@ export type SignalBrandMonitoringV1 = {
     delta: number | null;
     delta_ratio: number | null;
   };
-  conversation_structure: BrandMonitoringConversationWindow & {
-    previous_points: BrandMonitoringConversationPoint[];
-    previous_summary: BrandMonitoringConversationSummary | null;
+  conversation_structure: Omit<BrandMonitoringConversationWindow, "points" | "summary"> & {
+    points: ConversationMeasurements<BrandMonitoringConversationPoint>[];
+    summary: ConversationMeasurements<BrandMonitoringConversationSummary>;
+    previous_points: ConversationMeasurements<BrandMonitoringConversationPoint>[];
+    previous_summary: ConversationMeasurements<BrandMonitoringConversationSummary> | null;
   };
   sentiment: BrandMonitoringBreakdown & {
     previous_buckets: SignalBreakdownV1["buckets"];

@@ -61,7 +61,9 @@ export function buildNativeSignalMonitoringV1(
   const unavailable = { state: "not_available" as const, reason: "workspace_native_source_metadata_unavailable" };
   const metadataState = (known: number, total: number) => !native.is_current ? "stale" as const
     : known < total ? "partial" as const : "fresh" as const;
-  const emptySummary = { mentions: 0, conversations: 0, root_posts: 0, comments: 0, classified_sentiment: 0 };
+  const hasThreads = Boolean(monitoring && monitoring.source_coverage.thread_id_known > 0);
+  const hasRoles = Boolean(monitoring && monitoring.source_coverage.content_type_known > 0);
+  const emptySummary = { mentions: 0, conversations: null, root_posts: null, comments: null, classified_sentiment: 0 };
   const emptyAttention = { root_posts: 0, total_interactions: 0, median_interactions: 0, p90_interactions: 0,
     active_root_posts: 0, active_ratio: null, total_views: 0, viewed_root_posts: 0 };
   const sentimentKnown = monitoring?.source_coverage.sentiment_known ?? 0;
@@ -118,9 +120,11 @@ export function buildNativeSignalMonitoringV1(
     conversation_structure: {
       ...(monitoring ? { state: metadataState(monitoring.source_coverage.content_type_known, native.denominator), reason: null }
         : { state: "not_available" as const, reason: "workspace_native_conversation_structure_pending" }),
-      summary: monitoring?.summary ?? emptySummary,
+      summary: monitoring ? { ...monitoring.summary, conversations: hasThreads ? monitoring.summary.conversations : null,
+        root_posts: hasRoles ? monitoring.summary.root_posts : null, comments: hasRoles ? monitoring.summary.comments : null } : emptySummary,
       attention: monitoring?.attention ?? emptyAttention,
-      points: monitoring?.series ?? [],
+      points: monitoring?.series.map(point => ({ ...point, conversations: hasThreads ? point.conversations : null,
+        root_posts: hasRoles ? point.root_posts : null, comments: hasRoles ? point.comments : null })) ?? [],
       previous_points: [],
       previous_summary: null
     },

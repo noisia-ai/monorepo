@@ -941,8 +941,9 @@ export function SignalV2BrandMonitoring({
   const nativeSentimentPending = nativePopulation && ["not_available", "pending"].includes(data.sentiment.state);
   const nativeAttentionPending = nativePopulation && ["not_available", "pending"].includes(data.attention.state);
   const nativeHighlightsPending = nativePopulation && !data.highlights.positive.length && !data.highlights.negative.length;
-  const effectiveConversationMetric: ConversationMetric = nativeVolumeOnly ? "mentions" : conversationMetric;
   const currentStructure = data.conversation_structure.summary;
+  const effectiveConversationMetric: ConversationMetric = nativeVolumeOnly || currentStructure[conversationMetric] === null
+    ? "mentions" : conversationMetric;
   const previousStructure = data.conversation_structure.previous_summary;
   const currentConversationValue = nativeVolumeOnly ? data.volume.current_value : currentStructure[effectiveConversationMetric];
   const previousConversationValue = nativeVolumeOnly ? data.volume.previous_value : previousStructure?.[effectiveConversationMetric] ?? null;
@@ -1571,8 +1572,9 @@ export function SignalV2BrandMonitoring({
             eyebrow={t("cards.volume.eyebrow")}
             headingAction={(
               nativeVolumeOnly ? null : <ConversationMetricSwitch
+                current={data.conversation_structure.summary}
                 onChange={setConversationMetric}
-                value={conversationMetric}
+                value={effectiveConversationMetric}
               />
             )}
             help={translatedHelp(t, "cards.volume.help")}
@@ -1625,14 +1627,15 @@ export function SignalV2BrandMonitoring({
             help={translatedHelp(t, "cards.composition.help")}
             title={t("cards.composition.title")}
           >
-            {data.conversation_structure.points.length > 0 ? (
+            {data.conversation_structure.points.some(point => point.root_posts !== null || point.comments !== null) ? (
               <SignalEChart
                 ariaLabel={t("cards.composition.aria")}
                 onActivate={goToCorpus}
                 option={compositionOption}
               />
             ) : (
-              <EmptyMetric message={metricEmptyMessage(data.conversation_structure.state, t)} />
+              <EmptyMetric message={nativeSourceCoverage?.content_type_known === 0
+                ? t("metricsUnavailable.roles") : metricEmptyMessage(data.conversation_structure.state, t)} />
             )}
           </MetricCard>
 
@@ -2255,7 +2258,7 @@ function ConversationKpis({
   const t = useTranslations("SignalV2");
   const items: Array<{
     key: ConversationMetric;
-    value: number;
+    value: number | null;
     previousValue: number | null;
   }> = nativeVolume ? [
     { key: "mentions", value: nativeVolume.current, previousValue: nativeVolume.previous }
@@ -2268,7 +2271,7 @@ function ConversationKpis({
   return (
     <section aria-label={t("kpis.label")} className="signal-v2-kpi-strip">
       {items.map((item) => {
-        const change = item.previousValue == null
+        const change = item.value == null || item.previousValue == null
           ? null
           : comparisonDelta(item.value, item.previousValue);
         return (
@@ -2279,14 +2282,14 @@ function ConversationKpis({
                 label={t(`kpis.${item.key}`)}
               />
             </span>
-            <strong>{formatNumber(item.value)}</strong>
+            <strong>{item.value == null ? "—" : formatNumber(item.value)}</strong>
             <small className={change == null || change === 0
               ? undefined
               : change > 0
                 ? "signal-v2-trend--up"
                 : "signal-v2-trend--down"}
             >
-              {hasComparison ? formatDelta(change) : t("cards.sentiment.noComparison")}
+              {item.value == null ? t("metricsUnavailable.measurement") : hasComparison ? formatDelta(change) : t("cards.sentiment.noComparison")}
             </small>
           </article>
         );
@@ -2296,9 +2299,11 @@ function ConversationKpis({
 }
 
 function ConversationMetricSwitch({
+  current,
   onChange,
   value
 }: {
+  current: SignalBrandMonitoringV1["conversation_structure"]["summary"];
   onChange: (value: ConversationMetric) => void;
   value: ConversationMetric;
 }) {
@@ -2309,9 +2314,11 @@ function ConversationMetricSwitch({
       {options.map((option) => (
         <button
           aria-pressed={value === option}
+          disabled={current[option] === null}
           key={option}
           onClick={() => onChange(option)}
           type="button"
+          title={current[option] === null ? t(option === "conversations" ? "metricsUnavailable.threads" : "metricsUnavailable.roles") : undefined}
         >
           {t(`cards.volume.units.${option}`)}
         </button>

@@ -630,6 +630,9 @@
       "attention": "Cobertura de la fuente: interacciones para {interactions} y vistas para {views} de {total} publicaciones. Las mediciones ausentes aparecen como —."
     },
     "metricsUnavailable": {
+      "measurement": "La fuente no proporciona esta medición",
+      "threads": "La fuente no incluye identificadores de conversación.",
+      "roles": "La fuente no incluye tipos de publicación o comentario.",
       "emotions": "La fuente no incluye clasificación de emociones."
     },
     "metricsPending": {

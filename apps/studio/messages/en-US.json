@@ -632,6 +632,9 @@
       "attention": "Source coverage: interactions for {interactions} and views for {views} of {total} posts. Missing measurements appear as —."
     },
     "metricsUnavailable": {
+      "measurement": "Not supplied by the source",
+      "threads": "The source does not include conversation identifiers.",
+      "roles": "The source does not include post or comment types.",
       "emotions": "The source does not include emotion classifications."
     },
     "metricsPending": {
