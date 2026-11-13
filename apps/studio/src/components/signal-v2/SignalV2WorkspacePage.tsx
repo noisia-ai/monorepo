@@ -73,6 +73,7 @@ export async function SignalV2WorkspacePage({
       ? await resolveLegacyOutputSignalWorkspaceForUser(session.appUser, legacyOutputId)
       : null;
   if (!workspace || workspace.status !== "active") notFound();
+  const nativeInsightsWorkspaceId = process.env.NOISIA_MONITORING_INSIGHTS_ENABLED === "true" ? workspace.id : null;
   const manageTopicsHref = session.appUser.userType === "noisia_internal"
     && workspace.subject.type === "brand"
     ? `/studio/brands/${workspace.subject.id}/topics`
@@ -88,7 +89,7 @@ export async function SignalV2WorkspacePage({
     ]);
     return <SignalV2BrandMonitoring key={`${workspace.id}:${activeModule}`} activeModule={activeModule}
       deferredInitialModule={activeModule} activeStudy={null} brandName={workspace.name}
-      canRefreshInsights={false} nativeInsightsWorkspaceId={workspace.id} initialData={buildEmptySignalBrandMonitoringV1(workspace)}
+      canRefreshInsights={false} nativeInsightsWorkspaceId={nativeInsightsWorkspaceId} initialData={buildEmptySignalBrandMonitoringV1(workspace)}
       initialMention={null} initialMentions={null} initialSettings={null} initialTopicsNarratives={null}
       initialTriggersBarriers={null} legacyOutputId={null} manageTopicsHref={manageTopicsHref}
       strategicStudies={buildSignalStrategicStudyNavigation({ workspace, releases: releases.history })}
@@ -119,7 +120,7 @@ export async function SignalV2WorkspacePage({
       ]);
       const empty = buildEmptySignalBrandMonitoringV1(workspace);
       return <SignalV2BrandMonitoring activeModule="mentions" activeStudy={null} brandName={workspace.name}
-        canRefreshInsights={false} nativeInsightsWorkspaceId={workspace.id} initialData={native ? { ...empty, filter: native.filter, comparison: native.comparison,
+        canRefreshInsights={false} nativeInsightsWorkspaceId={nativeInsightsWorkspaceId} initialData={native ? { ...empty, filter: native.filter, comparison: native.comparison,
           coverage: { date_from: native.native.available_dates.date_from, date_through: native.native.available_dates.date_to,
             mentions: native.native.metric_denominator } } : empty}
         initialMention={focused} initialMentions={native ? { ...native, record: focused } : null} initialSettings={null}
@@ -156,7 +157,7 @@ export async function SignalV2WorkspacePage({
       const nativeMonitoring = buildNativeSignalMonitoringV1({ ...empty, filter,
         comparison: resolveSignalComparisonV1({ filter, mode: "none" }) }, native);
       return <SignalV2BrandMonitoring activeModule={activeReportKey ? "study" : activeModule} activeStudy={null} brandName={workspace.name}
-        canRefreshInsights={false} nativeInsightsWorkspaceId={workspace.id} initialData={nativeMonitoring}
+        canRefreshInsights={false} nativeInsightsWorkspaceId={nativeInsightsWorkspaceId} initialData={nativeMonitoring}
         initialMention={null} initialMentions={null} initialSettings={null} initialTopicsNarratives={native} initialNativeTopicBundle={bundle} initialTriggersBarriers={null}
         legacyOutputId={null} manageTopicsHref={manageTopicsHref}
         strategicStudies={buildSignalStrategicStudyNavigation({ workspace, releases: releases.history })}
