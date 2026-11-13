@@ -70,7 +70,10 @@ reunión que no era público se quedó fuera del deck por esa razón.
 Tres reglas que vienen de feedback de cliente y que cambian el sentido de la slide, no su forma:
 
 - **No somos social listening.** El foco es la **voz del público**, o del consumidor, o del
-  electorado según el caso. El monitoreo de redes es el medio, no lo que se vende.
+  electorado según el caso. El monitoreo de redes es el medio, no lo que se vende. Por eso el
+  verbo de Noisia es **analizamos** o **procesamos**, nunca "escuchamos": vamos después de la escucha,
+  y tiene que sentirse que las vimos todas. Las menciones de una base son "analizadas", no "escuchadas"
+  ni "leídas" (salvo una muestra que sí se leyó a mano, y eso va en el método).
 - **Nunca "jugadas".** No se dice así en México. Usa estrategias, decisiones o movimientos.
 - **Las slides de proceso explican cómo trabajamos con el cliente**, no el método interno. Y
   "lectura" como sustantivo no se entiende: di reporte o diagnóstico.

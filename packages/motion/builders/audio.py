@@ -11,11 +11,15 @@ Writes <piece>.timing.json next to the piece and the audio into <piece folder>/a
 - The key is the user's and costs money. It lives in the piece folder's .env (ELEVENLABS_API_KEY=...),
   ignored by git, and never goes through the chat or the repo. It is validated before generating.
 - Voices: narrator eleven_multilingual_v2 with the settings below; quotes eleven_v3 with the market's
-  language_code and the quote's emotion tag, which is filtered out of the timestamps.
+  language_code and the quote's emotion tag, which is filtered out of the timestamps. A piece can
+  change them with voices.model, voices.quoteModel and voices.settings (newer models take fewer
+  settings). A quote's `say` is what the voice reads when the literal spelling would be read wrong.
+- Music: with musicLock, an approved track is reused while it lasts as long as the video. A track is
+  never overwritten without keeping the previous one as <name>_prev_<date>.mp3.
 - Cache by hash of the spec (text, voice, model, settings): re-running only regenerates what changed.
 - Every time is measured from the real audio and written in frames. Nothing is fixed in the composition.
 """
-import argparse, base64, hashlib, json, math, os, sys, urllib.error, urllib.request
+import argparse, base64, datetime, hashlib, json, math, os, shutil, sys, urllib.error, urllib.request
 
 FPS = 30
 CHARS_PER_SECOND = 15.0          # narrator pace used by --estimate (~750 characters per finished minute)
@@ -29,6 +33,7 @@ VO_AT = 6                 # the voice enters on frame 6
 QUOTE_AFTER_VO = 6        # the quote, 6 frames after the voice ends
 SPARK_AFTER = 8           # spark_at, 8 frames after the quote (or the voice)
 SPARK_VOICE_AFTER = 6     # the spark's voice at spark_at + 6
+SPARK_CUE_AFTER = 16      # with sfx.insight: the cue at spark_at, the voice at spark_at + 16
 SCENE_TAIL = 20           # the scene closes 20 frames after the spark's voice
 UNVOICED_QUOTE = lambda text: int(FPS * (2.2 + 0.045 * len(text)))   # reading time of a silent quote card
 CHAT_STEP = 16            # one post every 16 frames in the climax chat
@@ -69,6 +74,10 @@ class Voice:
         if self.man.get(name, {}).get("hash") == h and os.path.exists(f):
             return self.man[name]["meta"]
         os.makedirs(self.aud, exist_ok=True)
+        if os.path.exists(f):
+            # Never lose an approved take: the previous file stays next to the new one.
+            stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+            shutil.copy2(f, os.path.join(self.aud, f"{name}_prev_{stamp}.mp3"))
         meta = make(f)
         self.man[name] = {"hash": h, "meta": meta}
         json.dump(self.man, open(self.man_p, "w"), indent=1)
@@ -95,9 +104,14 @@ class Voice:
         meta = self.cached(name, spec, make)
         return {**meta, "file": f"audio/{self.prefix}_{name}.mp3"}
 
-    def music(self, prompt, seconds):
+    def music(self, prompt, seconds, lock=False):
         if self.estimate or not prompt:
             return None
+        name = f"{self.prefix}_music"
+        kept = self.man.get(name, {})
+        if lock and kept.get("meta", {}).get("dur", 0) >= seconds and os.path.exists(os.path.join(self.aud, name + ".mp3")):
+            print(f"  music locked: reusing the approved track ({kept['meta']['dur']:.0f} s for {seconds:.1f} s of video)")
+            return f"audio/{name}.mp3"
         ms = int(math.ceil((seconds + 2) / 5) * 5 * 1000)    # rounded up to 5 s so small edits reuse the track
 
         def make(f):
@@ -118,6 +132,9 @@ def read_key(piece_dir):
     key = key.strip().strip("\"'").strip()       # a key pasted with quotes gave a 401
     if not key:
         raise SystemExit(f"No ElevenLabs key. Put ELEVENLABS_API_KEY=... in {env} (ignored by git), never in the chat.")
+    if not key.startswith("sk_"):
+        raise SystemExit("That is not an ElevenLabs API key (they start with sk_). If it is 64 hex characters it is the key's ID: "
+                         "the key itself is shown only once, when it is created or rotated.")
     r = urllib.request.Request("https://api.elevenlabs.io/v1/user/subscription", headers={"xi-api-key": key})
     try:
         sub = json.load(urllib.request.urlopen(r, timeout=30))
@@ -160,7 +177,14 @@ def clip(kind, meta, at):
 
 
 def quote_say(q):
-    return (f"{q['emotion']} " if q.get("emotion") else "") + q["text"]
+    return (f"{q['emotion']} " if q.get("emotion") else "") + (q.get("say") or q["text"])
+
+
+def sfx_of(piece):
+    """A study carries the kit's insight cue unless the piece says otherwise ("sfx": {} turns it off)."""
+    if "sfx" in piece:
+        return piece["sfx"] or {}
+    return {"insight": "kit"} if piece.get("format") == "study" else {}
 
 
 def time_piece(piece, v):
@@ -168,10 +192,13 @@ def time_piece(piece, v):
     narrator = voices.get("narrator", "")
     qvoices = voices.get("quotes", {})
     qlang = voices.get("quoteLanguage")
-    vo = lambda name, text: v.tts(name, text, narrator, NARRATOR_MODEL, NARRATOR_SETTINGS)
+    model = voices.get("model") or NARRATOR_MODEL
+    settings = voices.get("settings") or NARRATOR_SETTINGS
+    qmodel = voices.get("quoteModel") or QUOTE_MODEL
+    vo = lambda name, text: v.tts(name, text, narrator, model, settings)
     def qv(name, q):
         voice = qvoices.get(name) or qvoices.get("default") or narrator
-        return v.tts(f"q_{name}", quote_say(q), voice, QUOTE_MODEL, None, qlang)
+        return v.tts(f"q_{name}", quote_say(q), voice, qmodel, None, qlang)
 
     scenes, t = [], 0
     for i, sc in enumerate(piece["scenes"]):
@@ -187,18 +214,20 @@ def time_piece(piece, v):
             else:
                 cur = base
         elif typ == "cold":
+            # Thesis first: narrator with title and base → word storm → the quote.
+            c = clip("vo", vo(f"{sid}_vo", sc["vo"]), 12)
+            clips.append(c)
+            cur = c["at"] + c["len"] + 12
+            marks["words_at"] = cur
+            cur += 64                                        # the vocabulary storms in
+            marks["quote_at"] = cur
             q = sc["quote"]
             if q.get("voiced"):
-                c = clip("quote", qv(sid, q), 20)
+                c = clip("quote", qv(sid, q), cur)
                 clips.append(c)
-                cur = c["at"] + c["len"] + 16
+                cur = c["at"] + c["len"] + 30
             else:
-                cur = 20 + UNVOICED_QUOTE(q["text"])
-            marks["words_at"] = cur
-            cur += 40                                        # the vocabulary storms in
-            c = clip("vo", vo(f"{sid}_vo", sc["vo"]), cur)
-            clips.append(c)
-            cur = c["at"] + c["len"] + 36
+                cur += UNVOICED_QUOTE(q["text"]) + 10
         elif typ == "base":
             cur = BASE_FRAMES
             if sc.get("vo"):
@@ -236,7 +265,9 @@ def time_piece(piece, v):
                     cur = marks["quote_at"] + UNVOICED_QUOTE(q["text"])
             marks["spark_at"] = cur + SPARK_AFTER
             say = sc["spark"].get("say") or sc["spark"]["line"]
-            c = clip("spark", vo(f"{sid}_spark", say), marks["spark_at"] + SPARK_VOICE_AFTER)
+            # With an insight cue, the voice waits for it (~0.55 s) before saying the Spark.
+            after = SPARK_CUE_AFTER if sfx_of(piece).get("insight") else SPARK_VOICE_AFTER
+            c = clip("spark", vo(f"{sid}_spark", say), marks["spark_at"] + after)
             clips.append(c)
             cur = c["at"] + c["len"] + SCENE_TAIL
         scenes.append({"id": sid, "from": t, "len": cur, "marks": marks, "clips": clips})
@@ -251,7 +282,7 @@ def budget(piece):
             if sc.get(k):
                 texts.append(sc[k])
         if sc.get("quote", {}).get("voiced"):
-            texts.append(sc["quote"]["text"])
+            texts.append(quote_say(sc["quote"]))     # with its emotion tag: it is billed too
         if sc.get("spark"):
             texts.append(sc["spark"].get("say") or sc["spark"]["line"])
     n = sum(len(x) for x in texts)
@@ -279,9 +310,9 @@ def main():
         raise SystemExit("Set voices.narrator (an ElevenLabs voice id) in the piece before generating.")
     v = Voice(os.path.dirname(path), a.estimate, os.path.splitext(os.path.basename(path))[0])
     scenes, total = time_piece(piece, v)
-    music = v.music(piece.get("music"), total / FPS)
+    music = v.music(piece.get("music"), total / FPS, lock=bool(piece.get("musicLock")))
     out = os.path.splitext(path)[0] + ".timing.json"
-    json.dump({"fps": FPS, "total": total, "estimated": a.estimate, "scenes": scenes, "music": music, "sfx": {}},
+    json.dump({"fps": FPS, "total": total, "estimated": a.estimate, "scenes": scenes, "music": music, "sfx": sfx_of(piece)},
               open(out, "w", encoding="utf-8"), ensure_ascii=False, indent=1)
     print(f"{len(scenes)} scenes · {total / FPS:.1f} s{' (estimated, no audio)' if a.estimate else ''} → {out}")
     for sc in scenes:

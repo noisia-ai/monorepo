@@ -40,7 +40,7 @@
         "prefiero estar en mi casa"
       ],
       "title": "Qué significa una casa en México hoy",
-      "vo": "Leímos lo que la gente en México dice sobre su casa. Para responder una pregunta: qué significa hoy tener un hogar."
+      "vo": "Analizamos más de un millón de menciones de México, de enero a mayo, para responder qué significa hoy tener un hogar."
     },
     {
       "type": "chapter",
@@ -95,7 +95,7 @@
       "vo": "Pero el crédito llega y la casa no. Sesenta y cinco por ciento de esa frustración se cuenta en TikTok.",
       "note": {
         "mentions": 49080,
-        "what": "sobre frustración financiera",
+        "what": "de frustración",
         "period": "ene–may 2026",
         "channels": [
           "tiktok"
@@ -154,17 +154,12 @@
         "line": "Protege antes del primer pago.",
         "sub": "Verificación visible y alertas de fraude."
       },
-      "vo": "Buscar depa empieza con sospecha. Las menciones de fraude se multiplicaron once veces.",
-      "note": {
-        "mentions": 219,
-        "what": "en mayo (20 en enero)",
-        "period": "ene–may 2026"
-      }
+      "vo": "Buscar depa empieza con sospecha. Las menciones de fraude se multiplicaron once veces."
     },
     {
       "type": "base",
       "id": "base",
-      "vo": "La base: más de un millón de menciones en siete plataformas, de enero a mayo de 2026."
+      "vo": "Todo eso se dijo en siete plataformas, de YouTube a las reseñas."
     },
     {
       "type": "close",
@@ -174,7 +169,7 @@
         "La casa como destino.",
         "Confianza antes del pago."
       ],
-      "vo": "La apuesta: cifras reales, la casa como destino y confianza antes del primer pago."
+      "vo": "Nuestra apuesta es hablar con cifras reales, tratar la casa como destino y dar confianza antes del primer pago."
     }
   ],
   "base": {

@@ -47,22 +47,40 @@ dentro de una slide 16:9.
 - **Las cifras salen de datos**, con su cálculo anotado (`notes` en el clip, `data.json` en el estudio).
   Ninguna se teclea en el video.
 - **Toda cifra dice sobre qué está parada.** Un video no puede dejar más dudas de las que resuelve:
-  - **Debajo de cada cifra va su nota** con cuántas menciones la sostienen, en qué periodo y, cuando
-    se sabe, en qué canales ("35,385 menciones en mayo (13,079 en enero) · ene–may 2026" y los logos).
-    El builder rechaza una pieza social o de estudio con una cifra sin nota.
-  - **Cada pieza lleva una escena de base:** el total de menciones leídas, el periodo, el mercado y los
-    canales. Si el estudio tiene el desglose por canal (un estudio siempre lo tiene), van rankeados con
-    barras ("dónde se habló más"); si no, sus logos. Va al final, antes del cierre, o justo después del
-    gancho, nunca antes: el gancho abre. El builder rechaza una pieza sin ella.
-  - **El narrador dice la base una vez** (en la apertura o en la escena de base): cuántas menciones,
-    cuántos canales y qué periodo.
+  - **La base se dice una vez, y en el estudio al abrir.** La apertura del estudio dice la tesis y la
+    base: el narrador dice cuánto analizamos, en qué periodo y para qué, con el título, el total, el
+    periodo y los canales en pantalla. Ya dicha, los capítulos pueden ir sin nota: repetirla en cada
+    escena se sintió aburrido. Sin esa apertura, la nota es obligatoria en cada gráfica.
+  - **Una nota va debajo de la cifra** cuando hace falta: cuántas menciones la sostienen, en qué periodo
+    y, cuando se sabe, en qué canales ("35,385 menciones en mayo (13,079 en enero) · ene–may 2026" y los
+    logos). En una pieza social es obligatoria en cada cifra. `note.mentions` es **un conteo exacto**
+    (menciones distintas del tópico en el periodo), nunca una estimación ponderada como "voces
+    pertinentes". Una cifra oficial (un censo, un cómputo electoral) no tiene menciones: su nota lleva
+    `source`.
+  - **Con menos de 5,000 menciones analizadas, la cifra va en porcentaje** o en "de cada 100", y la nota
+    dice el universo del que salió (en una muestra al azar, el universo muestreado). "126 menciones"
+    bajo un 65% se leyó como estudio superficial aunque el corpus fuera de 332 mil. El conteo leído no
+    desaparece: queda en el método del deck. El builder rechaza una nota por debajo de 5,000.
+  - **Cada pieza lleva una escena de base.** En una pieza social: el total de menciones analizadas, el
+    periodo, el mercado y los canales, rankeados con barras si hay desglose y con sus logos si no. Va
+    antes del cierre o justo después del gancho, nunca antes: el gancho abre. En el estudio, como el
+    total ya se dijo al abrir, la base **no lo repite: cuenta los canales** (`head` y `channelTopics`):
+    el reparto de todos y, en los dos o tres que nombra la voz, de qué se habla ahí. El total queda en
+    una línea chica al pie. El builder rechaza una pieza sin escena de base.
+- **El verbo es "analizamos" o "procesamos", nunca "escuchamos".** "Escuchamos" es lenguaje de social
+  listening y Noisia trabaja después de la escucha: tiene que sentirse que las vimos todas. El total se
+  llama "menciones analizadas", no "leídas", porque no se leyeron a mano. El builder rechaza "escuch"
+  en la voz, los títulos y el Spark (`COPY_RULES.md` §0.5).
+- **En video un sustantivo necesita su apellido.** "Quien no vota culpa a la oferta" no se entendió; dice
+  "la oferta política". En el deck la slide da contexto; en 140 s no. Se revisa con el guion.
 - **Las citas son literales y verificadas:** `assert fragmento in texto_verificado` antes de entrar, con
   plataforma y mes. Si se dramatiza, la etiqueta en pantalla lo dice: "verified post, voiced", "real fan
   posts, as a group chat".
 - **La evidencia es real.** Una imagen generada o de atmósfera nunca se presenta como lo que dijo
   alguien (§4.3).
 - **Las reglas de copy del kit** (`COPY_RULES.md`): sin em dash, sin "no es X, es Y", sin dos puntos de
-  revelación, nada que suene a IA. Bilingüe es-MX y en-US cuando aplica.
+  revelación, nada que suene a IA. Bilingüe es-MX y en-US cuando aplica. En la voz, los dos puntos de
+  revelación ("La base:", "La apuesta:") se cuelan fácil: el builder los rechaza en `vo` y `vo2`.
 - **Ningún dato de cliente en una pieza pública** y ningún proyecto de caso en el repo.
 
 ## 3. El guion: Human Signals
@@ -231,19 +249,26 @@ video de estudio y se valida con la primera pieza publicada.
 3. La narración interpola `data.json`; nada se teclea.
 
 **La estructura que funcionó** (130.3 s, 10 escenas, 28 slides de deck detrás):
-- **Cold open** (~15 s): la voz de una persona real, la lluvia de su vocabulario y el título con el
-  contador del corpus.
+- **Cold open** (~15 s), con la tesis primero: el narrador dice la base y la pregunta mientras entran el
+  título, el total, el periodo y los canales; después la lluvia del vocabulario, y al final la voz de una
+  persona real. Abrir con la cita sin decir qué íbamos a ver no funcionó.
 - **Un capítulo por pregunta o tema** (10.5 a 16 s cada uno), todos con los mismos tres tiempos: el
   insight, la prueba (el dato y una voz real) y el Creative Spark. Ninguno se queda solo descriptivo: el
   feedback fue que "no todas las slides tienen la misma densidad".
 - **El clímax con el mejor hallazgo de espacio vacío** (~15 s): un contador baja a 0, la música cae y
   aparece un chat de grupo con posts reales y el hueco de la marca escribiendo.
-- **La base** (~4 a 8 s): las menciones leídas, el periodo y los canales rankeados por menciones, con
-  la voz que la dice.
+- **La base por canales** (~8 a 12 s): el reparto de todos los canales y, en los que nombra la voz, de qué
+  se habla ahí; cada tarjeta entra cuando la voz dice su canal. `vs` pone en pantalla la comparación que
+  dice la voz ("pesa el doble" se ve como 24% con "12% en Facebook" debajo).
 - **El cierre** (~11 s): la apuesta en tres tiempos, el asset de portada y el logo.
 
-La apertura cuenta el mismo corpus de la base, con los logos de sus canales, y cada capítulo con
-gráfica lleva su nota (§2).
+La apertura dice el corpus una vez, con los logos de sus canales; después los capítulos van sin nota o
+con la nota que una cifra en particular necesite (§2).
+
+**La seña del insight.** En pantalla el Spark se distingue, pero al oído entraba como una frase más del
+narrador. Cada Spark entra con la misma seña corta (dos notas de campana, 0.55 s, `builders/cue.py`,
+`public/sfx/insight.wav`) y la voz espera a que termine. A la segunda ya no hace falta explicarla. Es el
+default del estudio (`"sfx": {"insight": "kit"}`); `"sfx": {}` la quita.
 
 La duración la marca el contenido. Se planearon unos 90 s, el primer pase de audio dio 141 y se
 recortó a 120; el usuario pidió no cortarlo "si tiene sentido", y quedó en 130.3 s.
@@ -253,24 +278,45 @@ que ningún tiempo va fijo en la composición. `packages/motion/builders/audio.p
 cada palabra y escribe `pieza.timing.json` con los marcadores en cuadros: `quote_at`, `spark_at`,
 `zero_at`, `chat_at`, `logo_at`. Sin key, `--estimate` da el mismo timing estimado para un borrador mudo. Las reglas de
 un capítulo: la voz entra en el cuadro 6, la cita 6 cuadros después de que termina la voz, `spark_at` 8
-después, la voz del Spark en `spark_at + 6` y la escena cierra 20 cuadros después. Las animaciones se
+después, la voz del Spark en `spark_at + 6` (`+ 16` con la seña) y la escena cierra 20 cuadros después.
+Las fases van en fila: cada una sale completa antes de que entre la siguiente (título, palabras, cita,
+Spark), porque en el mismo lugar 10 cuadros cruzados se ven como "textos empalmados". Las animaciones se
 anclan a una palabra: el número arranca cuando el narrador la dice.
 
 **Audio:**
 - **Las voces del sistema no sirven para entregar** ("se escuchan súper feas"); sirven de borrador sin
   key.
 - **ElevenLabs por API**, endpoint `/v1/text-to-speech/{voice}/with-timestamps`:
-  - narrador: `eleven_multilingual_v2`, una voz premade de narrador, `stability 0.42`,
-    `similarity_boost 0.8`, `style 0.35`, `use_speaker_boost`;
+  - narrador: **una voz profesional de la biblioteca compartida, poco usada, elegida con muestras;
+    nunca una premade.** Una premade popular se rechazó como "la voz que anda circulando en todos los
+    videos de internet". Se busca en `/v1/shared-voices` con `category=professional`, el idioma y el
+    género, un uso anual moderado (entre unos 300 mil y 6 millones de caracteres) y una descripción de
+    narración o documental; se generan tres muestras con una línea del guion y elige el usuario. Las
+    voces compartidas funcionan por `voice_id` sin agregarlas a la cuenta. Modelo por defecto
+    `eleven_multilingual_v2` con `stability 0.42`, `similarity_boost 0.8`, `style 0.35`,
+    `use_speaker_boost`; la pieza los cambia con `voices.model`, `voices.quoteModel` y
+    `voices.settings` (Eleven v4 solo acepta `stability` y `similarity_boost`);
+  - la voz de la apertura se elige también **por ritmo**: la cita del cold open no debería pasar de unos
+    10 s. Una de 13 s fue "muy lenta"; la misma cita con otras voces duró de 9.3 a 11.9 s;
   - voces del público: `eleven_v3` con `language_code` del mercado, voces nativas de la biblioteca
     compartida, y un tag de emoción al inicio de cada cita (`[laughing]`, `[mocking]`, `[excited]`…).
-    Los tags llegan en la alineación como palabras y se filtran.
+    Los tags llegan en la alineación como palabras y se filtran. Si la cita trae ortografía de la calle
+    ("eh votado", "asen"), su `say` dice lo que lee la voz y la tarjeta sigue mostrando el texto literal.
+    Una cita en otro idioma lleva su `translation`, en la tarjeta y en el chat del clímax, y **la
+    traducción se revisa contra el fragmento citado, no contra el post completo**: dos lecturas del deck
+    agregaban una frase o una palabra que el fragmento no dice;
+  - voces diseñadas (Voice Design): el API solo acepta `eleven_multilingual_ttv_v2` y `eleven_ttv_v3`
+    para diseñar (`eleven_ttv_v4` da 422), y la voz se usa después con el modelo que se quiera. El plan
+    de pago por uso permite 3 voces propias y un clon ocupa una: revisar el cupo antes de diseñar y
+    guardar cada id en cuanto se crea.
 - **Subtítulos palabra por palabra** desde los timestamps: solo la voz del narrador, una línea de hasta
   30 caracteres a la vez, la palabra dicha en ink y la que viene en `#c3c5c8`. La cita tiene su propia
   tarjeta y no se subtitula. El mapeo cita ↔ timestamps se hace por texto normalizado, no por índice:
   por índice se desfasa con comillas anidadas o emojis.
 - **Música** con `/v1/music` (`force_instrumental`) y **efectos** con `/v1/sound-generation`. La pista
-  se pide redondeada hacia arriba a 5 s, para que un cambio chico de guion reuse la caché. **La licencia
+  se pide redondeada hacia arriba a 5 s, para que un cambio chico de guion reuse la caché. Una pista
+  aprobada se bloquea con `"musicLock": true` y se reusa mientras dure lo que el video; ningún audio se
+  sobrescribe sin guardar el anterior como `_prev_<fecha>`. **La licencia
   de uso comercial se confirma en el plan de ElevenLabs antes de publicar fuera de una presentación
   privada.**
 - **Mezcla:** narrador 0.95, citas 1.0, whoosh 0.45, pop 0.5, tick 0.22, hit 0.3 a 0.85. Música 0.26
@@ -282,14 +328,29 @@ anclan a una palabra: el número arranca cuando el narrador la dice.
 - La key es del usuario y cuesta dinero. Se crea el `.env` vacío del caso con su `.gitignore`, el usuario
   la pega ahí, y nunca pasa por el chat ni por el repo.
 - El lector limpia comillas y espacios (`strip().strip('"\'').strip()`; una key pegada con comillas dio
-  401) y la valida contra `/v1/user/subscription` antes de generar.
+  401), revisa que empiece con `sk_` (64 caracteres hex son el ID de la key, no la key) y la valida
+  contra `/v1/user/subscription` antes de generar.
 - **Antes de generar se dice el presupuesto en caracteres:** el video terminado usa ~750 por minuto, y
   con tres pases de narración más las citas y pruebas se gastaron ~5,000. Música y efectos se cobran
   aparte.
 
-**QA:** stills de cada escena en tres momentos: fin de la voz, fin de la cita y Spark completo. Así
-aparecieron todos los encimados (una etiqueta sobre la curva, una frase sobre el 0, el Spark sobre las
-barras). El audio solo lo puede aprobar una persona escuchándolo; se le pide al usuario.
+**QA:** stills de cada marca (fin de la voz, fin de la cita, Spark completo) y de cada transición (el
+arranque de la escena y el cuadro justo antes de cada marca): los encimados que vio el usuario estaban en
+las transiciones. **Un encimado bloquea la entrega**, y lo detecta el builder, no una persona: con
+`--qa`, cada bloque marcado con `data-qa` se mide en cada still y la QA truena si dos se cruzan o uno se
+sale del cuadro, con el nombre de los dos y el cuadro (`src/common/LayoutGuard.tsx`). También truena
+si un bloque baja a la franja de los subtítulos (60 px sobre ella), aunque en ese cuadro nadie hable, y
+mide la caja ya animada, no el contenedor: una tarjeta que entraba subiendo desde 80 px pisaba los
+subtítulos y la primera versión de la guardia no lo vio. La tarjeta de la
+cita y el Spark van debajo de la gráfica y su nota, en la misma columna, así que una gráfica alta los
+empuja hacia abajo en lugar de quedar debajo de ellos. El audio solo lo puede aprobar una persona
+escuchándolo; se le pide al usuario.
+
+**El `data.json` del caso.** El builder del deck de cada caso escribe `video/data.json` con las mismas
+variables de sus slides, cada bloque con su `_calc`, y un `make_piece.py` del caso arma la pieza desde
+ahí: números en palabras para la voz, el assert literal de cada cita contra el corpus y un assert por
+cada afirmación de la voz ("pesa el doble" se valida entre 1.8 y 2.2; "los dos temas principales" valida
+el orden). Las reglas de copy y de base ya las valida el esquema.
 
 ### 5.4 Motion de deck
 
@@ -368,6 +429,10 @@ itera con `--qa` y el Studio, y el MP4 completo se hace al final.
   con movimiento reducido.
 - **zsh** no parte `"Process 400"` en `$1 $2` dentro de un `for`: los scripts de render van con
   `#!/bin/bash`.
+- **Una copia del kit con `public/` enlazado** escribía el audio de la pieza dentro del repo. El builder
+  copia `public/` resolviendo enlaces.
+- **La música se regeneraba** cuando el total cruzaba un tramo de 5 s, y una pista aprobada se perdió.
+  Ahora se guarda la anterior y se puede bloquear (`musicLock`).
 
 ## 8. El builder
 
@@ -382,7 +447,8 @@ itera con `--qa` y el Studio, y el MP4 completo se hace al final.
 | Gráficas animadas | `src/charts`: anillo, barras, número héroe con cuadrícula de puntos, paneles enfrentados |
 | CLI | `builders/build-video.mjs --format clip\|social\|study\|deck --in pieza.json --out pieza.mp4`, `--gif`, `--qa`, `--scale` |
 | Audio y timing | `builders/audio.py` (`--budget`, `--estimate`, o ElevenLabs) |
-| QA | `builders/qa.py`: hoja de contactos de los stills y chequeo de tamaño, duración y audio |
+| QA | `--qa` con la guardia de layout (`src/common/LayoutGuard.tsx`, hoy en el estudio) y `builders/qa.py`: hoja de contactos de los stills y chequeo de tamaño, duración y audio |
+| Seña del insight | `builders/cue.py` reescribe `public/sfx/insight.wav`, sin API e idéntica cada vez |
 | GIF | `builders/mkgif.py`: la receta de §5.4 |
 
 **Los dos motores:** los componentes importan solo de `src/engine.ts`, que hoy apunta a Remotion. El
@@ -390,11 +456,25 @@ website expone los mismos nombres en su runtime, así que el paso que falta es q
 importe las escenas de este paquete en lugar de tener su copia. Toca el sitio en producción y se hace
 coordinado con quien lleva el website.
 
+**Al hacer un video no se edita el kit, y eso nunca baja la calidad.** Si el kit produce un defecto
+(un encimado, un orden fijo, un validador que no deja hacer lo correcto), la sesión del caso lo resuelve
+con una copia parchada de `packages/motion` en su carpeta (`public/` copiado, nunca enlazado), entrega
+bien, y deja el parche con su explicación para integrarlo. Así llegó todo lo de la apertura con tesis,
+las fases en fila, la base por canales y la seña.
+
 **Pendiente:**
+- La guardia de layout en la pieza social y en el clip (hoy solo marca bloques el estudio).
+- Un `builders/voices.py` que diseñe voces revisando el cupo y guarde cada id al crearlo, y un
+  `make_piece.py` de ejemplo con los asserts genéricos del `data.json`.
 - Que el website use las escenas de `packages/motion` (hoy son una copia portada, con los mismos tiempos).
-- Los efectos de sonido (whoosh, pop, tick, hit) en la mezcla: el estudio pagado los usó; el builder aún no.
+- Los efectos de sonido (whoosh, pop, tick, hit) en la mezcla: el estudio pagado los usó; el builder solo
+  trae la seña del insight.
 - Cuatro patrones de deck (§5.4) y tres gráficas: curva con barras de días, tarjetas de marca, uno contra
   muchos.
 - La primera pieza real de cada formato con voces de ElevenLabs, escuchada por una persona.
+- Un `builders/voices.py` que liste voces profesionales por idioma y género, genere muestras y revise
+  el cupo antes de diseñar.
+- `--estimate` mide todo a 15 caracteres por segundo y puede inflar las citas en otro alfabeto; el
+  audio real lo corrige.
 - La loudness: el ffmpeg que trae Remotion no tiene `ebur128`; la medición a -14 LUFS necesita uno
   completo.

@@ -248,6 +248,13 @@ un rectángulo negro) y guardando con `garbage=4, deflate=True` en PyMuPDF, que 
 revisándolo página por página. Al final se confirma con el conector que el archivo está y que su
 tamaño coincide.
 
+**Un video de más de 10 MB** (un estudio pesa unos 16 MB) no se recomprime: el usuario pidió no
+hacerlo. La subida del navegador también topa en 10 MB por archivo, y servirlo desde localhost no
+funciona porque Chrome no deja que Drive lea la red local. Lo que funcionó: partir el MP4 en dos piezas
+de menos de 10 MB, subir cada una a un `input` creado en la página, unirlas en el navegador
+(comprobando el mismo SHA-256) y soltar el archivo en la carpeta con un evento de arrastrar y soltar.
+Drive confirmó el tamaño exacto del original.
+
 Advisor antes que constructor. Se cierra el alcance, se corre el ETL una vez sobre lo correcto, y
 hasta entonces se abre el HTML. **No se construyen slides antes de que el corpus pase sus gates.**
 
