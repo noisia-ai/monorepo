@@ -125,6 +125,8 @@ BEGIN
    OR NEW.source_proof->>'input_revision' IS DISTINCT FROM NEW.input_revision::text
    OR NEW.source_proof->>'metadata_revision' IS DISTINCT FROM (SELECT revision::text FROM signal_monitoring_insight_input_state WHERE workspace_id=NEW.workspace_id)
    OR NEW.source_proof->>'map_identity' IS DISTINCT FROM signal_monitoring_insights_map_identity_v1(NEW.workspace_id)
+   OR NEW.source_proof->>'entity_context_digest' IS DISTINCT FROM (SELECT entity_context_digest FROM signal_mass_labeling_maps
+    WHERE workspace_id=NEW.workspace_id AND id=(NEW.packet#>>'{current,population,map_id}')::uuid)
    OR NEW.source_not_after<=clock_timestamp()
    OR NEW.input_token_upper_bound<>octet_length(NEW.request_body)*4+8192
    OR NEW.reservation_micro_usd<>(NEW.input_token_upper_bound*3000000+2048::bigint*15000000+999999)/1000000
@@ -215,6 +217,8 @@ BEGIN
   OR r.source_proof->>'metadata_revision' IS DISTINCT FROM (SELECT revision::text FROM signal_monitoring_insight_input_state WHERE workspace_id=r.workspace_id)
   OR r.source_proof->>'map_identity' IS DISTINCT FROM signal_monitoring_insights_map_identity_v1(r.workspace_id)
   OR r.source_proof->>'timezone' IS DISTINCT FROM (SELECT timezone FROM signal_workspaces WHERE id=r.workspace_id)
+  OR r.source_proof->>'entity_context_digest' IS DISTINCT FROM (SELECT entity_context_digest FROM signal_mass_labeling_maps
+   WHERE workspace_id=r.workspace_id AND id=(r.packet#>>'{current,population,map_id}')::uuid)
   OR r.source_not_after<=clock_timestamp() THEN
   RAISE EXCEPTION 'monitoring_insights_authority_invalid' USING ERRCODE='23514'; END IF;
  day:=(clock_timestamp() AT TIME ZONE p.budget_timezone)::date;
@@ -315,7 +319,7 @@ ALTER TABLE signal_monitoring_insight_input_state ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON signal_monitoring_insight_input_state FROM PUBLIC;
 CREATE FUNCTION invalidate_signal_monitoring_insights_v1() RETURNS trigger
 LANGUAGE plpgsql SET search_path=public,extensions,pg_temp AS $$
-DECLARE changed text;
+DECLARE changed text;images text;
 BEGIN
  IF TG_OP='INSERT' THEN changed:='SELECT DISTINCT workspace_id FROM new_rows';
  ELSIF TG_OP='DELETE' THEN changed:='SELECT DISTINCT workspace_id FROM old_rows';
@@ -324,6 +328,25 @@ BEGIN
   IF TG_OP='INSERT' THEN changed:='SELECT DISTINCT m.workspace_id FROM new_rows f JOIN mentions m ON m.id=f.subject_id WHERE f.subject_type=''mention''';
   ELSIF TG_OP='DELETE' THEN changed:='SELECT DISTINCT m.workspace_id FROM old_rows f JOIN mentions m ON m.id=f.subject_id WHERE f.subject_type=''mention''';
   ELSE changed:='SELECT m.workspace_id FROM new_rows f JOIN mentions m ON m.id=f.subject_id WHERE f.subject_type=''mention'' UNION SELECT m.workspace_id FROM old_rows f JOIN mentions m ON m.id=f.subject_id WHERE f.subject_type=''mention'''; END IF;
+ END IF;
+ -- Identity tables have brand/profile/entity ownership rather than workspace.
+ -- This invalidates only opted-in workspaces and never redefines entity terms.
+ -- The canonical digest itself remains the shared query-engine algorithm.
+ IF TG_TABLE_NAME IN('brands','brand_os_profiles','brand_os_products','competitors','brand_seeds','intelligence_entities','entity_aliases') THEN
+  IF TG_OP='INSERT' THEN images:='SELECT * FROM new_rows';
+  ELSIF TG_OP='DELETE' THEN images:='SELECT * FROM old_rows';
+  ELSE images:='SELECT * FROM new_rows UNION ALL SELECT * FROM old_rows'; END IF;
+  IF TG_TABLE_NAME='brands' THEN
+   changed:='SELECT DISTINCT w.id workspace_id FROM ('||images||') source JOIN signal_workspaces w ON w.brand_id=source.id';
+  ELSIF TG_TABLE_NAME IN('brand_os_profiles','competitors','intelligence_entities') THEN
+   changed:='SELECT DISTINCT w.id workspace_id FROM ('||images||') source JOIN signal_workspaces w ON w.brand_id=source.brand_id';
+  ELSIF TG_TABLE_NAME='brand_os_products' THEN
+   changed:='SELECT DISTINCT w.id workspace_id FROM ('||images||') source JOIN brand_os_profiles profile ON profile.id=source.brand_os_profile_id JOIN signal_workspaces w ON w.brand_id=profile.brand_id';
+  ELSIF TG_TABLE_NAME='brand_seeds' THEN
+   changed:='SELECT DISTINCT w.id workspace_id FROM ('||images||') source JOIN competitors competitor ON competitor.competitor_brand_seed_id=source.id JOIN signal_workspaces w ON w.brand_id=competitor.brand_id';
+  ELSE
+   changed:='SELECT DISTINCT w.id workspace_id FROM ('||images||') source JOIN intelligence_entities entity ON entity.id=source.entity_id JOIN signal_workspaces w ON w.brand_id=entity.brand_id';
+  END IF;
  END IF;
  EXECUTE 'INSERT INTO signal_monitoring_insight_input_state(workspace_id,revision)
   SELECT change.workspace_id,1 FROM ('||changed||') change
@@ -339,7 +362,8 @@ DO $$ DECLARE relation_name text; BEGIN
   'signal_retention_policies','signal_licensing_policies','signal_licensing_policy_usages','import_batches','data_sources',
   'signal_mass_labeling_maps','signal_topic_catalog_executions','signal_classification_generations','analysis_artifacts','signal_corpus_preparation_runs','record_feature_values',
   'signal_labeling_runs','signal_mass_labeling_runs','signal_mass_labeling_results','signal_mass_labeling_default_lexicons',
-  'signal_mass_labeling_localizations','signal_mass_labeling_r13_results','signal_mass_labeling_r13_interest_results','signal_mass_labeling_study_interest_results'] LOOP
+  'signal_mass_labeling_localizations','signal_mass_labeling_r13_results','signal_mass_labeling_r13_interest_results','signal_mass_labeling_study_interest_results',
+  'brands','brand_os_profiles','brand_os_products','competitors','brand_seeds','intelligence_entities','entity_aliases'] LOOP
   -- Alphabetically AFTER existing corpus revision triggers: payment also locks
   -- corpus input_state before this counter. Never introduce the reverse order.
   EXECUTE format('CREATE TRIGGER zz_monitoring_epoch_insert AFTER INSERT ON %I REFERENCING NEW TABLE AS new_rows

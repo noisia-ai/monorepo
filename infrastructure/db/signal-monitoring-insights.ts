@@ -271,6 +271,8 @@ export async function reserveMonitoringInsightCallV1(args:{database:Database;lea
   const context=access({database:args.database,workspace_id:owner.workspace_id,actor_user_id:owner.actor_user_id,
    conversation_segment:owner.packet.scope_segment,locale:owner.packet.locale});
   await financialLock(client,context);await lockMonitoringInsightInputsV1(client,owner.workspace_id);
+  const proof=await readMonitoringInsightProofV1(client,owner.workspace_id);
+  if(!currentSnapshot({packet:owner.packet,proof:owner.source_proof,not_after:owner.source_not_after},proof))throw new MonitoringInsightsError('monitoring_insights_source_changed',409,true);
   const row=await lockedLease(client,args.lease);
   const prior=(await client.query<Call>('SELECT * FROM signal_monitoring_insight_calls WHERE run_id=$1',[row.id])).rows[0];
   if(prior)return prior;
@@ -286,7 +288,15 @@ export async function markMonitoringInsightCallSentV1(args:{database:Database;le
   if(!owner)fail('monitoring_insights_lease_lost');
   const context=access({database:args.database,workspace_id:owner.workspace_id,actor_user_id:owner.actor_user_id,
    conversation_segment:owner.packet.scope_segment,locale:owner.packet.locale});
-  await financialLock(client,context);await lockMonitoringInsightInputsV1(client,owner.workspace_id);await lockedLease(client,args.lease);
+  await financialLock(client,context);await lockMonitoringInsightInputsV1(client,owner.workspace_id);
+  await lockedLease(client,args.lease);
+  const pending=(await client.query<{state:string}>(`SELECT state FROM signal_monitoring_insight_calls WHERE id=$1
+   AND run_id=$2 AND workspace_id=$3 AND attempt_token=$4`,[args.call_id,args.lease.run_id,args.lease.workspace_id,args.attempt_token])).rows[0];
+  // A second observer of an already-sent call never acquires a definitive-unsent
+  // failure merely because its source changed after the first sender's CAS.
+  if(pending?.state!=='reserved')return false;
+  const proof=await readMonitoringInsightProofV1(client,owner.workspace_id);
+  if(!currentSnapshot({packet:owner.packet,proof:owner.source_proof,not_after:owner.source_not_after},proof))throw new MonitoringInsightsError('monitoring_insights_source_changed',409,true);
   return(await client.query(`UPDATE signal_monitoring_insight_calls SET state='in_flight',sent_at=clock_timestamp(),updated_at=clock_timestamp()
    WHERE id=$1 AND run_id=$2 AND workspace_id=$3 AND attempt_token=$4 AND state='reserved' RETURNING id`,
   [args.call_id,args.lease.run_id,args.lease.workspace_id,args.attempt_token])).rows.length===1;
