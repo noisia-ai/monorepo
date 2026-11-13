@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
 import type {Pool} from 'pg';
 import {workspaceMonitoringInsightConfigurationV1,signalWorkspaceEmbeddingDigestV1 as digest} from '@noisia/query-engine';
-import {readMonitoringInsightProofV1,monitoringInsightProofKeyV1} from '../signal-monitoring-insights-source';
+import {readMonitoringInsightProofV1,monitoringInsightProofKeyV1,monitoringInsightNotAfterV1,monitoringInsightDeadlineMillisV1} from '../signal-monitoring-insights-source';
 import {quoteMonitoringInsightPolicyV1,provisionMonitoringInsightPolicyV1} from '../signal-monitoring-insights-policy';
 import * as insights from '../signal-monitoring-insights';
 
@@ -31,12 +31,60 @@ export async function assertNativeMonitoringInsightsV1(args:{database:Pool;query
   const config=workspaceMonitoringInsightConfigurationV1(args.workspace_id);
   assert.deepEqual((await query('SELECT signal_monitoring_insights_configuration_v1($1) configuration',[args.workspace_id])).rows[0].configuration,config);
   await setup.query('COMMIT');setupCommitted=true;
-  const policyArgs={database:args.database,workspace_id:args.workspace_id,actor_user_id:args.actor_user_id,
-   valid_until:new Date(Date.now()+86400000).toISOString()};
+  // Invented base policies exercise the actual infinity/finite database values.
+  // Setup copies every action; no helper is allowed to extend that base expiry.
+  const seedExpiry=async(validUntil:string,version?:string)=>{
+   const client=await args.database.connect();
+   try{
+    await client.query('BEGIN');
+    const prior=(await client.query(`SELECT p.* FROM signal_processing_policy_versions p JOIN signal_workspaces w ON w.organization_id=p.organization_id WHERE w.id=$1 AND p.status<>'draft' ORDER BY p.version DESC LIMIT 1`,[args.workspace_id])).rows[0];
+    const next=(await client.query(`INSERT INTO signal_processing_policy_versions(organization_id,version,status,valid_from,valid_until,budget_timezone,daily_cap_micro_usd,created_by_user_id)
+     SELECT organization_id,COALESCE($4::bigint,(SELECT max(version)+1 FROM signal_processing_policy_versions WHERE organization_id=p.organization_id)),'draft',clock_timestamp(),$2::timestamptz,budget_timezone,daily_cap_micro_usd,$3 FROM signal_processing_policy_versions p WHERE id=$1 RETURNING id,version::text,valid_until::text`,[prior.id,validUntil,args.actor_user_id,version??null])).rows[0];
+    await client.query(`INSERT INTO signal_processing_policy_actions SELECT $1,action,kind,provider,model,configuration,configuration_digest,max_execution_micro_usd,automatic_allowed FROM signal_processing_policy_actions WHERE policy_version_id=$2 AND action<>'monitoring_insights'`,[next.id,prior.id]);
+    await client.query(`INSERT INTO signal_processing_policy_actions VALUES($1,'monitoring_insights','provider','anthropic','claude-sonnet-4-6',$2,signal_semantic_context_digest_json_v2($2::jsonb),2000000,false)`,[next.id,JSON.stringify(config)]);
+    await client.query("UPDATE signal_processing_policy_versions SET status='revoked' WHERE id=$1 AND status='active'",[prior.id]);
+    await client.query("UPDATE signal_processing_policy_versions SET status='active' WHERE id=$1",[next.id]);
+    await client.query('COMMIT');return next as {id:string;version:string;valid_until:string};
+   }catch(error){await client.query('ROLLBACK');throw error;}finally{client.release();}
+  };
+  await seedExpiry('infinity');
+  const infinityQuote=await insights.quoteWorkspaceMonitoringInsightsV1({...access,budget_cap_micro_usd:2000000});
+  assert.ok(Number.isFinite(Date.parse(infinityQuote.expires_at)));
+  assert.ok(Date.parse(infinityQuote.expires_at)<=Date.now()+300000,'infinite policy never makes the quote infinite');
+  const futureCompetitor=async(effectiveFrom:string)=>{
+   const seed=randomUUID();
+   await query('INSERT INTO brand_seeds(id,canonical_name,active) VALUES($1,$2,true)',[seed,'Synthetic future boundary '+seed]);
+   await query(`INSERT INTO competitors(brand_id,competitor_brand_seed_id,status,effective_from,updated_at)
+    SELECT brand_id,$2,'current',$3::timestamptz,clock_timestamp() FROM signal_workspaces WHERE id=$1`,[args.workspace_id,seed,effectiveFrom]);
+  };
+  // A future, not-yet-effective identity leaves the native map current, while
+  // exercising the genuine PostgreSQL infinity returned by the boundary reader.
+  await futureCompetitor('infinity');
+  const infiniteProof=await readMonitoringInsightProofV1(args.database,args.workspace_id);
+  assert.equal(infiniteProof.entity_not_after,'infinity');
+  const infiniteSourceQuote=await insights.quoteWorkspaceMonitoringInsightsV1({...access,budget_cap_micro_usd:2000000});
+  assert.ok(Number.isFinite(Date.parse(infiniteSourceQuote.expires_at)));
+  const finiteBoundary=(await query("SELECT (clock_timestamp()+interval '20 minutes')::text value")).rows[0].value;
+  await futureCompetitor(finiteBoundary);
+  const mixedProof=await readMonitoringInsightProofV1(args.database,args.workspace_id);
+  assert.equal(monitoringInsightNotAfterV1([infiniteProof.entity_not_after,mixedProof.entity_not_after]),new Date(finiteBoundary).toISOString());
+  assert.equal(monitoringInsightNotAfterV1([infiniteProof.entity_not_after,Infinity,null]),null);
+  assert.throws(()=>monitoringInsightNotAfterV1(['invalid deadline']),/monitoring_insights_deadline_invalid/);
+  assert.throws(()=>monitoringInsightDeadlineMillisV1('-infinity'),/monitoring_insights_deadline_invalid/);
+  const mixedQuote=await insights.quoteWorkspaceMonitoringInsightsV1({...access,budget_cap_micro_usd:2000000});
+  const budgetEnd=(await query(`SELECT ((clock_timestamp() AT TIME ZONE p.budget_timezone)::date+1)::timestamp AT TIME ZONE p.budget_timezone value
+   FROM signal_processing_policy_versions p JOIN signal_workspaces w ON w.organization_id=p.organization_id WHERE w.id=$1 AND p.status='active'`,[args.workspace_id])).rows[0].value;
+  assert.ok(Date.parse(mixedQuote.expires_at)<=Math.min(Date.now()+300000,Date.parse(finiteBoundary),new Date(budgetEnd).getTime()),'five-minute, day and finite source limits remain binding');
+
+  const policyArgs={database:args.database,workspace_id:args.workspace_id,actor_user_id:args.actor_user_id};
   const plan=await quoteMonitoringInsightPolicyV1(policyArgs);
+  assert.equal(plan.plan.valid_until,'infinity');
+  assert.equal((await quoteMonitoringInsightPolicyV1({...policyArgs,valid_until:'infinity'})).plan_digest,plan.plan_digest);
   await assert.rejects(provisionMonitoringInsightPolicyV1({...policyArgs,plan_digest:'sha256:'+'0'.repeat(64)}),/monitoring_insights_policy_plan_changed/);
   const provisioned=await provisionMonitoringInsightPolicyV1({...policyArgs,plan_digest:plan.plan_digest});
   let policy=provisioned.policy_id;
+  const inherited=(await query('SELECT valid_until::text,daily_cap_micro_usd::text FROM signal_processing_policy_versions WHERE id=$1',[policy])).rows[0];
+  assert.equal(inherited.valid_until,'infinity');assert.equal(inherited.daily_cap_micro_usd,plan.prior.daily_cap_micro_usd);
   const oldActions=plan.plan.actions.filter(row=>row.action!=='monitoring_insights');
   const preserved=(await query(`SELECT action,kind,provider,model,configuration,configuration_digest,max_execution_micro_usd::text,automatic_allowed
    FROM signal_processing_policy_actions WHERE policy_version_id=$1 AND action<>'monitoring_insights' ORDER BY action`,[policy])).rows;
@@ -124,6 +172,8 @@ export async function assertNativeMonitoringInsightsV1(args:{database:Pool;query
   const licensed=await insights.loadWorkspaceMonitoringInsightsV1(access);
   assert.equal(licensed.monthly_insights.interpretation_state,'claude','spending-policy revocation alone does not erase licensed paid copy');
   assert.equal(licensed.authorization.can_request,false);
+  await assert.rejects(quoteMonitoringInsightPolicyV1(policyArgs),/monitoring_insights_base_policy_required/);
+  await seedExpiry('infinity');
   const renewalPlan=await quoteMonitoringInsightPolicyV1(policyArgs);
   policy=(await provisionMonitoringInsightPolicyV1({...policyArgs,plan_digest:renewalPlan.plan_digest})).policy_id;
 
@@ -153,6 +203,7 @@ export async function assertNativeMonitoringInsightsV1(args:{database:Pool;query
   await query('DELETE FROM record_feature_values WHERE id=$1',[feature]);
   assert.notEqual((await readMonitoringInsightProofV1(args.database,args.workspace_id)).metadata_revision,beforeDelete.metadata_revision);
   await query(`INSERT INTO record_feature_values(id,subject_type,subject_id,feature_key,feature_value,source) VALUES($1,'mention',$2,'emotion','"surprise"','synthetic-monthly-brand')`,[feature,root]);
+  await seedExpiry('infinity');
   const brandPlan=await quoteMonitoringInsightPolicyV1(policyArgs);
   await provisionMonitoringInsightPolicyV1({...policyArgs,plan_digest:brandPlan.plan_digest});
   const brandQuote=await insights.quoteWorkspaceMonitoringInsightsV1({...access,budget_cap_micro_usd:2000000});
@@ -179,6 +230,31 @@ export async function assertNativeMonitoringInsightsV1(args:{database:Pool;query
   assert.equal((await insights.reserveMonitoringInsightCallV1({database:args.database,lease:brandLease})).id,brandCall.id,'restoration never creates another call');
   await insights.failMonitoringInsightRunV1({database:args.database,lease:brandLease,call_id:brandCall.id,attempt_token:brandCall.attempt_token,outcome:'definitely_not_sent',error_code:'monitoring_insights_source_changed'});
   assert.equal((await query('SELECT count(*)::int n FROM signal_monitoring_insight_calls WHERE run_id=$1',[brandRun.run_id])).rows[0].n,1);
+  const farFuture=(await query("SELECT (clock_timestamp()+interval '60 days'+interval '123 microseconds')::text value")).rows[0].value;
+  const finite=await seedExpiry(farFuture);
+  const higherRevoked=await seedExpiry('infinity',(BigInt(finite.version)+10n).toString());
+  await query("UPDATE signal_processing_policy_versions SET status='revoked' WHERE id=$1",[higherRevoked.id]);
+  const currentFinite=await seedExpiry(finite.valid_until,(BigInt(finite.version)+5n).toString());
+  const draftVersion=(BigInt(finite.version)+20n).toString();
+  const draft=(await query(`INSERT INTO signal_processing_policy_versions(organization_id,version,status,valid_from,valid_until,budget_timezone,daily_cap_micro_usd,created_by_user_id)
+   SELECT organization_id,$2,'draft',clock_timestamp(),valid_until,budget_timezone,daily_cap_micro_usd,created_by_user_id FROM signal_processing_policy_versions WHERE id=$1 RETURNING id`,[currentFinite.id,draftVersion])).rows[0];
+  const finitePlan=await quoteMonitoringInsightPolicyV1(policyArgs);
+  assert.equal((await quoteMonitoringInsightPolicyV1({...policyArgs,valid_until:finite.valid_until})).plan_digest,finitePlan.plan_digest);
+  assert.equal(finitePlan.prior.id,currentFinite.id,'a numerically later revoked policy is never a source of authority');
+  assert.equal(finitePlan.plan.next_version,(BigInt(draftVersion)+1n).toString());
+  const finiteProvisioned=await provisionMonitoringInsightPolicyV1({...policyArgs,plan_digest:finitePlan.plan_digest});
+  assert.equal((await query('SELECT version::text FROM signal_processing_policy_versions WHERE id=$1',[finiteProvisioned.policy_id])).rows[0].version,finitePlan.plan.next_version);
+  assert.equal((await query('SELECT status FROM signal_processing_policy_versions WHERE id=$1',[draft.id])).rows[0].status,'draft','unrelated draft is untouched');
+  assert.equal((await query('SELECT valid_until=$2::timestamptz exact FROM signal_processing_policy_versions WHERE id=$1',[finiteProvisioned.policy_id,finite.valid_until])).rows[0].exact,true,'finite expiry including microseconds is preserved beyond the new-date thirty-day limit');
+  await assert.rejects(quoteMonitoringInsightPolicyV1({...policyArgs,valid_until:'infinity'}),/monitoring_insights_policy_dates_invalid/);
+  const shortFuture=(await query("SELECT (clock_timestamp()+interval '14 days')::text value")).rows[0].value;
+  const shortBase=await seedExpiry(shortFuture);
+  assert.equal((await quoteMonitoringInsightPolicyV1(policyArgs)).prior.id,shortBase.id,'the latest numeric policy version is selected even across nine to ten');
+  const extension=(await query("SELECT (clock_timestamp()+interval '20 days')::text value")).rows[0].value;
+  await assert.rejects(quoteMonitoringInsightPolicyV1({...policyArgs,valid_until:extension}),/monitoring_insights_policy_dates_invalid/);
+  const shortened=(await query("SELECT (clock_timestamp()+interval '7 days')::text value")).rows[0].value;
+  await quoteMonitoringInsightPolicyV1({...policyArgs,valid_until:shortened});
+
 
  }finally{
   if(!setupCommitted)await setup.query('ROLLBACK');
