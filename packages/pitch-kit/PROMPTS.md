@@ -582,3 +582,11 @@ MERCADO EN INGLÉS:
 Se traduce la idea, no las palabras. Los verbatims se dejan en su idioma original y se marcan como
 traducidos solo si se tradujeron.
 ```
+
+
+## Preparar un journey SDR en Instantly
+
+Para conciliar mensajes por lead desde Drive, aplicar el HTML comercial y verificar los pasos
+sin lanzar la campaña, usar el prompt de `commercial/COMMERCIAL.md` §15.10. Leer primero §15
+completa: distingue edición persistida, Preview, pruebas autorizadas y activación. Completar
+campaña, fuente, plantilla y destinatarios de prueba en privado; nunca subir esos datos al repo.
