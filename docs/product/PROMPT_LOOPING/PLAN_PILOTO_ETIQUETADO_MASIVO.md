@@ -213,6 +213,8 @@ Lo demás se resuelve de forma autónoma y se anota en el registro de decisiones
 
 ## Progreso
 
+- [x] Corrección posterior a R15 · En UAT `2c2f688e`, el recorrido autenticado Dashboard → estudio → Menciones mostró las 83,962 raíces y abrió una ficha sin recargar el documento. La navegación atrás y adelante y la entrada a Monitoreo desde la barra lateral mostraron el segmento de conversación de 61,975 raíces. La primera apertura directa de Monitoreo continúa pendiente de verificación tras la recuperación de red.
+
 - [ ] Corrección posterior a R15 (2026-11-12): resolver la apertura inicial de Menciones y el bloqueo del shell de Monitoreo. La aceptación exige Dashboard → estudio → Menciones → ficha, sin recargar, y abrir el enlace de Monitoreo con filtros.
 
 - [x] H7 · Los once archivos de origen coincidieron por SHA-256. Con 83,962 raíces en cada entorno, dev-test y UAT comparten 83,958 identidades. Sus textos exactos coincidieron en todos los casos comunes. El anexo conserva los cruces entre los cuatro segmentos y la comparación del léxico, los intereses y las poblaciones de consumidores.
@@ -354,6 +356,8 @@ Lo demás se resuelve de forma autónoma y se anota en el registro de decisiones
 
 ## Sorpresas y descubrimientos
 
+- Corrección posterior a R15 · La apertura directa sufrió `ERR_NETWORK_CHANGED` durante el documento. Dos solicitudes de Monitoreo finalizaron como HTTP 499 en 552 ms y 2,129 ms. Sus duraciones distinguen esa interrupción de una consulta que agota su plazo. La prueba montada también necesitó separar la compilación inicial de los módulos del tiempo dedicado al recorrido.
+
 - 2026-11-12: la pantalla de Monitoreo vacía reportada corresponde al fallback de ruta, con navegación decorativa todavía sin enlaces. Chrome registró ERR_NETWORK_CHANGED en el documento. El flujo SPA de Menciones convierte una excepción de transporte en no disponible y no tiene recuperación automática. El éxito tras recargar documentado anteriormente no satisface la apertura inicial requerida.
 
 - H7 · El total de raíces elegibles coincide entre entornos aunque hay cuatro identidades exclusivas en cada uno. Entre las comunes, 1,005 pasaron de publicidad en dev-test a conversación en UAT y 556 hicieron el recorrido contrario. Los 271 casos de sólo hashtags permanecieron en ese segmento. Para las cuatro identidades exclusivas por entorno, los registros de importación acreditan cuatro pares de versiones de texto que comparten un identificador de proveedor. Los dos entornos cargaron los archivos en orden contrario. El importador conservó la primera versión y registró la posterior como duplicada.
@@ -483,6 +487,8 @@ Lo demás se resuelve de forma autónoma y se anota en el registro de decisiones
 - Dos lotes devolvieron referencias válidas dentro de la muestra de 30 pero superaron el máximo de diez referencias por campo. La comprobación privada de las respuestas originales y de reparación encontró entre 11 y 30 referencias en los campos rechazados.
 
 ## Registro de decisiones
+
+- Corrección posterior a R15 · Esperar 1.5 s antes del segundo intento permitido para una lectura afectada por un fallo de transporte o HTTP 502, 503 o 504. La espera se cancela al abandonar el recorrido. Cada intento conserva su límite de 60 s y los errores de permisos, alcance o filtros se devuelven inmediatamente. La aceptación de la apertura directa se confirmará desde el navegador de UAT.
 
 - 2026-11-12: entregar primero el shell autorizado para los enlaces explícitos all_conversations y cargar sus datos mediante las APIs existentes. Recuperar lecturas ante interrupciones transitorias con intentos acotados y cancelación por navegación. Verificar montaje real del componente y recorrido autenticado de UAT antes de cerrar.
 

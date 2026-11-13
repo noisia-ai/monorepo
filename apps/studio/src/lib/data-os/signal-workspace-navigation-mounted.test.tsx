@@ -167,6 +167,44 @@ test("a scope change aborts the old GET and discards its late response without r
   } finally { await app.close(); globalThis.fetch = saved; }
 });
 
+test("the mounted shell waits for network recovery before sending its second GET", async t => {
+  const schedule = browser.setTimeout.bind(browser), saved = globalThis.fetch;
+  let releaseRetry: (() => void) | undefined, calls = 0;
+  t.mock.method(browser, "setTimeout", ((callback: (...args: unknown[]) => void, delay?: number, ...args: unknown[]) => {
+    if (delay === 1_500) {
+      const timer = schedule(() => undefined, 120_000);
+      releaseRetry = () => { browser.clearTimeout(timer); callback(...args); };
+      return timer;
+    }
+    return schedule(callback, delay, ...args);
+  }) as typeof browser.setTimeout);
+  globalThis.fetch = async () => { if (++calls === 1) throw new TypeError("network changed"); return response(); };
+  const app = await mount();
+  try {
+    await until(() => Boolean(releaseRetry)); await settle(); assert.equal(calls, 1);
+    await act(async () => releaseRetry!()); await until(isEvidenceVisible); assert.equal(calls, 2);
+  } finally { await app.close(); globalThis.fetch = saved; }
+});
+
+test("unmount during the network recovery wait cancels the second GET", async t => {
+  const schedule = browser.setTimeout.bind(browser), saved = globalThis.fetch;
+  let releaseRetry: (() => void) | undefined, calls = 0;
+  t.mock.method(browser, "setTimeout", ((callback: (...args: unknown[]) => void, delay?: number, ...args: unknown[]) => {
+    if (delay === 1_500) {
+      const timer = schedule(() => undefined, 120_000);
+      releaseRetry = () => { browser.clearTimeout(timer); callback(...args); };
+      return timer;
+    }
+    return schedule(callback, delay, ...args);
+  }) as typeof browser.setTimeout);
+  globalThis.fetch = async () => { calls++; throw new TypeError("network changed"); };
+  const app = await mount();
+  try {
+    await until(() => Boolean(releaseRetry)); await app.close();
+    await act(async () => releaseRetry!()); await settle(); assert.equal(calls, 1);
+  } finally { globalThis.fetch = saved; }
+});
+
 test("an aborted pending read on unmount is not retried", async () => {
   let calls = 0, requestSignal: AbortSignal | null | undefined;
   const saved = globalThis.fetch;
