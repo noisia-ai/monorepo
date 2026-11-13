@@ -61,7 +61,8 @@ blanco: investiga y propónme la respuesta para que solo la confirme.
 1. ¿Reporte, estudio, o los dos? Si es estudio, ¿es pagado o freebie? Cambia el tamaño y la
    densidad (LAYOUTS.md, "Paid or freebie").
 2. ¿En qué idiomas? Si son dos, se construyen juntos desde una sola fuente de contenido.
-3. ¿Qué método uso? Se nombra en inglés en la slide del marco. Si el deck va en español, ¿qué
+3. ¿Qué método uso? Las seis del KB, o uno de los dos en validación: tendencias (Cultural
+   Momentum Mapping) o generacional (Historia de influencias). Se nombra en inglés en la slide del marco. Si el deck va en español, ¿qué
    par de verbos acompaña a los términos? Por ejemplo Motiva / Desmotiva, o Empuja / Detiene si
    la pregunta es por qué compran o no.
 4. La pregunta de investigación en una frase, si es estudio. Un reporte no lleva.
@@ -423,6 +424,58 @@ cambió contra el periodo anterior, con una capa ligera de interpretación.
 Ningún número va solo: todo se compara contra el periodo anterior. Si es el primer periodo, se
 dice que es la línea base y que todavía no hay comparación. No se le inventa una tesis a un
 reporte.
+```
+
+## Bloque · Estudio de tendencias (Cultural Momentum Mapping)
+
+```text
+FAMILIA: estudio de tendencias. Freebie: 15 a 20 slides; pagado: 25 a 40. Lee completos
+packages/kb/01-methodologies/cultural-momentum-mapping.md y
+packages/kb/05-ai-playbooks/run-cultural-momentum-mapping.md antes de proponer nada: ahí están
+las fórmulas, las lecturas del mapa, sus umbrales y los gates M1 a M5.
+
+El método, que se nombra en inglés en la slide del marco:
+- Dos relojes por tema. La curva: si más personas hablan del tema, descontando el crecimiento del
+  corpus y lo que no es pertinente, el mismo trimestre año contra año. La voz: qué hace la gente
+  con el tema (descubre, adopta, normaliza, se cansa) y en qué momento de su vida vive.
+- El hallazgo está donde los relojes no marcan la misma hora.
+- Cuatro lecturas (Catching on, Growing but tiring, The steady base, Losing pull) y tres banderas
+  (señal temprana, empujada, en declive), con umbrales absolutos y la mediana como referencia.
+
+Antes de bajar datos, escribe en el plan el marco cerrado: las lecturas, las banderas y sus
+umbrales. El mapa mide exactamente lo que el marco promete, y cada hallazgo sale de la lectura de
+su dato (el builder lo comprueba). Ninguna query busca el tono ni la etapa: eso se etiqueta.
+
+Obligatorias de esta familia: el panorama, el marco, el mapa a todo lo ancho, todos los temas con
+su curva, las etapas de todos, el mapa de calor tema por momento, momentos y marca, las señales
+tempranas si las hay, la slide de canales y la de método sin kappa.
+```
+
+## Bloque · Estudio de Historia de influencias
+
+```text
+FAMILIA: estudio generacional, Historia de influencias (Influence History). Lee completos
+packages/kb/01-methodologies/historia-de-influencias.md y
+packages/kb/05-ai-playbooks/run-historia-de-influencias.md antes de proponer nada: ahí están la
+prueba clínica de cada eje y los gates H1 a H10.
+
+El método, que se nombra en inglés en la slide del marco:
+- Mide lo que rodeó a una generación mientras crecía (una búsqueda por influencia) y la categoría
+  del cliente (sus propias búsquedas). Las búsquedas nunca se suman.
+- Codificación multieje: vigencia (viva, transformada, heredada, recuerdo, sin señal) como eje
+  central, vía de llegada y cruce con la categoría; en el bloque de categoría, dirección y motivo.
+- La ausencia de la categoría es un hallazgo: el espacio en blanco, contado en todo el universo
+  contra quién sí ocupa el lugar, con el verbo "nombra" y como "poca presencia, oportunidad a
+  explorar", nunca "espacio libre".
+
+Antes de escuchar: el SSOT cualitativo, la cronología con fuente por fila, la regla para elegir
+influencias con lo que queda fuera, y la decisión del dueño del caso sobre qué detalle de método
+ve el cliente (H10). Ninguna frase atribuye la voz a la generación: cada porcentaje es "de lo que se
+dice de X".
+
+Obligatorias de esta familia: el método con una influencia recorrida de punta a punta, el journey
+de vida, el mapa de vigencia, el espacio en blanco y quién lo ocupa, el bloque de categoría y la
+slide de método. Se entregan dos versiones: un ejecutivo de 12 a 15 slides y el completo.
 ```
 
 ## Bloque · Muestra o freebie

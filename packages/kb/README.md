@@ -46,7 +46,7 @@ knowledge-base/
 ├── README.md                   ← este archivo
 ├── Design.md                   ← meta-doc: cómo está pensado este KB y cómo usarlo
 ├── 00-overview/                ← qué es Noisia, posicionamiento, principios
-├── 01-methodologies/           ← las 6 metodologías propietarias (definición + teoría)
+├── 01-methodologies/           ← las 6 metodologías propietarias + 2 en validación (definición + teoría)
 ├── 02-services/                ← modelo de producto (Reportes/Estudios/Data), tiers, pricing
 ├── 03-process/                 ← diagnóstico, corpus, trazabilidad, entrega
 ├── 04-cases/                   ← los 6 use cases (qué metodología corre cada uno)
