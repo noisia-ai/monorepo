@@ -16,3 +16,6 @@ for (const envFile of [join(process.cwd(), ".env"), join(process.cwd(), "..", ".
 if (process.env.REMOTION_PUBLIC_LICENSE_KEY) Config.setPublicLicenseKey(process.env.REMOTION_PUBLIC_LICENSE_KEY);
 if (process.env.CHROME_EXECUTABLE) Config.setBrowserExecutable(process.env.CHROME_EXECUTABLE.replace(/^~/, process.env.HOME ?? "~"));
 Config.setVideoImageFormat("jpeg");
+// The website's compositions (src/website): their runtime and icon packages resolve through the bridge.
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+Config.overrideWebpackConfig(require(join(process.cwd(), "builders", "webpack-website.cjs")).websiteBridge);
