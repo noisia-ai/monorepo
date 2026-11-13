@@ -85,7 +85,7 @@ test("workspace entry and client navigation request list plus focus in one nativ
   ]);
   assert.doesNotMatch(entry, /splitNativeMentionsFocusQuery|focusQuery/u);
   assert.match(entry, /native = await loadNativeSignalMentionsV1\(scope, params\);\s+focused = native\?\.record/u);
-  assert.match(navigation, /const requestQuery = new URLSearchParams\(query\);[\s\S]*fetch\(`\$\{endpoint\}\?\$\{requestQuery\}`/u);
+  assert.match(navigation, /const requestQuery = new URLSearchParams\(query\);[\s\S]*readSignalModule\(`\$\{endpoint\}\?\$\{requestQuery\}`/u);
   assert.doesNotMatch(navigation, /focusedResponse|focusQuery/u);
 });
 

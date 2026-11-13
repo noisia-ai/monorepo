@@ -211,7 +211,8 @@ test("strategic study navigation uses the shared module href and visible pending
   assert.match(component, /const navigateToStudy = useCallback/);
   assert.match(component, /setPendingModule\("study"\)/);
   assert.match(component, /triggers-barriers`/);
-  assert.match(component, /variant=\{pendingModule === "study" \? "triggersBarriers" : pendingModule\}/);
+  assert.match(component, /initialModuleState === "pending" \|\| pendingModule && currentModule !== pendingModule/);
+  assert.match(component, /variant=\{pendingModule === "study" \? "triggersBarriers" : pendingModule \?\? deferredInitialModule \?\? "monitoring"\}/);
   assert.match(component, /window\.history\.pushState/);
   assert.doesNotMatch(component, /window\.location\.assign/);
 });

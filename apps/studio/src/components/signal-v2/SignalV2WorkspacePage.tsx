@@ -80,6 +80,21 @@ export async function SignalV2WorkspacePage({
       ? (await loadClientBrandWorkspaceEntryV1(session.appUser, workspace.slug))?.navigation.topicsHref ?? null
       : null;
   const query = await searchParams;
+  if (query.view === "all_conversations" && !activeReportKey
+    && (activeModule === "monitoring" || activeModule === "mentions" || activeModule === "topics")) {
+    const [workspaceOptions, releases] = await Promise.all([
+      listSignalWorkspaceOptionsForUser(session.appUser),
+      loadSignalStrategicReleasesV1(workspace, session.appUser.userType === "noisia_internal")
+    ]);
+    return <SignalV2BrandMonitoring key={`${workspace.id}:${activeModule}`} activeModule={activeModule}
+      deferredInitialModule={activeModule} activeStudy={null} brandName={workspace.name}
+      canRefreshInsights={false} initialData={buildEmptySignalBrandMonitoringV1(workspace)}
+      initialMention={null} initialMentions={null} initialSettings={null} initialTopicsNarratives={null}
+      initialTriggersBarriers={null} legacyOutputId={null} manageTopicsHref={manageTopicsHref}
+      strategicStudies={buildSignalStrategicStudyNavigation({ workspace, releases: releases.history })}
+      userName={session.appUser.fullName ?? session.appUser.email ?? "Noisia"} workspaceOptions={workspaceOptions}
+      workspaceSubjectId={workspace.subject.id} viewKey="all_conversations" />;
+  }
   if (activeModule === "mentions" && !activeReportKey) {
     const params = new URLSearchParams();
     for (const [key, value] of Object.entries(query)) {
