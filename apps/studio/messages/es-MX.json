@@ -625,6 +625,16 @@
       "topicsTitle": "Tus conversaciones ya están disponibles",
       "topicsBody": "Hay {count, number} menciones disponibles para las métricas. Los Topics aparecerán después del análisis y su selección para Signal."
     },
+    "metricsCoverage": {
+      "structure": "Cobertura de la fuente: {roles} de {total} menciones tienen tipo de publicación/comentario y {threads} tienen identificador de conversación. Los tipos desconocidos quedan sin clasificar.",
+      "attention": "Cobertura de la fuente: interacciones para {interactions} y vistas para {views} de {total} publicaciones. Las mediciones ausentes aparecen como —."
+    },
+    "metricsUnavailable": {
+      "measurement": "La fuente no proporciona esta medición",
+      "threads": "La fuente no incluye identificadores de conversación.",
+      "roles": "La fuente no incluye tipos de publicación o comentario.",
+      "emotions": "La fuente no incluye clasificación de emociones."
+    },
     "metricsPending": {
       "sentiment": "El sentimiento todavía no está disponible.",
       "attention": "Las métricas de interacción todavía no están disponibles para estas conversaciones.",
@@ -1717,6 +1727,19 @@
       "noComparison": "Mostrando el periodo seleccionado sin una comparación."
     },
     "monthlyInsights": {
+      "native": {
+        "action": "Analizar insights · hasta USD 2",
+        "running": "Analizando insights…",
+        "reconciliation": "Conciliando la solicitud anterior",
+        "quoteLabel": "Estimación del análisis de insights",
+        "quote": "Estimación: USD {amount}. Máximo: USD {cap}.",
+        "confirm": "Confirmar análisis",
+        "retrySame": "Reintentar la misma solicitud",
+        "cancel": "Cancelar",
+        "checkStatus": "Consultar estado",
+        "explorePopulation": "Explorar esta población",
+        "fixedWindow": "Últimos 30 días de datos disponibles del segmento seleccionado; independiente del periodo de la página"
+      },
       "aria": "Insights de los últimos 30 días",
       "useful": "Información útil",
       "window": "{start}–{end}",

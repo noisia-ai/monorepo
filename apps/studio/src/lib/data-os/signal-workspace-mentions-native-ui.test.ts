@@ -64,6 +64,11 @@ test("native query preserves all-time, literal search and exact repeated platfor
   for (const key of ["start", "end", "offset", "dimension.country", "compare", "scope_digest", "cursor"]) assert.equal(query.has(key), false);
   assert.equal(nativeMentionQueryParams(data, { date_from: "2026-08-01", date_to: "2026-10-01" }).get("start"), "2026-08-01");
 });
+test("native paging, search and focus queries preserve the server-normalized segment", () => {
+  const scoped = { ...data, native: { ...data.native!, filters: { ...data.native!.filters, conversation_segment: "advertising" as const } } };
+  assert.equal(nativeMentionQueryParams(scoped).get("conversation_segment"), "advertising");
+  assert.equal(nativeMentionQueryParams(scoped, { search_query: "literal", date_from: "2026-09-01" }).get("conversation_segment"), "advertising");
+});
 test("stale native data cannot render a retained row or an initial drawer even before effects", async () => {
   const html = await render("en-US", { ...data, native: { ...data.native!, is_current: false } }, true);
   assert.doesNotMatch(html, /Evidence outside selected Topics|example.org\/original|signal-v2-mention-drawer__verbatim/);

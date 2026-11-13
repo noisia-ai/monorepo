@@ -54,9 +54,28 @@ export function buildNativeSignalMonitoringV1(
   }));
   const imported = native.source === "workspace_imported";
   const hasEditorialConsolidation = native.coverage.noise !== null;
+  const monitoring = native.monitoring?.contract_version === "signal-workspace-monitoring-v1"
+    && native.monitoring.scope_digest === native.scope_digest
+    && native.monitoring.denominator === native.denominator
+    && native.monitoring.summary.mentions === native.denominator ? native.monitoring : null;
+  const unavailable = { state: "not_available" as const, reason: "workspace_native_source_metadata_unavailable" };
+  const metadataState = (known: number, total: number) => !native.is_current ? "stale" as const
+    : known < total ? "partial" as const : "fresh" as const;
+  const hasThreads = Boolean(monitoring && monitoring.source_coverage.thread_id_known > 0);
+  const hasRoles = Boolean(monitoring && monitoring.source_coverage.content_type_known > 0);
+  const emptySummary = { mentions: 0, conversations: null, root_posts: null, comments: null, classified_sentiment: 0 };
+  const emptyAttention = { root_posts: 0, total_interactions: 0, median_interactions: 0, p90_interactions: 0,
+    active_root_posts: 0, active_ratio: null, total_views: 0, viewed_root_posts: 0 };
+  const sentimentKnown = monitoring?.source_coverage.sentiment_known ?? 0;
+  const sentimentBuckets = monitoring && sentimentKnown > 0 ? (["positive", "neutral", "negative"] as const).map(key => ({
+    key, label: key, value: monitoring.sentiment[key], denominator: native.denominator,
+    sample_size: sentimentKnown, state: metricState
+  })) : [];
 
   return {
     ...base,
+    corpus: null,
+    read_scope: { source: native.source, scope_digest: native.scope_digest },
     coverage: {
       date_from: native.available_dates.date_from,
       date_through: native.available_dates.date_to,
@@ -78,7 +97,9 @@ export function buildNativeSignalMonitoringV1(
         source: native.source,
         observed_at: native.observed_at,
         generation_id: native.generation_id,
-        unit: "canonical_mention"
+        unit: "canonical_mention",
+        ...(monitoring ? { source_coverage: monitoring.source_coverage, metadata_digest: monitoring.metadata_digest,
+          scope_digest: monitoring.scope_digest, unknown_roles: monitoring.summary.unknown_roles } : {})
       },
       interpretation: {
         source_engine_execution_id: native.source_engine_execution_id,
@@ -97,13 +118,39 @@ export function buildNativeSignalMonitoringV1(
       delta_ratio: null
     },
     conversation_structure: {
-      ...base.conversation_structure,
-      state: "not_available",
-      reason: "workspace_native_conversation_structure_pending",
-      points: [],
+      ...(monitoring ? { state: metadataState(monitoring.source_coverage.content_type_known, native.denominator), reason: null }
+        : { state: "not_available" as const, reason: "workspace_native_conversation_structure_pending" }),
+      summary: monitoring ? { ...monitoring.summary, conversations: hasThreads ? monitoring.summary.conversations : null,
+        root_posts: hasRoles ? monitoring.summary.root_posts : null, comments: hasRoles ? monitoring.summary.comments : null } : emptySummary,
+      attention: monitoring?.attention ?? emptyAttention,
+      points: monitoring?.series.map(point => ({ ...point, conversations: hasThreads ? point.conversations : null,
+        root_posts: hasRoles ? point.root_posts : null, comments: hasRoles ? point.comments : null })) ?? [],
       previous_points: [],
       previous_summary: null
     },
+    sentiment: { ...(sentimentKnown > 0 ? { state: metadataState(sentimentKnown, native.denominator), reason: null } : unavailable),
+      buckets: sentimentBuckets, previous_buckets: [] },
+    emotions: { ...(monitoring && monitoring.source_coverage.emotion_classified > 0
+      ? { state: metadataState(monitoring.source_coverage.emotion_classified, native.denominator), reason: null }
+      : { ...unavailable, reason: "workspace_native_source_emotions_unavailable" }),
+      buckets: monitoring?.emotions.map(item => ({ key: item.key, label: item.key, value: item.count,
+        denominator: native.denominator, sample_size: item.count, state: metricState })) ?? [] },
+    platforms: { ...(monitoring ? { state: currentState, reason: null } : unavailable),
+      buckets: monitoring?.platforms.map(item => ({ key: item.key, label: item.key, value: item.count,
+        denominator: native.denominator, sample_size: item.count, state: metricState })) ?? [] },
+    attention: { ...(monitoring?.attention ?? emptyAttention),
+      ...(monitoring && (monitoring.source_coverage.engagement_known_root_posts > 0 || monitoring.source_coverage.views_known_root_posts > 0)
+        ? { state: metadataState(monitoring.source_coverage.engagement_known_root_posts, monitoring.attention.root_posts), reason: null }
+        : unavailable), previous: null, previous_total_interactions: null, interactions_delta_ratio: null },
+    conversation_drivers: { ...(monitoring ? { state: currentState, reason: null } : unavailable), items: monitoring?.drivers ?? [] },
+    highlights: { positive: monitoring?.highlights.positive.map(item => ({ ...item, explanation: "" })) ?? [],
+      negative: monitoring?.highlights.negative.map(item => ({ ...item, explanation: "" })) ?? [] },
+    monthly_insights: { contract_version: "signal-monthly-insights-v1", candidate_hash: null, cadence: "rolling_30_days",
+      independent_of_page_filter: true, window: null, comparison_window: null, calculated_through: null,
+      context: { state: "not_available", objectives: 0, briefs: 0, audiences: 0, approved_assertions: 0 },
+      interpretation_state: "not_available", items: [] },
+    interpretations: [],
+    evidence_access: undefined,
     topics: {
       state: imported ? "not_available" : native.is_current ? "fresh" : "stale",
       reason: imported ? "workspace_imported_classification_pending" : native.is_current ? null : partialReason,
@@ -116,7 +163,8 @@ export function buildNativeSignalMonitoringV1(
     },
     partial_states: [
       { state: "partial", reason: partialReason },
-      ...native.limitations.map((reason) => ({ state: "partial", reason }))
+      ...native.limitations.map((reason) => ({ state: "partial", reason })),
+      ...(monitoring?.limitations.map(reason => ({ state: "partial", reason })) ?? [])
     ]
   };
 }
