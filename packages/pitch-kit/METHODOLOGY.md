@@ -290,6 +290,25 @@ said that way. Creatives are downloaded from the public DOM (the image URL or th
 chosen cards, from the CDN, with download permission), with each one's Library ID recorded. They
 pass the same Quality Gate as the gallery (`LAYOUTS.md`): in one study, three of six fell out.
 
+## 4.8 Two methods in validation: trends and influence history
+
+Two methods came out of real studies in Nov 2026 and are defined in the KB at T&B's level, each with
+its definition (theory, axes, clinical tests) and its playbook (protocol and gates). Their prompt
+blocks are in `PROMPTS.md`.
+
+- **Cultural Momentum Mapping** (trends): two clocks per topic, the curve (more people talking,
+  corrected for corpus growth and relevance, same quarter year on year) and the voice (discover,
+  adopt, normalize, tire; and the life moment). The finding is where they disagree.
+  `packages/kb/01-methodologies/cultural-momentum-mapping.md`.
+- **Historia de influencias / Influence History** (generations): what shaped a generation while it
+  grew up, read in today's conversation by vigencia (alive, transformed, inherited, memory), route
+  and crossing with the category; the category's absence is measured as white space.
+  `packages/kb/01-methodologies/historia-de-influencias.md`.
+
+Neither is double coding like T&B: the trends method codes four independent axes on a weighted
+sample, and influence history is multi-axis. What they share with every method here: labels after
+ingest, never in the query; `sin_senal` shown and never redistributed; counts from the coded table.
+
 ## 5. Provenance + changelog — how the system evolves
 
 Every study keeps a `PROVENANCE_AND_CHANGELOG.md` in its local folder (`examples/_local/<study>/`).
