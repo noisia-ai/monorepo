@@ -1,9 +1,10 @@
-export type SignalWorkspaceFeatureV1 = "mention_facets" | "concept_membership" | "mfp_discovery" | "mass_labeling";
+export type SignalWorkspaceFeatureV1 = "mention_facets" | "concept_membership" | "mfp_discovery" | "mass_labeling" | "monitoring_insights";
 
 const switches: Record<SignalWorkspaceFeatureV1, string> = {
   mention_facets: "NOISIA_MENTION_FACETS_ENABLED",
   concept_membership: "NOISIA_CONCEPT_MEMBERSHIP_ENABLED",
   mfp_discovery: "NOISIA_MENTION_FACETS_ENABLED",
+  monitoring_insights: "NOISIA_MONITORING_INSIGHTS_ENABLED",
   mass_labeling: "NOISIA_MASS_LABELING_ENABLED",
 };
 

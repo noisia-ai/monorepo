@@ -25,8 +25,25 @@ export async function createMassLabelingConcurrencyDatabaseV1(admin: Pool) {
   target.pathname = `/${name}`;
   const pool = new pg.Pool({ connectionString: target.href, max: 8 });
   const cleanup = async () => {
-    try { await pool.end(); }
-    finally { await admin.query(`DROP DATABASE ${pg.escapeIdentifier(name)} WITH (FORCE)`); }
+    let drainTimer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([pool.end(), new Promise<never>((_resolve, reject) => {
+        drainTimer = setTimeout(() => reject(new Error("concurrent_fixture_pool_drain_timeout")), 10_000);
+      })]);
+    } finally { clearTimeout(drainTimer); }
+    // pg-pool removes clients before their asynchronous client.end callbacks.
+    // pool.end alone therefore does not prove the PostgreSQL sessions closed.
+    // Never FORCE-drop a still-connected socket (57P01 can arrive after the
+    // pool's idle listener is gone). An unexpected extra pool is a real leak.
+    const deadline = Date.now() + 5_000;
+    for (;;) {
+      const active = (await admin.query<{ connections: number }>(
+        "SELECT count(*)::int connections FROM pg_stat_activity WHERE datname=$1", [name])).rows[0]!.connections;
+      if (active === 0) break;
+      assert.ok(Date.now() < deadline, `concurrent_fixture_connections_remain:${active}`);
+      await new Promise<void>(resolve => setTimeout(resolve, 25));
+    }
+    await admin.query(`DROP DATABASE ${pg.escapeIdentifier(name)}`);
   };
   try {
     const result = await promisify(execFile)(process.execPath,

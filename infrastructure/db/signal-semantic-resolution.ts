@@ -829,7 +829,7 @@ export async function loadSignalSemanticResolutionChildRuntimeV2(
 export async function loadSignalSemanticResolutionGovernedContextV1(
   queryable: {query<R extends Record<string,unknown>>(text:string,values?:unknown[]):Promise<{rows:R[]}>},
   workspaceId: string,
-  options: { complete_brand_context?: boolean; legacy_topic_identity?: boolean } = {}
+  options: { complete_brand_context?: boolean; legacy_topic_identity?: boolean; entity_context_only?: boolean } = {}
 ): Promise<SignalSemanticResolutionGovernedContextV1> {
   const legacyTopicIdentity = options.legacy_topic_identity === true;
   const workspaceResult = await queryable.query<{
@@ -886,7 +886,9 @@ export async function loadSignalSemanticResolutionGovernedContextV1(
       AND entity.status = 'active'
       AND entity.entity_type IN ('category', 'reference')
   `, [workspace.brand_id]);
-  const brandContextResult = await queryable.query<{ kind: string; title: string; content: string }>(`
+  // Identity-only consumers use the exact same governed identities while never
+  // loading unused narrative/knowledge rows. Existing callers retain their path.
+  const brandContextResult = options.entity_context_only ? { rows: [] } : await queryable.query<{ kind: string; title: string; content: string }>(`
     SELECT 'brand_objective' AS kind, objective.name AS title,
       concat_ws(E'\n', objective.description, objective.success_criteria::text) AS content
     FROM brand_os_objectives objective

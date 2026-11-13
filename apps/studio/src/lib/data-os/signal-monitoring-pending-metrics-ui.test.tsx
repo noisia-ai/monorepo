@@ -228,6 +228,18 @@ async function render(locale: string, data = computed()) {
       workspaceOptions: [], workspaceSubjectId: "synthetic-brand", viewKey: "all_conversations" })));
 }
 for (const locale of ["es-MX", "en-US"]) {
+  test(`${locale}: populated native topics retain their population denominator and never show a no-data badge`, async () => {
+    const source = structuredClone(fullNative);
+    source.terms = ["first", "second"].map(key => ({ term_key: key, kind: "topic", label: `Synthetic ${key} topic`,
+      definition: "Synthetic topic definition", definition_revision: 1, definition_digest: `sha256:${key}`,
+      selected: true, mention_count: 1, share_of_corpus: 1 / 3, basis: "computed_cluster" }));
+    const html = await render(locale, buildNativeSignalMonitoringV1(structuredClone(base), source));
+    const card = html.match(/class="signal-v2-card signal-v2-card--wide signal-v2-topics-card">([\s\S]*?)<\/article>/u)?.[1];
+    assert.ok(card);
+    assert.doesNotMatch(card, /Sin datos|No data/iu);
+    assert.equal([...card.matchAll(/<span>33%<\/span>/gu)].length, 2,
+      "each topic is one of three native roots, independently of selected topic totals");
+  });
   test(`${locale}: highlighted conversation headings count the two actual rows in each column`, async () => {
     const source = structuredClone(fullNative);
     const example = source.monitoring!.highlights.positive[0]!;

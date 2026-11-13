@@ -19,11 +19,12 @@ export type LabelingDatabaseV1 = Pick<Pool, "connect" | "query">;
 export async function loadFacetEntityContextV1(
   client: Pick<PoolClient, "query">,
   workspaceId: string,
+  options: { identity_only?: boolean } = {},
 ): Promise<EntityContextV1> {
   const governed = await loadSignalSemanticResolutionGovernedContextV1(
     client,
     workspaceId,
-    { complete_brand_context: true },
+    { complete_brand_context: true, entity_context_only: options.identity_only === true },
   );
   return canonicalEntityContextV1({
     entities: governed.identities

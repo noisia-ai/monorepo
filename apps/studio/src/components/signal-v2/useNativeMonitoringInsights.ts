@@ -47,7 +47,13 @@ export function useNativeMonitoringInsights(workspaceId: string | null, active: 
           || payload.request_scope !== view.request_scope
           || payload.budget_cap_micro_usd !== CAP_MICRO_USD || payload.reserved_micro_usd > CAP_MICRO_USD
           || !Number.isFinite(payload.reserved_micro_usd) || payload.reserved_micro_usd < 0 || !payload.quote_digest
+          || payload.monthly_insights?.contract_version !== "signal-monthly-insights-v1"
+          || payload.monthly_insights.candidate_hash !== payload.packet_digest
+          || payload.monthly_insights.scope_segment !== segment || payload.monthly_insights.editorial_locale !== locale
           || !Number.isFinite(Date.parse(payload.expires_at)) || Date.parse(payload.expires_at) <= Date.now()) throw new Error(fallbackMessage);
+        setView(current => current?.request_scope === payload.request_scope
+          ? { ...current, monthly_insights: payload.monthly_insights } : current);
+        setSubmitted(false);
         intentRef.current = { quote: payload, key: crypto.randomUUID() }; setQuote(payload);
       } else {
         const intent = intentRef.current;
@@ -71,7 +77,7 @@ export function useNativeMonitoringInsights(workspaceId: string | null, active: 
     } finally {
       if (!controller.signal.aborted && sequenceRef.current === ticket) setBusy(false);
     }
-  }, [endpoint, workspaceId, fallbackMessage, applyView, view]);
+  }, [endpoint, workspaceId, segment, locale, fallbackMessage, applyView, view]);
   const performRef = useRef(perform); performRef.current = perform;
   useEffect(() => {
     setView(null); setQuote(null); setError(null); setBusy(false); setSubmitted(false); intentRef.current = null;

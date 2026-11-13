@@ -1774,7 +1774,8 @@ export function SignalV2BrandMonitoring({
               help={translatedHelp(t, "cards.topics.help")}
               title={t("cards.topics.title")}
             />
-            <TopicTable topics={mergeTopicBuckets(data.topics, data.narratives)} />
+            <TopicTable topics={mergeTopicBuckets(data.topics, data.narratives)}
+              denominator={nativePopulation ? data.coverage.mentions : undefined} />
           </article>
           ) : null}
 
@@ -2606,13 +2607,15 @@ function DistributionBars({ buckets }: { buckets: BrandMonitoringBreakdown }) {
 }
 
 function TopicTable({
-  topics
+  topics,
+  denominator
 }: {
   topics: Array<{ key: string; label: string; value: number; kind: "topic" | "narrative" }>;
+  denominator?: number;
 }) {
   const t = useTranslations("SignalV2");
   if (topics.length === 0) return <EmptyMetric message={t("cards.topics.empty")} />;
-  const total = topics.reduce((sum, item) => sum + item.value, 0);
+  const total = denominator ?? topics.reduce((sum, item) => sum + item.value, 0);
   return (
     <div className="signal-v2-topic-table" role="table">
       <div className="signal-v2-topic-table__head" role="row">
@@ -2692,6 +2695,10 @@ function mergeTopicBuckets(topics: BrandMonitoringBreakdown, narratives: BrandMo
 }
 
 function worstBreakdownState(first: string, second: string) {
+  if (first === "not_available" || second === "not_available") {
+    const available = first === "not_available" ? second : first;
+    return ["not_available", "stale", "pending"].includes(available) ? available : "partial";
+  }
   const order = ["fresh", "stale", "partial", "pending", "not_available"];
   return order[Math.max(order.indexOf(first), order.indexOf(second))] ?? "partial";
 }
