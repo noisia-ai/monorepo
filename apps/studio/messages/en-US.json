@@ -627,6 +627,13 @@
       "topicsTitle": "Your conversations are available",
       "topicsBody": "There are {count, number} mentions available for metrics. Topics will appear after analysis and selection for Signal."
     },
+    "metricsCoverage": {
+      "structure": "Source coverage: {roles} of {total} mentions have a post/comment type and {threads} have a conversation identifier. Unknown types remain unclassified.",
+      "attention": "Source coverage: interactions for {interactions} and views for {views} of {total} posts. Missing measurements appear as —."
+    },
+    "metricsUnavailable": {
+      "emotions": "The source does not include emotion classifications."
+    },
     "metricsPending": {
       "sentiment": "Sentiment is not yet available.",
       "attention": "Interaction metrics are not yet available for these conversations.",
@@ -1719,6 +1726,19 @@
       "noComparison": "Showing the selected period without a comparison."
     },
     "monthlyInsights": {
+      "native": {
+        "action": "Analyze insights · up to USD 2",
+        "running": "Analyzing insights…",
+        "reconciliation": "Reconciling the previous request",
+        "quoteLabel": "Insight analysis estimate",
+        "quote": "Estimate: USD {amount}. Maximum: USD {cap}.",
+        "confirm": "Confirm analysis",
+        "retrySame": "Retry the same request",
+        "cancel": "Cancel",
+        "checkStatus": "Check status",
+        "explorePopulation": "Explore this population",
+        "fixedWindow": "Last 30 days of available data in the selected segment; independent of the page period"
+      },
       "aria": "Insights from the last 30 days",
       "useful": "Useful information",
       "window": "{start}–{end}",

@@ -88,7 +88,7 @@ export async function SignalV2WorkspacePage({
     ]);
     return <SignalV2BrandMonitoring key={`${workspace.id}:${activeModule}`} activeModule={activeModule}
       deferredInitialModule={activeModule} activeStudy={null} brandName={workspace.name}
-      canRefreshInsights={false} initialData={buildEmptySignalBrandMonitoringV1(workspace)}
+      canRefreshInsights={false} nativeInsightsWorkspaceId={workspace.id} initialData={buildEmptySignalBrandMonitoringV1(workspace)}
       initialMention={null} initialMentions={null} initialSettings={null} initialTopicsNarratives={null}
       initialTriggersBarriers={null} legacyOutputId={null} manageTopicsHref={manageTopicsHref}
       strategicStudies={buildSignalStrategicStudyNavigation({ workspace, releases: releases.history })}
@@ -119,7 +119,7 @@ export async function SignalV2WorkspacePage({
       ]);
       const empty = buildEmptySignalBrandMonitoringV1(workspace);
       return <SignalV2BrandMonitoring activeModule="mentions" activeStudy={null} brandName={workspace.name}
-        canRefreshInsights={false} initialData={native ? { ...empty, filter: native.filter, comparison: native.comparison,
+        canRefreshInsights={false} nativeInsightsWorkspaceId={workspace.id} initialData={native ? { ...empty, filter: native.filter, comparison: native.comparison,
           coverage: { date_from: native.native.available_dates.date_from, date_through: native.native.available_dates.date_to,
             mentions: native.native.metric_denominator } } : empty}
         initialMention={focused} initialMentions={native ? { ...native, record: focused } : null} initialSettings={null}
@@ -156,7 +156,7 @@ export async function SignalV2WorkspacePage({
       const nativeMonitoring = buildNativeSignalMonitoringV1({ ...empty, filter,
         comparison: resolveSignalComparisonV1({ filter, mode: "none" }) }, native);
       return <SignalV2BrandMonitoring activeModule={activeReportKey ? "study" : activeModule} activeStudy={null} brandName={workspace.name}
-        canRefreshInsights={false} initialData={nativeMonitoring}
+        canRefreshInsights={false} nativeInsightsWorkspaceId={workspace.id} initialData={nativeMonitoring}
         initialMention={null} initialMentions={null} initialSettings={null} initialTopicsNarratives={native} initialNativeTopicBundle={bundle} initialTriggersBarriers={null}
         legacyOutputId={null} manageTopicsHref={manageTopicsHref}
         strategicStudies={buildSignalStrategicStudyNavigation({ workspace, releases: releases.history })}

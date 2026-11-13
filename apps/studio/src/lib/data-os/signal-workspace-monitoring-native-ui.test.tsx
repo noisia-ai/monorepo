@@ -233,7 +233,7 @@ for (const locale of ["es-MX", "en-US"]) {
 test("native SPA navigation retains the server-normalized conversation segment across monitoring and topics", () => {
   for (const segment of ["conversation", "advertising", "hashtags", "all"] as const) {
     const filters = { date_from: "2026-01-01", date_to: "2026-01-31", conversation_segment: segment };
-    for (const target of ["monitoring", "topics"] as const) {
+    for (const target of ["monitoring", "topics", "mentions"] as const) {
       const query = nativeWorkspaceNavigationQueryV1(filters, target);
       assert.equal(query.get("conversation_segment"), segment);
       assert.equal(query.get("date_from"), filters.date_from);
@@ -243,5 +243,5 @@ test("native SPA navigation retains the server-normalized conversation segment a
     }
   }
   assert.equal(nativeWorkspaceNavigationQueryV1(undefined, "topics").has("conversation_segment"), false);
-  assert.equal(nativeWorkspaceNavigationQueryV1({ conversation_segment: "advertising" }, "mentions").has("conversation_segment"), false);
+  assert.equal(nativeWorkspaceNavigationQueryV1({ conversation_segment: "advertising" }, "mentions").get("conversation_segment"), "advertising");
 });

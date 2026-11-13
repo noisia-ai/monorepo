@@ -1,6 +1,7 @@
 import type {
   SignalBreakdownV1,
   SignalComparisonV1,
+  SignalConversationSegmentV1,
   SignalFilterV1,
   SignalMetricPointV1,
   SignalMonthlyInsightPacketV1,
@@ -171,7 +172,10 @@ export type BrandMonitoringMonthlyInsights = {
   contract_version: "signal-monthly-insights-v1";
   candidate_hash: string | null;
   cadence: "rolling_30_days";
-  independent_of_page_filter: true;
+  independent_of_page_filter: boolean;
+  independent_of_page_period?: boolean;
+  scope_segment?: SignalConversationSegmentV1;
+  editorial_locale?: "es-MX" | "en-US";
   window: {
     start: string;
     end: string;

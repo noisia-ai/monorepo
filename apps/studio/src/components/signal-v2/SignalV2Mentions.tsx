@@ -70,7 +70,8 @@ export type SignalNativeMentionsMetadata = {
   available_dates: { date_from: string | null; date_to: string | null };
   available_platforms?: string[];
   page_cursor?: string | null;
-  filters: { date_from: string | null; date_to: string | null; timezone?: string; search_query: string | null; platforms: string[] };
+  filters: { date_from: string | null; date_to: string | null; timezone?: string; search_query: string | null; platforms: string[];
+    conversation_segment?: "all" | "conversation" | "advertising" | "hashtags" };
   sort_direction: "asc" | "desc";
   metric_denominator: number;
   evidence_visible_total: number;
@@ -1049,6 +1050,7 @@ export function nativeMentionQueryParams(data: SignalMentionsViewData, overrides
   if (filter.date_from) params.set("start", filter.date_from);
   if (filter.date_to) params.set("end", filter.date_to);
   if (filter.search_query) params.set("q", filter.search_query);
+  if (filter.conversation_segment) params.set("conversation_segment", filter.conversation_segment);
   for (const platform of filter.platforms) params.append("platform", platform);
   return params;
 }

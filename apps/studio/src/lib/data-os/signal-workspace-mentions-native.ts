@@ -24,7 +24,7 @@ function invalid(code = "workspace_mentions_filter_invalid"): never {
 /** Only controls implemented by the generation reader may reach this endpoint. */
 export function nativeMentionsQueryV1(params: URLSearchParams): Query {
   const allowed = new Set(["view", "date_from", "date_to", "start", "end", "timezone", "granularity",
-    "compare", "q", "platform", "sort", "direction", "cursor", "scope_digest", "limit", "mention", "offset"]);
+    "compare", "q", "platform", "sort", "direction", "cursor", "scope_digest", "limit", "mention", "offset", "conversation_segment"]);
   if ([...params.keys()].some(key => !allowed.has(key)) || params.toString().length > 12_000)
     return invalid("workspace_mentions_filter_unsupported");
   for (const key of params.keys()) {
@@ -45,6 +45,9 @@ export function nativeMentionsQueryV1(params: URLSearchParams): Query {
   };
   const date_from = date("date_from", "start"), date_to = date("date_to", "end");
   if (date_from && date_to && date_from > date_to) return invalid();
+  const conversation_segment = params.get("conversation_segment") ?? undefined;
+  if (conversation_segment !== undefined && conversation_segment !== "all" && conversation_segment !== "conversation"
+    && conversation_segment !== "advertising" && conversation_segment !== "hashtags") return invalid();
   const search_query = params.get("q")?.trim() || undefined;
   if (search_query && (search_query.length > 300 || search_query.includes("\0"))) return invalid();
   const platforms = [...new Set(params.getAll("platform").map(value => value.trim()))].sort();
@@ -63,6 +66,7 @@ export function nativeMentionsQueryV1(params: URLSearchParams): Query {
   if (focus_mention_id !== undefined && !/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/iu.test(focus_mention_id)) return invalid();
   if (cursor && focus_mention_id) return invalid();
   return { ...(date_from ? { date_from } : {}), ...(date_to ? { date_to } : {}),
+    ...(conversation_segment ? { conversation_segment } : {}),
     ...(search_query ? { search_query } : {}), platforms, sort_direction, limit,
     ...(cursor ? { cursor } : {}), ...(expected_scope_digest ? { expected_scope_digest } : {}),
     ...(focus_mention_id ? { focus_mention_id } : {}) };
