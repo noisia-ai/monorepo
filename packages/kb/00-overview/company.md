@@ -45,6 +45,14 @@ Seis metodologías propietarias. Ver `01-methodologies/` para cada una. Resumen:
 | 05  | Journey Friction Mapping   | ¿Dónde se rompe el camino entre la intención y la acción?                          |
 | 06  | Influence Architecture     | ¿Quiénes diseñan, sin saberlo, el imaginario de tu categoría?                      |
 
+**Métodos en validación** (nov 2026). Salieron de estudios reales, ya tienen definición y playbook, y
+se revisan después de su segundo estudio antes de entrar a la lista de arriba:
+
+| Método | Pregunta que responde |
+| ------ | --------------------- |
+| Cultural Momentum Mapping (tendencias) | ¿Qué está ganando tracción de verdad en una cultura de consumo, qué solo sube de volumen o ya cansa, y en qué momentos vive cada tema? |
+| Historia de influencias (Influence History) | ¿Qué de lo que formó a una generación sigue vivo hoy, de qué forma, y dónde cabe la categoría? |
+
 Las metodologías se aplican solas, en combinación o como sistema. La pregunta de negocio define cuáles y en qué orden — nunca al revés.
 
 ## Modelo de producto

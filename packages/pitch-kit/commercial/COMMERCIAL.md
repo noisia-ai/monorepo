@@ -61,6 +61,7 @@ los mismos del sistema de diseño.
 | **Opener informativo** | Lead tibio que ya nos conoce. Objetivo: confirmar interés y conseguir la reunión | 9 |
 | **Opener outbound** | Lead frío, después del Loom. Objetivo: que conteste. Igual al anterior, la slide 2 es una pregunta | 9 |
 | **Overview a la medida** | Lead calificado, antes o justo después del workshop. Noisia contada con las preguntas del cliente | 9 a 10 |
+| **Credenciales** | Primera reunión con un prospecto que todavía no nos compra. Pocas slides sobre Noisia y casi todo casos de uso animados con sus preguntas. Se presenta desde el HTML (§2.1) | 8 a 12 |
 | **Oferta comercial** | Piden precios. El catálogo con las slides de precio, en XXX | 10 a 11 |
 | **Propuesta** | Después del workshop. Lo que entendimos, qué proponemos, cuánto cuesta y qué no incluye | 7 a 9 |
 | **One-pager** | Una página A4 para correo o WhatsApp: oferta o piloto | 1 |
@@ -73,6 +74,80 @@ de la oferta.
 
 El conteo de slides es de referencia. Cuando se rehace un deck que ya estaba aprobado (§3, paso
 0b), manda el deck original: una propuesta salió en 16 slides y estaba bien.
+
+## 2.1 Credenciales: pocas slides, casos de uso animados
+
+El formato que mejor ha funcionado en una primera reunión: "muy pocas slides sobre nosotros y más
+de casos de uso con ellos", todas animadas. Salió de dos decks reales, uno para un negocio de un
+mercado y otro para un portafolio global, y vive en `credentials/`.
+
+**Es la excepción a §1: aquí la fuente es el contenido, no el PPTX.** Un JSON de contenido produce
+tres salidas: el **HTML** para presentar desde el navegador (cada animación se reproduce al entrar a
+su slide), el **PPTX editable** (texto nativo y cada animación como GIF que abre en su cuadro final)
+y el **PDF** (Chrome imprime todos los diagramas terminados). El copy vive en un solo lugar.
+
+```bash
+cd packages/pitch-kit/commercial/credentials
+python3 build.py examples/portfolio.en.json --out ~/Downloads/<Lead>/credenciales --pptx
+```
+
+`--pptx` corre `capture_gifs.py` y `build_pptx.py`. Pide Chrome, numpy, Pillow,
+websocket-client y gifsicle.
+
+**Dos modos, el mismo motor:**
+
+| | Funnel | Portafolio |
+|---|---|---|
+| Para quién | Un mercado y una marca: un retador, un equipo de growth, marketing o producto | Multimercado o de portafolio: insights o estrategia de un corporativo, que compra una capacidad recurrente |
+| Slide de cómo trabajamos | Reportes y estudios (`ways`) | Un protocolo en cada mercado (`pillars` con la animación `protocol-zooms`) |
+| Los casos | Recorren el funnel del cliente: confianza, fricción, competencia real, reputación, campaña | Recorren territorios: tendencias por categoría, inmersión por país, una pregunta de innovación, una campaña |
+| El cierre | Tres pasos (workshop, Scope of Work, primera entrega) y una muestra, dentro del último caso | Una slide de piloto con el menú de estudios y reportes y sus tiempos |
+| Plantilla | `examples/funnel.es.json` | `examples/portfolio.en.json` |
+
+**La secuencia base:**
+1. Portada: una afirmación de la oferta, nunca una pregunta armada ("o la cierre" se leyó como
+   frase de IA).
+2. Qué es Noisia: la animación de la conversación a la decisión.
+3. **Dónde estamos**: la comparación contra herramientas de listening y agencias, con el copy
+   `where_we_stand` del kit. Va aquí porque es donde el cliente piensa "¿esto no lo hace ya mi
+   herramienta?". Para agencias, `where_we_stand_agency`.
+4. Cómo trabajamos, según el modo.
+5. De 3 a 5 casos de uso, uno por formato del catálogo.
+6. Dónde escuchamos (anillos de plataformas alrededor de la persona), en el modo portafolio.
+7. El cierre, según el modo.
+
+**La slide de caso:** a la izquierda, la pregunta del cliente en su voz (9 a 14 palabras, una sola
+palabra en teal), una línea de por qué importa, "Qué recibes" con 2 a 4 entregables sin adjetivos, y
+abajo un chip con el formato y otro con el tiempo. A la derecha, el escenario animado con la etiqueta
+"Ilustrativo". El vocabulario de la categoría (CURP, CLABE, tanda; ocasiones, empaque) es lo que hace
+que el deck "no sea tan genérico" sin nombrar la marca.
+
+**Las animaciones** (`credentials/anims/`, 14, cada una con su descripción arriba) siguen cinco
+reglas: `render(estado, t)` depende solo de `t`; el cuadro final siempre está completo; el aleatorio
+lleva semilla, así que el GIF coincide con el HTML; la coreografía dura de 5 a 7 segundos
+(estructura, datos escalonados, un resalte, la leyenda); y **cero datos**: cifras como `XX%`, texto
+en barras esqueleto, "City 1". Teal suma, coral frena, gris es ruido. Las listas de etiquetas se
+cambian por prospecto con `labels` en el JSON; el resto del texto está en el idioma del archivo.
+
+**Reglas del formato**, además de las de §4 y §6:
+- El prospecto no aparece en las slides, ni otras marcas, ni otros clientes. Su contexto público
+  (resultados, lanzamientos, campañas) va en las notas del orador, con fuente y fecha.
+- Solo se prometen **reportes y estudios**. Data queda fuera de una primera reunión.
+- La cobertura se dice como un total de fuentes ("170+ fuentes", la suma del catálogo aprobado),
+  no como un conteo de plataformas, y cierra con "si falta una fuente, construimos el conector".
+- "Protocolo", no "taxonomía".
+- Herramientas y proveedores nunca se nombran, tampoco en la comparación: van categorías.
+
+**Lo que sigue:** traer del website las animaciones que ya existen como módulos opcionales. Están en
+`apps/website-next/src/motion`, sobre el mismo contrato de cuadro por cuadro:
+- la comparación por pestañas (`ApproachComposition`) y la de encuestas (`LearnSurveyComposition`);
+- la persona detrás de la mención (`UnderstandComposition`);
+- el experto que firma y la evidencia que se abre (`HowArchitectComposition`, `HowEvidenceComposition`);
+- el mismo hallazgo en tu formato (`OfferFormats`).
+
+La ruta es exportarlas con un `render(t)` que `capture_gifs.py` pueda usar, para no mantener dos
+versiones de cada diagrama. Las cifras del sitio ("16 idiomas", "20+ países") entran solo cuando estén
+aprobadas en `copy/`.
 
 ## 3. La entrevista
 
@@ -447,5 +522,7 @@ la derecha.
 | ¿Un correo por idioma? | El de quien firma, que la entrevista pregunta |
 | ¿Se queda el tercer tipo de cooperación (audiencias y tendencias)? | Sí, en el opener |
 | Tiempo de entrega por defecto | 3 a 5 días hábiles después del workshop |
+| Tiempos por formato en Credenciales: estudio corto en 1 día, tendencias e inmersión por país en 48 a 72 h, lectura de campaña en 48 h, alertas en 24 h, aprobados en el chat de un deck de portafolio | El modo portafolio los usa; el modo funnel usa el tiempo por defecto. Falta una sola versión en `product-model.md` |
+| Cuántos países e idiomas se dicen en Credenciales | El deck dice "especialistas locales" sin número hasta que haya una cifra aprobada |
 | ¿Un índice diseñado y acordado con el cliente puede ir en su propuesta? Se pidió para un cliente con NPS y el equipo dice que va a pasar seguido | Excepción del caso, autorizada en el chat. §11 sigue igual: ningún índice de escucha como indicador genérico de Noisia, ni en decks de otros clientes |
 | ¿Los resultados de un piloto ya entregado al mismo cliente pueden abrir su propuesta? La razón de §4.1, "no los hemos leído", no aplica | Excepción del caso, autorizada en el chat, con el entregable y la fecha en las notas. Nunca en el deck de otro cliente |
