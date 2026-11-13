@@ -1,3 +1,5 @@
+import { nativeMonitoringCtesV1, nativeMonitoringAggregateV1, nativeMonitoringWindowsCtesV1,
+  nativeMonitoringCurrentWindowAggregateV1, nativeMonitoringPreviousWindowAggregateV1 } from "./signal-workspace-monitoring-sql";
 import { massLabelingLexiconDigestV1 } from "./signal-mass-labeling-lexicon-suggestions";
 import { sealedTopicContextBridgeMatchesV1 } from "./signal-topic-context-identity-cut";
 import {loadMassLabelingStudyPolicyWithClientV1,massLabelingStudyInterestDigestV1,type MassLabelingStudyPolicyV1} from "./signal-mass-labeling-study-policy";
@@ -14,6 +16,7 @@ import {
   type SignalConversationSegmentV1,
   type SignalWorkspaceTopicsOverviewV1,
   type SignalWorkspaceOverviewV1,
+  type SignalWorkspaceMonitoringV1,
   type SignalWorkspaceImportedIdentityV1,
   type SignalWorkspaceTopicEvidencePageV1,
   type SignalWorkspaceClassificationIdentityV1
@@ -41,7 +44,7 @@ export type SignalWorkspaceMentionV1 = {
 export type SignalWorkspaceMentionsPageV1 = {
   contract_version: "signal-workspace-mentions-v1"; workspace_id: string; generation_id: string;
   source_engine_execution_id: string; is_current: true; is_processing: boolean; scope_digest: string;
-  filters: { date_from: string | null; date_to: string | null; timezone?: string; search_query: string | null; platforms: string[] };
+  filters: { date_from: string | null; date_to: string | null; timezone?: string; conversation_segment?: SignalConversationSegmentV1; search_query: string | null; platforms: string[] };
   sort: { field: "published"; direction: "asc" | "desc" };
   available_dates: { date_from: string | null; date_to: string | null };
   available_platforms: string[];
@@ -474,11 +477,24 @@ async function publishedContext(client: PoolClient, args: Args, filters: CivilFi
  * the population query. Keeping this path separate avoids rebuilding unrelated
  * editorial input on every page while retaining workspace authorization. */
 async function mentionsContext(client: PoolClient, args: Args): Promise<Pick<Context,
-  "generation" | "is_current" | "is_processing" | "filters" | "native" | "imported">> {
+  "generation" | "is_current" | "is_processing" | "filters" | "native" | "imported" | "mass_labeling">> {
   const capabilities = await loadSignalWorkspaceCapabilitiesStoreV1({ queryable: client, ...args });
   if (!capabilities.can_view) return fail("workspace_topics_forbidden", 403);
   const filters: CivilFilters = { date_from: parseDate(args.date_from), date_to: parseDate(args.date_to), timezone: parseTimezone(args.timezone) };
   if (filters.date_from && filters.date_to && filters.date_from > filters.date_to) return fail("workspace_topics_date_invalid", 422);
+  // An explicit semantic cohort requires the current sealed mass-labeling map.
+  // The global corpus path remains independent of editorial state by default.
+  if (args.conversation_segment !== undefined) {
+    const mass = await signalWorkspaceFeatureEnabledV1({queryable:client,workspace_id:args.workspace_id,feature:"mass_labeling"})
+      ? await loadMassLabelingServingContextV1(client,args.workspace_id) : null;
+    if (!mass) return fail("workspace_mentions_segment_unsupported",422);
+    const projection = (await client.query<{ count: string }>(`SELECT count(*) FROM signal_mass_labeling_root_segments
+      WHERE workspace_id=$1 AND map_id=$2`, [args.workspace_id,mass.map.id])).rows[0]!;
+    if (Number(projection.count)!==mass.map.root_count) return fail("workspace_topics_materialization_incomplete",503);
+    filters.conversation_segment = args.conversation_segment;
+    return { generation:null, imported:{receipt_digest:mass.map.map_digest,input_revision:mass.map.input_revision},
+      mass_labeling:mass.map, is_current:mass.is_current,is_processing:false,native:true,filters };
+  }
   const binding = await readSignalTopicConsolidationServingBindingV1(client, args.workspace_id);
   if (binding?.snapshot) return consolidatedContext(binding.snapshot, filters);
   const row = (await client.query<Generation & { native: boolean; is_processing: boolean }>(`SELECT
@@ -559,7 +575,7 @@ const massMembershipsSql = `mass_memberships AS MATERIALIZED (
 // Population readers can share narrow mention metadata across provenance and
 // canonical eligibility. Complete text is fetched for search or the bounded page.
 const populationSql = (imported = false, definedInterest = false, consolidated = false, membership = false, facetEnabled = false,
-  checkedProjectionSource?: boolean, massLabeling = false, segment: SignalConversationSegmentV1 = "all", includeMemberships = true, massOverview = false, compactProvenance = false) => `WITH source_generation AS MATERIALIZED (
+  checkedProjectionSource?: boolean, massLabeling = false, segment: SignalConversationSegmentV1 = "all", includeMemberships = true, massOverview = false, compactProvenance = false, monitoring = false) => `WITH source_generation AS MATERIALIZED (
   SELECT generation.id,generation.workspace_id,generation.preparation_run_id,generation.input_snapshot
     FROM signal_classification_generations generation WHERE generation.id=$2::uuid
     AND generation.workspace_id=$1::uuid AND ${checkedProjectionSource === undefined
@@ -569,7 +585,7 @@ const populationSql = (imported = false, definedInterest = false, consolidated =
     FROM signal_topic_consolidation_snapshots snapshot WHERE snapshot.id=$2::uuid AND snapshot.workspace_id=$1::uuid
     AND signal_topic_consolidation_snapshot_current_v1(snapshot.id)
 ), ${massLabeling || compactProvenance ? `mass_mentions AS MATERIALIZED (
-  SELECT id,workspace_id,canonical_mention_id,inclusion_status,published_at${compactProvenance ? ",resolved_platform,platform,text_clean_sha256" : ""}
+  SELECT id,workspace_id,canonical_mention_id,inclusion_status,published_at${compactProvenance ? ",resolved_platform,platform,text_clean_sha256" : ""}${monitoring ? ",resolved_platform,platform,text_clean_sha256,source_file_id,content_type,sentiment_score,provider_record_id" : ""}
   FROM mentions WHERE workspace_id=$1::uuid
 ), ` : ""}received_imports AS MATERIALIZED (
   SELECT batch.id,batch.data_source_id FROM import_batches batch
@@ -583,6 +599,9 @@ const populationSql = (imported = false, definedInterest = false, consolidated =
       AND usage.licensing_policy_id=license.id AND usage.usage_purpose='client-mention-list' AND usage.decision='allowed')
      AND EXISTS(SELECT 1 FROM signal_licensing_policy_usages usage WHERE usage.workspace_id=$1::uuid
       AND usage.licensing_policy_id=license.id AND usage.usage_purpose='client-text-or-excerpt' AND usage.decision='allowed')) evidence
+    ${monitoring ? `,binding.id provenance_binding_id,binding.definition_hash rights_definition_hash,
+    EXISTS(SELECT 1 FROM signal_licensing_policy_usages usage WHERE usage.workspace_id=$1::uuid
+      AND usage.licensing_policy_id=license.id AND usage.usage_purpose='llm-processing' AND usage.decision='allowed') llm` : ""}
   FROM received_imports batch
   JOIN LATERAL (SELECT candidate.* FROM signal_provenance_policy_bindings candidate
     WHERE candidate.workspace_id=$1::uuid AND candidate.data_source_id=batch.data_source_id
@@ -604,7 +623,8 @@ const populationSql = (imported = false, definedInterest = false, consolidated =
 ), received_roots AS MATERIALIZED (
   SELECT ${massLabeling || compactProvenance ? `origin.canonical_mention_id root_id,
     bool_or(COALESCE(rights.metrics,false)) metrics,
-    bool_or(COALESCE(rights.metrics AND rights.evidence,false)) evidence` : "DISTINCT origin.canonical_mention_id root_id"}
+    bool_or(COALESCE(rights.metrics AND rights.evidence,false)) evidence
+    ${monitoring ? ",bool_or(COALESCE(rights.metrics AND rights.llm,false)) llm" : ""}` : "DISTINCT origin.canonical_mention_id root_id"}
   FROM received_imports batch JOIN signal_mention_import_memberships path ON path.import_batch_id=batch.id
     AND path.data_source_id=batch.data_source_id AND path.workspace_id=$1::uuid
   JOIN ${massLabeling || compactProvenance ? "mass_mentions" : "mentions"} origin ON origin.id=path.mention_id AND origin.workspace_id=$1::uuid
@@ -622,6 +642,7 @@ const populationSql = (imported = false, definedInterest = false, consolidated =
       ELSE 'unknown' END relevance,(mass_concept.root_id IS NOT NULL) has_concept,` : ""}
     COALESCE(${massLabeling || compactProvenance ? "received.metrics" : "rights.metrics"},false) metrics,
     COALESCE(${massLabeling || compactProvenance ? "received.evidence" : "rights.evidence"},false) evidence
+    ${monitoring ? ",COALESCE(received.llm,false) llm" : ""}
   FROM received_roots received JOIN ${massLabeling || compactProvenance ? "mass_mentions" : "mentions"} mention ON mention.id=received.root_id AND mention.workspace_id=$1::uuid
     AND mention.canonical_mention_id=mention.id AND mention.inclusion_status='included'
   ${massLabeling ? `JOIN signal_mass_labeling_items frozen ON frozen.map_id=$2::uuid AND frozen.workspace_id=$1::uuid AND frozen.root_id=mention.id
@@ -797,22 +818,23 @@ async function massEvidenceScope(client: PoolClient, args: Args, ctx: Context) {
     FROM authorized_imports`,populationParams(args,ctx))).rows[0]!.digest;
   return {scope_digest:massScopeDigest(args,ctx,rights)};
 }
-type Aggregate = { population_segments?: SignalWorkspaceTopicsOverviewV1["population_segments"];
+type Aggregate = { monitoring?: Omit<SignalWorkspaceMonitoringV1, "scope_digest" | "population" | "limitations">; population_segments?: SignalWorkspaceTopicsOverviewV1["population_segments"];
   consumer_indicators?: SignalWorkspaceTopicsOverviewV1["consumer_indicators"]; denominator: number; processed: number; assigned_unique: number; abstained: number; noise: number; unresolved: number;
   unresolved_exclusive: number;
   membership_population?: SignalWorkspaceTopicsOverviewV1["membership_population"];
   interest_processed?: number;
   evidence_visible_total: number; withheld: number; rights_digest: string; date_from: string | null; date_to: string | null;
   counts: Array<{ term_key: string; mention_count: number }>; series: SignalWorkspaceTopicsOverviewV1["series"]; observed_at: string };
-async function overview(client: PoolClient, args: Args, ctx: Context): Promise<SignalWorkspaceOverviewV1> {
+async function overview(client: PoolClient, args: Args, ctx: Context, monitoring = false): Promise<SignalWorkspaceOverviewV1> {
   const interestOnly = Boolean(ctx.imported && ctx.defined_interests?.length && !ctx.concept_membership);
   const params: unknown[] = populationParams(args, ctx);
   if (interestOnly) params.push(ctx.defined_interests!.map(item => item.generation_id));
   if(ctx.mass_labeling)params.push(ctx.mass_study_policy?.revision??0);
+  if(monitoring)params.push(ctx.is_current);
   // The mass overview reuses each root's complete provenance path and paid result
   // instead of joining the same rights, facet and concept evidence again.
-  const summary = (await client.query<Aggregate>(`${populationSql(Boolean(ctx.imported),Boolean(ctx.defined_interests?.length),ctx.consolidated,ctx.concept_membership,ctx.facet_enabled,checkedProjectionSource(ctx),Boolean(ctx.mass_labeling),ctx.filters.conversation_segment,true,Boolean(ctx.mass_labeling))}
-    SELECT count(*) FILTER(WHERE root.metrics AND root.evidence)::int evidence_visible_total,
+  const summary = (await client.query<Aggregate>(`${populationSql(Boolean(ctx.imported),Boolean(ctx.defined_interests?.length),ctx.consolidated,ctx.concept_membership,ctx.facet_enabled,checkedProjectionSource(ctx),Boolean(ctx.mass_labeling),ctx.filters.conversation_segment,true,Boolean(ctx.mass_labeling),false,monitoring)}${monitoring ? nativeMonitoringCtesV1 : ""}
+    SELECT ${monitoring ? `${nativeMonitoringAggregateV1} monitoring,` : ""}count(*) FILTER(WHERE root.metrics AND root.evidence)::int evidence_visible_total,
       count(*) FILTER(WHERE root.metrics)::int denominator,count(*) FILTER(WHERE root.metrics${ctx.mass_labeling ? " AND root.resolution_state<>'error'" : ""})::int processed,
       count(*) FILTER(WHERE root.metrics AND root.visible)::int assigned_unique,
       count(*) FILTER(WHERE root.metrics AND root.resolution_state='abstained')::int abstained,
@@ -893,6 +915,15 @@ async function overview(client: PoolClient, args: Args, ctx: Context): Promise<S
       ...(ctx.mass_labeling ? ["jev_probabilities_not_calibrated","candidate_topics_only","mass_labeling_frozen_population"] : []),
       ...(!ctx.generation && !ctx.concept_membership ? ["classification_required"] : !ctx.is_current ? ["last_complete_generation_stale"] : []),
       ...(summary.withheld ? ["current_rights_withhold_mentions"] : [])] };
+  if (summary.monitoring && ctx.mass_labeling) {
+    if (summary.monitoring.denominator !== computed.denominator) return fail("workspace_monitoring_population_mismatch", 503);
+    computed.monitoring = { ...summary.monitoring, scope_digest: computed.scope_digest,
+      population: { map_id: ctx.mass_labeling.id, map_digest: ctx.mass_labeling.map_digest,
+        input_revision: ctx.mass_labeling.input_revision, policy_revision: ctx.mass_study_policy?.revision ?? 0 },
+      limitations: ["sentiment_is_provider_metadata", "engagement_counts_observed_root_posts",
+        ...(summary.monitoring.source_coverage.thread_id_known < computed.denominator ? ["unthreaded_mentions_count_as_individual_conversations"] : []),
+        ...(summary.monitoring.source_coverage.emotion_classified === 0 ? ["source_emotion_classification_unavailable"] : [])] };
+  }
   if (interestOnly) {
     const selections = ctx.defined_interests!.map(item => ({ term_key: item.topic.term_key,
       selection_digest: item.selection.selection_digest, finalized_digest: item.finalized_digest }));
@@ -924,21 +955,108 @@ export async function loadSignalWorkspaceTopicsOverviewV1(args: Args, options?: 
   return transaction(args.database, async client => {
     const ctx = await context(client, args);
     if (!ctx.native) return null;
-    if (options?.surface !== "monitoring" || !ctx.mass_labeling) return overview(client, args, ctx);
-    // The mass map covers a large workspace fraction. Reading its randomly keyed
-    // mention metadata in heap order avoids repeated cold-page visits in UAT.
-    // Apply this plan preference only after authorization and only to this read.
-    const setting = (await client.query<{ enable_indexscan: string }>("SHOW enable_indexscan")).rows[0]!.enable_indexscan;
-    await client.query("SET LOCAL enable_indexscan=off");
-    try {
-      const result = await overview(client, args, ctx);
-      await client.query("SELECT set_config('enable_indexscan',$1,true)", [setting]);
-      return result;
-    } catch (error) {
-      await client.query("SELECT set_config('enable_indexscan',$1,true)", [setting]).catch(() => undefined);
-      throw error;
-    }
+    return options?.surface === "monitoring" ? monitoringWithin(client, args, ctx) : overview(client, args, ctx);
   });
+}
+
+export type SignalWorkspaceMonitoringWindowV1 = {
+  date_from: string; date_to: string; monitoring: SignalWorkspaceMonitoringV1;
+};
+export type SignalWorkspaceMonitoringWindowsV1 = {
+  anchor_date: string | null; available_dates: { date_from: string | null; date_to: string | null };
+  timezone: string; source_not_after: string | null;
+  current: SignalWorkspaceMonitoringWindowV1 | null; previous: SignalWorkspaceMonitoringWindowV1 | null;
+};
+
+/** One census and one snapshot for both monthly windows. Page dates are ignored;
+ * civil dates anchor to the latest governed observation in the chosen segment. */
+export async function loadSignalWorkspaceMonitoringWindowsWithClientV1(
+  client: PoolClient, args: Omit<Args, "database" | "date_from" | "date_to">
+): Promise<SignalWorkspaceMonitoringWindowsV1 | null> {
+  const isolation = (await client.query<{ transaction_isolation: string }>("SHOW transaction_isolation")).rows[0]!.transaction_isolation;
+  if (!["repeatable read", "serializable"].includes(isolation)) return fail("workspace_monitoring_snapshot_required",409);
+  return monitoringWindowsWithin(client,args);
+}
+
+/** Financial admission owns policy/day and actor locks before calling this path.
+ * The caller's epoch lock fences metadata/provenance mutations; the input lock
+ * below fences corpus edits. This never claims to be a repeatable-read snapshot. */
+export async function loadSignalWorkspaceMonitoringWindowsForDispatchWithClientV1(
+  client: PoolClient, args: Omit<Args, "database" | "date_from" | "date_to">
+): Promise<SignalWorkspaceMonitoringWindowsV1 | null> {
+  const isolation = (await client.query<{ transaction_isolation: string }>("SHOW transaction_isolation")).rows[0]!.transaction_isolation;
+  if (isolation !== "read committed") return fail("workspace_monitoring_dispatch_isolation_required",409);
+  await client.query("SELECT input_revision FROM signal_corpus_preparation_input_state WHERE workspace_id=$1 FOR UPDATE",[args.workspace_id]);
+  return monitoringWindowsWithin(client,args);
+}
+
+async function monitoringWindowsWithin(client: PoolClient, args: Omit<Args,"database"|"date_from"|"date_to">): Promise<SignalWorkspaceMonitoringWindowsV1|null> {
+  const access: Args={...args,date_from:null,date_to:null,database:{connect:async()=>client}};
+  const ctx=await context(client,access);
+  if(!ctx.native||!ctx.mass_labeling)return null;
+  if(!ctx.is_current)return fail("workspace_topics_evidence_stale");
+  const settings=(await client.query<{indexscan:string;nestloop:string;jit:string}>(
+    "SELECT current_setting('enable_indexscan') indexscan,current_setting('enable_nestloop') nestloop,current_setting('jit') jit")).rows[0]!;
+  await client.query("SET LOCAL enable_indexscan=off; SET LOCAL enable_nestloop=off; SET LOCAL jit=off");
+  try {
+    type WindowRow={anchor_date:string|null;available_from:string|null;current_from:string|null;previous_from:string|null;previous_to:string|null;
+      source_not_after:string|null;rights_digest:string;current:NonNullable<Aggregate["monitoring"]>;previous:NonNullable<Aggregate["monitoring"]>};
+    const row=(await client.query<WindowRow>(`${populationSql(true,false,false,false,false,undefined,true,ctx.filters.conversation_segment,false,false,false,true)}
+      ${nativeMonitoringWindowsCtesV1}
+      SELECT to_char(anchor.anchor_date,'YYYY-MM-DD') anchor_date,to_char(anchor.available_from,'YYYY-MM-DD') available_from,
+        to_char(anchor.anchor_date-29,'YYYY-MM-DD') current_from,to_char(anchor.anchor_date-59,'YYYY-MM-DD') previous_from,
+        to_char(anchor.anchor_date-30,'YYYY-MM-DD') previous_to,$7::int policy_revision,
+        ${nativeMonitoringCurrentWindowAggregateV1} current,${nativeMonitoringPreviousWindowAggregateV1} previous,
+        'sha256:'||encode(sha256(convert_to(COALESCE((SELECT string_agg(jsonb_build_array(id,data_source_id,metrics,evidence)::text,
+          '' ORDER BY id) FROM authorized_imports),''),'UTF8')),'hex') rights_digest,
+        (SELECT to_char(min(deadline) AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') FROM (
+          SELECT effective_from deadline FROM signal_provenance_policy_bindings WHERE workspace_id=$1
+          UNION ALL SELECT effective_to FROM signal_provenance_policy_bindings WHERE workspace_id=$1
+          UNION ALL SELECT effective_from FROM signal_licensing_policies WHERE workspace_id=$1
+          UNION ALL SELECT effective_to FROM signal_licensing_policies WHERE workspace_id=$1
+          UNION ALL SELECT effective_from FROM signal_retention_policies WHERE workspace_id=$1
+          UNION ALL SELECT effective_to FROM signal_retention_policies WHERE workspace_id=$1
+          UNION ALL SELECT retain_until FROM signal_retention_policies WHERE workspace_id=$1
+          UNION ALL SELECT retention_until FROM signal_provider_mention_observations WHERE workspace_id=$1
+          UNION ALL SELECT policy_valid_until FROM signal_corpus_preparation_runs WHERE workspace_id=$1
+        ) deadlines WHERE deadline>now()) source_not_after
+      FROM monitoring_window_anchor anchor`,
+      [access.workspace_id,ctx.mass_labeling.id,null,null,ctx.filters.timezone,"[]",ctx.mass_study_policy?.revision??0,false])).rows[0]!;
+    const window=(data:NonNullable<Aggregate["monitoring"]>,from:string|null,to:string|null):SignalWorkspaceMonitoringWindowV1|null=>from&&to?{
+      date_from:from,date_to:to,monitoring:{...data,
+        scope_digest:massScopeDigest(access,{...ctx,filters:{...ctx.filters,date_from:from,date_to:to}},row.rights_digest),
+        population:{map_id:ctx.mass_labeling!.id,map_digest:ctx.mass_labeling!.map_digest,input_revision:ctx.mass_labeling!.input_revision,
+          policy_revision:ctx.mass_study_policy?.revision??0},limitations:["sentiment_is_provider_metadata","rolling_30_civil_days","aggregate_only_no_mention_text"]}}:null;
+    return {anchor_date:row.anchor_date,available_dates:{date_from:row.available_from,date_to:row.anchor_date},timezone:ctx.filters.timezone,
+      source_not_after:row.source_not_after,current:window(row.current,row.current_from,row.anchor_date),previous:window(row.previous,row.previous_from,row.previous_to)};
+  } finally {await client.query("SELECT set_config('enable_indexscan',$1,true),set_config('enable_nestloop',$2,true),set_config('jit',$3,true)",
+    [settings.indexscan,settings.nestloop,settings.jit]).catch(()=>undefined);}
+}
+
+/** Borrow the caller's repeatable-read snapshot for paired monthly windows.
+ * Each window repeats current actor, map and complete provenance-path checks. */
+export async function loadSignalWorkspaceMonitoringOverviewWithClientV1(
+  client: PoolClient, args: Omit<Args, "database">
+): Promise<SignalWorkspaceOverviewV1 | null> {
+  const isolation = (await client.query<{ transaction_isolation: string }>("SHOW transaction_isolation")).rows[0]!.transaction_isolation;
+  if (!["repeatable read", "serializable"].includes(isolation)) return fail("workspace_monitoring_snapshot_required", 409);
+  const access = { ...args, database: { connect: async () => client } };
+  const ctx = await context(client, access);
+  return ctx.native ? monitoringWithin(client, access, ctx) : null;
+}
+
+async function monitoringWithin(client: PoolClient, args: Args, ctx: Context): Promise<SignalWorkspaceOverviewV1> {
+  if (!ctx.mass_labeling) return overview(client, args, ctx);
+  const setting = (await client.query<{ enable_indexscan: string }>("SHOW enable_indexscan")).rows[0]!.enable_indexscan;
+  await client.query("SET LOCAL enable_indexscan=off");
+  try {
+    const result = await overview(client, args, ctx, true);
+    await client.query("SELECT set_config('enable_indexscan',$1,true)", [setting]);
+    return result;
+  } catch (error) {
+    await client.query("SELECT set_config('enable_indexscan',$1,true)", [setting]).catch(() => undefined);
+    throw error;
+  }
 }
 
 export type SignalWorkspaceTopicDetailV1 = {
@@ -1283,10 +1401,12 @@ function mentionsRequest(args: SignalWorkspaceMentionsArgsV1) {
     || args.search_query != null && (typeof args.search_query !== "string" || args.search_query.length > 300 || args.search_query.includes("\0"))
     || args.platforms !== undefined && (!Array.isArray(args.platforms) || args.platforms.length > 32
       || args.platforms.some(value => typeof value !== "string" || !value.trim() || value.length > 100 || value.includes("\0")))
+    || args.conversation_segment !== undefined && !["all","conversation","advertising","hashtags"].includes(args.conversation_segment)
     || args.focus_mention_id != null && (!mentionUuid.test(args.focus_mention_id) || args.cursor != null)
     || args.expected_scope_digest != null && !/^sha256:[a-f0-9]{64}$/u.test(args.expected_scope_digest))
     return fail("workspace_mentions_request_invalid", 422);
   const filters = { date_from: parseDate(args.date_from), date_to: parseDate(args.date_to), timezone: parseTimezone(args.timezone),
+    conversation_segment: args.conversation_segment ?? "all",
     search_query: args.search_query?.trim() || null,
     platforms: [...new Set((args.platforms ?? []).map(value => value.trim().toLowerCase()))].sort() };
   if (filters.date_from && filters.date_to && filters.date_from > filters.date_to) return fail("workspace_topics_date_invalid", 422);
@@ -1317,14 +1437,14 @@ function mentionsRequest(args: SignalWorkspaceMentionsArgsV1) {
  * exact digest constraint installed in SQL0167–0169; no prepared artifact exists.
  * Text rights are checked before searching or returning canonical content.
  * Only root metadata is materialized; complete document bodies stay in Postgres. */
-const mentionsPopulationSql = (imported = false,facetEnabled = false,search = false) => `${populationSql(imported,false,false,false,facetEnabled,undefined,false,"all",false,false,true)}, mention_roots AS MATERIALIZED (
+const mentionsPopulationSql = (imported = false,facetEnabled = false,search = false,segment: SignalConversationSegmentV1 = "all",massLabeling=false) => `${populationSql(imported,false,false,false,facetEnabled,undefined,massLabeling,segment,false,false,true)}, mention_roots AS MATERIALIZED (
   SELECT checked.*,hashtextextended(ROW(checked.root_id,checked.metrics,checked.evidence,
     checked.text_valid,checked.text_digest,extract(epoch FROM checked.published_at),checked.platform)::text,0::bigint) population_hash
   FROM (
     SELECT root.*,COALESCE(mention.resolved_platform,mention.platform) platform,mention.text_clean_sha256 text_digest,
-      CASE WHEN root.evidence THEN ${imported ? "mention.text_clean_sha256 IS NOT NULL" : "COALESCE(prepared.asset_sha256=mention.text_clean_sha256,false)"} ELSE false END text_valid
+      CASE WHEN root.evidence THEN ${imported && !massLabeling ? "mention.text_clean_sha256 IS NOT NULL" : "COALESCE(prepared.asset_sha256=mention.text_clean_sha256,false)"} ELSE false END text_valid
     FROM period_roots root JOIN mass_mentions mention ON mention.id=root.root_id AND mention.workspace_id=$1::uuid
-    ${imported ? "" : `JOIN source_generation generation ON true
+    ${imported && !massLabeling ? "" : `JOIN ${massLabeling ? "signal_mass_labeling_maps" : "source_generation"} generation ON ${massLabeling ? "generation.id=$2::uuid AND generation.workspace_id=$1::uuid" : "true"}
     LEFT JOIN signal_corpus_preparation_items prepared ON prepared.workspace_id=$1::uuid
       AND prepared.run_id=generation.preparation_run_id AND prepared.root_id=root.root_id`}
   ) checked
@@ -1351,6 +1471,7 @@ export async function loadSignalWorkspaceMentionsV1(args: SignalWorkspaceMention
   const request = mentionsRequest(args);
   const access = { database: args.database, workspace_id: args.workspace_id.toLowerCase(), actor_user_id: args.actor_user_id.toLowerCase(),
     date_from: request.filters.date_from, date_to: request.filters.date_to, timezone: request.filters.timezone,
+    conversation_segment: args.conversation_segment,
     imported_fallback: args.imported_fallback };
   return transaction(args.database, async client => {
     const ctx = await mentionsContext(client, access);
@@ -1360,12 +1481,12 @@ export async function loadSignalWorkspaceMentionsV1(args: SignalWorkspaceMention
     // The transaction wrapper disables nested loops and JIT before this query:
     // skewed workspace estimates otherwise choose a quadratic plan and compile it.
     // Empty visible_terms intentionally avoids every membership/selection join.
-    const params = [access.workspace_id, ctx.generation?.id ?? null, ctx.filters.date_from, ctx.filters.date_to, ctx.filters.timezone, "[]",
+    const params = [access.workspace_id, ctx.mass_labeling?.id ?? ctx.generation?.id ?? null, ctx.filters.date_from, ctx.filters.date_to, ctx.filters.timezone, "[]",
       request.filters.search_query, request.filters.platforms];
     const direction = request.direction === "asc" ? "ASC" : "DESC", operator = request.direction === "asc" ? ">" : "<";
     const before = request.direction === "asc" ? "<" : ">";
     const facetEnabled=await signalWorkspaceFeatureEnabledV1({queryable:client,workspace_id:access.workspace_id,feature:"mention_facets"});
-    const result = await client.query<MentionsSummary & { item: SignalWorkspaceMentionV1 | null; focus_only: boolean | null }>(`${mentionsPopulationSql(Boolean(ctx.imported),facetEnabled,Boolean(request.filters.search_query))},
+    const result = await client.query<MentionsSummary & { item: SignalWorkspaceMentionV1 | null; focus_only: boolean | null }>(`${mentionsPopulationSql(Boolean(ctx.imported),facetEnabled,Boolean(request.filters.search_query),request.filters.conversation_segment,Boolean(ctx.mass_labeling))},
       summary AS MATERIALIZED (
       SELECT count(*) FILTER(WHERE root.metrics)::int metric_denominator,
         count(*) FILTER(WHERE root.metrics AND root.evidence AND root.text_valid)::int evidence_visible_total,

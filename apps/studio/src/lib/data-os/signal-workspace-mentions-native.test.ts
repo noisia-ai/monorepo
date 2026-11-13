@@ -28,6 +28,15 @@ test("native dates, literal search and repeated platforms preserve their exact m
   assert.deepEqual(nativeMentionsQueryV1(new URLSearchParams("timezone=America/Mexico_City")),
     { platforms: [], sort_direction: "desc", limit: 50 });
 });
+test("mention entry preserves the exact conversation segment without broadening old all-content requests", () => {
+  for (const segment of ["all", "conversation", "advertising", "hashtags"]) {
+    assert.equal(nativeMentionsQueryV1(new URLSearchParams(`conversation_segment=${segment}`)).conversation_segment, segment);
+  }
+  assert.equal(nativeMentionsQueryV1(new URLSearchParams()).conversation_segment, undefined);
+  for (const query of ["conversation_segment=", "conversation_segment=unknown", "conversation_segment=all&conversation_segment=conversation"]) {
+    assert.throws(() => nativeMentionsQueryV1(new URLSearchParams(query)), { status: 422 });
+  }
+});
 
 test("unsupported dimensions, ambiguous aliases, malformed limits and fabricated scopes fail closed", () => {
   for (const query of ["view=brand", "view=all_conversations&view=brand",

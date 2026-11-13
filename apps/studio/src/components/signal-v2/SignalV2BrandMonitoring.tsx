@@ -3,7 +3,7 @@ import type { SignalWorkspaceTopicReadBundleV1 } from "@noisia/db";
 
 import Link from "next/link";
 import dynamic from "next/dynamic";
-import { useTranslations } from "next-intl";
+import { useLocale, useTranslations } from "next-intl";
 import {
   ArrowDownRight,
   ArrowRight,
@@ -61,6 +61,8 @@ import {
 } from "@/components/signal-v2/SignalMetricHelp";
 import type { SignalMentionsViewData } from "@/components/signal-v2/SignalV2Mentions";
 import { MonthlyInsightCarousel } from "@/components/signal-v2/MonthlyInsightCarousel";
+import { useNativeMonitoringInsights } from "@/components/signal-v2/useNativeMonitoringInsights";
+import { NativeMonitoringInsightControls } from "@/components/signal-v2/NativeMonitoringInsightControls";
 import { SignalV2ModuleHeader } from "@/components/signal-v2/SignalV2ModuleHeader";
 import { SignalV2Settings } from "@/components/signal-v2/SignalV2Settings";
 import { SignalV2ModuleSkeleton } from "@/components/signal-v2/SignalV2RouteSkeleton";
@@ -108,7 +110,7 @@ export function nativeWorkspaceNavigationQueryV1(filters: {
   const query = new URLSearchParams();
   if (filters?.date_from) query.set("date_from", filters.date_from);
   if (filters?.date_to) query.set("date_to", filters.date_to);
-  if ((target === "monitoring" || target === "topics") && filters?.conversation_segment) {
+  if ((target === "monitoring" || target === "topics" || target === "mentions") && filters?.conversation_segment) {
     query.set("conversation_segment", filters.conversation_segment);
   }
   return query;
@@ -171,6 +173,7 @@ export function SignalV2BrandMonitoring({
   initialNativeTopicBundle = null,
   initialTriggersBarriers,
   legacyOutputId,
+  nativeInsightsWorkspaceId = null,
   manageTopicsHref,
   strategicStudies,
   userName,
@@ -194,6 +197,7 @@ export function SignalV2BrandMonitoring({
   initialTopicsNarratives: SignalTopicsNarrativesOverviewV1 | SignalWorkspaceOverviewV1 | null;
   initialTriggersBarriers: SignalTriggersBarriersOverviewV2 | null;
   legacyOutputId: string | null;
+  nativeInsightsWorkspaceId?: string | null;
   manageTopicsHref: string | null;
   strategicStudies: SignalStrategicStudyNavigationItem[];
   userName: string;
@@ -202,6 +206,7 @@ export function SignalV2BrandMonitoring({
   viewKey?: "brand" | "competition" | "category" | "all-governed" | "all_conversations";
 }) {
   const t = useTranslations("SignalV2");
+  const locale = useLocale();
   const [data, setData] = useState(initialData);
   const [mentionsData, setMentionsData] = useState(initialMentions);
   const [nativeMentionsUnavailable, setNativeMentionsUnavailable] = useState(initialNativeMentionsUnavailable);
@@ -230,6 +235,10 @@ export function SignalV2BrandMonitoring({
     "idle" | "queued" | "running" | "completed" | "failed"
   >("idle");
   const [insightRunError, setInsightRunError] = useState<string | null>(null);
+  const nativeInsights = useNativeMonitoringInsights(nativeInsightsWorkspaceId,
+    currentModule === "monitoring" && initialModuleState === "complete", t("monthlyInsights.refresh.error"),
+    topicsNarrativesData?.contract_version === "signal-workspace-topics-serving-v1"
+      ? topicsNarrativesData.filters.conversation_segment ?? "conversation" : "conversation", locale === "en-US" ? "en-US" : "es-MX");
   const searchRef = useRef<HTMLInputElement>(null);
   const workspaceMenuRef = useRef<HTMLDivElement>(null);
   const moduleCacheRef = useRef(new Map<string, SignalWorkspaceModulePayload>());
@@ -922,12 +931,19 @@ export function SignalV2BrandMonitoring({
 
   const comparisonFilter = data.comparison_filter;
   const hasComparison = comparisonFilter != null;
-  const nativeVolumeOnly = data.freshness.data.unit === "canonical_mention";
-  const nativeSentimentPending = nativeVolumeOnly && ["not_available", "pending"].includes(data.sentiment.state);
-  const nativeAttentionPending = nativeVolumeOnly && ["not_available", "pending"].includes(data.attention.state);
-  const nativeHighlightsPending = nativeVolumeOnly && !data.highlights.positive.length && !data.highlights.negative.length;
-  const effectiveConversationMetric: ConversationMetric = nativeVolumeOnly ? "mentions" : conversationMetric;
+  const nativePopulation = data.freshness.data.unit === "canonical_mention";
+  const nativeSourceCoverage = data.freshness.data.source_coverage as {
+    content_type_known: number; thread_id_known: number; engagement_known_root_posts: number; views_known_root_posts: number
+  } | undefined;
+  const hasInteractionSource = !nativeSourceCoverage || nativeSourceCoverage.engagement_known_root_posts > 0;
+  const hasViewSource = !nativeSourceCoverage || nativeSourceCoverage.views_known_root_posts > 0;
+  const nativeVolumeOnly = nativePopulation && ["not_available", "pending"].includes(data.conversation_structure.state);
+  const nativeSentimentPending = nativePopulation && ["not_available", "pending"].includes(data.sentiment.state);
+  const nativeAttentionPending = nativePopulation && ["not_available", "pending"].includes(data.attention.state);
+  const nativeHighlightsPending = nativePopulation && !data.highlights.positive.length && !data.highlights.negative.length;
   const currentStructure = data.conversation_structure.summary;
+  const effectiveConversationMetric: ConversationMetric = nativeVolumeOnly || currentStructure[conversationMetric] === null
+    ? "mentions" : conversationMetric;
   const previousStructure = data.conversation_structure.previous_summary;
   const currentConversationValue = nativeVolumeOnly ? data.volume.current_value : currentStructure[effectiveConversationMetric];
   const previousConversationValue = nativeVolumeOnly ? data.volume.previous_value : previousStructure?.[effectiveConversationMetric] ?? null;
@@ -1434,8 +1450,8 @@ export function SignalV2BrandMonitoring({
           </button>}
           controls={<>
           <SignalAnalyticsFilter
-            showComparison={!nativeVolumeOnly}
-            boundedToCoverage={nativeVolumeOnly}
+            showComparison={!nativePopulation}
+            boundedToCoverage={nativePopulation}
             comparison={data.comparison}
             coverage={data.coverage}
             filter={data.filter}
@@ -1450,7 +1466,7 @@ export function SignalV2BrandMonitoring({
             mentionCount={data.coverage.mentions}
             onOpenMentions={goToCorpus}
           />
-          {!nativeVolumeOnly ? <button
+          {!nativePopulation ? <button
             aria-expanded={controlsOpen}
             className={`signal-v2-filter${controlsOpen ? " signal-v2-filter--active" : ""}`}
             onClick={() => setControlsOpen((open) => !open)}
@@ -1482,6 +1498,7 @@ export function SignalV2BrandMonitoring({
                     : t("monthlyInsights.refresh.action")}
             </button>
           ) : null}
+          {nativeInsightsWorkspaceId ? <NativeMonitoringInsightControls insights={nativeInsights} mode="action" /> : null}
           <span className={`signal-v2-freshness signal-v2-freshness--${data.freshness.state}`}>
             <span />
             {freshnessLabel(data.freshness.state, t)}
@@ -1513,10 +1530,20 @@ export function SignalV2BrandMonitoring({
             <button onClick={() => setInsightRunError(null)} type="button"><X size={15} /></button>
           </div>
         ) : null}
+        {nativeInsightsWorkspaceId ? <NativeMonitoringInsightControls insights={nativeInsights} mode="feedback" /> : null}
 
         <MonthlyInsightCarousel
-          insights={data.monthly_insights}
-          onOpenEvidence={goToCorpus}
+          insights={nativeInsights.view?.monthly_insights ?? data.monthly_insights}
+          labels={nativeInsights.view ? { fixedWindow: t("monthlyInsights.native.fixedWindow"),
+            openEvidence: t("monthlyInsights.native.explorePopulation") } : undefined}
+          secondaryMeta={nativeInsights.view ? t(`workspaceTopics.conversationSegment.${nativeInsights.view.monthly_insights.scope_segment ?? "conversation"}`) : undefined}
+          onOpenEvidence={nativeInsights.view ? () => {
+            const window = nativeInsights.view?.monthly_insights.window;
+            const query = new URLSearchParams({ view: "all_conversations",
+              conversation_segment: nativeInsights.view?.monthly_insights.scope_segment ?? "conversation", compare: "none" });
+            if (window) { query.set("date_from", window.start); query.set("date_to", window.end); }
+            void navigateToModule("mentions", "push", query);
+          } : goToCorpus}
         />
 
         <div
@@ -1532,6 +1559,11 @@ export function SignalV2BrandMonitoring({
             } : null}
             previous={data.conversation_structure.previous_summary}
           />
+          {nativeSourceCoverage && (nativeSourceCoverage.content_type_known < data.volume.current_value!
+            || nativeSourceCoverage.thread_id_known < data.volume.current_value!) ? <p className="signal-v2-card__coverage-note">
+            {t("metricsCoverage.structure", { roles: formatNumber(nativeSourceCoverage.content_type_known),
+              threads: formatNumber(nativeSourceCoverage.thread_id_known), total: formatNumber(data.volume.current_value ?? 0) })}
+          </p> : null}
 
           <section className="signal-v2-grid" aria-label={t("sections.metrics")}>
           <MetricCard
@@ -1540,8 +1572,9 @@ export function SignalV2BrandMonitoring({
             eyebrow={t("cards.volume.eyebrow")}
             headingAction={(
               nativeVolumeOnly ? null : <ConversationMetricSwitch
+                current={data.conversation_structure.summary}
                 onChange={setConversationMetric}
-                value={conversationMetric}
+                value={effectiveConversationMetric}
               />
             )}
             help={translatedHelp(t, "cards.volume.help")}
@@ -1594,14 +1627,15 @@ export function SignalV2BrandMonitoring({
             help={translatedHelp(t, "cards.composition.help")}
             title={t("cards.composition.title")}
           >
-            {data.conversation_structure.points.length > 0 ? (
+            {data.conversation_structure.points.some(point => point.root_posts !== null || point.comments !== null) ? (
               <SignalEChart
                 ariaLabel={t("cards.composition.aria")}
                 onActivate={goToCorpus}
                 option={compositionOption}
               />
             ) : (
-              <EmptyMetric message={metricEmptyMessage(data.conversation_structure.state, t)} />
+              <EmptyMetric message={nativeSourceCoverage?.content_type_known === 0
+                ? t("metricsUnavailable.roles") : metricEmptyMessage(data.conversation_structure.state, t)} />
             )}
           </MetricCard>
 
@@ -1653,7 +1687,7 @@ export function SignalV2BrandMonitoring({
             <div className="signal-v2-attention-metrics">
               <div>
                 <small>{t("cards.attention.totalInteractions")}</small>
-                <strong>{formatCompact(data.attention.total_interactions)}</strong>
+                <strong>{hasInteractionSource ? formatCompact(data.attention.total_interactions) : "—"}</strong>
                 <AttentionComparison
                   current={data.attention.total_interactions}
                   hasComparison={hasComparison}
@@ -1662,7 +1696,7 @@ export function SignalV2BrandMonitoring({
               </div>
               <div>
                 <small>{t("cards.attention.median")}</small>
-                <strong>{formatCompact(data.attention.median_interactions)}</strong>
+                <strong>{hasInteractionSource ? formatCompact(data.attention.median_interactions) : "—"}</strong>
                 <AttentionComparison
                   current={data.attention.median_interactions}
                   hasComparison={hasComparison}
@@ -1671,7 +1705,7 @@ export function SignalV2BrandMonitoring({
               </div>
               <div>
                 <small>{t("cards.attention.p90")}</small>
-                <strong>{formatCompact(data.attention.p90_interactions)}</strong>
+                <strong>{hasInteractionSource ? formatCompact(data.attention.p90_interactions) : "—"}</strong>
                 <AttentionComparison
                   current={data.attention.p90_interactions}
                   hasComparison={hasComparison}
@@ -1680,7 +1714,7 @@ export function SignalV2BrandMonitoring({
               </div>
               <div>
                 <small>{t("cards.attention.active")}</small>
-                <strong>{formatPercent(data.attention.active_ratio)}</strong>
+                <strong>{hasInteractionSource ? formatPercent(data.attention.active_ratio) : "—"}</strong>
                 <AttentionComparison
                   current={data.attention.active_ratio}
                   hasComparison={hasComparison}
@@ -1690,7 +1724,7 @@ export function SignalV2BrandMonitoring({
               </div>
               <div>
                 <small>{t("cards.attention.views")}</small>
-                <strong>{formatCompact(data.attention.total_views)}</strong>
+                <strong>{hasViewSource ? formatCompact(data.attention.total_views) : "—"}</strong>
                 <AttentionComparison
                   current={data.attention.total_views}
                   hasComparison={hasComparison}
@@ -1700,7 +1734,7 @@ export function SignalV2BrandMonitoring({
               <div>
                 <small>{t("cards.attention.viewedPosts")}</small>
                 <strong>
-                  {formatNumber(data.attention.viewed_root_posts)}
+                  {hasViewSource ? formatNumber(data.attention.viewed_root_posts) : "—"}
                   <span> / {formatNumber(data.attention.root_posts)}</span>
                 </strong>
                 <CoverageIndicator
@@ -1710,11 +1744,15 @@ export function SignalV2BrandMonitoring({
               </div>
             </div>
             <p>{t("cards.attention.note", { count: formatNumber(data.attention.root_posts) })}</p>
+            {nativeSourceCoverage ? <p>{t("metricsCoverage.attention", {
+              interactions: formatNumber(nativeSourceCoverage.engagement_known_root_posts),
+              views: formatNumber(nativeSourceCoverage.views_known_root_posts), total: formatNumber(data.attention.root_posts)
+            })}</p> : null}
             </>}
             <button onClick={goToCorpus} type="button">{t("actions.openMentions")}<ArrowRight size={14} /></button>
           </article>
 
-          {data.emotions.buckets.length > 0 ? <article className="signal-v2-card">
+          {data.emotions.buckets.length > 0 || nativeSourceCoverage ? <article className="signal-v2-card">
             <CardHeading
               dataState={data.emotions.state}
               eyebrow={t("cards.emotions.eyebrow")}
@@ -1724,7 +1762,7 @@ export function SignalV2BrandMonitoring({
             {data.emotions.buckets.length > 0 ? (
               <DistributionBars buckets={data.emotions} />
             ) : (
-              <EmptyMetric message={metricEmptyMessage(data.emotions.state, t)} />
+              <EmptyMetric message={nativePopulation ? t("metricsUnavailable.emotions") : metricEmptyMessage(data.emotions.state, t)} />
             )}
           </article> : null}
 
@@ -2220,7 +2258,7 @@ function ConversationKpis({
   const t = useTranslations("SignalV2");
   const items: Array<{
     key: ConversationMetric;
-    value: number;
+    value: number | null;
     previousValue: number | null;
   }> = nativeVolume ? [
     { key: "mentions", value: nativeVolume.current, previousValue: nativeVolume.previous }
@@ -2233,7 +2271,7 @@ function ConversationKpis({
   return (
     <section aria-label={t("kpis.label")} className="signal-v2-kpi-strip">
       {items.map((item) => {
-        const change = item.previousValue == null
+        const change = item.value == null || item.previousValue == null
           ? null
           : comparisonDelta(item.value, item.previousValue);
         return (
@@ -2244,14 +2282,14 @@ function ConversationKpis({
                 label={t(`kpis.${item.key}`)}
               />
             </span>
-            <strong>{formatNumber(item.value)}</strong>
+            <strong>{item.value == null ? "—" : formatNumber(item.value)}</strong>
             <small className={change == null || change === 0
               ? undefined
               : change > 0
                 ? "signal-v2-trend--up"
                 : "signal-v2-trend--down"}
             >
-              {hasComparison ? formatDelta(change) : t("cards.sentiment.noComparison")}
+              {item.value == null ? t("metricsUnavailable.measurement") : hasComparison ? formatDelta(change) : t("cards.sentiment.noComparison")}
             </small>
           </article>
         );
@@ -2261,9 +2299,11 @@ function ConversationKpis({
 }
 
 function ConversationMetricSwitch({
+  current,
   onChange,
   value
 }: {
+  current: SignalBrandMonitoringV1["conversation_structure"]["summary"];
   onChange: (value: ConversationMetric) => void;
   value: ConversationMetric;
 }) {
@@ -2274,9 +2314,11 @@ function ConversationMetricSwitch({
       {options.map((option) => (
         <button
           aria-pressed={value === option}
+          disabled={current[option] === null}
           key={option}
           onClick={() => onChange(option)}
           type="button"
+          title={current[option] === null ? t(option === "conversations" ? "metricsUnavailable.threads" : "metricsUnavailable.roles") : undefined}
         >
           {t(`cards.volume.units.${option}`)}
         </button>
