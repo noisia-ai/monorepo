@@ -3,7 +3,9 @@
 > El método de tendencias de Noisia. En español, **momentum cultural**; en el equipo, "crece y
 > prende": *crece* es la curva, *prende* es que la gente lo hace suyo. Método en validación (nov
 > 2026): salió de un estudio de tendencias de comida en un mercado europeo y se definió aquí con lo
-> que ese estudio dejó abierto. Playbook ejecutable:
+> que ese estudio dejó abierto. La v1.1 suma lo que hacían mejor las referencias que lo inspiraron
+> (un método de la industria por drivers y horizonte, el ciclo de vida de una plataforma de listening)
+> y dos estudios propios de panificación. Playbook ejecutable:
 > [`05-ai-playbooks/run-cultural-momentum-mapping.md`](../05-ai-playbooks/run-cultural-momentum-mapping.md).
 
 ## Pregunta que responde
@@ -81,7 +83,7 @@ multiplicador  = exp(momentum)                     # lo que se muestra: "×2.2"
 | **Empuje** | Parte emitida del tema en el año | Una tendencia empujada es campaña, no cultura |
 | Concentración | Parte del hilo y del autor más grandes en la voz del año | Un pico de un solo post no es tendencia |
 | **Salto de comunidad** | Canales e hilos distintos con el tema en NOW contra PREV | Lo que predice lo masivo es saltar de comunidad, no el volumen |
-| Resonancia | Engagement normalizado por fuente y tipo de post | Ver "Decisiones abiertas" |
+| **Crecimiento de la resonancia** | La misma regla del momentum aplicada a las interacciones del tema (engagement normalizado por fuente y tipo de post), NOW contra PREV | El cruce con engagement que se pidió. Su **nivel** casi no separó temas en el primer estudio; su **crecimiento** se prueba como segunda medida de la curva, como hace Synthesio con interacciones |
 | Por 10,000 menciones | `menciones_del_tema / menciones_analizadas × 10,000` | Contrastar con listas externas de tendencias (lo viral de las listas a veces se busca y no se conversa) |
 | Piso de señal | ≥240 menciones en el año (unas 20 por mes) | Debajo, "señal débil", nunca en porcentaje |
 
@@ -142,12 +144,57 @@ en cada ventana; con menos, la etapa es una foto del año, no una trayectoria.
   tendencias: va en su propia slide aunque el tema caiga en "la base".
 - **Empujada:** más de 60% emitido. Borde punteado: es campaña antes que cultura.
 - **En declive:** multiplicador < 1 con el intervalo debajo de ×1.
+- **Saturado:** el tercio de mayor tamaño y multiplicador < 1. Grande y bajando es otra lectura que
+  "pierde tirón": la gente lo sigue haciendo, pero ya no crece.
+- **Estacional:** su serie mensual repite un pico en la misma temporada (con 24 meses, o con Google
+  Trends a cinco años). Un tema estacional que además crece año contra año se dice así: "crece, y
+  además es de temporada". En comida es media historia.
 
 **Los cuadrantes del mapa son exactamente las lecturas del marco.** Lo que el marco promete, el mapa
 lo mide; un hallazgo que agrupa temas sale del cuadrante del dato, y el builder lo comprueba.
 
 La tradición entra al corpus a propósito: la base es la línea contra la que se mide si algo importado
 crece de verdad.
+
+### De temas a drivers
+
+El cliente no recibe 20 temas sueltos: recibe **drivers**, grupos de temas que comparten una misma
+fuerza cultural, cada uno con su tesis en una frase ("la proteína se volvió argumento de todo"). Es lo
+que mejor hace el método de referencia de la industria (de miles de tendencias a catorce drivers), y es
+lo que evita agrupar temas a mano en los hallazgos.
+
+- Se agrupan los temas del mapa por lo que dicen sus menciones (glosas y asuntos dominantes), no por
+  su posición en el mapa. Cada tema pertenece a un solo driver; un driver lleva dos temas o más.
+- Cada driver lleva su tesis, su porqué cultural, cómo se extiende a categorías vecinas y qué
+  significa para la marca.
+- El builder comprueba la pertenencia: cada tema citado en un driver está en ese driver.
+
+### El horizonte: cuándo actuar
+
+El método no pronostica fechas, pero sí ordena por horizonte con reglas que se escriben antes de los
+datos. Salió de un estudio propio de panificación, que ya lo hacía con tamaño por crecimiento:
+
+| Horizonte | Regla | Para qué |
+|---|---|---|
+| **1 año · actuar ya** | Prende y está en el tercio de mayor tamaño | Lo que ya pasa a escala: llega tarde quien no está |
+| **3 años · construir** | Prende con tamaño medio, o señal temprana con su crecimiento confirmado por el intervalo | Lo que se puede construir antes de que sea masivo |
+| **5 años · vigilar** | Señal temprana chica | Lo que vale la pena seguir sin invertir todavía |
+
+Un tema empujado (más de 60% emitido) nunca entra a "actuar ya" sin decir que es campaña.
+
+### Dónde pesa más: índices de sobre-representación
+
+Para estudios con varias categorías del cliente o varios mercados, cada tema lleva su índice: su peso
+en esa categoría o mercado contra su peso promedio, donde 100 es el promedio ("en Brasil pesa 173").
+Una celda sobre-representada es prioridad; los índices van en un mapa de calor tema × categoría o
+tema × mercado, con el n de cada celda.
+
+### Del tema a la señal
+
+El mapa ordena **temas** por números; los reportes publicados de Noisia (`HUMAN_SIGNALS.md`) eligen
+**señales** por lo que dicen ("las señales se eligen por lo que dicen, no por cuánto suben"). No se
+contradicen: un tema del mapa se vuelve señal cuando una tensión de su voz, con las frases que la
+sostienen, explica su lectura. El mapa dice dónde mirar; la señal dice qué significa.
 
 ## Fundamentos teóricos
 
@@ -182,7 +229,25 @@ tradición, momento y economía); 5,000+ codificadas, con ≥100 por ventana en 
 - **Momentos y marca:** dónde vive cada tema y dónde ya están las marcas; el momento sin marca es la
   puerta de entrada.
 - **Un hallazgo por lectura** que pese (en datos y en la vida real), y uno para las señales tempranas.
-- `curva.csv` y `voz.csv` como dataset entregable.
+- **Drivers** con su tesis, y el **roadmap por horizonte** (actuar ya, construir, vigilar).
+- **Índices de sobre-representación** por categoría o mercado, cuando el estudio tiene varios.
+- **Quién ya actúa:** marcas y startups que ya mueven oferta sobre el tema, con su evidencia pública.
+  Es la prueba de que la tendencia mueve mercado, y lo que más pregunta un equipo de innovación.
+- `curva.csv` y `voz.csv` como dataset entregable, **con su diccionario de columnas**, para que el
+  equipo del cliente, o su copiloto de IA, pueda consultar el estudio sin el deck.
+- Opcional: el mapa interactivo (pasar el cursor por un tema muestra su tarjeta).
+
+**Cuando el cliente tiene datos de oferta** (lanzamientos, catálogo, anaquel), el cruce con la demanda
+es el insumo de mayor valor: dice dónde la conversación va adelante de lo que se vende.
+
+## Variantes
+
+- **Rápida, de 3 a 6 meses.** Solo con la curva mes a mes y la voz de la ventana. Sirve para "qué se
+  está discutiendo ahora". No permite decir "crece" contra la temporada ni leer el giro de etapa; usa
+  las palabras "sube en estos meses" y se declara en el método.
+- **Solo curva, para reportes recurrentes.** Sin el reloj de la voz: multiplicador, pendiente,
+  empuje, saturación y estacionalidad, con la misma regla cada mes. Es reproducible y barata; pierde
+  el "prende o cansa", que es lo que distingue a Noisia, y se dice así.
 
 ## Limitaciones
 
@@ -197,10 +262,17 @@ tradición, momento y economía); 5,000+ codificadas, con ≥100 por ventana en 
 
 ## Decisiones abiertas
 
-- **El engagement.** Se pidió cruzar la evolución con el engagement. La resonancia (engagement
-  normalizado por plataforma) se calculó y no entró al mapa porque casi no separó temas. Mientras no
-  se decida otra cosa, va como color opcional de la burbuja y se reporta en la tarjeta del tema.
-- **Los nombres finales** de las lecturas en español y en inglés.
+- **Un solo vocabulario con los reportes publicados.** Los reportes de noisia.ai clasifican cada señal
+  por madurez según la forma de su curva mensual: **emergente** (mínima al principio y rampa al final),
+  **acelerando** (crecimiento visible, más fuerte en los últimos meses) y **mainstreaming** (tráfico
+  alto y crecimiento gradual), con colores canónicos. Este método usa otras palabras para su mapa. Un
+  cliente que vea los dos productos tiene que ver un solo vocabulario. Propuesta: la madurez de los
+  reportes nombra al reloj de la curva (emergente, acelerando, mainstreaming, más saturado y en
+  declive), y el reloj de la voz la califica (prende o cansa); las cuatro lecturas del mapa se
+  vuelven combinaciones de las dos. Pendiente de decisión.
+- **El engagement.** Se prueba el crecimiento de la resonancia como segunda medida de la curva en el
+  siguiente estudio. Si separa temas, entra al mapa como color de la burbuja; si no, sale con su razón
+  escrita.
 
 ## Ver también
 

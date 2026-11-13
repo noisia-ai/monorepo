@@ -448,7 +448,10 @@ su dato (el builder lo comprueba). Ninguna query busca el tono ni la etapa: eso 
 
 Obligatorias de esta familia: el panorama, el marco, el mapa a todo lo ancho, todos los temas con
 su curva, las etapas de todos, el mapa de calor tema por momento, momentos y marca, las señales
-tempranas si las hay, la slide de canales y la de método sin kappa.
+tempranas si las hay, los hallazgos por driver con su tesis y quién ya actúa, el horizonte (actuar
+ya, construir, vigilar), la slide de canales y la de método sin kappa. Antes de nombrar la madurez,
+lee los reportes publicados de noisia.ai (apps/website-next/src/content/reports): el vocabulario es
+uno solo.
 ```
 
 ## Bloque · Estudio de Historia de influencias
