@@ -128,6 +128,7 @@ Lee solo lo que tu entregable necesita:
 | Gráficas | `CHARTS.md` | Barras, líneas, ejes, color por plataforma y la regla de sin gradientes |
 | Criterio | `METHODOLOGY.md` | Qué se puede afirmar y con qué fuerza |
 | Ejecución de datos | `DATA.md` | Inventario, ETL, gates de calidad, contratos de salida |
+| Notificaciones | `NOTIFICATIONS.md` | Los correos automáticos del Data API: los cuatro tipos, el sistema visual, las reglas |
 | Comercial | `commercial/COMMERCIAL.md` | Openers, overview, oferta, propuesta y one-pager; la entrevista, el copy canónico y los precios en XXX |
 | Interno | `INTERNAL.md` | Decks para el equipo: status, operación, producto y su estado |
 | Arranque | `PROMPTS.md` | El prompt con el que empieza cualquier corrida |
@@ -415,6 +416,7 @@ Lo que sigue pendiente:
 | Un generador de queries con cláusulas compartidas | `builders/check-queries.py` ya las valida; falta el que las arma desde bloques definidos una vez (`DATA.md` §3). Dos casos tienen el suyo en `work/build_queries.py` | Media |
 | Un `builders/pdf-light.py` | Aligerar un PDF saltando las imágenes con transparencia (§6). Hoy cada caso trae su script | Media |
 | Una paleta oscura sin rojo en `gen-backgrounds.py` | Para temas sensibles, donde el rojo se lee como alarma (`LAYOUTS.md`) | Baja |
+| Coherencia de cifras en los correos del Data API | Antes de enviar, validar que nuevos ≤ traídos, entregados ≤ generados y que los estados sumen el total; si no cuadra, no sale (`NOTIFICATIONS.md` regla 6). Hoy no se comprueba | Alta |
 | El núcleo de entrega de datos como builder | Streaming, id estable, zona horaria, baldes, vacío contra cero (`DATA_DELIVERY.md` §11). Se extrae cuando un segundo caso lo use igual; hoy está en el registro de un caso | Media |
 | Lo que le falta al builder de video | `VIDEO.md` §8: que el website use las escenas de `packages/motion` en lugar de su copia, los efectos de sonido en la mezcla, cuatro patrones de deck y tres gráficas, y la primera pieza real de cada formato con voces escuchada por una persona | Media |
 | Un builder multimercado | Un estudio en tres mercados armó su propio builder por país, alimentado por un módulo de narrativa, más un builder del resumen transversal. La propuesta: un builder por familia con un JSON por mercado | Media |

@@ -253,6 +253,9 @@ reescribió tres veces: una tabla con "Partial", una tabla con diagnóstico, y a
 en tono "sí, así funciona por diseño". **Ningún compromiso que no esté verificado:** "TikTok y
 Facebook son lo siguiente en nuestra lista" salió de un borrador porque esa capacidad no existía.
 
+Un feed continuo no manda un mail técnico por entrega: manda correos automáticos, y esos tienen su
+propia guía, `NOTIFICATIONS.md`.
+
 ## 10. Comercial, sin montos
 
 - **Pago único:** la integración (el mapeo al esquema, el conector, la deduplicación, la
