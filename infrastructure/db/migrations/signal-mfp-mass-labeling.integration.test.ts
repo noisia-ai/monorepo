@@ -1,3 +1,4 @@
+import { assertNativeMonitoringWidgetsV1 } from "./signal-native-monitoring-widgets.assertions";
 import { createMassLabelingConcurrencyDatabaseV1 } from "./signal-mass-labeling-concurrent.synthetic.fixture";
 import {assertMassLabelingOverviewProvenanceV1} from "./signal-mass-labeling-overview-provenance.assertions";
 import {assertMassLabelingServingProjectionV1,assertMassLabelingProjectionBackfillV1} from "./signal-mass-labeling-serving-projection.assertions";
@@ -248,6 +249,7 @@ for(const authorization of ["rotation","scoped","scoped-scale","scoped-funding",
         await raw.query("COMMIT");
         await assertMassLabelingProductNativeV2({...access,database:pool,query:pool.query.bind(pool),map_id:map.map_id,concurrent_recovery:true,foreign_actor_id:foreignActor});
       }else await assertMassLabelingProductNativeV2({...access,query:scoped.query,map_id:map.map_id});
+      if (authorization === "product") await assertNativeMonitoringWidgetsV1({ access, query, map_id: map.map_id });
       await assertMassLabelingServingProjectionV1(scaledRecovery?pool.query.bind(pool):scoped.query,access.workspace_id,map.map_id);return;
     }
     const candidateSample=(await query("SELECT candidates FROM signal_mass_labeling_items WHERE map_id=$1 ORDER BY ordinal LIMIT 1",[map.map_id])).rows[0]!.candidates[0];
@@ -748,7 +750,7 @@ for(const authorization of ["rotation","scoped","scoped-scale","scoped-funding",
     for (const setting of ["on", "off"]) {
       await query("SELECT set_config('enable_indexscan',$1,true)", [setting]);
       const monitoring = await loadSignalWorkspaceTopicsOverviewV1(access, { surface: "monitoring" });
-      assert.deepEqual({ ...monitoring, observed_at: null }, { ...view, observed_at: null },
+      assert.deepEqual({ ...monitoring, monitoring: undefined, observed_at: null }, { ...view, monitoring: undefined, observed_at: null },
         "monitoring keeps every native aggregate, consumer indicator, scope digest and selected term");
       assert.equal((await query("SHOW enable_indexscan")).rows[0]!.enable_indexscan, setting,
         "the monitoring statement restores the incoming planner setting");
