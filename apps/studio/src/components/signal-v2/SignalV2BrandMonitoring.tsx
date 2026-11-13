@@ -79,13 +79,13 @@ import {
 } from "@/components/workspace/WorkspaceShell";
 
 const loadSignalV2WorkspaceTopics = () => import("@/components/signal-v2/SignalV2WorkspaceTopics");
-const SignalV2WorkspaceTopics = dynamic(() => loadSignalV2WorkspaceTopics().then(module => module.SignalV2WorkspaceTopics), { loading: () => null });
+const SignalV2WorkspaceTopics = dynamic(() => loadSignalV2WorkspaceTopics().then(module => module.SignalV2WorkspaceTopics), { loading: () => <SignalV2ModuleSkeleton brandName="" showBody variant="topics" /> });
 const loadSignalV2Mentions = () => import("@/components/signal-v2/SignalV2Mentions");
 const loadSignalV2TopicsNarratives = () => import("@/components/signal-v2/SignalV2TopicsNarratives");
 const loadSignalV2TriggersBarriers = () => import("@/components/signal-v2/SignalV2TriggersBarriers");
 const SignalV2Mentions = dynamic(
   () => loadSignalV2Mentions().then((module) => module.SignalV2Mentions),
-  { loading: () => null }
+  { loading: () => <SignalV2ModuleSkeleton brandName="" showBody variant="mentions" /> }
 );
 const SignalV2TopicsNarratives = dynamic(
   () => loadSignalV2TopicsNarratives().then((module) => module.SignalV2TopicsNarratives),
@@ -159,6 +159,7 @@ export function SignalV2BrandMonitoring({
   activeStudy,
   brandName,
   canRefreshInsights,
+  deferredInitialModule,
   emptyWorkspace = false,
   emptyWorkspaceReason = "source_missing",
   initialData,
@@ -181,6 +182,7 @@ export function SignalV2BrandMonitoring({
   activeStudy: SignalStrategicStudyNavigationItem | null;
   brandName: string;
   canRefreshInsights: boolean;
+  deferredInitialModule?: SignalStandardModule;
   emptyWorkspace?: boolean;
   emptyWorkspaceReason?: "source_missing" | "population_unavailable" | "empty_result";
   initialData: SignalBrandMonitoringV1;
@@ -220,6 +222,9 @@ export function SignalV2BrandMonitoring({
   const [showPendingModuleBody, setShowPendingModuleBody] = useState(false);
   const [contentArriving, setContentArriving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [initialModuleState, setInitialModuleState] = useState<"pending" | "failed" | "complete">(
+    deferredInitialModule ? "pending" : "complete"
+  );
   const [conversationMetric, setConversationMetric] = useState<ConversationMetric>("mentions");
   const [insightRunState, setInsightRunState] = useState<
     "idle" | "queued" | "running" | "completed" | "failed"
@@ -232,6 +237,8 @@ export function SignalV2BrandMonitoring({
   const filterSequenceRef = useRef(0);
   const navigationRequestRef = useRef<AbortController | null>(null);
   const navigationSequenceRef = useRef(0);
+  const failedNavigationRef = useRef<{ target: SignalStandardModule; query: string }
+    | { target: "study"; study: SignalStrategicStudyNavigationItem } | null>(null);
   const contentArrivalTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
@@ -275,10 +282,10 @@ export function SignalV2BrandMonitoring({
 
   useEffect(() => {
     setShowPendingModuleBody(false);
-    if (!pendingModule || pendingModule === currentModule) return;
+    if (!pendingModule || pendingModule === currentModule && initialModuleState === "complete") return;
     const timer = window.setTimeout(() => setShowPendingModuleBody(true), 200);
     return () => window.clearTimeout(timer);
-  }, [currentModule, pendingModule]);
+  }, [currentModule, initialModuleState, pendingModule]);
 
   useEffect(() => () => {
     filterRequestRef.current?.abort();
@@ -552,8 +559,6 @@ export function SignalV2BrandMonitoring({
     navigationSequenceRef.current = sequence;
 
     const previousModule = currentModule;
-    preloadSignalWorkspaceModule(target);
-    if ((target === "monitoring" || target === "topics") && topicsNarrativesData?.contract_version === "signal-workspace-topics-serving-v1") void loadSignalV2WorkspaceTopics();
     const previousQuery = previousModule === "study"
       ? buildStudyQuery(window.location.search)
       : previousModule === "settings"
@@ -588,6 +593,7 @@ export function SignalV2BrandMonitoring({
     // workspace contract and current authorization are revalidated.
     const cachedPayload = nativeTarget ? undefined : moduleCacheRef.current.get(moduleCacheKey(target, query));
     setPendingModule(target);
+    if (initialModuleState !== "complete") setInitialModuleState("pending");
     setSidebarOpen(false);
     setError(null);
 
@@ -609,21 +615,17 @@ export function SignalV2BrandMonitoring({
             : `/api/data-os/signal/${data.workspace.id}/brand-monitoring`;
       const requestQuery = new URLSearchParams(query);
       const focus = nativeTarget && target === "mentions" ? requestQuery.get("mention") : null;
-      const response = await fetch(`${endpoint}?${requestQuery}`, {
-        cache: "no-store",
-        signal: controller.signal
-      });
+      const { response, payload } = await readSignalModule(`${endpoint}?${requestQuery}`, controller.signal,
+        () => preloadSignalWorkspaceModule(target, nativeTarget));
       if (sequence !== navigationSequenceRef.current || controller.signal.aborted) return;
       if (!response.ok) {
         if ((target === "topics" || nativeTarget) && [401, 403, 404, 409].includes(response.status)) invalidateNativeTopicEvidence();
         throw new Error(t("errors.load"));
       }
-      const payload = await response.json() as (
-        SignalBrandMonitoringV1 | SignalMentionsViewData | SignalTopicsNarrativesOverviewV1 | SignalWorkspaceOverviewV1
-      );
+      const modulePayload = payload as SignalWorkspaceModulePayload;
       if (sequence !== navigationSequenceRef.current || controller.signal.aborted) return;
       if (nativeTarget && target === "mentions") {
-        const mentions = payload as SignalMentionsViewData;
+        const mentions = modulePayload as SignalMentionsViewData;
         if (!mentions.native || mentions.native.workspace_id !== data.workspace.id) {
           invalidateNativeTopicEvidence(); throw new Error(t("errors.load"));
         }
@@ -634,20 +636,25 @@ export function SignalV2BrandMonitoring({
         }
       }
       if (nativeTarget && target !== "mentions") {
-        if (!isNativeSignalTopicsOverviewV1(payload, data.workspace.id)) {
+        if (!isNativeSignalTopicsOverviewV1(modulePayload, data.workspace.id)) {
           invalidateNativeTopicEvidence(); throw new Error(t("errors.load"));
         }
       }
-      moduleCacheRef.current.set(moduleCacheKey(target, query), payload);
-      applyModulePayload(target, payload);
+      moduleCacheRef.current.set(moduleCacheKey(target, query), modulePayload);
+      applyModulePayload(target, modulePayload);
       setCurrentModule(target);
+      failedNavigationRef.current = null;
+      setInitialModuleState("complete");
       if (historyMode === "none") window.history.replaceState(null, "", moduleHref(data.workspace.slug, target, query));
-    } catch (navigationError) {
+    } catch {
       if (controller.signal.aborted || sequence !== navigationSequenceRef.current) return;
-      setError(navigationError instanceof Error ? navigationError.message : t("errors.load"));
+      failedNavigationRef.current = { target, query: query.toString() };
+      controller.abort();
+      setError(t("errors.load"));
+      if (initialModuleState !== "complete") setInitialModuleState("failed");
       if (nativeTarget && target === "mentions") {
         setNativeMentionsUnavailable(true); setCurrentModule("mentions");
-      } else if (!cachedPayload) {
+      } else if (!cachedPayload && historyMode === "push") {
         window.history.replaceState(
           null,
           "",
@@ -663,6 +670,7 @@ export function SignalV2BrandMonitoring({
   }, [
     applyModulePayload,
     currentModule,
+    initialModuleState,
     data,
     invalidateNativeTopicEvidence,
     mentionsData,
@@ -672,6 +680,16 @@ export function SignalV2BrandMonitoring({
     triggersBarriersData,
     viewKey
   ]);
+
+  const initialNavigationRef = useRef(navigateToModule);
+  useEffect(() => { initialNavigationRef.current = navigateToModule; }, [navigateToModule]);
+  useEffect(() => {
+    if (!deferredInitialModule) return;
+    const timer = window.setTimeout(() => {
+      void initialNavigationRef.current(deferredInitialModule, "none", new URLSearchParams(window.location.search));
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [deferredInitialModule, data.workspace.id]);
 
   const navigateToStudy = useCallback(async (
     study: SignalStrategicStudyNavigationItem,
@@ -688,7 +706,6 @@ export function SignalV2BrandMonitoring({
     navigationSequenceRef.current = sequence;
 
     const previousModule = currentModule;
-    preloadSignalWorkspaceModule("study");
     const previousQuery = previousModule === "study"
       ? buildStudyQuery(window.location.search)
       : previousModule === "settings"
@@ -714,6 +731,7 @@ export function SignalV2BrandMonitoring({
       : new URLSearchParams();
     const cachedPayload = moduleCacheRef.current.get(moduleCacheKey("study", query));
     setPendingModule("study");
+    if (initialModuleState !== "complete") setInitialModuleState("pending");
     setSidebarOpen(false);
     setError(null);
 
@@ -727,22 +745,23 @@ export function SignalV2BrandMonitoring({
 
     try {
       const endpoint = `/api/data-os/signal/${data.workspace.id}/triggers-barriers`;
-      const response = await fetch(`${endpoint}?${query}`, {
-        cache: "no-store",
-        signal: controller.signal
-      });
-      const payload = await response.json() as SignalTriggersBarriersOverviewV2 & {
-        message?: string;
-      };
-      if (!response.ok) throw new Error(payload.message ?? t("errors.load"));
+      const result = await readSignalModule(`${endpoint}?${query}`, controller.signal,
+        () => preloadSignalWorkspaceModule("study"));
+      if (!result.response.ok) throw new Error(t("errors.load"));
+      const payload = result.payload as SignalTriggersBarriersOverviewV2;
       if (sequence !== navigationSequenceRef.current) return;
       moduleCacheRef.current.set(moduleCacheKey("study", query), payload);
       applyModulePayload("study", payload);
       setCurrentModule("study");
-    } catch (navigationError) {
+      failedNavigationRef.current = null;
+      setInitialModuleState("complete");
+    } catch {
       if (controller.signal.aborted || sequence !== navigationSequenceRef.current) return;
-      setError(navigationError instanceof Error ? navigationError.message : t("errors.load"));
-      if (!cachedPayload) {
+      failedNavigationRef.current = { target: "study", study };
+      controller.abort();
+      setError(t("errors.load"));
+      if (initialModuleState !== "complete") setInitialModuleState("failed");
+      if (!cachedPayload && historyMode === "push") {
         window.history.replaceState(
           null,
           "",
@@ -758,6 +777,7 @@ export function SignalV2BrandMonitoring({
   }, [
     applyModulePayload,
     currentModule,
+    initialModuleState,
     currentStudy?.id,
     data,
     mentionsData,
@@ -1314,11 +1334,21 @@ export function SignalV2BrandMonitoring({
         className={`signal-v2-main${loading ? " signal-v2-main--loading" : ""}${pendingModule ? " signal-v2-main--updating" : ""}`}
         id="signal-v2-content"
       >
-        {pendingModule && currentModule !== pendingModule ? (
+        {initialModuleState === "failed" ? (
+          <section className="signal-v2-error" role="alert">
+            <p>{t("errors.load")}</p>
+            <button className="signal-v2-filter" type="button" onClick={() => {
+              const failed = failedNavigationRef.current;
+              if (failed?.target === "study") void navigateToStudy(failed.study, "none");
+              else void navigateToModule(failed?.target ?? deferredInitialModule ?? "monitoring", "none",
+                new URLSearchParams(failed?.query ?? window.location.search));
+            }}>{t("workspaceTopics.refresh")}</button>
+          </section>
+        ) : initialModuleState === "pending" || pendingModule && currentModule !== pendingModule ? (
           <SignalV2ModuleSkeleton
             brandName={brandName}
             showBody={showPendingModuleBody}
-            variant={pendingModule === "study" ? "triggersBarriers" : pendingModule}
+            variant={pendingModule === "study" ? "triggersBarriers" : pendingModule ?? deferredInitialModule ?? "monitoring"}
           />
         ) : (
         <div className={`signal-v2-module-content${contentArriving ? " signal-v2-module-content--arriving" : ""}`}>
@@ -2014,16 +2044,51 @@ function moduleFromPathname(pathname: string): SignalStandardModule | "settings"
   return "monitoring";
 }
 
-function preloadSignalWorkspaceModule(module: SignalWorkspaceModule) {
-  if (module === "mentions") {
-    void loadSignalV2Mentions();
-    return;
+/** Module reads are GETs. One bounded retry covers a changed network or proxy outage. */
+export async function readSignalModule(url: string, signal: AbortSignal, loadModule: () => Promise<unknown>) {
+  const read = async () => {
+    const attempt = new AbortController();
+    let rejectInterrupted: (reason: unknown) => void = () => undefined;
+    const interrupted = new Promise<never>((_resolve, reject) => { rejectInterrupted = reject; });
+    const abort = () => {
+      attempt.abort(signal.reason);
+      rejectInterrupted(signal.reason ?? new DOMException("Navigation cancelled.", "AbortError"));
+    };
+    signal.addEventListener("abort", abort, { once: true });
+    const timeout = window.setTimeout(() => {
+      const error = new DOMException("Signal read timed out.", "TimeoutError");
+      attempt.abort(error);
+      rejectInterrupted(error);
+    }, 60_000);
+    if (signal.aborted) abort();
+    try {
+      const request = async () => {
+        const response = await fetch(url, { cache: "no-store", signal: attempt.signal });
+        const payload: unknown = response.ok ? await response.json() : null;
+        if (response.ok) await loadModule();
+        return { response, payload };
+      };
+      return await Promise.race([request(), interrupted]);
+    } finally {
+      window.clearTimeout(timeout);
+      signal.removeEventListener("abort", abort);
+    }
+  };
+  try {
+    const result = await read();
+    if (signal.aborted || ![502, 503, 504].includes(result.response.status)) return result;
+  } catch (error) {
+    if (signal.aborted || !(error instanceof TypeError
+      || error instanceof DOMException && error.name === "TimeoutError")) throw error;
   }
-  if (module === "topics") {
-    void loadSignalV2TopicsNarratives();
-    return;
-  }
-  if (module === "study") void loadSignalV2TriggersBarriers();
+  return read();
+}
+
+function preloadSignalWorkspaceModule(module: SignalWorkspaceModule, native = false): Promise<unknown> {
+  if (module === "mentions") return loadSignalV2Mentions();
+  if (module === "topics") return native ? loadSignalV2WorkspaceTopics() : loadSignalV2TopicsNarratives();
+  if (module === "study") return loadSignalV2TriggersBarriers();
+  return Promise.resolve();
 }
 
 function currentModulePayload(

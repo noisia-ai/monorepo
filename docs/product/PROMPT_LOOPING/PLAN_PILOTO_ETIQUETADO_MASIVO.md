@@ -213,6 +213,8 @@ Lo demás se resuelve de forma autónoma y se anota en el registro de decisiones
 
 ## Progreso
 
+- [ ] Corrección posterior a R15 (2026-11-12): resolver la apertura inicial de Menciones y el bloqueo del shell de Monitoreo. La aceptación exige Dashboard → estudio → Menciones → ficha, sin recargar, y abrir el enlace de Monitoreo con filtros.
+
 - [x] H7 · Los once archivos de origen coincidieron por SHA-256. Con 83,962 raíces en cada entorno, dev-test y UAT comparten 83,958 identidades. Sus textos exactos coincidieron en todos los casos comunes. El anexo conserva los cruces entre los cuatro segmentos y la comparación del léxico, los intereses y las poblaciones de consumidores.
 
 - [x] H7 · Se sellaron 600 casos ciegos para el auditor. Las diez cohortes de tópicos aportan 50 cada una y las de motivadores y barreras aportan otras 100. Son 598 raíces distintas por el solapamiento entre cohortes. Para cotejar las 22 causas del estudio de referencia se obtuvieron otras 100 raíces distintas, 50 por dirección, sin compartir raíz ni texto normalizado con las muestras ciegas. Las claves permanecen bajo custodia separada.
@@ -352,6 +354,8 @@ Lo demás se resuelve de forma autónoma y se anota en el registro de decisiones
 
 ## Sorpresas y descubrimientos
 
+- 2026-11-12: la pantalla de Monitoreo vacía reportada corresponde al fallback de ruta, con navegación decorativa todavía sin enlaces. Chrome registró ERR_NETWORK_CHANGED en el documento. El flujo SPA de Menciones convierte una excepción de transporte en no disponible y no tiene recuperación automática. El éxito tras recargar documentado anteriormente no satisface la apertura inicial requerida.
+
 - H7 · El total de raíces elegibles coincide entre entornos aunque hay cuatro identidades exclusivas en cada uno. Entre las comunes, 1,005 pasaron de publicidad en dev-test a conversación en UAT y 556 hicieron el recorrido contrario. Los 271 casos de sólo hashtags permanecieron en ese segmento. Para las cuatro identidades exclusivas por entorno, los registros de importación acreditan cuatro pares de versiones de texto que comparten un identificador de proveedor. Los dos entornos cargaron los archivos en orden contrario. El importador conservó la primera versión y registró la posterior como duplicada.
 
 - H7 · El cambio de filtro devolvió HTTP 500. Studio agotó en diez segundos la espera por una conexión mientras consultaba el rol del usuario. La interfaz también solicitaba detalles de tópicos en segundo plano al recibir un resumen nuevo. El cierre de esa petición en el navegador podía dejar la consulta en curso en PostgreSQL.
@@ -479,6 +483,8 @@ Lo demás se resuelve de forma autónoma y se anota en el registro de decisiones
 - Dos lotes devolvieron referencias válidas dentro de la muestra de 30 pero superaron el máximo de diez referencias por campo. La comprobación privada de las respuestas originales y de reparación encontró entre 11 y 30 referencias en los campos rechazados.
 
 ## Registro de decisiones
+
+- 2026-11-12: entregar primero el shell autorizado para los enlaces explícitos all_conversations y cargar sus datos mediante las APIs existentes. Recuperar lecturas ante interrupciones transitorias con intentos acotados y cancelación por navegación. Verificar montaje real del componente y recorrido autenticado de UAT antes de cerrar.
 
 - H7 · El cotejo usa dos instantáneas de sólo lectura y la procedencia que consulta Signal en cada entorno. Se informa por separado si coincide la identidad de una raíz, el texto exacto y el segmento que el lector le asigna. La comparación de causas mantiene su muestra independiente de la reservada al auditor.
 
