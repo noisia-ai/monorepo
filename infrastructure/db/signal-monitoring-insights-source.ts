@@ -11,6 +11,18 @@ export type MonitoringInsightContextV1={workspace_id:string;actor_user_id:string
  conversation_segment:SignalConversationSegmentV1;locale:'es-MX'|'en-US'};
 export type MonitoringInsightProofV1={input_revision:string;metadata_revision:string;enabled:boolean;timezone:string;map_identity:string;entity_context_digest:string;entity_not_after:string|null;observed_at:string};
 export type MonitoringInsightSnapshotV1={packet:WorkspaceMonitoringInsightPacketV1|null;proof:MonitoringInsightProofV1;not_after:string|null};
+/** PostgreSQL +infinity is an absent upper bound, never an invalid JS date.
+ * Keep malformed/negative-infinite dates closed instead of removing a limit. */
+export function monitoringInsightDeadlineMillisV1(value:unknown):number{
+ if(value==='infinity'||value===Infinity)return Infinity;
+ const deadline=value instanceof Date?value.getTime():typeof value==='string'?Date.parse(value):NaN;
+ if(!Number.isFinite(deadline))throw Error('monitoring_insights_deadline_invalid');
+ return deadline;
+}
+export function monitoringInsightNotAfterV1(values:readonly unknown[]):string|null{
+ const deadline=Math.min(Infinity,...values.filter(value=>value!==null&&value!==undefined).map(monitoringInsightDeadlineMillisV1));
+ return deadline===Infinity?null:new Date(deadline).toISOString();
+}
 export async function readMonitoringInsightProofV1(client:Pick<PoolClient,'query'>,workspace:string):Promise<MonitoringInsightProofV1>{
  const row=(await client.query<Omit<MonitoringInsightProofV1,'entity_context_digest'>>(`SELECT COALESCE(state.input_revision,0)::text input_revision,
   COALESCE(epoch.revision,0)::text metadata_revision,w.timezone,
@@ -57,8 +69,7 @@ export async function buildMonitoringInsightSnapshotV1(client:PoolClient,args:Mo
  const windows=mode==='preview'
   ?await native.loadSignalWorkspaceMonitoringWindowsWithClientV1(client,args)
   :await native.loadSignalWorkspaceMonitoringWindowsForDispatchWithClientV1(client,args);
- const boundaries=[windows?.source_not_after,proof.entity_not_after].filter((value):value is string=>Boolean(value));
- const not_after=boundaries.length?new Date(Math.min(...boundaries.map(value=>Date.parse(value)))).toISOString():null;
+ const not_after=monitoringInsightNotAfterV1([windows?.source_not_after,proof.entity_not_after]);
  if(!windows)return{packet:null,proof,not_after};
  const dates=workspaceMonitoringInsightWindowsV1({from:windows.available_dates.date_from,through:windows.anchor_date});
  if(!dates||!windows.current?.monitoring.denominator)return{packet:null,proof,not_after};

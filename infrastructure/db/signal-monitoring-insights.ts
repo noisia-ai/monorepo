@@ -8,7 +8,7 @@ import {
 } from '@noisia/query-engine';
 import {loadSignalWorkspaceCapabilitiesStoreV1} from './signal-workspace-capabilities';
 import {admitSignalProcessingWithClientV1} from './signal-processing-policy';
-import {buildMonitoringInsightSnapshotV1,readMonitoringInsightProofV1,monitoringInsightProofKeyV1,lockMonitoringInsightInputsV1,
+import {buildMonitoringInsightSnapshotV1,readMonitoringInsightProofV1,monitoringInsightProofKeyV1,lockMonitoringInsightInputsV1,monitoringInsightDeadlineMillisV1,
  type MonitoringInsightSnapshotV1,type MonitoringInsightProofV1,type MonitoringInsightContextV1} from './signal-monitoring-insights-source';
 
 type Database=Pick<Pool,'query'|'connect'>;
@@ -115,7 +115,7 @@ function requestScope(args:Access,current:Policy,proof:MonitoringInsightProofV1)
  policy_id:current.policy_id,policy_digest:current.policy_digest,budget_date:current.budget_date,
  configuration:workspaceMonitoringInsightConfigurationV1(args.workspace_id),source:monitoringInsightProofKeyV1(proof)});}
 function currentSnapshot(snapshot:MonitoringInsightSnapshotV1,proof:MonitoringInsightProofV1){return monitoringInsightProofKeyV1(snapshot.proof)===monitoringInsightProofKeyV1(proof)
- &&(!snapshot.not_after||Date.parse(snapshot.not_after)>Date.parse(proof.observed_at));}
+ &&(!snapshot.not_after||monitoringInsightDeadlineMillisV1(snapshot.not_after)>Date.parse(proof.observed_at));}
 function allowed(args:Access,current:Policy,proof:MonitoringInsightProofV1){
  const flags=runtime(args);
  if(!flags.enabled||!proof.enabled)return 'monitoring_insights_disabled';
@@ -156,8 +156,8 @@ function quoteFor(args:Access,current:Policy,snapshot:MonitoringInsightSnapshotV
  const request=buildWorkspaceMonitoringInsightRequestV1(snapshot.packet,workspaceMonitoringInsightConfigurationV1(args.workspace_id));
  if(request.reserved_micro_usd>cap)fail('monitoring_insights_budget_below_quote',422);
  const instant=Date.parse(snapshot.proof.observed_at),slot=Math.floor(instant/300000)*300000;
- const expires=Math.min(slot+300000,Date.parse(current.valid_until!),Date.parse(current.day_end),snapshot.not_after?Date.parse(snapshot.not_after):Infinity);
- if(expires<=Date.now())fail('monitoring_insights_quote_expired');
+ const expires=Math.min(slot+300000,monitoringInsightDeadlineMillisV1(current.valid_until),monitoringInsightDeadlineMillisV1(current.day_end),snapshot.not_after?monitoringInsightDeadlineMillisV1(snapshot.not_after):Infinity);
+ if(!Number.isFinite(expires)||expires<=Date.now())fail('monitoring_insights_quote_expired');
  const scope=requestScope(args,current,snapshot.proof),expires_at=new Date(expires).toISOString();
  const seal={workspace_id:args.workspace_id,actor_user_id:args.actor_user_id,scope,packet_digest:request.packet_digest,
   request_digest:request.request_digest,policy_id:current.policy_id,policy_digest:current.policy_digest,
