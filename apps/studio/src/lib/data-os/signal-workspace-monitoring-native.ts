@@ -69,7 +69,7 @@ export function buildNativeSignalMonitoringV1(
   const sentimentKnown = monitoring?.source_coverage.sentiment_known ?? 0;
   const sentimentBuckets = monitoring && sentimentKnown > 0 ? (["positive", "neutral", "negative"] as const).map(key => ({
     key, label: key, value: monitoring.sentiment[key], denominator: native.denominator,
-    sample_size: sentimentKnown, state: metricState
+    sample_size: monitoring.sentiment[key], state: metricState
   })) : [];
 
   return {

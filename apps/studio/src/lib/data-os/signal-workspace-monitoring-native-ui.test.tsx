@@ -218,7 +218,7 @@ for (const locale of ["es-MX", "en-US"]) {
     const html = await render(locale, false);
     assert.match(html, /signal-v2-attention-metrics/);
     assert.match(html, /signal-v2-conversation-columns/);
-    assert.ok(html.includes(locale === "es-MX" ? "3 señales positivas" : "3 positive signals"));
+    assert.ok(html.includes(locale === "es-MX" ? "0 señales positivas" : "0 positive signals"));
   });
   test(`${locale}: a classified interest is shown without claiming open discovery or pending classification`, async () => {
     const html = await render(locale, true, defined);

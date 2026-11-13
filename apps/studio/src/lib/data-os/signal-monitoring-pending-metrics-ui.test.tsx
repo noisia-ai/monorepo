@@ -228,6 +228,49 @@ async function render(locale: string, data = computed()) {
       workspaceOptions: [], workspaceSubjectId: "synthetic-brand", viewKey: "all_conversations" })));
 }
 for (const locale of ["es-MX", "en-US"]) {
+  test(`${locale}: highlighted conversation headings count the two actual rows in each column`, async () => {
+    const source = structuredClone(fullNative);
+    const example = source.monitoring!.highlights.positive[0]!;
+    source.monitoring!.highlights = { positive: [1, 2].map(index => ({ ...example, id: `synthetic-positive-${index}`,
+      text: `Synthetic positive highlight ${index}` })), negative: [1, 2].map(index => ({ ...example, id: `synthetic-negative-${index}`,
+      text: `Synthetic negative highlight ${index}`, sentiment: -1 })) };
+    const html = await render(locale, buildNativeSignalMonitoringV1(structuredClone(base), source));
+    assert.ok(html.includes(locale === "es-MX" ? "2 señales positivas" : "2 positive signals"));
+    assert.ok(html.includes(locale === "es-MX" ? "2 señales negativas" : "2 negative signals"));
+    assert.doesNotMatch(html, /3 señales positivas|3 señales negativas|3 positive signals|3 negative signals/u);
+    for (const tone of ["positive", "negative"]) for (const index of [1, 2]) {
+      assert.equal(html.split(`Synthetic ${tone} highlight ${index}`).length - 1, 1);
+    }
+  });
+  test(`${locale}: the real sentiment donut shows each category count and sums only classified mentions`, async () => {
+    const source = structuredClone(fullNative);
+    source.denominator = 11;
+    source.series[0]!.mention_count = 11;
+    source.monitoring!.denominator = 11;
+    source.monitoring!.summary.mentions = 11;
+    source.monitoring!.summary.classified_sentiment = 8;
+    source.monitoring!.source_coverage.sentiment_known = 8;
+    source.monitoring!.sentiment = { positive: 2, neutral: 5, negative: 1, unclassified: 3 };
+    source.monitoring!.series[0]!.mentions = 11;
+    source.monitoring!.series[0]!.sentiment = { positive: 2, neutral: 5, negative: 1, classified: 8 };
+    const data = buildNativeSignalMonitoringV1(structuredClone(base), source);
+    const html = await render(locale, data);
+    const legend = html.match(/class="signal-v2-sentiment__legend">([\s\S]*?)<\/div>/u)?.[1];
+    assert.ok(legend);
+    const entries = [...legend.matchAll(/<span>(.*?)<\/span><strong>(.*?)<\/strong>/gu)]
+      .map(match => ({ label: match[1], count: Number(match[2]) }));
+    assert.deepEqual(entries, (locale === "es-MX" ? ["Positivo", "Neutral", "Negativo"] : ["Positive", "Neutral", "Negative"])
+      .map((label, index) => ({ label, count: [2, 5, 1][index] })));
+    const center = html.match(/class="signal-v2-sentiment__center"><span>[^<]*<\/span><strong>(\d+)<\/strong>/u)?.[1];
+    assert.equal(Number(center), 8);
+    assert.equal(entries.reduce((sum, entry) => sum + entry.count, 0), Number(center));
+    assert.ok(html.includes(locale === "es-MX" ? "8 de 11 menciones" : "8 of 11 mentions"));
+    assert.equal(data.conversation_structure.summary.classified_sentiment, 8);
+    assert.equal(data.coverage.mentions - data.conversation_structure.summary.classified_sentiment, 3);
+    assert.equal(source.monitoring!.sentiment.unclassified, 3);
+    assert.deepEqual(data.sentiment.buckets.map(bucket => [bucket.value, bucket.sample_size, bucket.denominator]),
+      [[2, 2, 11], [5, 5, 11], [1, 1, 11]]);
+  });
   for (const [knownThreads, knownRoles] of [[0, 0], [0, 3], [3, 0]] as const) {
     test(`${locale}: thread coverage ${knownThreads} and role coverage ${knownRoles} independently govern numbers and series`, async () => {
       const source = structuredClone(fullNative);
@@ -343,10 +386,11 @@ for (const locale of ["es-MX", "en-US"]) {
     const html = await render(locale, data);
     assert.match(html, /Synthetic highlighted conversation|Synthetic evidence/);
     assert.match(html, /signal-v2-conversation-columns/);
+    assert.ok(html.includes(locale === "es-MX" ? "1 señal positiva" : "1 positive signal"));
   });
   test(`${locale}: legacy monitoring retains its current breakdowns and evidence presentation`, async () => {
     const html = await render(locale, base);
     assert.match(html, /signal-v2-attention-metrics/); assert.match(html, /signal-v2-conversation-columns/);
-    assert.ok(html.includes(locale === "es-MX" ? "3 señales positivas" : "3 positive signals"));
+    assert.ok(html.includes(locale === "es-MX" ? "0 señales positivas" : "0 positive signals"));
   });
 }
