@@ -61,8 +61,10 @@ export function useNativeMonitoringInsights(workspaceId: string | null, active: 
       }
     } catch (reason) {
       if (!controller.signal.aborted && sequenceRef.current === ticket) {
-        if (reason && typeof reason === "object" && "status" in reason && [401, 403, 404, 409].includes(Number(reason.status))) {
-          setView(null); setQuote(null); intentRef.current = null;
+        if (reason && typeof reason === "object" && "status" in reason) {
+          const status = Number(reason.status);
+          if ([400, 422].includes(status)) { setQuote(null); setSubmitted(false); intentRef.current = null; }
+          if ([401, 403, 404, 409].includes(status)) { setView(null); setQuote(null); intentRef.current = null; }
         }
         setError(reason instanceof Error ? reason.message : fallbackMessage);
       }

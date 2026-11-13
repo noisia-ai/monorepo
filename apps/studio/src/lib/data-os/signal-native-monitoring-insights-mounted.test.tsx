@@ -162,3 +162,18 @@ test("revoked authorization clears a displayed quote and capability", async () =
     assert.ok(!mounted.element.textContent!.includes("Confirm analysis")); assert.ok(!mounted.element.textContent!.includes("up to USD 2"));
   } finally { await mounted.close(); }
 });
+test("a definitely rejected quote may be replaced while an uncertain POST keeps its original identity", async () => {
+  let reject = true; globalThis.fetch = async (url, options) => {
+    if (options?.method === "POST" && reject) return Response.json({ message: "Quote expired" }, { status: 422 });
+    return Response.json(String(url).includes("/quote?") ? quote : view);
+  };
+  const mounted = await mount();
+  try {
+    await until(() => mounted.element.textContent!.includes("up to USD 2")); await click("Analyze insights");
+    await until(() => mounted.element.textContent!.includes("Confirm analysis")); await click("Confirm analysis");
+    await until(() => mounted.element.textContent!.includes("Quote expired"));
+    assert.ok(!mounted.element.textContent!.includes("Retry the same request"));
+    reject = false; await click("Analyze insights"); await until(() => mounted.element.textContent!.includes("Confirm analysis"));
+    assert.ok(mounted.element.textContent!.includes("Cancel"));
+  } finally { await mounted.close(); }
+});
