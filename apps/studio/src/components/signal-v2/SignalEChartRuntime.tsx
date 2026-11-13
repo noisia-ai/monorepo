@@ -90,7 +90,8 @@ export function SignalEChartRuntime({
 
     const chart = echarts.init(element, undefined, {
       renderer: "canvas",
-      useDirtyRect: true
+      // Deferred animated charts must repaint fully without requiring a resize.
+      useDirtyRect: false
     });
     chartRef.current = chart;
 
