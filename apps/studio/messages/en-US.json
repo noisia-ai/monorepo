@@ -2040,8 +2040,8 @@
       "conversations": {
         "eyebrow": "Prioritized evidence",
         "title": "Highlighted conversations in the period",
-        "positive": "3 positive signals",
-        "negative": "3 negative signals",
+        "positive": "{count, plural, one {# positive signal} other {# positive signals}}",
+        "negative": "{count, plural, one {# negative signal} other {# negative signals}}",
         "emptyPositive": "No positively classified mentions in this period.",
         "emptyNegative": "No negatively classified mentions in this period.",
         "openOriginal": "Open original conversation",

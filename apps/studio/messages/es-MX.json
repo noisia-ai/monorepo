@@ -2038,8 +2038,8 @@
       "conversations": {
         "eyebrow": "Evidencia priorizada",
         "title": "Conversaciones destacadas del periodo",
-        "positive": "3 señales positivas",
-        "negative": "3 señales negativas",
+        "positive": "{count, plural, one {# señal positiva} other {# señales positivas}}",
+        "negative": "{count, plural, one {# señal negativa} other {# señales negativas}}",
         "emptyPositive": "No hay menciones positivas clasificadas en este periodo.",
         "emptyNegative": "No hay menciones negativas clasificadas en este periodo.",
         "openOriginal": "Abrir conversación original",
