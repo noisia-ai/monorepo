@@ -57,7 +57,8 @@ export async function assertNativeMonitoringInsightsV1(args:{database:Pool;query
   assert.equal((await insights.reserveMonitoringInsightCallV1({database:args.database,lease})).id,call.id);
   const originalTimezone=(await query('SELECT timezone FROM signal_workspaces WHERE id=$1',[args.workspace_id])).rows[0].timezone;
   await query('UPDATE signal_workspaces SET timezone=$2 WHERE id=$1',[args.workspace_id,originalTimezone==='UTC'?'America/Mexico_City':'UTC']);
-  await assert.rejects(insights.markMonitoringInsightCallSentV1({database:args.database,lease,call_id:call.id,attempt_token:call.attempt_token}),/monitoring_insights_authority_invalid/);
+  await assert.rejects(insights.markMonitoringInsightCallSentV1({database:args.database,lease,call_id:call.id,attempt_token:call.attempt_token}),/monitoring_insights_(authority_invalid|source_changed)/);
+  await rejectedSql(args.database,`UPDATE signal_monitoring_insight_calls SET state='in_flight',sent_at=clock_timestamp() WHERE id=$1`,[call.id],/monitoring_insights_authority_invalid/);
   assert.equal((await query('SELECT state FROM signal_monitoring_insight_calls WHERE id=$1',[call.id])).rows[0].state,'reserved');
   await query('UPDATE signal_workspaces SET timezone=$2 WHERE id=$1',[args.workspace_id,originalTimezone]);
   assert.equal(await insights.markMonitoringInsightCallSentV1({database:args.database,lease,call_id:call.id,attempt_token:call.attempt_token}),true);
@@ -137,6 +138,8 @@ export async function assertNativeMonitoringInsightsV1(args:{database:Pool;query
   // Governance changes while HTTP is in flight. Persist/settle/application remain
   // evidence-only; a completed owner does not make that stale packet serveable.
   await query(`UPDATE record_feature_values SET feature_value='"joy"' WHERE id=$1`,[feature]);
+  assert.equal(await insights.markMonitoringInsightCallSentV1({database:args.database,lease:thirdLease,call_id:thirdCall.id,attempt_token:thirdCall.attempt_token}),false,'a changed source cannot turn another in-flight sender into definitely-not-sent');
+  assert.equal((await query('SELECT state FROM signal_monitoring_insight_calls WHERE id=$1',[thirdCall.id])).rows[0].state,'in_flight');
   const thirdRaw=Buffer.from(raw.toString().replace(nextLease.request.packet_digest,thirdLease.request.packet_digest));
   const thirdReceipt={database:args.database,call_id:thirdCall.id,attempt_token:thirdCall.attempt_token,
    receipt:{bytes:thirdRaw,http_status:200,provider_request_id:'synthetic-after-revocation',complete:true}};
@@ -149,6 +152,34 @@ export async function assertNativeMonitoringInsightsV1(args:{database:Pool;query
   const beforeDelete=await readMonitoringInsightProofV1(args.database,args.workspace_id);
   await query('DELETE FROM record_feature_values WHERE id=$1',[feature]);
   assert.notEqual((await readMonitoringInsightProofV1(args.database,args.workspace_id)).metadata_revision,beforeDelete.metadata_revision);
+  await query(`INSERT INTO record_feature_values(id,subject_type,subject_id,feature_key,feature_value,source) VALUES($1,'mention',$2,'emotion','"surprise"','synthetic-monthly-brand')`,[feature,root]);
+  const brandPlan=await quoteMonitoringInsightPolicyV1(policyArgs);
+  await provisionMonitoringInsightPolicyV1({...policyArgs,plan_digest:brandPlan.plan_digest});
+  const brandQuote=await insights.quoteWorkspaceMonitoringInsightsV1({...access,budget_cap_micro_usd:2000000});
+  const brandRun=await insights.requestWorkspaceMonitoringInsightsV1({...access,idempotency_key:randomUUID(),quote_digest:brandQuote.quote_digest,budget_cap_micro_usd:2000000});
+  const brandLease=await insights.claimMonitoringInsightRunV1({database:args.database,run_id:brandRun.run_id});assert.ok(brandLease);
+  const brandCall=await insights.reserveMonitoringInsightCallV1({database:args.database,lease:brandLease});
+  const brand=(await query(`SELECT b.id,b.display_name,b.name FROM signal_workspaces w JOIN brands b ON b.id=w.brand_id WHERE w.id=$1`,[args.workspace_id])).rows[0];
+  const identityQueries:string[]=[];
+  const identityReader={query:((sql:string,values?:unknown[])=>{identityQueries.push(sql);return args.database.query(sql,values);}) as Pool['query']};
+  const beforeBrand=await readMonitoringInsightProofV1(identityReader,args.workspace_id);
+  for(const sql of identityQueries)assert.doesNotMatch(sql,/FROM mentions|FROM signal_mention_facet_labels|FROM brand_os_objectives|FROM brand_os_briefs/u,'cheap identity proof never scans roots or narrative knowledge');
+  assert.equal(beforeBrand.entity_context_digest,(await query('SELECT entity_context_digest FROM signal_mass_labeling_maps WHERE id=$1',[args.map_id])).rows[0].entity_context_digest);
+
+  await query('UPDATE brands SET display_name=$2 WHERE id=$1',[brand.id,(brand.display_name??brand.name)+' changed identity']);
+  const afterBrand=await readMonitoringInsightProofV1(args.database,args.workspace_id);
+  assert.equal(afterBrand.input_revision,beforeBrand.input_revision,'Brand OS identity does not pretend to be a corpus edit');
+  assert.notEqual(afterBrand.entity_context_digest,beforeBrand.entity_context_digest,'same native canonical digest detects the legitimate identity edit');
+  assert.notEqual(afterBrand.metadata_revision,beforeBrand.metadata_revision,'direct SQL source fence sees the opted-in identity epoch');
+  await rejectedSql(args.database,`UPDATE signal_monitoring_insight_calls SET state='in_flight',sent_at=clock_timestamp() WHERE id=$1`,[brandCall.id],/monitoring_insights_authority_invalid/);
+  await assert.rejects(insights.markMonitoringInsightCallSentV1({database:args.database,lease:brandLease,call_id:brandCall.id,attempt_token:brandCall.attempt_token}),/monitoring_insights_(authority_invalid|source_changed)/);
+  assert.equal((await query('SELECT state FROM signal_monitoring_insight_calls WHERE id=$1',[brandCall.id])).rows[0].state,'reserved');
+  assert.equal((await insights.loadWorkspaceMonitoringInsightsV1(access)).monthly_insights.items.length,0,'native stale identity also hides cached monthly cards');
+  await query('UPDATE brands SET display_name=$2 WHERE id=$1',[brand.id,brand.display_name]);
+  assert.equal((await insights.reserveMonitoringInsightCallV1({database:args.database,lease:brandLease})).id,brandCall.id,'restoration never creates another call');
+  await insights.failMonitoringInsightRunV1({database:args.database,lease:brandLease,call_id:brandCall.id,attempt_token:brandCall.attempt_token,outcome:'definitely_not_sent',error_code:'monitoring_insights_source_changed'});
+  assert.equal((await query('SELECT count(*)::int n FROM signal_monitoring_insight_calls WHERE run_id=$1',[brandRun.run_id])).rows[0].n,1);
+
  }finally{
   if(!setupCommitted)await setup.query('ROLLBACK');
   setup.release();

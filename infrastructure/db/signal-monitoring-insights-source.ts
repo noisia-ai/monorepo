@@ -1,27 +1,35 @@
 import type {PoolClient} from 'pg';
 import {
  buildWorkspaceMonitoringInsightCandidatesV1,workspaceMonitoringInsightWindowsV1,
- signalWorkspaceEmbeddingDigestV1 as digest,
+ signalWorkspaceEmbeddingDigestV1 as digest,entityContextDigestV1,
  type WorkspaceInsightMetricsV1,type WorkspaceMonitoringInsightPacketV1,type SignalConversationSegmentV1,
 } from '@noisia/query-engine';
 import * as native from './signal-workspace-topics-serving';
+import {loadFacetEntityContextV1} from './signal-mention-facets';
 
 export type MonitoringInsightContextV1={workspace_id:string;actor_user_id:string;
  conversation_segment:SignalConversationSegmentV1;locale:'es-MX'|'en-US'};
-export type MonitoringInsightProofV1={input_revision:string;metadata_revision:string;enabled:boolean;timezone:string;map_identity:string;observed_at:string};
+export type MonitoringInsightProofV1={input_revision:string;metadata_revision:string;enabled:boolean;timezone:string;map_identity:string;entity_context_digest:string;entity_not_after:string|null;observed_at:string};
 export type MonitoringInsightSnapshotV1={packet:WorkspaceMonitoringInsightPacketV1|null;proof:MonitoringInsightProofV1;not_after:string|null};
 export async function readMonitoringInsightProofV1(client:Pick<PoolClient,'query'>,workspace:string):Promise<MonitoringInsightProofV1>{
- const row=(await client.query<MonitoringInsightProofV1>(`SELECT COALESCE(state.input_revision,0)::text input_revision,
+ const row=(await client.query<Omit<MonitoringInsightProofV1,'entity_context_digest'>>(`SELECT COALESCE(state.input_revision,0)::text input_revision,
   COALESCE(epoch.revision,0)::text metadata_revision,w.timezone,
   signal_monitoring_insights_map_identity_v1(w.id) map_identity,
   EXISTS(SELECT 1 FROM signal_workspace_features WHERE workspace_id=w.id AND feature='monitoring_insights') enabled,
+  (SELECT min(boundary)::text FROM competitors competitor JOIN brand_seeds seed ON seed.id=competitor.competitor_brand_seed_id
+   CROSS JOIN LATERAL(VALUES(competitor.effective_from),(competitor.effective_to)) bounds(boundary)
+   WHERE competitor.brand_id=w.brand_id AND competitor.status='current' AND seed.active AND boundary>clock_timestamp()) entity_not_after,
   clock_timestamp()::text observed_at
   FROM signal_workspaces w LEFT JOIN signal_corpus_preparation_input_state state ON state.workspace_id=w.id
   LEFT JOIN signal_monitoring_insight_input_state epoch ON epoch.workspace_id=w.id WHERE w.id=$1`,[workspace])).rows[0];
- if(!row)throw Error('monitoring_insights_workspace_unavailable');return row;
+ if(!row)throw Error('monitoring_insights_workspace_unavailable');
+ // Canonical identity is shared with native mapCurrent. This reads only small
+ // governed identity rows, never inspectFacetContextChange's affected roots.
+ const context=await loadFacetEntityContextV1(client,workspace,{identity_only:true});
+ return{...row,entity_context_digest:entityContextDigestV1(context)};
 }
 export const monitoringInsightProofKeyV1=(proof:MonitoringInsightProofV1)=>digest({input_revision:proof.input_revision,
- metadata_revision:proof.metadata_revision,enabled:proof.enabled,timezone:proof.timezone,map_identity:proof.map_identity});
+ metadata_revision:proof.metadata_revision,enabled:proof.enabled,timezone:proof.timezone,map_identity:proof.map_identity,entity_context_digest:proof.entity_context_digest});
 
 /** Only private processing callers take these locks, after policy/day/actor locks.
  * The epoch trigger runs after existing corpus revision statement triggers. */
@@ -49,7 +57,8 @@ export async function buildMonitoringInsightSnapshotV1(client:PoolClient,args:Mo
  const windows=mode==='preview'
   ?await native.loadSignalWorkspaceMonitoringWindowsWithClientV1(client,args)
   :await native.loadSignalWorkspaceMonitoringWindowsForDispatchWithClientV1(client,args);
- const not_after=windows?.source_not_after?new Date(windows.source_not_after).toISOString():null;
+ const boundaries=[windows?.source_not_after,proof.entity_not_after].filter((value):value is string=>Boolean(value));
+ const not_after=boundaries.length?new Date(Math.min(...boundaries.map(value=>Date.parse(value)))).toISOString():null;
  if(!windows)return{packet:null,proof,not_after};
  const dates=workspaceMonitoringInsightWindowsV1({from:windows.available_dates.date_from,through:windows.anchor_date});
  if(!dates||!windows.current?.monitoring.denominator)return{packet:null,proof,not_after};
