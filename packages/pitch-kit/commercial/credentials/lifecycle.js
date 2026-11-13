@@ -1,0 +1,28 @@
+/* Credenciales · lifecycle. Binds each <svg data-anim="name"> to its animation in LIB, draws every
+   animation on its last frame, plays the one on the active slide from 0, and prints last frames. */
+const deck=document.querySelector('deck-stage');
+let raf=null, built=false; const ST={};
+function build(){ if(built) return; built=true;
+  const slides=[...deck.querySelectorAll(':scope > section')];
+  slides.forEach((s,k)=>{
+    const svg=s.querySelector('svg[data-anim]'); if(!svg) return;
+    const A=LIB[svg.dataset.anim]; if(!A){console.warn('no animation',svg.dataset.anim);return}
+    ANIMS[k]=A; ST[k]=A.setup(svg); A.render(ST[k],A.dur);
+  });
+}
+function play(idx){
+  cancelAnimationFrame(raf);
+  for(const k in ANIMS) if(+k!==idx) ANIMS[k].render(ST[k],ANIMS[k].dur);
+  const A=ANIMS[idx]; if(!A) return;
+  const t0=performance.now();
+  const step=now=>{const t=(now-t0)/1000;A.render(ST[idx],Math.min(t,A.dur));if(t<A.dur) raf=requestAnimationFrame(step)};
+  A.render(ST[idx],0); raf=requestAnimationFrame(step);
+}
+document.fonts.ready.then(()=>{
+  build(); paintIcons(document);
+  const cur=deck.querySelectorAll(':scope > section'); let idx=0;
+  cur.forEach((s,i)=>{if(getComputedStyle(s).visibility!=='hidden')idx=i});
+  play(idx);
+});
+deck.addEventListener('slidechange',e=>{ if(built) play(e.detail.index) });
+window.addEventListener('beforeprint',()=>{cancelAnimationFrame(raf);for(const k in ANIMS)ANIMS[k].render(ST[k],ANIMS[k].dur)});
