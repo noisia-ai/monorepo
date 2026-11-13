@@ -22,6 +22,9 @@ export async function readClassicPolicyActiveWorkV1(client:Pick<import('pg').Poo
    EXISTS(SELECT 1 FROM signal_topic_catalog_executions r WHERE r.workspace_id=w.id AND r.status IN('queued','running')) OR
    EXISTS(SELECT 1 FROM signal_topic_consolidation_executions r WHERE r.workspace_id=w.id AND r.status IN('queued','running')) OR
    EXISTS(SELECT 1 FROM signal_topic_editorial_executions r WHERE r.workspace_id=w.id AND r.status IN('queued','running','review_ready')) OR
+   EXISTS(SELECT 1 FROM signal_monitoring_insight_runs r WHERE r.workspace_id=w.id AND
+    (r.status IN('queued','running','outcome_unknown') OR EXISTS(SELECT 1 FROM signal_monitoring_insight_calls c
+     WHERE c.run_id=r.id AND c.state IN('reserved','in_flight','response_persisted','outcome_unknown')))) OR
    EXISTS(SELECT 1 FROM signal_interest_decision_owners_v1 r WHERE r.workspace_id=w.id AND r.status IN('open','ready','blocked'))
   )) pending`,[organizationId])).rows[0];
  const labeling=await readMfpPolicySwitchBlockersV1(client,organizationId);
