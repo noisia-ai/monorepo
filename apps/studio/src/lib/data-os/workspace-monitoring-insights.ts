@@ -1,6 +1,10 @@
+import {canManageCorpus} from '@/lib/auth/roles';
 import {MonitoringInsightsError,type MonitoringInsightAccessV1} from '@noisia/db';
 import type {SignalConversationSegmentV1} from '@noisia/query-engine';
 
+export function requireMonitoringInsightManagerV1(role:string){
+ if(!canManageCorpus(role))throw new MonitoringInsightsError('monitoring_insights_forbidden',403);
+}
 export const monitoringInsightHeadersV1={'Cache-Control':'private, no-store'};
 /** Only the native request context is accepted. Page dates, supplied packets,
  * provider bodies and arbitrary modes are never forwarded to the store. */

@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import {monitoringInsightBodyV1,monitoringInsightContextV1,monitoringInsightErrorV1} from './workspace-monitoring-insights';
+import {requireMonitoringInsightManagerV1,monitoringInsightBodyV1,monitoringInsightContextV1,monitoringInsightErrorV1} from './workspace-monitoring-insights';
 import {MonitoringInsightsError} from '@noisia/db';
 test('native insights accept only the bound segment/locale and fixed explicit budget',()=>{
+ assert.doesNotThrow(()=>requireMonitoringInsightManagerV1('noisia_admin'));
+ assert.throws(()=>requireMonitoringInsightManagerV1('client_admin'));
  assert.deepEqual(monitoringInsightContextV1(new Request('https://studio.invalid/insights')),{conversation_segment:'conversation',locale:'es-MX'});
  assert.deepEqual(monitoringInsightContextV1(new Request('https://studio.invalid/insights?conversation_segment=all&locale=en-US')),{conversation_segment:'all',locale:'en-US'});
  for(const query of ['date_from=2026-01-01','conversation_segment=conversation&conversation_segment=all','locale=pt-BR'])

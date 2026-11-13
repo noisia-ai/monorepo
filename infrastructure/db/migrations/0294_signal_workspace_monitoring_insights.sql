@@ -198,18 +198,25 @@ BEGIN
  SELECT * INTO r FROM signal_monitoring_insight_runs WHERE id=target_run;
  SELECT * INTO a FROM signal_processing_admissions WHERE id=r.admission_id;
  SELECT * INTO p FROM signal_processing_policy_versions WHERE id=a.policy_version_id;
- IF r.id IS NULL OR a.id IS NULL OR r.status<>'running' OR NOT COALESCE(r.execution_expires_at>clock_timestamp(),false)
-  OR NOT EXISTS(SELECT 1 FROM signal_workspace_features WHERE workspace_id=r.workspace_id AND feature='monitoring_insights')
-  OR r.source_proof->>'input_revision' IS DISTINCT FROM (SELECT input_revision::text FROM signal_corpus_preparation_input_state WHERE workspace_id=r.workspace_id)
-  OR r.source_proof->>'metadata_revision' IS DISTINCT FROM (SELECT revision::text FROM signal_monitoring_insight_input_state WHERE workspace_id=r.workspace_id)
-  OR r.source_proof->>'map_identity' IS DISTINCT FROM signal_monitoring_insights_map_identity_v1(r.workspace_id)
-  OR r.source_not_after<=clock_timestamp() THEN
-  RAISE EXCEPTION 'monitoring_insights_authority_invalid' USING ERRCODE='23514'; END IF;
+ IF r.id IS NULL OR a.id IS NULL THEN RAISE EXCEPTION 'monitoring_insights_authority_invalid' USING ERRCODE='23514'; END IF;
  -- Reuse the common policy/date/actor/config checks and lock order. No fake engine
  -- ledger is supplied; this action performs its own exact run sum below.
  PERFORM signal_processing_capacity_v1(r.workspace_id,r.actor_user_id,r.id,r.admission_id,
   ARRAY['monitoring_insights'],'anthropic','claude-sonnet-4-6',r.configuration,r.budget_cap_micro_usd,
   NULL,NULL,0,reserved_time);
+ -- Common capacity has locked the actor/workspace (including timezone). Match
+ -- the application order before reading source facts: input, epoch, then owner.
+ PERFORM workspace_id FROM signal_corpus_preparation_input_state WHERE workspace_id=r.workspace_id FOR UPDATE;
+ PERFORM workspace_id FROM signal_monitoring_insight_input_state WHERE workspace_id=r.workspace_id FOR UPDATE;
+ SELECT * INTO r FROM signal_monitoring_insight_runs WHERE id=target_run FOR UPDATE;
+ IF r.id IS NULL OR a.id IS NULL OR r.status<>'running' OR NOT COALESCE(r.execution_expires_at>clock_timestamp(),false)
+  OR NOT EXISTS(SELECT 1 FROM signal_workspace_features WHERE workspace_id=r.workspace_id AND feature='monitoring_insights')
+  OR r.source_proof->>'input_revision' IS DISTINCT FROM (SELECT input_revision::text FROM signal_corpus_preparation_input_state WHERE workspace_id=r.workspace_id)
+  OR r.source_proof->>'metadata_revision' IS DISTINCT FROM (SELECT revision::text FROM signal_monitoring_insight_input_state WHERE workspace_id=r.workspace_id)
+  OR r.source_proof->>'map_identity' IS DISTINCT FROM signal_monitoring_insights_map_identity_v1(r.workspace_id)
+  OR r.source_proof->>'timezone' IS DISTINCT FROM (SELECT timezone FROM signal_workspaces WHERE id=r.workspace_id)
+  OR r.source_not_after<=clock_timestamp() THEN
+  RAISE EXCEPTION 'monitoring_insights_authority_invalid' USING ERRCODE='23514'; END IF;
  day:=(clock_timestamp() AT TIME ZONE p.budget_timezone)::date;
  SELECT COALESCE(sum(CASE WHEN state='settled' THEN settled_micro_usd WHEN state='definitely_not_sent' THEN 0 ELSE reserved_micro_usd END),0)
   INTO run_spent FROM signal_monitoring_insight_calls WHERE run_id=r.id AND id<>excluded_call;
@@ -245,7 +252,10 @@ BEGIN
  -- Settlement of an already-sent call remains possible after expiry/revocation,
  -- under its original day lock; only a new reservation/send revalidates authority.
  PERFORM signal_processing_lock_v1(a.organization_id,NEW.budget_date);
- SELECT * INTO r FROM signal_monitoring_insight_runs WHERE id=NEW.run_id FOR UPDATE;
+ IF TG_OP='INSERT' OR NEW.state='in_flight' AND OLD.state='reserved' THEN
+  -- Capacity acquires input/epoch before this owner, matching normal dispatch.
+  SELECT * INTO r FROM signal_monitoring_insight_runs WHERE id=NEW.run_id;
+ ELSE SELECT * INTO r FROM signal_monitoring_insight_runs WHERE id=NEW.run_id FOR UPDATE; END IF;
  IF ROW(NEW.workspace_id,NEW.organization_id,NEW.packet_digest,NEW.request_digest,NEW.reserved_micro_usd,NEW.budget_date,NEW.budget_timezone)
   IS DISTINCT FROM ROW(r.workspace_id,a.organization_id,r.packet_digest,r.request_digest,r.reservation_micro_usd,a.budget_date,a.budget_timezone) THEN
   RAISE EXCEPTION 'monitoring_insights_call_scope_invalid' USING ERRCODE='23514'; END IF;
@@ -327,7 +337,9 @@ DO $$ DECLARE relation_name text; BEGIN
   'signal_mass_labeling_overrides','signal_mass_labeling_root_segments','signal_mass_labeling_topic_probabilities',
   'signal_mass_labeling_study_policies','signal_mass_labeling_selections','signal_provenance_policy_bindings',
   'signal_retention_policies','signal_licensing_policies','signal_licensing_policy_usages','import_batches','data_sources',
-  'signal_mass_labeling_maps','signal_topic_catalog_executions','signal_classification_generations','analysis_artifacts','signal_corpus_preparation_runs','record_feature_values'] LOOP
+  'signal_mass_labeling_maps','signal_topic_catalog_executions','signal_classification_generations','analysis_artifacts','signal_corpus_preparation_runs','record_feature_values',
+  'signal_labeling_runs','signal_mass_labeling_runs','signal_mass_labeling_results','signal_mass_labeling_default_lexicons',
+  'signal_mass_labeling_localizations','signal_mass_labeling_r13_results','signal_mass_labeling_r13_interest_results','signal_mass_labeling_study_interest_results'] LOOP
   -- Alphabetically AFTER existing corpus revision triggers: payment also locks
   -- corpus input_state before this counter. Never introduce the reverse order.
   EXECUTE format('CREATE TRIGGER zz_monitoring_epoch_insert AFTER INSERT ON %I REFERENCING NEW TABLE AS new_rows

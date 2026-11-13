@@ -36,7 +36,7 @@ export async function assertNativeMonitoringInsightsV1(args:{database:Pool;query
   const plan=await quoteMonitoringInsightPolicyV1(policyArgs);
   await assert.rejects(provisionMonitoringInsightPolicyV1({...policyArgs,plan_digest:'sha256:'+'0'.repeat(64)}),/monitoring_insights_policy_plan_changed/);
   const provisioned=await provisionMonitoringInsightPolicyV1({...policyArgs,plan_digest:plan.plan_digest});
-  const policy=provisioned.policy_id;
+  let policy=provisioned.policy_id;
   const oldActions=plan.plan.actions.filter(row=>row.action!=='monitoring_insights');
   const preserved=(await query(`SELECT action,kind,provider,model,configuration,configuration_digest,max_execution_micro_usd::text,automatic_allowed
    FROM signal_processing_policy_actions WHERE policy_version_id=$1 AND action<>'monitoring_insights' ORDER BY action`,[policy])).rows;
@@ -55,6 +55,11 @@ export async function assertNativeMonitoringInsightsV1(args:{database:Pool;query
   let lease=await insights.claimMonitoringInsightRunV1({database:args.database,run_id:started.run_id});assert.ok(lease);
   const call=await insights.reserveMonitoringInsightCallV1({database:args.database,lease});
   assert.equal((await insights.reserveMonitoringInsightCallV1({database:args.database,lease})).id,call.id);
+  const originalTimezone=(await query('SELECT timezone FROM signal_workspaces WHERE id=$1',[args.workspace_id])).rows[0].timezone;
+  await query('UPDATE signal_workspaces SET timezone=$2 WHERE id=$1',[args.workspace_id,originalTimezone==='UTC'?'America/Mexico_City':'UTC']);
+  await assert.rejects(insights.markMonitoringInsightCallSentV1({database:args.database,lease,call_id:call.id,attempt_token:call.attempt_token}),/monitoring_insights_authority_invalid/);
+  assert.equal((await query('SELECT state FROM signal_monitoring_insight_calls WHERE id=$1',[call.id])).rows[0].state,'reserved');
+  await query('UPDATE signal_workspaces SET timezone=$2 WHERE id=$1',[args.workspace_id,originalTimezone]);
   assert.equal(await insights.markMonitoringInsightCallSentV1({database:args.database,lease,call_id:call.id,attempt_token:call.attempt_token}),true);
   assert.equal(await insights.markMonitoringInsightCallSentV1({database:args.database,lease,call_id:call.id,attempt_token:call.attempt_token}),false);
   await rejectedSql(args.database,`UPDATE signal_monitoring_insight_calls SET state='definitely_not_sent',response_body=$2,response_sha256='sha256:'||encode(sha256($2::bytea),'hex'),response_http_status=200,response_complete=true WHERE id=$1`,
@@ -114,6 +119,13 @@ export async function assertNativeMonitoringInsightsV1(args:{database:Pool;query
   const final=await insights.loadWorkspaceMonitoringInsightsV1(access);
   assert.equal(final.run?.status,'completed');assert.equal(final.monthly_insights.interpretation_state,'claude');assert.equal(final.authorization.can_request,true);
   assert.equal((await query('SELECT count(*)::int n FROM signal_monitoring_insight_calls WHERE run_id=$1',[next.run_id])).rows[0].n,1);
+  await query("UPDATE signal_processing_policy_versions SET status='revoked' WHERE id=$1",[policy]);
+  const licensed=await insights.loadWorkspaceMonitoringInsightsV1(access);
+  assert.equal(licensed.monthly_insights.interpretation_state,'claude','spending-policy revocation alone does not erase licensed paid copy');
+  assert.equal(licensed.authorization.can_request,false);
+  const renewalPlan=await quoteMonitoringInsightPolicyV1(policyArgs);
+  policy=(await provisionMonitoringInsightPolicyV1({...policyArgs,plan_digest:renewalPlan.plan_digest})).policy_id;
+
   await query(`UPDATE record_feature_values SET feature_value='"sadness"' WHERE id=$1`,[feature]);
   assert.equal((await insights.loadWorkspaceMonitoringInsightsV1(access)).monthly_insights.items.length,0);
   const thirdQuote=await insights.quoteWorkspaceMonitoringInsightsV1({...access,budget_cap_micro_usd:2000000});
