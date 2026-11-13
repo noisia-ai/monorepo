@@ -37,6 +37,7 @@ import { startSignalTopicConsolidationOutboxDrainerV1 } from "./workers/signal-t
 import { startSignalTopicEditorialOutboxDrainerV1 } from "./workers/signal-topic-editorial-queue";
 import { startSignalTopicEditorialBatchDrainerV2 } from "./workers/signal-topic-editorial-batch-queue-v2";
 import { startSignalTopicEditorialGlobalStageDrainerV2 } from "./workers/signal-topic-editorial-global-stage-queue-v2";
+import { startSignalWorkspaceMonitoringInsightsDrainerV1 } from "./workers/signal-workspace-monitoring-insights-outbox";
 
 const startupEvidence = await assertUatWorkerStartup({
   database: pool,
@@ -59,6 +60,7 @@ const topicClassificationOutboxDrainer = dataOsWorker
   : null;
 const corpusPreparationDrainer = dataOsWorker ? startSignalWorkspaceCorpusPreparationDrainerV1() : null;
 const workspaceEmbeddingsDrainer = dataOsWorker ? startSignalWorkspaceEmbeddingsDrainerV1() : null;
+const workspaceMonitoringInsightsDrainer = dataOsWorker ? startSignalWorkspaceMonitoringInsightsDrainerV1() : null;
 const topicConsolidationDrainer = dataOsWorker ? startSignalTopicConsolidationOutboxDrainerV1() : null;
 // Opt-in by NOISIA_SIGNAL_TOPIC_EDITORIAL_ENABLED; provider sends additionally
 // require their own flag and key. All flags default off.
@@ -139,6 +141,7 @@ async function shutdown() {
   await topicClassificationOutboxDrainer?.close();
   await corpusPreparationDrainer?.close();
   await workspaceEmbeddingsDrainer?.close();
+  await workspaceMonitoringInsightsDrainer?.close();
   await topicConsolidationDrainer?.close();
   await topicEditorialDrainer?.close();
   await topicEditorialBatchDrainer?.close();
