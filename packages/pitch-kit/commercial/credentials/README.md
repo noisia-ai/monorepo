@@ -5,7 +5,7 @@ están en `../COMMERCIAL.md` §2.1; aquí solo va cómo se construye.
 
 ```bash
 python3 build.py examples/portfolio.en.json --out ~/Downloads/<Lead>/credenciales          # HTML para presentar
-python3 build.py examples/funnel.es.json   --out ~/Downloads/<Lead>/credenciales --pptx   # + GIFs y PPTX editable
+python3 build.py examples/funnel.es.json   --out ~/Downloads/<Lead>/credenciales --pptx --pdf   # + PPTX editable y PDF
 ```
 
 Se presenta sirviendo la carpeta (`python3 -m http.server` dentro de ella) y abriendo `index.html`.
@@ -26,7 +26,11 @@ Para una animación nueva: un archivo en `anims/` con `LIB['nombre']={dur, setup
 donde `render` depende solo de `t`.
 
 **Tipos de slide:** `cover`, `pillars`, `ways`, `compare` (con `"copy": "where_we_stand"` toma el copy
-del kit), `case` (con `band` lleva el cierre de tres pasos), `menu` y `coverage`.
+del kit), `case` (con `band` lleva el cierre de tres pasos), `menu`, `coverage` y `website` (una
+animación de noisia.ai por nombre, `"anim": "understand"`; la lista sale con
+`node ../../../motion/builders/website-assets.mjs --list`). Los archivos de cada animación del sitio
+se renderizan una vez en `<deck>/web/` y se reusan.
 
-Requiere Chrome, y para `--pptx` también numpy, Pillow, websocket-client, python-pptx y gifsicle.
+Requiere Chrome y node con el repo instalado, y para `--pptx` también numpy, Pillow, websocket-client,
+python-pptx y gifsicle.
 No va en la skill `noisia-comercial` de claude.ai: necesita un navegador para capturar las animaciones.

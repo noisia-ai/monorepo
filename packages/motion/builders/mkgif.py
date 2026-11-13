@@ -38,7 +38,7 @@ def exact(im):
     rgb = np.stack([(u >> 16) & 255, (u >> 8) & 255, u & 255], 1)
     d = ((rgb[:, None, :] - PAL[None, :, :]) ** 2).sum(2)
     idx = d.argmin(1).astype(np.uint8)[inv.reshape(-1)].reshape(a.shape[:2])
-    o = Image.fromarray(idx, "P")
+    o = Image.frombytes("P", (idx.shape[1], idx.shape[0]), idx.astype(np.uint8).tobytes())
     o.putpalette(p)
     return o
 

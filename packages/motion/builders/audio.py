@@ -123,15 +123,20 @@ class Voice:
 
 
 def read_key(piece_dir):
+    # The shell, then the case folder's .env, then the repo root's .env.local, where the team keeps
+    # every tool key (ignored by git). No need to ask the user for a key that is already there.
     key = os.environ.get("ELEVENLABS_API_KEY", "")
+    root_env = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", ".env.local")
     env = os.path.join(piece_dir, ".env")
-    if not key and os.path.exists(env):
-        for line in open(env, encoding="utf-8"):
+    for f in (env, root_env):
+        if key or not os.path.exists(f):
+            continue
+        for line in open(f, encoding="utf-8"):
             if line.startswith("ELEVENLABS_API_KEY="):
                 key = line.split("=", 1)[1]
     key = key.strip().strip("\"'").strip()       # a key pasted with quotes gave a 401
     if not key:
-        raise SystemExit(f"No ElevenLabs key. Put ELEVENLABS_API_KEY=... in {env} (ignored by git), never in the chat.")
+        raise SystemExit("No ElevenLabs key. Put ELEVENLABS_API_KEY=... in the repo root's .env.local (ignored by git), never in the chat.")
     if not key.startswith("sk_"):
         raise SystemExit("That is not an ElevenLabs API key (they start with sk_). If it is 64 hex characters it is the key's ID: "
                          "the key itself is shown only once, when it is created or rotated.")

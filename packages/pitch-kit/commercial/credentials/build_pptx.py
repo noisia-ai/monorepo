@@ -28,6 +28,7 @@ LOGO = os.path.join(N.ASSETS, "logo", "noisia.png")
 class Builder:
     def __init__(self, spec, gifs):
         self.spec, self.gifs, self.ui = spec, gifs, UI[spec["lang"]]
+        self.deck = os.path.dirname(gifs)
         self.K = Deck(lang=spec["lang"], mode="present")
 
     # ------------------------------------------------------------ primitives (from the two decks)
@@ -236,6 +237,23 @@ class Builder:
         K.text(s, 120, y, 690, 32, d.get("ose", "Owned · Shared · Earned"), 24, INK, bold=True, fit_box=False)
         self.block(s, 120, y + 42, 690, d.get("any", ""), 22, FG2, lh=1.4)
         self.gif(s, n, 880, 150, 920, 780)
+
+    def website(self, d, n):
+        """A noisia.ai animation as the GIF from website-assets.mjs, opening on its finished frame."""
+        K = self.K
+        s = K.new(notes=d.get("notes", ""))
+        self.frame(s)
+        y = self.block(s, 120, 150, 820, d["title"], 54, INK, bold=True, lh=1.12)
+        y = self.block(s, 120, y + 26, 820, d.get("why", ""), 25, FG2, lh=1.42) + 40
+        for it in d.get("items", []):
+            K.icon(s, "check-circle", 120, y + 9, size=32)
+            y = self.block(s, 166, y + 8, 774, it, 23, FG, lh=1.38) + 8
+        gif = os.path.join(self.deck, "web", f'{d["anim"]}.{self.spec["lang"]}.gif')
+        if not os.path.exists(gif):
+            sys.exit(f"build_pptx.py: {gif} is missing; build.py renders it")
+        K.box(s, 1020, 150, 780, 780, fill="ffffff", line=None, radius=16)
+        K.image(s, gif, 1020, 150, w=780, h=780, name=f"Animation {d['anim']}")
+        K.box(s, 1020, 150, 780, 780, fill=None, line=BORDER, radius=16)
 
     def build(self, out):
         for i, d in enumerate(self.spec["slides"]):

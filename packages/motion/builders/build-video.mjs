@@ -39,12 +39,15 @@ function args(argv) {
   return out;
 }
 
+// Keys: packages/motion/.env, then the repo root's .env.local, where the team keeps every tool key
+// (both ignored by git). The first value found wins; the shell environment wins over both.
 function loadEnv() {
-  const file = join(PKG, ".env");
-  if (!existsSync(file)) return;
-  for (const line of readFileSync(file, "utf8").split("\n")) {
-    const m = line.match(/^([A-Z_]+)=(.*)$/);
-    if (m && !process.env[m[1]]) process.env[m[1]] = m[2].trim().replace(/^["']|["']$/g, "");
+  for (const file of [join(PKG, ".env"), join(PKG, "..", "..", ".env.local")]) {
+    if (!existsSync(file)) continue;
+    for (const line of readFileSync(file, "utf8").split("\n")) {
+      const m = line.match(/^([A-Z_]+)=(.*)$/);
+      if (m && !process.env[m[1]]) process.env[m[1]] = m[2].trim().replace(/^["']|["']$/g, "");
+    }
   }
 }
 
@@ -62,7 +65,7 @@ const input = resolve(opt.in);
 if (!existsSync(input)) fail(`no such file: ${input}`);
 const out = resolve(opt.out ?? join(PKG, "out", `${basename(input, ".json")}${opt.gif ? ".gif" : ".mp4"}`));
 const licenseKey = process.env.REMOTION_LICENSE_KEY || null;
-if (!licenseKey) console.warn("build-video: no REMOTION_LICENSE_KEY in packages/motion/.env; rendering without the company license key.");
+if (!licenseKey) console.warn("build-video: no REMOTION_LICENSE_KEY in the repo root's .env.local or packages/motion/.env; rendering without the company license key.");
 const browserExecutable = process.env.CHROME_EXECUTABLE ? process.env.CHROME_EXECUTABLE.replace(/^~/, process.env.HOME) : null;
 const scale = opt.scale ? Number(opt.scale) : 1;
 
