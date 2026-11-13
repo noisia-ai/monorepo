@@ -24,8 +24,13 @@
    idioma marcado. Si el total baja y la muestra está en el idioma, sirve; si no, el idioma se ancla
    en la query. El país **nunca** se deja al filtro (`METHODOLOGY.md` §1).
 4. **¿El export completo cabe?** Con más de 50,000 menciones se baja por mes desde el principio.
-5. **El marco se cierra antes de los datos:** las cuatro lecturas, las tres banderas y sus umbrales
-   se escriben en el plan. El mapa mide exactamente lo que el marco promete.
+5. **El marco se cierra antes de los datos:** las cuatro lecturas, las banderas, sus umbrales y las
+   reglas del horizonte se escriben en el plan. El mapa mide exactamente lo que el marco promete.
+6. **¿Cuánto tiempo hay?** Con menos de 15 meses se corre la variante rápida (3 a 6 meses) y se
+   declara; para un reporte recurrente, la variante de solo curva. Ver "Variantes" en la definición.
+7. **¿El cliente tiene datos de oferta** (lanzamientos, catálogo, anaquel) o varias categorías y
+   mercados? Se piden en el plan: el cruce con la oferta y los índices de sobre-representación salen
+   de ahí.
 
 ## Protocolo
 
@@ -101,6 +106,21 @@ voces y piso de señal. Salida: `curva.csv`.
    desde el principio (`DATA.md` §16).
 5. **Imágenes reales** por hallazgo, con su pie.
 
+### Paso 7. Drivers, horizonte y quién ya actúa
+
+1. **Agrupa los temas del mapa en drivers** por lo que dicen sus menciones (glosas y asuntos
+   dominantes), no por su posición. Cada tema en un solo driver, cada driver con dos temas o más y
+   una tesis en una frase. Los hallazgos del deck se escriben por driver.
+2. **Ordena por horizonte** con las reglas del plan: actuar ya, construir, vigilar.
+3. **Índices de sobre-representación** por categoría del cliente o por mercado, con el n de cada
+   celda, si el estudio tiene varios.
+4. **Quién ya actúa:** por cada driver que llegue a "actuar ya" o "construir", las marcas y startups
+   que ya mueven oferta sobre él, con fuente pública y fecha.
+5. **El cruce con la oferta**, si el cliente la compartió: dónde la conversación va adelante de lo
+   que se vende.
+6. **El dataset con su diccionario:** `curva.csv` y `voz.csv` con una línea por columna (qué es, cómo
+   se calcula, su unidad), para que el equipo del cliente o su copiloto lo consulten sin el deck.
+
 ## Quality gates
 
 | Gate | Pasa si |
@@ -117,6 +137,10 @@ voces y piso de señal. Salida: `curva.csv`.
 | M3 · Intervalo | Ningún "crece" con un intervalo que toca ×1 |
 | M4 · Empuje | Un tema con más de 60% emitido lleva su bandera y nunca se presenta como adopción |
 | M5 · Base | Ningún porcentaje de etapa o momento sin su n y su cobertura; debajo del piso, "señal débil" |
+| M6 · Drivers | Cada tema citado en un driver pertenece a ese driver (`assert`), y cada driver tiene su tesis |
+| M7 · Horizonte | Las reglas de actuar ya, construir y vigilar se escribieron en el plan antes de los datos, y cada tema cae donde dicen |
+| M8 · Saturado y estacional | Un tema grande que baja lleva "saturado" y no "pierde tirón"; un tema de temporada lo dice, aunque crezca |
+| M9 · Vocabulario | La madurez se nombra igual que en los reportes publicados de noisia.ai (ver "Decisiones abiertas" en la definición) |
 
 ## Formato de output
 
@@ -132,7 +156,8 @@ La secuencia aprobada (19 slides; un primer corte de 15 regresó con "calidad po
 | 6 | Todos los temas | Rejilla de pequeños múltiplos: tamaño por 1,000, curva y multiplicador |
 | 7 | Las etapas | Barras apiladas de etapa de todos los temas |
 | 8 | Tema × momento | Mapa de calor |
-| 9 a 14 | Un hallazgo en dos tiempos | "En datos" y "en la vida real"; un hallazgo por lectura que pese |
+| 9 a 14 | Un driver en dos tiempos | "En datos" y "en la vida real", con su tesis y quién ya actúa sobre él |
+| + | El horizonte | Los drivers en actuar ya, construir y vigilar, con la regla de cada columna |
 | + | Señales tempranas | Los temas "ahead of the curve", si los hay |
 | 15 | Momentos y marca | Dónde vive cada tema y dónde ya están las marcas: el espacio vacío |
 | 16 | Canales | Para qué sirve cada canal y la parte figurada |
@@ -155,10 +180,19 @@ study).
 | Un trimestre domina | Un evento cayó en esas ventanas | Pendiente de 12 meses como segunda medida |
 | El mapa no se entiende | Gráfica chica, cuadrantes como texto gris | Tamaño mínimo y lecturas nombradas |
 | El marco promete una lectura que el mapa no mide | El marco se escribió después de los datos | Gate M1 |
+| 20 temas sueltos y hallazgos agrupados a mano | No se agruparon en drivers con regla | Paso 7 y gate M6 |
+| El cliente pregunta "¿y cuándo actúo?" | El método no ordenaba por horizonte | Las reglas de actuar ya, construir y vigilar |
+| Dos vocabularios de madurez en el mismo cliente | El estudio no leyó los reportes publicados | Gate M9 |
 | Un hallazgo agrupa un tema que el mapa pone en otra lectura | El agrupamiento se hizo a mano | Gate M2 |
 
 ## Versionado
 
 v1.0 · nov 2026 · definido desde el primer estudio, con lo que dejó abierto (señal temprana,
 umbrales absolutos, intervalos, empuje, giro de etapa, salto de comunidad, validación humana) ya
-dentro del protocolo. Se revisa después del segundo estudio.
+dentro del protocolo.
+
+v1.1 · nov 2026 · contrastado contra todas las referencias que lo inspiraron y contra los reportes
+publicados de noisia.ai: drivers con tesis, horizonte con reglas, saturado y estacional, crecimiento de
+la resonancia, índices de sobre-representación, quién ya actúa, cruce con la oferta, el dataset con su
+diccionario, y las variantes rápida y de solo curva. Pendiente: un solo vocabulario con los reportes.
+Se revisa después del segundo estudio.
