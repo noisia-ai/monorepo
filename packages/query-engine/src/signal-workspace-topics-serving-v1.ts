@@ -20,6 +20,8 @@ export type SignalWorkspaceTopicsOverviewV1 = {
   scope_digest: string;
   observed_at: string;
   denominator: number;
+  /** Present only when the native monitoring surface requested its governed metadata. */
+  monitoring?: SignalWorkspaceMonitoringV1;
   coverage: {
     processed: number;
     assigned_unique: number;
@@ -124,3 +126,43 @@ export type SignalWorkspaceDefinedInterestOverviewV1 = Omit<SignalWorkspaceTopic
 };
 export type SignalWorkspaceOverviewV1 = SignalWorkspaceTopicsOverviewV1 | SignalWorkspaceImportedOverviewV1
   | SignalWorkspaceDefinedInterestOverviewV1;
+
+
+export type SignalWorkspaceMonitoringHighlightV1 = {
+  id: string; occurred_at: string; title: string | null; text: string; url: string | null;
+  platform: string; sentiment: number; engagement: number; reach: number | null;
+  source_sha256: string;
+};
+
+/** Provider metadata aggregated over exactly the native rights-filtered root population.
+ * Evidence rows require current mention-list/text rights and the prepared text SHA.
+ * Source coverage distinguishes absent provider measurements from observed zero. */
+export type SignalWorkspaceMonitoringV1 = {
+  contract_version: "signal-workspace-monitoring-v1";
+  denominator: number;
+  scope_digest: string;
+  metadata_digest: string;
+  population: { map_id: string; map_digest: string; input_revision: string; policy_revision: number };
+  source_coverage: {
+    sentiment_known: number; emotion_classified: number; thread_id_known: number;
+    content_type_known: number; engagement_known: number; views_known: number;
+    engagement_known_root_posts: number; views_known_root_posts: number;
+    provider_observation_roots: number; evidence_eligible: number; llm_eligible_roots: number;
+  };
+  summary: { mentions: number; conversations: number; root_posts: number; comments: number;
+    unknown_roles: number; classified_sentiment: number };
+  series: Array<{ period_start: string; mentions: number; conversations: number;
+    root_posts: number; comments: number;
+    sentiment: { positive: number; neutral: number; negative: number; classified: number } }>;
+  sentiment: { positive: number; neutral: number; negative: number; unclassified: number };
+  platforms: Array<{ key: string; count: number }>;
+  emotions: Array<{ key: string; count: number }>;
+  attention: { root_posts: number; total_interactions: number; median_interactions: number;
+    p90_interactions: number; active_root_posts: number; active_ratio: number | null;
+    total_views: number; viewed_root_posts: number };
+  drivers: Array<{ id: string; title: string | null; text: string; url: string | null;
+    platform: string; mention_count: number; root_post_count: number; comment_count: number;
+    interaction_count: number; view_count: number; source_sha256: string }>;
+  highlights: { positive: SignalWorkspaceMonitoringHighlightV1[]; negative: SignalWorkspaceMonitoringHighlightV1[] };
+  limitations: string[];
+};
