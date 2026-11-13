@@ -181,6 +181,42 @@ const native: SignalWorkspaceTopicsOverviewV1 = {
   series: [{ date: "2026-09-01", mention_count: 3, assigned_unique: 0 }], limitations: []
 };
 const computed = () => buildNativeSignalMonitoringV1(structuredClone(base), native);
+const fullNative: SignalWorkspaceTopicsOverviewV1 = {
+  ...native,
+  monitoring: {
+    contract_version: "signal-workspace-monitoring-v1", denominator: 3, scope_digest: native.scope_digest, metadata_digest: "sha256:metadata",
+    population: { map_id: native.generation_id!, map_digest: "sha256:map", input_revision: "revision", policy_revision: 1 },
+    summary: { mentions: 3, conversations: 2, root_posts: 1, comments: 2, unknown_roles: 0, classified_sentiment: 2 },
+    series: [{ period_start: "2026-09-01", mentions: 3, conversations: 2, root_posts: 1, comments: 2,
+      sentiment: { positive: 1, neutral: 0, negative: 1, classified: 2 } }],
+    sentiment: { positive: 1, neutral: 0, negative: 1, unclassified: 1 },
+    emotions: [],
+    platforms: [{ key: "instagram", count: 3 }],
+    attention: { root_posts: 1, total_interactions: 123, median_interactions: 123, p90_interactions: 123,
+      active_root_posts: 1, active_ratio: 1, total_views: 456, viewed_root_posts: 1 },
+    source_coverage: { sentiment_known: 2, emotion_classified: 0, thread_id_known: 3, content_type_known: 3, engagement_known: 1, views_known: 1,
+      engagement_known_root_posts: 1, views_known_root_posts: 1, provider_observation_roots: 3, evidence_eligible: 3, llm_eligible_roots: 0 },
+    drivers: [{ id: "synthetic-driver", title: "Synthetic thread", text: "Synthetic driver evidence", url: null,
+      platform: "instagram", mention_count: 3, root_post_count: 1, comment_count: 2, interaction_count: 123, view_count: 456, source_sha256: "sha256:text" }],
+    highlights: { positive: [{ id: "synthetic-highlight", occurred_at: "2026-09-01", title: null,
+      text: "Synthetic positive source", url: null, platform: "instagram", sentiment: 1, engagement: 123,
+      reach: null, source_sha256: "sha256:text" }], negative: [] }, limitations: []
+  }
+};
+test("native metadata never inherits a previous population when the DTO is absent or mismatched", () => {
+  const previous = buildNativeSignalMonitoringV1(structuredClone(base), fullNative);
+  for (const next of [native, { ...fullNative, scope_digest: "sha256:other-scope" },
+    { ...fullNative, denominator: 999 }]) {
+    const result = buildNativeSignalMonitoringV1(previous, next);
+    assert.equal(result.conversation_structure.state, "not_available");
+    assert.deepEqual(result.conversation_structure.points, []);
+    assert.equal(result.sentiment.state, "not_available");
+    assert.deepEqual(result.platforms.buckets, []);
+    assert.equal(result.attention.state, "not_available");
+    assert.deepEqual(result.conversation_drivers.items, []);
+    assert.deepEqual(result.highlights, { positive: [], negative: [] });
+  }
+});
 async function render(locale: string, data = computed()) {
   const messages = JSON.parse(await readFile(new URL(`../../../messages/${locale}.json`, import.meta.url), "utf8"));
   return renderToStaticMarkup(createElement(NextIntlClientProvider,
@@ -192,6 +228,87 @@ async function render(locale: string, data = computed()) {
       workspaceOptions: [], workspaceSubjectId: "synthetic-brand", viewKey: "all_conversations" })));
 }
 for (const locale of ["es-MX", "en-US"]) {
+  for (const [knownThreads, knownRoles] of [[0, 0], [0, 3], [3, 0]] as const) {
+    test(`${locale}: thread coverage ${knownThreads} and role coverage ${knownRoles} independently govern numbers and series`, async () => {
+      const source = structuredClone(fullNative);
+      source.monitoring!.source_coverage.thread_id_known = knownThreads;
+      source.monitoring!.source_coverage.content_type_known = knownRoles;
+      if (!knownThreads && !knownRoles) {
+        source.monitoring!.summary = { mentions: 3, conversations: 0, root_posts: 0, comments: 0, unknown_roles: 3, classified_sentiment: 0 };
+        source.monitoring!.series = [{ period_start: "2026-09-01", mentions: 3, conversations: 0, root_posts: 0, comments: 0,
+          sentiment: { positive: 0, negative: 0, neutral: 0, classified: 0 } }];
+        source.monitoring!.sentiment = { positive: 0, negative: 0, neutral: 0, unclassified: 3 };
+        source.monitoring!.source_coverage.sentiment_known = 0;
+        source.monitoring!.source_coverage.engagement_known_root_posts = 0;
+        source.monitoring!.source_coverage.views_known_root_posts = 0;
+        source.monitoring!.drivers = [];
+        source.monitoring!.highlights = { positive: [], negative: [] };
+      }
+      const data = buildNativeSignalMonitoringV1(structuredClone(base), source);
+      assert.equal(data.conversation_structure.summary.conversations, knownThreads ? 2 : null);
+      assert.equal(data.conversation_structure.summary.root_posts, knownRoles ? 1 : null);
+      assert.equal(data.conversation_structure.summary.comments, knownRoles ? 2 : null);
+      assert.equal(data.conversation_structure.points[0]!.conversations, knownThreads ? 2 : null);
+      assert.equal(data.conversation_structure.points[0]!.root_posts, knownRoles ? 1 : null);
+      assert.equal(data.conversation_structure.points[0]!.comments, knownRoles ? 2 : null);
+      const html = await render(locale, data);
+      const kpis = html.match(/<section aria-label="[^"]*" class="signal-v2-kpi-strip">[\s\S]*?<\/section>/)?.[0];
+      assert.ok(kpis);
+      assert.deepEqual([...kpis.matchAll(/<strong>(.*?)<\/strong>/gu)].map(match => match[1]),
+        ["3", knownThreads ? "2" : "—", knownRoles ? "1" : "—", knownRoles ? "2" : "—"]);
+      const switches = html.match(/<div aria-label="[^"]*" class="signal-v2-metric-switch" role="group">[\s\S]*?<\/div>/)?.[0];
+      assert.ok(switches);
+      assert.deepEqual([...switches.matchAll(/<button([^>]*)>/gu)].map(match => match[1]!.includes("disabled")),
+        [false, !knownThreads, !knownRoles, !knownRoles]);
+      const noRoleSource = locale === "es-MX" ? "La fuente no incluye tipos de publicación o comentario" : "The source does not include post or comment types";
+      assert.equal(html.includes(noRoleSource), !knownRoles);
+    });
+  }
+  test(`${locale}: an observed zero remains a zero when its source is known`, async () => {
+    const source = structuredClone(fullNative);
+    source.monitoring!.summary.root_posts = 0; source.monitoring!.summary.comments = 3;
+    source.monitoring!.series[0]!.root_posts = 0; source.monitoring!.series[0]!.comments = 3;
+    const data = buildNativeSignalMonitoringV1(structuredClone(base), source);
+    assert.equal(data.conversation_structure.summary.root_posts, 0);
+    assert.equal(data.conversation_structure.points[0]!.root_posts, 0);
+    const html = await render(locale, data);
+    const kpis = html.match(/<section aria-label="[^"]*" class="signal-v2-kpi-strip">[\s\S]*?<\/section>/)?.[0];
+    assert.ok(kpis); assert.match(kpis, /<strong>0<\/strong>/);
+  });
+  test(`${locale}: native source metrics restore all proven dashboard widgets without enabling unsupported comparison`, async () => {
+    const data = buildNativeSignalMonitoringV1(structuredClone(base), fullNative);
+    assert.deepEqual(data.conversation_structure.summary, fullNative.monitoring!.summary);
+    assert.deepEqual(data.conversation_structure.points, fullNative.monitoring!.series);
+    assert.equal(data.sentiment.buckets.find(bucket => bucket.key === "positive")?.value, 1);
+    assert.equal(data.platforms.buckets[0]?.key, "instagram");
+    assert.equal(data.attention.total_interactions, 123);
+    assert.equal(data.conversation_drivers.items[0]?.id, "synthetic-driver");
+    assert.equal(data.highlights.positive[0]?.text, "Synthetic positive source");
+    const html = await render(locale, data);
+    assert.match(html, /signal-v2-metric-switch/);
+    assert.match(html, /signal-v2-attention-metrics/);
+    assert.match(html, /Synthetic positive source/);
+    assert.ok(html.includes(locale === "es-MX" ? "2 de 3 menciones" : "2 of 3 mentions"));
+    assert.ok(html.includes(locale === "es-MX" ? "La fuente no incluye clasificación de emociones" : "The source does not include emotion classifications"));
+    assert.equal(data.comparison_filter, null);
+    assert.equal(data.comparison.mode, "none");
+  });
+  test(`${locale}: missing views stay absent while genuine interaction zero and source emotions remain visible`, async () => {
+    const source = structuredClone(fullNative);
+    source.monitoring!.source_coverage.views_known_root_posts = 0;
+    source.monitoring!.attention.total_views = 0;
+    source.monitoring!.attention.total_interactions = 0;
+    source.monitoring!.emotions = [{ key: "joy", count: 1 }];
+    source.monitoring!.source_coverage.emotion_classified = 1;
+    const data = buildNativeSignalMonitoringV1(structuredClone(base), source);
+    const html = await render(locale, data);
+    assert.equal(data.emotions.buckets[0]?.value, 1);
+    assert.equal(data.emotions.state, "partial");
+    assert.ok(!html.includes(locale === "es-MX" ? "La fuente no incluye clasificación de emociones" : "The source does not include emotion classifications"));
+    assert.match(html, /signal-v2-attention-metrics/);
+    assert.match(html, /<strong>0<\/strong>/);
+    assert.match(html, /<strong>—<\/strong>/);
+  });
   for (const state of ["not_available", "pending"] as const) {
     test(`${locale}: native ${state} metrics keep dashboard/volume without invented zero enrichment or live highlights`, async () => {
       const data = computed(); data.sentiment.state = state; data.attention.state = state;

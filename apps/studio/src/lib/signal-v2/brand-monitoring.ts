@@ -1,6 +1,7 @@
 import type {
   SignalBreakdownV1,
   SignalComparisonV1,
+  SignalConversationSegmentV1,
   SignalFilterV1,
   SignalMetricPointV1,
   SignalMonthlyInsightPacketV1,
@@ -171,7 +172,10 @@ export type BrandMonitoringMonthlyInsights = {
   contract_version: "signal-monthly-insights-v1";
   candidate_hash: string | null;
   cadence: "rolling_30_days";
-  independent_of_page_filter: true;
+  independent_of_page_filter: boolean;
+  independent_of_page_period?: boolean;
+  scope_segment?: SignalConversationSegmentV1;
+  editorial_locale?: "es-MX" | "en-US";
   window: {
     start: string;
     end: string;
@@ -200,6 +204,14 @@ type BrandMonitoringConversationWindow = {
   points: BrandMonitoringConversationPoint[];
   summary: BrandMonitoringConversationSummary;
   attention: BrandMonitoringAttention;
+};
+
+/** Native sources may omit thread or post-role metadata independently. Null
+ * measurements are unavailable; numeric zero always means an observed count. */
+type ConversationMeasurements<T> = Omit<T, "conversations" | "root_posts" | "comments"> & {
+  conversations: number | null;
+  root_posts: number | null;
+  comments: number | null;
 };
 
 export type SignalBrandMonitoringV1 = {
@@ -234,9 +246,11 @@ export type SignalBrandMonitoringV1 = {
     delta: number | null;
     delta_ratio: number | null;
   };
-  conversation_structure: BrandMonitoringConversationWindow & {
-    previous_points: BrandMonitoringConversationPoint[];
-    previous_summary: BrandMonitoringConversationSummary | null;
+  conversation_structure: Omit<BrandMonitoringConversationWindow, "points" | "summary"> & {
+    points: ConversationMeasurements<BrandMonitoringConversationPoint>[];
+    summary: ConversationMeasurements<BrandMonitoringConversationSummary>;
+    previous_points: ConversationMeasurements<BrandMonitoringConversationPoint>[];
+    previous_summary: ConversationMeasurements<BrandMonitoringConversationSummary> | null;
   };
   sentiment: BrandMonitoringBreakdown & {
     previous_buckets: SignalBreakdownV1["buckets"];
