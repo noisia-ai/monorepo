@@ -10,10 +10,24 @@ function build(){ if(built) return; built=true;
     ANIMS[k]=A; ST[k]=A.setup(svg); A.render(ST[k],A.dur);
   });
 }
-// Website slides carry a video: it plays from the start when its slide comes in, and rests otherwise.
+// Website slides carry a video: it plays from the start when its slide comes in and stops on the
+// finished diagram (data-stop, the website's poster frame), before the composition fades out to loop.
+// If a browser misses the stop, the end shows the finished PNG instead of a blank stage.
+function holdOnPoster(v){
+  const stop=parseFloat(v.dataset.stop);
+  const img=v.parentElement.querySelector('img.poster');
+  const rest=()=>{v.pause();if(stop)v.currentTime=stop};
+  const tick=()=>{if(v.paused)return;if(stop&&v.currentTime>=stop){rest();return}
+    if(v.requestVideoFrameCallback)v.requestVideoFrameCallback(tick);else requestAnimationFrame(tick)};
+  v.addEventListener('play',()=>{if(img)img.style.display='none';tick()});
+  // timeupdate still fires (about 4 times a second) where frame callbacks are throttled, e.g. a hidden tab.
+  v.addEventListener('timeupdate',()=>{if(!v.paused&&stop&&v.currentTime>=stop)rest()});
+  v.addEventListener('ended',()=>{if(img)img.style.display='block'});
+}
+document.querySelectorAll('video[data-web]').forEach(holdOnPoster);
 function playVideos(idx){
   deck.querySelectorAll(':scope > section').forEach((s,i)=>{const v=s.querySelector('video[data-web]');if(!v)return;
-    if(i===idx){v.currentTime=0;v.play().catch(()=>{})}else v.pause()});
+    if(i===idx){v.currentTime=0;v.play().catch(()=>{})}else{v.pause();if(parseFloat(v.dataset.stop))v.currentTime=parseFloat(v.dataset.stop)}});
 }
 function play(idx){
   playVideos(idx);

@@ -304,6 +304,9 @@ export const studySchema = z
     piece.scenes.forEach((s, i) => {
       if (s.type === "chapter" && s.chart && !s.note && !opensWithBase)
         ctx.addIssue({ code: "custom", path: ["scenes", i, "note"], message: `chapter "${s.id}" shows a chart without its note: mentions, period, channels` });
+      // The climax count is a figure too: without a cold open it needs its note, like a chapter's chart.
+      if (s.type === "climax" && !s.note && !opensWithBase)
+        ctx.addIssue({ code: "custom", path: ["scenes", i, "note"], message: `climax "${s.id}" shows a count without its note: mentions, period, channels` });
       if (s.type === "chapter" || s.type === "climax") thinNote(s.note, i, ctx);
     });
     copyRules(piece.scenes as Record<string, unknown>[], ctx);
