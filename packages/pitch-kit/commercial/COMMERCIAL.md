@@ -540,3 +540,263 @@ la derecha.
 | Cuántos países e idiomas se dicen en Credenciales | El deck dice "especialistas locales" sin número hasta que haya una cifra aprobada |
 | ¿Un índice diseñado y acordado con el cliente puede ir en su propuesta? Se pidió para un cliente con NPS y el equipo dice que va a pasar seguido | Excepción del caso, autorizada en el chat. §11 sigue igual: ningún índice de escucha como indicador genérico de Noisia, ni en decks de otros clientes |
 | ¿Los resultados de un piloto ya entregado al mismo cliente pueden abrir su propuesta? La razón de §4.1, "no los hemos leído", no aplica | Excepción del caso, autorizada en el chat, con el entregable y la fecha en las notas. Nunca en el deck de otro cliente |
+
+## 15. Outbound SDR: Drive → mensajes por lead → Instantly
+
+**Este es el procedimiento canónico de preparación, no una autorización para enviar.**
+La familia comercial también incluye los correos SDR. Sus mensajes aprobados viven en Drive;
+Instantly conserva el estado de cada lead y ejecuta el journey; este repo público conserva
+el método y los patrones reutilizables. No copiar aquí listas, mensajes reales, correos,
+IDs de campañas, enlaces privados de Drive, capturas, credenciales ni cifras de un caso.
+
+El diseño toma los tokens y el shell de `../NOTIFICATIONS.md`, **no** sus reglas de envío:
+no lleva etiquetas API, estados operativos ni pie de notificación automática. La regla CID de
+Data API no se traslada a Instantly: aquí se probaron assets públicos HTTPS. El texto comercial
+sigue viniendo de la fuente aprobada, no se inventa al maquetar.
+
+### 15.1 Dónde guardar cada cosa
+
+- **Reglas, límites y prompt reutilizable:** esta sección. Cambios al procedimiento se integran
+  aquí, no en un nuevo handoff que compita con el canon.
+- **Evidencia de una ejecución:** carpeta privada de trabajo del grupo. Guardar un manifiesto,
+  snapshots previos, conciliación, diferencias, HTML exacto aprobado y pruebas. No subirlos a git.
+- **Fuente:** archivo original vigente del grupo en el Drive comercial compartido por el dueño.
+  Buscarlo por nombre y confirmar su ID y carpeta, no elegir una descarga por fecha de archivo.
+  Los enlaces internos se suministran en privado como en §9; no están publicados en este repo.
+- **Índice privado de fuentes:** registrar carpeta/archivo/hoja, versión o modifiedTime,
+  fecha UTC de lectura, encabezados y hash del contenido leído. Si el archivo cambia durante
+  la conciliación, releer y reconciliar antes de escribir. No modificar el original.
+- **Plantilla:** conservar el HTML exacto aprobado en la carpeta privada. Este runbook explica
+  cómo reutilizarlo; no sustituirlo con un diseño reconstruido de memoria.
+
+### 15.2 Preflight y permisos
+
+1. Leer las instrucciones del repo y confirmar el workspace de Instantly, ID de campaña,
+   grupo, estado y cuenta remitente. Verificar que no hay otro operador escribiendo lo mismo.
+2. Leer todas las páginas de leads y todos los pasos/variantes. Guardar snapshot de IDs,
+   email, campos, estado y progreso; asunto y HTML de cada paso; delays, threading, sender,
+   firma y ajustes HTML/text-only. El snapshot queda privado y permite restaurar campos.
+3. Separar lo autorizado: investigar, editar un borrador concreto, actualizar leads existentes,
+   importar nuevos, editar una firma persistente, enviar pruebas y activar campaña son acciones
+   diferentes. Preparar mensajes no autoriza activar ni enviar a prospectos.
+4. Una firma de cuenta afecta futuros correos de esa cuenta: confirmar cuenta y cambio concreto
+   con su responsable antes de modificarla. No generalizar autorización de una cuenta a otras.
+5. Si una campaña ya envía o sus leads avanzaron, detener cambios masivos y acordar alcance.
+   No pausar, borrar, reiniciar ni cambiar estatus por inferencia.
+6. No cambiar remitente, límites, horario, tracking, ajustes globales, permisos ni credenciales
+   como efecto secundario. El equipo decide la cuenta desde la que saldrá el journey.
+
+### 15.3 Leer y conciliar la fuente completa
+
+La columna final usada en el flujo es **`Mensaje (datos Noisia)`**. Una columna antigua
+`mensaje` puede seguir vacía o contener copy obsoleto. No sustituir la columna final por ella.
+Un contador de Resumen puede apuntar todavía a la columna antigua: verificar su fórmula antes
+de concluir que no hay mensajes. No corregir fórmulas, comentarios o formatos sin encargo.
+
+- Leer filas completas y encabezados reales, incluidas variantes antiguas. Contar filas,
+  mensajes finales no vacíos y contactos únicos por separado. Una fila no equivale a un lead.
+- Identidad primaria: email, con espacios exteriores removidos y comparación normalizada.
+  No quitar puntos, sufijos `+` ni fusionar por nombre/empresa. Conservar el email original.
+- Clasificar: coincidencia uno-a-uno, solo fuente, solo campaña, duplicado/ambiguo y mensaje
+  ausente. No importar, borrar ni elegir entre variantes automáticamente.
+- En coincidencias, comparar la versión final íntegra con los campos actuales. Mantener
+  cambios humanos divergentes hasta reconciliarlos. Guardar diferencias por lead en privado.
+- Los asuntos se validan **aparte**: varias opciones separadas por `|` no son un asunto final;
+  `(sin mensaje)` no lo es. No inferir asunto a partir del cuerpo ni elegir opción por posición.
+- Un link mencionado en el copy sin URL es pendiente, no una invitación a inventar un enlace.
+
+### 15.4 Contrato de campos y variables
+
+Escala con **una plantilla por paso y datos por lead**, no con una variante por persona.
+Los nombres siguientes son el mapeo probado; confirmar los campos existentes de cada campaña.
+
+| Capa | Función |
+|---|---|
+| Fuente `Mensaje (datos Noisia)` | Texto final aprobado, sin reescrituras |
+| Campo de referencia `Correo personalizada` | Copia exacta del texto final para conciliación |
+| Campo `Personalization` | Versión de presentación: texto escapado en párrafos HTML |
+| Variable `{{personalization}}` | Inserta esa versión en el cuerpo del paso personalizado |
+| Variable `{{accountSignature}}` | Inserta la firma de la cuenta remitente seleccionada |
+| Asunto personalizado | Solo cargar cuando exista un asunto final aprobado y mapeado |
+
+**Insertar variables desde el selector de Instantly.** El encabezado visible no determina
+el token: derivar `{{correo_personalizada}}` de una etiqueta falló porque esa variable no existía.
+No dar por hecho que cada campaña tenga los mismos campos. Comprobar que el selector los reconoce.
+
+Transformación controlada: preservar el original exacto; escapar `&`, `<`, `>`, comillas y
+apóstrofos como texto, después envolver párrafos en etiquetas con estilos inline. No ejecutar
+HTML procedente de una celda ni hacer doble escape. Preservar acentos, signos y párrafos.
+Solo retirar un cierre personal duplicado si se aprobó usar la firma de cuenta; registrar esa
+única diferencia. No cambiar claims, cifras, CTA ni identidad del autor silenciosamente.
+Una firma dinámica no corrige un cuerpo que se presenta como otra persona: detener esa contradicción.
+
+### 15.5 Escribir sin perder progreso
+
+**Reimportar los mismos emails no es un upsert:** Instantly omite duplicados y no sobrescribe
+sus variables. **No borrar y reimportar** para forzar cambios: puede reiniciar al lead en Step 1.
+
+- Leads existentes: editar sus campos en detalle, o usar una API soportada cuyo alcance,
+  permisos y semántica se hayan comprobado. No prometer actualización masiva si la tool no la tiene.
+- Antes de cada cambio, releer el lead y comparar con el snapshot. Si hay una diferencia nueva,
+  detener ese lead y conciliar; continuar únicamente los independientes.
+- Guardar, recargar y comprobar cada campo actualizado. Mantener checkpoint privado con ID,
+  hash previo/esperado/leído y resultado. No repetir una escritura de resultado incierto sin leer.
+- Con muchos leads, trabajar en lotes verificables. Al reanudar, saltar los ya confirmados.
+  La segunda corrida sin diferencia debe realizar **cero escrituras**.
+- Nuevos leads: solo con autorización de importación del grupo. CSV UTF-8, Email obligatorio,
+  encabezados únicos de máximo 20 caracteres y máximo 50 variables por upload. Revisar mapping
+  antes de confirmar. No activar Verify Leads ni gastar créditos por inferencia.
+
+El conector y el navegador tienen límites distintos. Usar acciones documentadas disponibles;
+si el usuario dejó una sesión en Chrome, verificar esa sesión y campaña, no un navegador cloud
+sin el mismo acceso. No extraer tokens, usar APIs privadas ni eludir una denegación de permisos.
+Una vista truncada no prueba haber revisado todos los leads: paginar hasta terminar.
+
+### 15.6 Los tres pasos del journey
+
+1. Guardar el contenido original de cada paso y variante, su asunto, delay y variables.
+2. Aplicar el shell aprobado a cada paso. El primero puede usar `{{personalization}}`;
+   los demás conservan su texto y variables existentes salvo cambios aprobados en la fuente.
+3. Colocar una sola firma por paso, preferentemente `{{accountSignature}}` cuando la firma
+   de cuenta funcione. No combinarla con otra firma embebida ni un nombre duplicado.
+4. Preservar delays y comportamiento de respuesta. No convertir los delays de un caso en
+   una cadencia universal. Revisar todos los pasos, no solo el primer correo.
+5. Dejar asuntos o links sin evidencia como bloqueos explícitos. Un cuerpo configurado no
+   significa que la campaña esté lista para activar.
+6. Guardar en Code view (`<>`), volver a la vista visual, recargar y releer el HTML persistido.
+   Seleccionar un lead real y una cuenta concreta en Preview para comprobar la resolución.
+
+### 15.7 HTML, firma, fuente y responsive
+
+Conservar el shell aprobado: fondo exterior `#f4f4f4`, tarjeta blanca, logo de Noisia,
+texto y separaciones legibles, tablas de presentación y estilos inline. No añadir contenido
+operativo de las plantillas de notificaciones. El correo debe seguir siendo entendible si el
+cliente bloquea imágenes. Evitar diseños pesados o convertir el texto a imagen.
+
+- Fuente preferida inline en cuerpo, títulos, labels y firma:
+  `font-family:'Google Sans',Roboto,Arial,Helvetica,sans-serif;`.
+  Google Sans tiene licencia OFL, pero disponibilidad/licencia no equivale a soporte de webfonts
+  en email. Gmail/Outlook pueden usar fallback. No garantizar Google Sans real en todos los clientes.
+- **Un solo atributo `style` por elemento.** Al añadir font-family, fusionar propiedades,
+  no añadir otro `style`. Un atributo duplicado hizo que desapareciera el fondo gris: fue un bug,
+  no una decisión de diseño. Revisar sintaxis además del aspecto visual.
+- Assets con URL HTTPS pública estable, alt, dimensiones y escala adecuadas. No `blob:`,
+  rutas locales, data URLs enormes ni CID sin adjunto correspondiente. No pegar una captura de firma.
+- Editar firma por Code view si el editor visual altera imágenes/links. Se observó que copiar
+  una firma por la vista visual generó `blob:` y perdió `href`; comprobar HTML guardado y recibido.
+- Firma y cuerpo fluidos, sin tabla rígida de 660 px que fuerce scroll móvil. Usar estructura
+  que pueda envolver columnas con estilos inline, y probar widths pequeños y nombres largos.
+  No asumir que media queries sobrevivirán al editor y al cliente.
+- Preferir firma dinámica reparada. Si no se puede resolver, firma embebida aprobada como fallback,
+  sin duplicación, vinculada al remitente correcto. No extender una firma personal a todas las cuentas.
+- Respaldar la firma previa antes de editarla y verificarla recargando su configuración.
+
+Revisar tres filtros que pueden quitar HTML: text-only para toda la campaña, text-only del
+primer email y text-only del primer email a nivel workspace. El ajuste global puede prevalecer.
+Inspeccionar no autoriza cambiarlos. Clean HTML no significa lo mismo que text-only y puede
+alterar una maquetación: no aplicarlo ciegamente sobre la versión aprobada.
+
+### 15.8 Pruebas: cuatro cosas distintas
+
+| Paso | Qué prueba | Qué no prueba |
+|---|---|---|
+| Lectura posterior | Datos y HTML quedaron guardados | Apariencia en el inbox |
+| Preview con lead + sender | Variables/firma se resuelven | Que un override se guardó en el lead |
+| Send test autorizado | Composición y envío de una prueba | Lanzamiento ni entrega a todos los leads |
+| Recepción/MIME/cliente | Lo recibido y render probado | Compatibilidad universal o inbox futuro |
+
+Los overrides en Preview **no persisten**. Send test envía inmediatamente a **todos** los
+destinatarios listados: revisar y dejar únicamente las direcciones autorizadas en esa prueba.
+No usar un prospecto para probar. Un toast de envío no demuestra recepción; comprobar ambas cosas.
+
+Checklist antes de entregar al responsable:
+- [ ] Toda la población conciliada y paginada, sin faltantes ocultos; excepciones separadas.
+- [ ] Relectura de **todos** los leads modificados contra la fuente, no solo una muestra.
+- [ ] Los tres pasos/variantes persistidos, asuntos y links aprobados o bloqueo declarado.
+- [ ] Ninguna variable vacía, inválida o literal, ni etiquetas HTML visibles en el mensaje.
+- [ ] Remitente y texto coherentes, exactamente una firma; no `blob:` ni links sin `href`.
+- [ ] Sin atributos `style` duplicados; fondo, logo, cuerpo y firma conservados.
+- [ ] Preview con texto corto/largo, signos y caracteres especiales; no solo la celda más fácil.
+- [ ] Prueba recibida en los clientes disponibles: desktop y móvil; documentar qué no se probó.
+- [ ] Si se inspecciona MIME: imágenes/links estables y resultado de autenticación observado.
+- [ ] Estado/progreso, sender, delays, límites y número de envíos sin cambios no autorizados.
+- [ ] Diferenciar configurado, probado, bloqueado y listo para revisión. No decir “lanzado”.
+
+**Deliverability:** Instantly recomienda reducir HTML/media en cold email. Una imagen no implica
+spam automáticamente. Reputación, autenticación, volumen, rebotes y quejas también importan.
+SPF/DKIM/DMARC pass, un score de la tool o una prueba en Inbox no garantizan entregabilidad.
+No alterar campañas ni lanzar experimentos de volumen como parte de una prueba visual.
+
+### 15.9 Cierre, reversión y límites conocidos
+
+Entregar al responsable conteos y diferencias, campos/steps cambiados, pruebas y límites,
+source-only/campaign-only pendientes, asuntos/URLs faltantes y decisión de remitente. No enviar
+ese informe a terceros por inferencia. El dueño decide cuándo activar.
+
+Si hay un problema, restaurar solo campos/HTML de esta ejecución desde el snapshot, tras releer
+para evitar pisar cambios nuevos. No “rollback” borrando leads o reiniciando la campaña. Un envío
+real no se deshace con un rollback; escalar el incidente sin repetirlo.
+
+Aprendizajes observados al preparar journeys: la fuente puede tener variantes antiguas y más
+contactos que la campaña; el cuerpo final puede estar completo mientras el asunto está vacío;
+las variables de Preview no actualizan leads; la firma de sistema puede romperse aunque la firma
+embebida se vea bien. Los conteos y decisiones concretos pertenecen al registro privado, no son
+valores por defecto para el siguiente grupo. La cobertura de un cliente de correo no es universal.
+
+### 15.10 Prompt para el agente del equipo
+
+Completar los campos entre corchetes en privado. Sin campaña/fuente verificadas, investigar y
+pedir solo lo imprescindible; no inventarlas. Este prompt prepara borradores, no autoriza envíos.
+
+```text
+Trabaja con noisia-ai/monorepo. Lee AGENTS.md, packages/pitch-kit/AGENTS.md,
+CANON.md y packages/pitch-kit/commercial/COMMERCIAL.md §15 antes de actuar.
+
+Grupo: [GRUPO]. Archivo/carpeta Drive original: [URL PRIVADA].
+Campaña exacta Instantly: [URL/ID PRIVADO]. Plantilla HTML aprobada: [UBICACIÓN PRIVADA].
+Alcance: conciliar y actualizar mensajes de los leads EXISTENTES y los tres pasos en borrador.
+No activar, lanzar ni mandar a prospectos. No añadir ni borrar leads. No cambiar remitente,
+firmas de cuenta, límites, horarios o ajustes globales sin autorización específica.
+Pruebas: [NO AUTORIZADAS / DIRECCIONES CONCRETAS Y ALCANCE AUTORIZADO].
+
+Lee la última versión completa de Drive y toda la campaña paginada. Usa Mensaje (datos Noisia)
+si ese es el encabezado final confirmado. No alteres el archivo, comentarios ni formatos.
+Haz snapshot privado y concilia uno-a-uno por email, no nombre. Separa coincidencias,
+source-only, campaign-only, duplicados y mensajes/asuntos faltantes. Preserva cambios humanos.
+
+Conserva texto final exacto como referencia. Genera el HTML de presentación escapando texto,
+preserva copy y registra cualquier cierre duplicado retirado. Usa el HTML aprobado, no rediseñes.
+Inserta variables desde el selector: valida personalization y accountSignature en esta campaña.
+Conserva texto/variables/asuntos/delays de pasos siguientes salvo cambios explícitos de la fuente.
+La firma debe corresponder a la cuenta que el responsable elija. Si hay contradicción, señálala.
+
+Actualiza campos existentes sin borrar/reimportar. Relee antes y después de cada escritura;
+checkpoint por lead para reanudar sin duplicar. No uses Preview overrides como datos persistidos.
+No ejecutes APIs privadas ni extraigas tokens para superar limitaciones de la tool.
+
+Verifica todos los datos guardados, HTML de los tres pasos y Preview con lead y sender.
+Revisa fondo gris, Google Sans con fallbacks, HTTPS, href, firma única, responsive y style único.
+Pruebas solo dentro del alcance dado y a todas las direcciones revisadas; verifica recepción.
+No inventes asunto final, link del post ni compatibilidad móvil/Outlook no probada.
+
+Entrega un reporte privado de cambios, conteos, fuentes/versiones, pruebas, límites y pendientes.
+Una segunda pasada sin diferencias no debe escribir nada. Mantén la campaña sin activar.
+No publiques PII, mensajes reales, IDs/URLs privados ni credenciales en el repo.
+```
+
+### 15.11 Referencias operativas
+
+Documentación consultada el 13 de noviembre de 2026; releer si cambia la UI o el comportamiento:
+
+- [HTML en campañas](https://help.instantly.ai/en/articles/7911973-html-in-campaign-email)
+- [Editor](https://help.instantly.ai/en/articles/11967303-getting-started-with-editor-section)
+- [Variables](https://help.instantly.ai/en/articles/6135930-how-to-add-and-use-variables-in-campaigns)
+- [Importar CSV](https://help.instantly.ai/en/articles/6254215-how-to-add-leads-to-your-campaign-from-a-csv-file)
+- [Duplicados y variables](https://help.instantly.ai/en/articles/13631826-why-are-variables-not-showing-up)
+- [Actualizar lead](https://help.instantly.ai/en/articles/6762327-update-lead-data-and-lead-status)
+- [Preview y test](https://help.instantly.ai/en/articles/7002900-preview-and-send-test-emails)
+- [Firmas](https://help.instantly.ai/en/articles/8278149-how-to-add-email-signatures)
+- [Clean HTML](https://help.instantly.ai/en/articles/6525904-clean-html-features)
+- [Deliverability](https://help.instantly.ai/en/articles/16034903-deliverability-guide)
+- [CSS soportado por Gmail](https://developers.google.com/workspace/gmail/design/css)
+- [Google Sans y licencia](https://github.com/googlefonts/googlesans)
