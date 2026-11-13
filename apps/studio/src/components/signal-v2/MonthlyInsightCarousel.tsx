@@ -276,6 +276,7 @@ export function MonthlyInsightCarousel({
 
         <div className="signal-v2-monthly-insights__visual">
           <SignalEChart
+            key={active.id}
             ariaLabel={detail.chartAria}
             onActivate={() => onOpenEvidence(active)}
             option={chartOption}
