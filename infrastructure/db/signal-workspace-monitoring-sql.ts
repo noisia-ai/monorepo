@@ -63,8 +63,10 @@ monitoring_roots AS MATERIALIZED (
       root.root_id::text) thread_key,
     (observation.provider_thread_key_hash IS NOT NULL OR fallback.thread_key IS NOT NULL) thread_known,
     (observation.root_id IS NOT NULL) provider_observation,
-    CASE WHEN root.content_type='comment' THEN 'comment'
-      WHEN root.content_type IS NOT NULL THEN 'root' ELSE 'unknown' END conversation_role,
+    CASE WHEN root.content_type IN('comment','comments','comentario','comentarios') THEN 'comment'
+      WHEN root.content_type IN('video','short','shorts','post','posts','tweet','tweets','quote_tweet',
+        'article','articles','news','reel','reels','story','stories','image','photo','photos','forum_post','review')
+        THEN 'root' ELSE 'unknown' END conversation_role,
     COALESCE(observation.engagement_total::numeric,fallback.interactions) interactions,
     COALESCE(observation.views_count::numeric,fallback.views) views
   FROM monitoring_roots root
@@ -145,7 +147,7 @@ export const nativeMonitoringAggregateV1 = `(SELECT jsonb_build_object(
     'negative',count(*) FILTER(WHERE sentiment_score< -0.2),'unclassified',count(*) FILTER(WHERE sentiment_score IS NULL)),
   'source_coverage',jsonb_build_object('sentiment_known',count(sentiment_score),
     'emotion_classified',(SELECT count(*) FROM monitoring_emotions),'thread_id_known',count(*) FILTER(WHERE thread_known),
-    'content_type_known',count(content_type),'engagement_known',count(interactions),'views_known',count(views),
+    'content_type_known',count(*) FILTER(WHERE conversation_role<>'unknown'),'engagement_known',count(interactions),'views_known',count(views),
     'engagement_known_root_posts',count(*) FILTER(WHERE conversation_role='root' AND interactions IS NOT NULL),
     'views_known_root_posts',count(*) FILTER(WHERE conversation_role='root' AND views IS NOT NULL),
     'provider_observation_roots',count(*) FILTER(WHERE provider_observation),
@@ -177,3 +179,23 @@ export const nativeMonitoringAggregateV1 = `(SELECT jsonb_build_object(
     FROM monitoring_highlights WHERE polarity='positive'),'[]'::jsonb),
     'negative',COALESCE((SELECT jsonb_agg(item ORDER BY rank) FROM monitoring_highlights WHERE polarity='negative'),'[]'::jsonb))
 ) FROM monitoring_data)`;
+
+/** Two rolling civil-date windows share the canonical metadata and observation
+ * census. Only the small per-window aggregates are repeated; evidence is disabled
+ * by the caller, so this packet cannot fetch or expose mention text. */
+const windowSplit = nativeMonitoringCtesV1.indexOf(", monitoring_emotions AS MATERIALIZED");
+const windowNames = (sql: string, prefix: "current" | "previous") =>
+  sql.replace(/\bmonitoring_[a-z_]+\b/gu, name => `${prefix}_${name}`);
+export const nativeMonitoringWindowsCtesV1 = `${nativeMonitoringCtesV1.slice(0, windowSplit)},
+monitoring_window_anchor AS MATERIALIZED (
+  SELECT min(period_start)::date available_from,max(period_start)::date anchor_date FROM monitoring_data
+), current_monitoring_data AS MATERIALIZED (
+  SELECT data.* FROM monitoring_data data CROSS JOIN monitoring_window_anchor anchor
+  WHERE data.period_start::date BETWEEN anchor.anchor_date-29 AND anchor.anchor_date
+)${windowNames(nativeMonitoringCtesV1.slice(windowSplit), "current")},
+previous_monitoring_data AS MATERIALIZED (
+  SELECT data.* FROM monitoring_data data CROSS JOIN monitoring_window_anchor anchor
+  WHERE data.period_start::date BETWEEN anchor.anchor_date-59 AND anchor.anchor_date-30
+)${windowNames(nativeMonitoringCtesV1.slice(windowSplit), "previous")}`;
+export const nativeMonitoringCurrentWindowAggregateV1 = windowNames(nativeMonitoringAggregateV1, "current");
+export const nativeMonitoringPreviousWindowAggregateV1 = windowNames(nativeMonitoringAggregateV1, "previous");
