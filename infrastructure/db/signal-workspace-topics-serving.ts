@@ -1,4 +1,5 @@
-import { nativeMonitoringCtesV1, nativeMonitoringAggregateV1 } from "./signal-workspace-monitoring-sql";
+import { nativeMonitoringCtesV1, nativeMonitoringAggregateV1, nativeMonitoringWindowsCtesV1,
+  nativeMonitoringCurrentWindowAggregateV1, nativeMonitoringPreviousWindowAggregateV1 } from "./signal-workspace-monitoring-sql";
 import { massLabelingLexiconDigestV1 } from "./signal-mass-labeling-lexicon-suggestions";
 import { sealedTopicContextBridgeMatchesV1 } from "./signal-topic-context-identity-cut";
 import {loadMassLabelingStudyPolicyWithClientV1,massLabelingStudyInterestDigestV1,type MassLabelingStudyPolicyV1} from "./signal-mass-labeling-study-policy";
@@ -483,7 +484,7 @@ async function mentionsContext(client: PoolClient, args: Args): Promise<Pick<Con
   if (filters.date_from && filters.date_to && filters.date_from > filters.date_to) return fail("workspace_topics_date_invalid", 422);
   // An explicit semantic cohort requires the current sealed mass-labeling map.
   // The global corpus path remains independent of editorial state by default.
-  if (args.conversation_segment && args.conversation_segment !== "all") {
+  if (args.conversation_segment !== undefined) {
     const mass = await signalWorkspaceFeatureEnabledV1({queryable:client,workspace_id:args.workspace_id,feature:"mass_labeling"})
       ? await loadMassLabelingServingContextV1(client,args.workspace_id) : null;
     if (!mass) return fail("workspace_mentions_segment_unsupported",422);
@@ -958,6 +959,80 @@ export async function loadSignalWorkspaceTopicsOverviewV1(args: Args, options?: 
   });
 }
 
+export type SignalWorkspaceMonitoringWindowV1 = {
+  date_from: string; date_to: string; monitoring: SignalWorkspaceMonitoringV1;
+};
+export type SignalWorkspaceMonitoringWindowsV1 = {
+  anchor_date: string | null; available_dates: { date_from: string | null; date_to: string | null };
+  timezone: string; source_not_after: string | null;
+  current: SignalWorkspaceMonitoringWindowV1 | null; previous: SignalWorkspaceMonitoringWindowV1 | null;
+};
+
+/** One census and one snapshot for both monthly windows. Page dates are ignored;
+ * civil dates anchor to the latest governed observation in the chosen segment. */
+export async function loadSignalWorkspaceMonitoringWindowsWithClientV1(
+  client: PoolClient, args: Omit<Args, "database" | "date_from" | "date_to">
+): Promise<SignalWorkspaceMonitoringWindowsV1 | null> {
+  const isolation = (await client.query<{ transaction_isolation: string }>("SHOW transaction_isolation")).rows[0]!.transaction_isolation;
+  if (!["repeatable read", "serializable"].includes(isolation)) return fail("workspace_monitoring_snapshot_required",409);
+  return monitoringWindowsWithin(client,args);
+}
+
+/** Financial admission owns policy/day and actor locks before calling this path.
+ * The caller's epoch lock fences metadata/provenance mutations; the input lock
+ * below fences corpus edits. This never claims to be a repeatable-read snapshot. */
+export async function loadSignalWorkspaceMonitoringWindowsForDispatchWithClientV1(
+  client: PoolClient, args: Omit<Args, "database" | "date_from" | "date_to">
+): Promise<SignalWorkspaceMonitoringWindowsV1 | null> {
+  const isolation = (await client.query<{ transaction_isolation: string }>("SHOW transaction_isolation")).rows[0]!.transaction_isolation;
+  if (isolation !== "read committed") return fail("workspace_monitoring_dispatch_isolation_required",409);
+  await client.query("SELECT input_revision FROM signal_corpus_preparation_input_state WHERE workspace_id=$1 FOR UPDATE",[args.workspace_id]);
+  return monitoringWindowsWithin(client,args);
+}
+
+async function monitoringWindowsWithin(client: PoolClient, args: Omit<Args,"database"|"date_from"|"date_to">): Promise<SignalWorkspaceMonitoringWindowsV1|null> {
+  const access: Args={...args,date_from:null,date_to:null,database:{connect:async()=>client}};
+  const ctx=await context(client,access);
+  if(!ctx.native||!ctx.mass_labeling)return null;
+  if(!ctx.is_current)return fail("workspace_topics_evidence_stale");
+  const settings=(await client.query<{indexscan:string;nestloop:string;jit:string}>(
+    "SELECT current_setting('enable_indexscan') indexscan,current_setting('enable_nestloop') nestloop,current_setting('jit') jit")).rows[0]!;
+  await client.query("SET LOCAL enable_indexscan=off; SET LOCAL enable_nestloop=off; SET LOCAL jit=off");
+  try {
+    type WindowRow={anchor_date:string|null;available_from:string|null;current_from:string|null;previous_from:string|null;previous_to:string|null;
+      source_not_after:string|null;rights_digest:string;current:NonNullable<Aggregate["monitoring"]>;previous:NonNullable<Aggregate["monitoring"]>};
+    const row=(await client.query<WindowRow>(`${populationSql(true,false,false,false,false,undefined,true,ctx.filters.conversation_segment,false,false,false,true)}
+      ${nativeMonitoringWindowsCtesV1}
+      SELECT to_char(anchor.anchor_date,'YYYY-MM-DD') anchor_date,to_char(anchor.available_from,'YYYY-MM-DD') available_from,
+        to_char(anchor.anchor_date-29,'YYYY-MM-DD') current_from,to_char(anchor.anchor_date-59,'YYYY-MM-DD') previous_from,
+        to_char(anchor.anchor_date-30,'YYYY-MM-DD') previous_to,$7::int policy_revision,
+        ${nativeMonitoringCurrentWindowAggregateV1} current,${nativeMonitoringPreviousWindowAggregateV1} previous,
+        'sha256:'||encode(sha256(convert_to(COALESCE((SELECT string_agg(jsonb_build_array(id,data_source_id,metrics,evidence)::text,
+          '' ORDER BY id) FROM authorized_imports),''),'UTF8')),'hex') rights_digest,
+        (SELECT to_char(min(deadline) AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') FROM (
+          SELECT effective_from deadline FROM signal_provenance_policy_bindings WHERE workspace_id=$1
+          UNION ALL SELECT effective_to FROM signal_provenance_policy_bindings WHERE workspace_id=$1
+          UNION ALL SELECT effective_from FROM signal_licensing_policies WHERE workspace_id=$1
+          UNION ALL SELECT effective_to FROM signal_licensing_policies WHERE workspace_id=$1
+          UNION ALL SELECT effective_from FROM signal_retention_policies WHERE workspace_id=$1
+          UNION ALL SELECT effective_to FROM signal_retention_policies WHERE workspace_id=$1
+          UNION ALL SELECT retain_until FROM signal_retention_policies WHERE workspace_id=$1
+          UNION ALL SELECT retention_until FROM signal_provider_mention_observations WHERE workspace_id=$1
+          UNION ALL SELECT policy_valid_until FROM signal_corpus_preparation_runs WHERE workspace_id=$1
+        ) deadlines WHERE deadline>now()) source_not_after
+      FROM monitoring_window_anchor anchor`,
+      [access.workspace_id,ctx.mass_labeling.id,null,null,ctx.filters.timezone,"[]",ctx.mass_study_policy?.revision??0,false])).rows[0]!;
+    const window=(data:NonNullable<Aggregate["monitoring"]>,from:string|null,to:string|null):SignalWorkspaceMonitoringWindowV1|null=>from&&to?{
+      date_from:from,date_to:to,monitoring:{...data,
+        scope_digest:massScopeDigest(access,{...ctx,filters:{...ctx.filters,date_from:from,date_to:to}},row.rights_digest),
+        population:{map_id:ctx.mass_labeling!.id,map_digest:ctx.mass_labeling!.map_digest,input_revision:ctx.mass_labeling!.input_revision,
+          policy_revision:ctx.mass_study_policy?.revision??0},limitations:["sentiment_is_provider_metadata","rolling_30_civil_days","aggregate_only_no_mention_text"]}}:null;
+    return {anchor_date:row.anchor_date,available_dates:{date_from:row.available_from,date_to:row.anchor_date},timezone:ctx.filters.timezone,
+      source_not_after:row.source_not_after,current:window(row.current,row.current_from,row.anchor_date),previous:window(row.previous,row.previous_from,row.previous_to)};
+  } finally {await client.query("SELECT set_config('enable_indexscan',$1,true),set_config('enable_nestloop',$2,true),set_config('jit',$3,true)",
+    [settings.indexscan,settings.nestloop,settings.jit]).catch(()=>undefined);}
+}
+
 /** Borrow the caller's repeatable-read snapshot for paired monthly windows.
  * Each window repeats current actor, map and complete provenance-path checks. */
 export async function loadSignalWorkspaceMonitoringOverviewWithClientV1(
@@ -1396,7 +1471,7 @@ export async function loadSignalWorkspaceMentionsV1(args: SignalWorkspaceMention
   const request = mentionsRequest(args);
   const access = { database: args.database, workspace_id: args.workspace_id.toLowerCase(), actor_user_id: args.actor_user_id.toLowerCase(),
     date_from: request.filters.date_from, date_to: request.filters.date_to, timezone: request.filters.timezone,
-    conversation_segment: request.filters.conversation_segment,
+    conversation_segment: args.conversation_segment,
     imported_fallback: args.imported_fallback };
   return transaction(args.database, async client => {
     const ctx = await mentionsContext(client, access);
