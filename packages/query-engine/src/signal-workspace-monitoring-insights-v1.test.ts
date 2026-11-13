@@ -37,6 +37,11 @@ test('one aggregate request is sealed and budgeted with no mention text or legac
   comparison_window:null,partial:true,current:metrics,previous:null,
   candidates:buildWorkspaceMonitoringInsightCandidatesV1({current:metrics,previous:null})};
  const request=buildWorkspaceMonitoringInsightRequestV1(packet,workspaceMonitoringInsightConfigurationV1(workspace));
+ const reorder=(value:unknown):unknown=>Array.isArray(value)?value.map(reorder):value&&typeof value==='object'
+  ?Object.fromEntries(Object.entries(value).reverse().map(([key,child])=>[key,reorder(child)])):value;
+ const reread=buildWorkspaceMonitoringInsightRequestV1(reorder(packet) as typeof packet,workspaceMonitoringInsightConfigurationV1(workspace));
+ assert.equal(reread.request_body,request.request_body,'JSONB object ordering cannot change a paid request during replay');
+ assert.equal(reread.request_digest,request.request_digest);
  assert.ok(request.reserved_micro_usd>0&&request.reserved_micro_usd<2_000_000);
  assert.ok(!request.request_body.includes('study_corpus_id'));
  assert.ok(!request.request_body.includes('mention_ids'));

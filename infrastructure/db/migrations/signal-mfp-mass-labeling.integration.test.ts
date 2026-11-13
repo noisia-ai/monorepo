@@ -1,3 +1,4 @@
+import { assertNativeMonitoringInsightsV1 } from './signal-monitoring-insights.assertions';
 import { assertNativeMonitoringWidgetsV1 } from "./signal-native-monitoring-widgets.assertions";
 import { createMassLabelingConcurrencyDatabaseV1 } from "./signal-mass-labeling-concurrent.synthetic.fixture";
 import {assertMassLabelingOverviewProvenanceV1} from "./signal-mass-labeling-overview-provenance.assertions";
@@ -41,7 +42,7 @@ for(const authorization of ["rotation","scoped","scoped-scale","scoped-funding",
   const flag = process.env.NOISIA_MASS_LABELING_ENABLED;
   process.env.NOISIA_MASS_LABELING_ENABLED = "true";
   try {
-    isolated=scaledRecovery?await createMassLabelingConcurrencyDatabaseV1(admin):null;
+    isolated=scaledRecovery||authorization==="product"?await createMassLabelingConcurrencyDatabaseV1(admin):null;
     const pool:Pool=isolated?.pool??admin, raw = await pool.connect();
     releaseRaw=async()=>{await raw.query("ROLLBACK").catch(()=>undefined);raw.release();};
     await raw.query("BEGIN");
@@ -249,8 +250,13 @@ for(const authorization of ["rotation","scoped","scoped-scale","scoped-funding",
         await raw.query("COMMIT");
         await assertMassLabelingProductNativeV2({...access,database:pool,query:pool.query.bind(pool),map_id:map.map_id,concurrent_recovery:true,foreign_actor_id:foreignActor});
       }else await assertMassLabelingProductNativeV2({...access,query:scoped.query,map_id:map.map_id});
-      if (authorization === "product") await assertNativeMonitoringWidgetsV1({ access, query, map_id: map.map_id });
-      await assertMassLabelingServingProjectionV1(scaledRecovery?pool.query.bind(pool):scoped.query,access.workspace_id,map.map_id);return;
+      if (authorization === "product") {
+        await assertNativeMonitoringWidgetsV1({ access, query, map_id: map.map_id });
+        assert.equal(stack.length,0);
+        await raw.query("COMMIT");
+        await assertNativeMonitoringInsightsV1({...access,database:pool,query:pool.query.bind(pool),map_id:map.map_id});
+      }
+      await assertMassLabelingServingProjectionV1(scaledRecovery||authorization==="product"?pool.query.bind(pool):scoped.query,access.workspace_id,map.map_id);return;
     }
     const candidateSample=(await query("SELECT candidates FROM signal_mass_labeling_items WHERE map_id=$1 ORDER BY ordinal LIMIT 1",[map.map_id])).rows[0]!.candidates[0];
     assert.equal(candidateSample.name,localization?.original.name??"Bicycle repairs");
