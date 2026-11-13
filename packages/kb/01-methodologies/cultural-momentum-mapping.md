@@ -61,12 +61,17 @@ no entran a los relojes y alimentan la medida de **empuje**.
 verdad habla del tema (`p`, del reloj de la voz), y se resta el crecimiento del corpus:
 
 ```
-p(t, P)        = Σ peso(codificadas de t en P que son pertinentes) / Σ peso(codificadas de t en P)
+p(t, P)        = Σ peso_voz(codificadas de t en P que son pertinentes) / Σ peso_voz(codificadas de t en P)
+peso_voz(m)    = peso(m) / menciones del autor de m en t y P      # una mención anónima es su propia voz
 v'(t, P)       = v(t, P) × p(t, P)
 momentum(t)    = ln( (v'(t,NOW) + K) / (v'(t,PREV) + K) ) − ln( V(NOW) / V(PREV) )      K = 5
 multiplicador  = exp(momentum)                     # lo que se muestra: "×2.2"
 ```
 
+- **`p` se estima en la misma unidad que `v`, la voz.** Cada mención codificada pesa además 1 entre
+  las menciones de su autor en ese tema y periodo, así cada autor cuenta una vez. Sin eso, un autor
+  que publica cien veces fuera de tema hunde la pertinencia de cien autores que hablan del tema una
+  vez, y un cambio en cuánto publica la gente movería el momentum sin que cambien las voces.
 - `K = 5` amortigua los temas chicos: de 2 a 10 voces no es "×5".
 - Restar el crecimiento del corpus evita leer como tendencia que la herramienta indexa más los meses
   recientes.
@@ -127,9 +132,11 @@ en cada ventana; con menos, la etapa es una foto del año, no una trayectoria.
 - **Entran al mapa** los temas con ≥20 menciones con etapa, multiplicador calculable y ≥50 voces
   pertinentes en el año. Los paraguas y las queries de servicio (discovery, marca) no entran.
 
-**Cortes:** umbrales absolutos, con la mediana del set dibujada como referencia.
+**Cortes:** umbrales absolutos. La mediana del set se dibuja solo como referencia y nunca decide una
+lectura: si decidiera, agregar al set temas con mucha adopción volvería "cansado" a un tema que no
+cambió y que no tiene una sola mención de cansancio.
 - **Crece:** multiplicador ≥ ×1.5 y su intervalo no toca ×1.
-- **Cansa:** `se_cansa` ≥ 20% de las menciones con etapa, o índice de voz por debajo de la mediana.
+- **Cansa:** `se_cansa` ≥ 20% de las menciones con etapa. Sin cansancio en su voz, un tema no cansa.
 
 | Lectura | Regla | Qué significa |
 |---|---|---|
@@ -174,11 +181,15 @@ lo que evita agrupar temas a mano en los hallazgos.
 El método no pronostica fechas, pero sí ordena por horizonte con reglas que se escriben antes de los
 datos. Salió de un estudio propio de panificación, que ya lo hacía con tamaño por crecimiento:
 
-| Horizonte | Regla | Para qué |
-|---|---|---|
-| **1 año · actuar ya** | Prende y está en el tercio de mayor tamaño | Lo que ya pasa a escala: llega tarde quien no está |
-| **3 años · construir** | Prende con tamaño medio, o señal temprana con su crecimiento confirmado por el intervalo | Lo que se puede construir antes de que sea masivo |
-| **5 años · vigilar** | Señal temprana chica | Lo que vale la pena seguir sin invertir todavía |
+Las reglas se aplican **en orden y la primera que se cumple gana**, así cada tema cae en un solo
+horizonte:
+
+| Orden | Horizonte | Regla | Para qué |
+|---|---|---|---|
+| 1 | **1 año · actuar ya** | Prende y está en el tercio de mayor tamaño | Lo que ya pasa a escala: llega tarde quien no está |
+| 2 | **3 años · construir** | Prende, de cualquier otro tamaño; o señal temprana con crecimiento confirmado (intervalo sobre ×1) | Lo que se puede construir antes de que sea masivo |
+| 3 | **5 años · vigilar** | Señal temprana sin crecimiento confirmado | Lo que vale la pena seguir sin invertir todavía |
+| 4 | **Contexto** | Todo lo demás: la base, pico cerca, pierde tirón, saturado, en declive | No es una apuesta de horizonte: es el paisaje contra el que se leen las apuestas, y así se presenta |
 
 Un tema empujado (más de 60% emitido) nunca entra a "actuar ya" sin decir que es campaña.
 
@@ -247,7 +258,11 @@ es el insumo de mayor valor: dice dónde la conversación va adelante de lo que 
   las palabras "sube en estos meses" y se declara en el método.
 - **Solo curva, para reportes recurrentes.** Sin el reloj de la voz: multiplicador, pendiente,
   empuje, saturación y estacionalidad, con la misma regla cada mes. Es reproducible y barata; pierde
-  el "prende o cansa", que es lo que distingue a Noisia, y se dice así.
+  el "prende o cansa", que es lo que distingue a Noisia, y se dice así. **La pertinencia no se
+  omite:** sin el libro completo, cada tema y periodo lleva una muestra chica (unas 100 menciones)
+  codificada **solo** en el eje `pertinencia`, y de ahí sale `p`. Si ni eso se hace, el número no se
+  llama momentum: se reporta como "crecimiento sin corregir por pertinencia", con esas palabras, porque
+  el uso figurado o fuera de tema puede verse como tendencia.
 
 ## Limitaciones
 

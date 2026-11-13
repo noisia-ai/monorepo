@@ -18,15 +18,21 @@ const LEGIBLE = 0.6;
 
 const alpha = (n: Element) => parseFloat(getComputedStyle(n).opacity || "1");
 
-/** What the eye gets: the ancestors' opacity, and the single-child wrappers inside the tag (a card's own fade). */
+/** How visible a block's content is: its own opacity times its most visible child. Text of its own
+ *  counts as fully visible. A wrapper that stays mounted with every child faded out (the climax chat
+ *  before it starts) reads as invisible, not as a full-size opaque box. */
+function inner(el: Element): number {
+  const own = Array.from(el.childNodes).some((n) => n.nodeType === 3 && (n.textContent ?? "").trim() !== "");
+  const kids = Array.from(el.children);
+  const best = own || el instanceof SVGElement || el.tagName === "IMG" || !kids.length ? 1 : Math.max(0, ...kids.map(inner));
+  return alpha(el) * best;
+}
+
+/** What the eye gets: the ancestors' opacity times what is visible inside the tag. */
 function opacityOf(el: Element, root: Element): number {
   let o = 1;
-  for (let n: Element | null = el; n && n !== root.parentElement; n = n.parentElement) o *= alpha(n);
-  for (let n = el; n.children.length === 1; ) {
-    n = n.children[0];
-    o *= alpha(n);
-  }
-  return o;
+  for (let n: Element | null = el.parentElement; n && n !== root.parentElement; n = n.parentElement) o *= alpha(n);
+  return o * inner(el);
 }
 
 export function LayoutGuard({ on, width, height, bottom, children }: { on: boolean; width: number; height: number; bottom?: number; children: ReactNode }) {

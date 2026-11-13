@@ -9,10 +9,12 @@
  *   <name>.<locale>.mp4   plays from the start, for presenting from the HTML deck
  *   <name>.<locale>.gif   for the PPTX: opens on the finished diagram (the website's poster frame)
  *   <name>.<locale>.png   the finished diagram, for the PDF and as the video's poster
+ *   <name>.<locale>.json  frames, fps and poster frame: the deck stops the video there, before the
+ *                         composition's end-of-loop fade
  * Files already there are reused (pass --force to render them again). One bundle for all names.
  */
 import { spawnSync } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir, cpus } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -77,6 +79,7 @@ for (const name of String(opt.names).split(",").map((s) => s.trim()).filter(Bool
     process.exit(1);
   }
   const base = join(out, `${name}.${locale}`);
+  writeFileSync(base + ".json", JSON.stringify({ frames: e.frames, fps: 30, poster: e.poster }));
   const done = [".mp4", ".gif", ".png"].every((x) => existsSync(base + x));
   if (done && !opt.force) {
     console.log(`${name}.${locale}: already there`);

@@ -18,6 +18,7 @@ import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statS
 import { tmpdir, cpus } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { createRequire } from "node:module";
 import { bundle } from "@remotion/bundler";
 import { renderFrames, renderMedia, renderStill, selectComposition } from "@remotion/renderer";
 
@@ -111,7 +112,9 @@ for (const sub of ["audio", "images"]) {
 }
 
 console.log(`Bundling ${COMPOSITION[format]}…`);
-const serveUrl = await bundle({ entryPoint: join(PKG, "src", "index.ts"), publicDir, outDir: join(work, "bundle") });
+// Root registers the website's compositions too, so every bundle needs the bridge (webpack-website.cjs).
+const { websiteBridge } = createRequire(import.meta.url)("./webpack-website.cjs");
+const serveUrl = await bundle({ entryPoint: join(PKG, "src", "index.ts"), publicDir, outDir: join(work, "bundle"), webpackOverride: websiteBridge });
 const common = { serveUrl, browserExecutable, logLevel: "error" };
 
 async function composition(props) {

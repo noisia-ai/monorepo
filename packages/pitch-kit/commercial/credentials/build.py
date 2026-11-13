@@ -152,9 +152,11 @@ def website(d, n, ui):
     items = "".join(f'<div class="it">{ico("check-circle")}{esc(i)}</div>' for i in d.get("items", []))
     gets = f'<div class="gets">{items}</div>' if items else ""
     base = f'web/{d["anim"]}.{d["_lang"]}'
+    # The video stops on the website's poster frame: the compositions fade out at the end of their loop.
+    stop = d.get("_stop", "")
     return (f'<section class="web" data-label="{html.escape(d.get("label", d["anim"]))}">{LOGO}<div class="left">'
             f'<h2>{esc(d["title"])}</h2><p class="why">{esc(d.get("why", ""))}</p>{gets}</div>'
-            f'<div class="stage card"><video data-web src="{base}.mp4" poster="{base}.png" muted playsinline preload="auto"></video>'
+            f'<div class="stage card"><video data-web data-stop="{stop}" src="{base}.mp4" poster="{base}.png" muted playsinline preload="auto"></video>'
             f'<img class="poster" src="{base}.png" alt=""></div>{frame(n)}</section>')
 
 
@@ -187,6 +189,10 @@ def website_assets(spec, out):
                         "--locale", spec["lang"], "--out", os.path.join(out, "web")], cwd=MOTION)
     if r.returncode:
         sys.exit("build.py: website-assets.mjs failed (pnpm install in the repo, and see packages/motion/README.md)")
+    for d in spec["slides"]:
+        if d["type"] == "website":
+            meta = json.load(open(os.path.join(out, "web", f'{d["anim"]}.{spec["lang"]}.json')))
+            d["_stop"] = round(meta["poster"] / meta["fps"], 3)
 
 
 def build(spec, out):
@@ -198,10 +204,14 @@ def build(spec, out):
     for name, src in ASSETS.items():
         shutil.copyfile(src, os.path.join(out, "assets", name))
     shutil.copyfile(os.path.join(KIT, "engine", "deck-stage.js"), os.path.join(out, "deck-stage.js"))
+    # The engine's tokens are linked, not copied into the page: the palette stays shared (AGENTS.md rule 10).
+    tokens = open(os.path.join(KIT, "engine", "noisia-tokens.css"), encoding="utf-8").read()
+    # Offline-safe: Google Sans comes from the local fonts in base.css, not the tokens' CDN import.
+    open(os.path.join(out, "noisia-tokens.css"), "w", encoding="utf-8").write(re.sub(r"@import url\([^)]*\);\n?", "", tokens))
+    website_assets(spec, out)
     body = "\n\n".join(TYPES[d["type"]](d, i + 1, ui) for i, d in enumerate(spec["slides"]))
     used = sorted(set(re.findall(r'data-anim="([^"]+)"', body)))
     anims = "\n".join(open(os.path.join(HERE, "anims", f"{a}.js"), encoding="utf-8").read() for a in used)
-    website_assets(spec, out)
     notes = [d.get("notes", "") for d in spec["slides"]]
     page = f"""<!doctype html>
 <html lang="{spec["lang"]}">
@@ -209,6 +219,7 @@ def build(spec, out):
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{html.escape(spec.get("title", "Noisia"))}</title>
+<link rel="stylesheet" href="noisia-tokens.css">
 <script type="application/json" id="speaker-notes">
 {json.dumps(notes, ensure_ascii=False, indent=0)}
 </script>

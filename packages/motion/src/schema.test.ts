@@ -112,3 +112,17 @@ test("an official figure carries its source instead of mentions", () => {
   study.scenes[1].note = { period: "2021" };
   assert.throws(() => studySchema.parse(study), /source of an official figure/);
 });
+
+test("without a cold open, the climax count needs its note too", () => {
+  const study = ex("study.json");
+  study.scenes = study.scenes.filter((s: { type: string }) => s.type !== "cold");
+  const post = { text: "Nadie habla de esto", platform: "tiktok", meta: "MX · may 2026", verified: true };
+  const climax = { type: "climax", id: "gap", label: "el hueco", head: "Nadie lo dice", count: { from: 100, label: "de cada 100" },
+    chat: [post, post], empty: "La marca está escribiendo", spark: { line: "Llena el hueco." }, vo: "Nadie lo dice." };
+  study.scenes.splice(1, 0, climax);
+  assert.throws(() => studySchema.parse(study), /climax .* without its note/);
+  // With every figure's note in place (the example's chapters drop theirs after its cold open), it passes.
+  const note = { mentions: 12000, period: "ene-may 2026" };
+  for (const s of study.scenes as Record<string, unknown>[]) if ((s.type === "chapter" && s.chart) || s.type === "climax") s.note ??= note;
+  assert.doesNotThrow(() => studySchema.parse(study));
+});

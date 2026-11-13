@@ -91,7 +91,7 @@ voces y piso de señal. Salida: `curva.csv`.
    consistencia del libro y se declara así.
 5. **Codificación completa** en lotes de 150, con validador por lote y revisión de texto contra glosa
    después de cada ola (`packages/pitch-kit/DATA.md` §15).
-6. **Agregación:** pesos por estrato, pertinencia por periodo, etapas, índice de voz y su giro,
+6. **Agregación:** pesos por estrato, pertinencia por periodo en unidad de voz (cada autor una vez), etapas, índice de voz y su giro,
    momentos con cobertura y n, precio en lo pertinente, momentum pertinente. Salida: `voz.csv`.
 
 ### Paso 6. El mapa y los hallazgos
@@ -138,7 +138,7 @@ voces y piso de señal. Salida: `curva.csv`.
 | M4 · Empuje | Un tema con más de 60% emitido lleva su bandera y nunca se presenta como adopción |
 | M5 · Base | Ningún porcentaje de etapa o momento sin su n y su cobertura; debajo del piso, "señal débil" |
 | M6 · Drivers | Cada tema citado en un driver pertenece a ese driver (`assert`), y cada driver tiene su tesis |
-| M7 · Horizonte | Las reglas de actuar ya, construir y vigilar se escribieron en el plan antes de los datos, y cada tema cae donde dicen |
+| M7 · Horizonte | Las reglas de actuar ya, construir, vigilar y contexto se escribieron en el plan antes de los datos, se aplican en orden, y cada tema cae en uno solo |
 | M8 · Saturado y estacional | Un tema grande que baja lleva "saturado" y no "pierde tirón"; un tema de temporada lo dice, aunque crezca |
 | M9 · Vocabulario | La madurez se nombra igual que en los reportes publicados de noisia.ai (ver "Decisiones abiertas" en la definición) |
 
