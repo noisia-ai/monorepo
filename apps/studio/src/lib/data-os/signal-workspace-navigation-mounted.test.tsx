@@ -17,6 +17,12 @@ const router = { back() {}, forward() {}, refresh() {}, push() {}, replace() {},
 const imageModule = require("next/image");
 Object.assign(imageModule, imageModule.default);
 const { SignalV2BrandMonitoring, readSignalModule } = await import("../../components/signal-v2/SignalV2BrandMonitoring");
+// Compile the real lazy modules before measuring navigation under concurrent CI load.
+await Promise.all([
+  import("../../components/signal-v2/SignalV2Mentions"),
+  import("../../components/signal-v2/SignalV2WorkspaceTopics"),
+  import("../../components/signal-v2/SignalV2TriggersBarriers")
+]);
 const messages = JSON.parse(await readFile(new URL("../../../messages/en-US.json", import.meta.url), "utf8"));
 const unavailable = { state: "not_available", reason: "workspace_has_no_sources" } as const;
 const attention = { root_posts: 0, total_interactions: 0, median_interactions: 0, p90_interactions: 0,
@@ -74,7 +80,8 @@ async function mount(module: "monitoring" | "mentions" | "topics" = "mentions", 
 }
 async function settle() { await act(async () => { await new Promise(resolve => setTimeout(resolve, 30)); }); }
 async function until(ready: () => boolean) {
-  for (let attempt = 0; attempt < 40 && !ready(); attempt++) await settle();
+  const deadline = performance.now() + 30_000;
+  while (!ready() && performance.now() < deadline) await settle();
   assert.ok(ready(), document.body.textContent?.slice(-500));
 }
 async function click(element: Element | null) {
@@ -158,6 +165,44 @@ test("a scope change aborts the old GET and discards its late response without r
     assert.equal(calls.length, 2); assert.ok(calls[1]!.url.includes("other-workspace"));
     assert.equal(document.querySelectorAll("tbody tr").length, 1);
   } finally { await app.close(); globalThis.fetch = saved; }
+});
+
+test("the mounted shell waits for network recovery before sending its second GET", async t => {
+  const schedule = browser.setTimeout.bind(browser), saved = globalThis.fetch;
+  let releaseRetry: (() => void) | undefined, calls = 0;
+  t.mock.method(browser, "setTimeout", ((callback: (...args: unknown[]) => void, delay?: number, ...args: unknown[]) => {
+    if (delay === 1_500) {
+      const timer = schedule(() => undefined, 120_000);
+      releaseRetry = () => { browser.clearTimeout(timer); callback(...args); };
+      return timer;
+    }
+    return schedule(callback, delay, ...args);
+  }) as typeof browser.setTimeout);
+  globalThis.fetch = async () => { if (++calls === 1) throw new TypeError("network changed"); return response(); };
+  const app = await mount();
+  try {
+    await until(() => Boolean(releaseRetry)); await settle(); assert.equal(calls, 1);
+    await act(async () => releaseRetry!()); await until(isEvidenceVisible); assert.equal(calls, 2);
+  } finally { await app.close(); globalThis.fetch = saved; }
+});
+
+test("unmount during the network recovery wait cancels the second GET", async t => {
+  const schedule = browser.setTimeout.bind(browser), saved = globalThis.fetch;
+  let releaseRetry: (() => void) | undefined, calls = 0;
+  t.mock.method(browser, "setTimeout", ((callback: (...args: unknown[]) => void, delay?: number, ...args: unknown[]) => {
+    if (delay === 1_500) {
+      const timer = schedule(() => undefined, 120_000);
+      releaseRetry = () => { browser.clearTimeout(timer); callback(...args); };
+      return timer;
+    }
+    return schedule(callback, delay, ...args);
+  }) as typeof browser.setTimeout);
+  globalThis.fetch = async () => { calls++; throw new TypeError("network changed"); };
+  const app = await mount();
+  try {
+    await until(() => Boolean(releaseRetry)); await app.close();
+    await act(async () => releaseRetry!()); await settle(); assert.equal(calls, 1);
+  } finally { globalThis.fetch = saved; }
 });
 
 test("an aborted pending read on unmount is not retried", async () => {

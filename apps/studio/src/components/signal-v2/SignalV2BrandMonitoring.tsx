@@ -2047,6 +2047,7 @@ function moduleFromPathname(pathname: string): SignalStandardModule | "settings"
 /** Module reads are GETs. One bounded retry covers a changed network or proxy outage. */
 export async function readSignalModule(url: string, signal: AbortSignal, loadModule: () => Promise<unknown>) {
   const read = async () => {
+    if (signal.aborted) throw signal.reason ?? new DOMException("Navigation cancelled.", "AbortError");
     const attempt = new AbortController();
     let rejectInterrupted: (reason: unknown) => void = () => undefined;
     const interrupted = new Promise<never>((_resolve, reject) => { rejectInterrupted = reject; });
@@ -2081,6 +2082,19 @@ export async function readSignalModule(url: string, signal: AbortSignal, loadMod
     if (signal.aborted || !(error instanceof TypeError
       || error instanceof DOMException && error.name === "TimeoutError")) throw error;
   }
+  await new Promise<void>((resolve, reject) => {
+    const abort = () => {
+      window.clearTimeout(timer);
+      signal.removeEventListener("abort", abort);
+      reject(signal.reason ?? new DOMException("Navigation cancelled.", "AbortError"));
+    };
+    const timer = window.setTimeout(() => {
+      signal.removeEventListener("abort", abort);
+      resolve();
+    }, 1_500);
+    signal.addEventListener("abort", abort, { once: true });
+    if (signal.aborted) abort();
+  });
   return read();
 }
 
