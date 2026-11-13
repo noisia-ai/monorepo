@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import {signalWorkspaceEmbeddingDigestV1 as digest} from './signal-workspace-embeddings-v1';
 import {
   buildWorkspaceMonitoringInsightCandidatesV1,
   buildWorkspaceMonitoringInsightRequestV1,
@@ -37,6 +38,26 @@ test('one aggregate request is sealed and budgeted with no mention text or legac
   comparison_window:null,partial:true,current:metrics,previous:null,
   candidates:buildWorkspaceMonitoringInsightCandidatesV1({current:metrics,previous:null})};
  const request=buildWorkspaceMonitoringInsightRequestV1(packet,workspaceMonitoringInsightConfigurationV1(workspace));
+ const providerBody=JSON.parse(request.request_body);
+ const schema=providerBody.output_config.format.schema;
+ const unsupported=new Set(['minimum','maximum','multipleOf','minLength','maxLength','maxItems']);
+ const structuralSchema=(value:unknown):void=>{
+  if(Array.isArray(value)){value.forEach(structuralSchema);return;}
+  if(!value||typeof value!=='object')return;
+  const node=value as Record<string,unknown>;
+  for(const [key,child] of Object.entries(node)){
+   assert.equal(unsupported.has(key),false,'raw Anthropic schema rejects unsupported constraint '+key);
+   if(key==='minItems')assert.ok(child===0||child===1,'only minItems zero/one is supported');
+   structuralSchema(child);
+  }
+  if(node.type==='object')assert.equal(node.additionalProperties,false);
+ };
+ structuralSchema(schema);
+ assert.equal(request.configuration.schema_digest,digest(schema),'policy seals the schema actually emitted on the wire');
+ assert.equal((request.configuration as Record<string,unknown>).strict_schema_digest,'sha256:8f0d73a4e2e5459f51127b650c4b09dd634f31422b117fa5b4a9b28ab36d9956','the original strict local contract remains sealed');
+ assert.match(schema.properties.items.items.properties.short_title.description,/80/);
+ assert.equal(schema.properties.items.minItems,1);
+ assert.equal(schema.properties.items.items.properties.limitations.minItems,1);
  const reorder=(value:unknown):unknown=>Array.isArray(value)?value.map(reorder):value&&typeof value==='object'
   ?Object.fromEntries(Object.entries(value).reverse().map(([key,child])=>[key,reorder(child)])):value;
  const reread=buildWorkspaceMonitoringInsightRequestV1(reorder(packet) as typeof packet,workspaceMonitoringInsightConfigurationV1(workspace));
@@ -56,4 +77,17 @@ test('one aggregate request is sealed and budgeted with no mention text or legac
  const parsed=parseWorkspaceMonitoringInsightReceiptV1(request,raw);
  assert.equal(parsed.usage.input_tokens,100);assert.equal(parsed.editorial.items.length,1);
  assert.throws(()=>parseWorkspaceMonitoringInsightReceiptV1(request,raw.replace('end_turn','max_tokens')));
+ const envelope=JSON.parse(raw),output=JSON.parse(envelope.content[0].text);
+ for(const [field,limit] of [['summary',400],['short_title',80],['explanation',280],['why_it_matters',220],['limitations',180]] as const){
+  const oversized=structuredClone(output);
+  if(field==='summary')oversized.summary='a'.repeat(limit+1);
+  else if(field==='limitations')oversized.items[0].limitations=['a'.repeat(limit+1)];
+  else oversized.items[0][field]='a'.repeat(limit+1);
+  assert.throws(()=>parseWorkspaceMonitoringInsightReceiptV1(request,JSON.stringify({...envelope,content:[{type:'text',text:JSON.stringify(oversized)}]})),field+' keeps its strict local bound');
+ }
+ for(const invalid of [{...output,items:[]},{...output,items:Array.from({length:8},()=>output.items[0])},
+  {...output,items:[{...output.items[0],priority:0}]},{...output,items:[{...output.items[0],priority:8}]},
+  {...output,items:[{...output.items[0],limitations:['a','b','c','d']}]}])
+  assert.throws(()=>parseWorkspaceMonitoringInsightReceiptV1(request,JSON.stringify({...envelope,content:[{type:'text',text:JSON.stringify(invalid)}]})));
+
 });
