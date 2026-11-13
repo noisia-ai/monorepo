@@ -88,10 +88,12 @@ y el **PDF** (Chrome imprime todos los diagramas terminados). El copy vive en un
 
 ```bash
 cd packages/pitch-kit/commercial/credentials
-python3 build.py examples/portfolio.en.json --out ~/Downloads/<Lead>/credenciales --pptx
+python3 build.py examples/portfolio.en.json --out ~/Downloads/<Lead>/credenciales --pptx --pdf
 ```
 
-`--pptx` corre `capture_gifs.py` y `build_pptx.py`. Pide Chrome, numpy, Pillow,
+Con eso salen las tres: `index.html` para presentar, el PPTX con las animaciones como GIF y el PDF
+con cada animación en su último cuadro. `--pptx` corre `capture_gifs.py` y `build_pptx.py`; `--pdf`
+imprime con Chrome. Pide Chrome, node con el repo instalado (`pnpm install`), numpy, Pillow,
 websocket-client y gifsicle.
 
 **Dos modos, el mismo motor:**
@@ -138,16 +140,28 @@ cambian por prospecto con `labels` en el JSON; el resto del texto está en el id
 - "Protocolo", no "taxonomía".
 - Herramientas y proveedores nunca se nombran, tampoco en la comparación: van categorías.
 
-**Lo que sigue:** traer del website las animaciones que ya existen como módulos opcionales. Están en
-`apps/website-next/src/motion`, sobre el mismo contrato de cuadro por cuadro:
-- la comparación por pestañas (`ApproachComposition`) y la de encuestas (`LearnSurveyComposition`);
-- la persona detrás de la mención (`UnderstandComposition`);
-- el experto que firma y la evidencia que se abre (`HowArchitectComposition`, `HowEvidenceComposition`);
-- el mismo hallazgo en tu formato (`OfferFormats`).
+**Las animaciones del website entran tal cual.** El tipo de slide `website` pone a la derecha una
+pieza cuadrada de noisia.ai, con su copy en el idioma del deck, y a la izquierda el punto que la
+slide quiere hacer. No se portan ni se redibujan: `packages/motion` renderiza las composiciones del
+sitio con Remotion (`src/website/registry.tsx`, `builders/website-assets.mjs`), así que el deck y el
+sitio dicen siempre lo mismo. Cada pieza sale en tres archivos: un MP4 que se reproduce al entrar a
+la slide del HTML, un GIF que abre en el diagrama terminado para el PPTX, y ese cuadro terminado en
+PNG para el PDF. La lista completa sale con `node builders/website-assets.mjs --list`. Las que más
+sirven en unas credenciales:
 
-La ruta es exportarlas con un `render(t)` que `capture_gifs.py` pueda usar, para no mantener dos
-versiones de cada diagrama. Las cifras del sitio ("16 idiomas", "20+ países") entran solo cuando estén
-aprobadas en `copy/`.
+| Pieza | Para qué slide |
+|---|---|
+| `survey` | Contra encuestas: la encuesta dice cuántos, la conversación dice por qué |
+| `approach-noisia`, `approach-listening`, `approach-ai`, `approach-agency` | Quién lee la conversación cambia la respuesta |
+| `keywords` | Buscar palabras contra leer toda la conversación |
+| `understand` | La persona en cuatro capas: lo que mueve y lo que frena |
+| `method-count`, `method-weight`, `method-number` | Contar contra entender, cuántas contra cuánto pesan, mover el número contra mover la razón |
+| `architect`, `evidence` | Un experto firma; cada hallazgo abre su evidencia |
+| `one-conversation`, `sources-hub` | La misma conversación cortada como piensa cada equipo; todas las fuentes en una lectura |
+| `offer-report`, `offer-study`, `offer-plan` | Las formas de trabajar con Noisia |
+
+Las cifras del sitio ("16 idiomas", "20+ países") entran a una slide solo cuando estén aprobadas en
+`copy/`.
 
 ## 3. La entrevista
 
@@ -522,7 +536,7 @@ la derecha.
 | ¿Un correo por idioma? | El de quien firma, que la entrevista pregunta |
 | ¿Se queda el tercer tipo de cooperación (audiencias y tendencias)? | Sí, en el opener |
 | Tiempo de entrega por defecto | 3 a 5 días hábiles después del workshop |
-| Tiempos por formato en Credenciales: estudio corto en 1 día, tendencias e inmersión por país en 48 a 72 h, lectura de campaña en 48 h, alertas en 24 h, aprobados en el chat de un deck de portafolio | El modo portafolio los usa; el modo funnel usa el tiempo por defecto. Falta una sola versión en `product-model.md` |
+| Tiempo de entrega de un estudio en Credenciales | **Decidido (nov 2026): 72 horas** en los dos modos. Los reportes conservan su cadencia (mensual, alertas en 24 h) |
 | Cuántos países e idiomas se dicen en Credenciales | El deck dice "especialistas locales" sin número hasta que haya una cifra aprobada |
 | ¿Un índice diseñado y acordado con el cliente puede ir en su propuesta? Se pidió para un cliente con NPS y el equipo dice que va a pasar seguido | Excepción del caso, autorizada en el chat. §11 sigue igual: ningún índice de escucha como indicador genérico de Noisia, ni en decks de otros clientes |
 | ¿Los resultados de un piloto ya entregado al mismo cliente pueden abrir su propuesta? La razón de §4.1, "no los hemos leído", no aplica | Excepción del caso, autorizada en el chat, con el entregable y la fecha en las notas. Nunca en el deck de otro cliente |

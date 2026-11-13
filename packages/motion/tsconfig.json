@@ -11,7 +11,16 @@
     "skipLibCheck": true,
     "noEmit": true,
     "lib": ["DOM", "ES2022"],
-    "types": ["node"]
+    "types": ["node"],
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["../../apps/website-next/src/*"],
+      "react": ["node_modules/@types/react"],
+      "react/*": ["node_modules/@types/react/*"],
+      "iconoir-react": ["node_modules/iconoir-react"],
+      "simple-icons": ["node_modules/simple-icons"],
+      "zod": ["node_modules/zod"]
+    }
   },
   "include": ["src", "remotion.config.ts"]
 }

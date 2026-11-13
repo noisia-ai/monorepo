@@ -6,6 +6,8 @@ import { Clip, clipDuration, type ClipProps } from "./clip/Clip";
 import { Social, socialDuration, type SocialProps } from "./social/Social";
 import { Study, type StudyProps } from "./study/Study";
 import { Deck, deckFrames, type DeckProps } from "./deck/Deck";
+import { Website, type WebsiteProps } from "./website/Website";
+import { WEBSITE } from "./website/registry";
 import stories from "../../../apps/website-next/src/content/stories/public/the-mexican-home.json";
 import socialExample from "../examples/social.json";
 import studyExample from "../examples/study.json";
@@ -69,6 +71,22 @@ export function Root() {
         calculateMetadata={({ props }) => {
           const piece = deckSchema.parse(props.piece);
           return { durationInFrames: deckFrames(piece), width: piece.box.w, height: piece.box.h, props: { ...props, piece } };
+        }}
+      />
+      <Composition
+        id="Website"
+        component={Website}
+        width={1080}
+        height={1080}
+        fps={30}
+        durationInFrames={1}
+        defaultProps={{ name: "understand", locale: "es", rotate: 0 } as WebsiteProps}
+        calculateMetadata={({ props }) => {
+          const e = WEBSITE[props.name];
+          if (!e) throw new Error(`no website composition "${props.name}". Names: ${Object.keys(WEBSITE).join(", ")}`);
+          // The catalog travels in the props so builders/website-assets.mjs can list names and posters.
+          const catalog = Object.fromEntries(Object.entries(WEBSITE).map(([k, v]) => [k, { about: v.about, frames: v.frames, poster: v.poster }]));
+          return { durationInFrames: e.frames, props: { ...props, catalog } };
         }}
       />
     </>

@@ -46,6 +46,20 @@ node builders/build-video.mjs --format study --in examples/study.json --out out/
 pnpm studio
 ```
 
+## Animaciones del website para decks (`builders/website-assets.mjs`)
+
+```bash
+node builders/website-assets.mjs --list                                   # las piezas de noisia.ai disponibles
+node builders/website-assets.mjs --names understand,survey --locale es --out <dir>
+```
+
+Renderiza las composiciones del sitio (`apps/website-next/src/motion`) con su copy, sin portarlas:
+`builders/webpack-website.cjs` apunta su `./runtime` a `src/engine.ts`, que expone los mismos nombres
+sobre Remotion. Cada pieza sale en MP4 (para presentar), GIF que abre en el cuadro terminado (para el
+PPTX) y PNG de ese cuadro (para el PDF). Lo usa el builder de Credenciales
+(`packages/pitch-kit/commercial/credentials`). Una pieza nueva del sitio entra con una línea en
+`src/website/registry.tsx`.
+
 ## Audio y timing (`builders/audio.py`)
 
 ```bash

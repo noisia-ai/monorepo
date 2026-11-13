@@ -37,6 +37,14 @@ EXTRA_CSS = """
 .cmp h2{position:absolute;left:120px;top:150px;font-size:60px;font-weight:700;color:var(--ink);letter-spacing:-.01em}
 .cmp .lead{position:absolute;left:120px;top:248px;width:1400px;font-size:27px;line-height:1.4;color:var(--fg2)}
 .cmp svg{position:absolute;left:120px;top:340px}
+/* website: a noisia.ai animation, square, on the right */
+.web .left{position:absolute;left:120px;top:150px;width:820px;height:800px;display:flex;flex-direction:column}
+.web h2{font-size:54px;line-height:1.12;font-weight:700;color:var(--ink);letter-spacing:-.01em}
+.web .why{margin-top:26px;font-size:25px;line-height:1.42;color:var(--fg2)}
+.web .stage{position:absolute;left:1020px;top:150px;width:780px;height:780px;overflow:hidden;background:#fff}
+.web .stage video,.web .stage img.poster{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+.web .stage img.poster{display:none}
+@media print{.web .stage video{display:none}.web .stage img.poster{display:block}}
 """
 
 
@@ -138,7 +146,19 @@ def coverage(d, n, ui):
             f'{svg("coverage-rings", 920, 780, d.get("labels"))}{frame(n)}</section>')
 
 
-TYPES = {"cover": cover, "pillars": pillars, "ways": ways, "compare": compare, "case": case, "menu": menu, "coverage": coverage}
+def website(d, n, ui):
+    """A noisia.ai animation (packages/motion, src/website/registry.tsx) with its point on the left. The
+    video plays when the slide comes in; printing shows its finished frame."""
+    items = "".join(f'<div class="it">{ico("check-circle")}{esc(i)}</div>' for i in d.get("items", []))
+    gets = f'<div class="gets">{items}</div>' if items else ""
+    base = f'web/{d["anim"]}.{d["_lang"]}'
+    return (f'<section class="web" data-label="{html.escape(d.get("label", d["anim"]))}">{LOGO}<div class="left">'
+            f'<h2>{esc(d["title"])}</h2><p class="why">{esc(d.get("why", ""))}</p>{gets}</div>'
+            f'<div class="stage card"><video data-web src="{base}.mp4" poster="{base}.png" muted playsinline preload="auto"></video>'
+            f'<img class="poster" src="{base}.png" alt=""></div>{frame(n)}</section>')
+
+
+TYPES = {"cover": cover, "pillars": pillars, "ways": ways, "compare": compare, "case": case, "menu": menu, "coverage": coverage, "website": website}
 
 
 def kit_copy(lang, key):
@@ -155,8 +175,24 @@ def resolve(spec):
     return spec
 
 
+MOTION = os.path.join(KIT, "..", "motion")
+
+
+def website_assets(spec, out):
+    """Renders (or reuses) the MP4, GIF and poster of every website slide into <out>/web."""
+    names = sorted({d["anim"] for d in spec["slides"] if d["type"] == "website"})
+    if not names:
+        return
+    r = subprocess.run(["node", os.path.join(MOTION, "builders", "website-assets.mjs"), "--names", ",".join(names),
+                        "--locale", spec["lang"], "--out", os.path.join(out, "web")], cwd=MOTION)
+    if r.returncode:
+        sys.exit("build.py: website-assets.mjs failed (pnpm install in the repo, and see packages/motion/README.md)")
+
+
 def build(spec, out):
     spec = resolve(spec)
+    for d in spec["slides"]:
+        d["_lang"] = spec["lang"]
     ui = UI[spec["lang"]]
     os.makedirs(os.path.join(out, "assets"), exist_ok=True)
     for name, src in ASSETS.items():
@@ -165,6 +201,7 @@ def build(spec, out):
     body = "\n\n".join(TYPES[d["type"]](d, i + 1, ui) for i, d in enumerate(spec["slides"]))
     used = sorted(set(re.findall(r'data-anim="([^"]+)"', body)))
     anims = "\n".join(open(os.path.join(HERE, "anims", f"{a}.js"), encoding="utf-8").read() for a in used)
+    website_assets(spec, out)
     notes = [d.get("notes", "") for d in spec["slides"]]
     page = f"""<!doctype html>
 <html lang="{spec["lang"]}">
@@ -199,11 +236,33 @@ def build(spec, out):
     return used
 
 
+def pdf(out, name):
+    """Prints the served deck with Chrome: every animation on its last frame, website slides on their poster."""
+    import functools, http.server, socket, threading
+    chrome = os.environ.get("CHROME_PATH", "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")
+    sock = socket.socket(); sock.bind(("127.0.0.1", 0)); port = sock.getsockname()[1]; sock.close()
+
+    class Quiet(http.server.SimpleHTTPRequestHandler):
+        def log_message(self, *a):
+            pass
+    srv = http.server.ThreadingHTTPServer(("127.0.0.1", port), functools.partial(Quiet, directory=out))
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    target = os.path.join(out, name)
+    try:
+        subprocess.run([chrome, "--headless=new", "--disable-gpu", "--no-pdf-header-footer", "--virtual-time-budget=8000",
+                        f"--print-to-pdf={target}", f"http://127.0.0.1:{port}/index.html"],
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+    finally:
+        srv.shutdown()
+    print(f"{target} · {os.path.getsize(target) / 1e6:.2f} MB")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("spec")
     ap.add_argument("--out", required=True)
     ap.add_argument("--pptx", action="store_true", help="also capture the GIFs and write the editable PPTX")
+    ap.add_argument("--pdf", action="store_true", help="also print the PDF with Chrome")
     a = ap.parse_args()
     spec = json.load(open(a.spec, encoding="utf-8"))
     out = os.path.abspath(os.path.expanduser(a.out))
@@ -213,6 +272,8 @@ def main():
             r = subprocess.run([sys.executable, os.path.join(HERE, script), out, a.spec])
             if r.returncode:
                 sys.exit(f"{script} failed")
+    if a.pdf:
+        pdf(out, f"Noisia_Credenciales_{spec['lang'].upper()}.pdf")
 
 
 if __name__ == "__main__":

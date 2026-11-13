@@ -10,7 +10,13 @@ function build(){ if(built) return; built=true;
     ANIMS[k]=A; ST[k]=A.setup(svg); A.render(ST[k],A.dur);
   });
 }
+// Website slides carry a video: it plays from the start when its slide comes in, and rests otherwise.
+function playVideos(idx){
+  deck.querySelectorAll(':scope > section').forEach((s,i)=>{const v=s.querySelector('video[data-web]');if(!v)return;
+    if(i===idx){v.currentTime=0;v.play().catch(()=>{})}else v.pause()});
+}
 function play(idx){
+  playVideos(idx);
   cancelAnimationFrame(raf);
   for(const k in ANIMS) if(+k!==idx) ANIMS[k].render(ST[k],ANIMS[k].dur);
   const A=ANIMS[idx]; if(!A) return;
