@@ -44,6 +44,7 @@ EXTRA_CSS = """
 .web .stage{position:absolute;left:1020px;top:150px;width:780px;height:780px;overflow:hidden;background:#fff}
 .web .stage video,.web .stage img.poster{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
 .web .stage img.poster{display:none}
+.web .stage img.poster.shown{display:block}
 @media print{.web .stage video{display:none}.web .stage img.poster{display:block}}
 """
 

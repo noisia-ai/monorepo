@@ -19,10 +19,11 @@ function holdOnPoster(v){
   const rest=()=>{v.pause();if(stop)v.currentTime=stop};
   const tick=()=>{if(v.paused)return;if(stop&&v.currentTime>=stop){rest();return}
     if(v.requestVideoFrameCallback)v.requestVideoFrameCallback(tick);else requestAnimationFrame(tick)};
-  v.addEventListener('play',()=>{if(img)img.style.display='none';tick()});
+  // A class, not an inline display: an inline style would beat the print rule that shows the poster.
+  v.addEventListener('play',()=>{if(img)img.classList.remove('shown');tick()});
   // timeupdate still fires (about 4 times a second) where frame callbacks are throttled, e.g. a hidden tab.
   v.addEventListener('timeupdate',()=>{if(!v.paused&&stop&&v.currentTime>=stop)rest()});
-  v.addEventListener('ended',()=>{if(img)img.style.display='block'});
+  v.addEventListener('ended',()=>{if(img)img.classList.add('shown')});
 }
 document.querySelectorAll('video[data-web]').forEach(holdOnPoster);
 function playVideos(idx){
