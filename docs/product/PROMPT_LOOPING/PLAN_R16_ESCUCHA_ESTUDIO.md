@@ -12,6 +12,8 @@ No hay aprobaciones humanas intermedias en los procesos de análisis: Sonnet 4.6
 
 ## Progreso
 
+- H0: mediciones remotas de sólo lectura y pruebas de IO sintético registradas antes de cambios productivos; se distingue latencia histórica del proveedor de Storage/DB actuales. H1 se implementa en tres worktrees separados y todavía no acredita el throughput final.
+
 - [x] Leer objetivo completo, diseño aprobado, auditoría y reglas del repositorio; contrastar develop y checkout.
 - [x] Verificar límites y saldos actuales en las consolas autenticadas antes de cambiar el pipeline. Recibos privados, sin claves.
 - [ ] H0: medir baseline separado de proveedor, tokens por raíz, crudos, base, materialización e importación/Voyage. Sin cambios productivos antes de esa medición.
@@ -82,6 +84,9 @@ Recibo: separar Voyage/JEV por raíz de Claude por número de grupos y vueltas; 
 
 ## Sorpresas y descubrimientos
 
+- El PR documental agotó el heap de aproximadamente 2 GiB de Node en el build completo de Studio, sin cambios de aplicación respecto a R15. La misma construcción local con 4 GiB y placeholders aislados de CI pasó completa. Se conserva el primer log y el resultado posterior de CI se verificará antes de fusionar.
+- La sección 4.6 de METHODOLOGY no está en el checkout de develop; se consultó el archivo vigente mediante una referencia Git de main en sólo lectura. No se fusiona ni modifica esa rama. El diseño aprobado R16 manda sobre diferencias del playbook anterior.
+
 - H0: 83,962 llamadas históricas completas, 137,026,416 tokens y 1,632.005 tokens/raíz. Se leyeron 24 crudos físicos con hashes verificados: latencia histórica de proveedor p50 82.4 ms y p95 134.6 ms. No se presenta como inferencia nueva. Lecturas Storage actuales: media 250 ms; RTT de DB aproximado 72–77 ms salvo un valor de 159 ms.
 - H0: adaptador Storage actual, prefijo sintético propio en UAT: cinco archivos lógicos causaron 21 operaciones HTTP. Tras el primer envío de 2.87 s, cuatro envíos tardaron 1.12–1.31 s. Una página de cuatro filas tardó 1.20 s, frente a aproximadamente ese costo por cada raíz individual. No se modificaron objetos anteriores.
 - H0: en tabla temporal de la copia privada, 200 actualizaciones individuales tardaron 108.9 ms y una actualización JSONB equivalente de 200 filas 5.45 ms. Es SQL representativo en copia, no un benchmark del store productivo ni evidencia del objetivo de 1,000/s.
@@ -95,6 +100,8 @@ Recibo: separar Voyage/JEV por raíz de Claude por número de grupos y vueltas; 
 
 ## Registro de decisiones
 
+- 2026-11-14: reservar 4 GiB de heap únicamente al paso de construcción de Studio en CI; no omitir lint, tipado, build ni gates. UAT y sus variables no cambian.
+
 - 2026-11-14: implementar H1 en tres ramas/worktrees existentes limpios y separados: crítico DB/páginas/lector dual, estándar proveedor/scheduler, mecánico benchmark con almacenamiento y PostgreSQL reales. El orquestador conserva integración, pruebas remotas, gasto, revisión y fusión; ninguno opera cuentas o UAT. El resultado sintético inicial y la escritura temporal no cuentan como aceptación de 1,000/s.
 
 - 2026-11-14: R16 nuevo prevalece sobre el plan piloto anterior. La evidencia literal de T&B sirve para integridad de la salida/capa y no se convierte en Claude por mención ni puerta de clasificación.
@@ -102,5 +109,7 @@ Recibo: separar Voyage/JEV por raíz de Claude por número de grupos y vueltas; 
 - 2026-11-14: separar capacidad interna sintética de throughput real: organización observada 80 solicitudes/s y 100,000 tokens/s compartidos entre claves. No prometer 1,000 raíces/s reales con ese límite.
 
 ## Resultado y retrospectiva
+
+Las observaciones H0 y su procedencia se guardan en custodia privada; la implementación, el benchmark integral y las ejecuciones reales de R16 siguen pendientes. Ninguna prueba de adaptador aislado o store en memoria se usa como aceptación global.
 
 En ejecución. Lectura y verificación inicial completas; implementación, mediciones detalladas y aceptación UAT pendientes. Este documento conserva el alcance completo y no sustituye el objetivo por un piloto reducido.
