@@ -14,6 +14,18 @@ import { createLabelingRawPagesStorageV1 } from "./signal-labeling-receipt-stora
 import { jevUsageV1 } from "./signal-jev-labeling-page";
 import { createWorkspaceEngineStorageV1, type WorkspaceEngineStorageV1 } from "./signal-workspace-engine-storage";
 
+type RecoveryPageOrderV1={recovery_page_id:string|null;recovery_byte_offset:number|string|null};
+/** Keep page members contiguous so a bounded one-page reader never oscillates
+ * between two large artifacts. Historical individual receipts remain in the pass. */
+export function groupMassLabelingRecoveryCallsV1<T extends RecoveryPageOrderV1>(calls:T[]):T[]{
+  return [...calls].sort((a,b)=>{
+    if(a.recovery_page_id===null)return b.recovery_page_id===null?0:1;
+    if(b.recovery_page_id===null)return -1;
+    return a.recovery_page_id.localeCompare(b.recovery_page_id)
+      ||Number(a.recovery_byte_offset)-Number(b.recovery_byte_offset);
+  });
+}
+
 /** Recovers only bytes previously returned for this exact frozen call. This
  * function has no provider, input selection, reservation or retry transport. */
 export async function recoverMassLabelingJevReceiptsV1(args: {
@@ -28,9 +40,13 @@ export async function recoverMassLabelingJevReceiptsV1(args: {
   if (!run || run.identity.params.request_version !== "mass-labeling-jev-v2") return { recovered: 0 };
   const configuration = massLabelingConfigurationV2(run.identity.params);
   if (labelerDigestV1(run.identity) !== labelerDigestV1(massLabelingJevIdentityV2(configuration))) throw new Error("mass_labeling_identity_invalid");
-  const calls = (await args.database.query<LabelingCallV1<MassLabelingInputV1>>(`SELECT * FROM signal_labeling_calls
-    WHERE run_id=$1 AND workspace_id=$2 AND status='unknown' AND results_applied ORDER BY created_at,id LIMIT 200`,
-    [run.id, run.workspace_id])).rows;
+  const calls = groupMassLabelingRecoveryCallsV1((await args.database.query<LabelingCallV1<MassLabelingInputV1>&RecoveryPageOrderV1>(`SELECT receipt.*,
+      member.page_id recovery_page_id,member.byte_offset recovery_byte_offset
+    FROM signal_labeling_calls receipt LEFT JOIN signal_labeling_raw_page_members member
+      ON member.workspace_id=receipt.workspace_id AND member.run_id=receipt.run_id AND member.call_id=receipt.id
+    WHERE receipt.run_id=$1 AND receipt.workspace_id=$2 AND receipt.status='unknown' AND receipt.results_applied
+    ORDER BY member.page_id NULLS LAST,member.byte_offset NULLS LAST,receipt.created_at,receipt.id LIMIT 200`,
+    [run.id, run.workspace_id])).rows);
   if (!calls.length) return { recovered: 0 };
   const storage = args.storage ?? createWorkspaceEngineStorageV1();
   const readPage = createLabelingRawCallPageReaderV1({database:args.database,
