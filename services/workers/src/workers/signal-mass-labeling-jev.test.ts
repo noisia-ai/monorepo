@@ -119,7 +119,7 @@ function fixture(count: number, product = false) {
     async clearUnknownFailure() {},
     async markFailed(_run, page, unknown) {
       page.forEach((call) => {
-        call.status = unknown ? "unknown" : "failed";
+        if (["reserved", "submitting", "submitted"].includes(call.status)) call.status = unknown ? "unknown" : "failed";
       });
     },
     async persistRaw(_run, call, raw) {
@@ -476,7 +476,7 @@ test('streaming storage failure preserves unknown outcome and never resends it',
   const f = fixture(32, true);
   f.store.persistRawPage = async () => { throw Error('storage_down'); };
   await assert.rejects(processMassLabelingJevV1({ run_id:f.run.id,store:f.store,provider:{...f.provider,max_response_bytes:16384},execution:streaming }), /storage_down/);
-  assert.ok(f.results.length > 0); assert.ok(f.results.every(row => row.status === 'error'));
+  assert.equal(f.results.length, 0, 'storage failures preserve responses for recovery instead of applying a substitute');
   assert.ok(f.calls.some(call => call.status === 'unknown'));
   assert.equal(f.events.includes('settle'), false);
 });
@@ -581,5 +581,39 @@ test('streaming observer failure cannot interrupt settlement or change the outco
     provider:{...f.provider,max_response_bytes:16384},execution:streaming,
     observe_stream:() => { throw Error('observer_down'); } });
   assert.equal(outcome.status,'completed');assert.equal(f.results.length,8);
+  assert.ok(f.calls.every(call => call.status==='settled' && call.results_applied));
+});
+
+for (const fault of ['apply', 'settlement_ack'] as const) test(`streaming preserves valid paid responses after a ${fault} failure`, async () => {
+  const f = fixture(8, true), durable = new Map<string, string>();
+  f.store.persistRawPage = async (_run, rows) => { for (const row of rows) {
+    durable.set(row.call.id, row.raw); row.call.raw_body = row.raw;
+  } };
+  const calls = f.store.calls;
+  f.store.calls = async run => {
+    const rows = await calls(run);
+    for (const call of rows) if (!call.raw_body && durable.has(call.id)) call.raw_body = durable.get(call.id)!;
+    return rows;
+  };
+  const apply = f.store.apply, settle = f.store.settlePage;
+  let injected = false, applyAttempts = 0;
+  f.store.apply = async (run, rows) => {
+    applyAttempts++;
+    if (fault === 'apply' && !injected) { injected = true; throw Error('apply_commit_failed'); }
+    await apply(run, rows);
+  };
+  f.store.settlePage = async (run, rows) => {
+    await settle(run, rows);
+    if (fault === 'settlement_ack' && !injected) { injected = true; throw Error('settlement_ack_lost'); }
+  };
+  const invoke = () => processMassLabelingJevV1({ run_id:f.run.id,store:f.store,
+    provider:{...f.provider,max_response_bytes:16384},execution:streaming });
+  await assert.rejects(invoke(), fault === 'apply' ? /apply_commit_failed/ : /settlement_ack_lost/);
+  assert.equal(f.results.length,0,'a database failure cannot replace valid model evidence with a technical label');
+  assert.ok(f.calls.every(call => call.status==='settled' && !call.results_applied));
+  assert.equal(applyAttempts,fault==='apply'?1:0,'no second technical apply after a persistence failure');
+  assert.equal((await invoke()).status,'completed');
+  assert.equal(f.transports(),8,'recovery reads durable responses without another physical attempt');
+  assert.equal(f.results.length,8);assert.ok(f.results.every(result => result.status==='labeled'));
   assert.ok(f.calls.every(call => call.status==='settled' && call.results_applied));
 });

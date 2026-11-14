@@ -40,7 +40,7 @@ export async function processJevStreamingWindowV2<I extends FacetInput, R>(args:
     memory = calls.reduce((n, call) => n + Buffer.byteLength(call.raw_body ?? ''), 0),
     inFlight = 0, next = 0, fatal: unknown;
   let totalCost = 0, labeled = 0; const latencies: number[] = [];
-  const errors = new Map<string, { call: LabelingCallV1<I>; unknown: boolean; code: string }>();
+  const errors = new Map<string, { call: LabelingCallV1<I>; unknown: boolean; code: string; write_result: boolean }>();
   const applied = new Set<string>(), observedRaw = new Set(calls.filter(c => Boolean(c.raw_body)).map(c => c.id));
   const active = new Set<Promise<void>>(); const waiters = new Set<() => void>();
   const observe = () => {
@@ -52,7 +52,8 @@ export async function processJevStreamingWindowV2<I extends FacetInput, R>(args:
   const wait = () => new Promise<void>(resolve => { waiters.add(resolve); });
   const release = (bytes: number) => { memory -= bytes; observe(); wake(); };
   const fail = (error: unknown) => { fatal ??= error; cancellation.abort(); wake(); };
-  const record = (call: LabelingCallV1<I>, unknown: boolean, code: string) => errors.set(call.id, { call, unknown, code });
+  const record = (call: LabelingCallV1<I>, unknown: boolean, code: string, write_result = true) =>
+    errors.set(call.id, { call, unknown, code, write_result });
   async function consume(rows: Row[], alreadyDurable = false) {
     try {
       if (!alreadyDurable) await store.persistRawPage(run, rows.map(({ call, raw }) => ({ call, raw })));
@@ -95,9 +96,12 @@ export async function processJevStreamingWindowV2<I extends FacetInput, R>(args:
         if(failure)throw failure.reason;
       }
     } catch (error) {
-      // A known, already-applied receipt must never become an unknown financial outcome.
+      // A database/storage failure does not invalidate provider evidence. In
+      // particular, settlement may have committed even if its acknowledgement
+      // was lost. Preserve the pending result for a durable, idempotent replay;
+      // never replace it with a technical label in a second apply.
       const pending = rows.filter(row => !applied.has(row.call.id));
-      for (const row of pending) record(row.call, true, 'jev_stream_persistence_failed');
+      for (const row of pending) record(row.call, true, 'jev_stream_persistence_failed', false);
       try { if (pending.length) await store.markFailed(run, pending.map(row => row.call), true); }
       catch (markError) { fail(new AggregateError([error, markError], 'jev_stream_persistence_failed')); }
       fail(error);
@@ -173,7 +177,7 @@ export async function processJevStreamingWindowV2<I extends FacetInput, R>(args:
       const group = [...errors.values()].filter(error => error.unknown === unknown);
       if (group.length) {
         await store.markFailed(run, group.map(error => error.call), unknown);
-        const technical = group.filter(error => !applied.has(error.call.id)).map(error => ({call:error.call,
+        const technical = group.filter(error => error.write_result && !applied.has(error.call.id)).map(error => ({call:error.call,
           results:hooks.error(run,error.call,error.code,unknown)})).filter(row => row.results.length);
         if (technical.length) { await store.apply(run, technical); for (const row of technical) applied.add(row.call.id); }
       }
