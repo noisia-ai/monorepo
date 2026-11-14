@@ -42,6 +42,15 @@ test('listening prototypes use governed Voyage receipts and share one total exec
   await assert.rejects(prepareSignalListeningV1({...scope,idempotency_key:randomUUID(),cap_micro_usd:1,provider_available:true}),/cap_exhausted/);
   await assert.rejects(prepareSignalListeningV1({...scope,idempotency_key:randomUUID(),cap_micro_usd:1000000,provider_available:false}),/prototype_provider_unavailable/);
   await assert.rejects(prepareSignalListeningV1({...scope,workspace_id:randomUUID(),idempotency_key:randomUUID(),cap_micro_usd:1000000,provider_available:true,prototype_provider_available:true}),/policy_changed|forbidden/);
+  const featureOff=await prepareSignalListeningV1({...scope,idempotency_key:randomUUID(),cap_micro_usd:1000000,provider_available:true,prototype_provider_available:true});
+  assert.ok(featureOff.prototype_run_id);const featureJob=(await database.query('SELECT worker_job_id FROM signal_workspace_embedding_runs WHERE id=$1',[featureOff.prototype_run_id])).rows[0]!;
+  await database.query("DELETE FROM signal_workspace_features WHERE workspace_id=$1 AND feature='mass_labeling'",[access.workspace_id]);
+  let forbiddenSends=0;
+  const refused=await signalWorkspaceEmbeddingsJobV1({id:featureJob.worker_job_id,data:{run_id:featureOff.prototype_run_id!},updateProgress:async()=>{}},
+   {database,provider:{embedBatch:async()=>{forbiddenSends++;throw Error('feature-off provider must never execute');}}});
+  assert.equal('replayed' in refused&&refused.replayed,true);assert.equal(forbiddenSends,0);
+  await database.query("INSERT INTO signal_workspace_features(workspace_id,feature,enabled_by) VALUES($1,'mass_labeling',$2)",[access.workspace_id,access.actor_user_id]);
+  assert.equal((await continueSignalListeningPreparationV1({...access,preparation_id:featureOff.preparation_id,provider_available:true})).status,'failed');
   const request={...scope,idempotency_key:randomUUID(),cap_micro_usd:1000000,provider_available:true,prototype_provider_available:true};
   assert.equal((await database.query('SELECT signal_listening_prototype_plan_valid_v1($1,$2,$3::jsonb) ok',[access.workspace_id,configuration.id,JSON.stringify(quote.prototype_plan)])).rows[0].ok,true);
   const pending=await prepareSignalListeningV1(request);assert.equal(pending.status,'waiting_prototypes');assert.ok(pending.prototype_run_id);assert.equal(pending.run_id,null);

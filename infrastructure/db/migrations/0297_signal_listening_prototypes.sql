@@ -511,6 +511,9 @@ CREATE TRIGGER signal_listening_preparation_label_guard BEFORE INSERT ON signal_
 CREATE FUNCTION signal_listening_prototype_call_guard_v1() RETURNS trigger LANGUAGE plpgsql SET search_path=public,extensions,pg_temp AS $$
 BEGIN
  IF NOT EXISTS(SELECT 1 FROM signal_listening_prototype_runs WHERE run_id=NEW.run_id) THEN RETURN NEW;END IF;
+ IF TG_OP='UPDATE' AND NOT(NEW.status='in_flight' AND OLD.status='reserved') THEN RETURN NEW;END IF;
+ IF NOT EXISTS(SELECT 1 FROM signal_workspace_features WHERE workspace_id=NEW.workspace_id AND feature='mass_labeling')
+  OR NOT COALESCE(signal_listening_prototype_current_v1(NEW.run_id),false) THEN RAISE EXCEPTION 'listening_prototype_send_forbidden';END IF;
  IF NOT COALESCE(signal_listening_prototype_owner_valid_v1(NEW.run_id),false) THEN RAISE EXCEPTION 'listening_prototype_call_owner_invalid';END IF;
  IF EXISTS(SELECT 1 FROM signal_workspace_embedding_calls prior WHERE prior.workspace_id=NEW.workspace_id AND prior.config_digest=NEW.config_digest
   AND prior.id<>NEW.id AND prior.input_keys&&NEW.input_keys AND prior.status<>'definitely_not_sent'
@@ -520,7 +523,7 @@ BEGIN
   RAISE EXCEPTION 'listening_prototype_prior_outcome_unresolved';END IF;
  RETURN NEW;
 END $$;
-CREATE TRIGGER signal_listening_prototype_call_guard BEFORE INSERT ON signal_workspace_embedding_calls
+CREATE TRIGGER signal_listening_prototype_call_guard BEFORE INSERT OR UPDATE ON signal_workspace_embedding_calls
  FOR EACH ROW EXECUTE FUNCTION signal_listening_prototype_call_guard_v1();
 
 -- Append-only calibration evidence. No synthetic tokenizer estimate is stored.

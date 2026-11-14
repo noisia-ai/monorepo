@@ -146,6 +146,8 @@ async function requireRunAuthority(client:PoolClient,run:Run,newWork:boolean){
  // The listening owner is independent of taxonomy and Brand Context receipts.
  // Its SQL predicate binds the native admission, frozen positive bytes and cap.
  if(run.input_owner_contract==="listening-prototype-v1"){
+  if(newWork&&!(await client.query("SELECT 1 FROM signal_workspace_features WHERE workspace_id=$1 AND feature='mass_labeling'",[run.workspace_id])).rows.length)
+   return fail("workspace_embedding_forbidden",403);
   if((await client.query<{valid:boolean}>("SELECT signal_listening_prototype_owner_valid_v1($1::uuid) valid",[run.id])).rows[0]?.valid!==true
    ||!(await loadSignalWorkspaceCapabilitiesStoreV1({queryable:client,workspace_id:run.workspace_id,actor_user_id:run.actor_user_id})).can_request_processing)
    return fail("workspace_embedding_forbidden",403);
