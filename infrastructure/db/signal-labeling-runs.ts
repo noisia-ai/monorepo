@@ -656,6 +656,39 @@ export function createSignalLabelingStoreV1<
     return policy;
   }
   return {
+    ...(rawPages?{
+      /** Only the live scheduler may provide IDs it never delivered to evaluate.
+       * Missing raw alone is never evidence that a crashed process did not send. */
+      async requeueUnsent(run:LabelingRunV1,calls:LabelingCallV1<Input>[]){
+        if(!calls.length)return;
+        if(new Set(calls.map(call=>call.id)).size!==calls.length)fail("labeling_unsent_requeue_conflict");
+        await tx(db,async c=>{
+          await lock(c,run);await authority(c,run,0);
+          if(!(await c.query(`SELECT 1 FROM signal_labeling_runs WHERE id=$1 AND workspace_id=$2
+            AND lease_token=$3::uuid AND lease_until>clock_timestamp()`,[run.id,run.workspace_id,run.lease_token])).rows.length)
+            fail("labeling_lease_lost");
+          await c.query("SELECT set_config('noisia.labeling_unsent_requeue_v1',$1,true)",
+            [JSON.stringify({contract_version:'signal-labeling-unsent-requeue-v1',run_id:run.id,workspace_id:run.workspace_id,
+              lease_token:run.lease_token,calls:calls.map(call=>({id:call.id,request_digest:call.request_digest}))})]);
+          const changed=await c.query(`UPDATE signal_labeling_calls call SET status='reserved',stop_reason=NULL,updated_at=clock_timestamp()
+            FROM jsonb_to_recordset($3::jsonb) known(id uuid,request_digest text)
+            WHERE call.run_id=$1 AND call.workspace_id=$2 AND call.id=known.id AND call.request_digest=known.request_digest
+              AND EXISTS(SELECT 1 FROM signal_labeling_runs held WHERE held.id=$1 AND held.workspace_id=$2
+                AND held.lease_token=$4::uuid AND held.lease_until>clock_timestamp())
+              AND call.status IN('submitting','reserved') AND call.provider_batch_id IS NULL
+              AND call.raw_sha256 IS NULL AND call.raw_storage_key IS NULL AND call.raw_size_bytes IS NULL
+              AND call.raw_storage_verified_at IS NULL AND call.raw_storage_verified_key IS NULL
+              AND call.usage IS NULL AND call.settled_micro_usd IS NULL AND call.terminal_exposure_micro_usd=0
+              AND NOT call.results_applied AND call.results IS NULL
+              AND NOT EXISTS(SELECT 1 FROM signal_labeling_raw_page_members member
+                WHERE member.workspace_id=call.workspace_id AND member.run_id=call.run_id AND member.call_id=call.id)
+            RETURNING call.id`,[run.id,run.workspace_id,JSON.stringify(calls.map(call=>({id:call.id,request_digest:call.request_digest}))),run.lease_token]);
+          await c.query("SELECT set_config('noisia.labeling_unsent_requeue_v1','',true)");
+          if(changed.rows.length!==calls.length)fail("labeling_unsent_requeue_conflict");
+        });
+        for(const call of calls)call.status='reserved';
+      },
+    }:{}),
     async claim(runId: string): Promise<LabelingRunV1 | null> {
       return tx(db, async (c) => {
         const token = randomUUID();
@@ -684,7 +717,7 @@ export function createSignalLabelingStoreV1<
         ).rows[0]!;
       });
     },
-    async fail(run: LabelingRunV1, code: string) {
+    async fail(run: LabelingRunV1, code: string,mode:{preserve_reserved?:boolean}={}) {
       await tx(db, async (c) => {
         await lock(c, run);
         if(code==="labeling_raw_receipt_invalid"){
@@ -696,7 +729,7 @@ export function createSignalLabelingStoreV1<
           await c.query(`UPDATE signal_labeling_runs SET error_code=$2,status='failed',updated_at=now() WHERE id=$1`,[run.id,code]);
           return;
         }
-        await c.query(
+        if(!rawPages||mode.preserve_reserved!==true)await c.query(
           `UPDATE signal_labeling_calls SET status='failed',updated_at=now() WHERE run_id=$1 AND status='reserved'`,
           [run.id],
         );

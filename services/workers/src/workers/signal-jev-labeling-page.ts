@@ -1,4 +1,4 @@
-import { processJevStreamingWindowV2, type JevStreamingExecutionV2, type JevStreamingMetricsV2 } from './signal-jev-streaming-window';
+import { assertJevStreamingExecutionV2, processJevStreamingWindowV2, type JevStreamingExecutionV2, type JevStreamingMetricsV2 } from './signal-jev-streaming-window';
 import { setMaxListeners } from "node:events";
 import { llmCostMicroUsdV1, type FacetInput, type LlmPriceV1, type LlmUsageV1 } from "@noisia/query-engine";
 import type { createSignalLabelingStoreV1, LabelingRunV1, LabelingCallV1, LabelingCallProposalV1 } from "@noisia/db";
@@ -47,7 +47,13 @@ export async function processJevLabelingPageV1<Input extends FacetInput,Result>(
     for (;;) {
       const pending=(await store.calls(run)).filter(call=>!call.results_applied);
       if(hooks.fail_on_error&&pending.some(call=>call.status==="unknown"&&!call.raw_body)){
-        await store.fail(run,"labeling_outcome_unknown");return {status:"outcome_unknown"};
+        await store.fail(run,"labeling_outcome_unknown",args.execution?{preserve_reserved:true}:undefined);return {status:"outcome_unknown"};
+      }
+      if(args.execution&&run.error_code==="labeling_outcome_unknown"&&!pending.some(call=>Boolean(call.raw_body))){
+        await store.finish(run);const refreshed=await store.refresh(run);run.error_code=refreshed.error_code;
+        if(run.error_code==="labeling_outcome_unknown"){
+          await store.fail(run,"labeling_outcome_unknown",{preserve_reserved:true});return {status:"outcome_unknown"};
+        }
       }
       let calls=(hooks.recovery_only?pending.filter(call=>Boolean(call.raw_body)):pending).slice(0,args.execution?.window_size??200);
       if(hooks.recovery_only&&!calls.length)return {status:"recovery_unavailable"};
@@ -56,6 +62,7 @@ export async function processJevLabelingPageV1<Input extends FacetInput,Result>(
         if(proposals.length)calls=(await store.reserve(run,proposals)).slice(0,args.execution?.window_size??200);
       }
       const reserved=run.error_code?[]:calls.filter(call=>call.status==="reserved"&&!call.raw_body);
+      if(args.execution)assertJevStreamingExecutionV2(args.execution,provider);
       if(reserved.length)await store.markSubmitting(run,reserved);
       if(args.execution) {
         const outcome = await processJevStreamingWindowV2({run,calls,send_calls:reserved,store,provider,execution:args.execution,price,cancellation,hooks,observe_stream:args.observe_stream});
@@ -64,6 +71,7 @@ export async function processJevLabelingPageV1<Input extends FacetInput,Result>(
           settled_micro_usd:(aggregate?.settled_micro_usd??0)+outcome.settled_micro_usd,
           unresolved_billing_requests:(aggregate?.unresolved_billing_requests??0)+outcome.unresolved_billing_requests };
         windows++;
+        if(run.error_code){const refreshed=await store.refresh(run);run.error_code=refreshed.error_code;}
         if(leaseError)throw leaseError;
         if(cancellation.signal.aborted||outcome.status!=="running"||!calls.length||outcome.unresolved_billing_requests||hooks.recovery_only||windows>=(args.max_windows??Infinity))return aggregate;
         continue;

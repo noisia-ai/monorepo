@@ -12,6 +12,9 @@ No hay aprobaciones humanas intermedias en los procesos de análisis: Sonnet 4.6
 
 ## Progreso
 
+- H1: integrado el harness con PostgreSQL/Redis reales, Storage HTTP con fsync/readback, matriz de fallos y workflow propio. La revisión corrigió una prueba de presupuesto que usaba el ID incorrecto, la mezcla de procedencia entre recibos, picos de memoria omitidos por muestreo y un doble fallo accidental en la prueba de lease. El benchmark sostenido sigue pendiente; no hay aceptación por pruebas unitarias.
+- H1: la matriz encontró que reservas no entregadas al proveedor se finalizaban como errores. La corrección conserva esas reservas, drena toda escritura antes de liberar la lease y cubre también una caída durante recuperación anterior al primer envío. Las 41 pruebas focales y el caso PostgreSQL de reencolado pasan; faltan revisión final e integración del benchmark completo.
+- H2: backend y UI mínimos integrados en rama separada; tipado/lint 11/11 y Studio 1,335 aprobadas con siete omisiones por entorno. La revisión detectó población completa recalculada por llamada y dos casos de lifecycle/precedencia humana; se corrigen mediante una migración posterior antes de solicitar aceptación.
 - PR195 integrado a develop en 952eb507 tras revisión independiente de 60abe0e2 y CI/PostgreSQL verdes. Publica contratos y el heap del build; no modifica el despliegue de UAT.
 - H1 parcial: páginas inmutables y lectores duales pasaron seis escenarios PostgreSQL con 276 migraciones, build y tipado/lint. La revisión del transporte encontró tres P1: ausencia de backoff sin cabecera, liquidación indebida de un rechazo con usage cero y errores técnicos sin aplicar. Se reprodujeron y las 48 pruebas focales pasan; suite workers con 987 aprobadas y 43 omisiones por entorno, tipado/lint 11/11. Faltan revisión del SHA final, integración del harness, CI y benchmark sostenido.
 - H0: mediciones remotas de sólo lectura y pruebas de IO sintético registradas antes de cambios productivos; se distingue latencia histórica del proveedor de Storage/DB actuales. H1 se implementa en tres worktrees separados y todavía no acredita el throughput final.
@@ -90,6 +93,8 @@ Recibo: separar Voyage/JEV por raíz de Claude por número de grupos y vueltas; 
 
 ## Sorpresas y descubrimientos
 
+- El recuento de resultados no bastaba para probar recuperación: dos respuestas físicas se recuperaban correctamente, pero una tercera raíz nunca enviada se convertía en error técnico final. Se exige recuperar resultados válidos sin reenviar las respuestas pagadas. Si se pierde la lease antes de persistir bytes, el resultado correcto conserva exposición incierta, sin fingir crudo durable.
+- La prueba de denegación presupuestaria del primer harness pasaba por una admisión inexistente. Ahora usa el ID real, un control positivo y el código exacto de agotamiento. Matriz y capacidad deben compartir huellas del código y configuración; una fecha reciente o el mismo PostgreSQL no bastan.
 - Las respuestas 429/529 pueden incluir campos de uso, incluso cero. Eso no prueba ausencia de procesamiento ni un cargo definitivo. El transporte conserva cuerpo y exposición como unknown, detiene nuevos envíos de la ventana y aplica un error técnico sin inventar una liquidación.
 - La suite completa reveló que los consumidores híbridos anteriores inferían uso cero del HTTP 429/529. Se elimina esa inferencia al compartir el validador; sus errores técnicos conservan el crudo y exposición sin repetir el proveedor. No se habilita esa ruta ni se alteran recibos liquidados históricos.
 - La segunda revisión detectó que un fallo de aplicación podía sustituir una respuesta válida por un error, incluso después de liquidarla. Las pruebas reproducen tanto fallo de apply como pérdida del acuse de settlement. La recuperación debe releer el recibo y ledger sin reenviar ni escribir una etiqueta sustituta.
@@ -114,6 +119,8 @@ Recibo: separar Voyage/JEV por raíz de Claude por número de grupos y vueltas; 
 
 ## Registro de decisiones
 
+- 2026-11-14: reencolar sólo los IDs que el scheduler vivo sabe que nunca entregó a evaluate, con lease vigente y sin crudo, página, uso, liquidación, resultado, lote o exposición terminal. Mantener identidad y reserva; nunca inferir ausencia de envío después de una caída. Drenar todas las escrituras antes de reencolar o liberar la lease, también si falla una recuperación previa al primer envío.
+- 2026-11-14: mantener separadas la pérdida de lease antes y después de durabilidad; la primera acredita contención de exposición, la segunda recuperación de resultados. Un diagnóstico filtrado no produce un recibo de aceptación de la matriz completa.
 - 2026-11-14: mantener unknown los rechazos ambiguos 429/529 aunque su JSON declare uso cero. Backoff compartido siempre, con piso exponencial de 1–30 s cuando Retry-After falte o sea menor; nunca reenviar el intento incierto. Si falla la actualización de la cuota compartida, cerrar nuevas admisiones y conservar el recibo físico.
 - 2026-11-14: conservar la reserva de memoria de cada respuesta hasta terminar su página durable, liquidación/aplicación y feedback; liberar las referencias locales al crudo al concluir. La recuperación reutiliza la última página autenticada por pase sin compartirla entre ámbitos.
 - 2026-11-14: el harness utiliza el pool de la base sintética acreditada directamente; las pruebas PostgreSQL normales conservan sus clones. No falsificar GITHUB_ACTIONS ni ampliar los guards para admitir pools arbitrarios.
