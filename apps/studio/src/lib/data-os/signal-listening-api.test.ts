@@ -12,7 +12,7 @@ function harness(denied=false){
     start:async(scope,args)=>{calls.push({...scope,...args});return{id:'run'};},metrics:async(scope,args)=>{calls.push({...scope,...args});return{counts:{asked:0}};}};
   const api=createSignalListeningApiV1(deps),exports:Record<string,unknown>={};
   const source=readFileSync(new URL('../../app/api/data-os/signal/[workspaceId]/listening/route.ts',import.meta.url),'utf8');
-  new Function('require','exports',ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText)(()=>({listeningApi:api}),exports);
+  new Function('require','exports',ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText)(()=>({loadSignalWorkspaceContextForListening:async()=>({api})}),exports);
   const invoke=(method:'GET'|'PUT'|'POST',body?:unknown,key='stable-listening-key')=>(exports[method]as (request:Request,context:{params:Promise<{workspaceId:string}>})=>Promise<Response>)(new Request('https://studio.invalid/listening',{
     method,...(body===undefined?{}:{body:JSON.stringify(body)}),headers:{'Content-Type':'application/json','Idempotency-Key':key}}),{params:Promise.resolve({workspaceId:workspace})});
   return{calls,invoke,api};

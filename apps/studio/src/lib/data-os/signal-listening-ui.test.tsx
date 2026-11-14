@@ -7,7 +7,7 @@ import {Window} from 'happy-dom';
 import {NextIntlClientProvider} from 'next-intl';
 import {signalListeningBaseTemplateV1} from '@noisia/query-engine';
 import {SignalListeningConfiguration} from '../../components/brands/SignalListeningConfiguration';
-import {SignalListeningMetricTables} from '../../components/signal-v2/SignalListeningMetrics';
+import {SignalListeningMetricTables,SignalListeningMetrics} from '../../components/signal-v2/SignalListeningMetrics';
 import {signalListeningDateBoundaryV1} from './signal-listening-date';
 import {renderToStaticMarkup} from 'react-dom/server';
 const browser=new Window({url:'https://studio.invalid'});
@@ -69,4 +69,42 @@ test('polling a newer configuration never advances the CAS revision of an unsave
   }finally{
     await act(async()=>root.unmount());host.remove();globalThis.fetch=savedFetch;globalThis.setInterval=savedInterval;globalThis.clearInterval=savedClear;
   }
+});
+
+test('automatic prototype preparation and unresolved prior exposure keep the run action closed',async()=>{
+  const messages=JSON.parse(await readFile(new URL('../../../messages/en-US.json',import.meta.url),'utf8'));
+  const configuration=signalListeningBaseTemplateV1({category:'tea',lexicon_terms:['tea']}),oldFetch=globalThis.fetch;
+  try{for(const mode of ['preparation','unknown']as const){
+    globalThis.fetch=async()=>Response.json({configuration:{id:'config',revision:1,configuration},map:{id:'map',root_count:12},
+      run:mode==='unknown'?{id:'run',status:'failed',unknown_micro_usd:'10'}:null,
+      preparation:mode==='preparation'?{id:'prep',status:'waiting_prototypes'}:null,capabilities:{can_edit_topics:true,can_request_processing:true}});
+    const host=document.createElement('div');document.body.appendChild(host);const root=createRoot(host);
+    await act(async()=>{root.render(<NextIntlClientProvider locale="en-US" messages={messages} timeZone="UTC"><SignalListeningConfiguration workspaceId="workspace"/></NextIntlClientProvider>);});
+    const label=mode==='preparation'?messages.Listening.running:messages.Listening.run;
+    const run=[...host.querySelectorAll('button')].find(button=>button.textContent===label)!;
+    assert.equal(run.disabled,true);
+    if(mode==='unknown')assert.ok(host.textContent?.includes(messages.Listening.unresolved));
+    await act(async()=>root.unmount());host.remove();
+  }}finally{globalThis.fetch=oldFetch;}
+});
+
+
+test('changing a question and receiving an error never shows the prior question distribution',async()=>{
+  const messages=JSON.parse(await readFile(new URL('../../../messages/en-US.json',import.meta.url),'utf8'));
+  const configuration=signalListeningBaseTemplateV1({category:'tea',lexicon_terms:['tea']}),oldFetch=globalThis.fetch;let reads=0;
+  globalThis.fetch=async input=>{
+    const url=String(input);
+    if(!url.includes('/metrics?'))return Response.json({configuration:{id:'config',configuration},map:{id:'map'}});
+    if(++reads>1)return Response.json({error:'unavailable'},{status:503});
+    return Response.json({contract_version:'signal-listening-question-metrics-v1',configuration_id:'config',question_key:new URL(url,'https://studio.invalid').searchParams.get('question_key'),
+      counts:{asked:7,eligible:10,pending:3},distribution:[{option_key:'unique_old_question_label',count:7}],trend:[],topic_cross:[]});
+  };
+  const host=document.createElement('div');document.body.appendChild(host);const root=createRoot(host);
+  try{
+    await act(async()=>{root.render(<NextIntlClientProvider locale="en-US" messages={messages} timeZone="UTC"><SignalListeningMetrics workspaceId="workspace" from="2026-01-01" to="2026-01-31" timezone="UTC"/></NextIntlClientProvider>);});
+    assert.ok(host.textContent?.includes('unique_old_question_label'));
+    const question=host.querySelector('select')!;
+    await act(async()=>{question.value=question.value==='voice'?'promotion':'voice';question.dispatchEvent(new browser.Event('change',{bubbles:true}) as unknown as Event);});
+    assert.ok(host.textContent?.includes(messages.Listening.error));assert.ok(!host.textContent?.includes('unique_old_question_label'));
+  }finally{await act(async()=>root.unmount());host.remove();globalThis.fetch=oldFetch;}
 });

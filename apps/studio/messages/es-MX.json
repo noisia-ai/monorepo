@@ -4973,6 +4973,7 @@
     "includeOutside": "Ver fuera de categoría",
     "positiveAnswer": "Positivas",
     "negativeAnswer": "Negativas",
-    "uncertainAnswer": "Inciertas"
+    "uncertainAnswer": "Inciertas",
+    "unresolved": "Hay respuestas pendientes de recuperar. La actualización está detenida para evitar repetir solicitudes."
   }
 }

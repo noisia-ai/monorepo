@@ -4,7 +4,7 @@ import {useTranslations} from 'next-intl';
 import type {SignalListeningConfigurationV1,SignalListeningQuestionV1} from '@noisia/query-engine';
 
 type Status={configuration:{id:string;revision:number;configuration:SignalListeningConfigurationV1}|null;
-  map:{id:string;root_count:number}|null;run:{id:string;status:string}|null;map_stale?:boolean;capabilities:{can_edit_topics:boolean;can_request_processing:boolean}};
+  map:{id:string;root_count:number}|null;run:{id:string;status:string;unknown_micro_usd?:string}|null;preparation?:{id:string;status:string}|null;map_stale?:boolean;capabilities:{can_edit_topics:boolean;can_request_processing:boolean}};
 export function SignalListeningConfiguration({workspaceId,editable=true}:{workspaceId:string;editable?:boolean}){
   const t=useTranslations('Listening'),[status,setStatus]=useState<Status|null>(null),[draft,setDraft]=useState<SignalListeningConfigurationV1|null>(null);
   const [draftRevision,setDraftRevision]=useState(0),[category,setCategory]=useState(''),[lexicon,setLexicon]=useState(''),[budget,setBudget]=useState('');
@@ -21,15 +21,16 @@ export function SignalListeningConfiguration({workspaceId,editable=true}:{worksp
     }).catch(()=>{if(!controller.signal.aborted&&generation.current===current)setError(true);});
     return()=>{controller.abort();generation.current=current+1;};
   },[url,retry]);
-  const runId=status?.run?.id,runState=status?.run?.status;
+  const runId=status?.run?.id,runState=status?.run?.status,preparationId=status?.preparation?.id,preparationState=status?.preparation?.status;
+  const preparing=Boolean(preparationState&&['preparing','waiting_prototypes','ready_for_labeling','labeling'].includes(preparationState));
   useEffect(()=>{
-    if(!runId||!['queued','running'].includes(runState??''))return;
+    if((!runId||!['queued','running'].includes(runState??''))&&(!preparationId||!preparing))return;
     const controller=new AbortController();
     const timer=setInterval(()=>{fetch(url,{signal:controller.signal,cache:'no-store'}).then(async response=>{
       if(response.ok){const result=await response.json()as Status;if(!controller.signal.aborted)setStatus(result);}
     }).catch(()=>undefined);},3000);
     return()=>{clearInterval(timer);controller.abort();};
-  },[url,runId,runState]);
+  },[url,runId,runState,preparationId,preparing]);
   const canEdit=editable&&Boolean(status?.capabilities.can_edit_topics);
   const canProcess=canEdit&&Boolean(status?.capabilities.can_request_processing);
   function change(question:SignalListeningQuestionV1,index:number){
@@ -61,12 +62,14 @@ export function SignalListeningConfiguration({workspaceId,editable=true}:{worksp
     }catch{if(generation.current===current)setError(true);}finally{if(generation.current===current)setBusy(false);}
   }
   const dirty=Boolean(draft&&status?.configuration&&JSON.stringify(draft)!==JSON.stringify(status.configuration.configuration));
-  const running=Boolean(status?.run&&['queued','running'].includes(status.run.status));
+  const unresolved=Number(status?.run?.unknown_micro_usd??0)>0;
+  const running=preparing||Boolean(status?.run&&['queued','running'].includes(status.run.status));
   if(unavailable)return null;
   return <section className="admin-section workspace-resource-section" aria-busy={busy}>
     <header className="admin-section__head"><div><h2>{t('title')}</h2><p>{t('description')}</p></div></header>
     {error?<p role="alert">{t('error')} <button className="admin-button" type="button" onClick={()=>setRetry(value=>value+1)}>{t('retry')}</button></p>:null}
     {saved?<p role="status">{t('saved')}</p>:null}
+    {unresolved?<p role="status">{t('unresolved')}</p>:null}
     {!status&&!error?<p role="status">{t('loading')}</p>:null}
     {status&&!draft?<><label className="admin-form-field"><span>{t('category')}</span><input value={category} disabled={!canEdit||busy} onChange={event=>setCategory(event.target.value)}/></label>
       <label className="admin-form-field"><span>{t('lexicon')}</span><textarea value={lexicon} disabled={!canEdit||busy} onChange={event=>setLexicon(event.target.value)}/></label></>:null}
@@ -102,7 +105,7 @@ export function SignalListeningConfiguration({workspaceId,editable=true}:{worksp
     {canProcess&&status?.configuration?<div className="admin-form">
       <label className="admin-form-field"><span>{t('budget')}</span><input inputMode="decimal" value={budget} disabled={busy||running} onChange={event=>{setBudget(event.target.value);key.current=null;}}/></label>
       <p>{t('incremental')}</p>
-      <button className="admin-button" type="button" disabled={busy||running||dirty||!status.map||status.map_stale||!budget} onClick={run}>{running?t('running'):t('run')}</button>
+      <button className="admin-button" type="button" disabled={busy||running||unresolved||dirty||!status.map||status.map_stale||!budget} onClick={run}>{running?t('running'):t('run')}</button>
     </div>:null}
   </section>;
 }

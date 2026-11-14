@@ -22,7 +22,7 @@ export function SignalListeningMetrics({workspaceId,from,to,timezone,granularity
   const configurationId=status?.configuration?.id,mapId=status?.map?.id;
   useEffect(()=>{
     if(!question||!configurationId||!mapId)return;
-    const controller=new AbortController();setBusy(true);setError(false);
+    const controller=new AbortController();setBusy(true);setError(false);setMetrics(null);
     let params:URLSearchParams;
     try{params=new URLSearchParams({question_key:question,timezone,granularity,include_outside:String(outside),
       from:signalListeningDateBoundaryV1(from,timezone),to:signalListeningDateBoundaryV1(to,timezone,true),...(topic?{topic_key:topic}:{})});}

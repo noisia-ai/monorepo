@@ -4973,6 +4973,7 @@
     "includeOutside": "Show outside category",
     "positiveAnswer": "Positive",
     "negativeAnswer": "Negative",
-    "uncertainAnswer": "Uncertain"
+    "uncertainAnswer": "Uncertain",
+    "unresolved": "Some responses still need recovery. Updates are paused to avoid repeating requests."
   }
 }
