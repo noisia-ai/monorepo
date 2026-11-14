@@ -79,6 +79,9 @@ export function createCalibratedJevRuntimeProviderV2(args: {
     async observeUsage(raw:JevRawResponseV1,tokens:number) {
       await inner.observeUsage?.(raw,tokens);
       const receipt=raw.rate_calibration;
+      // Historical durable receipts predate rate reservations/calibration metadata.
+      // They can be recovered without manufacturing a fresh quota event.
+      if(!receipt&&!raw.rate_reservation)return;
       if(!receipt||receipt.labeler_digest!==args.labeler_digest||!Number.isSafeInteger(receipt.input_bytes)||receipt.input_bytes<1)
         throw Error('jev_stream_calibration_receipt_invalid');
       await evaluate(CALIBRATION_LUA,[calibrationKey],[args.labeler_digest,'observe',String(tokens/receipt.input_bytes)]);

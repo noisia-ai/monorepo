@@ -50,8 +50,9 @@ export async function processJevStreamingWindowV2<I extends FacetInput, R>(args:
       const settled: Parameters<typeof store.settlePage>[1] = [];
       const observations: Array<{ raw: JevRawResponseV1; tokens: number }> = [];
       for (const { call, raw } of rows) {
+        let physical:JevRawResponseV1|undefined;
         try {
-          const physical = JSON.parse(raw) as JevRawResponseV1;
+          physical = JSON.parse(raw) as JevRawResponseV1;
           const parsed = validateJevResponseV1(call.request as JevRequestV1, physical);
           const mapped = hooks.map(run, call, parsed), usage = jevUsageV1(parsed.usage);
           settled.push({ call, usage, settled_micro_usd: llmCostMicroUsdV1(usage, price), stop_reason: 'completed' });
@@ -63,6 +64,7 @@ export async function processJevStreamingWindowV2<I extends FacetInput, R>(args:
             const usage = jevUsageV1(observed);
             settled.push({ call, usage, settled_micro_usd: llmCostMicroUsdV1(usage, price), stop_reason: failure.code });
             results.push({ call, results: hooks.error(run, call, failure.code, false) });
+            if(physical)observations.push({raw:physical,tokens:observed.input_tokens});
             if (hooks.fail_on_error) record(call, false, failure.code);
           } else record(call, true, failure.code);
         }
@@ -141,7 +143,10 @@ export async function processJevStreamingWindowV2<I extends FacetInput, R>(args:
     for (const call of reserved.slice(next)) record(call, false, 'jev_send_canceled');
     while (buffered.length || active.size) { flush(true); if (active.size) await Promise.all(active); }
     for (const call of calls) {
-      if (!observedRaw.has(call.id) && !errors.has(call.id)) record(call, call.status !== 'failed', call.status === 'failed' ? 'jev_definitely_not_sent' : 'jev_outcome_unknown');
+      if (!observedRaw.has(call.id) && !errors.has(call.id)) {
+        const unsent=call.status==='failed'||call.status==='reserved';
+        record(call,!unsent,unsent?'jev_definitely_not_sent':'jev_outcome_unknown');
+      }
     }
     for (const unknown of [false, true]) {
       const group = [...errors.values()].filter(error => error.unknown === unknown);

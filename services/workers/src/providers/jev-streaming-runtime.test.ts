@@ -21,6 +21,7 @@ test('runtime calibration learns from durable usage only and fails closed before
   const raw=await provider.evaluate(request);
   assert.equal(sent,1);assert.equal(observations,0);assert.equal(raw.rate_calibration?.labeler_digest,digest);
   await provider.observeUsage!(JSON.parse(JSON.stringify(raw)),200);assert.equal(observations,1);
+  await provider.observeUsage!({body:raw.body,http_status:200,latency_ms:1},200);assert.equal(observations,1);
   const broken=createCalibratedJevRuntimeProviderV2({labeler_digest:digest,execution,env,evaluateRedis:async()=>{throw Error('offline');},fetch:async()=>{throw Error('must not send');}});
   await assert.rejects(broken.evaluate(request),(error:unknown)=>error instanceof JevProviderErrorV1&&error.outcome==='definitely_not_sent');
 });
