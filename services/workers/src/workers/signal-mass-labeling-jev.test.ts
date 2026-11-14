@@ -584,7 +584,7 @@ test('streaming observer failure cannot interrupt settlement or change the outco
   assert.ok(f.calls.every(call => call.status==='settled' && call.results_applied));
 });
 
-for (const fault of ['apply', 'settlement_ack'] as const) test(`streaming preserves valid paid responses after a ${fault} failure`, async () => {
+for (const fault of ['apply', 'settlement_ack', 'application_ack'] as const) test(`streaming preserves valid paid responses after a ${fault} failure`, async () => {
   const f = fixture(8, true), durable = new Map<string, string>();
   f.store.persistRawPage = async (_run, rows) => { for (const row of rows) {
     durable.set(row.call.id, row.raw); row.call.raw_body = row.raw;
@@ -596,11 +596,19 @@ for (const fault of ['apply', 'settlement_ack'] as const) test(`streaming preser
     return rows;
   };
   const apply = f.store.apply, settle = f.store.settlePage;
+  const claim = f.store.claim;
+  f.store.claim = async id => f.run.status === 'failed' && !f.calls.some(call => call.status === 'unknown') ? null : claim(id);
+  f.store.finish = async () => {
+    const state: 'running' | 'failed' | 'completed' = f.calls.some(call => durable.has(call.id) && !call.results_applied) ? 'running'
+      : f.calls.some(call => call.status === 'unknown') ? 'failed' : 'completed';
+    f.run.status = state; return state;
+  };
   let injected = false, applyAttempts = 0;
   f.store.apply = async (run, rows) => {
     applyAttempts++;
     if (fault === 'apply' && !injected) { injected = true; throw Error('apply_commit_failed'); }
     await apply(run, rows);
+    if (fault === 'application_ack' && !injected) { injected = true; throw Error('application_ack_lost'); }
   };
   f.store.settlePage = async (run, rows) => {
     await settle(run, rows);
@@ -608,11 +616,19 @@ for (const fault of ['apply', 'settlement_ack'] as const) test(`streaming preser
   };
   const invoke = () => processMassLabelingJevV1({ run_id:f.run.id,store:f.store,
     provider:{...f.provider,max_response_bytes:16384},execution:streaming });
-  await assert.rejects(invoke(), fault === 'apply' ? /apply_commit_failed/ : /settlement_ack_lost/);
-  assert.equal(f.results.length,0,'a database failure cannot replace valid model evidence with a technical label');
-  assert.ok(f.calls.every(call => call.status==='settled' && !call.results_applied));
-  assert.equal(applyAttempts,fault==='apply'?1:0,'no second technical apply after a persistence failure');
-  assert.equal((await invoke()).status,'completed');
+  await assert.rejects(invoke(), fault === 'apply' ? /apply_commit_failed/
+    : fault === 'settlement_ack' ? /settlement_ack_lost/ : /application_ack_lost/);
+  if (fault === 'application_ack') {
+    assert.equal(f.results.length,8);assert.ok(f.results.every(result => result.status==='labeled'));
+    assert.equal(f.run.status,'completed','the ledger reconciles an applied commit without an unreclaimable failed run');
+    assert.equal((await invoke()).status,'not_claimed');
+  } else {
+    assert.equal(f.results.length,0,'a database failure cannot replace valid model evidence with a technical label');
+    assert.ok(f.calls.every(call => call.status==='settled' && !call.results_applied));
+    assert.equal(f.run.status,'running','pending raw remains automatically reclaimable');
+    assert.equal(applyAttempts,fault==='apply'?1:0,'no second technical apply after a persistence failure');
+    assert.equal((await invoke()).status,'completed');
+  }
   assert.equal(f.transports(),8,'recovery reads durable responses without another physical attempt');
   assert.equal(f.results.length,8);assert.ok(f.results.every(result => result.status==='labeled'));
   assert.ok(f.calls.every(call => call.status==='settled' && call.results_applied));

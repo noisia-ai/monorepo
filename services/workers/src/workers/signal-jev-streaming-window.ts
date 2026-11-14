@@ -175,18 +175,30 @@ export async function processJevStreamingWindowV2<I extends FacetInput, R>(args:
     }
     for (const unknown of [false, true]) {
       const group = [...errors.values()].filter(error => error.unknown === unknown);
-      if (group.length) {
-        await store.markFailed(run, group.map(error => error.call), unknown);
-        const technical = group.filter(error => error.write_result && !applied.has(error.call.id)).map(error => ({call:error.call,
-          results:hooks.error(run,error.call,error.code,unknown)})).filter(row => row.results.length);
-        if (technical.length) { await store.apply(run, technical); for (const row of technical) applied.add(row.call.id); }
-      }
+      if (group.length) await store.markFailed(run, group.map(error => error.call), unknown);
     }
-    if (hooks.fail_on_error && errors.size) await store.fail(run, [...errors.values()].some(x => x.unknown) ? 'labeling_outcome_unknown' : [...errors.values()][0]!.code);
+    const terminalErrors = [...errors.values()].filter(error => error.write_result);
+    // Persist the stop reason before applying technical errors: a lost apply
+    // acknowledgement must not reopen admission for other roots on restart.
+    if (hooks.fail_on_error && terminalErrors.length) await store.fail(run,
+      terminalErrors.some(x => x.unknown) ? 'labeling_outcome_unknown' : terminalErrors[0]!.code);
+    for (const unknown of [false, true]) {
+      const technical = [...errors.values()].filter(error => error.unknown === unknown && error.write_result
+        && !applied.has(error.call.id)).map(error => ({call:error.call,
+        results:hooks.error(run,error.call,error.code,unknown)})).filter(row => row.results.length);
+      if (technical.length) { await store.apply(run, technical); for (const row of technical) applied.add(row.call.id); }
+    }
     if (fatal) throw fatal;
     latencies.sort((a, b) => a - b);
     return { status: await store.finish(run), roots: calls.length, labeled, unresolved_billing_requests: [...errors.values()].filter(x => x.unknown).length,
       settled_micro_usd: totalCost, p50_ms: latencies[Math.ceil(latencies.length * .5) - 1] ?? null,
       p95_ms: latencies[Math.ceil(latencies.length * .95) - 1] ?? null };
+  } catch (error) {
+    // Only the ledger can tell whether a lost SQL acknowledgement committed.
+    // Reconcile under the existing lease after any failed stage, including a
+    // technical-error apply; never infer state from an in-memory acknowledgement.
+    try { await store.finish(run); }
+    catch (reconciliation) { throw new AggregateError([error, reconciliation], 'jev_stream_reconciliation_failed'); }
+    throw error;
   } finally { clearInterval(timer); cancellation.signal.removeEventListener('abort', wake); }
 }
