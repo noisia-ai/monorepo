@@ -22,6 +22,8 @@ import {
   writeFacetResultsV1,
   type LabelingDatabaseV1,
 } from "./signal-mention-facets";
+import {createLabelingRawPageStoreV1} from "./signal-labeling-raw-page-store";
+import {LABELING_RAW_PAGE_MAX_MEMBERS_V1,type LabelingRawPageStorageV1} from "./signal-labeling-raw-pages";
 export type LabelingPolicyV1={organization_id:string;budget_date:string;budget_timezone:string;daily_cap_micro_usd:string|null;
  max_execution_micro_usd:string|null;provider:string;model:string;action:string;funding_receipt_id?:string|null;effective_total_cap_micro_usd?:string};
 export type LabelingRequestPolicyV1=Pick<LabelingPolicyV1,"max_execution_micro_usd"|"provider"|"model">;
@@ -540,6 +542,9 @@ export function createSignalLabelingStoreV1<
     beforeSubmit?: (client: PoolClient, run: LabelingRunV1, calls: LabelingCallV1<Input>[]) => Promise<void>;
   };
   database: LabelingDatabaseV1;
+  /** Explicit R16 opt-in. Historical consumers keep their page of 200. */
+  page_size?: number;
+  rawPages?: LabelingRawPageStorageV1;
   /** Runtime preflight, cached by the existing private storage adapter. */
   assertRawReady?: () => Promise<void>;
   /** True only for a runtime writer that authenticates a byte-for-byte readback. */
@@ -561,6 +566,8 @@ export function createSignalLabelingStoreV1<
   }) => Promise<string>;
 }) {
   const db = options.database;
+  const pageSize=options.page_size??200;
+  if(!Number.isInteger(pageSize)||pageSize<1||pageSize>LABELING_RAW_PAGE_MAX_MEMBERS_V1)fail("labeling_page_size_invalid",400);
   async function lock(c: PoolClient, run: LabelingRunV1) {
     const found = (
       await c.query(
@@ -570,6 +577,8 @@ export function createSignalLabelingStoreV1<
     ).rows[0];
     if (!found) fail("labeling_lease_lost");
   }
+  const rawPages=options.rawPages?createLabelingRawPageStoreV1({database:db,storage:options.rawPages,
+    withRunLock:(run,fn)=>tx(db,async c=>{await lock(c,run);return fn(c);})}):null;
   async function authority(c: PoolClient, run: LabelingRunV1, amount: number) {
     // Policy lifecycle triggers take this lock. Read only after acquiring it so a
     // revocation committed while this call waited cannot leave stale authority.
@@ -708,12 +717,13 @@ export function createSignalLabelingStoreV1<
         if (!changed.rows.length) fail("labeling_lease_lost");
       });
     },
-    async release(run: LabelingRunV1) {
+    async release(run: LabelingRunV1, cadence: {immediate?:boolean}={}) {
       await db.query(
         `UPDATE signal_labeling_runs SET lease_token=NULL,lease_until=NULL,
          next_poll_at=CASE WHEN EXISTS(SELECT 1 FROM signal_labeling_calls WHERE run_id=$1 AND status='unknown')
-           THEN now()+interval '1 hour' ELSE now()+interval '30 seconds' END WHERE id=$1 AND lease_token=$2`,
-        [run.id, run.lease_token],
+           THEN now()+interval '1 hour' WHEN $3::boolean AND error_code IS NULL THEN now()
+           ELSE now()+interval '30 seconds' END WHERE id=$1 AND lease_token=$2`,
+        [run.id, run.lease_token, cadence.immediate===true],
       );
     },
     async inputs(run: LabelingRunV1) {
@@ -722,7 +732,7 @@ export function createSignalLabelingStoreV1<
         db,
         run.workspace_id,
         run.cursor_root_id,
-        200,
+        pageSize,
       ) as Promise<Input[]>;
     },
     async reserve(
@@ -784,17 +794,29 @@ export function createSignalLabelingStoreV1<
         await db.query<LabelingCallV1<Input>>(
           `SELECT * FROM signal_labeling_calls WHERE run_id=$1
            ${options.adapter?.pending_calls_only ? "AND NOT results_applied" : ""}
-           ORDER BY created_at,id ${options.adapter?.pending_calls_only ? "LIMIT 200" : ""}`,
-          [run.id],
+           ORDER BY created_at,id ${options.adapter?.pending_calls_only ? "LIMIT $2" : ""}`,
+          options.adapter?.pending_calls_only?[run.id,pageSize]:[run.id],
         )
       ).rows.map((call) => ({ ...call, raw_body: call.raw_body ?? null }));
+      let pageCalls=new Set<string>();
+      if(rawPages){
+        try{pageCalls=await rawPages.loadCalls(run,calls.filter(c=>!c.results_applied));}
+        catch(error){
+          if(error instanceof SignalLabelingError)throw error;
+          if(error instanceof SyntaxError||error instanceof Error&&["labeling_raw_page_invalid","labeling_raw_receipt_invalid",
+            "workspace_engine_storage_object_missing","workspace_engine_storage_digest_invalid","workspace_engine_storage_part_invalid",
+            "workspace_engine_storage_manifest_invalid","workspace_engine_storage_reference_invalid",
+            "workspace_engine_storage_response_too_large"].includes(error.message))fail("labeling_raw_receipt_invalid",503);
+          fail("labeling_raw_storage_unavailable",503);
+        }
+      }
       for (const call of calls) {
         const stored = call as LabelingCallV1<Input> & {
           raw_storage_key?: string | null;
           raw_sha256?: string | null;
           raw_size_bytes?: string | number | null;
         };
-        if (stored.raw_storage_key && stored.raw_sha256 && !call.raw_body && !call.results_applied) {
+        if (!pageCalls.has(call.id) && stored.raw_storage_key && stored.raw_sha256 && !call.raw_body && !call.results_applied) {
           if (!options.loadRaw) fail("labeling_raw_loader_unavailable", 503);
           const size = Number(stored.raw_size_bytes);
           if (!Number.isSafeInteger(size) || size < 0) fail("labeling_raw_receipt_invalid", 503);
@@ -954,6 +976,8 @@ export function createSignalLabelingStoreV1<
       run: LabelingRunV1,
       pages: Array<{ call: LabelingCallV1<Input>; raw: string }>,
     ) {
+      if(!pages.length)return;
+      if(rawPages)return rawPages.persist(run,pages);
       const receipts = [];
       for (const page of pages) {
         const sha = `sha256:${createHash("sha256").update(page.raw).digest("hex")}`;

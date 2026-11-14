@@ -14,6 +14,7 @@ function fail(code: string): never { throw new SignalLabelingError(code); }
  * until its operator uses the ordinary retry action with the frozen admission. */
 export async function reconcileMassLabelingJevReceiptV1(args: {
   database: LabelingDatabaseV1; run_id: string; workspace_id: string; actor_user_id: string;
+  raw_page_id?: string;
   call_id: string; request_digest: string; raw_sha256: string; raw_storage_key: string; raw_size_bytes: number;
   usage: LlmUsageV1; settled_micro_usd: number; result: MassLabelingResultV1;
 }) {
@@ -34,11 +35,25 @@ export async function reconcileMassLabelingJevReceiptV1(args: {
     const call = (await client.query<LabelingCallV1<MassLabelingInputV1>>(`SELECT * FROM signal_labeling_calls
       WHERE id=$1 AND run_id=$2 AND workspace_id=$3 FOR UPDATE`, [args.call_id, args.run_id, args.workspace_id])).rows[0];
     if (!call || call.request_digest !== args.request_digest) fail("mass_labeling_jev_recovery_conflict");
-    const prior = (await client.query<{ raw_sha256: string; raw_storage_key: string; raw_size_bytes: string;
+    if(args.raw_page_id){
+      const page=await client.query(`SELECT 1 FROM signal_labeling_raw_pages p
+        JOIN signal_labeling_raw_page_members m ON m.page_id=p.id
+        WHERE p.id=$1 AND p.workspace_id=$2 AND p.run_id=$3 AND m.workspace_id=p.workspace_id AND m.run_id=p.run_id
+          AND m.call_id=$4 AND m.request_digest=$5 AND m.raw_sha256=$6 AND m.raw_size_bytes=$7
+          AND p.storage_key=$8 AND m.byte_offset>=0 AND m.byte_length>0 AND m.byte_offset+m.byte_length+1<=p.size_bytes
+        FOR UPDATE OF p`,[args.raw_page_id,args.workspace_id,run.id,call.id,args.request_digest,args.raw_sha256,args.raw_size_bytes,args.raw_storage_key]);
+      if(page.rows.length!==1)fail("mass_labeling_jev_recovery_conflict");
+      // The ordinary worker owns active leases. A no-provider failed-run
+      // recovery cannot attach bytes while a current or future claim exists.
+      if((await client.query(`SELECT 1 FROM signal_labeling_runs WHERE id=$1 AND
+        (lease_token IS NOT NULL OR lease_until>clock_timestamp())`,[run.id])).rows.length)
+        fail("mass_labeling_jev_recovery_unavailable");
+    }
+    const prior = (await client.query<{ raw_page_id:string|null; raw_sha256: string; raw_storage_key: string; raw_size_bytes: string;
       usage: LlmUsageV1; settled_micro_usd: string; recovered_result: MassLabelingResultV1 }>(`SELECT * FROM signal_mass_labeling_jev_receipt_recoveries
       WHERE call_id=$1 AND workspace_id=$2 AND run_id=$3`, [args.call_id, args.workspace_id, args.run_id])).rows[0];
     if (prior) {
-      if (prior.raw_sha256 !== args.raw_sha256 || prior.raw_storage_key !== args.raw_storage_key
+      if ((prior.raw_page_id??undefined)!==args.raw_page_id || prior.raw_sha256 !== args.raw_sha256 || prior.raw_storage_key !== args.raw_storage_key
         || Number(prior.raw_size_bytes) !== args.raw_size_bytes || digest(prior.usage) !== digest(args.usage)
         || Number(prior.settled_micro_usd) !== args.settled_micro_usd || digest(prior.recovered_result) !== digest(args.result)) fail("mass_labeling_jev_recovery_conflict");
       const intact = await client.query(`SELECT 1 FROM signal_labeling_calls receipt
@@ -64,12 +79,15 @@ export async function reconcileMassLabelingJevReceiptV1(args: {
       || !call.results_applied || call.inputs.length !== 1 || call.inputs[0]?.root_id !== args.result.root_id
       || args.result.input_digest !== call.inputs[0].input_digest || args.result.entity_context_digest !== run.entity_context_digest
       || !["labeled", "abstained"].includes(args.result.status)) fail("mass_labeling_jev_recovery_conflict");
+    if(args.raw_page_id)await client.query(`UPDATE signal_labeling_raw_pages
+      SET status='verified',verified_at=clock_timestamp()
+      WHERE id=$1 AND workspace_id=$2 AND run_id=$3 AND status='planned'`,[args.raw_page_id,args.workspace_id,run.id]);
     await client.query(`INSERT INTO signal_mass_labeling_jev_receipt_recoveries(call_id,workspace_id,run_id,map_id,root_id,
-      request_digest,raw_sha256,raw_storage_key,raw_size_bytes,original_call,original_result,recovered_result,usage,settled_micro_usd,recovered_by_user_id)
-      SELECT receipt.id,$2,$3,$4,$5,$6,$7,$8,$9,to_jsonb(receipt),$10::jsonb,$11::jsonb,$12::jsonb,$13,$14
+      request_digest,raw_sha256,raw_storage_key,raw_size_bytes,original_call,original_result,recovered_result,usage,settled_micro_usd,recovered_by_user_id,raw_page_id)
+      SELECT receipt.id,$2,$3,$4,$5,$6,$7,$8,$9,to_jsonb(receipt),$10::jsonb,$11::jsonb,$12::jsonb,$13,$14,$15
       FROM signal_labeling_calls receipt WHERE receipt.id=$1`, [call.id, args.workspace_id, run.id, run.map_id,
       args.result.root_id, args.request_digest, args.raw_sha256, args.raw_storage_key, args.raw_size_bytes,
-      JSON.stringify(result), JSON.stringify(args.result), JSON.stringify(args.usage), args.settled_micro_usd, args.actor_user_id]);
+      JSON.stringify(result), JSON.stringify(args.result), JSON.stringify(args.usage), args.settled_micro_usd, args.actor_user_id,args.raw_page_id??null]);
     await client.query(`UPDATE signal_labeling_calls SET status='settled',raw_sha256=$4,raw_storage_key=$5,raw_size_bytes=$6,
       raw_storage_verified_at=now(),raw_storage_verified_key=$5,usage=$7::jsonb,settled_micro_usd=$8,stop_reason='completed',
       results=jsonb_build_array($9::jsonb),results_applied=true,updated_at=now()

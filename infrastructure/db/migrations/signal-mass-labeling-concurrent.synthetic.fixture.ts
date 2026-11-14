@@ -14,12 +14,18 @@ import type { WorkspaceEngineStorageV1 } from "../../../services/workers/src/wor
  * ordinary integration fixtures retain their physical rollback behavior. */
 export async function createMassLabelingConcurrencyDatabaseV1(admin: Pool) {
   const target = new URL(process.env.DATABASE_URL ?? "");
-  assert.equal(process.env.NOISIA_MFP_PG_CI, "true");
-  assert.equal(process.env.GITHUB_ACTIONS, "true");
-  assert.equal(target.hostname, "127.0.0.1");
-  assert.equal(target.port, "5432");
-  assert.equal(target.pathname, "/noisia_mfp_ci");
-  assert.equal(target.username, "postgres");
+  if(process.env.NOISIA_R16_LOCAL_PG_LAB){
+    // The exact pool was authenticated against Docker ownership and postmaster
+    // identity. No caller-provided URL or CI flag can self-authorize this path.
+    (await import("./signal-r16-local-pg.fixture")).assertR16LocalPostgresPoolV1(admin);
+  }else{
+    assert.equal(process.env.NOISIA_MFP_PG_CI, "true");
+    assert.equal(process.env.GITHUB_ACTIONS, "true");
+    assert.equal(target.hostname, "127.0.0.1");
+    assert.equal(target.port, "5432");
+    assert.equal(target.pathname, "/noisia_mfp_ci");
+    assert.equal(target.username, "postgres");
+  }
   const name = `noisia_mfp_recovery_${randomUUID().replaceAll("-", "")}`;
   await admin.query(`CREATE DATABASE ${pg.escapeIdentifier(name)} TEMPLATE template0`);
   target.pathname = `/${name}`;

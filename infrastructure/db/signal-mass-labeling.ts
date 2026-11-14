@@ -294,7 +294,7 @@ const itemPageSql = `SELECT item.root_id,item.input_digest,item.text,NULL::text 
   WHERE mass.run_id=$1 AND mass.workspace_id=$2
     AND (mass.smoke_root_limit IS NULL OR item.ordinal<=mass.smoke_root_limit)
     AND NOT EXISTS(SELECT 1 FROM signal_mass_labeling_call_roots call WHERE call.run_id=mass.run_id AND call.root_id=item.root_id)
-  ORDER BY item.root_id LIMIT 200`;
+  ORDER BY item.root_id LIMIT $3`;
 
 export function createMassLabelingStoreV1(options: Omit<Parameters<typeof createSignalLabelingStoreV1>[0], "adapter">) {
   return createSignalLabelingStoreV1<MassLabelingInputV1, MassLabelingResultV1>({...options, adapter: {
@@ -302,7 +302,7 @@ export function createMassLabelingStoreV1(options: Omit<Parameters<typeof create
     policy: massLabelingRunPolicyWithClientV1,
     pending_calls_only: true, persist_results_before_write: true,
     inputs: async (client, run) => {
-      const rows=(await client.query<MassLabelingInputV1>(itemPageSql,[run.id,run.workspace_id])).rows;
+      const rows=(await client.query<MassLabelingInputV1>(itemPageSql,[run.id,run.workspace_id,options.page_size??200])).rows;
       if(run.identity.params.request_version!=="mass-labeling-jev-v2"||!rows.length)return rows;
       const map=await mapCurrent(client,run.workspace_id,rows[0]!.map_id);
       const imported=(await client.query<{topic_key:string;localization:SignalTopicLocalizationV1}>(

@@ -143,3 +143,6 @@ export * from "./signal-mass-labeling-lexicon-suggestions";
 export * from "./signal-mass-labeling-jev-recovery";
 export * from './signal-monitoring-insights';
 export * from './signal-monitoring-insights-policy';
+
+export * from "./signal-labeling-raw-pages";
+export {readLabelingRawCallPageV1} from "./signal-labeling-raw-page-store";
