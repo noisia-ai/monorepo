@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import {
-  reconcileMassLabelingJevReceiptV1, readLabelingRawCallPageV1, type LabelingRunV1, type LabelingCallV1,
+  reconcileMassLabelingJevReceiptV1, createLabelingRawCallPageReaderV1, type LabelingRunV1, type LabelingCallV1,
   type createMassLabelingStoreV1,
 } from "@noisia/db";
 import {
@@ -33,6 +33,8 @@ export async function recoverMassLabelingJevReceiptsV1(args: {
     [run.id, run.workspace_id])).rows;
   if (!calls.length) return { recovered: 0 };
   const storage = args.storage ?? createWorkspaceEngineStorageV1();
+  const readPage = createLabelingRawCallPageReaderV1({database:args.database,
+    loadPage:createLabelingRawPagesStorageV1(storage).load});
   let recovered = 0;
   for (const call of calls) {
     if (call.inputs.length !== 1) throw new Error("mass_labeling_input_invalid");
@@ -43,9 +45,8 @@ export async function recoverMassLabelingJevReceiptsV1(args: {
       entity_context_digest: run.entity_context_digest, labeler_digest: run.labeler_digest, request });
     if (requestDigest !== call.request_digest || digest(call.request) !== digest(request)
       || call.custom_id !== `mass_${requestDigest.slice(7, 67)}`) throw new Error("mass_labeling_jev_recovery_request_invalid");
-    const page = await readLabelingRawCallPageV1({ database:args.database, workspace_id:run.workspace_id,
-      run_id:run.id, call_id:call.id, request_digest:call.request_digest,
-      loadPage:createLabelingRawPagesStorageV1(storage).load });
+    const page = await readPage({ workspace_id:run.workspace_id,
+      run_id:run.id, call_id:call.id, request_digest:call.request_digest });
     if(!page&&!storage.recoverIncomplete)throw Error("mass_labeling_jev_recovery_storage_unavailable");
     const stored = page ? { raw_text:page.raw_text, sha256:page.raw_sha256, size_bytes:page.raw_size_bytes,
       storage_key:page.storage_key } : await storage.recoverIncomplete!({ workspace_id: run.workspace_id, execution_id: run.id,

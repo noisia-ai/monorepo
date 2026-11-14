@@ -110,30 +110,55 @@ export function createLabelingRawPageStoreV1(options:{database:LabelingDatabaseV
 /** Read-only access for the no-provider recovery path. A null result means an
  * individual historical receipt, never permission to infer or scan a page key.
  * Planned bytes can be authenticated here but are not attached or settled. */
-export async function readLabelingRawCallPageV1(args:{database:Pick<LabelingDatabaseV1,'query'>;
-  workspace_id:string;run_id:string;call_id:string;request_digest:string;
-  loadPage:LabelingRawPageStorageV1['load']}):Promise<null|{page_id:string;page_status:'planned'|'verified';
-    raw_text:string;raw_sha256:string;raw_size_bytes:number;storage_key:string}>{
-  const linked=(await args.database.query<{page_id:string;request_digest:string;call_request_digest:string}>(`SELECT m.page_id,m.request_digest,c.request_digest call_request_digest
-    FROM signal_labeling_raw_page_members m JOIN signal_labeling_calls c ON c.id=m.call_id
-    WHERE m.workspace_id=$1 AND m.run_id=$2 AND m.call_id=$3
-      AND c.workspace_id=m.workspace_id AND c.run_id=m.run_id
-      `,
-    [args.workspace_id,args.run_id,args.call_id])).rows[0];
-  if(!linked)return null;
-  if(linked.request_digest!==args.request_digest||linked.call_request_digest!==args.request_digest)return invalid();
-  const page=(await args.database.query<Page>(`SELECT * FROM signal_labeling_raw_pages
-    WHERE workspace_id=$1 AND run_id=$2 AND id=$3`,[args.workspace_id,args.run_id,linked.page_id])).rows[0];
-  if(!page)return invalid();
-  const rows=(await args.database.query<Member>(`SELECT call_id,request_digest,raw_sha256,raw_size_bytes,byte_offset,byte_length,page_id
-    FROM signal_labeling_raw_page_members WHERE workspace_id=$1 AND run_id=$2 AND page_id=$3 ORDER BY byte_offset`,
-    [args.workspace_id,args.run_id,page.id])).rows.map(normalize);
-  if(rows.length!==page.member_count)return invalid();
-  const raw=await args.loadPage(ref(page));
-  const decoded=parseLabelingRawPageV1({workspace_id:args.workspace_id,run_id:args.run_id,raw_text:raw,
-    raw_sha256:page.sha256,size_bytes:Number(page.size_bytes),members:rows});
-  const member=rows.find(m=>m.call_id===args.call_id),raw_text=decoded.get(args.call_id);
-  if(!member||member.request_digest!==args.request_digest||raw_text===undefined)return invalid();
-  return {page_id:page.id,page_status:page.status,raw_text,raw_sha256:member.raw_sha256,
-    raw_size_bytes:member.raw_size_bytes,storage_key:page.storage_key};
+type RawCallPageReadV1={workspace_id:string;run_id:string;call_id:string;request_digest:string};
+type RawCallPageReceiptV1={page_id:string;page_status:'planned'|'verified';raw_text:string;
+  raw_sha256:string;raw_size_bytes:number;storage_key:string};
+
+/** A reader belongs to one recovery pass. Only its last authenticated page stays
+ * resident; neither provider bytes nor mutable references escape into a global cache.
+ * Every read still checks current DB scope, page identity and the complete membership. */
+export function createLabelingRawCallPageReaderV1(options:{database:Pick<LabelingDatabaseV1,'query'>;
+  loadPage:LabelingRawPageStorageV1['load']}){
+  let cached:{reference:LabelingRawPageReferenceV1;members:LabelingRawPageMemberV1[];
+    decoded:Map<string,string>}|undefined;
+  return async(args:RawCallPageReadV1):Promise<RawCallPageReceiptV1|null>=>{
+    const linked=(await options.database.query<{page_id:string;request_digest:string;call_request_digest:string}>(`SELECT m.page_id,m.request_digest,c.request_digest call_request_digest
+      FROM signal_labeling_raw_page_members m JOIN signal_labeling_calls c ON c.id=m.call_id
+      WHERE m.workspace_id=$1 AND m.run_id=$2 AND m.call_id=$3
+        AND c.workspace_id=m.workspace_id AND c.run_id=m.run_id
+        `,
+      [args.workspace_id,args.run_id,args.call_id])).rows[0];
+    if(!linked)return null;
+    if(linked.request_digest!==args.request_digest||linked.call_request_digest!==args.request_digest)return invalid();
+    const page=(await options.database.query<Page>(`SELECT * FROM signal_labeling_raw_pages
+      WHERE workspace_id=$1 AND run_id=$2 AND id=$3`,[args.workspace_id,args.run_id,linked.page_id])).rows[0];
+    if(!page)return invalid();
+    const rows=(await options.database.query<Member>(`SELECT call_id,request_digest,raw_sha256,raw_size_bytes,byte_offset,byte_length,page_id
+      FROM signal_labeling_raw_page_members WHERE workspace_id=$1 AND run_id=$2 AND page_id=$3 ORDER BY byte_offset`,
+      [args.workspace_id,args.run_id,page.id])).rows.map(normalize);
+    if(rows.length!==page.member_count||rows.some(row=>row.page_id!==page.id))return invalid();
+    const reference=ref(page);
+    if(reference.workspace_id!==args.workspace_id||reference.run_id!==args.run_id||reference.page_id!==linked.page_id)return invalid();
+    const hit=cached&&Object.entries(reference).every(([key,value])=>cached!.reference[key as keyof LabelingRawPageReferenceV1]===value)
+      &&sameMembers(cached.members,rows);
+    if(!hit){
+      // Evict before loading another page: failures cannot leave an older authenticated
+      // page available under a changed reference. The raw JSONL is not retained.
+      cached=undefined;
+      const raw=await options.loadPage(reference);
+      const decoded=parseLabelingRawPageV1({workspace_id:args.workspace_id,run_id:args.run_id,raw_text:raw,
+        raw_sha256:page.sha256,size_bytes:Number(page.size_bytes),members:rows});
+      cached={reference:{...reference},members:rows.map(row=>({...row})),decoded};
+    }
+    const decoded=cached!.decoded;
+    const member=rows.find(m=>m.call_id===args.call_id),raw_text=decoded.get(args.call_id);
+    if(!member||member.request_digest!==args.request_digest||raw_text===undefined)return invalid();
+    return {page_id:page.id,page_status:page.status,raw_text,raw_sha256:member.raw_sha256,
+      raw_size_bytes:member.raw_size_bytes,storage_key:page.storage_key};
+  };
+}
+
+export async function readLabelingRawCallPageV1(args:RawCallPageReadV1&{
+  database:Pick<LabelingDatabaseV1,'query'>;loadPage:LabelingRawPageStorageV1['load']}){
+  return createLabelingRawCallPageReaderV1(args)(args);
 }
