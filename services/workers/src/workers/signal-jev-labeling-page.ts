@@ -1,4 +1,4 @@
-import { processJevStreamingWindowV2, type JevStreamingExecutionV2, type JevStreamingMetricsV2 } from './signal-jev-streaming-window';
+import { assertJevStreamingExecutionV2, processJevStreamingWindowV2, type JevStreamingExecutionV2, type JevStreamingMetricsV2 } from './signal-jev-streaming-window';
 import { setMaxListeners } from "node:events";
 import { llmCostMicroUsdV1, type FacetInput, type LlmPriceV1, type LlmUsageV1 } from "@noisia/query-engine";
 import type { createSignalLabelingStoreV1, LabelingRunV1, LabelingCallV1, LabelingCallProposalV1 } from "@noisia/db";
@@ -62,6 +62,7 @@ export async function processJevLabelingPageV1<Input extends FacetInput,Result>(
         if(proposals.length)calls=(await store.reserve(run,proposals)).slice(0,args.execution?.window_size??200);
       }
       const reserved=run.error_code?[]:calls.filter(call=>call.status==="reserved"&&!call.raw_body);
+      if(args.execution)assertJevStreamingExecutionV2(args.execution,provider);
       if(reserved.length)await store.markSubmitting(run,reserved);
       if(args.execution) {
         const outcome = await processJevStreamingWindowV2({run,calls,send_calls:reserved,store,provider,execution:args.execution,price,cancellation,hooks,observe_stream:args.observe_stream});

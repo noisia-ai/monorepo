@@ -16,7 +16,7 @@ import {
 } from "@noisia/query-engine";
 import type { LabelingRunV1, LabelingCallV1 } from "@noisia/db";
 import { processMassLabelingJevV1, signalMassLabelingJevJobV1, MASS_LABELING_JEV_PENDING_RUNS_SQL_V1 } from "./signal-mass-labeling-jev";
-import { createTypesafeJevClientV1, type JevProviderV1, type JevRequestV1 } from "../providers/typesafe-jev";
+import { JevProviderErrorV1, createTypesafeJevClientV1, type JevProviderV1, type JevRequestV1 } from "../providers/typesafe-jev";
 
 type Store = Parameters<typeof processMassLabelingJevV1>[0]["store"];
 function fixture(count: number, product = false) {
@@ -705,3 +705,54 @@ for(const fault of ['raw_page_write','settlement_ack','apply_ack']as const)
     assert.ok(f.calls.every(call=>call.status==='settled'&&call.results_applied));
     assert.equal(f.results.length,3);assert.ok(f.results.every(result=>result.status==='labeled'));
   });
+test('requeue failure cannot release the lease while a paid response is still flushing',async()=>{
+  const f=fixture(3,true);let unlock!:()=>void,entered!:()=>void;
+  const blocked=new Promise<void>(resolve=>{unlock=resolve;}),started=new Promise<void>(resolve=>{entered=resolve;});
+  let drained=false,released=false,finished=false,requeueCalled=false;
+  f.store.persistRawPage=async(_run,rows)=>{entered();await blocked;for(const row of rows)row.call.raw_body=row.raw;drained=true;};
+  f.store.requeueUnsent=async()=>{requeueCalled=true;assert.ok(drained);throw Error('synthetic_requeue_lease_lost');};
+  const release=f.store.release,finish=f.store.finish;
+  f.store.release=async(...args)=>{released=true;await release(...args);};
+  f.store.finish=async(...args)=>{finished=true;assert.ok(drained);return finish(...args);};
+  let n=0;
+  const provider:JevProviderV1={max_concurrency:2,max_response_bytes:16384,async evaluate(request){
+    if(++n===1)return f.response(request);
+    await started;throw new JevProviderErrorV1('synthetic_transport_unknown','outcome_unknown');
+  }};
+  const task=processMassLabelingJevV1({run_id:f.run.id,store:f.store,provider,
+    execution:{...streaming,max_in_flight:2,flush_size:1,max_flushes:1,window_size:3,max_buffered_bytes:(16384*24+65536)*2}});
+  const rejection=assert.rejects(task,/synthetic_requeue_lease_lost/);
+  await started;await delay(15);
+  assert.equal(requeueCalled,false);assert.equal(released,false);assert.equal(finished,false);
+  unlock();await rejection;assert.ok(drained);assert.ok(requeueCalled);assert.ok(released);
+});
+test('a recovery flush failure requeues every live unsent reservation before any fetch',async()=>{
+  const f=fixture(4,true);let failed=false,sends=0;
+  f.store.finish=async()=>{f.run.error_code=null;const status=f.calls.some(call=>!call.results_applied)?'running' as const:'completed' as const;f.run.status=status;return status;};
+  const originalApply=f.store.apply;
+  f.store.apply=async(run,batch)=>{if(!failed){failed=true;throw Error('synthetic_recovery_apply');}return originalApply(run,batch);};
+  const provider:JevProviderV1={max_concurrency:1,max_response_bytes:16384,async evaluate(request){sends++;return f.response(request);}};
+  // First persist one receipt, interrupt its materialization, and retain its sibling reservations.
+  const args={run_id:f.run.id,store:f.store,provider,execution:{...streaming,max_in_flight:1,flush_size:1,window_size:4,max_buffered_bytes:16384*24+65536}};
+  const durable=new Map<string,string>();
+  f.store.persistRawPage=async(_run,batch)=>{for(const row of batch){durable.set(row.call.id,row.raw);row.call.raw_body=row.raw;}};
+  const get=f.store.calls;f.store.calls=async run=>{const calls=await get(run);for(const call of calls)call.raw_body=durable.get(call.id)??null;return calls;};
+  f.store.requeueUnsent=async(_run,calls)=>{for(const call of calls){assert.ok(!durable.has(call.id));call.status='reserved';}};
+  await assert.rejects(processMassLabelingJevV1(args),/synthetic_recovery_apply/);
+  const before=sends;
+  // Replaying the durable receipt fails before any of the remaining calls reaches evaluate.
+  failed=false;await assert.rejects(processMassLabelingJevV1(args),/synthetic_recovery_apply/);
+  assert.equal(sends,before);assert.ok(f.calls.filter(call=>!durable.has(call.id)).every(call=>call.status==='reserved'&&!call.results_applied));
+  f.store.apply=originalApply;assert.equal((await processMassLabelingJevV1(args)).status,'completed');
+  assert.equal(sends,4);assert.equal(f.results.length,4);assert.ok(f.results.every(result=>result.status==='labeled'));
+});
+test('invalid streaming bounds fail before any call becomes submitting',async()=>{
+  for(const invalid of ['execution','response','memory']as const){
+    const f=fixture(3,true);let submitted=0;
+    f.store.markSubmitting=async()=>{submitted++;};
+    const provider:JevProviderV1={max_response_bytes:invalid==='response'?0:16384,async evaluate(){throw Error('unexpected send');}};
+    await assert.rejects(processMassLabelingJevV1({run_id:f.run.id,store:f.store,provider,
+      execution:{...streaming,max_in_flight:invalid==='execution'?0:1,max_buffered_bytes:invalid==='memory'?1:streaming.max_buffered_bytes}}),/jev_(?:stream_(?:configuration|response_bound|memory_budget)|page_concurrency)_invalid/);
+    assert.equal(submitted,0);assert.ok(f.calls.every(call=>call.status==='reserved'));
+  }
+});

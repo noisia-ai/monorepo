@@ -11,6 +11,17 @@ export type JevStreamingExecutionV2 = {
 };
 export type JevStreamingMetricsV2 = { in_flight: number; reserved_working_bytes: number;
   buffered_responses: number; active_flushes: number };
+export function assertJevStreamingExecutionV2(e:JevStreamingExecutionV2,provider:JevProviderV1){
+  for (const value of Object.values(e)) if (!Number.isSafeInteger(value) || value < 1) throw Error('jev_stream_configuration_invalid');
+  if (e.max_in_flight > 4096 || e.max_flushes > 64 || e.flush_size > 4096 || e.window_size > 4096
+    || e.flush_interval_ms > 60_000) throw Error('jev_stream_configuration_invalid');
+  const responseBound = provider.max_response_bytes ?? 2 * 1024 * 1024;
+  if(!Number.isSafeInteger(responseBound)||responseBound<1||responseBound>2*1024*1024)throw Error('jev_stream_response_bound_invalid');
+  // JSON escaping, base64 page codec and temporary serialization copies are budgeted.
+  const reservationBytes = responseBound * 24 + 64 * 1024;
+  if (e.max_buffered_bytes < reservationBytes) throw Error('jev_stream_memory_budget_invalid');
+  return reservationBytes;
+}
 /** One reserved window, continuous HTTP producers and independently bounded durable flushes.
  * The caller owns the lease and heartbeat. A response does not release its buffer until
  * its page is durable, billed and applied. No provider request is retried here. */
@@ -25,14 +36,7 @@ export async function processJevStreamingWindowV2<I extends FacetInput, R>(args:
     fail_on_error?: boolean };
 }) {
   const { run, calls, store, provider, execution: e, hooks, price, cancellation } = args;
-  for (const value of Object.values(e)) if (!Number.isSafeInteger(value) || value < 1) throw Error('jev_stream_configuration_invalid');
-  if (e.max_in_flight > 4096 || e.max_flushes > 64 || e.flush_size > 4096 || e.window_size > 4096
-    || e.flush_interval_ms > 60_000) throw Error('jev_stream_configuration_invalid');
-  const responseBound = provider.max_response_bytes ?? 2 * 1024 * 1024;
-  if(!Number.isSafeInteger(responseBound)||responseBound<1||responseBound>2*1024*1024)throw Error('jev_stream_response_bound_invalid');
-  // JSON escaping, base64 page codec and temporary serialization copies are budgeted.
-  const reservationBytes = responseBound * 24 + 64 * 1024;
-  if (e.max_buffered_bytes < reservationBytes) throw Error('jev_stream_memory_budget_invalid');
+  const reservationBytes=assertJevStreamingExecutionV2(e,provider);
   const workers = Math.min(calls.length, e.max_in_flight, provider.max_concurrency ?? e.max_in_flight,
     Math.floor(e.max_buffered_bytes / reservationBytes));
   type Row = { call: LabelingCallV1<I>; raw: string; bytes: number; memory_bytes: number };
@@ -127,6 +131,18 @@ export async function processJevStreamingWindowV2<I extends FacetInput, R>(args:
       active.add(task); observe();
     }
   }
+  // Track the exact live send frontier even when raw recovery fails before HTTP.
+  const reserved=(args.send_calls??calls.filter(call=>call.status==='reserved')).filter(call=>!call.raw_body);
+  let requeueAttempted=false;
+  async function drainAndRequeue(){
+    while(buffered.length||active.size){flush(true);if(active.size)await Promise.all(active);}
+    const pending=reserved.slice(next);
+    if(pending.length&&!requeueAttempted){
+      requeueAttempted=true;
+      if(!store.requeueUnsent)throw Error('jev_unsent_recovery_unavailable');
+      await store.requeueUnsent(run,pending);
+    }
+  }
   cancellation.signal.addEventListener('abort', wake, { once: true });
   const timer = setInterval(() => flush(true), e.flush_interval_ms); timer.unref?.();
   try {
@@ -140,7 +156,6 @@ export async function processJevStreamingWindowV2<I extends FacetInput, R>(args:
     }
     // Only the caller's just-marked reservations may be sent. A submitting call
     // recovered after a crash is ambiguous even if it has no stored bytes.
-    const reserved = (args.send_calls ?? calls.filter(call => call.status === 'reserved')).filter(call => !call.raw_body);
     await Promise.all(Array.from({ length: workers }, async () => {
       while (next < reserved.length && !fatal && !cancellation.signal.aborted) {
         while (memory + reservationBytes > e.max_buffered_bytes && !fatal && !cancellation.signal.aborted) { flush(true); await wait(); }
@@ -166,13 +181,8 @@ export async function processJevStreamingWindowV2<I extends FacetInput, R>(args:
     }));
     // No HTTP was attempted for reserved calls left behind by cancellation or write failure.
     const notDelivered=reserved.slice(next),notDeliveredIds=new Set(notDelivered.map(call=>call.id));
-    // These exact IDs never crossed evaluate in this live process. A lease-held
-    // compare-and-set restores their reservation without inventing a final result.
-    if(notDelivered.length){
-      if(!store.requeueUnsent)throw Error('jev_unsent_recovery_unavailable');
-      await store.requeueUnsent(run,notDelivered);
-    }
-    while (buffered.length || active.size) { flush(true); if (active.size) await Promise.all(active); }
+    // Drain paid receipts before requeue failure can finish or release the lease.
+    await drainAndRequeue();
     for (const call of calls) {
       if (!observedRaw.has(call.id) && !errors.has(call.id)) {
         if(notDeliveredIds.has(call.id)||call.status==='reserved'&&!reserved.some(item=>item.id===call.id))continue;
@@ -204,7 +214,7 @@ export async function processJevStreamingWindowV2<I extends FacetInput, R>(args:
     // Only the ledger can tell whether a lost SQL acknowledgement committed.
     // Reconcile under the existing lease after any failed stage, including a
     // technical-error apply; never infer state from an in-memory acknowledgement.
-    try { await store.finish(run); }
+    try { await drainAndRequeue();await store.finish(run); }
     catch (reconciliation) { throw new AggregateError([error, reconciliation], 'jev_stream_reconciliation_failed'); }
     throw error;
   } finally { clearInterval(timer); cancellation.signal.removeEventListener('abort', wake); }
