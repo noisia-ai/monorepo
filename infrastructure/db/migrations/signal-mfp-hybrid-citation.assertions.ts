@@ -99,6 +99,25 @@ export async function verifyHybridCitationQualityV1(a:{client:PoolClient;databas
     JOIN signal_labeler_versions version ON version.id=run.labeler_version_id WHERE run.id=$1`,[initial.run_id])).rows[0];
    assert.equal((await selectHybridClaudeInputsV1(client,{...initialRun,cursor_root_id:null})).length,0,
     'a technical verifier failure never re-admits an already settled Claude confirmation');
+   if(scenario==='verifier_http_error'){
+    assert.equal(call.status,'unknown');assert.equal(call.usage,null);assert.equal(call.settled_micro_usd,null);
+    assert.ok(Number(call.reserved_micro_usd)>0);assert.ok(call.raw_sha256&&call.raw_storage_key);
+    const frozen=(await client.query('SELECT to_jsonb(c) snapshot FROM signal_labeling_calls c WHERE id=$1',[call.id])).rows[0].snapshot;
+    for(let retry=0;retry<2;retry++){
+     const receipt=await requestHybridMembershipStageV1({database:a.database,workspace_id:a.workspace,actor_user_id:a.actor,
+      stage:'citation',route_digest:a.route,source_run_id:initial.run_id,idempotency_key:`unknown-${randomUUID()}`,provider_available:true});
+     const outcome=await runHybridMembershipTickV1({run_id:receipt.run_id,stage:'citation',store:createStore('citation'),jevPrice:0.042,jev,claude});
+     assert.equal(outcome.followup,null);
+     assert.equal((await client.query('SELECT count(*)::int n FROM signal_labeling_calls WHERE run_id=$1',[receipt.run_id])).rows[0].n,0,
+      'an ambiguous HTTP rejection excludes its pair before another provider reservation');
+    }
+    assert.equal(verifySends,1);assert.equal(claudeSends,1);
+    assert.deepEqual((await client.query('SELECT to_jsonb(c) snapshot FROM signal_labeling_calls c WHERE id=$1',[call.id])).rows[0].snapshot,frozen,
+     'no empty retry can settle zero, release exposure, or rewrite an ambiguous paid attempt');
+    assert.equal((await client.query('SELECT count(*)::int n FROM signal_hybrid_membership_decisions WHERE workspace_id=$1',[a.workspace])).rows[0].n,0);
+    console.log(JSON.stringify({gate:'h1_pg_verifier_throttle_unknown',scenario,claudeSends,verifySends,settled:false,exposure_retained:true}));
+    await client.query('ROLLBACK TO SAVEPOINT citation_quality');continue;
+   }
    for(let retry=1;retry<=2;retry++){
     const receipt=await requestHybridMembershipStageV1({database:a.database,workspace_id:a.workspace,actor_user_id:a.actor,
      stage:'citation',route_digest:a.route,source_run_id:initial.run_id,idempotency_key:`technical-${randomUUID()}`,provider_available:true});
@@ -181,7 +200,7 @@ export async function verifyHybridCitationQualityV1(a:{client:PoolClient;databas
  await client.query('SAVEPOINT bounded_jev_retry');
  await client.query("UPDATE signal_labeling_calls SET results_applied=true,results='[]' WHERE run_id=$1 AND status='failed'",[a.jevRun]);
  await client.query(`UPDATE signal_labeling_calls SET results=(SELECT jsonb_agg(result || jsonb_build_object('jev',
-   jsonb_build_object('verdict','error','probability',NULL,'citation',NULL),'error_code','jev_http_429'))
+   jsonb_build_object('verdict','error','probability',NULL,'citation',NULL),'error_code','jev_response_invalid'))
    FROM jsonb_array_elements(results) result) WHERE run_id=$1 AND status='settled'`,[a.jevRun]);
  let retrySends=0;
  const raw=new Map<string,string>(),store=createHybridMembershipStageStoreV1('jev',{database:a.database,
@@ -190,7 +209,8 @@ export async function verifyHybridCitationQualityV1(a:{client:PoolClient;databas
   const receipt=await requestHybridMembershipStageV1({database:a.database,workspace_id:a.workspace,actor_user_id:a.actor,
    stage:'jev',route_digest:a.route,idempotency_key:`bounded-${randomUUID()}`,provider_available:true});
   const outcome=await runHybridMembershipTickV1({run_id:receipt.run_id,stage:'jev',store,jevPrice:0.042,
-   jev:{evaluate:async()=>{retrySends++;return {http_status:429,latency_ms:1,body:JSON.stringify({error:'synthetic_overload'})};}}});
+   jev:{evaluate:async()=>{retrySends++;return {http_status:200,latency_ms:1,body:JSON.stringify({model:'jev-1.13.0',
+    usage:{input_tokens:10,output_tokens:0},answers:{membership:{type:'noul',noul:2}}})};}}});
   assert.equal(outcome.status,'failed');
   assert.equal((await client.query('SELECT count(*)::int n FROM signal_hybrid_membership_decisions WHERE workspace_id=$1',[a.workspace])).rows[0].n,attempt===3?1:0);
  }
