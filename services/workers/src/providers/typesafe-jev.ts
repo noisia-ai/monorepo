@@ -44,7 +44,7 @@ async function readBounded(response: Response, limit = MAX_RESPONSE_BYTES): Prom
   for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
   return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
 }
-export type JevProviderV1 = { readonly max_concurrency?: number; readonly max_response_bytes?: number; evaluate(request: JevRequestV1, options?: { signal?: AbortSignal }): Promise<JevRawResponseV1>; observeUsage?(raw: JevRawResponseV1, input_tokens: number): Promise<void> };
+export type JevProviderV1 = { close?():Promise<void>; readonly max_concurrency?: number; readonly max_response_bytes?: number; evaluate(request: JevRequestV1, options?: { signal?: AbortSignal }): Promise<JevRawResponseV1>; observeUsage?(raw: JevRawResponseV1, input_tokens: number): Promise<void> };
 /** One attempt only. Callers persist submitting before invoking this client. Raw responses
  * are returned without JSON parsing so the shared ledger can persist them first. */
 export function createTypesafeJevClientV1(options: {

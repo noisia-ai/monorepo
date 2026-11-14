@@ -54,9 +54,9 @@ test('official context bootstrap stays at65536 despite a learned Redis ratio and
 
 
 test('runtime shares one pending Redis connection before parallel admissions instead of failing definitely-unsent work',async()=>{
-  let connects=0,sends=0;
+  let connects=0,sends=0,quits=0;
   class LocalRedis{
-    status='wait';on(){return this;}
+    status='wait';on(){return this;}async quit(){quits++;this.status='end';}disconnect(){this.status='end';}
     async connect(){connects++;this.status='connecting';await new Promise(resolve=>setTimeout(resolve,5));this.status='ready';}
     async eval(_script:string,_count:number,...values:string[]){
       if(this.status!=='ready')throw Error('offline queue disabled');
@@ -71,4 +71,7 @@ test('runtime shares one pending Redis connection before parallel admissions ins
     fetch:async()=>{sends++;return Response.json({model:request.model,usage:{input_tokens:200,output_tokens:0},answers:{topic:{type:'choice',choice:'a',confidence:.8,probabilities:{a:.8,b:.2}}}});}});
   await Promise.all(Array.from({length:8},()=>provider.evaluate(request)));
   assert.equal(connects,1);assert.equal(sends,8);
+  await provider.close!();await provider.close!();assert.equal(quits,1);
+  const injected=create({labeler_digest:digest,execution,env,evaluateRedis:async(_script,_keys,args)=>args[0]==='acquire'?[1,0]:'0'});
+  await injected.close!();assert.equal(quits,1,'injected Redis evaluation is externally owned');
 });

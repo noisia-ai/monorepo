@@ -47,3 +47,30 @@ test('Redis atomically shares provider-account request/token windows, usage debt
     await Promise.all([a.quit(), b.quit()]);
   }
 });
+
+test('native runtime factory cold-admits parallel requests on local Redis and closes its owned connection', {skip:!url,timeout:10000},async()=>{
+  const parsed=new URL(url!);assert.ok(['127.0.0.1','localhost','[::1]'].includes(parsed.hostname),'synthetic loopback Redis only');
+  const {createCalibratedJevRuntimeProviderV2}=await import('./jev-streaming-runtime');
+  const account=randomUUID(),digest=`sha256:${'b'.repeat(64)}`;
+  const execution={max_in_flight:32,flush_size:32,max_flushes:1,max_buffered_bytes:16*1024*1024,flush_interval_ms:5,window_size:32};
+  let sent=0;
+  const provider=createCalibratedJevRuntimeProviderV2({labeler_digest:digest,execution,env:{
+    TYPESAFE_API_KEY:'synthetic-test-key',NOISIA_TYPESAFE_ACCOUNT_ID:account,NOISIA_TYPESAFE_ACCOUNT_REDIS_URL:url,
+    NOISIA_TYPESAFE_ACCOUNT_RPS:'1000',NOISIA_TYPESAFE_ACCOUNT_INPUT_TPS:'1000000',
+    NOISIA_JEV_TOKEN_CALIBRATIONS_JSON:JSON.stringify({[digest]:{source:'synthetic verified fixture',fixed_input_tokens:100,input_tokens_per_utf8_byte:0,max_request_bytes:10000}})},
+    fetch:async()=>{sent++;return Response.json({model:'jev-1.13.0',usage:{input_tokens:100,output_tokens:0},answers:{q:{type:'noul',noul:.8}}});}});
+  const cleanup=new Redis(url!,{maxRetriesPerRequest:1,connectTimeout:2000});
+  try{
+    const request={model:'jev-1.13.0',state:'Synthetic source',questions:{q:{type:'noul' as const,instructions:'Configured question'}}};
+    const raw=await Promise.all(Array.from({length:32},()=>provider.evaluate(request)));
+    assert.equal(sent,32);assert.ok(raw.every(item=>item.rate_reservation));
+    await Promise.all(raw.map(item=>provider.observeUsage!(item,100)));
+    await provider.close!();await provider.close!();
+    assert.equal(await cleanup.ping(),'PONG','closing the owned client must not close other clients or clear quota keys');
+  }finally{
+    await provider.close?.();
+    const prefix=`noisia:jev-account:{${createHash('sha256').update(account).digest('hex')}}`;
+    await cleanup.del(...['events','tokens','total','cooldown','limits','backoff'].map(key=>`${prefix}:${key}`),`noisia:jev-calibration:${account}`);
+    await cleanup.quit();
+  }
+});

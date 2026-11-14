@@ -73,6 +73,14 @@ export function createCalibratedJevRuntimeProviderV2(args: {
     estimate_input_tokens:request=>estimates.get(request) ?? (()=>{throw Error('jev_stream_calibration_not_loaded');})() });
   const estimates = new WeakMap<object,number>();
   return { max_concurrency:inner.max_concurrency,max_response_bytes:inner.max_response_bytes,
+    async close(){
+      const owned=client;client=undefined;
+      const pending=connecting;connecting=undefined;
+      if(!owned)return;
+      try{if(pending)await pending;}catch{owned.disconnect();return;}
+      if(owned.status==='wait'||owned.status==='end'){owned.disconnect();return;}
+      await owned.quit();
+    },
     async evaluate(request,options) {
       const bytes=Buffer.byteLength(JSON.stringify(request));
       try {

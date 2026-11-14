@@ -308,6 +308,8 @@ export function startMassLabelingJevDrainerV1() {
     async close() {
       clearInterval(timer);
       if (active) await active;
+      await Promise.all([...new Set([...streamingProviders.values(),...(runtimeProvider?[runtimeProvider]:[])])]
+        .map(provider=>provider.close?.()));
     },
   };
 }
