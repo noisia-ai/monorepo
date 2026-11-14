@@ -525,6 +525,8 @@ export function createSignalLabelingStoreV1<
     hybrid_stage?: "jev" | "claude" | "citation";
     feature?: SignalWorkspaceFeatureV1;
     pending_calls_only?: boolean;
+    /** Listening can drain previously paid raw receipts on a terminal run. */
+    recover_failed_raw?: boolean;
     policy_action?: "concept_membership_jev" | "concept_membership_claude" | "mass_labeling_jev";
     /** H1 verifies each decision against this call's results in the same transaction. */
     persist_results_before_write?: boolean;
@@ -696,8 +698,14 @@ export function createSignalLabelingStoreV1<
           await c.query(
             `UPDATE signal_labeling_runs SET lease_token=$2,lease_until=now()+interval '10 minutes',status='running',updated_at=now()
    WHERE id=$1 AND kind=$3 AND ($4::text IS NULL OR membership_snapshot->>'hybrid_stage'=$4)
-   AND (status IN('queued','running') OR status='failed' AND error_code='labeling_outcome_unknown'
-   AND EXISTS(SELECT 1 FROM signal_labeling_calls c WHERE c.run_id=$1 AND c.status='unknown')
+   AND (status IN('queued','running') OR status='failed' AND (
+     error_code='labeling_outcome_unknown' AND EXISTS(SELECT 1 FROM signal_labeling_calls c WHERE c.run_id=$1 AND c.status='unknown')
+     OR ${options.adapter?.recover_failed_raw===true?`kind='mass_labeling'
+       AND EXISTS(SELECT 1 FROM signal_labeler_versions l JOIN signal_listening_runs owner
+         ON owner.run_id=signal_labeling_runs.id AND owner.workspace_id=signal_labeling_runs.workspace_id
+         WHERE l.id=signal_labeling_runs.labeler_version_id AND l.identity#>>'{params,request_version}'='listening-jev-v1')
+       AND EXISTS(SELECT 1 FROM signal_labeling_calls c WHERE c.run_id=$1 AND c.workspace_id=signal_labeling_runs.workspace_id
+         AND c.raw_storage_key IS NOT NULL AND NOT c.results_applied)`:'FALSE'})
    AND NOT EXISTS(SELECT 1 FROM signal_labeling_runs active WHERE active.workspace_id=signal_labeling_runs.workspace_id
      AND active.kind=signal_labeling_runs.kind AND active.id<>signal_labeling_runs.id AND active.status IN('queued','running')))
    AND NOT waiting_full_confirmation AND (lease_until IS NULL OR lease_until<now()) RETURNING id`,
