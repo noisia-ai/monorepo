@@ -180,6 +180,14 @@ export function createMassLabelingRuntimeStoreV1(
   });
 }
 
+const massLabelingRequestVersionPredicateV1 = "labeler.identity#>>'{params,request_version}' IN('mass-labeling-jev-v1','mass-labeling-jev-v2')";
+export const MASS_LABELING_JEV_PENDING_RUNS_SQL_V1 = `SELECT run.id FROM signal_labeling_runs run
+  JOIN signal_labeler_versions labeler ON labeler.id=run.labeler_version_id
+  WHERE run.kind='mass_labeling' AND labeler.provider='typesafe' AND run.status IN('queued','running')
+    AND ${massLabelingRequestVersionPredicateV1}
+    AND NOT run.waiting_full_confirmation AND run.next_poll_at<=now()
+    AND (run.lease_until IS NULL OR run.lease_until<now()) ORDER BY run.created_at LIMIT 1`;
+
 export const SIGNAL_MASS_LABELING_JEV_JOB_V1 = "signal-mass-labeling-jev-v1";
 let runtimeProvider: JevProviderV1 | undefined;
 const streamingProviders = new Map<string,JevProviderV1>();
@@ -206,12 +214,12 @@ export async function signalMassLabelingJevJobV1(job: {
     await pool.query<{ workspace_id: string; request_version: string; labeler_digest:string }>(
       `SELECT run.workspace_id,labeler.identity#>>'{params,request_version}' request_version,labeler.labeler_digest
        FROM signal_labeling_runs run JOIN signal_labeler_versions labeler ON labeler.id=run.labeler_version_id
-       WHERE run.id=$1::uuid AND run.kind='mass_labeling'`,
+       WHERE run.id=$1::uuid AND run.kind='mass_labeling' AND ${massLabelingRequestVersionPredicateV1}`,
       [job.data.run_id],
     )
   ).rows[0];
   if (
-    !run ||
+    !run || !["mass-labeling-jev-v1", "mass-labeling-jev-v2"].includes(run.request_version) ||
     !(await signalWorkspaceFeatureEnabledV1({
       queryable: pool,
       workspace_id: run.workspace_id,
@@ -280,11 +288,7 @@ export function startMassLabelingJevDrainerV1() {
     const runs = (
       await pool.query<{
         id: string;
-      }>(`SELECT run.id FROM signal_labeling_runs run
-      JOIN signal_labeler_versions labeler ON labeler.id=run.labeler_version_id
-      WHERE run.kind='mass_labeling' AND labeler.provider='typesafe' AND run.status IN('queued','running')
-        AND NOT run.waiting_full_confirmation AND run.next_poll_at<=now()
-        AND (run.lease_until IS NULL OR run.lease_until<now()) ORDER BY run.created_at LIMIT 1`)
+      }>(MASS_LABELING_JEV_PENDING_RUNS_SQL_V1)
     ).rows;
     for (const run of runs)
       await signalMassLabelingJevJobV1({ data: { run_id: run.id } });

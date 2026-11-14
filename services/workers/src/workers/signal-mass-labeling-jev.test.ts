@@ -15,7 +15,7 @@ import {
   type MassLabelingResultV1,
 } from "@noisia/query-engine";
 import type { LabelingRunV1, LabelingCallV1 } from "@noisia/db";
-import { processMassLabelingJevV1, signalMassLabelingJevJobV1 } from "./signal-mass-labeling-jev";
+import { processMassLabelingJevV1, signalMassLabelingJevJobV1, MASS_LABELING_JEV_PENDING_RUNS_SQL_V1 } from "./signal-mass-labeling-jev";
 import { createTypesafeJevClientV1, type JevProviderV1, type JevRequestV1 } from "../providers/typesafe-jev";
 
 type Store = Parameters<typeof processMassLabelingJevV1>[0]["store"];
@@ -633,3 +633,39 @@ for (const fault of ['apply', 'settlement_ack', 'application_ack'] as const) tes
   assert.equal(f.results.length,8);assert.ok(f.results.every(result => result.status==='labeled'));
   assert.ok(f.calls.every(call => call.status==='settled' && call.results_applied));
 });
+
+
+test('legacy drainer selects only its two request versions and keeps the lease/poll guards',()=>{
+  assert.match(MASS_LABELING_JEV_PENDING_RUNS_SQL_V1,/request_version.*IN\('mass-labeling-jev-v1','mass-labeling-jev-v2'\)/);
+  assert.match(MASS_LABELING_JEV_PENDING_RUNS_SQL_V1,/NOT run.waiting_full_confirmation/);
+  assert.match(MASS_LABELING_JEV_PENDING_RUNS_SQL_V1,/run.next_poll_at<=now\(\)/);
+  assert.match(MASS_LABELING_JEV_PENDING_RUNS_SQL_V1,/run.lease_until<now\(\)/);
+});
+for(const version of ['mass-labeling-jev-v1','mass-labeling-jev-v2','listening-jev-v1','unknown-version'])
+  test(`mass-labeling job fences request owner before claiming (${version})`,async()=>{
+    const legacy=version==='mass-labeling-jev-v1'||version==='mass-labeling-jev-v2';
+    const f=fixture(1,version!=='mass-labeling-jev-v1');let claims=0;
+    const claim=f.store.claim;f.store.claim=async id=>{claims++;return claim(id);};
+    const savedMass=process.env.NOISIA_MASS_LABELING_ENABLED,savedJev=process.env.NOISIA_JEV_PROVIDER_ENABLED;
+    process.env.NOISIA_MASS_LABELING_ENABLED='true';process.env.NOISIA_JEV_PROVIDER_ENABLED='true';
+    const query=async(sql:string)=>{
+      if(sql.startsWith('SELECT run.workspace_id,labeler.identity')){
+        assert.match(sql,/request_version.*IN\('mass-labeling-jev-v1','mass-labeling-jev-v2'\)/);
+        // An untrusted/stale adapter returning a foreign owner is fenced again in code.
+        return{rows:[{workspace_id:f.run.workspace_id,request_version:version}]};
+      }
+      if(sql.includes('FROM signal_workspace_features')){assert.ok(legacy);return{rows:[{enabled:true}]};}
+      if(sql.startsWith('SELECT run.workspace_id,run.actor_user_id'))return{rows:[]};
+      throw Error('unexpected_owner_query');
+    };
+    const database={query,async connect(){return{query,release(){}};}}as unknown as NonNullable<Parameters<typeof signalMassLabelingJevJobV1>[1]>['database'];
+    try{
+      const call=()=>signalMassLabelingJevJobV1({data:{run_id:f.run.id}},{database,store:f.store,provider:f.provider,
+        provider_preflight:{api_key:`synthetic-coexistence-${version}`,fetch_impl:async()=>new Response('{}',{status:200})}});
+      if(legacy){assert.equal((await call()).status,'completed');assert.equal(claims,1);assert.equal(f.transports(),1);}
+      else{await assert.rejects(call(),/mass_labeling_not_enabled/);assert.equal(claims,0);assert.equal(f.transports(),0);}
+    }finally{
+      if(savedMass===undefined)delete process.env.NOISIA_MASS_LABELING_ENABLED;else process.env.NOISIA_MASS_LABELING_ENABLED=savedMass;
+      if(savedJev===undefined)delete process.env.NOISIA_JEV_PROVIDER_ENABLED;else process.env.NOISIA_JEV_PROVIDER_ENABLED=savedJev;
+    }
+  });
