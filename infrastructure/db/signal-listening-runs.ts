@@ -21,7 +21,8 @@ async function owner(c:Pick<PoolClient,'query'>,run:LabelingRunV1,current=true){
 }
 const population=`signal_listening_population_v1($1::uuid,$2::uuid,$3::uuid,$4::text)`;
 async function inputs(c:Pick<PoolClient,'query'>,run:LabelingRunV1,limit:number):Promise<SignalListeningInputV1[]>{
- const o=await owner(c,run);
+ const o=await owner(c,run,false);
+ if((await loadSignalListeningConfigurationWithClientV1(c,run.workspace_id))?.id!==o.configuration_id)return [];
  const rows=(await c.query<{root_id:string;input_digest:string;body:string;published_at:Date|string;platform:string|null;
   question_keys:string[];question_digests:Record<string,string>;scope_basis:Record<string,string>}>(`WITH pending AS MATERIALIZED(
   SELECT p.*,row_number() OVER(PARTITION BY root_id ORDER BY question_key) n FROM ${population} p
@@ -87,13 +88,15 @@ export function createSignalListeningStoreV1(options:Omit<Parameters<typeof crea
  const store=createSignalLabelingStoreV1<SignalListeningInputV1,SignalListeningResultV1>({...options,adapter:{
   kind:'mass_labeling',policy_action:'mass_labeling_jev',feature:'mass_labeling',pending_calls_only:true,persist_results_before_write:true,
   inputs:(c,run)=>inputs(c,run,limit),
-  authority:async(c,run)=>{await owner(c,run);},
+  authority:async(c,run)=>{await owner(c,run,false);},
   beforeSubmit:async(c,run,calls)=>{
+   await owner(c,run);
    const configuration=config(run);
    for(const call of calls){if(call.inputs.length!==1||digest(call.request)!==digest(buildSignalListeningJevRequestV1(call.inputs[0]!,configuration)))fail('listening_request_invalid');}
   },
   pending:async(c,run)=>{
-   const o=await owner(c,run);
+   const o=await owner(c,run,false);
+   if((await loadSignalListeningConfigurationWithClientV1(c,run.workspace_id))?.id!==o.configuration_id)return 0;
    return (await c.query<{count:number}>(`SELECT count(DISTINCT root_id)::int count FROM ${population}
     WHERE candidate AND scope_state='included' AND answer IS NULL`,[run.workspace_id,o.configuration_id,o.map_id,run.entity_context_digest])).rows[0]!.count;
   },

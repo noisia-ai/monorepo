@@ -45,7 +45,7 @@ export async function saveSignalListeningConfigurationV1(args:SignalListeningAcc
    retired_theme_keys:current?[...new Set([...current.configuration.retired_theme_keys,...current.configuration.themes.filter(t=>!input.themes.some(i=>i.key===t.key)).map(t=>t.key)])].filter(k=>!input.themes.some(t=>t.key===k)).sort():input.retired_theme_keys,
    questions:input.questions.map(q=>{
    const old=current?.configuration.questions.find(o=>o.key===q.key);
-   return args.provenance==='human'&&(old?digest(old)!==digest(q):q.origin!=='base')?{...q,human_locked:true}:q;
+   return args.provenance==='human'&&(old?digest(old)!==digest(q)||signalListeningQuestionDigestV1(input,q)!==signalListeningQuestionDigestV1(current!.configuration,old):q.origin!=='base')?{...q,human_locked:true}:q;
   }),themes:input.themes.map(theme=>{const old=current?.configuration.themes.find(t=>t.key===theme.key);
     return args.provenance==='human'&&(!old||digest(old)!==digest(theme))?{...theme,human_locked:true}:theme;})};
   if(args.provenance==='agent'&&current&&(current.configuration.retired_question_keys.some(k=>input.questions.some(q=>q.key===k))

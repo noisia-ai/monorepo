@@ -19,6 +19,22 @@ test('calibration uses the latest32 verified normal receipts and preserves earli
   const access={database:ctx.database,workspace_id:ctx.workspace_id,actor_user_id:ctx.actor_user_id},database=ctx.database;
   await database.query("UPDATE signal_labeling_runs SET status='canceled' WHERE id=$1",[ctx.run_id]);
   const configuration=await saveSignalListeningConfigurationV1({...access,expected_revision:0,provenance:'human',configuration:signalListeningBaseTemplateV1({category:'bicycles',lexicon_terms:['synthetic']})});
+  const map=(await database.query('SELECT entity_context_digest FROM signal_mass_labeling_maps WHERE id=$1',[ctx.map_id])).rows[0]!;
+  const roots=(await database.query('SELECT root_id FROM signal_mass_labeling_items WHERE workspace_id=$1 AND map_id=$2 ORDER BY root_id LIMIT 64',[ctx.workspace_id,ctx.map_id])).rows.map(r=>r.root_id);
+  const full=(await database.query('SELECT * FROM signal_listening_population_v1($1,$2,$3,$4) ORDER BY root_id,question_key',[ctx.workspace_id,configuration.id,ctx.map_id,map.entity_context_digest])).rows;
+  assert.equal(full.length,2004);
+  const bounded=(await database.query('SELECT * FROM signal_listening_population_roots_v1($1,$2,$3,$4,$5,$6) ORDER BY root_id,question_key',[ctx.workspace_id,configuration.id,ctx.map_id,map.entity_context_digest,roots,'llm-processing'])).rows;
+  assert.deepEqual(bounded,full.filter(r=>roots.includes(r.root_id)));
+  let source=(await database.query("SELECT prosrc FROM pg_proc WHERE oid='signal_listening_population_roots_v1(uuid,uuid,uuid,text,uuid[],text)'::regprocedure")).rows[0].prosrc as string;
+  for(const [name,value] of Object.entries({w:'$1::uuid',cid:'$2::uuid',mid:'$3::uuid',ctx:'$4::text',roots:'$5::uuid[]',purpose:'$6::text'}))source=source.replace(new RegExp('\\b'+name+'\\b','g'),value);
+  const explained=(await database.query('EXPLAIN (ANALYZE,FORMAT JSON) '+source,[ctx.workspace_id,configuration.id,ctx.map_id,map.entity_context_digest,[roots[0]],'llm-processing'])).rows[0]['QUERY PLAN'][0].Plan;
+  type Node={['Node Type']:string;['Relation Name']?:string;['Index Cond']?:string;['Actual Rows']:number;['Actual Loops']:number;Plans?:Node[]};
+  const flatten=(node:Node):Node[]=>[node,...(node.Plans??[]).flatMap(flatten)];
+  const itemScans=flatten(explained).filter(n=>n['Relation Name']==='signal_mass_labeling_items');assert.ok(itemScans.length>=1);
+  const active=itemScans.filter(n=>n['Actual Loops']>0);assert.equal(active.length,1);
+  assert.match(active[0]!['Node Type'],/Index/);assert.match(active[0]!['Index Cond']??'',/root_id/);assert.equal(active[0]!['Actual Rows'],1);
+  assert.ok(itemScans.every(n=>n['Actual Loops']===0||/root_id/.test(n['Index Cond']??'')),'the full corpus branch is pruned or never executed for a call root');
+  console.log('# bounded validation plan '+JSON.stringify(active.map(n=>({node:n['Node Type'],rows:n['Actual Rows'],loops:n['Actual Loops'],index_cond:n['Index Cond']}))));
   const files=await mkdtemp(join(tmpdir(),'r16-calibration-native-'));
   try{
    const rawPages={reference:(a:{workspace_id:string;run_id:string;name:string;raw_sha256:string})=>({storage_key:`private/${a.workspace_id}/${a.run_id}/${a.name}.${a.raw_sha256.slice(7)}.parts.json`}),

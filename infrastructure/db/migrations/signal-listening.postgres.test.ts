@@ -141,8 +141,9 @@ test('listening reuses question receipts across configuration versions with live
    await database.query('SAVEPOINT config_stale');const stale=await start();
    await saveSignalListeningConfigurationV1({...access,expected_revision:configuration.revision,provenance:'human',configuration:{...configuration.configuration,
     questions:configuration.configuration.questions.map(q=>q.key==='opinion'?{...q,text:'Changed after this run was admitted'}:q)}});
-   const staleRun=await store.claim(stale.run_id);assert.ok(staleRun);
-   await assert.rejects(store.inputs(staleRun),/listening_configuration_changed/);
+   await database.query('SET CONSTRAINTS ALL IMMEDIATE');await database.query('SET CONSTRAINTS ALL DEFERRED');
+   assert.equal(await store.claim(stale.run_id),null);
+   assert.equal((await database.query('SELECT status FROM signal_labeling_runs WHERE id=$1',[stale.run_id])).rows[0].status,'failed');
    await database.query('ROLLBACK TO SAVEPOINT config_stale');await database.query('RELEASE SAVEPOINT config_stale');
    await database.query('SAVEPOINT rights_revoked');
    await database.query("UPDATE data_sources SET status='archived' WHERE workspace_id=$1",[ctx.workspace_id]);
