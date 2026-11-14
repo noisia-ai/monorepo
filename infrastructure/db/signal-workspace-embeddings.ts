@@ -70,7 +70,7 @@ async function transaction<T>(database:SignalWorkspaceEmbeddingsDatabaseV1,work:
  catch(error){await client.query("ROLLBACK").catch(()=>undefined);throw error;}finally{client.release();}
 }
 type Run={id:string;workspace_id:string;preparation_run_id:string|null;actor_user_id:string;status:string;profile:SignalWorkspaceEmbeddingProfileV1;
- input_contract:SignalWorkspaceEmbeddingInputContractV1;taxonomy_profile_id:string|null;topic_input_digest:string|null;cursor_input_sha256:string|null;
+ input_contract:SignalWorkspaceEmbeddingInputContractV1;input_owner_contract?:string|null;taxonomy_profile_id:string|null;topic_input_digest:string|null;cursor_input_sha256:string|null;
  input_revision:string|null;current_revision:string|null;policy_live:boolean;preparation_complete:boolean;execution_live:boolean;execution_token:string|null;
  worker_job_id:string;cursor_asset_sha256:string|null;cursor_chunk_index:number|null;processing_admission_id:string|null;
  brand_context_preparation_operation_id:string|null;hard_cap_micro_usd:string|null;
@@ -90,7 +90,7 @@ async function lockRun(client:PoolClient,id:string):Promise<Run>{
  else if(scope.input_contract==="topic_prototypes")await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))",[`signal-taxonomy:${scope.workspace_id}:topic`]);
  else return fail("workspace_embedding_input_contract_invalid");
  const run=(await client.query<Run>(`SELECT run.id,run.workspace_id,run.preparation_run_id,run.actor_user_id,run.status,run.profile,
-  run.input_contract,run.taxonomy_profile_id,run.topic_input_digest,run.cursor_input_sha256,
+  run.input_contract,run.topic_input_snapshot->>'contract_version' input_owner_contract,run.taxonomy_profile_id,run.topic_input_digest,run.cursor_input_sha256,
   run.execution_token,run.worker_job_id,run.cursor_asset_sha256,run.cursor_chunk_index,run.counts,run.observed_exception_micro_usd,
   run.processing_admission_id::text,run.brand_context_preparation_operation_id::text,run.hard_cap_micro_usd::text,
   run.input_revision::text,state.input_revision::text current_revision,
@@ -104,6 +104,8 @@ async function lockRun(client:PoolClient,id:string):Promise<Run>{
 async function inputsCurrent(client:PoolClient,run:Run):Promise<boolean>{
  if(!run.policy_live)return false;
  if(run.input_contract==="corpus")return run.input_revision===run.current_revision&&run.preparation_complete;
+ if(run.input_owner_contract==="listening-prototype-v1")return (await client.query<{valid:boolean}>(
+  "SELECT signal_listening_prototype_current_v1($1::uuid) valid",[run.id])).rows[0]?.valid===true;
  try{const plan=await loadSignalWorkspaceTopicPrototypePlanV1({queryable:client,workspace_id:run.workspace_id,actor_user_id:run.actor_user_id});
   return plan.taxonomy_profile_id===run.taxonomy_profile_id&&plan.plan_digest===run.topic_input_digest;}
  catch(error){if(error instanceof SignalTopicCatalogError&&["brand_context_source_stale","brand_context_semantic_context_required"].includes(error.code))return false;
@@ -141,6 +143,18 @@ function capacityError(error:unknown):never{
  throw error;
 }
 async function requireRunAuthority(client:PoolClient,run:Run,newWork:boolean){
+ // The listening owner is independent of taxonomy and Brand Context receipts.
+ // Its SQL predicate binds the native admission, frozen positive bytes and cap.
+ if(run.input_owner_contract==="listening-prototype-v1"){
+  if((await client.query<{valid:boolean}>("SELECT signal_listening_prototype_owner_valid_v1($1::uuid) valid",[run.id])).rows[0]?.valid!==true
+   ||!(await loadSignalWorkspaceCapabilitiesStoreV1({queryable:client,workspace_id:run.workspace_id,actor_user_id:run.actor_user_id})).can_request_processing)
+   return fail("workspace_embedding_forbidden",403);
+  if(newWork){try{await client.query(`SELECT signal_processing_capacity_v1($1::uuid,$2::uuid,$3::uuid,$4::uuid,
+   ARRAY['topic_prototype_embeddings'],$5,$6,$7::jsonb,$8::bigint)`,[run.workspace_id,run.actor_user_id,run.id,
+    run.processing_admission_id,run.profile.provider,run.profile.model,JSON.stringify(run.profile),run.hard_cap_micro_usd]);}
+   catch(error){capacityError(error);}}
+  return;
+ }
  // Corpus admissions are self-contained immutable authority. Keep draining an
  // admitted run safely even if the UI feature flag changes after admission.
  if(run.input_contract==="corpus" && run.processing_admission_id!==null){
@@ -408,10 +422,10 @@ async function prototypeCoverage(client:PoolClient,run:Run):Promise<Pick<SignalW
   LEFT JOIN signal_workspace_chunk_embeddings cache ON cache.workspace_id=run.workspace_id AND cache.config_digest=run.config_digest AND cache.chunk_sha256=input.text_sha256
   WHERE run.id=$1::uuid
  ), topic_state AS (
-  SELECT topic->>'taxonomy_term_id' topic_id,count(*) expected,count(*) FILTER(WHERE input.covered) covered
+  SELECT CASE WHEN run.topic_input_snapshot->>'contract_version'='listening-prototype-v1' THEN topic->>'question_key' ELSE topic->>'taxonomy_term_id' END topic_id,count(*) expected,count(*) FILTER(WHERE input.covered) covered
   FROM signal_workspace_embedding_runs run CROSS JOIN LATERAL jsonb_array_elements(run.topic_input_snapshot->'topics') topic
   CROSS JOIN LATERAL jsonb_array_elements_text(topic->'input_digests') reference(input_digest)
-  LEFT JOIN input_state input ON input.input_digest=reference.input_digest WHERE run.id=$1::uuid GROUP BY topic->>'taxonomy_term_id'
+  LEFT JOIN input_state input ON input.input_digest=reference.input_digest WHERE run.id=$1::uuid GROUP BY 1
  ) SELECT count(*) FILTER(WHERE expected=covered)::int completed_topics,
   count(*) FILTER(WHERE covered>0 AND covered<expected)::int partial_topics,
   count(*) FILTER(WHERE covered=0)::int pending_topics,(COALESCE(sum(covered),0) + (SELECT count(*) FROM signal_workspace_embedding_runs run,
@@ -525,7 +539,8 @@ export async function claimSignalWorkspaceEmbeddingsDispatchV1(args:{database:Si
  return transaction(args.database,async client=>(await client.query<SignalWorkspaceEmbeddingDispatchV1>(`WITH selected AS (
   SELECT run.id FROM signal_workspace_embedding_runs run WHERE run.status IN('queued','running') AND run.available_at<=clock_timestamp()
    AND (dispatch_status='pending' OR dispatch_status='dispatching' AND dispatch_expires_at<clock_timestamp())
-   AND (run.input_contract<>'topic_prototypes' OR run.brand_context_preparation_operation_id IS NOT NULL OR EXISTS(
+   AND (run.input_contract<>'topic_prototypes' OR run.brand_context_preparation_operation_id IS NOT NULL
+    OR (run.topic_input_snapshot->>'contract_version'='listening-prototype-v1' AND COALESCE(signal_listening_prototype_owner_valid_v1(run.id),false)) OR EXISTS(
     SELECT 1 FROM signal_brand_context_prototype_receipts receipt JOIN signal_processing_admissions admission ON admission.id=receipt.admission_id
     WHERE receipt.run_id=run.id AND receipt.admission_id=run.processing_admission_id AND receipt.workspace_id=run.workspace_id
      AND receipt.actor_user_id=run.actor_user_id AND admission.target_id=run.id AND admission.brand_context_prototype_receipt_id=receipt.id

@@ -18,8 +18,11 @@ export async function getSignalListeningStatusV1(args:SignalListeningAccessV1){
    FROM signal_listening_runs o JOIN signal_labeling_runs r ON r.id=o.run_id AND r.workspace_id=o.workspace_id
    LEFT JOIN signal_labeling_calls call ON call.run_id=r.id
    WHERE o.workspace_id=$1 GROUP BY r.id,o.run_id ORDER BY r.created_at DESC,r.id DESC LIMIT 1`,[args.workspace_id])).rows[0]??null;
+  const preparation=(await c.query<{id:string;status:string;configuration_id:string;prototype_run_id:string|null;listening_run_id:string|null;cap_micro_usd:string;error_code:string|null}>(
+   `SELECT id,status,configuration_id,prototype_run_id,listening_run_id,cap_micro_usd::text,error_code FROM signal_listening_preparations
+    WHERE workspace_id=$1 ORDER BY created_at DESC,id DESC LIMIT 1`,[args.workspace_id])).rows[0]??null;
   const change=await inspectFacetContextChangeV1(c,args.workspace_id);
-  return {contract_version:'signal-listening-status-v1' as const,configuration,map,run,capabilities,
+  return {contract_version:'signal-listening-status-v1' as const,configuration,map,run,preparation,capabilities,
    map_stale:map?map.entity_context_digest!==change.digest:true};
  });
 }

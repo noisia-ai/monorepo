@@ -30,24 +30,34 @@ async function inputs(c:Pick<PoolClient,'query'>,run:LabelingRunV1,limit:number)
   SELECT root_id,input_digest,body,published_at,platform,array_agg(question_key ORDER BY question_key) question_keys,
    jsonb_object_agg(question_key,question_digest) question_digests,
    COALESCE(jsonb_object_agg(question_key,scope_basis) FILTER(WHERE scope_basis IS NOT NULL),'{}'::jsonb) scope_basis
-  FROM pending WHERE n<=64 GROUP BY root_id,input_digest,body,published_at,platform ORDER BY root_id LIMIT $6`,
+  FROM pending WHERE n<=256 GROUP BY root_id,input_digest,body,published_at,platform ORDER BY root_id LIMIT $6`,
   [run.workspace_id,o.configuration_id,o.map_id,run.entity_context_digest,run.id,limit])).rows;
  return rows.map(row=>({root_id:row.root_id,input_digest:row.input_digest,text:row.body,title:null,platform:row.platform,
   content_type:null,author:null,published_at:new Date(row.published_at).toISOString(),language:null,map_id:o.map_id,
   configuration_digest:o.configuration_digest,question_keys:row.question_keys,question_digests:row.question_digests,scope_basis:row.scope_basis}));
 }
 export async function requestSignalListeningV1(args:SignalListeningAccessV1&{configuration_id:string;map_id:string;
- idempotency_key:string;cap_micro_usd:number;provider_available:boolean}){
+ idempotency_key:string;cap_micro_usd:number;provider_available:boolean;preparation_id?:string}){
  const stored=await getForRequest(args),identity=signalListeningJevIdentityV1(stored.configuration);
  return requestMentionFacetsV1({...args,identity,full_recalculation:true,adapter:{
-  request_identity:{contract_version:'signal-listening-run-v1',configuration_id:stored.id,map_id:args.map_id,full_corpus:true},
+  request_identity:{contract_version:'signal-listening-run-v1',configuration_id:stored.id,map_id:args.map_id,full_corpus:true,...(args.preparation_id?{preparation_id:args.preparation_id}:{})},
   policy_action:'mass_labeling_jev',feature:'mass_labeling',select_labeler:false,
   validateIdentity:candidate=>{if(labelerDigestV1(candidate)!==labelerDigestV1(identity))fail('listening_identity_invalid');},
   prepare:async(c,workspace,_run,_labeler,context)=>{
    await authorizeSignalListeningV1(c,args,'process');
+   if(args.preparation_id){
+    const flow=(await c.query<{configuration_id:string;map_id:string;cap_micro_usd:string;status:string;actor_user_id:string;spent:string}>(`SELECT f.*,
+     COALESCE(p.settled_micro_usd,0)::text spent FROM signal_listening_preparations f
+     LEFT JOIN signal_workspace_embedding_runs p ON p.id=f.prototype_run_id
+     WHERE f.id=$1 AND f.workspace_id=$2 FOR UPDATE OF f`,[args.preparation_id,workspace])).rows[0];
+    if(!flow||flow.actor_user_id!==args.actor_user_id||flow.configuration_id!==stored.id||flow.map_id!==args.map_id
+     ||flow.status!=='ready_for_labeling'||Number(flow.cap_micro_usd)-Number(flow.spent)!==args.cap_micro_usd)
+     fail('listening_preparation_cap_binding_invalid');
+   }
    const latest=await loadSignalListeningConfigurationWithClientV1(c,workspace);
    if(latest?.id!==stored.id)fail('listening_configuration_changed');
    const map=await mapCurrent(c,workspace,args.map_id);
+   if((await c.query<{blocked:boolean}>('SELECT signal_listening_prior_outcome_unresolved_v1($1,$2,$3,$4) blocked',[workspace,stored.id,map.id,map.entity_context_digest])).rows[0]?.blocked)fail('listening_prior_outcome_unresolved');
    const stats=(await c.query<{roots:number;chars:string}>(`SELECT count(DISTINCT root_id)::int roots,
     COALESCE(sum(length(body)+length(wire::text)+512),0)::text chars FROM ${population} p
     WHERE candidate AND scope_state<>'excluded' AND answer IS NULL`,[workspace,stored.id,map.id,map.entity_context_digest])).rows[0]!;
@@ -58,8 +68,9 @@ export async function requestSignalListeningV1(args:SignalListeningAccessV1&{con
   persist:async(c,run,prepared)=>{
    await c.query('UPDATE signal_labeling_runs SET membership_snapshot=$2::jsonb,concept_set_digest=$3 WHERE id=$1',
     [run,JSON.stringify(prepared.snapshot),prepared.concept_set_digest]);
-   await c.query(`INSERT INTO signal_listening_runs(run_id,workspace_id,configuration_id,map_id,configuration_digest)
-    VALUES($1,$2,$3,$4,$5)`,[run,args.workspace_id,stored.id,args.map_id,stored.configuration_digest]);
+   await c.query(`INSERT INTO signal_listening_runs(run_id,workspace_id,configuration_id,map_id,configuration_digest${args.preparation_id?',preparation_id':''})
+    VALUES($1,$2,$3,$4,$5${args.preparation_id?',$6':''})`,[run,args.workspace_id,stored.id,args.map_id,stored.configuration_digest,...(args.preparation_id?[args.preparation_id]:[])]);
+   if(args.preparation_id)await c.query("UPDATE signal_listening_preparations SET status='labeling',listening_run_id=$2,updated_at=clock_timestamp() WHERE id=$1",[args.preparation_id,run]);
   },
  }});
 }
