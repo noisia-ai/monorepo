@@ -86,7 +86,7 @@ async function getForRequest(args:SignalListeningAccessV1&{configuration_id:stri
 export function createSignalListeningStoreV1(options:Omit<Parameters<typeof createSignalLabelingStoreV1>[0],'adapter'>){
  const limit=options.page_size??200;
  const store=createSignalLabelingStoreV1<SignalListeningInputV1,SignalListeningResultV1>({...options,adapter:{
-  kind:'mass_labeling',policy_action:'mass_labeling_jev',feature:'mass_labeling',pending_calls_only:true,persist_results_before_write:true,
+  kind:'mass_labeling',recover_failed_raw:true,policy_action:'mass_labeling_jev',feature:'mass_labeling',pending_calls_only:true,persist_results_before_write:true,
   inputs:(c,run)=>inputs(c,run,limit),
   authority:async(c,run)=>{await owner(c,run,false);},
   beforeSubmit:async(c,run,calls)=>{

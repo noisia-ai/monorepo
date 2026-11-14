@@ -67,7 +67,8 @@ export async function processJevLabelingPageV1<Input extends FacetInput,Result>(
     let aggregate: Awaited<ReturnType<typeof processJevStreamingWindowV2<Input,Result>>> | undefined;
     for (;;) {
       const pending=(await store.calls(run)).filter(call=>!call.results_applied);
-      if(hooks.fail_on_error&&pending.some(call=>call.status==="unknown"&&!call.raw_body)){
+      if(hooks.fail_on_error&&pending.some(call=>call.status==="unknown"&&!call.raw_body)
+        &&!(hooks.recovery_only&&pending.some(call=>Boolean(call.raw_body)))){
         await store.fail(run,"labeling_outcome_unknown",execution?{preserve_reserved:true}:undefined);return {status:"outcome_unknown"};
       }
       if(execution&&run.error_code==="labeling_outcome_unknown"&&!pending.some(call=>Boolean(call.raw_body))){

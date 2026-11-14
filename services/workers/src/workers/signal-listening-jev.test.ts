@@ -1,12 +1,12 @@
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
 import test from 'node:test';
-import {signalListeningBaseTemplateV1,signalListeningJevIdentityV1,signalListeningQuestionDigestV1,
+import {buildSignalListeningJevRequestV1,signalListeningRequestDigestV1,signalListeningBaseTemplateV1,signalListeningJevIdentityV1,signalListeningQuestionDigestV1,
   signalListeningConsumerCutV1,labelerDigestV1,entityContextDigestV1,signalWorkspaceEmbeddingDigestV1 as digest,
   type SignalListeningConfigurationV1,type SignalListeningInputV1,type SignalListeningResultV1} from '@noisia/query-engine';
 import type {LabelingRunV1,LabelingCallV1} from '@noisia/db';
 import type {JevProviderV1,JevRequestV1} from '../providers/typesafe-jev';
-import {processSignalListeningJevV1,signalListeningJevJobV1,createSignalListeningProviderV1} from './signal-listening-jev';
+import {processSignalListeningJevV1,signalListeningJevJobV1} from './signal-listening-jev';
 const execution={max_in_flight:8,flush_size:8,max_flushes:1,max_buffered_bytes:16*1024*1024,flush_interval_ms:5,window_size:200};
 function fixture(configuration:SignalListeningConfigurationV1,windows:string[][],cache:Record<string,unknown>={}){
   const context={entities:[{entity_id:'category',kind:'category' as const,name:'tea',aliases:[],disambiguation:null}]};
@@ -66,11 +66,44 @@ test('listening job is disabled without its explicit owner flag before any datab
   finally{if(previous===undefined)delete process.env.NOISIA_SIGNAL_LISTENING_ENABLED;else process.env.NOISIA_SIGNAL_LISTENING_ENABLED=previous;}
 });
 
-test('missing calibrated provider configuration closes the claimed run without any physical send',async()=>{
+test('listening job automatically warms up32 ordinary roots inside the claimed run without an env profile',async()=>{
   const f=fixture(signalListeningBaseTemplateV1({category:'tea',lexicon_terms:['tea']}),[['voice','promotion']]);
-  let initialized=0;
-  const provider=createSignalListeningProviderV1(f.run.labeler_digest,execution,()=>{initialized++;throw Error('missing-account-calibration');});
-  const outcome=await processSignalListeningJevV1({run_id:f.run.id,store:f.store,provider,execution});
-  assert.equal(outcome.status,'failed');assert.equal(outcome.unresolved_billing_requests,0);assert.equal(initialized,1);
-  assert.equal(f.requests.length,0);assert.equal(f.results[0]?.status,'error');assert.deepEqual(f.cache,{});
+  const sample=(await f.store.inputs(f.run))[0]!;let reserved=false,closed=0,derivations=0;
+  f.store.inputs=async()=>reserved?[]:Array.from({length:40},()=>({...sample,root_id:randomUUID()}));
+  const reserve=f.store.reserve;f.store.reserve=async(run,proposals)=>{assert.ok(proposals.length<=32);reserved=true;return reserve(run,proposals);};
+  const original=f.provider.evaluate;let active=0,peak=0;
+  f.provider.evaluate=async(...args)=>{active++;peak=Math.max(peak,active);try{await new Promise(resolve=>setTimeout(resolve,1));return await original(...args);}finally{active--;}};
+  f.provider.close=async()=>{closed++;};
+  const database={async query(sql:string){
+    if(sql.includes('SELECT run.workspace_id'))return{rows:[{workspace_id:f.run.workspace_id,labeler_digest:f.run.labeler_digest,recovery_only:false}]};
+    if(sql.includes('signal_workspace_features'))return{rows:[{enabled:true}]};throw Error('unexpected database query');
+  }}as NonNullable<Parameters<typeof signalListeningJevJobV1>[1]>['database'];
+  const previous={owner:process.env.NOISIA_SIGNAL_LISTENING_ENABLED,provider:process.env.NOISIA_JEV_PROVIDER_ENABLED};
+  process.env.NOISIA_SIGNAL_LISTENING_ENABLED='true';process.env.NOISIA_JEV_PROVIDER_ENABLED='true';
+  try{
+    const outcome=await signalListeningJevJobV1(f.run.id,{database,store:f.store,provider:f.provider,execution:{...execution,window_size:200},preflight:async()=>{},
+      calibration:{load:async()=>null,derive:async args=>{derivations++;assert.equal(args.run_id,f.run.id);assert.equal(args.actor_user_id,f.run.actor_user_id);
+        assert.equal(f.results.length,32);assert.ok(f.events.includes('durable'));return null;}}});
+    assert.equal(outcome.labeled,32);assert.equal(f.requests.length,32);assert.equal(peak,1);assert.equal(derivations,1);
+    assert.equal(closed,0,'an externally injected provider remains caller-owned');
+  }finally{
+    for(const [key,value]of [['NOISIA_SIGNAL_LISTENING_ENABLED',previous.owner],['NOISIA_JEV_PROVIDER_ENABLED',previous.provider]]as const)
+      if(value===undefined)delete process.env[key];else process.env[key]=value;
+  }
+});
+
+test('recovery-only applies a paid sibling while an unknown raw-less attempt stays blocked without another fetch',async()=>{
+ const configuration=signalListeningBaseTemplateV1({category:'tea',lexicon_terms:['tea']}),f=fixture(configuration,[['voice','promotion']]);
+ const input=(await f.store.inputs(f.run))[0]!;
+ const proposals=[input,{...input,root_id:randomUUID()}].map(i=>{const request=buildSignalListeningJevRequestV1(i,configuration),request_digest=signalListeningRequestDigestV1(f.run,i,request);
+  return{request,request_digest,custom_id:'listening_'+request_digest.slice(7,67),inputs:[i],reserved_micro_usd:100};});
+ const calls=await f.store.reserve(f.run,proposals);await f.store.markSubmitting(f.run,calls);
+ const raw=await f.provider.evaluate(proposals[0]!.request);f.requests.splice(0);
+ calls[0]!.raw_body=JSON.stringify(raw);calls[1]!.status='unknown';f.run.error_code='labeling_outcome_unknown';
+ f.store.finish=async()=>{f.run.status='failed';return'failed';};
+ const outcome=await processSignalListeningJevV1({run_id:f.run.id,store:f.store,provider:f.provider,execution,recovery_only:true});
+ assert.equal(outcome.labeled,1);assert.equal(f.results.length,1);assert.equal(calls[0]!.results_applied,true);
+ assert.equal(calls[1]!.status,'unknown');assert.equal(calls[1]!.results_applied,false);assert.equal(f.requests.length,0);
+ assert.equal((await processSignalListeningJevV1({run_id:f.run.id,store:f.store,provider:f.provider,execution,recovery_only:true})).status,'outcome_unknown');
+ assert.equal(f.requests.length,0);
 });
