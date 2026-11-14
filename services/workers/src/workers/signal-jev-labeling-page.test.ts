@@ -34,3 +34,29 @@ test('invalid max_windows fails before claiming any work',async()=>{
   for(const value of [0,-1,1.5,4097])await assert.rejects(processJevLabelingPageV1({run_id:'run',store,provider:{}as never,hooks:{}as never,execution,max_windows:value}),/jev_window_limit_invalid/);
   assert.equal(claimed,0);
 });
+test('asynchronous preparation runs under a renewable lease and selects immutable local execution before reserve',async()=>{
+  type Args=Parameters<typeof processJevLabelingPageV1<FacetInput,string>>[0];
+  const run={id:'prepared',lease_token:'lease',status:'running',error_code:null}as LabelingRunV1;
+  const order:string[]=[];let renewals=0;
+  const store={async claim(){order.push('claim');return run;},async renew(){renewals++;},async release(){order.push('release');},
+    async calls(){order.push('calls');return[];},async inputs(){return[];},async reserve(){throw Error('unexpected reserve');},
+    async finish(){return'completed';},async fail(){throw Error('unexpected fail');}}as unknown as Args['store'];
+  const original={max_response_bytes:4096,evaluate:async()=>{throw Error('wrong provider');}};
+  const args:Args={run_id:run.id,store,provider:original,hooks:{price:()=>llmPriceV1('typesafe','jev-1.13.0','sync',.042),
+    propose:()=>[],map:()=>[],error:()=>[],labeled:()=>true},lease_renewal_ms:1,
+    prepare:async leased=>{assert.equal(leased.lease_token,'lease');assert.ok(Object.isFrozen(leased));order.push('prepare');
+      await new Promise(resolve=>setTimeout(resolve,10));return{provider:original,execution,max_windows:1};}};
+  assert.equal((await processJevLabelingPageV1(args)).status,'completed');
+  assert.ok(renewals>0);assert.deepEqual(order,['claim','prepare','calls','release']);
+  assert.equal(args.execution,undefined);assert.equal(args.max_windows,undefined);assert.equal(args.provider,original);
+});
+test('invalid preparation and transient preparation failures release the lease before any reservation without inventing a terminal outcome',async()=>{
+  type Args=Parameters<typeof processJevLabelingPageV1<FacetInput,string>>[0];
+  let releases=0,failures=0;const run={id:'run',lease_token:'lease'}as LabelingRunV1;
+  const store={async claim(){return run;},async release(){releases++;},async renew(){},async fail(){failures++;},
+    async reserve(){throw Error('unexpected reserve');},async calls(){throw Error('unexpected calls');}}as unknown as Args['store'];
+  const base={run_id:run.id,store,provider:{evaluate:async()=>{throw Error('unexpected provider');}},hooks:{}as Args['hooks']};
+  await assert.rejects(processJevLabelingPageV1({...base,prepare:async()=>{throw Error('database_temporarily_unavailable');}}),/database_temporarily_unavailable/);
+  await assert.rejects(processJevLabelingPageV1({...base,prepare:async()=>({provider:base.provider,execution:{...execution,window_size:0}})}),/jev_stream_configuration_invalid/);
+  assert.equal(releases,2);assert.equal(failures,0);
+});

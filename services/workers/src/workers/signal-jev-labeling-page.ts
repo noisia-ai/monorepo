@@ -5,12 +5,23 @@ import type { createSignalLabelingStoreV1, LabelingRunV1, LabelingCallV1, Labeli
 import { validateJevResponseV1, jevProviderErrorV1, type JevProviderV1, type JevRawResponseV1,
   type JevRequestV1, type JevResponseV1, type JevProviderErrorV1 } from "../providers/typesafe-jev";
 
+export type JevPreparedExecutionV1 = {provider:JevProviderV1;execution:JevStreamingExecutionV2;max_windows?:number};
+function validatePreparedExecution(value:JevPreparedExecutionV1){
+  if(!value||typeof value.provider?.evaluate!=='function'||!value.execution)throw Error('jev_preparation_invalid');
+  const e=value.execution;
+  if(Object.keys(e).length!==6||Object.values(e).some(v=>!Number.isSafeInteger(v)||v<1)
+    ||e.max_in_flight>4096||e.max_flushes>64||e.flush_size>4096||e.window_size>4096||e.flush_interval_ms>60000)
+    throw Error('jev_stream_configuration_invalid');
+  if(value.max_windows!==undefined&&(!Number.isSafeInteger(value.max_windows)||value.max_windows<1||value.max_windows>4096))
+    throw Error('jev_window_limit_invalid');
+}
 export const jevUsageV1 = (usage:JevResponseV1["usage"]):LlmUsageV1 => ({...usage,cache_read_input_tokens:0,
   cache_creation_input_tokens:0,cache_creation:{ephemeral_5m_input_tokens:0,ephemeral_1h_input_tokens:0}});
 /** Shared page transport: one lease, durable raw before settlement, multi-row application.
  * JEV requests remain individual. A consumer may bound work through durable persistence. */
 export async function processJevLabelingPageV1<Input extends FacetInput,Result>(args:{
   run_id:string;store:ReturnType<typeof createSignalLabelingStoreV1<Input,Result>>;provider:JevProviderV1;
+  prepare?(run:Readonly<LabelingRunV1>):Promise<JevPreparedExecutionV1>;
   lease_renewal_ms?:number; execution?:JevStreamingExecutionV2;max_windows?:number;hooks:{
     price(run:LabelingRunV1):LlmPriceV1;
     propose(run:LabelingRunV1,inputs:Input[]):LabelingCallProposalV1<Input>[];
@@ -28,7 +39,8 @@ export async function processJevLabelingPageV1<Input extends FacetInput,Result>(
   settled_micro_usd?:number; p50_ms?:number|null; p95_ms?:number|null}> {
   if(args.max_windows!==undefined&&(!args.execution||!Number.isSafeInteger(args.max_windows)||args.max_windows<1||args.max_windows>4096))
     throw new Error("jev_window_limit_invalid");
-  const {store,provider,hooks}=args,run=await store.claim(args.run_id);
+  const {store,hooks}=args;let provider=args.provider,execution=args.execution,maxWindows=args.max_windows;
+  const run=await store.claim(args.run_id);
   if(!run)return {status:"not_claimed"};
   const cancellation=new AbortController();setMaxListeners(Math.max(201,(args.execution?.max_in_flight??0)*2+64),cancellation.signal);
   let leaseError:unknown,renewal:Promise<void>|undefined;
@@ -39,33 +51,42 @@ export async function processJevLabelingPageV1<Input extends FacetInput,Result>(
     renewal=store.renew(run).catch(error=>{leaseError=error;cancellation.abort();}).finally(()=>{renewal=undefined;});
   },interval);heartbeat.unref?.();
   try{
+    if(args.prepare){
+      // Preparation may inspect server-owned inputs under this lease, never reserve
+      // money or send requests. Selection is local and leaves caller arguments intact.
+      const prepared=await args.prepare(Object.freeze({...run}));validatePreparedExecution(prepared);
+      if(renewal)await renewal;if(leaseError)throw leaseError;
+      if(cancellation.signal.aborted)throw Error('labeling_lease_lost');
+      provider=prepared.provider;execution=Object.freeze({...prepared.execution});maxWindows=prepared.max_windows;
+      setMaxListeners(Math.max(201,execution.max_in_flight*2+64),cancellation.signal);
+    }
     const price=hooks.price(run);
-    const maxInFlight=args.execution?.max_in_flight??hooks.max_in_flight?.(run);
-    if(maxInFlight!==undefined&&(!Number.isSafeInteger(maxInFlight)||maxInFlight<1||maxInFlight>(args.execution?4096:200)))throw new Error("jev_page_concurrency_invalid");
+    const maxInFlight=execution?.max_in_flight??hooks.max_in_flight?.(run);
+    if(maxInFlight!==undefined&&(!Number.isSafeInteger(maxInFlight)||maxInFlight<1||maxInFlight>(execution?4096:200)))throw new Error("jev_page_concurrency_invalid");
     let windows=0;
     let aggregate: Awaited<ReturnType<typeof processJevStreamingWindowV2<Input,Result>>> | undefined;
     for (;;) {
       const pending=(await store.calls(run)).filter(call=>!call.results_applied);
       if(hooks.fail_on_error&&pending.some(call=>call.status==="unknown"&&!call.raw_body)){
-        await store.fail(run,"labeling_outcome_unknown",args.execution?{preserve_reserved:true}:undefined);return {status:"outcome_unknown"};
+        await store.fail(run,"labeling_outcome_unknown",execution?{preserve_reserved:true}:undefined);return {status:"outcome_unknown"};
       }
-      if(args.execution&&run.error_code==="labeling_outcome_unknown"&&!pending.some(call=>Boolean(call.raw_body))){
+      if(execution&&run.error_code==="labeling_outcome_unknown"&&!pending.some(call=>Boolean(call.raw_body))){
         await store.finish(run);const refreshed=await store.refresh(run);run.error_code=refreshed.error_code;
         if(run.error_code==="labeling_outcome_unknown"){
           await store.fail(run,"labeling_outcome_unknown",{preserve_reserved:true});return {status:"outcome_unknown"};
         }
       }
-      let calls=(hooks.recovery_only?pending.filter(call=>Boolean(call.raw_body)):pending).slice(0,args.execution?.window_size??200);
+      let calls=(hooks.recovery_only?pending.filter(call=>Boolean(call.raw_body)):pending).slice(0,execution?.window_size??200);
       if(hooks.recovery_only&&!calls.length)return {status:"recovery_unavailable"};
       if(!calls.length&&!run.error_code&&!hooks.recovery_only){
         const proposals=hooks.propose(run,await store.inputs(run));
-        if(proposals.length)calls=(await store.reserve(run,proposals)).slice(0,args.execution?.window_size??200);
+        if(proposals.length)calls=(await store.reserve(run,proposals)).slice(0,execution?.window_size??200);
       }
       const reserved=run.error_code?[]:calls.filter(call=>call.status==="reserved"&&!call.raw_body);
-      if(args.execution)assertJevStreamingExecutionV2(args.execution,provider);
+      if(execution)assertJevStreamingExecutionV2(execution,provider);
       if(reserved.length)await store.markSubmitting(run,reserved);
-      if(args.execution) {
-        const outcome = await processJevStreamingWindowV2({run,calls,send_calls:reserved,store,provider,execution:args.execution,price,cancellation,hooks,observe_stream:args.observe_stream});
+      if(execution) {
+        const outcome = await processJevStreamingWindowV2({run,calls,send_calls:reserved,store,provider,execution:execution,price,cancellation,hooks,observe_stream:args.observe_stream});
         aggregate = { ...outcome, roots:(aggregate?.roots??0)+outcome.roots,
           labeled:(aggregate?.labeled??0)+outcome.labeled,
           settled_micro_usd:(aggregate?.settled_micro_usd??0)+outcome.settled_micro_usd,
@@ -73,7 +94,7 @@ export async function processJevLabelingPageV1<Input extends FacetInput,Result>(
         windows++;
         if(run.error_code){const refreshed=await store.refresh(run);run.error_code=refreshed.error_code;}
         if(leaseError)throw leaseError;
-        if(cancellation.signal.aborted||outcome.status!=="running"||!calls.length||outcome.unresolved_billing_requests||hooks.recovery_only||windows>=(args.max_windows??Infinity))return aggregate;
+        if(cancellation.signal.aborted||outcome.status!=="running"||!calls.length||outcome.unresolved_billing_requests||hooks.recovery_only||windows>=(maxWindows??Infinity))return aggregate;
         continue;
       }
     const rawPage:Array<{call:LabelingCallV1<Input>;raw:string}>=[];
@@ -140,5 +161,5 @@ export async function processJevLabelingPageV1<Input extends FacetInput,Result>(
     if(["labeling_forbidden","labeling_policy_changed","labeling_preparation_changed","labeling_context_changed",
       "labeling_cap_exhausted","labeling_daily_cap_exhausted","labeling_raw_receipt_invalid"].includes(code))await store.fail(run,code);
     throw error;
-  }finally{clearInterval(heartbeat);if(renewal)await renewal;await store.release(run,args.execution?{immediate:true}:undefined);}
+  }finally{clearInterval(heartbeat);if(renewal)await renewal;await store.release(run,execution?{immediate:true}:undefined);}
 }
