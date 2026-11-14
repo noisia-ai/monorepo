@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createTypesafeJevClientV1, validateJevResponseV1, JevProviderErrorV1, type JevRequestV1 } from './typesafe-jev';
+import { createTypesafeJevClientV1, jevRetryAfterMsV1, validateJevResponseV1, JevProviderErrorV1, type JevRequestV1 } from './typesafe-jev';
 const request: JevRequestV1 = { model: 'jev-1.13.0', state: 'synthetic', questions: { yes: { type: 'noul', instructions: 'yes?' }, select: { type: 'choice', instructions: 'choose', criteria: { a: 'A', b: 'B' } } } };
 const response = () => ({ model: request.model, usage: { input_tokens: 100, output_tokens: 5 }, answers: { yes: { type: 'noul', noul: 0.9 }, select: { type: 'choice', choice: 'a', confidence: 0.8, probabilities: { a: 0.9, b: 0.1 } } } });
 test('one request, disabled by default and no credential/error leakage', async () => {
@@ -84,4 +84,35 @@ test('nonfinite choice probabilities remain invalid', () => {
         (error: unknown) => error instanceof JevProviderErrorV1 && error.outcome === 'known_response_invalid');
     }
   }
+});
+
+test('physical throttle receipts preserve Retry-After without hiding a retry', async () => {
+  for (const status of [429, 529]) {
+    let attempts = 0;
+    const raw = await createTypesafeJevClientV1({ enabled: true, api_key: 'test', fetch: async () => {
+      attempts++; return new Response('provider rejection', { status, headers: { 'retry-after': '1.25' } });
+    } }).evaluate(request);
+    assert.equal(attempts, 1); assert.equal(raw.http_status, status);
+    assert.equal(raw.body, 'provider rejection'); assert.equal(raw.retry_after, '1.25'); assert.equal(raw.retry_after_ms, 1250);
+  }
+  const now = Date.parse('2026-11-14T12:00:00Z');
+  assert.equal(jevRetryAfterMsV1('Sat, 14 Nov 2026 12:00:03 GMT', now), 3000);
+  assert.equal(jevRetryAfterMsV1('Sat, 14 Nov 2026 11:59:59 GMT', now), 0);
+  assert.equal(jevRetryAfterMsV1('invalid', now), undefined);
+});
+
+test('high concurrency requires shared account admission and explicit token estimate', async () => {
+  let calls = 0; let observed = 0;
+  const fetch = async () => { calls++; return new Response(JSON.stringify(response())); };
+  await assert.rejects(createTypesafeJevClientV1({ enabled: true, api_key: 'test', concurrency: 512, fetch }).evaluate(request), /jev_configuration_invalid/);
+  assert.equal(calls, 0);
+  const limiter = { acquire: async (tokens: number) => { assert.equal(tokens, 123); return { id: 'synthetic', estimated_input_tokens: tokens }; },
+    throttle: async () => {}, observe: async () => { observed++; } };
+  const client = createTypesafeJevClientV1({ enabled: true, api_key: 'test', concurrency: 512, fetch, rate_limiter: limiter, estimate_input_tokens: () => 123 });
+  const raw = await client.evaluate(request); assert.equal(calls, 1); assert.equal(observed, 0);
+  assert.equal(raw.rate_reservation?.estimated_input_tokens, 123);
+  await client.observeUsage!(raw, 100); assert.equal(observed, 1);
+  const unavailable = createTypesafeJevClientV1({ enabled: true, api_key: 'test', fetch, rate_limiter: { ...limiter, acquire: async () => { throw Error('private backend detail'); } }, estimate_input_tokens: () => 123 });
+  await assert.rejects(unavailable.evaluate(request), (e: unknown) => e instanceof JevProviderErrorV1 && e.code === 'jev_rate_limiter_unavailable' && e.outcome === 'definitely_not_sent');
+  assert.equal(calls, 1);
 });
