@@ -64,6 +64,9 @@ jobs:
         # Build-time placeholders exercise route collection without any live
         # service credential or database connection. Runtime secrets stay in Railway.
         env:
+          # Next's full monorepo graph can exceed Node's default ~2 GiB heap.
+          # Keep the full build/type validation; allocate memory only for this step.
+          NODE_OPTIONS: --max-old-space-size=4096
           DATABASE_URL: postgresql://test@127.0.0.1:1/noisia_test
           KINDE_ISSUER_URL: https://ci.example.invalid
           KINDE_CLIENT_ID: ci-placeholder

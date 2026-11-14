@@ -4,10 +4,11 @@
 > Cursor, etc.) and for any human joining the repo. It is written as **operating
 > instructions**, not prose. Nested `AGENTS.md` files override this one in their folder.
 
-## Estado actual (actualizado 2026-11-07)
+## Trabajo vigente
 
-- **Trabajo vigente:** el piloto de etiquetado masivo descrito en el ExecPlan [`docs/product/PROMPT_LOOPING/PLAN_PILOTO_ETIQUETADO_MASIVO.md`](docs/product/PROMPT_LOOPING/PLAN_PILOTO_ETIQUETADO_MASIVO.md). Si algo choca con documentos anteriores (spec v1.3, AUDIT §19.6 o §20.3), manda ese plan.
-- **Ruta de etiquetado:** la de ADR 015. Vectores Voyage, luego BERTopic guiado, luego Claude sólo por grupo (sobre una muestra), luego JEV como clasificador por mención. **No uses Claude por mención, no exijas cita literal y no pongas la precisión de 90% como requisito.**
+- **Trabajo vigente:** R16, descrita en [`docs/product/PROMPT_LOOPING/PLAN_R16_ESCUCHA_ESTUDIO.md`](docs/product/PROMPT_LOOPING/PLAN_R16_ESCUCHA_ESTUDIO.md) y ADR 033. El objetivo y diseño aprobados de R16 prevalecen sobre el piloto anterior, que conserva la historia y aceptación de R15. Sólo develop/UAT; producción, main y rediseño de Signal quedan fuera.
+- **Ruta de etiquetado:** la de ADR 015. Vectores Voyage, luego BERTopic guiado, luego Claude sólo por grupo (sobre una muestra), luego JEV como clasificador por mención. **No uses Claude por mención ni pongas la precisión de 90% como requisito. Escucha no exige cita literal; la evidencia de T&B se rige por R16.**
+- **Separación R16:** Signal sirve la Escucha genérica configurada en Brand OS; las metodologías son Estudios versionados sobre el mismo corpus. No hay preguntas metodológicas fijas en workers. Sólo Sonnet 4.6 para juicio, sin puertas humanas intermedias; las ediciones posteriores del humano prevalecen. En T&B, R16 exige evidencia literal verificada para capas y verbatims, sin convertirla en requisito de pertenencia temática ni en Claude por mención.
 - **El historial de avisos de estado** (septiembre y octubre) está en `docs/product/PROMPT_LOOPING/STATUS_HISTORY_AGENTS_BANNERS.md`. Es historia, no instrucciones.
 - **No pongas avisos de estado en este archivo.** El estado vive en el ExecPlan; este archivo debe quedar por debajo de 32 KiB.
 
