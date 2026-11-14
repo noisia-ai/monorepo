@@ -27,18 +27,20 @@ import {jevUsageV1} from "../../../services/workers/src/workers/signal-jev-label
 import {validateJevResponseV1} from "../../../services/workers/src/providers/typesafe-jev";
 
 export type MassLabelingAcceptanceModeV1="rotation"|"scoped"|"scoped-scale"|"scoped-funding"|"product"|"product-recovery";
-export type R16BenchmarkFixtureV1={root_count:number;execution_cap_micro_usd:number;
+export type R16BenchmarkFixtureV1={root_count:number;execution_cap_micro_usd:number;import_batch_size?:number;
   beforeProcessing:(context:{database:import('../signal-mention-facets').LabelingDatabaseV1;run_id:string;
     workspace_id:string;actor_user_id:string;map_id:string})=>Promise<void>};
 /** Test-only fixture: native admissions, rights, preparation and provider caps
  * are populated through the same contracts as the acceptance suite. */
 export async function runMassLabelingAcceptanceFixtureV1(authorization:MassLabelingAcceptanceModeV1,
-  options:{benchmark?:R16BenchmarkFixtureV1}={}){
+  options:{benchmark?:R16BenchmarkFixtureV1;beforeProcessing?:R16BenchmarkFixtureV1['beforeProcessing']}={}){
   const benchmark=options.benchmark;
+  if(options.beforeProcessing){assert.equal(authorization,'product');assert.equal(benchmark,undefined);}
   if(benchmark){
     assert.equal(authorization,'product-recovery');
     assert.ok(Number.isInteger(benchmark.root_count)&&benchmark.root_count>=1002&&benchmark.root_count<=100000);
     assert.ok(Number.isSafeInteger(benchmark.execution_cap_micro_usd)&&benchmark.execution_cap_micro_usd>0&&benchmark.execution_cap_micro_usd<=100000000);
+    assert.ok(benchmark.import_batch_size===undefined||Number.isInteger(benchmark.import_batch_size)&&benchmark.import_batch_size>=2&&benchmark.import_batch_size<=2048);
     assert.ok(process.env.NOISIA_R16_LOCAL_PG_LAB,'benchmark requires its accredited owned R16 Docker lab');
   }
   const localization=(authorization==="rotation"||authorization==="product"||authorization==="product-recovery")?{original_language:"pt-BR",
@@ -49,7 +51,7 @@ export async function runMassLabelingAcceptanceFixtureV1(authorization:MassLabel
   const scopedMode=authorization!=="rotation"&&authorization!=="product"&&!scaledRecovery,rootCount=benchmark?.root_count??(authorization==="scoped-funding"||scaledRecovery?1002:authorization==="scoped-scale"?200:3);
   const {openDatabase} = await import(new URL("../../../scripts/dev-corpus/guard.mjs", import.meta.url).href);
   const admin: Pool = process.env.NOISIA_R16_LOCAL_PG_LAB
-    ? await (await import("./signal-r16-local-pg.fixture"))[benchmark&&process.env.GITHUB_ACTIONS==="true"?"openR16CiPostgresV1":"openR16LocalPostgresV1"]()
+    ? await (await import("./signal-r16-local-pg.fixture"))[process.env.GITHUB_ACTIONS==="true"?"openR16CiPostgresV1":"openR16LocalPostgresV1"]()
     : await openDatabase();
   let isolated: Awaited<ReturnType<typeof createMassLabelingConcurrencyDatabaseV1>> | null = null;
   let releaseRaw = async () => {};
@@ -126,7 +128,7 @@ export async function runMassLabelingAcceptanceFixtureV1(authorization:MassLabel
     const syntheticSaves=createSignalTopicEditorialRenewalSyntheticSavesV1(undefined,{brand_name:"Synthetic fixture"});
     const seed = await seedSignalTopicEditorialRenewalSourceV1({database, scoped, query, cleanup: async () => {},
       saves:syntheticSaves,
-      root_count:rootCount,numeric_daily_cap_micro_usd: benchmark?100_000_000:10_000_000, projection: {split_guided_groups:true,interpretation_configuration:globalConfiguration,engine_config: {profile_version: "workspace-bertopic-mass-labeling-v1", fixture: true},
+      root_count:rootCount,import_batch_size:benchmark?.import_batch_size,numeric_daily_cap_micro_usd: benchmark?100_000_000:10_000_000, projection: {split_guided_groups:true,interpretation_configuration:globalConfiguration,engine_config: {profile_version: "workspace-bertopic-mass-labeling-v1", fixture: true},
         onCheckpoint: async fixture => {
           if(fixture.proposals.length!==2)return;
           const assignment=[...fixture.bodies.entries()].find(([key])=>key.endsWith("/assignments.guided.jsonl"))![1];
@@ -268,7 +270,17 @@ export async function runMassLabelingAcceptanceFixtureV1(authorization:MassLabel
         await raw.query("COMMIT");
         await assertMassLabelingProductNativeV2({...access,database:pool,query:pool.query.bind(pool),map_id:map.map_id,concurrent_recovery:true,foreign_actor_id:foreignActor,...(benchmark?{execution_cap_micro_usd:benchmark.execution_cap_micro_usd,beforeProcessing:benchmark.beforeProcessing}:{})});
         if(benchmark)return;
-      }else await assertMassLabelingProductNativeV2({...access,query:scoped.query,map_id:map.map_id});
+      }else if(options.beforeProcessing){
+        assert.equal(stack.length,0,"the callback begins after all setup savepoints have been released");
+        // Fault tests cross real PostgreSQL commits inside a disposable clone.
+        // The outer finally drops that clone after the callback returns.
+        await raw.query("COMMIT");
+        await assertMassLabelingProductNativeV2({...access,database:pool,query:pool.query.bind(pool),map_id:map.map_id,
+          beforeProcessing:options.beforeProcessing});
+        return;
+      }else{
+        await assertMassLabelingProductNativeV2({...access,query:scoped.query,map_id:map.map_id});
+      }
       if (authorization === "product") {
         await assertNativeMonitoringWidgetsV1({ access, query, map_id: map.map_id });
         assert.equal(stack.length,0);

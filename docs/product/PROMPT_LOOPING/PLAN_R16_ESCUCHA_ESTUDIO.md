@@ -12,11 +12,15 @@ No hay aprobaciones humanas intermedias en los procesos de análisis: Sonnet 4.6
 
 ## Progreso
 
+- H1: integrado el harness con PostgreSQL/Redis reales, Storage HTTP con fsync/readback, matriz de fallos y workflow propio. La revisión corrigió una prueba de presupuesto que usaba el ID incorrecto, la mezcla de procedencia entre recibos, picos de memoria omitidos por muestreo y un doble fallo accidental en la prueba de lease. El benchmark sostenido sigue pendiente; no hay aceptación por pruebas unitarias.
+- H1: la matriz encontró que reservas no entregadas al proveedor se finalizaban como errores. La corrección conserva esas reservas, drena toda escritura antes de liberar la lease y cubre también una caída durante recuperación anterior al primer envío. Las 41 pruebas focales y el caso PostgreSQL de reencolado pasan; faltan revisión final e integración del benchmark completo.
+- H2: backend y UI mínimos integrados en rama separada; tipado/lint 11/11 y Studio 1,335 aprobadas con siete omisiones por entorno. La revisión detectó población completa recalculada por llamada y dos casos de lifecycle/precedencia humana; se corrigen mediante una migración posterior antes de solicitar aceptación.
 - PR195 integrado a develop en 952eb507 tras revisión independiente de 60abe0e2 y CI/PostgreSQL verdes. Publica contratos y el heap del build; no modifica el despliegue de UAT.
 - H1 parcial: páginas inmutables y lectores duales pasaron seis escenarios PostgreSQL con 276 migraciones, build y tipado/lint. La revisión del transporte encontró tres P1: ausencia de backoff sin cabecera, liquidación indebida de un rechazo con usage cero y errores técnicos sin aplicar. Se reprodujeron y las 48 pruebas focales pasan; suite workers con 987 aprobadas y 43 omisiones por entorno, tipado/lint 11/11. Faltan revisión del SHA final, integración del harness, CI y benchmark sostenido.
 - H0: mediciones remotas de sólo lectura y pruebas de IO sintético registradas antes de cambios productivos; se distingue latencia histórica del proveedor de Storage/DB actuales. H1 se implementa en tres worktrees separados y todavía no acredita el throughput final.
 - H1 diagnóstico integral: 1,002 raíces sintéticas completaron solicitudes, páginas durables y proyección Signal usando PostgreSQL y Redis reales. La corrida corta dio aproximadamente 494 raíces/s y no acredita la meta; el ensayo de 32,768 está en preparación/ejecución. Las fallas de aplicación y acuse perdido tienen prueba RED→GREEN, 48 focales pasan y la suite DB integrada suma 658 aprobadas/163 omisiones por entorno.
 - H2 inició contratos y persistencia en rama/worktree separado. La exploración confirmó que V2 no tiene caché por pregunta y su unicidad por mapa impide ejecuciones incrementales; no se altera esa historia para añadir el nuevo flujo.
+- H1 CI: verify pasó en e5606cde; PostgreSQL detectó una expectativa heredada que exigía repetir un rechazo HTTP incierto. La regresión focal sobre PostgreSQL migrado ahora comprueba una única solicitud, reserva conservada y recibo intacto. Las tres oportunidades explícitas siguen probándose con respuesta HTTP 200 inválida y uso conocido, que permite distinguir fallo semántico de facturación incierta. Falta el nuevo CI del candidato corregido.
 
 - [x] Leer objetivo completo, diseño aprobado, auditoría y reglas del repositorio; contrastar develop y checkout.
 - [x] Verificar límites y saldos actuales en las consolas autenticadas antes de cambiar el pipeline. Recibos privados, sin claves.
@@ -26,6 +30,7 @@ No hay aprobaciones humanas intermedias en los procesos de análisis: Sonnet 4.6
 - [ ] H3: ciclo automático de tópicos, con evidencia calculada, límites de vueltas y precedencia humana.
 - [ ] H4: objeto Estudio, plantilla T&B completa y salida con evidencia literal verificada.
 - [ ] H5: stopwords/lift, edición posterior, recibo de costo corregido y ADR033.
+- [x] H5 parcial: corregir la extrapolación del recibo R15 y documentar el escenario de aproximadamente USD 114/millón, separando raíces de grupos/vueltas. El costo real de R16 sigue pendiente.
 - [ ] H6: ejecución real en UAT de Escucha y Estudio T&B; muestras ciegas, comparación privada, guía QA, costos y tiempos.
 - [ ] Aceptación final requisito por requisito, PR revisados y checks reales verdes, paquete con SHA256SUMS y resumen de diez líneas.
 
@@ -88,10 +93,13 @@ Recibo: separar Voyage/JEV por raíz de Claude por número de grupos y vueltas; 
 
 ## Sorpresas y descubrimientos
 
+- El recuento de resultados no bastaba para probar recuperación: dos respuestas físicas se recuperaban correctamente, pero una tercera raíz nunca enviada se convertía en error técnico final. Se exige recuperar resultados válidos sin reenviar las respuestas pagadas. Si se pierde la lease antes de persistir bytes, el resultado correcto conserva exposición incierta, sin fingir crudo durable.
+- La prueba de denegación presupuestaria del primer harness pasaba por una admisión inexistente. Ahora usa el ID real, un control positivo y el código exacto de agotamiento. Matriz y capacidad deben compartir huellas del código y configuración; una fecha reciente o el mismo PostgreSQL no bastan.
 - Las respuestas 429/529 pueden incluir campos de uso, incluso cero. Eso no prueba ausencia de procesamiento ni un cargo definitivo. El transporte conserva cuerpo y exposición como unknown, detiene nuevos envíos de la ventana y aplica un error técnico sin inventar una liquidación.
 - La suite completa reveló que los consumidores híbridos anteriores inferían uso cero del HTTP 429/529. Se elimina esa inferencia al compartir el validador; sus errores técnicos conservan el crudo y exposición sin repetir el proveedor. No se habilita esa ruta ni se alteran recibos liquidados históricos.
 - La segunda revisión detectó que un fallo de aplicación podía sustituir una respuesta válida por un error, incluso después de liquidarla. Las pruebas reproducen tanto fallo de apply como pérdida del acuse de settlement. La recuperación debe releer el recibo y ledger sin reenviar ni escribir una etiqueta sustituta.
 - También se cubre el acuse perdido de una aplicación ya confirmada: el ledger debe cerrar la ejecución completa o dejar pendiente recuperable, nunca fallarla sin llamadas unknown que permitan reclamarla. Los fallos de nuestra persistencia se reconcilian bajo la lease antes de devolver el error.
+- El primer ensayo de 32,768 raíces quedó sólo en preparación sintética: dos INSERT seriales por raíz y sus triggers dominaron el tiempo. Se terminó explícitamente al confirmar que su instrumentación anterior no podía acreditar aceptación, conservando el diagnóstico y el rollback con cero envíos. El siguiente ensayo usa inserciones agrupadas equivalentes, con todos los guards y admisiones nativos.
 - La prueba de capacidad usa un proveedor y una cuenta de cuota sintéticos, aislados. El limiter Redis sigue siendo real y respeta esa cuota declarada; otra prueba conserva 80 solicitudes/s y 100,000 tokens/s. Limitar el proveedor simulado a 80 no demostraría la capacidad interna de 1,000/s ni sustituye la corrida posterior con Typesafe real.
 - El recibo histórico R15 separa importación (6 h 35 min 45 s), preparación (16 min 25 s), Voyage (59 min 58 s), mapa y JEV. «Mapa disponible» incluye etapas interiores: no se suman para aparentar un tiempo CSV→Signal. La nueva corrida debe registrar sus propios extremos y esperas.
 - El PR documental agotó el heap de aproximadamente 2 GiB de Node en el build completo de Studio, sin cambios de aplicación respecto a R15. La misma construcción local con 4 GiB y placeholders aislados de CI pasó completa. Se conserva el primer log y el resultado posterior de CI se verificará antes de fusionar.
@@ -107,9 +115,12 @@ Recibo: separar Voyage/JEV por raíz de Claude por número de grupos y vueltas; 
 - Los documentos privados reflejaban saldos previos. La consola actual muestra más crédito; se registra evidencia privada nueva y no se presupone recarga por parte del agente.
 - El cliente JEV actual tiene concurrencia por defecto dos y valida máximo ochenta; el worker mass-labeling v2 agrega un techo interno de ocho. Esto requiere perfilado por etapa antes de elegir un cambio.
 - El checkout no tiene .data local. La custodia existente está en el checkout privado de Downloads; no copiarla a Git.
+- El promedio del piloto completo incluye una etapa editorial que no escala por raíz. Multiplicarlo linealmente daba USD 205.81/millón; mantener explícitamente los grupos y una vuelta de referencia produce USD 114.035250. Ambos cálculos parten del mismo recibo, cuyo uso histórico permanece USD 17.280463.
 
 ## Registro de decisiones
 
+- 2026-11-14: reencolar sólo los IDs que el scheduler vivo sabe que nunca entregó a evaluate, con lease vigente y sin crudo, página, uso, liquidación, resultado, lote o exposición terminal. Mantener identidad y reserva; nunca inferir ausencia de envío después de una caída. Drenar todas las escrituras antes de reencolar o liberar la lease, también si falla una recuperación previa al primer envío.
+- 2026-11-14: mantener separadas la pérdida de lease antes y después de durabilidad; la primera acredita contención de exposición, la segunda recuperación de resultados. Un diagnóstico filtrado no produce un recibo de aceptación de la matriz completa.
 - 2026-11-14: mantener unknown los rechazos ambiguos 429/529 aunque su JSON declare uso cero. Backoff compartido siempre, con piso exponencial de 1–30 s cuando Retry-After falte o sea menor; nunca reenviar el intento incierto. Si falla la actualización de la cuota compartida, cerrar nuevas admisiones y conservar el recibo físico.
 - 2026-11-14: conservar la reserva de memoria de cada respuesta hasta terminar su página durable, liquidación/aplicación y feedback; liberar las referencias locales al crudo al concluir. La recuperación reutiliza la última página autenticada por pase sin compartirla entre ámbitos.
 - 2026-11-14: el harness utiliza el pool de la base sintética acreditada directamente; las pruebas PostgreSQL normales conservan sus clones. No falsificar GITHUB_ACTIONS ni ampliar los guards para admitir pools arbitrarios.
@@ -122,6 +133,7 @@ Recibo: separar Voyage/JEV por raíz de Claude por número de grupos y vueltas; 
 - 2026-11-14: R16 nuevo prevalece sobre el plan piloto anterior. La evidencia literal de T&B sirve para integridad de la salida/capa y no se convierte en Claude por mención ni puerta de clasificación.
 - 2026-11-14: preservar R15 aceptada y empezar en rama desde develop c1c7ed5e. No modificar implementación hasta cerrar baseline H0; lecturas y documentación preparatoria son gratuitas.
 - 2026-11-14: separar capacidad interna sintética de throughput real: organización observada 80 solicitudes/s y 100,000 tokens/s compartidos entre claves. No prometer 1,000 raíces/s reales con ese límite.
+- 2026-11-14: publicar una fórmula condicional con coeficientes medidos en R15 y costo editorial por grupos/vueltas; actualizar la proyección histórica sin cambiar sus recibos ni presentarla como costo medido de R16. Reconstrucción verificada con aritmética decimal exacta.
 
 ## Resultado y retrospectiva
 
@@ -130,3 +142,5 @@ Los contratos de R16 están integrados. Las páginas durables tienen evidencia P
 Las observaciones H0 y su procedencia se guardan en custodia privada; la implementación, el benchmark integral y las ejecuciones reales de R16 siguen pendientes. Ninguna prueba de adaptador aislado o store en memoria se usa como aceptación global.
 
 En ejecución. Lectura y verificación inicial completas; implementación, mediciones detalladas y aceptación UAT pendientes. Este documento conserva el alcance completo y no sustituye el objetivo por un piloto reducido.
+
+El modelo de costo ya tiene una referencia reproducible en R16_COST_MODEL_BASELINE.md. Las ejecuciones reales de R16 y sus costos por etapa todavía deben producirse y verificarse.

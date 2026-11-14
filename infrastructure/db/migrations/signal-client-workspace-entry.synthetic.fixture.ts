@@ -22,7 +22,7 @@ export type SyntheticTransactionV1={database:Pool;scoped:PoolClient;query:Worksp
 /** Accepted import only: no preparation, embeddings, execution or provider receipt.
  * The caller must own an approved synthetic-only transaction and its rollback. */
 export async function syntheticImportedWorkspaceFixtureV1(tx:SyntheticTransactionV1,
- identity?:{organization_id:string;brand_id:string;actor_user_id:string;workspace_id:string},options:{root_count?:number;long_text?:boolean}={}){
+ identity?:{organization_id:string;brand_id:string;actor_user_id:string;workspace_id:string},options:{root_count?:number;long_text?:boolean;batch_size?:number}={}){
  const {database,query}=tx;
  const roots:string[]=[];
  const texts: string[]=options.root_count===undefined?[...NOI19_SYNTHETIC_TEXTS]:
@@ -41,14 +41,33 @@ export async function syntheticImportedWorkspaceFixtureV1(tx:SyntheticTransactio
  await query(`INSERT INTO import_batches(id,workspace_id,data_source_id,source_system,source_file_name,source_file_hash,status,
  record_count,included_count,excluded_count,duplicate_count,imported_by_user_id)
  VALUES($1,$2,$3,'synthetic','invented-synthetic-roots.txt',$4,'completed',$6,$6,0,0,$5)`,[batch,workspace_id,source,fixtureSha(texts.join('\n')),actor_user_id,texts.length]);
- for(const [index,text] of texts.entries()){
-  const root=randomUUID();roots.push(root);
+ const batchSize=options.batch_size??1;
+ assert(Number.isSafeInteger(batchSize)&&batchSize>=1&&batchSize<=2048,'synthetic import batch size must remain bounded');
+ const rows=texts.map((text,index)=>{const id=randomUUID();roots.push(id);return{id,workspace_id,data_source_id:source,
+  provider_record_id:`noi19-${id}-${index}`,source_file_id:batch,text_hash:fixtureSha(text),text,text_length:text.length};});
+ for(let offset=0;offset<rows.length;offset+=batchSize){
+  const page=rows.slice(offset,offset+batchSize);
+  if(batchSize===1){
+   const row=page[0]!;
+   await query(`INSERT INTO mentions(id,workspace_id,data_source_id,canonical_mention_id,provider_record_id,external_id,source_system,
+    source_file_id,text_hash,text_raw,text_clean,text_length,published_at,platform,resolved_platform,language,inclusion_status)
+    VALUES($1,$2,$3,$1,$4,$4,'synthetic',$5,$6,$7,$7,$8,'2026-09-01T12:00:00Z','synthetic','synthetic','en','included')`,
+    [row.id,workspace_id,source,row.provider_record_id,batch,row.text_hash,row.text,row.text_length]);
+   await query(`INSERT INTO signal_mention_import_memberships(workspace_id,mention_id,import_batch_id,data_source_id,ingestion_disposition)
+    VALUES($1,$2,$3,$4,'included') ON CONFLICT(mention_id,import_batch_id) DO NOTHING`,[workspace_id,row.id,batch,source]);
+   continue;
+  }
+  const encoded=JSON.stringify(page);
   await query(`INSERT INTO mentions(id,workspace_id,data_source_id,canonical_mention_id,provider_record_id,external_id,source_system,
    source_file_id,text_hash,text_raw,text_clean,text_length,published_at,platform,resolved_platform,language,inclusion_status)
-   VALUES($1,$2,$3,$1,$4,$4,'synthetic',$5,$6,$7,$7,$8,'2026-09-01T12:00:00Z','synthetic','synthetic','en','included')`,
-   [root,workspace_id,source,`noi19-${root}-${index}`,batch,fixtureSha(text),text,text.length]);
+   SELECT row.id,row.workspace_id,row.data_source_id,row.id,row.provider_record_id,row.provider_record_id,'synthetic',
+    row.source_file_id,row.text_hash,row.text,row.text,row.text_length,'2026-09-01T12:00:00Z','synthetic','synthetic','en','included'
+   FROM jsonb_to_recordset($1::jsonb) AS row(id uuid,workspace_id uuid,data_source_id uuid,provider_record_id text,
+    source_file_id uuid,text_hash text,text text,text_length integer)`,[encoded]);
   await query(`INSERT INTO signal_mention_import_memberships(workspace_id,mention_id,import_batch_id,data_source_id,ingestion_disposition)
-   VALUES($1,$2,$3,$4,'included') ON CONFLICT(mention_id,import_batch_id) DO NOTHING`,[workspace_id,root,batch,source]);
+   SELECT row.workspace_id,row.id,$2,row.data_source_id,'included'
+   FROM jsonb_to_recordset($1::jsonb) AS row(id uuid,workspace_id uuid,data_source_id uuid)
+   ON CONFLICT(mention_id,import_batch_id) DO NOTHING`,[JSON.stringify(page.map(row=>({id:row.id,workspace_id,data_source_id:source}))),batch]);
  }
  const quality=randomUUID(),retention=randomUUID(),license=randomUUID();
  const q={workspace_id,policy_key:'noi19-synthetic-quality',policy_version:1,min_quality_score:null,
@@ -84,11 +103,12 @@ export async function syntheticClientWorkspaceFixtureV1(tx:SyntheticTransactionV
  identity?:{organization_id:string;brand_id:string;actor_user_id:string;workspace_id:string};
  root_count?:number;
  long_text?:boolean;
+ import_batch_size?:number;
  skip_topic_prototypes?:boolean;
  projection?:Parameters<typeof workspaceProjectionFixtureBodyV1>[1];
 }={}){
  const {database,query,scoped}=tx;
- const {workspace_id,actor_user_id}=await syntheticImportedWorkspaceFixtureV1(tx,options.identity,{root_count:options.root_count,long_text:options.long_text});
+ const {workspace_id,actor_user_id}=await syntheticImportedWorkspaceFixtureV1(tx,options.identity,{root_count:options.root_count,long_text:options.long_text,batch_size:options.import_batch_size});
  const access={database,workspace_id,actor_user_id};
  const prep=await requestSignalWorkspaceCorpusPreparationStoreV1({...access,idempotency_key:randomUUID()});
  const prepJob=(await query('SELECT worker_job_id FROM signal_corpus_preparation_runs WHERE id=$1',[prep.run_id])).rows[0]!.worker_job_id;
