@@ -4,7 +4,7 @@ import test from 'node:test';
 import {signalListeningBaseTemplateV1,SIGNAL_WORKSPACE_EMBEDDING_PROFILE_V1 as profile} from '@noisia/query-engine';
 import {runMassLabelingAcceptanceFixtureV1} from './signal-mass-labeling-acceptance.synthetic.fixture';
 import {saveSignalListeningConfigurationV1} from '../signal-listening-configuration';
-import {prepareSignalListeningV1,continueSignalListeningPreparationV1,quoteSignalListeningPreparationV1} from '../signal-listening-preparation';
+import {prepareSignalListeningV1,continueSignalListeningPreparationV1,quoteSignalListeningPreparationV1,pendingSignalListeningPreparationsV1} from '../signal-listening-preparation';
 import {createBrandContextSyntheticVoyageProviderV1} from './signal-brand-context.synthetic.fixture';
 import {signalWorkspaceEmbeddingsJobV1} from '../../../services/workers/src/workers/signal-workspace-embeddings';
 
@@ -85,6 +85,24 @@ test('listening prototypes use governed Voyage receipts and share one total exec
   await assert.rejects(prepareSignalListeningV1({...changedScope,idempotency_key:randomUUID(),cap_micro_usd:1000000,provider_available:true,prototype_provider_available:true}),/prior_outcome_unresolved/);
   assert.equal(unknownSends,1,'a new workflow key cannot resend a Voyage input with an unknown paid outcome');
   assert.equal((await database.query('SELECT count(*)::int n FROM signal_listening_question_vectors WHERE configuration_id=$1',[configuration.id])).rows[0].n,9,'original vectors remain immutable');
+  const waitingConfig=await saveSignalListeningConfigurationV1({...access,expected_revision:changed.revision,provenance:'human',configuration:{...changed.configuration,
+   questions:changed.configuration.questions.map(q=>q.key==='defined_1'&&q.type==='noul'?{...q,positive:'Another exact positive for the pending lifecycle test'}:q)}});
+  const waiting=await prepareSignalListeningV1({...access,configuration_id:waitingConfig.id,map_id:context.map_id,idempotency_key:randomUUID(),cap_micro_usd:1000000,provider_available:true,prototype_provider_available:true});
+  assert.equal(waiting.status,'waiting_prototypes');assert.ok(waiting.prototype_run_id);
+  const waitingJob=(await database.query('SELECT worker_job_id FROM signal_workspace_embedding_runs WHERE id=$1',[waiting.prototype_run_id])).rows[0]!;
+  await saveSignalListeningConfigurationV1({...access,expected_revision:waitingConfig.revision,provenance:'human',configuration:{...waitingConfig.configuration,instructions:'New human instructions while Voyage is queued.'}});
+  assert.equal((await continueSignalListeningPreparationV1({...access,preparation_id:waiting.preparation_id,provider_available:true})).status,'waiting_prototypes','polling existing work does not require the superseded configuration to be latest');
+  let staleSends=0;
+  const stale=await signalWorkspaceEmbeddingsJobV1({id:waitingJob.worker_job_id,data:{run_id:waiting.prototype_run_id!},updateProgress:async()=>{}},
+   {database,provider:{embedBatch:async()=>{staleSends++;throw Error('stale prototype must never send');}}});
+  assert.equal('replayed' in stale&&stale.replayed,true);assert.equal(staleSends,0);
+  assert.equal((await database.query('SELECT status FROM signal_workspace_embedding_runs WHERE id=$1',[waiting.prototype_run_id])).rows[0].status,'stale');
+  const closed=await continueSignalListeningPreparationV1({...access,preparation_id:waiting.preparation_id,provider_available:true});
+  assert.equal(closed.status,'failed');assert.equal(closed.run_id,null);
+  const preserved=(await database.query('SELECT configuration_id,prototype_run_id,cap_micro_usd::text FROM signal_listening_preparations WHERE id=$1',[waiting.preparation_id])).rows[0]!;
+  assert.equal(preserved.configuration_id,waitingConfig.id);assert.equal(preserved.prototype_run_id,waiting.prototype_run_id);assert.equal(preserved.cap_micro_usd,'1000000');
+  assert.ok(!(await pendingSignalListeningPreparationsV1({database,limit:200})).some(r=>r.id===waiting.preparation_id),'the obsolete preparation does not occupy the polling queue forever');
+  assert.equal((await database.query('SELECT count(*)::int n FROM signal_workspace_embedding_calls WHERE run_id=$1',[waiting.prototype_run_id])).rows[0].n,0);
   assert.equal(profile.model,'voyage-4-large');
  }});
 });

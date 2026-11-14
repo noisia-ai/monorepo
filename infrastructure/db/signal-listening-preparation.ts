@@ -124,11 +124,17 @@ export async function continueSignalListeningPreparationV1(args:SignalListeningA
     [row.id,child.status==='completed'?'completed':'failed',child.error_code]);
    return {...row,status:child.status==='completed'?'completed' as const:child.status==='failed'||child.status==='canceled'?'failed' as const:row.status};
   }
-  const cfg=await loadSignalListeningConfigurationWithClientV1(c,args.workspace_id);
-  if(cfg?.id!==row.configuration_id)fail('listening_configuration_changed');
-  await mapCurrent(c,args.workspace_id,row.map_id);
   if(row.status==='failed')return row;
+  const current=async()=>{
+   const cfg=await loadSignalListeningConfigurationWithClientV1(c,args.workspace_id);
+   if(cfg?.id!==row.configuration_id){
+    await c.query("UPDATE signal_listening_preparations SET status='failed',error_code='listening_configuration_changed',updated_at=clock_timestamp() WHERE id=$1",[row.id]);
+    return false;
+   }
+   await mapCurrent(c,args.workspace_id,row.map_id);return true;
+  };
   if(row.status==='preparing'){
+   if(!await current())return {...row,status:'failed' as const,error_code:'listening_configuration_changed'};
    await c.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))",[`signal-taxonomy:${row.workspace_id}:topic`]);
    if((await c.query(`SELECT 1 FROM signal_workspace_embedding_runs WHERE workspace_id=$1 AND config_digest=$2 AND status IN('queued','running') LIMIT 1`,
     [row.workspace_id,row.quote.prototype_plan.embedding_profile.config_digest])).rows.length)return row;
@@ -146,11 +152,16 @@ export async function continueSignalListeningPreparationV1(args:SignalListeningA
      return {...row,status:'failed' as const,error_code:error};
     }return row;
    }
+   // Terminal child metadata is read using its frozen identity before checking
+   // whether another configuration may start new work. No provider or reserve is repeated.
+   if(!await current())return {...row,status:'failed' as const,error_code:'listening_configuration_changed'};
    if(count(proto.reserved_micro_usd)||count(proto.unknown_reserved_micro_usd)||count(proto.observed_exception_micro_usd))fail('listening_prototype_outcome_unknown');
    await bindCached(c,args,row.quote.prototype_plan);
    await c.query("UPDATE signal_listening_preparations SET status='ready_for_labeling',updated_at=clock_timestamp() WHERE id=$1",[row.id]);
    return {...row,status:'ready_for_labeling' as const};
-  }return row;
+  }
+  if(row.status==='ready_for_labeling'&&!await current())return {...row,status:'failed' as const,error_code:'listening_configuration_changed'};
+  return row;
  });
  if(flow.status==='ready_for_labeling'){
   const spent=flow.prototype_run_id?count((await args.database.query<{spent:string}>('SELECT settled_micro_usd::text spent FROM signal_workspace_embedding_runs WHERE id=$1',[flow.prototype_run_id])).rows[0]!.spent):0;
