@@ -56,7 +56,11 @@ export async function runMassLabelingAcceptanceFixtureV1(authorization:MassLabel
   const flag = process.env.NOISIA_MASS_LABELING_ENABLED;
   process.env.NOISIA_MASS_LABELING_ENABLED = "true";
   try {
-    isolated=scaledRecovery||authorization==="product"?await createMassLabelingConcurrencyDatabaseV1(admin):null;
+    // The dedicated benchmark already owns its disposable, accredited base
+    // database. Keep that exact Pool so all runner authority checks agree;
+    // ordinary acceptance cases retain their independent migrated clone.
+    if(benchmark)(await import("./signal-r16-local-pg.fixture")).assertR16LocalPostgresPoolV1(admin);
+    isolated=!benchmark&&(scaledRecovery||authorization==="product")?await createMassLabelingConcurrencyDatabaseV1(admin):null;
     const pool:Pool=isolated?.pool??admin, raw = await pool.connect();
     releaseRaw=async()=>{await raw.query("ROLLBACK").catch(()=>undefined);raw.release();};
     await raw.query("BEGIN");

@@ -20,3 +20,23 @@ test('local R16 fixture rejects an arbitrary pool, remote URL and CI impersonati
     for(const [key,value] of Object.entries(before))if(value===undefined)delete process.env[key];else process.env[key]=value;
   }
 });
+
+test('R16 benchmark callback retains the exact accredited base pool and native admission',{
+  skip:process.env.NOISIA_R16_BENCHMARK_FIXTURE_PG!=='true',timeout:120000,
+},async()=>{
+  const {runMassLabelingAcceptanceFixtureV1}=await import('./signal-mass-labeling-acceptance.synthetic.fixture');
+  let callbacks=0;
+  await runMassLabelingAcceptanceFixtureV1('product-recovery',{benchmark:{root_count:1002,
+    execution_cap_micro_usd:20000000,beforeProcessing:async context=>{
+      callbacks++;
+      assertR16LocalPostgresPoolV1(context.database as pg.Pool);
+      const {rows:[scope]}=await context.database.query(`SELECT current_database() database,r.processing_admission_id,
+        count(i.root_id)::int roots FROM signal_labeling_runs r JOIN signal_mass_labeling_runs m ON m.run_id=r.id
+        JOIN signal_mass_labeling_items i ON i.workspace_id=m.workspace_id AND i.map_id=m.map_id
+        WHERE r.id=$1 AND r.workspace_id=$2 GROUP BY r.id`,[context.run_id,context.workspace_id]);
+      assert.equal(scope.database,'noisia_mfp_ci');assert.ok(scope.processing_admission_id);assert.equal(scope.roots,1002);
+      assert.equal((await context.database.query('SELECT count(*)::int n FROM signal_labeling_calls WHERE run_id=$1',[context.run_id])).rows[0].n,0,
+        'the benchmark callback executes before any provider submission or reservation');
+    }}});
+  assert.equal(callbacks,1);
+});
