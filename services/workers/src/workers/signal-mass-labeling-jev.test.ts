@@ -60,8 +60,8 @@ function fixture(count: number, product = false) {
     },
     async release() {},
     async renew() {},
-    async fail() {
-      run.status = "failed";
+    async fail(_run,code) {
+      run.status = "failed";run.error_code=code;
     },
     async refresh() {
       return { status: run.status, error_code: run.error_code ?? null };
@@ -112,6 +112,9 @@ function fixture(count: number, product = false) {
       page.forEach((call) => {
         call.status = "submitting";
       });
+    },
+    async requeueUnsent(_run, page) {
+      for(const call of page){assert.equal(call.raw_body,null);assert.equal(call.results_applied,false);call.status='reserved';}
     },
     async markSubmitted() {},
     async recoverUnknownBatch() {},
@@ -533,7 +536,8 @@ test('streaming seals a 529 with usage zero, stops new sends and applies technic
   assert.equal(JSON.parse(durable.get(f.calls[0]!.id)!).http_status, 529);
   assert.equal(observations, 3, 'unknown usage is not a quota refund or calibration sample');
   assert.equal(f.results.filter(row => row.status === 'labeled').length, 3);
-  assert.equal(f.results.filter(row => row.status === 'error').length, 61);
+  assert.equal(f.results.filter(row => row.status === 'error').length, 1);
+  assert.equal(f.calls.filter(call=>call.status==='reserved'&&!call.results_applied).length,60,'never-evaluated roots keep their reservation without a final technical result');
   assert.equal(f.calls.filter(call => call.status === 'settled').length, 3);
   await processMassLabelingJevV1({ run_id: f.run.id, store: f.store, provider, execution: streaming });
   assert.equal(sends, 4, 'an ambiguous rejection never authorizes another send');
@@ -668,4 +672,36 @@ for(const version of ['mass-labeling-jev-v1','mass-labeling-jev-v2','listening-j
       if(savedMass===undefined)delete process.env.NOISIA_MASS_LABELING_ENABLED;else process.env.NOISIA_MASS_LABELING_ENABLED=savedMass;
       if(savedJev===undefined)delete process.env.NOISIA_JEV_PROVIDER_ENABLED;else process.env.NOISIA_JEV_PROVIDER_ENABLED=savedJev;
     }
+  });
+
+
+for(const fault of ['raw_page_write','settlement_ack','apply_ack']as const)
+  test(`streaming ${fault} leaves never-evaluated reservations pending and resumes all roots without duplicate HTTP`,async()=>{
+    const f=fixture(3,true),raws=new Map<string,string>(),sent=new Set<string>();let injected=false;
+    const calls=f.store.calls;
+    f.store.calls=async run=>{const rows=await calls(run);for(const call of rows)call.raw_body=raws.get(call.id)??null;return rows;};
+    f.store.markFailed=async(_run,rows,unknown)=>{for(const call of rows)if(['reserved','submitting','submitted'].includes(call.status))call.status=unknown?'unknown':'failed';};
+    const requeued:string[]=[];
+    f.store.requeueUnsent=async(_run,rows)=>{for(const call of rows){assert.ok(!sent.has(call.id),'evaluate-started IDs must never be requeued');assert.ok(!raws.has(call.id));assert.equal(call.results_applied,false);call.status='reserved';requeued.push(call.id);}};
+    f.store.finish=async()=>{
+      const unknown=f.calls.some(call=>call.status==='unknown'),active=f.calls.some(call=>['reserved','submitting','submitted'].includes(call.status)||call.status==='settled'&&!call.results_applied);
+      f.run.error_code=unknown?'labeling_outcome_unknown':null;const status=active?'running' as const:unknown?'failed' as const:'completed' as const;f.run.status=status;return status;
+    };
+    f.store.persistRawPage=async(_run,rows)=>{for(const row of rows){raws.set(row.call.id,row.raw);row.call.raw_body=row.raw;}await delay(1);
+      if(fault==='raw_page_write'&&!injected){injected=true;throw Error('synthetic_after_durable_write');}};
+    const settle=f.store.settlePage,apply=f.store.apply;
+    f.store.settlePage=async(run,rows)=>{await settle(run,rows);if(fault==='settlement_ack'&&!injected){injected=true;throw Error('synthetic_after_settlement_commit');}};
+    f.store.apply=async(run,rows)=>{await apply(run,rows);if(fault==='apply_ack'&&!injected){injected=true;throw Error('synthetic_after_apply_commit');}};
+    const provider:JevProviderV1={max_concurrency:1,max_response_bytes:16384,async evaluate(request){
+      const call=f.calls.find(call=>call.request===request)!;assert.ok(call);assert.ok(!sent.has(call.id),'no physical request may replay');sent.add(call.id);
+      await delay(8);return f.response(request);
+    }};
+    const args={run_id:f.run.id,store:f.store,provider,execution:{...streaming,max_in_flight:1,flush_size:1,max_flushes:1,window_size:3}};
+    await assert.rejects(processMassLabelingJevV1(args),/synthetic_after_/);
+    assert.equal(sent.size,2);assert.deepEqual(requeued,['call-2']);
+    assert.equal(f.calls[2]!.status,'reserved');assert.equal(f.calls[2]!.results_applied,false);
+    const recovered=await processMassLabelingJevV1(args);
+    assert.equal(recovered.status,'completed');assert.equal(sent.size,3);
+    assert.ok(f.calls.every(call=>call.status==='settled'&&call.results_applied));
+    assert.equal(f.results.length,3);assert.ok(f.results.every(result=>result.status==='labeled'));
   });

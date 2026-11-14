@@ -165,10 +165,17 @@ export async function processJevStreamingWindowV2<I extends FacetInput, R>(args:
       }
     }));
     // No HTTP was attempted for reserved calls left behind by cancellation or write failure.
-    for (const call of reserved.slice(next)) record(call, false, 'jev_send_canceled');
+    const notDelivered=reserved.slice(next),notDeliveredIds=new Set(notDelivered.map(call=>call.id));
+    // These exact IDs never crossed evaluate in this live process. A lease-held
+    // compare-and-set restores their reservation without inventing a final result.
+    if(notDelivered.length){
+      if(!store.requeueUnsent)throw Error('jev_unsent_recovery_unavailable');
+      await store.requeueUnsent(run,notDelivered);
+    }
     while (buffered.length || active.size) { flush(true); if (active.size) await Promise.all(active); }
     for (const call of calls) {
       if (!observedRaw.has(call.id) && !errors.has(call.id)) {
+        if(notDeliveredIds.has(call.id)||call.status==='reserved'&&!reserved.some(item=>item.id===call.id))continue;
         const unsent=call.status==='failed'||call.status==='reserved';
         record(call,!unsent,unsent?'jev_definitely_not_sent':'jev_outcome_unknown');
       }
@@ -181,7 +188,7 @@ export async function processJevStreamingWindowV2<I extends FacetInput, R>(args:
     // Persist the stop reason before applying technical errors: a lost apply
     // acknowledgement must not reopen admission for other roots on restart.
     if (hooks.fail_on_error && terminalErrors.length) await store.fail(run,
-      terminalErrors.some(x => x.unknown) ? 'labeling_outcome_unknown' : terminalErrors[0]!.code);
+      terminalErrors.some(x => x.unknown) ? 'labeling_outcome_unknown' : terminalErrors[0]!.code,{preserve_reserved:true});
     for (const unknown of [false, true]) {
       const technical = [...errors.values()].filter(error => error.unknown === unknown && error.write_result
         && !applied.has(error.call.id)).map(error => ({call:error.call,
