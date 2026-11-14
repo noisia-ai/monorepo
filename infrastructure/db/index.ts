@@ -146,3 +146,7 @@ export * from './signal-monitoring-insights-policy';
 
 export * from "./signal-labeling-raw-pages";
 export {readLabelingRawCallPageV1,createLabelingRawCallPageReaderV1} from "./signal-labeling-raw-page-store";
+
+export * from "./signal-listening-configuration";
+export * from "./signal-listening-runs";
+export * from "./signal-listening-serving";
