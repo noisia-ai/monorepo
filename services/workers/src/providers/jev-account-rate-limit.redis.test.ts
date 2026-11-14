@@ -27,6 +27,13 @@ test('Redis atomically shares provider-account request/token windows, usage debt
     await tokens.observe(reservation, 8); await tokensOther.observe(reservation, 8);
     const t2 = Date.now(); await tokensOther.acquire(3);
     assert.ok(Date.now() - t2 >= 900, 'actual token usage debt must be shared and applied once');
+    const lateAccount=randomUUID();ids.push(lateAccount);
+    const late=make(a,lateAccount,100,10),lateOther=make(b,lateAccount,100,10);
+    const lateReservation=await late.acquire(1);
+    await new Promise(resolve=>setTimeout(resolve,1100));
+    await late.observe(lateReservation,9);
+    const tLate=Date.now();await lateOther.acquire(3);
+    assert.ok(Date.now()-tLate>=900,'late underestimated paid usage must charge current global token window');
     const throttleAccount = randomUUID(); ids.push(throttleAccount);
     const throttled = make(a, throttleAccount, 100, 100), other = make(b, throttleAccount, 100, 100);
     await throttled.throttle(200); await other.throttle(10);

@@ -453,3 +453,61 @@ test("product lease loss keeps in-flight receipts and cancels unsent roots under
   assert.equal(httpSends, 8);
   assert.equal(f.results.length, 8);
 });
+
+const streaming = { max_in_flight: 32, flush_size: 8, max_flushes: 2,
+  max_buffered_bytes: 16 * 1024 * 1024, flush_interval_ms: 10, window_size: 200 };
+test('streaming overlaps provider sends and bounded durable page writes, never parsing before durability', async () => {
+  const f = fixture(96, true); let activeWrites = 0, maxWrites = 0, maxCallsBeforeFirstWrite = 0;
+  const provider: JevProviderV1 = { max_concurrency: 32, max_response_bytes: 16384,
+    async evaluate(request) { await delay(2); return f.response(request); } };
+  f.store.persistRawPage = async (_run, rows) => {
+    activeWrites++; maxWrites = Math.max(maxWrites, activeWrites);
+    maxCallsBeforeFirstWrite = Math.max(maxCallsBeforeFirstWrite, f.calls.filter(call => call.raw_body).length);
+    await delay(15);
+    for (const row of rows) row.call.raw_body = row.raw;
+    f.events.push(`page:${rows.length}`); activeWrites--;
+  };
+  const outcome = await processMassLabelingJevV1({ run_id: f.run.id, store: f.store, provider, execution: streaming });
+  assert.equal(outcome.status, 'completed'); assert.equal(outcome.labeled, 96);
+  assert.equal(outcome.unresolved_billing_requests, 0); assert.equal(f.results.length, 96);
+  assert.equal(maxWrites, 2); assert.ok(maxCallsBeforeFirstWrite > 0);
+  assert.ok(f.events.indexOf('settle') > f.events.findIndex(event => event.startsWith('page:')));
+});
+test('streaming storage failure preserves unknown outcome and never resends it', async () => {
+  const f = fixture(32, true);
+  f.store.persistRawPage = async () => { throw Error('storage_down'); };
+  await assert.rejects(processMassLabelingJevV1({ run_id:f.run.id,store:f.store,provider:{...f.provider,max_response_bytes:16384},execution:streaming }), /storage_down/);
+  assert.equal(f.results.length, 0); assert.ok(f.calls.some(call => call.status === 'unknown'));
+  assert.equal(f.events.includes('settle'), false);
+});
+test('streaming rate observation failure cannot turn applied paid calls unknown', async () => {
+  const f = fixture(8, true);
+  f.store.persistRawPage = async (_run, rows) => { for (const row of rows) row.call.raw_body = row.raw; };
+  const provider: JevProviderV1 = { ...f.provider, max_response_bytes:16384, async observeUsage(){ throw Error('redis_down'); } };
+  await assert.rejects(processMassLabelingJevV1({run_id:f.run.id,store:f.store,provider,execution:streaming}), /redis_down/);
+  assert.equal(f.results.length,8); assert.ok(f.calls.every(call => call.status === 'settled' && call.results_applied));
+});
+
+test('streaming keeps one lease across successive input windows without the polling cooldown',async()=>{
+  const f=fixture(512,true), inputs=await f.store.inputs(f.run);let cursor=0,claims=0,releases=0;
+  f.store.inputs=async()=>inputs.slice(cursor,cursor+=128);
+  const reserve=f.store.reserve;
+  f.store.reserve=async(run,proposals)=>{const base=f.calls.length;const rows=await reserve(run,proposals);for(const [index,row]of rows.entries())row.id=`call-${base+index}`;return rows;};
+  const claim=f.store.claim;f.store.claim=async(id)=>{claims++;return claim(id);};
+  f.store.release=async()=>{releases++;};
+  f.store.finish=async()=>{const status=f.results.length===512?'completed':'running';f.run.status=status;return status;};
+  f.store.persistRawPage=async(_run,rows)=>{for(const row of rows)row.call.raw_body=row.raw;};
+  const outcome=await processMassLabelingJevV1({run_id:f.run.id,store:f.store,provider:{...f.provider,max_response_bytes:16384},execution:{...streaming,window_size:128}});
+  assert.equal(outcome.status,'completed');assert.equal(outcome.labeled,512);assert.equal(outcome.roots,512);
+  assert.equal(claims,1);assert.equal(releases,1);assert.equal(f.transports(),512);
+});
+
+test('streaming restart never resends a submitting call without a durable receipt',async()=>{
+  const f=fixture(1,true);
+  await processMassLabelingJevV1({run_id:f.run.id,store:f.store,provider:f.provider});
+  const call=f.calls[0]!;call.status='submitting';call.results_applied=false;call.raw_body=null;
+  f.run.status='running';f.results.length=0;let sent=0;
+  const outcome=await processMassLabelingJevV1({run_id:f.run.id,store:f.store,
+    provider:{max_response_bytes:16384,evaluate:async()=>{sent++;throw Error('must_not_send');}},execution:streaming});
+  assert.equal(sent,0);assert.equal(outcome.status,'failed');assert.equal(call.status,'unknown');assert.equal(f.results.length,0);
+});

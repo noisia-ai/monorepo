@@ -26,6 +26,7 @@ local used=tonumber(redis.call('GET',total) or '0')
 for _,id in ipairs(expired) do
  used=used-tonumber(redis.call('HGET',tokens,id) or '0')
  redis.call('HDEL',tokens,id,id..':observed')
+ if string.sub(id,1,5)=='debt:' then redis.call('HDEL',tokens,string.sub(id,6)..':observed') end
 end
 redis.call('ZREMRANGEBYSCORE',events,'-inf',cutoff)
 used=math.max(0,used)
@@ -39,10 +40,26 @@ end
 if operation=='observe' then
  local id=ARGV[2]
  local previous=redis.call('HGET',tokens,id)
- if previous and redis.call('HSETNX',tokens,id..':observed','1')==1 then
-  local delta=tonumber(ARGV[3])-tonumber(previous)
-  redis.call('HSET',tokens,id,ARGV[3])
-  redis.call('SET',total,math.max(0,used+delta),'PX',2000)
+ if redis.call('HSETNX',tokens,id..':observed','1')==1 then
+  if previous then
+   local delta=tonumber(ARGV[3])-tonumber(previous)
+   redis.call('HSET',tokens,id,ARGV[3])
+   redis.call('SET',total,math.max(0,used+delta),'PX',2000)
+  else
+   -- Late durable observations still charge any underestimated usage to the
+   -- current window. Expired reservations cannot refund unrelated requests.
+   local debt=math.max(0,tonumber(ARGV[3])-tonumber(ARGV[4]))
+   if debt>0 then
+    local debtId='debt:'..id
+    redis.call('ZADD',events,now,debtId)
+    redis.call('HSET',tokens,debtId,debt)
+    redis.call('SET',total,used+debt,'PX',2000)
+    redis.call('PEXPIRE',events,2000)
+   else
+    redis.call('HDEL',tokens,id..':observed')
+   end
+  end
+  redis.call('PEXPIRE',tokens,2000)
  end
  return {1,0}
 end
@@ -98,7 +115,7 @@ export function createJevAccountRateLimiter(limits: JevAccountRateLimits, evalua
     },
     async observe(reservation, tokens) {
       if (!/^[0-9a-f-]{36}$/.test(reservation.id) || !Number.isSafeInteger(tokens) || tokens < 0) throw new Error('jev_rate_usage_invalid');
-      await command(['observe', reservation.id, String(tokens)]);
+      await command(['observe', reservation.id, String(tokens), String(reservation.estimated_input_tokens)]);
     },
   };
 }

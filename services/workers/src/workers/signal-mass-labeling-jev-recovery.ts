@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import {
-  reconcileMassLabelingJevReceiptV1, type LabelingRunV1, type LabelingCallV1,
+  reconcileMassLabelingJevReceiptV1, readLabelingRawCallPageV1, type LabelingRunV1, type LabelingCallV1,
   type createMassLabelingStoreV1,
 } from "@noisia/db";
 import {
@@ -10,6 +10,7 @@ import {
   type MassLabelingInputV1,
 } from "@noisia/query-engine";
 import { validateJevResponseV1, type JevRawResponseV1 } from "../providers/typesafe-jev";
+import { createLabelingRawPagesStorageV1 } from "./signal-labeling-receipt-storage";
 import { jevUsageV1 } from "./signal-jev-labeling-page";
 import { createWorkspaceEngineStorageV1, type WorkspaceEngineStorageV1 } from "./signal-workspace-engine-storage";
 
@@ -32,7 +33,6 @@ export async function recoverMassLabelingJevReceiptsV1(args: {
     [run.id, run.workspace_id])).rows;
   if (!calls.length) return { recovered: 0 };
   const storage = args.storage ?? createWorkspaceEngineStorageV1();
-  if (!storage.recoverIncomplete) throw new Error("mass_labeling_jev_recovery_storage_unavailable");
   let recovered = 0;
   for (const call of calls) {
     if (call.inputs.length !== 1) throw new Error("mass_labeling_input_invalid");
@@ -43,7 +43,12 @@ export async function recoverMassLabelingJevReceiptsV1(args: {
       entity_context_digest: run.entity_context_digest, labeler_digest: run.labeler_digest, request });
     if (requestDigest !== call.request_digest || digest(call.request) !== digest(request)
       || call.custom_id !== `mass_${requestDigest.slice(7, 67)}`) throw new Error("mass_labeling_jev_recovery_request_invalid");
-    const stored = await storage.recoverIncomplete({ workspace_id: run.workspace_id, execution_id: run.id,
+    const page = await readLabelingRawCallPageV1({ database:args.database, workspace_id:run.workspace_id,
+      run_id:run.id, call_id:call.id, request_digest:call.request_digest,
+      loadPage:createLabelingRawPagesStorageV1(storage).load });
+    if(!page&&!storage.recoverIncomplete)throw Error("mass_labeling_jev_recovery_storage_unavailable");
+    const stored = page ? { raw_text:page.raw_text, sha256:page.raw_sha256, size_bytes:page.raw_size_bytes,
+      storage_key:page.storage_key } : await storage.recoverIncomplete!({ workspace_id: run.workspace_id, execution_id: run.id,
       name: `response-${call.id}.json`, max_bytes: 8 * 1024 * 1024 });
     if (!stored) continue;
     if (Buffer.byteLength(stored.raw_text) !== stored.size_bytes
@@ -53,6 +58,7 @@ export async function recoverMassLabelingJevReceiptsV1(args: {
     const usage = jevUsageV1(parsed.usage);
     const settlement = await reconcileMassLabelingJevReceiptV1({ database: args.database, run_id: run.id, workspace_id: run.workspace_id,
       actor_user_id: run.actor_user_id, call_id: call.id, request_digest: call.request_digest,
+      ...(page ? {raw_page_id:page.page_id} : {}),
       raw_sha256: stored.sha256, raw_storage_key: stored.storage_key, raw_size_bytes: stored.size_bytes,
       usage, settled_micro_usd: llmCostMicroUsdV1(usage, llmPriceV1("typesafe", run.identity.model, "sync", Number(run.identity.params.input_usd_per_mtok))), result });
     if (!settlement.replayed) recovered++;

@@ -26,7 +26,7 @@ test('input token accounting uses an explicit measured estimate, never a monetar
   const limiter = createJevAccountRateLimiter(limits, async (_s, _k, args) => { seen.push(args); return [1, 0]; });
   const reservation = await limiter.acquire(1632);
   assert.equal(reservation.estimated_input_tokens, 1632); assert.equal(seen[0]![2], '1632');
-  await limiter.observe(reservation, 1650); assert.deepEqual(seen[1], ['observe', reservation.id, '1650']);
+  await limiter.observe(reservation, 1650); assert.deepEqual(seen[1], ['observe', reservation.id, '1650', '1632']);
   await limiter.throttle(1200); assert.deepEqual(seen[2], ['throttle', '1200']);
   for (const estimate of [0, -1, NaN, 100_001]) await assert.rejects(limiter.acquire(estimate), /jev_rate_token_estimate_invalid/);
 });

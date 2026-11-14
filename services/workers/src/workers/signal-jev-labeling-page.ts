@@ -1,3 +1,4 @@
+import { processJevStreamingWindowV2, type JevStreamingExecutionV2 } from './signal-jev-streaming-window';
 import { setMaxListeners } from "node:events";
 import { llmCostMicroUsdV1, type FacetInput, type LlmPriceV1, type LlmUsageV1 } from "@noisia/query-engine";
 import type { createSignalLabelingStoreV1, LabelingRunV1, LabelingCallV1, LabelingCallProposalV1 } from "@noisia/db";
@@ -10,7 +11,7 @@ export const jevUsageV1 = (usage:JevResponseV1["usage"]):LlmUsageV1 => ({...usag
  * JEV requests remain individual. A consumer may bound work through durable persistence. */
 export async function processJevLabelingPageV1<Input extends FacetInput,Result>(args:{
   run_id:string;store:ReturnType<typeof createSignalLabelingStoreV1<Input,Result>>;provider:JevProviderV1;
-  lease_renewal_ms?:number;hooks:{
+  lease_renewal_ms?:number; execution?:JevStreamingExecutionV2;hooks:{
     price(run:LabelingRunV1):LlmPriceV1;
     propose(run:LabelingRunV1,inputs:Input[]):LabelingCallProposalV1<Input>[];
     map(run:LabelingRunV1,call:LabelingCallV1<Input>,parsed:JevResponseV1):Result[];
@@ -22,10 +23,11 @@ export async function processJevLabelingPageV1<Input extends FacetInput,Result>(
     recovery_only?:boolean;
     max_in_flight?(run:LabelingRunV1):number|undefined;
   };
-}){
+}): Promise<{status:string; roots?:number; labeled?:number; unresolved_billing_requests?:number;
+  settled_micro_usd?:number; p50_ms?:number|null; p95_ms?:number|null}> {
   const {store,provider,hooks}=args,run=await store.claim(args.run_id);
   if(!run)return {status:"not_claimed"};
-  const cancellation=new AbortController();setMaxListeners(201,cancellation.signal);
+  const cancellation=new AbortController();setMaxListeners(Math.max(201,(args.execution?.max_in_flight??0)*2+64),cancellation.signal);
   let leaseError:unknown,renewal:Promise<void>|undefined;
   const interval=args.lease_renewal_ms??60_000;
   if(!Number.isSafeInteger(interval)||interval<1||interval>60_000){await store.release(run);throw new Error("jev_renewal_interval_invalid");}
@@ -35,20 +37,32 @@ export async function processJevLabelingPageV1<Input extends FacetInput,Result>(
   },interval);heartbeat.unref?.();
   try{
     const price=hooks.price(run);
-    const maxInFlight=hooks.max_in_flight?.(run);
-    if(maxInFlight!==undefined&&(!Number.isSafeInteger(maxInFlight)||maxInFlight<1||maxInFlight>200))throw new Error("jev_page_concurrency_invalid");
-    const pending=(await store.calls(run)).filter(call=>!call.results_applied);
-    if(hooks.fail_on_error&&pending.some(call=>call.status==="unknown"&&!call.raw_body)){
-      await store.fail(run,"labeling_outcome_unknown");return {status:"outcome_unknown"};
-    }
-    let calls=(hooks.recovery_only?pending.filter(call=>Boolean(call.raw_body)):pending).slice(0,200);
-    if(hooks.recovery_only&&!calls.length)return {status:"recovery_unavailable"};
-    if(!calls.length&&!run.error_code&&!hooks.recovery_only){
-      const proposals=hooks.propose(run,await store.inputs(run));
-      if(proposals.length)calls=(await store.reserve(run,proposals)).slice(0,200);
-    }
-    const reserved=run.error_code?[]:calls.filter(call=>call.status==="reserved"&&!call.raw_body);
-    if(reserved.length)await store.markSubmitting(run,reserved);
+    const maxInFlight=args.execution?.max_in_flight??hooks.max_in_flight?.(run);
+    if(maxInFlight!==undefined&&(!Number.isSafeInteger(maxInFlight)||maxInFlight<1||maxInFlight>(args.execution?4096:200)))throw new Error("jev_page_concurrency_invalid");
+    let aggregate: Awaited<ReturnType<typeof processJevStreamingWindowV2<Input,Result>>> | undefined;
+    for (;;) {
+      const pending=(await store.calls(run)).filter(call=>!call.results_applied);
+      if(hooks.fail_on_error&&pending.some(call=>call.status==="unknown"&&!call.raw_body)){
+        await store.fail(run,"labeling_outcome_unknown");return {status:"outcome_unknown"};
+      }
+      let calls=(hooks.recovery_only?pending.filter(call=>Boolean(call.raw_body)):pending).slice(0,args.execution?.window_size??200);
+      if(hooks.recovery_only&&!calls.length)return {status:"recovery_unavailable"};
+      if(!calls.length&&!run.error_code&&!hooks.recovery_only){
+        const proposals=hooks.propose(run,await store.inputs(run));
+        if(proposals.length)calls=(await store.reserve(run,proposals)).slice(0,args.execution?.window_size??200);
+      }
+      const reserved=run.error_code?[]:calls.filter(call=>call.status==="reserved"&&!call.raw_body);
+      if(reserved.length)await store.markSubmitting(run,reserved);
+      if(args.execution) {
+        const outcome = await processJevStreamingWindowV2({run,calls,send_calls:reserved,store,provider,execution:args.execution,price,cancellation,hooks});
+        aggregate = { ...outcome, roots:(aggregate?.roots??0)+outcome.roots,
+          labeled:(aggregate?.labeled??0)+outcome.labeled,
+          settled_micro_usd:(aggregate?.settled_micro_usd??0)+outcome.settled_micro_usd,
+          unresolved_billing_requests:(aggregate?.unresolved_billing_requests??0)+outcome.unresolved_billing_requests };
+        if(leaseError)throw leaseError;
+        if(cancellation.signal.aborted||outcome.status!=="running"||!calls.length||outcome.unresolved_billing_requests||hooks.recovery_only)return aggregate;
+        continue;
+      }
     const rawPage:Array<{call:LabelingCallV1<Input>;raw:string}>=[];
     const errors:Array<{call:LabelingCallV1<Input>;unknown:boolean;code:string;transport?:boolean}>=[];
     let nextCall=0;
@@ -107,10 +121,11 @@ export async function processJevLabelingPageV1<Input extends FacetInput,Result>(
       unresolved_billing_requests:errors.filter(error=>error.unknown).length,
       settled_micro_usd:settlement.reduce((sum,page)=>sum+page.settled_micro_usd,0),
       p50_ms:latencies[Math.ceil(latencies.length*0.5)-1]??null,p95_ms:latencies[Math.ceil(latencies.length*0.95)-1]??null};
+    }
   }catch(error){
     const code=error&&typeof error==="object"&&"code"in error?String(error.code):"";
     if(["labeling_forbidden","labeling_policy_changed","labeling_preparation_changed","labeling_context_changed",
       "labeling_cap_exhausted","labeling_daily_cap_exhausted","labeling_raw_receipt_invalid"].includes(code))await store.fail(run,code);
     throw error;
-  }finally{clearInterval(heartbeat);if(renewal)await renewal;await store.release(run);}
+  }finally{clearInterval(heartbeat);if(renewal)await renewal;await store.release(run,args.execution?{immediate:true}:undefined);}
 }

@@ -3,7 +3,7 @@ import type { JevAccountRateLimiter, JevRateReservation } from './jev-account-ra
 
 import type { JevRequestV1, JevResponseV1 } from '@noisia/query-engine/src/signal-mention-facets-jev-v1';
 export type { JevRequestV1, JevResponseV1 } from '@noisia/query-engine/src/signal-mention-facets-jev-v1';
-export type JevRawResponseV1 = { body: string; http_status: number; latency_ms: number; retry_after?: string; retry_after_ms?: number; rate_reservation?: JevRateReservation; rate_limit_update_failed?: true };
+export type JevRawResponseV1 = { body: string; http_status: number; latency_ms: number; retry_after?: string; retry_after_ms?: number; rate_reservation?: JevRateReservation; rate_calibration?:{labeler_digest:string;input_bytes:number}; rate_limit_update_failed?: true };
 export type JevOutcomeV1 = 'definitely_not_sent' | 'outcome_unknown' | 'known_response_invalid';
 export class JevProviderErrorV1 extends Error {
   constructor(readonly code: string, readonly outcome: JevOutcomeV1,
@@ -24,9 +24,9 @@ export function jevRetryAfterMsV1(value: string, now: number): number | undefine
   return Number.isFinite(date) ? Math.max(0, date - now) : undefined;
 }
 const MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
-async function readBounded(response: Response): Promise<string> {
+async function readBounded(response: Response, limit = MAX_RESPONSE_BYTES): Promise<string> {
   const length = response.headers.get('content-length');
-  if ((length !== null && (!/^\d+$/u.test(length) || Number(length) > MAX_RESPONSE_BYTES)) || !response.body) {
+  if ((length !== null && (!/^\d+$/u.test(length) || Number(length) > limit)) || !response.body) {
     await response.body?.cancel().catch(() => undefined);
     throw new JevProviderErrorV1('jev_response_unavailable', 'outcome_unknown');
   }
@@ -35,7 +35,7 @@ async function readBounded(response: Response): Promise<string> {
     for (;;) {
       const part = await reader.read(); if (part.done) break;
       size += part.value.byteLength;
-      if (size > MAX_RESPONSE_BYTES) { await reader.cancel().catch(() => undefined); throw new JevProviderErrorV1('jev_response_too_large', 'outcome_unknown'); }
+      if (size > limit) { await reader.cancel().catch(() => undefined); throw new JevProviderErrorV1('jev_response_too_large', 'outcome_unknown'); }
       chunks.push(part.value);
     }
   } finally { reader.releaseLock(); }
@@ -43,15 +43,16 @@ async function readBounded(response: Response): Promise<string> {
   for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
   return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
 }
-export type JevProviderV1 = { readonly max_concurrency?: number; evaluate(request: JevRequestV1, options?: { signal?: AbortSignal }): Promise<JevRawResponseV1>; observeUsage?(raw: JevRawResponseV1, input_tokens: number): Promise<void> };
+export type JevProviderV1 = { readonly max_concurrency?: number; readonly max_response_bytes?: number; evaluate(request: JevRequestV1, options?: { signal?: AbortSignal }): Promise<JevRawResponseV1>; observeUsage?(raw: JevRawResponseV1, input_tokens: number): Promise<void> };
 /** One attempt only. Callers persist submitting before invoking this client. Raw responses
  * are returned without JSON parsing so the shared ledger can persist them first. */
 export function createTypesafeJevClientV1(options: {
-  api_key?: string; enabled?: boolean; timeout_ms?: number; concurrency?: number; fetch?: typeof fetch; rate_limiter?: JevAccountRateLimiter; estimate_input_tokens?: (request: JevRequestV1) => number;
+  api_key?: string; enabled?: boolean; timeout_ms?: number; max_response_bytes?: number; concurrency?: number; fetch?: typeof fetch; rate_limiter?: JevAccountRateLimiter; estimate_input_tokens?: (request: JevRequestV1) => number;
 } = {}): JevProviderV1 {
   const concurrency = options.concurrency ?? Number(process.env.NOISIA_JEV_CONCURRENCY ?? '2');
   let active = 0; const waiting: Array<() => void> = [];
-  return { max_concurrency: concurrency,
+  const responseLimit = options.max_response_bytes ?? MAX_RESPONSE_BYTES;
+  return { max_concurrency: concurrency, max_response_bytes: responseLimit,
     async observeUsage(raw, input_tokens) {
       if (raw.rate_reservation && options.rate_limiter) await options.rate_limiter.observe(raw.rate_reservation, input_tokens);
     }, async evaluate(request, cancellation = {}) {
@@ -59,6 +60,7 @@ export function createTypesafeJevClientV1(options: {
     const timeout = options.timeout_ms ?? 60_000;
     if (!(options.enabled ?? process.env.NOISIA_JEV_PROVIDER_ENABLED === 'true')) throw new JevProviderErrorV1('jev_disabled', 'definitely_not_sent');
     if (!key?.trim() || !Number.isSafeInteger(timeout) || timeout < 1 || timeout > 120_000
+      || !Number.isSafeInteger(responseLimit) || responseLimit < 1 || responseLimit > MAX_RESPONSE_BYTES
       || !Number.isSafeInteger(concurrency) || concurrency < 1 || concurrency > 4096 || (concurrency > 80 && !options.rate_limiter)
       || Boolean(options.rate_limiter) !== Boolean(options.estimate_input_tokens)) throw new JevProviderErrorV1('jev_configuration_invalid', 'definitely_not_sent');
     let body: string;
@@ -94,7 +96,7 @@ export function createTypesafeJevClientV1(options: {
       });
       const retryAfter = response.headers.get('retry-after');
       const retryDelay = retryAfter === null ? undefined : jevRetryAfterMsV1(retryAfter, Date.now());
-      const responseBody = await readBounded(response);
+      const responseBody = await readBounded(response, responseLimit);
       const physicalLatency = performance.now() - start;
       let rateUpdateFailed = false;
       if ([429, 529].includes(response.status) && options.rate_limiter && retryDelay !== undefined) {

@@ -20,6 +20,8 @@ export type WorkspaceEngineStorageV1 = {
   /** Recover deterministic immutable receipt bytes only after checking their full hash. */
   recoverIncomplete?(args: { workspace_id: string; execution_id: string; name: string; max_bytes: number }):
     Promise<(StoredFile & { raw_text: string }) | null>;
+  recoverVerifiedPage?(args: { workspace_id: string; execution_id: string; name: string; sha256: string; size_bytes: number }):
+    Promise<(StoredFile & { raw_text: string }) | null>;
   put(args: { workspace_id: string; execution_id: string; file: string; sha256: string; size_bytes: number;
     media_type: string }): Promise<StoredFile>;
   get(args: { workspace_id: string; execution_id: string; stored: StoredFile; destination: string }): Promise<void>;
@@ -38,6 +40,13 @@ const prefixFor = (workspace: string, execution: string) => {
   if (!uuid.test(workspace) || !uuid.test(execution)) return fail("scope_invalid");
   return `workspace-engine/${workspace}/${execution}/`;
 };
+
+/** Pure immutable reference, shared by the durable page intent and actual upload. */
+export function buildWorkspaceEngineStorageKeyV1(workspace_id: string, execution_id: string, name: string, sha256: string) {
+  const prefix = prefixFor(workspace_id, execution_id);
+  if (!fileName.test(name) || name.includes("..") || !digest.test(sha256)) return fail("reference_invalid");
+  return `${prefix}${name}.${sha256.slice(7)}.parts.json`;
+}
 
 /** Existing private Supabase corpus bucket, deterministic immutable keys and
  * bounded parts. Models survive worker replacement; no local path becomes a receipt. */
@@ -99,6 +108,26 @@ export function createWorkspaceEngineStorageV1(options: {
     if (actual.length !== content.length || hash(actual) !== hash(content)) return fail("verification_failed");
   }
   const storage: WorkspaceEngineStorageV1 = {
+    async recoverVerifiedPage(args) {
+      await privateBucket();
+      const expected = buildWorkspaceEngineStorageKeyV1(args.workspace_id, args.execution_id, args.name, args.sha256);
+      if (args.name !== `page-${args.sha256.slice(7)}.jsonl` || !Number.isSafeInteger(args.size_bytes)
+        || args.size_bytes < 1 || args.size_bytes > 32 * 1024 * 1024) return fail("recovery_scope_invalid");
+      const partKey = expected.slice(0, -".parts.json".length) + ".part-000000";
+      const read = await request(objectUrl(partKey));
+      if (read.status === 404) { await read.body?.cancel(); return null; }
+      if (!read.ok) { await read.body?.cancel(); return fail("recovery_read_failed"); }
+      const content = await bytes(read, args.size_bytes);
+      if (content.length !== args.size_bytes || hash(content) !== args.sha256) return fail("recovery_digest_invalid");
+      const raw_text = new TextDecoder("utf-8", { fatal: true }).decode(content);
+      const directory = await mkdtemp(join(tmpdir(), "noisia-page-recovery-"));
+      try {
+        const file = join(directory, args.name); await writeFile(file, content, { mode: 0o600 });
+        const stored = await storage.put({ workspace_id: args.workspace_id, execution_id: args.execution_id,
+          file, sha256: args.sha256, size_bytes: args.size_bytes, media_type: "application/x-ndjson" });
+        return { ...stored, raw_text };
+      } finally { await rm(directory, { recursive: true, force: true }); }
+    },
     async recoverIncomplete(args) {
       await privateBucket();
       const prefix = prefixFor(args.workspace_id, args.execution_id);
@@ -165,7 +194,7 @@ export function createWorkspaceEngineStorageV1(options: {
       } finally { await file.close(); }
       if (await hashWorkspaceEngineFileV1(args.file) !== args.sha256) return fail("file_changed");
       const envelope: Envelope = { contract_version: "workspace-engine-parts-v1", sha256: args.sha256, size_bytes: stat.size, parts };
-      const storage_key = `${immutable}.parts.json`;
+      const storage_key = buildWorkspaceEngineStorageKeyV1(args.workspace_id, args.execution_id, name, args.sha256);
       // The private imports bucket permits binary artifacts. The envelope stays
       // JSON bytes; its transport MIME does not change the original artifact type.
       await putVerified(storage_key, Buffer.from(JSON.stringify(envelope)), "application/octet-stream");

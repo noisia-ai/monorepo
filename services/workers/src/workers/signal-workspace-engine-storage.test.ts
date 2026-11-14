@@ -156,3 +156,20 @@ test("native receipt policy waits at least three seconds for a 429 without Retry
     assert.equal(fixture.objects.size, 2);
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
+
+test('durable JSONL page recovery reconstructs its exact manifest without listing objects', async () => {
+  const fixture = server();
+  const { createHash } = await import('node:crypto');
+  const { createLabelingRawPagesStorageV1 } = await import('./signal-labeling-receipt-storage');
+  const raw_text = '{"raw_base64":"Y29udGVudA=="}\n', sha256 = `sha256:${createHash('sha256').update(raw_text).digest('hex')}`;
+  const name = `page-${sha256.slice(7)}.jsonl`;
+  const args = {workspace_id:scope.workspace_id,run_id:scope.execution_id,page_id:'page',name,raw_text,raw_sha256:sha256,size_bytes:Buffer.byteLength(raw_text)};
+  const pages = createLabelingRawPagesStorageV1(fixture.storage);
+  const reference = pages.reference(args), stored = await pages.store(args);
+  assert.equal(stored.storage_key, reference.storage_key); assert.equal(stored.verified,true);
+  fixture.objects.delete(stored.storage_key);
+  const restored = await pages.load({...args,...stored});
+  assert.equal(restored,raw_text); assert.ok(fixture.objects.has(stored.storage_key));
+  fixture.objects.delete(stored.storage_key); fixture.corrupt();
+  await assert.rejects(pages.load({...args,...stored}), /recovery_digest_invalid/);
+});

@@ -1,3 +1,4 @@
+import { createCalibratedJevRuntimeProviderV2, jevStreamingExecutionFromEnvV2 } from "../providers/jev-streaming-runtime";
 import { recoverMassLabelingJevReceiptsV1 } from "./signal-mass-labeling-jev-recovery";
 import { materializeMassLabelingProductMapV2 } from "./signal-mass-labeling-product-map";
 import {assertMassJevConsumerV1} from "../providers/mass-labeling-consumer";
@@ -34,9 +35,10 @@ import {
   processJevLabelingPageV1,
   jevUsageV1,
 } from "./signal-jev-labeling-page";
-import { createWorkspaceEngineStorageV1 } from "./signal-workspace-engine-storage";
-import { readSignalLabelingReceiptV1 } from "./signal-labeling-receipt-storage";
+import { createWorkspaceEngineStorageV1, type WorkspaceEngineStorageV1 } from "./signal-workspace-engine-storage";
+import { readSignalLabelingReceiptV1, createLabelingRawPagesStorageV1 } from "./signal-labeling-receipt-storage";
 
+import type { JevStreamingExecutionV2 } from './signal-jev-streaming-window';
 type Store = ReturnType<typeof createMassLabelingStoreV1>;
 function priceOf(run: LabelingRunV1) {
   if (
@@ -63,6 +65,7 @@ export function processMassLabelingJevV1(args: {
   provider: JevProviderV1;
   lease_renewal_ms?: number;
   recovery_only?: boolean;
+  execution?: JevStreamingExecutionV2;
 }) {
   return processJevLabelingPageV1<MassLabelingInputV1, MassLabelingResultV1>({
     ...args,
@@ -119,6 +122,7 @@ export function processMassLabelingJevV1(args: {
         })),
       labeled: (result) => result.status === "labeled",
       durable_raw_per_response: true,
+      fail_on_error: Boolean(args.execution),
       recovery_only: args.recovery_only,
     },
   });
@@ -134,11 +138,12 @@ export async function processMassLabelingProductPageV2(args: Parameters<typeof p
 
 export function createMassLabelingRuntimeStoreV1(
   database: Parameters<typeof createMassLabelingStoreV1>[0]["database"],
-  options: { product_v2?: boolean } = {},
+  options: { product_v2?: boolean; execution?:JevStreamingExecutionV2; storage?:WorkspaceEngineStorageV1 } = {},
 ) {
-  const storage = createWorkspaceEngineStorageV1({ retry_429_min_delay_ms: options.product_v2 ? 3000 : undefined });
+  const storage = options.storage ?? createWorkspaceEngineStorageV1({ retry_429_min_delay_ms: options.product_v2 ? 3000 : undefined });
   return createMassLabelingStoreV1({
     database,
+    ...(options.execution ? {page_size:options.execution.window_size,rawPages:createLabelingRawPagesStorageV1(storage)} : {}),
     storeRawVerified: true,
     assertRawReady: async () => {
       await storage.assertReady?.();
@@ -176,6 +181,7 @@ export function createMassLabelingRuntimeStoreV1(
 
 export const SIGNAL_MASS_LABELING_JEV_JOB_V1 = "signal-mass-labeling-jev-v1";
 let runtimeProvider: JevProviderV1 | undefined;
+const streamingProviders = new Map<string,JevProviderV1>();
 export async function signalMassLabelingJevJobV1(job: {
   data: { run_id: string };
 }, options: {
@@ -196,8 +202,8 @@ export async function signalMassLabelingJevJobV1(job: {
   });
   const pool = options.database ?? (await import("../db/client")).pool;
   const run = (
-    await pool.query<{ workspace_id: string; request_version: string }>(
-      `SELECT run.workspace_id,labeler.identity#>>'{params,request_version}' request_version
+    await pool.query<{ workspace_id: string; request_version: string; labeler_digest:string }>(
+      `SELECT run.workspace_id,labeler.identity#>>'{params,request_version}' request_version,labeler.labeler_digest
        FROM signal_labeling_runs run JOIN signal_labeler_versions labeler ON labeler.id=run.labeler_version_id
        WHERE run.id=$1::uuid AND run.kind='mass_labeling'`,
       [job.data.run_id],
@@ -212,11 +218,15 @@ export async function signalMassLabelingJevJobV1(job: {
     }))
   )
     throw new Error("mass_labeling_not_enabled");
-  if (!options.provider) runtimeProvider ??= createTypesafeJevClientV1({ enabled: process.env.NOISIA_JEV_PROVIDER_ENABLED !== "false" });
+  const execution = run.request_version === "mass-labeling-jev-v2" ? jevStreamingExecutionFromEnvV2() : undefined;
+  if (!options.provider && execution && !streamingProviders.has(run.labeler_digest))
+    streamingProviders.set(run.labeler_digest,createCalibratedJevRuntimeProviderV2({labeler_digest:run.labeler_digest,execution}));
+  if (!options.provider && !execution) runtimeProvider ??= createTypesafeJevClientV1({ enabled: process.env.NOISIA_JEV_PROVIDER_ENABLED !== "false" });
   const outcome = await processMassLabelingProductPageV2({
     database: pool, run_id: job.data.run_id,
-    store: options.store ?? createMassLabelingRuntimeStoreV1(pool, { product_v2: run.request_version === "mass-labeling-jev-v2" }),
-    provider: options.provider ?? runtimeProvider!,
+    store: options.store ?? createMassLabelingRuntimeStoreV1(pool, { product_v2: run.request_version === "mass-labeling-jev-v2", execution }),
+    provider: options.provider ?? (execution ? streamingProviders.get(run.labeler_digest)! : runtimeProvider!),
+    execution,
   });
   return outcome;
 }
