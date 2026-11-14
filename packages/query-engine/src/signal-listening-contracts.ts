@@ -88,17 +88,16 @@ export function selectSignalListeningQuestionsV1(c:SignalListeningConfigurationV
 export function signalListeningConsumerCutV1(c:SignalListeningConfigurationV1,body:string,answers:Record<string,JevAnswerV1>):'awaiting_base'|'included'|'excluded'{
   const voice=answers.voice,promotion=answers.promotion;
   if(voice?.type!=='choice'||promotion?.type!=='noul')return 'awaiting_base';
-  const normalized=body.normalize('NFKC').toLocaleLowerCase('und');
-  const hashtagOnly=!normalized.replace(/#[\p{L}\p{N}_]+/gu,'').trim();
-  const matched=c.lexicon_terms.some(term=>{
-    const escaped=term.normalize('NFKC').toLocaleLowerCase('und').replace(/[.*+?^${}()|[\]\\]/gu,'\\$&');
-    return new RegExp('(^|[^\\p{L}\\p{N}_])'+escaped+'($|[^\\p{L}\\p{N}_])','u').test(normalized);
-  });
+  const normalized=body.toLocaleLowerCase('und');
+  const hashtagOnly=/#[\p{L}\p{N}_]+/u.test(body)&&!body.includes('\u0085')
+    &&body.replace(/#[\p{L}\p{N}_]+/gu,'').replace(/[\s.,;:!?()\[\]{}'"“”‘’«»…—–-]+/gu,'').replace(/\uFEFF/gu,'')==='';
+  const lexical=(value:string)=>' '+value.toLocaleLowerCase('und').replace(/[^\p{L}\p{N}]+/gu,' ').trim()+' ';
+  const matched=c.lexicon_terms.some(term=>lexical(normalized).includes(lexical(term)));
   return voice.choice==='individual'&&promotion.noul<=.7&&!hashtagOnly&&matched?'included':'excluded';
 }
 export function buildSignalListeningJevRequestV1(input:Pick<SignalListeningInputV1,'text'|'question_keys'>&Partial<SignalListeningInputV1>,value:SignalListeningConfigurationV1):JevRequestV1{
   const c=validateSignalListeningConfigurationV1(value),byKey=new Map(c.questions.map(q=>[q.key,q]));
-  if(!input.text.trim()||!input.question_keys.length||input.question_keys.length>64
+  if(!input.text.trim()||!input.question_keys.length||input.question_keys.length>256
     ||new Set(input.question_keys).size!==input.question_keys.length||input.question_keys.some(k=>!byKey.has(k)))throw new Error('listening_input_invalid');
   return {model:c.model,state:input.text,questions:Object.fromEntries([...input.question_keys].sort().map(k=>[k,wire(c,byKey.get(k)!)]))};
 }

@@ -26,6 +26,7 @@ test('consumer scope waits for known base answers and includes filter/base ident
   const base={voice:{type:'choice' as const,choice:'individual',confidence:.9,probabilities:{individual:.9,unknown:.1}},promotion:{type:'noul' as const,noul:.1}};
   assert.equal(signalListeningConsumerCutV1(c,'My bike',base),'included');
   assert.equal(signalListeningConsumerCutV1(c,'#bike',base),'excluded');
+  assert.equal(signalListeningConsumerCutV1(c,'#bike!',base),'excluded');
   assert.equal(signalListeningConsumerCutV1(c,'bikeway',base),'excluded');
   assert.notEqual(signalListeningQuestionDigestV1(c,scoped),signalListeningQuestionDigestV1({...c,lexicon_terms:['bicycle']},scoped));
   assert.equal(signalListeningQuestionDigestV1(c,c.questions[0]!),signalListeningQuestionDigestV1({...c,lexicon_terms:['bicycle']},c.questions[0]!));
@@ -51,4 +52,12 @@ test('two-level themes and outside metadata preserve semantic caches and retired
  assert.equal(signalListeningQuestionDigestV1(c,topic),signalListeningQuestionDigestV1(changed,changed.questions.find(q=>q.key==='repairs')!));
  assert.throws(()=>validateSignalListeningConfigurationV1({...c,themes:[]}),/listening_configuration_invalid/);
  assert.throws(()=>validateSignalListeningConfigurationV1({...c,retired_question_keys:['repairs']}),/listening_configuration_invalid/);
+});
+
+test('one eligible phase compiles every configured question without a separate internal batch ceiling',()=>{
+ const base=signalListeningBaseTemplateV1({category:'bicycles',lexicon_terms:['bike']});
+ const c=validateSignalListeningConfigurationV1({...base,questions:[...base.questions,...Array.from({length:254},(_,i)=>({key:`question_${i}`,
+  type:'choice',text:`What is answer ${i}?`,scope:'all',origin:'brand_os',human_locked:false,options:[{key:'yes',definition:'Yes'},{key:'other',definition:'Other'}]}))]});
+ const request=buildSignalListeningJevRequestV1({text:'My bike',question_keys:c.questions.map(q=>q.key)},c);
+ assert.equal(Object.keys(request.questions).length,256);
 });

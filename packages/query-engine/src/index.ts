@@ -1286,3 +1286,6 @@ export * from "./signal-mass-labeling-category-lexicon-v1";
 export * from "./signal-workspace-monitoring-insights-v1";
 
 export * from "./signal-listening-contracts";
+export * from "./signal-listening-prototypes";
+
+export * from './signal-listening-calibration';
