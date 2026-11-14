@@ -13,12 +13,14 @@ import { startR16HttpFilesystemStorageV1 } from "./http-filesystem-storage";
 import { deterministicR16LatencyV1, createSyntheticJevFetchV1 } from "./synthetic-jev";
 import { R16BenchmarkRecorderV1 } from "./benchmark-recorder";
 import { summarizeR16BenchmarkV1, type R16BenchmarkEvidenceV1, type R16PhaseV1 } from "./benchmark-contract";
+import { captureR16SourceProvenanceV1, r16PolicyConfigurationDigestV1 } from "./source-provenance";
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const privateRoot = resolve(repo, ".data/piloto-masivo/r16");
 const connectionPath = resolve(privateRoot, "labs/benchmark-pg17/connection.env");
 const redisPath = resolve(privateRoot, "labs/r16-lab-nov14/connection.env");
-type FaultMatrixV1 = { completed_at: string; postgres: { system_identifier: string };
+type FaultMatrixV1 = { completed_at: string; case_count: number; postgres: { system_identifier: string };
+  source_provenance: R16BenchmarkEvidenceV1["source_provenance"]; policy_configuration_digest: string;
   failures: R16BenchmarkEvidenceV1["failures"]; guards: { policy_denials: number; budget_denials: number; denied_requests_not_sent: number };
   invariants: { duplicate_settlements: number; denied_provider_requests: number } };
 async function loadPrivateEnv(path: string): Promise<Record<string, string>> {
@@ -45,6 +47,7 @@ if (process.env.R16BENCH_RUN_ID !== "benchmark-pg17" || !process.env.DATABASE_UR
 process.env.NOISIA_R16_LOCAL_PG_LAB = "r16-benchmark-pg17";
 
 const rootCount = Number(process.env.R16BENCH_ROOTS ?? 32_768);
+const sourceProvenance = await captureR16SourceProvenanceV1(repo);
 const execution = { max_in_flight: 1024, flush_size: 256, max_flushes: 2,
   max_buffered_bytes: 512 * 1024 * 1024, flush_interval_ms: 100, window_size: 4096 };
 const responseBound = 16 * 1024;
@@ -95,6 +98,10 @@ let sampleDb: DbLike | undefined;
 let sampleRunId = "";
 let sampleRootCount = 0;
 let streamMetrics = { in_flight: 0, reserved_working_bytes: 0, buffered_responses: 0, active_flushes: 0 };
+const observeStream = (metrics: typeof streamMetrics) => {
+  streamMetrics = metrics;
+  recorder.observeStream(metrics);
+};
 async function sampleProgress() {
   if (!sampleDb || !sampleRunId) return;
   const at = recorder.elapsedMs();
@@ -123,6 +130,7 @@ try {
       recorder = new R16BenchmarkRecorderV1("r16-synthetic-benchmark");
       sustainedStartMs = 5_000;
       streamMetrics = { in_flight: 0, reserved_working_bytes: 0, buffered_responses: 0, active_flushes: 0 };
+      recorder.observeStream(streamMetrics);
       sampleDb = instrumentDatabase(context.database as unknown as DbLike);
       sampleRunId = context.run_id;
       const db = sampleDb;
@@ -135,6 +143,32 @@ try {
         JOIN signal_labeler_versions labeler ON labeler.id=run.labeler_version_id WHERE run.id=$1::uuid`, [context.run_id]);
       const labelerDigest = String(labeler.rows[0]?.labeler_digest ?? "");
       if (!/^sha256:[0-9a-f]{64}$/u.test(labelerDigest)) throw new Error("r16_labeler_digest_missing");
+      const policyRow = await db.query(`SELECT admission.action,admission.configuration,admission.configuration_digest,
+          admission.provider,admission.model,policy.id::text policy_version_id,policy.policy_digest,
+          policy.daily_cap_micro_usd::text policy_daily_cap,action.max_execution_micro_usd::text policy_max_execution
+        FROM signal_labeling_runs run JOIN signal_processing_admissions admission ON admission.id=run.processing_admission_id
+        JOIN signal_processing_policy_versions policy ON policy.id=admission.policy_version_id
+        JOIN signal_processing_policy_actions action ON action.policy_version_id=policy.id AND action.action=admission.action
+        WHERE run.id=$1::uuid`, [context.run_id]);
+      const policy = policyRow.rows[0];
+      if (!policy) throw new Error("r16_policy_provenance_missing");
+      const policyConfigurationDigest = r16PolicyConfigurationDigestV1({ action:String(policy.action),
+        configuration:policy.configuration, configuration_digest:String(policy.configuration_digest),
+        model:String(policy.model), policy_daily_cap_micro_usd:String(policy.policy_daily_cap),
+        policy_digest:String(policy.policy_digest), policy_max_execution_micro_usd:String(policy.policy_max_execution),
+        policy_version_id:String(policy.policy_version_id), provider:String(policy.provider) });
+      const candidates = (await readdir(privateRoot)).filter(name => /^fault-matrix-\d+-[a-f0-9]{8}\.json$/u.test(name)).sort();
+      const newest = candidates.at(-1);
+      if (!newest) throw new Error("r16_fault_matrix_missing");
+      const faultMatrix = JSON.parse(await readFile(resolve(privateRoot, newest), "utf8")) as FaultMatrixV1;
+      const ageMs = Date.now() - Date.parse(faultMatrix.completed_at);
+      if (!Number.isFinite(ageMs) || ageMs < 0 || ageMs > 2 * 60 * 60 * 1_000
+        || faultMatrix.case_count !== 8
+        || faultMatrix.postgres.system_identifier !== String(identity.rows[0]?.system_identifier)
+        || JSON.stringify(faultMatrix.source_provenance) !== JSON.stringify(sourceProvenance)
+        || faultMatrix.policy_configuration_digest !== policyConfigurationDigest) {
+        throw new Error("r16_fault_matrix_provenance_mismatch");
+      }
       const providerClient = createCalibratedJevRuntimeProviderV2({ labeler_digest: labelerDigest, execution,
         env: { NOISIA_TYPESAFE_ACCOUNT_ID: `r16-synthetic-capacity-${randomUUID()}`,
           NOISIA_TYPESAFE_ACCOUNT_RPS: "2000", NOISIA_TYPESAFE_ACCOUNT_INPUT_TPS: "10000000",
@@ -178,12 +212,12 @@ try {
       } });
       const before = recorder.elapsedMs();
       let outcome = await processMassLabelingProductPageV2({ run_id: context.run_id, database: db as never,
-        store, provider, execution, observe_stream: metrics => { streamMetrics = metrics; } });
+        store, provider, execution, observe_stream: observeStream });
       if (rootCount > 1_000) {
         await continueMassLabelingV1({ database: db as never, run_id: context.run_id,
           workspace_id: context.workspace_id, actor_user_id: context.actor_user_id });
         outcome = await processMassLabelingProductPageV2({ run_id: context.run_id, database: db as never,
-          store, provider, execution, observe_stream: metrics => { streamMetrics = metrics; } });
+          store, provider, execution, observe_stream: observeStream });
       }
       const after = recorder.elapsedMs();
       await sampleProgress();
@@ -226,22 +260,9 @@ try {
       for (const page of pages) recorder.rawPage({ page_id: page.page_id, storage_key: page.storage_key,
         raw_sha256: page.raw_sha256, size_bytes: page.size_bytes, members: page.members, verified: page.verified });
       const admission = await db.query(`SELECT count(*)::int n FROM signal_processing_admissions WHERE target_id=$1::uuid AND action='mass_labeling_jev'`, [context.run_id]);
-      let faultMatrix: FaultMatrixV1 | undefined;
-      try {
-        const candidates = (await readdir(privateRoot)).filter(name => /^fault-matrix-\d+-[a-f0-9]{8}\.json$/u.test(name)).sort();
-        const newest = candidates.at(-1);
-        if (!newest) throw Object.assign(new Error("r16_fault_matrix_missing"), { code: "ENOENT" });
-        faultMatrix = JSON.parse(await readFile(resolve(privateRoot, newest), "utf8")) as FaultMatrixV1;
-        const ageMs = Date.now() - Date.parse(faultMatrix.completed_at);
-        if (!Number.isFinite(ageMs) || ageMs < 0 || ageMs > 2 * 60 * 60 * 1_000
-          || faultMatrix.postgres.system_identifier !== String(identity.rows[0]?.system_identifier)) {
-          throw new Error("r16_fault_matrix_provenance_mismatch");
-        }
-      } catch (error) {
-        if (!(error instanceof Error) || (error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-      }
       const phaseSpans = spans;
       const measured = recorder.finish({
+        source_provenance: sourceProvenance, policy_configuration_digest: policyConfigurationDigest,
         postgres: { verified_version: String(identity.rows[0]?.verified_version), database_name: String(identity.rows[0]?.database_name),
           container_name: "r16-benchmark-pg17", system_identifier: String(identity.rows[0]?.system_identifier),
           loopback_binding: true, pgvector: true,
@@ -256,8 +277,9 @@ try {
           lost_materialized_rows: rootCount - Number(summary.segments) },
         max_buffered_bytes_allowed: execution.max_buffered_bytes,
         max_in_flight_allowed: execution.max_in_flight,
+        max_flushes_allowed: execution.max_flushes,
       }, sustainedStartMs);
-      evidence = { ...measured, failures: faultMatrix?.failures ?? [] };
+      evidence = { ...measured, failures: faultMatrix.failures };
       await mkdir(privateRoot, { recursive: true, mode: 0o700 });
       const output = resolve(privateRoot, `benchmark-${new Date().toISOString().replace(/[:.]/gu, "-")}.json`);
       const finalSummary = summarizeR16BenchmarkV1({ ...evidence, phases: phaseSpans });

@@ -1,10 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { summarizeR16BenchmarkV1, type R16BenchmarkEvidenceV1 } from "./benchmark-contract";
+import { sha256HexV1, summarizeR16BenchmarkV1, type R16BenchmarkEvidenceV1 } from "./benchmark-contract";
 
 function completeEvidence(): R16BenchmarkEvidenceV1 {
+  const fileManifest = [{ path: "scripts/r16/benchmark-contract.ts", sha256: `sha256:${"e".repeat(64)}` }];
   return {
     contract_version: "r16-benchmark-evidence-v1", run_id: "synthetic-run-01",
+    source_provenance: { head_sha: "a".repeat(40), source_tree_sha256: `sha256:${sha256HexV1(JSON.stringify(fileManifest.map(file => [file.path, file.sha256])))}`,
+      tree_status_sha256: `sha256:${"c".repeat(64)}`, file_count: fileManifest.length, file_manifest: fileManifest },
+    policy_configuration_digest: `sha256:${"d".repeat(64)}`,
     started_at: "2026-11-14T10:00:00.000Z", ended_at: "2026-11-14T10:00:20.000Z",
     wall_elapsed_ms: 20_000, sustained_start_ms: 0,
     provider: { kind: "synthetic", requests: 20_000, latency_ms: Array.from({ length: 20_000 }, (_, index) => [100, 250, 500][index % 3]!),
@@ -20,6 +24,8 @@ function completeEvidence(): R16BenchmarkEvidenceV1 {
       denied_provider_requests: 0, lost_materialized_rows: 0 },
     max_buffered_bytes_allowed: 8_388_608,
     max_in_flight_allowed: 1_000,
+    max_flushes_allowed: 1,
+    stream_peaks: { in_flight: 1_000, reserved_working_bytes: 4_096, buffered_responses: 3, active_flushes: 1 },
     phases: Array.from({ length: 20 }, (_, index) => ({ phase: "signal", start_ms: index * 1_000, end_ms: (index + 1) * 1_000 - 1, roots: 1_000 })),
     samples: [{ at_ms: 200, in_flight: 1_000, buffered_bytes: 4_096, buffered_responses: 3,
       active_flushes: 1, leased_runs: 1, rss_bytes: 10_000_000 }],
@@ -41,7 +47,7 @@ function completeEvidence(): R16BenchmarkEvidenceV1 {
 
 test("R16 harness accepts only end-to-end durable PG evidence meeting every sustained window", () => {
   const result = summarizeR16BenchmarkV1(completeEvidence());
-  assert.equal(result.accepted, true);
+  assert.equal(result.accepted, true, result.rejected_reasons.join(","));
   assert.equal(result.roots_per_second, 1_000);
   assert.equal(result.minimum_full_window_roots_per_second, 1_000);
   assert.equal(result.sustained_window_count, 20);
@@ -119,4 +125,17 @@ test("R16 lease expiry evidence distinguishes unresolved RAM-only responses from
   beforeDurability.raw_page_durable = false;
   evidence.failures.splice(evidence.failures.findIndex(failure => failure.kind === "lease_expiry_after_durable"), 1);
   assert.ok(summarizeR16BenchmarkV1(evidence).rejected_reasons.includes("failure_case_missing_lease_expiry_after_durable"));
+});
+
+test("R16 acceptance rejects replayed recovery and callback-observed peaks between samples", () => {
+  const evidence = completeEvidence();
+  evidence.failures.find(failure => failure.kind === "raw_page_write")!.physical_replays = 1;
+  evidence.stream_peaks.in_flight = 1_001;
+  evidence.stream_peaks.reserved_working_bytes = evidence.max_buffered_bytes_allowed + 1;
+  evidence.stream_peaks.active_flushes = evidence.max_flushes_allowed + 1;
+  const result = summarizeR16BenchmarkV1(evidence);
+  assert.ok(result.rejected_reasons.includes("failure_recovery_incomplete"));
+  assert.ok(result.rejected_reasons.includes("in_flight_limit_exceeded"));
+  assert.ok(result.rejected_reasons.includes("memory_backpressure_limit_exceeded"));
+  assert.ok(result.rejected_reasons.includes("active_flush_limit_exceeded"));
 });

@@ -23,6 +23,9 @@ export interface R16RawPageReceiptV1 {
 
 export interface R16BenchmarkEvidenceV1 {
   contract_version: "r16-benchmark-evidence-v1";
+  source_provenance: { head_sha: string; source_tree_sha256: string; tree_status_sha256: string; file_count: number;
+    file_manifest: Array<{ path: string; sha256: string }> };
+  policy_configuration_digest: string;
   run_id: string;
   started_at: string;
   ended_at: string;
@@ -40,6 +43,8 @@ export interface R16BenchmarkEvidenceV1 {
     denied_provider_requests: number; lost_materialized_rows: number };
   max_buffered_bytes_allowed: number;
   max_in_flight_allowed: number;
+  max_flushes_allowed: number;
+  stream_peaks: { in_flight: number; reserved_working_bytes: number; buffered_responses: number; active_flushes: number };
   phases: R16PhaseSpanV1[];
   samples: Array<{ at_ms: number; in_flight: number; buffered_bytes: number; buffered_responses: number;
     active_flushes: number; leased_runs: number; rss_bytes: number }>;
@@ -105,6 +110,15 @@ export function summarizeR16BenchmarkV1(evidence: R16BenchmarkEvidenceV1, option
   const reasons: string[] = [];
 
   if (evidence.contract_version !== "r16-benchmark-evidence-v1") reasons.push("evidence_contract_missing");
+  if (!/^[0-9a-f]{40}$/u.test(evidence.source_provenance.head_sha)
+    || !/^sha256:[0-9a-f]{64}$/u.test(evidence.source_provenance.source_tree_sha256)
+    || !/^sha256:[0-9a-f]{64}$/u.test(evidence.source_provenance.tree_status_sha256)
+    || !Number.isSafeInteger(evidence.source_provenance.file_count) || evidence.source_provenance.file_count < 1
+    || evidence.source_provenance.file_count !== evidence.source_provenance.file_manifest.length
+    || evidence.source_provenance.file_manifest.some(file => !file.path || !/^sha256:[0-9a-f]{64}$/u.test(file.sha256))
+    || `sha256:${sha256HexV1(JSON.stringify(evidence.source_provenance.file_manifest.map(file => [file.path, file.sha256])))}`
+      !== evidence.source_provenance.source_tree_sha256
+    || !/^sha256:[0-9a-f]{64}$/u.test(evidence.policy_configuration_digest)) reasons.push("benchmark_provenance_missing");
   if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || !Number.isFinite(wallMs) || wallMs <= 0) reasons.push("invalid_wall_clock");
   if (evidence.provider.kind !== "synthetic" || evidence.provider.requests !== roots) reasons.push("synthetic_provider_request_count_mismatch");
   if (evidence.provider.latency_ms.length < evidence.provider.requests) reasons.push("provider_latency_missing");
@@ -137,7 +151,7 @@ export function summarizeR16BenchmarkV1(evidence: R16BenchmarkEvidenceV1, option
       || failure.physical_replays !== 0 || failure.raw_page_durable !== false
       || failure.technical_result_applied !== false || failure.settlement_absent !== true
       || failure.reservation_preserved !== true;
-    return failure.outcome !== "recovered" || failure.physical_replays < 0;
+    return failure.outcome !== "recovered" || failure.physical_replays !== 0;
   })) reasons.push("failure_recovery_incomplete");
   if (evidence.failures.some(failure => ["429", "529"].includes(failure.kind) && !(failure.retry_after_ms! > 0))) reasons.push("retry_after_not_observed");
   const injectedFailures = new Set(evidence.failures.map(failure => failure.kind));
@@ -147,10 +161,14 @@ export function summarizeR16BenchmarkV1(evidence: R16BenchmarkEvidenceV1, option
   }
   if (!evidence.samples.length) reasons.push("backpressure_samples_missing");
   if (!Number.isSafeInteger(evidence.max_in_flight_allowed) || evidence.max_in_flight_allowed < 1
-    || evidence.max_in_flight_allowed > 4_096 || evidence.samples.some(sample => sample.in_flight > evidence.max_in_flight_allowed)) {
+    || evidence.max_in_flight_allowed > 4_096 || evidence.samples.some(sample => sample.in_flight > evidence.max_in_flight_allowed)
+    || evidence.stream_peaks.in_flight > evidence.max_in_flight_allowed) {
     reasons.push("in_flight_limit_exceeded");
   }
-  if (evidence.max_buffered_bytes_allowed <= 0 || evidence.samples.some(sample => sample.buffered_bytes > evidence.max_buffered_bytes_allowed)) reasons.push("memory_backpressure_limit_exceeded");
+  if (evidence.max_buffered_bytes_allowed <= 0 || evidence.samples.some(sample => sample.buffered_bytes > evidence.max_buffered_bytes_allowed)
+    || evidence.stream_peaks.reserved_working_bytes > evidence.max_buffered_bytes_allowed) reasons.push("memory_backpressure_limit_exceeded");
+  if (!Number.isSafeInteger(evidence.max_flushes_allowed) || evidence.max_flushes_allowed < 1
+    || evidence.stream_peaks.active_flushes > evidence.max_flushes_allowed) reasons.push("active_flush_limit_exceeded");
   if (!evidence.samples.some(sample => sample.leased_runs > 0)) reasons.push("lease_samples_missing");
 
   const sustainedStart = Math.min(wallMs, Math.max(0, evidence.sustained_start_ms));
@@ -189,9 +207,9 @@ export function summarizeR16BenchmarkV1(evidence: R16BenchmarkEvidenceV1, option
     provider_request_count: evidence.provider.requests,
     raw_page_count: evidence.raw_storage.pages.length,
     postgres_apply_batches: evidence.postgres.apply_batches,
-    max_in_flight: Math.max(0, ...evidence.samples.map(sample => sample.in_flight)),
+    max_in_flight: Math.max(evidence.stream_peaks.in_flight, 0, ...evidence.samples.map(sample => sample.in_flight)),
     max_in_flight_allowed: evidence.max_in_flight_allowed,
-    max_buffered_bytes: Math.max(0, ...evidence.samples.map(sample => sample.buffered_bytes)),
+    max_buffered_bytes: Math.max(evidence.stream_peaks.reserved_working_bytes, 0, ...evidence.samples.map(sample => sample.buffered_bytes)),
     failure_count: evidence.failures.length,
     recovered_failure_count: evidence.failures.filter(failure => failure.outcome === "recovered").length,
     contained_unknown_failure_count: evidence.failures.filter(failure => failure.outcome === "contained_unknown").length,

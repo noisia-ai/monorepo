@@ -12,6 +12,7 @@ import { createWorkspaceEngineStorageV1 } from '../../services/workers/src/worke
 import { startR16HttpFilesystemStorageV1 } from './http-filesystem-storage';
 import { createSyntheticJevFetchV1, deterministicR16LatencyV1 } from './synthetic-jev';
 import type { R16BenchmarkEvidenceV1 } from './benchmark-contract';
+import { captureR16SourceProvenanceV1, r16PolicyConfigurationDigestV1 } from './source-provenance';
 
 type Db = { query: (sql: string, values?: unknown[]) => Promise<{ rows: Array<Record<string, unknown>> }> };
 type Case = '429' | '529' | 'raw_page_write' | 'postgres_commit' | 'settlement_ack_lost'
@@ -37,12 +38,14 @@ if (process.env.R16BENCH_RUN_ID !== 'benchmark-pg17' || !process.env.DATABASE_UR
 const redisUrl = process.env.R16BENCH_REDIS_URL ?? (await loadPrivateEnv(
   process.env.R16BENCH_REDIS_ENV_PATH ?? resolve(privateRoot, 'labs/r16-lab-nov14/connection.env'))).R16BENCH_REDIS_URL;
 if (!redisUrl || !/^redis:\/\/(?:127\.0\.0\.1|localhost|\[::1\]):\d+(?:\/\d*)?$/u.test(redisUrl)) throw new Error('r16_fault_matrix_loopback_redis_required');
+const sourceProvenance = await captureR16SourceProvenanceV1(repo);
 const objectRoot = await mkdtemp(join(privateRoot, 'fault-objects-'));
 const storageServer = await startR16HttpFilesystemStorageV1(objectRoot);
 const providerClosers: Array<() => Promise<void>> = [];
 const results: R16BenchmarkEvidenceV1['failures'] = [];
 const runIds: string[] = [];
 let systemIdentifier = '';
+let policyConfigurationDigest = '';
 let policyDenials = 0, budgetDenials = 0, deniedRequestsNotSent = 0, deniedProviderRequests = 0;
 let duplicateSettlements = 0;
 
@@ -58,14 +61,27 @@ async function runCase(kind: Case): Promise<void> {
     runIds.push(context.run_id);
     const identityRow = await database.query(`SELECT current_database() database_name,
       (SELECT system_identifier::text FROM pg_control_system()) system_identifier,
-      admission.execution_cap_micro_usd::text execution_cap,admission.provider,admission.model,admission.configuration
+      run.processing_admission_id::text admission_id,
+      admission.execution_cap_micro_usd::text execution_cap,admission.provider,admission.model,admission.configuration,
+      admission.configuration_digest,admission.action,admission.policy_version_id::text policy_version_id,
+      policy.policy_digest,policy.daily_cap_micro_usd::text policy_daily_cap,
+      action.max_execution_micro_usd::text policy_max_execution
       FROM signal_labeling_runs run JOIN signal_processing_admissions admission ON admission.id=run.processing_admission_id
+      JOIN signal_processing_policy_versions policy ON policy.id=admission.policy_version_id
+      JOIN signal_processing_policy_actions action ON action.policy_version_id=policy.id AND action.action=admission.action
       WHERE run.id=$1::uuid`, [context.run_id]);
     const identity = identityRow.rows[0]!;
     assert.match(String(identity.database_name), /^noisia_mfp_recovery_[a-f0-9]{32}$/u);
     assert.ok(identity.system_identifier);
     if (systemIdentifier) assert.equal(String(identity.system_identifier), systemIdentifier);
     else systemIdentifier = String(identity.system_identifier);
+    const casePolicyDigest = r16PolicyConfigurationDigestV1({ action:String(identity.action),
+      configuration:identity.configuration, configuration_digest:String(identity.configuration_digest),
+      model:String(identity.model), policy_daily_cap_micro_usd:String(identity.policy_daily_cap),
+      policy_digest:String(identity.policy_digest), policy_max_execution_micro_usd:String(identity.policy_max_execution),
+      policy_version_id:String(identity.policy_version_id), provider:String(identity.provider) });
+    if (policyConfigurationDigest) assert.equal(casePolicyDigest, policyConfigurationDigest);
+    else policyConfigurationDigest = casePolicyDigest;
 
     const physicalBodies: string[] = [];
     const physicalStatuses: number[] = [];
@@ -136,10 +152,12 @@ async function runCase(kind: Case): Promise<void> {
         : property === 'settlePage' && kind === 'settlement_ack_lost' ? 'settlePage'
         : property === 'persistRawPage' && kind === 'worker_restart_after_page' ? 'persistRawPage' : undefined;
       if (fault) return async (...args: never[]) => {
-        if (kind === 'lease_expiry_after_durable' && !expiryInjected) {
-          expiryInjected = true;
-          await database.query(`UPDATE signal_labeling_runs SET lease_until=clock_timestamp()-interval '1 second'
-            WHERE id=$1::uuid`, [context.run_id]);
+        if (kind === 'lease_expiry_after_durable') {
+          if (!expiryInjected) {
+            expiryInjected = true;
+            await database.query(`UPDATE signal_labeling_runs SET lease_until=clock_timestamp()-interval '1 second'
+              WHERE id=$1::uuid`, [context.run_id]);
+          }
           return (target[fault] as (...input: never[]) => Promise<unknown>).apply(target, args);
         }
         const result = await (target[fault] as (...input: never[]) => Promise<unknown>).apply(target, args);
@@ -158,11 +176,19 @@ async function runCase(kind: Case): Promise<void> {
       const delta = physicalBodies.length - before;
       assert.equal(delta, 0); policyDenials++; deniedRequestsNotSent++;
       if (delta !== 0) deniedProviderRequests += delta;
+
+      const admissionId = String(identity.admission_id ?? '');
+      const executionCap = Number(identity.execution_cap);
+      assert.match(admissionId, /^[0-9a-f-]{36}$/u);
+      assert.ok(Number.isSafeInteger(executionCap) && executionCap > 0);
+      const capacityProbe = (amount: number) => database.query(`SELECT signal_processing_capacity_v1(
+          $1::uuid,$2::uuid,$3::uuid,$4::uuid,ARRAY['mass_labeling_jev']::text[],
+          $5::text,$6::text,$7::jsonb,$8::bigint,'r16_risk_probe',NULL,$9::bigint)`,
+      [context.workspace_id, context.actor_user_id, context.run_id, admissionId, String(identity.provider),
+        String(identity.model), JSON.stringify(identity.configuration), executionCap, amount]);
+      await capacityProbe(0);
       const beforeBudget = physicalBodies.length;
-      await assert.rejects(database.query(`SELECT signal_processing_capacity_v1($1::uuid,$2::uuid,$3::uuid,$4::uuid,
-          ARRAY['mass_labeling_jev']::text[],$5::text,$6::text,$7::jsonb,$8::bigint)`,
-      [context.workspace_id, context.actor_user_id, context.run_id, context.run_id, identity.provider, identity.model,
-        JSON.stringify(identity.configuration), Number(identity.execution_cap) + 1]));
+      await assert.rejects(capacityProbe(executionCap + 1), /processing_execution_cap_exhausted/u);
       const budgetDelta = physicalBodies.length - beforeBudget;
       assert.equal(budgetDelta, 0); budgetDenials++; deniedRequestsNotSent++;
       if (budgetDelta !== 0) deniedProviderRequests += budgetDelta;
@@ -280,7 +306,9 @@ try {
       requested_cases: cases, denied_provider_requests: deniedProviderRequests })}\n`);
   } else {
   const output = resolve(privateRoot, `fault-matrix-${Date.now()}-${randomUUID().slice(0, 8)}.json`);
-  const receipt = { completed_at: new Date().toISOString(), postgres: { system_identifier: systemIdentifier },
+  const receipt = { completed_at: new Date().toISOString(), case_count: results.length,
+    postgres: { system_identifier: systemIdentifier }, source_provenance: sourceProvenance,
+    policy_configuration_digest: policyConfigurationDigest,
     failures: results, guards: { policy_denials: policyDenials, budget_denials: budgetDenials,
       denied_requests_not_sent: deniedRequestsNotSent },
     invariants: { duplicate_settlements: duplicateSettlements, denied_provider_requests: deniedProviderRequests } };
