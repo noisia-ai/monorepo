@@ -27,6 +27,7 @@ No hay aprobaciones humanas intermedias en los procesos de análisis: Sonnet 4.6
 - [ ] H3: ciclo automático de tópicos, con evidencia calculada, límites de vueltas y precedencia humana.
 - [ ] H4: objeto Estudio, plantilla T&B completa y salida con evidencia literal verificada.
 - [ ] H5: stopwords/lift, edición posterior, recibo de costo corregido y ADR033.
+- [x] H5 parcial: corregir la extrapolación del recibo R15 y documentar el escenario de aproximadamente USD 114/millón, separando raíces de grupos/vueltas. El costo real de R16 sigue pendiente.
 - [ ] H6: ejecución real en UAT de Escucha y Estudio T&B; muestras ciegas, comparación privada, guía QA, costos y tiempos.
 - [ ] Aceptación final requisito por requisito, PR revisados y checks reales verdes, paquete con SHA256SUMS y resumen de diez líneas.
 
@@ -109,6 +110,7 @@ Recibo: separar Voyage/JEV por raíz de Claude por número de grupos y vueltas; 
 - Los documentos privados reflejaban saldos previos. La consola actual muestra más crédito; se registra evidencia privada nueva y no se presupone recarga por parte del agente.
 - El cliente JEV actual tiene concurrencia por defecto dos y valida máximo ochenta; el worker mass-labeling v2 agrega un techo interno de ocho. Esto requiere perfilado por etapa antes de elegir un cambio.
 - El checkout no tiene .data local. La custodia existente está en el checkout privado de Downloads; no copiarla a Git.
+- El promedio del piloto completo incluye una etapa editorial que no escala por raíz. Multiplicarlo linealmente daba USD 205.81/millón; mantener explícitamente los grupos y una vuelta de referencia produce USD 114.035250. Ambos cálculos parten del mismo recibo, cuyo uso histórico permanece USD 17.280463.
 
 ## Registro de decisiones
 
@@ -124,6 +126,7 @@ Recibo: separar Voyage/JEV por raíz de Claude por número de grupos y vueltas; 
 - 2026-11-14: R16 nuevo prevalece sobre el plan piloto anterior. La evidencia literal de T&B sirve para integridad de la salida/capa y no se convierte en Claude por mención ni puerta de clasificación.
 - 2026-11-14: preservar R15 aceptada y empezar en rama desde develop c1c7ed5e. No modificar implementación hasta cerrar baseline H0; lecturas y documentación preparatoria son gratuitas.
 - 2026-11-14: separar capacidad interna sintética de throughput real: organización observada 80 solicitudes/s y 100,000 tokens/s compartidos entre claves. No prometer 1,000 raíces/s reales con ese límite.
+- 2026-11-14: publicar una fórmula condicional con coeficientes medidos en R15 y costo editorial por grupos/vueltas; actualizar la proyección histórica sin cambiar sus recibos ni presentarla como costo medido de R16. Reconstrucción verificada con aritmética decimal exacta.
 
 ## Resultado y retrospectiva
 
@@ -132,3 +135,5 @@ Los contratos de R16 están integrados. Las páginas durables tienen evidencia P
 Las observaciones H0 y su procedencia se guardan en custodia privada; la implementación, el benchmark integral y las ejecuciones reales de R16 siguen pendientes. Ninguna prueba de adaptador aislado o store en memoria se usa como aceptación global.
 
 En ejecución. Lectura y verificación inicial completas; implementación, mediciones detalladas y aceptación UAT pendientes. Este documento conserva el alcance completo y no sustituye el objetivo por un piloto reducido.
+
+El modelo de costo ya tiene una referencia reproducible en R16_COST_MODEL_BASELINE.md. Las ejecuciones reales de R16 y sus costos por etapa todavía deben producirse y verificarse.

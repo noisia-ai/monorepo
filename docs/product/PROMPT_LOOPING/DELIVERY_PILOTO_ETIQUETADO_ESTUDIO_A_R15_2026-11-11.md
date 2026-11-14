@@ -17,7 +17,7 @@ Corte de UAT del 2026-11-11. Studio importó once archivos con 113,338 registros
 | JEV · continuación | 82,962 | raíces adicionales | 5.727985 | 0.068221 |
 | Signal | 4 | segmentos | 0.000000 | 0.000000 |
 
-El uso a tarifa sumó **USD 17.280463**. Equivale a USD 0.205813 por mil raíces. La proyección lineal por millón es USD 205.81 con el mismo costo medio. La parte editorial depende del número y tamaño de grupos. Voyage mostró USD 0 de cargo en cuenta por los vectores. El total de la tabla usa la tarifa correspondiente a sus tokens.
+El uso a tarifa sumó **USD 17.280463**. Equivale a USD 0.205813 por mil raíces de esta ejecución. Para proyectar otro volumen se separan Voyage/JEV por raíz y Claude por grupos y vueltas: el escenario de un millón con el mismo costo editorial de una vuelta da **USD 114.04**, según la [fórmula y sus supuestos](R16_COST_MODEL_BASELINE.md). El recibo histórico no cambia. Voyage mostró USD 0 de cargo en cuenta por los vectores. El total de la tabla usa la tarifa correspondiente a sus tokens.
 
 | Intervalo | Tiempo de reloj |
 |---|---:|
