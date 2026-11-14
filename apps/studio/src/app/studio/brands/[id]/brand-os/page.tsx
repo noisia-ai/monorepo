@@ -1,4 +1,5 @@
 import Link from "next/link";
+import {SignalListeningConfiguration} from "@/components/brands/SignalListeningConfiguration";
 import { BrandMonitoringJourney } from "@/components/brands/BrandMonitoringJourney";
 import { ArrowRight, IdentificationCard } from "@phosphor-icons/react/dist/ssr";
 import { getTranslations } from "next-intl/server";
@@ -65,6 +66,7 @@ export default async function BrandOsWorkspacePage({ params }: { params: Promise
       <KnowledgeBaseManager brandId={brand.id} sources={brand.knowledgeSources} />
       {workspace.summary.workspaceId ? (
         <>
+          {process.env.NOISIA_SIGNAL_LISTENING_ENABLED === "true" ? <SignalListeningConfiguration workspaceId={workspace.summary.workspaceId} /> : null}
           <BrandOsContextPreparation brandId={brand.id} workspaceId={workspace.summary.workspaceId} mfpEnabled={mfpEnabled}
             allowProcessingAuthorization={["noisia_admin", "founder", "admin"].includes(session.appUser.primaryRole)} />
           <AdminResourceSection

@@ -1,4 +1,5 @@
 import Link from "next/link";
+import {SignalListeningConfiguration} from "@/components/brands/SignalListeningConfiguration";
 import { notFound } from "next/navigation";
 import { getTranslations } from "next-intl/server";
 import { ArrowRight, IdentificationCard } from "@phosphor-icons/react/dist/ssr";
@@ -53,6 +54,7 @@ export default async function ClientBrandOsPage({ params }: { params: Promise<{ 
     />
     <CompetitorManager brandId={brand.id} workspaceId={entry.workspaceId} competitors={brand.competitors} unfunded />
     <KnowledgeBaseManager brandId={brand.id} sources={brand.knowledgeSources} unfunded />
+    {process.env.NOISIA_SIGNAL_LISTENING_ENABLED === "true" ? <SignalListeningConfiguration workspaceId={entry.workspaceId} editable={entry.canManageBrandContext} /> : null}
     <ClientBrandContextProcessingQuote workspaceId={entry.workspaceId} refreshSignal={new Date().toISOString()}
       authorizeFromEndpoint />
     <AdminResourceSection

@@ -1,4 +1,5 @@
 import "./env/load";
+import {startSignalListeningDrainerV1} from "./workers/signal-listening-jev";
 
 import { isDataOsWorkerEnabled, isEngineRuntimeEnabled } from "@noisia/query-engine";
 import { closeWorkerDatabasePoolsV1, pool } from "./db/client";
@@ -59,6 +60,7 @@ const topicClassificationOutboxDrainer = dataOsWorker
   ? startSignalTopicClassificationOutboxDrainerV1()
   : null;
 const corpusPreparationDrainer = dataOsWorker ? startSignalWorkspaceCorpusPreparationDrainerV1() : null;
+const listeningDrainer = dataOsWorker ? startSignalListeningDrainerV1() : null;
 const workspaceEmbeddingsDrainer = dataOsWorker ? startSignalWorkspaceEmbeddingsDrainerV1() : null;
 const workspaceMonitoringInsightsDrainer = dataOsWorker ? startSignalWorkspaceMonitoringInsightsDrainerV1() : null;
 const topicConsolidationDrainer = dataOsWorker ? startSignalTopicConsolidationOutboxDrainerV1() : null;
@@ -141,6 +143,7 @@ async function shutdown() {
   await topicClassificationOutboxDrainer?.close();
   await corpusPreparationDrainer?.close();
   await workspaceEmbeddingsDrainer?.close();
+  await listeningDrainer?.close();
   await workspaceMonitoringInsightsDrainer?.close();
   await topicConsolidationDrainer?.close();
   await topicEditorialDrainer?.close();
