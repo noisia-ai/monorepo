@@ -1,4 +1,4 @@
-import { processJevStreamingWindowV2, type JevStreamingExecutionV2 } from './signal-jev-streaming-window';
+import { processJevStreamingWindowV2, type JevStreamingExecutionV2, type JevStreamingMetricsV2 } from './signal-jev-streaming-window';
 import { setMaxListeners } from "node:events";
 import { llmCostMicroUsdV1, type FacetInput, type LlmPriceV1, type LlmUsageV1 } from "@noisia/query-engine";
 import type { createSignalLabelingStoreV1, LabelingRunV1, LabelingCallV1, LabelingCallProposalV1 } from "@noisia/db";
@@ -23,6 +23,7 @@ export async function processJevLabelingPageV1<Input extends FacetInput,Result>(
     recovery_only?:boolean;
     max_in_flight?(run:LabelingRunV1):number|undefined;
   };
+  observe_stream?(metrics:JevStreamingMetricsV2):void;
 }): Promise<{status:string; roots?:number; labeled?:number; unresolved_billing_requests?:number;
   settled_micro_usd?:number; p50_ms?:number|null; p95_ms?:number|null}> {
   const {store,provider,hooks}=args,run=await store.claim(args.run_id);
@@ -54,7 +55,7 @@ export async function processJevLabelingPageV1<Input extends FacetInput,Result>(
       const reserved=run.error_code?[]:calls.filter(call=>call.status==="reserved"&&!call.raw_body);
       if(reserved.length)await store.markSubmitting(run,reserved);
       if(args.execution) {
-        const outcome = await processJevStreamingWindowV2({run,calls,send_calls:reserved,store,provider,execution:args.execution,price,cancellation,hooks});
+        const outcome = await processJevStreamingWindowV2({run,calls,send_calls:reserved,store,provider,execution:args.execution,price,cancellation,hooks,observe_stream:args.observe_stream});
         aggregate = { ...outcome, roots:(aggregate?.roots??0)+outcome.roots,
           labeled:(aggregate?.labeled??0)+outcome.labeled,
           settled_micro_usd:(aggregate?.settled_micro_usd??0)+outcome.settled_micro_usd,
@@ -100,7 +101,7 @@ export async function processJevLabelingPageV1<Input extends FacetInput,Result>(
         settlement.push({call,usage,settled_micro_usd:llmCostMicroUsdV1(usage,price),stop_reason:"completed"});
         results.push({call,results:mapped});latencies.push(raw.latency_ms);
       }catch(error){
-        const failure=jevProviderErrorV1(error),observed=hooks.invalidUsage?.(failure)??failure.evidence.usage;
+        const failure=jevProviderErrorV1(error),observed=failure.outcome==='outcome_unknown'?undefined:hooks.invalidUsage?.(failure)??failure.evidence.usage;
         if(observed){const usage=jevUsageV1(observed);settlement.push({call,usage,settled_micro_usd:llmCostMicroUsdV1(usage,price),stop_reason:failure.code});
           results.push({call,results:hooks.error(run,call,failure.code,false)});
           if(hooks.fail_on_error)errors.push({call,unknown:false,code:failure.code});

@@ -38,7 +38,7 @@ import {
 import { createWorkspaceEngineStorageV1, type WorkspaceEngineStorageV1 } from "./signal-workspace-engine-storage";
 import { readSignalLabelingReceiptV1, createLabelingRawPagesStorageV1 } from "./signal-labeling-receipt-storage";
 
-import type { JevStreamingExecutionV2 } from './signal-jev-streaming-window';
+import type { JevStreamingExecutionV2, JevStreamingMetricsV2 } from './signal-jev-streaming-window';
 type Store = ReturnType<typeof createMassLabelingStoreV1>;
 function priceOf(run: LabelingRunV1) {
   if (
@@ -66,6 +66,7 @@ export function processMassLabelingJevV1(args: {
   lease_renewal_ms?: number;
   recovery_only?: boolean;
   execution?: JevStreamingExecutionV2;
+  observe_stream?(metrics:JevStreamingMetricsV2):void;
 }) {
   return processJevLabelingPageV1<MassLabelingInputV1, MassLabelingResultV1>({
     ...args,

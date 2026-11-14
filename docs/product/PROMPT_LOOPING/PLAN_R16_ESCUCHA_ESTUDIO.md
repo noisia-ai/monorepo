@@ -12,6 +12,8 @@ No hay aprobaciones humanas intermedias en los procesos de análisis: Sonnet 4.6
 
 ## Progreso
 
+- PR195 integrado a develop en 952eb507 tras revisión independiente de 60abe0e2 y CI/PostgreSQL verdes. Publica contratos y el heap del build; no modifica el despliegue de UAT.
+- H1 parcial: páginas inmutables y lectores duales pasaron seis escenarios PostgreSQL con 276 migraciones, build y tipado/lint. La revisión del transporte encontró tres P1: ausencia de backoff sin cabecera, liquidación indebida de un rechazo con usage cero y errores técnicos sin aplicar. Se reprodujeron y las 36 pruebas focales pasan; suite workers con 983 aprobadas y 43 omisiones por entorno, tipado/lint 11/11. Faltan revisión del SHA final, integración del harness, CI y benchmark sostenido.
 - H0: mediciones remotas de sólo lectura y pruebas de IO sintético registradas antes de cambios productivos; se distingue latencia histórica del proveedor de Storage/DB actuales. H1 se implementa en tres worktrees separados y todavía no acredita el throughput final.
 
 - [x] Leer objetivo completo, diseño aprobado, auditoría y reglas del repositorio; contrastar develop y checkout.
@@ -84,6 +86,10 @@ Recibo: separar Voyage/JEV por raíz de Claude por número de grupos y vueltas; 
 
 ## Sorpresas y descubrimientos
 
+- Las respuestas 429/529 pueden incluir campos de uso, incluso cero. Eso no prueba ausencia de procesamiento ni un cargo definitivo. El transporte conserva cuerpo y exposición como unknown, detiene nuevos envíos de la ventana y aplica un error técnico sin inventar una liquidación.
+- La suite completa reveló que los consumidores híbridos anteriores inferían uso cero del HTTP 429/529. Se elimina esa inferencia al compartir el validador; sus errores técnicos conservan el crudo y exposición sin repetir el proveedor. No se habilita esa ruta ni se alteran recibos liquidados históricos.
+- La prueba de capacidad usa un proveedor y una cuenta de cuota sintéticos, aislados. El limiter Redis sigue siendo real y respeta esa cuota declarada; otra prueba conserva 80 solicitudes/s y 100,000 tokens/s. Limitar el proveedor simulado a 80 no demostraría la capacidad interna de 1,000/s ni sustituye la corrida posterior con Typesafe real.
+- El recibo histórico R15 separa importación (6 h 35 min 45 s), preparación (16 min 25 s), Voyage (59 min 58 s), mapa y JEV. «Mapa disponible» incluye etapas interiores: no se suman para aparentar un tiempo CSV→Signal. La nueva corrida debe registrar sus propios extremos y esperas.
 - El PR documental agotó el heap de aproximadamente 2 GiB de Node en el build completo de Studio, sin cambios de aplicación respecto a R15. La misma construcción local con 4 GiB y placeholders aislados de CI pasó completa. Se conserva el primer log y el resultado posterior de CI se verificará antes de fusionar.
 - La sección 4.6 de METHODOLOGY no está en el checkout de develop; se consultó el archivo vigente mediante una referencia Git de main en sólo lectura. No se fusiona ni modifica esa rama. El diseño aprobado R16 manda sobre diferencias del playbook anterior.
 
@@ -100,6 +106,9 @@ Recibo: separar Voyage/JEV por raíz de Claude por número de grupos y vueltas; 
 
 ## Registro de decisiones
 
+- 2026-11-14: mantener unknown los rechazos ambiguos 429/529 aunque su JSON declare uso cero. Backoff compartido siempre, con piso exponencial de 1–30 s cuando Retry-After falte o sea menor; nunca reenviar el intento incierto. Si falla la actualización de la cuota compartida, cerrar nuevas admisiones y conservar el recibo físico.
+- 2026-11-14: conservar la reserva de memoria de cada respuesta hasta terminar su página durable, liquidación/aplicación y feedback; liberar las referencias locales al crudo al concluir. La recuperación reutiliza la última página autenticada por pase sin compartirla entre ámbitos.
+- 2026-11-14: el harness utiliza el pool de la base sintética acreditada directamente; las pruebas PostgreSQL normales conservan sus clones. No falsificar GITHUB_ACTIONS ni ampliar los guards para admitir pools arbitrarios.
 - 2026-11-14: reservar 4 GiB de heap únicamente al paso de construcción de Studio en CI; no omitir lint, tipado, build ni gates. UAT y sus variables no cambian.
 
 - 2026-11-14: implementar H1 en tres ramas/worktrees existentes limpios y separados: crítico DB/páginas/lector dual, estándar proveedor/scheduler, mecánico benchmark con almacenamiento y PostgreSQL reales. El orquestador conserva integración, pruebas remotas, gasto, revisión y fusión; ninguno opera cuentas o UAT. El resultado sintético inicial y la escritura temporal no cuentan como aceptación de 1,000/s.
@@ -109,6 +118,8 @@ Recibo: separar Voyage/JEV por raíz de Claude por número de grupos y vueltas; 
 - 2026-11-14: separar capacidad interna sintética de throughput real: organización observada 80 solicitudes/s y 100,000 tokens/s compartidos entre claves. No prometer 1,000 raíces/s reales con ese límite.
 
 ## Resultado y retrospectiva
+
+Los contratos de R16 están integrados. Las páginas durables tienen evidencia PostgreSQL aislada y el transporte está en validación tras corregir la revisión. No hay migraciones R16 aplicadas en UAT ni llamadas pagadas nuevas. El benchmark integral, la configuración genérica de Escucha y las ejecuciones de aceptación siguen pendientes.
 
 Las observaciones H0 y su procedencia se guardan en custodia privada; la implementación, el benchmark integral y las ejecuciones reales de R16 siguen pendientes. Ninguna prueba de adaptador aislado o store en memoria se usa como aceptación global.
 

@@ -116,3 +116,39 @@ test('high concurrency requires shared account admission and explicit token esti
   await assert.rejects(unavailable.evaluate(request), (e: unknown) => e instanceof JevProviderErrorV1 && e.code === 'jev_rate_limiter_unavailable' && e.outcome === 'definitely_not_sent');
   assert.equal(calls, 1);
 });
+
+test('throttling always backs off the shared account, including missing or invalid Retry-After', async () => {
+  for (const header of [undefined, 'invalid', '0', '3']) {
+    const delays: number[] = [];
+    const limiter = { acquire: async () => ({ id: 'synthetic', estimated_input_tokens: 100 }),
+      throttle: async (delay: number) => { delays.push(delay); }, observe: async () => {} };
+    const client = createTypesafeJevClientV1({ enabled: true, api_key: 'test', rate_limiter: limiter,
+      estimate_input_tokens: () => 100, fetch: async () => new Response('busy', {
+        status: 529, ...(header === undefined ? {} : { headers: { 'retry-after': header } }) }) });
+    await client.evaluate(request); await client.evaluate(request);
+    assert.deepEqual(delays, header === '3' ? [3000, 3000] : [1000, 2000]);
+  }
+});
+
+test('a 429/529 usage claim never proves billing or absence of processing', () => {
+  for (const http_status of [429, 529]) for (const input_tokens of [0, 100]) {
+    const body = JSON.stringify({ error: 'busy', usage: { input_tokens, output_tokens: 0 } });
+    assert.throws(() => validateJevResponseV1(request, { body, http_status, latency_ms: 1 }),
+      (error: unknown) => error instanceof JevProviderErrorV1 && error.outcome === 'outcome_unknown'
+        && error.evidence.http_status === http_status && error.evidence.usage === undefined
+        && /^sha256:[0-9a-f]{64}$/.test(error.evidence.response_digest ?? ''));
+  }
+});
+
+test('failed shared cooldown preserves its receipt and closes subsequent admission', async () => {
+  let sends = 0;
+  const client = createTypesafeJevClientV1({ enabled: true, api_key: 'test', estimate_input_tokens: () => 100,
+    rate_limiter: { acquire: async () => ({ id: 'synthetic', estimated_input_tokens: 100 }),
+      throttle: async () => { throw Error('redis_down'); }, observe: async () => {} },
+    fetch: async () => { sends++; return new Response('busy', { status: 529 }); } });
+  const raw = await client.evaluate(request);
+  assert.equal(raw.http_status, 529); assert.equal(raw.body, 'busy'); assert.equal(raw.rate_limit_update_failed, true);
+  await assert.rejects(client.evaluate(request), (error: unknown) => error instanceof JevProviderErrorV1
+    && error.outcome === 'definitely_not_sent' && error.code === 'jev_rate_limiter_unavailable');
+  assert.equal(sends, 1);
+});

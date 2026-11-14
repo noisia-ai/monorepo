@@ -1,9 +1,10 @@
 import { createHash } from 'node:crypto';
+import { setTimeout as sleep } from 'node:timers/promises';
 import type { JevAccountRateLimiter, JevRateReservation } from './jev-account-rate-limit';
 
 import type { JevRequestV1, JevResponseV1 } from '@noisia/query-engine/src/signal-mention-facets-jev-v1';
 export type { JevRequestV1, JevResponseV1 } from '@noisia/query-engine/src/signal-mention-facets-jev-v1';
-export type JevRawResponseV1 = { body: string; http_status: number; latency_ms: number; retry_after?: string; retry_after_ms?: number; rate_reservation?: JevRateReservation; rate_calibration?:{labeler_digest:string;input_bytes:number}; rate_limit_update_failed?: true };
+export type JevRawResponseV1 = { body: string; http_status: number; latency_ms: number; retry_after?: string; retry_after_ms?: number; rate_backoff_ms?: number; rate_reservation?: JevRateReservation; rate_calibration?:{labeler_digest:string;input_bytes:number}; rate_limit_update_failed?: true };
 export type JevOutcomeV1 = 'definitely_not_sent' | 'outcome_unknown' | 'known_response_invalid';
 export class JevProviderErrorV1 extends Error {
   constructor(readonly code: string, readonly outcome: JevOutcomeV1,
@@ -51,6 +52,7 @@ export function createTypesafeJevClientV1(options: {
 } = {}): JevProviderV1 {
   const concurrency = options.concurrency ?? Number(process.env.NOISIA_JEV_CONCURRENCY ?? '2');
   let active = 0; const waiting: Array<() => void> = [];
+  let rejections = 0, localCooldownUntil = 0, rateUnavailable = false;
   const responseLimit = options.max_response_bytes ?? MAX_RESPONSE_BYTES;
   return { max_concurrency: concurrency, max_response_bytes: responseLimit,
     async observeUsage(raw, input_tokens) {
@@ -85,8 +87,12 @@ export function createTypesafeJevClientV1(options: {
       // Cancellation fences queued work immediately before fetch. Already sent calls keep
       // their response channel so raw billing evidence can still be persisted.
       if (options.rate_limiter && options.estimate_input_tokens) {
+        if (rateUnavailable) throw new JevProviderErrorV1('jev_rate_limiter_unavailable', 'definitely_not_sent');
         try { reservation = await options.rate_limiter.acquire(options.estimate_input_tokens(request), signal); }
         catch { throw new JevProviderErrorV1(signal?.aborted ? 'jev_send_canceled' : 'jev_rate_limiter_unavailable', 'definitely_not_sent'); }
+      } else if (localCooldownUntil > Date.now()) {
+        try { await sleep(localCooldownUntil - Date.now(), undefined, { signal }); }
+        catch { throw new JevProviderErrorV1('jev_send_canceled', 'definitely_not_sent'); }
       }
       if (signal?.aborted) throw new JevProviderErrorV1('jev_send_canceled', 'definitely_not_sent');
       start = performance.now(); timer = setTimeout(() => controller.abort(), timeout); timer.unref?.();
@@ -96,15 +102,22 @@ export function createTypesafeJevClientV1(options: {
       });
       const retryAfter = response.headers.get('retry-after');
       const retryDelay = retryAfter === null ? undefined : jevRetryAfterMsV1(retryAfter, Date.now());
-      const responseBody = await readBounded(response, responseLimit);
-      const physicalLatency = performance.now() - start;
-      let rateUpdateFailed = false;
-      if ([429, 529].includes(response.status) && options.rate_limiter && retryDelay !== undefined) {
-        try { await options.rate_limiter.throttle(retryDelay); } catch { rateUpdateFailed = true; }
-      }
+      // Start the shared cooldown as soon as rejection headers arrive, even if
+      // the body is slow or invalid. Retry-After may extend the exponential floor.
+      let backoff: number | undefined;
+      if ([429, 529].includes(response.status)) {
+        rejections++;
+        backoff = Math.max(retryDelay ?? 0, Math.min(30_000, 1000 * 2 ** Math.min(rejections - 1, 5)));
+        localCooldownUntil = Math.max(localCooldownUntil, Date.now() + backoff);
+      } else if (response.status === 200) rejections = 0;
+      const bodyPromise = readBounded(response, responseLimit).then(body => ({ body, latency: performance.now() - start }));
+      const cooldownPromise = backoff === undefined || !options.rate_limiter ? Promise.resolve(false)
+        : options.rate_limiter.throttle(backoff).then(() => false, () => { rateUnavailable = true; return true; });
+      const [physical, rateUpdateFailed] = await Promise.all([bodyPromise, cooldownPromise]);
       // Preserve physical rejection evidence. The scheduler must persist this response
       // before admitting any new attempt; this client never retries an HTTP request.
-      return { body: responseBody, ...(reservation ? { rate_reservation: reservation } : {}), ...(rateUpdateFailed ? { rate_limit_update_failed: true as const } : {}), http_status: response.status, latency_ms: physicalLatency,
+      return { body: physical.body, ...(reservation ? { rate_reservation: reservation } : {}), ...(rateUpdateFailed ? { rate_limit_update_failed: true as const } : {}), http_status: response.status, latency_ms: physical.latency,
+        ...(backoff === undefined ? {} : { rate_backoff_ms: backoff }),
         ...(retryAfter === null ? {} : { retry_after: retryAfter }),
         ...(retryDelay === undefined ? {} : { retry_after_ms: retryDelay }) };
     } catch (error) { throw jevProviderErrorV1(error); }
@@ -117,6 +130,10 @@ const probability = (value: unknown): value is number => typeof value === 'numbe
  * become an unrelated/spam decision. No silent acceptance of missing or extra questions. */
 export function validateJevResponseV1(request: JevRequestV1, raw: JevRawResponseV1): JevResponseV1 {
   const response_digest = `sha256:${createHash('sha256').update(raw.body).digest('hex')}`;
+  // A throttle's optional usage fields do not prove non-processing or a bill.
+  // Keep its exposure until authoritative evidence can reconcile the attempt.
+  if ([429, 529].includes(raw.http_status)) throw new JevProviderErrorV1('jev_response_invalid', 'outcome_unknown',
+    { response_digest, http_status: raw.http_status });
   let usage: JevResponseV1['usage'] | undefined;
   try {
     const json: unknown = JSON.parse(raw.body);

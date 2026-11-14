@@ -74,8 +74,7 @@ function runJevTick(args:{run_id:string;store:HybridStore;jevPrice:number;lease_
     price:()=>{if(!Number.isFinite(args.jevPrice)||args.jevPrice<=0)throw new Error("hybrid_jev_price_required");return llmPriceV1("typesafe","jev-1.13.0","sync",args.jevPrice);},
     propose:(run,inputs)=>inputs.flatMap(input=>input.evaluated_concepts.map(concept=>hybridJevCallProposalV1(run,input,concept,args.jevPrice))),
     map:(_run,call,parsed)=>[result(call,mapHybridJevAnswerV1(call.inputs[0]!,parsed),null)],
-    error:(_run,call,code,unknown)=>unknown||!call.raw_body?[]:[result(call,{verdict:"error",probability:null,citation:null},code)],
-    invalidUsage:failure=>failure.evidence.usage??([429,529].includes(failure.evidence.http_status??0)?{input_tokens:0,output_tokens:0}:undefined),
+    error:(_run,call,code)=>!call.raw_body?[]:[result(call,{verdict:"error",probability:null,citation:null},code)],
     labeled:()=>false,fail_on_error:true,
   }});
 }
@@ -95,15 +94,14 @@ function runCitationTick(args:{run_id:string;store:HybridStore;jevPrice:number;l
     const retry=(run as LabelingRunV1&{membership_snapshot:{citation_retry?:boolean}}).membership_snapshot.citation_retry===true;
     return [{...prior,citation_call_id:call.id,claude:{...prior.claude,verification:{...mapHybridCitationVerificationV1(parsed),call_id:call.id,attempt:retry?1 as const:0 as const}}}];
   },
-  error:(run,call,code,unknown)=>{
-    if(unknown)return [];
+  error:(run,call,code)=>{
+    if(!call.raw_body)return [];
     const input=call.inputs[0]!,prior=input.confirmation_by_concept?.[input.evaluated_concepts[0]!.concept_key];
     if(!prior?.claude)return [];
     const {verification:_previousVerification,...confirmation}=prior.claude;
     return [{...prior,verdict:'error',error_code:code,citation_call_id:call.id,
       claude:{...confirmation,verdict:'error' as const}}];
   },
-  invalidUsage:failure=>failure.evidence.usage??([429,529].includes(failure.evidence.http_status??0)?{input_tokens:0,output_tokens:0}:undefined),
   labeled:()=>false,fail_on_error:true,
  }});
 }

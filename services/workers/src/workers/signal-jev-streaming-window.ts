@@ -9,6 +9,8 @@ export type JevStreamingExecutionV2 = {
   max_in_flight: number; flush_size: number; max_flushes: number;
   max_buffered_bytes: number; flush_interval_ms: number; window_size: number;
 };
+export type JevStreamingMetricsV2 = { in_flight: number; reserved_working_bytes: number;
+  buffered_responses: number; active_flushes: number };
 /** One reserved window, continuous HTTP producers and independently bounded durable flushes.
  * The caller owns the lease and heartbeat. A response does not release its buffer until
  * its page is durable, billed and applied. No provider request is retried here. */
@@ -16,6 +18,7 @@ export async function processJevStreamingWindowV2<I extends FacetInput, R>(args:
   run: LabelingRunV1; calls: LabelingCallV1<I>[]; send_calls?:LabelingCallV1<I>[];
   store: ReturnType<typeof createSignalLabelingStoreV1<I, R>>; provider: JevProviderV1;
   execution: JevStreamingExecutionV2; price: LlmPriceV1; cancellation: AbortController;
+  observe_stream?(metrics: JevStreamingMetricsV2): void;
   hooks: { map(run: LabelingRunV1, call: LabelingCallV1<I>, raw: JevResponseV1): R[];
     error(run: LabelingRunV1, call: LabelingCallV1<I>, code: string, unknown: boolean): R[];
     labeled(result: R): boolean; invalidUsage?(failure: JevProviderErrorV1): JevResponseV1['usage'] | undefined;
@@ -28,19 +31,26 @@ export async function processJevStreamingWindowV2<I extends FacetInput, R>(args:
   const responseBound = provider.max_response_bytes ?? 2 * 1024 * 1024;
   if(!Number.isSafeInteger(responseBound)||responseBound<1||responseBound>2*1024*1024)throw Error('jev_stream_response_bound_invalid');
   // JSON escaping, base64 page codec and temporary serialization copies are budgeted.
-  const reservationBytes = responseBound * 6 + 64 * 1024;
+  const reservationBytes = responseBound * 24 + 64 * 1024;
   if (e.max_buffered_bytes < reservationBytes) throw Error('jev_stream_memory_budget_invalid');
   const workers = Math.min(calls.length, e.max_in_flight, provider.max_concurrency ?? e.max_in_flight,
     Math.floor(e.max_buffered_bytes / reservationBytes));
-  type Row = { call: LabelingCallV1<I>; raw: string; bytes: number };
-  let buffered: Row[] = [], bufferedBytes = 0, memory = 0, next = 0, fatal: unknown;
+  type Row = { call: LabelingCallV1<I>; raw: string; bytes: number; memory_bytes: number };
+  let buffered: Row[] = [], bufferedBytes = 0,
+    memory = calls.reduce((n, call) => n + Buffer.byteLength(call.raw_body ?? ''), 0),
+    inFlight = 0, next = 0, fatal: unknown;
   let totalCost = 0, labeled = 0; const latencies: number[] = [];
   const errors = new Map<string, { call: LabelingCallV1<I>; unknown: boolean; code: string }>();
   const applied = new Set<string>(), observedRaw = new Set(calls.filter(c => Boolean(c.raw_body)).map(c => c.id));
   const active = new Set<Promise<void>>(); const waiters = new Set<() => void>();
+  const observe = () => {
+    // Instrumentation never changes physical attempts or their financial outcome.
+    try { args.observe_stream?.({ in_flight: inFlight, reserved_working_bytes: memory,
+      buffered_responses: buffered.length, active_flushes: active.size }); } catch { /* Observer only. */ }
+  };
   const wake = () => { for (const resolve of waiters) resolve(); waiters.clear(); };
   const wait = () => new Promise<void>(resolve => { waiters.add(resolve); });
-  const release = (bytes: number) => { memory -= bytes; wake(); };
+  const release = (bytes: number) => { memory -= bytes; observe(); wake(); };
   const fail = (error: unknown) => { fatal ??= error; cancellation.abort(); wake(); };
   const record = (call: LabelingCallV1<I>, unknown: boolean, code: string) => errors.set(call.id, { call, unknown, code });
   async function consume(rows: Row[], alreadyDurable = false) {
@@ -59,7 +69,8 @@ export async function processJevStreamingWindowV2<I extends FacetInput, R>(args:
           results.push({ call, results: mapped }); latencies.push(physical.latency_ms);
           observations.push({ raw: physical, tokens: parsed.usage.input_tokens });
         } catch (error) {
-          const failure = jevProviderErrorV1(error), observed = hooks.invalidUsage?.(failure) ?? failure.evidence.usage;
+          const failure = jevProviderErrorV1(error), observed = failure.outcome === 'outcome_unknown' ? undefined
+            : hooks.invalidUsage?.(failure) ?? failure.evidence.usage;
           if (observed) {
             const usage = jevUsageV1(observed);
             settled.push({ call, usage, settled_micro_usd: llmCostMicroUsdV1(usage, price), stop_reason: failure.code });
@@ -86,10 +97,15 @@ export async function processJevStreamingWindowV2<I extends FacetInput, R>(args:
     } catch (error) {
       // A known, already-applied receipt must never become an unknown financial outcome.
       const pending = rows.filter(row => !applied.has(row.call.id));
+      for (const row of pending) record(row.call, true, 'jev_stream_persistence_failed');
       try { if (pending.length) await store.markFailed(run, pending.map(row => row.call), true); }
       catch (markError) { fail(new AggregateError([error, markError], 'jev_stream_persistence_failed')); }
       fail(error);
-    } finally { release(rows.reduce((n, row) => n + row.bytes, 0)); }
+    } finally {
+      // Durable storage, not the retained window of call objects, owns these bytes.
+      for (const row of rows) row.call.raw_body = null;
+      release(rows.reduce((n, row) => n + row.memory_bytes, 0));
+    }
   }
   function flush(force = false) {
     while (buffered.length && active.size < e.max_flushes && (force || buffered.length >= e.flush_size)) {
@@ -103,17 +119,19 @@ export async function processJevStreamingWindowV2<I extends FacetInput, R>(args:
       }
       if(!count) { fail(Error('jev_stream_page_memory_bound')); return; }
       const rows = buffered.splice(0, count); bufferedBytes -= rows.reduce((n, row) => n + row.bytes, 0);
-      const task = consume(rows).finally(() => { active.delete(task); wake(); flush(force); });
-      active.add(task);
+      const task = consume(rows).finally(() => { active.delete(task); observe(); wake(); flush(force); });
+      active.add(task); observe();
     }
   }
   cancellation.signal.addEventListener('abort', wake, { once: true });
   const timer = setInterval(() => flush(true), e.flush_interval_ms); timer.unref?.();
   try {
+    observe();
+    if (memory > e.max_buffered_bytes) throw Error('jev_stream_recovery_memory_budget_exceeded');
     // Recover durable responses first; no HTTP or re-upload is necessary.
     for (const call of calls.filter(call => Boolean(call.raw_body))) {
       const raw = call.raw_body!, bytes = Buffer.byteLength(raw);
-      memory += bytes; await consume([{ call, raw, bytes }], true);
+      await consume([{ call, raw, bytes, memory_bytes: bytes }], true);
       if (fatal) throw fatal;
     }
     // Only the caller's just-marked reservations may be sent. A submitting call
@@ -124,19 +142,22 @@ export async function processJevStreamingWindowV2<I extends FacetInput, R>(args:
         while (memory + reservationBytes > e.max_buffered_bytes && !fatal && !cancellation.signal.aborted) { flush(true); await wait(); }
         if (fatal || cancellation.signal.aborted) return;
         const call = reserved[next++]; if (!call) return;
-        memory += reservationBytes;
+        memory += reservationBytes; inFlight++; observe();
         try {
           const physical = await provider.evaluate(call.request as JevRequestV1, { signal: cancellation.signal });
           const raw = JSON.stringify(physical), bytes = Buffer.byteLength(raw);
           if (bytes > reservationBytes) throw Error('jev_stream_response_memory_bound');
-          release(reservationBytes - bytes);
-          observedRaw.add(call.id); buffered.push({ call, raw, bytes }); bufferedBytes += bytes;
-          flush(bufferedBytes >= e.max_buffered_bytes / 2);
+          observedRaw.add(call.id); buffered.push({ call, raw, bytes, memory_bytes: reservationBytes }); bufferedBytes += bytes;
+          observe();
+          const throttled = [429, 529].includes(physical.http_status);
+          if (throttled) cancellation.abort();
+          flush(throttled || bufferedBytes >= e.max_buffered_bytes / 2);
           if(physical.rate_limit_update_failed)fail(Error('jev_rate_cooldown_unavailable'));
         } catch (error) {
           release(reservationBytes);
           const failure = jevProviderErrorV1(error); record(call, failure.outcome !== 'definitely_not_sent', failure.code);
-        }
+          if (hooks.fail_on_error) cancellation.abort();
+        } finally { inFlight--; observe(); }
       }
     }));
     // No HTTP was attempted for reserved calls left behind by cancellation or write failure.
@@ -150,7 +171,12 @@ export async function processJevStreamingWindowV2<I extends FacetInput, R>(args:
     }
     for (const unknown of [false, true]) {
       const group = [...errors.values()].filter(error => error.unknown === unknown);
-      if (group.length) await store.markFailed(run, group.map(error => error.call), unknown);
+      if (group.length) {
+        await store.markFailed(run, group.map(error => error.call), unknown);
+        const technical = group.filter(error => !applied.has(error.call.id)).map(error => ({call:error.call,
+          results:hooks.error(run,error.call,error.code,unknown)})).filter(row => row.results.length);
+        if (technical.length) { await store.apply(run, technical); for (const row of technical) applied.add(row.call.id); }
+      }
     }
     if (hooks.fail_on_error && errors.size) await store.fail(run, [...errors.values()].some(x => x.unknown) ? 'labeling_outcome_unknown' : [...errors.values()][0]!.code);
     if (fatal) throw fatal;

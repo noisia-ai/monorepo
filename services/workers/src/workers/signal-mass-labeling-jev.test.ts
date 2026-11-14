@@ -457,12 +457,11 @@ test("product lease loss keeps in-flight receipts and cancels unsent roots under
 const streaming = { max_in_flight: 32, flush_size: 8, max_flushes: 2,
   max_buffered_bytes: 16 * 1024 * 1024, flush_interval_ms: 10, window_size: 200 };
 test('streaming overlaps provider sends and bounded durable page writes, never parsing before durability', async () => {
-  const f = fixture(96, true); let activeWrites = 0, maxWrites = 0, maxCallsBeforeFirstWrite = 0;
+  const f = fixture(96, true); let activeWrites = 0, maxWrites = 0, completedDuringWrite = 0;
   const provider: JevProviderV1 = { max_concurrency: 32, max_response_bytes: 16384,
-    async evaluate(request) { await delay(2); return f.response(request); } };
+    async evaluate(request) { await delay(2); if (activeWrites) completedDuringWrite++; return f.response(request); } };
   f.store.persistRawPage = async (_run, rows) => {
     activeWrites++; maxWrites = Math.max(maxWrites, activeWrites);
-    maxCallsBeforeFirstWrite = Math.max(maxCallsBeforeFirstWrite, f.calls.filter(call => call.raw_body).length);
     await delay(15);
     for (const row of rows) row.call.raw_body = row.raw;
     f.events.push(`page:${rows.length}`); activeWrites--;
@@ -470,14 +469,15 @@ test('streaming overlaps provider sends and bounded durable page writes, never p
   const outcome = await processMassLabelingJevV1({ run_id: f.run.id, store: f.store, provider, execution: streaming });
   assert.equal(outcome.status, 'completed'); assert.equal(outcome.labeled, 96);
   assert.equal(outcome.unresolved_billing_requests, 0); assert.equal(f.results.length, 96);
-  assert.equal(maxWrites, 2); assert.ok(maxCallsBeforeFirstWrite > 0);
+  assert.equal(maxWrites, 2); assert.ok(completedDuringWrite > 0, 'HTTP responses continue during durable writes');
   assert.ok(f.events.indexOf('settle') > f.events.findIndex(event => event.startsWith('page:')));
 });
 test('streaming storage failure preserves unknown outcome and never resends it', async () => {
   const f = fixture(32, true);
   f.store.persistRawPage = async () => { throw Error('storage_down'); };
   await assert.rejects(processMassLabelingJevV1({ run_id:f.run.id,store:f.store,provider:{...f.provider,max_response_bytes:16384},execution:streaming }), /storage_down/);
-  assert.equal(f.results.length, 0); assert.ok(f.calls.some(call => call.status === 'unknown'));
+  assert.ok(f.results.length > 0); assert.ok(f.results.every(row => row.status === 'error'));
+  assert.ok(f.calls.some(call => call.status === 'unknown'));
   assert.equal(f.events.includes('settle'), false);
 });
 test('streaming rate observation failure cannot turn applied paid calls unknown', async () => {
@@ -509,5 +509,77 @@ test('streaming restart never resends a submitting call without a durable receip
   f.run.status='running';f.results.length=0;let sent=0;
   const outcome=await processMassLabelingJevV1({run_id:f.run.id,store:f.store,
     provider:{max_response_bytes:16384,evaluate:async()=>{sent++;throw Error('must_not_send');}},execution:streaming});
-  assert.equal(sent,0);assert.equal(outcome.status,'failed');assert.equal(call.status,'unknown');assert.equal(f.results.length,0);
+  assert.equal(sent,0);assert.equal(outcome.status,'failed');assert.equal(call.status,'unknown');
+  assert.equal(f.results.length,1);assert.equal(f.results[0]!.status,'error');assert.equal(call.results_applied,true);
+});
+
+test('streaming seals a 529 with usage zero, stops new sends and applies technical errors without settlement', {timeout:10000}, async () => {
+  const f = fixture(64, true), durable = new Map<string, string>();
+  let sends = 0, observations = 0;
+  f.store.persistRawPage = async (_run, rows) => { for (const row of rows) {
+    durable.set(row.call.id, row.raw); row.call.raw_body = row.raw;
+  } };
+  const provider: JevProviderV1 = { max_concurrency: 4, max_response_bytes: 16384,
+    async evaluate(request) {
+      if (sends++ === 0) return { http_status: 529, latency_ms: 1,
+        body: JSON.stringify({ error: 'busy', usage: { input_tokens: 0, output_tokens: 0 } }) };
+      await delay(10); return f.response(request);
+    }, async observeUsage() { observations++; } };
+  const outcome = await processMassLabelingJevV1({ run_id: f.run.id, store: f.store, provider,
+    execution: { ...streaming, max_in_flight: 4 } });
+  assert.equal(sends, 4, 'only the already in-flight responses may finish after a rejection');
+  assert.equal(outcome.status, 'failed'); assert.equal(outcome.unresolved_billing_requests, 1);
+  assert.equal(f.calls[0]!.status, 'unknown'); assert.equal(f.calls[0]!.results_applied, true);
+  assert.equal(JSON.parse(durable.get(f.calls[0]!.id)!).http_status, 529);
+  assert.equal(observations, 3, 'unknown usage is not a quota refund or calibration sample');
+  assert.equal(f.results.filter(row => row.status === 'labeled').length, 3);
+  assert.equal(f.results.filter(row => row.status === 'error').length, 61);
+  assert.equal(f.calls.filter(call => call.status === 'settled').length, 3);
+  await processMassLabelingJevV1({ run_id: f.run.id, store: f.store, provider, execution: streaming });
+  assert.equal(sends, 4, 'an ambiguous rejection never authorizes another send');
+});
+
+test('streaming releases applied raw bodies instead of retaining them for an entire input window', {timeout:10000}, async () => {
+  const f = fixture(48, true); let sends = 0, retainedApplied = false;
+  f.store.persistRawPage = async (_run, rows) => { for (const row of rows) row.call.raw_body = row.raw; };
+  const provider: JevProviderV1 = { max_concurrency: 1, max_response_bytes: 16384,
+    async evaluate(request) {
+      if (sends++ > 8 && f.calls.some(call => call.results_applied && call.raw_body !== null)) retainedApplied = true;
+      await delay(2); return f.response(request);
+    } };
+  const outcome = await processMassLabelingJevV1({ run_id: f.run.id, store: f.store, provider,
+    execution: { ...streaming, flush_size: 1, max_in_flight: 1, max_flushes: 1 } });
+  assert.equal(outcome.status, 'completed'); assert.equal(outcome.labeled, 48);
+  assert.equal(retainedApplied, false);
+  assert.ok(f.calls.every(call => call.raw_body === null));
+});
+
+test('streaming reserves codec working memory until durable flush finishes', {timeout:10000}, async () => {
+  const f = fixture(16, true); let beforeDurability = 0, durable = false;
+  const snapshots: Array<{in_flight:number;reserved_working_bytes:number;active_flushes:number}> = [];
+  f.store.persistRawPage = async (_run, rows) => {
+    await delay(20); for (const row of rows) row.call.raw_body = row.raw;
+    durable = true;
+  };
+  const provider: JevProviderV1 = { max_concurrency: 16, max_response_bytes: 16384,
+    async evaluate(request) { if (!durable) beforeDurability++; return f.response(request); } };
+  const outcome = await processMassLabelingJevV1({ run_id: f.run.id, store: f.store, provider,
+    execution: { ...streaming, max_in_flight: 16, max_flushes: 1, max_buffered_bytes: 1024 * 1024 },
+    observe_stream: metrics => { snapshots.push(metrics); } });
+  assert.equal(outcome.status, 'completed'); assert.equal(outcome.labeled, 16);
+  assert.equal(beforeDurability, 2, 'body receipt cannot release the capacity reserved for JSONL copies');
+  assert.ok(snapshots.every(s => s.reserved_working_bytes >= 0 && s.reserved_working_bytes <= 1024 * 1024));
+  assert.ok(snapshots.some(s => s.in_flight === 0 && s.active_flushes > 0 && s.reserved_working_bytes > 0),
+    'the measured reservation includes flushes after all HTTP requests returned');
+  assert.equal(snapshots.at(-1)!.reserved_working_bytes, 0);
+});
+
+test('streaming observer failure cannot interrupt settlement or change the outcome', async () => {
+  const f = fixture(8, true);
+  f.store.persistRawPage = async (_run, rows) => { for (const row of rows) row.call.raw_body = row.raw; };
+  const outcome = await processMassLabelingJevV1({ run_id:f.run.id,store:f.store,
+    provider:{...f.provider,max_response_bytes:16384},execution:streaming,
+    observe_stream:() => { throw Error('observer_down'); } });
+  assert.equal(outcome.status,'completed');assert.equal(f.results.length,8);
+  assert.ok(f.calls.every(call => call.status==='settled' && call.results_applied));
 });
