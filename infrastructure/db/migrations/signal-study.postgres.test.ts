@@ -23,6 +23,7 @@ import{promoteSignalStudyMotivesV1}from'../signal-study-promotion';
 test('Study freezes only its native consumer cut and exact external configuration, with no import, Voyage or provider admission',{
  skip:!enabled,timeout:600000,
 },async()=>withSignalStudyFixtureV1(async f=>{
+ const sources:Array<Awaited<ReturnType<typeof readSignalStudyRuntimeSourceV1>>>=[];try{
  const before=(await f.database.query('SELECT (SELECT count(*) FROM signal_workspace_embedding_calls)::int embedding_calls,(SELECT count(*) FROM engine_cost_events)::int editorial_calls,(SELECT count(*) FROM signal_processing_admissions)::int admissions')).rows[0];
  const configurationKey=randomUUID(),configArgs={...f,expected_revision:0,configuration:f.envelope,listening_snapshot_id:f.listeningSnapshot.id,provenance:'human' as const,idempotency_key:configurationKey},created=await saveSignalStudyConfigurationV1(configArgs);
  assert.equal((await saveSignalStudyConfigurationV1(configArgs)).id,created.id,'lost configuration ACK does not create a second Study');
@@ -33,27 +34,45 @@ test('Study freezes only its native consumer cut and exact external configuratio
  assert.equal(await readSignalStudyExecutionStatusV1({...f,workspace_id:randomUUID(),execution_id:run.id}).catch(()=>null),null);
  assert.notEqual(run.configuration_id,f.listening.id);assert.equal(run.source_roots,3);assert.equal(run.status,'queued');
  const lease=await claimSignalStudyExecutionV1({database:f.database,execution_id:run.id});assert.ok(lease);
- const source=await readSignalStudyRuntimeSourceV1({database:f.database,lease});assert.ok(source);
+ const source=await readSignalStudyRuntimeSourceV1({database:f.database,lease});assert.ok(source);sources.push(source);
  assert.deepEqual(source.configuration,f.envelope);assert.deepEqual(source.configuration.source_listening.configuration,f.listening.configuration);
  assert.equal(source.selection.scope,'listening_consumer_cut');assert.equal(source.selection.eligible_roots,3);assert.equal(source.selection.pending_base_roots,0);assert.equal(source.source_digest,run.source_digest);
  for(const root of source.roots){assert.equal(root.selected_fragment!.text,root.text.slice(root.selected_fragment!.start,root.selected_fragment!.end));assert.equal(root.vector.length,1024);assert.ok(root.embedding_proof.proof_json);assert.ok(root.base_answers.voice);assert.ok(root.base_answers.promotion);}
  await releaseSignalStudyExecutionV1({database:f.database,lease});
- const again=await claimSignalStudyExecutionV1({database:f.database,execution_id:run.id});assert.ok(again);assert.deepEqual(await readSignalStudyRuntimeSourceV1({database:f.database,lease:again}),source);
+ const again=await claimSignalStudyExecutionV1({database:f.database,execution_id:run.id});assert.ok(again);const replayed=await readSignalStudyRuntimeSourceV1({database:f.database,lease:again});sources.push(replayed);assert.deepEqual(replayed,source);
  await releaseSignalStudyExecutionV1({database:f.database,lease:again});
  assert.deepEqual((await f.database.query('SELECT (SELECT count(*) FROM signal_workspace_embedding_calls)::int embedding_calls,(SELECT count(*) FROM engine_cost_events)::int editorial_calls,(SELECT count(*) FROM signal_processing_admissions)::int admissions')).rows[0],before);
  assert.equal(await readSignalStudyConfigurationV1({...f,workspace_id:randomUUID(),configuration_id:f.cfg.id}).catch(()=>null),null);
  await assert.rejects(f.request(4000001,key),/study_idempotency_conflict/);
+}finally{for(const source of sources)await disposeStudySourcePagesV1(source);}
 }));
 import{withStudyNativeRuntimeV1}from'./signal-study-runtime.synthetic.fixture';
 import{assertSignalStudyMoneyV1}from'./signal-study-money.assertions';
 import{readSignalStudyOutputV1}from'../signal-study-serving';
 import{pendingSignalStudyExecutionsV1}from'../signal-study-executions';
+import{disposeStudySourcePagesV1}from'../../../services/workers/src/workers/signal-study-source-pages';
+test('Study stop retains uncertain admitted siblings and never resends them after reactivation',{
+ skip:!enabled,timeout:600000,
+},async()=>withSignalStudyFixtureV1(async f=>withStudyNativeRuntimeV1(f.database,async runtime=>{
+ const execution=await f.request();runtime.setAnalysisEnabled(false);assert.equal((await runtime.run(execution.id)).status,'not_claimed');assert.equal(runtime.metrics().jevCalls,0);runtime.setAnalysisEnabled(true);runtime.setSonnetAvailable(false);assert.equal((await runtime.run(execution.id)).status,'not_claimed');assert.equal(runtime.metrics().jevCalls,0);runtime.setSonnetAvailable(true);
+ let flip=true;runtime.onJev(async()=>{if(flip){flip=false;runtime.setAnalysisEnabled(false);}});await runtime.run(execution.id).catch(error=>assert.match(error.message,/study_analysis_disabled|jev_stopped/));runtime.onJev(undefined);assert.equal(runtime.metrics().jevCalls,1);assert.equal((await runtime.run(execution.id)).status,'not_claimed');assert.equal(runtime.metrics().jevCalls,1);assert.equal(Number((await f.database.query('SELECT count(*)::int n FROM signal_study_answers a JOIN signal_study_jev_batches b ON b.id=a.batch_id WHERE b.execution_id=$1',[execution.id])).rows[0].n),0);runtime.setAnalysisEnabled(true);
+ assert.equal((await runtime.run(execution.id)).status,'outcome_unknown');
+ const census=async()=>(await f.database.query(`SELECT count(*)::int calls,
+  count(*) FILTER(WHERE c.status='unknown')::int unknown_calls,
+  count(*) FILTER(WHERE c.status='settled' AND c.results_applied AND c.raw_storage_verified_at IS NOT NULL)::int known_applied,
+  COALESCE(sum(c.reserved_micro_usd) FILTER(WHERE c.status='unknown'),0)::text unknown_reserved
+  FROM signal_study_jev_batches b JOIN signal_labeling_calls c ON c.run_id=b.run_id WHERE b.execution_id=$1`,[execution.id])).rows[0]!;
+ const contained=await census();assert.equal(contained.calls,3);assert.equal(contained.unknown_calls,2);assert.equal(contained.known_applied,1);assert.ok(BigInt(contained.unknown_reserved)>0n);
+ const before=runtime.metrics();assert.equal(before.jevCalls,1);assert.equal(before.fitCalls,0);assert.equal(before.sonnetCalls,0);
+ assert.equal((await runtime.run(execution.id)).status,'outcome_unknown');
+ assert.deepEqual(await census(),contained);assert.equal(runtime.metrics().jevCalls,before.jevCalls);assert.equal(runtime.metrics().fitCalls,0);assert.equal(runtime.metrics().sonnetCalls,0);
+ assert.equal((await f.database.query('SELECT status FROM signal_study_executions WHERE id=$1',[execution.id])).rows[0].status,'outcome_unknown');
+})),);
 test('Study native runtime commits a real insufficient-population artifact, H1 pages and directional output without a Sonnet call',{
  skip:!enabled,timeout:600000,
 },async()=>withSignalStudyFixtureV1(async f=>withStudyNativeRuntimeV1(f.database,async runtime=>{
  const persist=runtime.store.persistNumeric;let lost=true;runtime.store.persistNumeric=async(...args)=>{const value=await persist(...args);if(lost){lost=false;throw Error('lost native numeric ACK');}return value;};
- const execution=await f.request();runtime.setAnalysisEnabled(false);assert.equal((await runtime.run(execution.id)).status,'not_claimed');assert.equal(runtime.metrics().jevCalls,0);runtime.setAnalysisEnabled(true);runtime.setSonnetAvailable(false);assert.equal((await runtime.run(execution.id)).status,'not_claimed');assert.equal(runtime.metrics().jevCalls,0);runtime.setSonnetAvailable(true);
- let flip=true;runtime.onJev(async()=>{if(flip){flip=false;runtime.setAnalysisEnabled(false);}});await runtime.run(execution.id).catch(error=>assert.match(error.message,/study_analysis_disabled|jev_stopped/));runtime.onJev(undefined);assert.equal(runtime.metrics().jevCalls,1);assert.equal((await runtime.run(execution.id)).status,'not_claimed');assert.equal(runtime.metrics().jevCalls,1);assert.equal(Number((await f.database.query('SELECT count(*)::int n FROM signal_study_answers a JOIN signal_study_jev_batches b ON b.id=a.batch_id WHERE b.execution_id=$1',[execution.id])).rows[0].n),0);runtime.setAnalysisEnabled(true);
+ const execution=await f.request();
  await assert.rejects(runtime.run(execution.id),/lost native numeric ACK/);assert.equal(runtime.metrics().fitCalls,1);
  const result=await runtime.run(execution.id);assert.equal(result.status,'completed');
  const counts=runtime.metrics();assert.equal(counts.jevCalls,3);assert.equal(counts.fitCalls,1);assert.equal(counts.sonnetCalls,0);

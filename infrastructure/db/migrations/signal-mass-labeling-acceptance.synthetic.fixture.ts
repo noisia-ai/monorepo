@@ -173,10 +173,10 @@ export async function runMassLabelingAcceptanceFixtureV1(authorization:MassLabel
           await editorialMoney.markSignalWorkspaceEngineInterpretationSentV1({...originalToken,execution_token:fixture.lease.execution_token});
           await editorialMoney.failSignalWorkspaceEngineInterpretationV1({...originalToken,outcome:"outcome_unknown",error_code:"workspace_engine_mass_consolidation_transport_failed"});
           await failSignalWorkspaceEngineV1({database,lease:fixture.lease,error_code:"workspace_engine_mass_consolidation_transport_failed"});
-          const sentAt=(await query("SELECT sent_at FROM engine_cost_events WHERE id=$1",[original.call_id])).rows[0]!.sent_at;
+          const terminalTimes=(await query("SELECT sent_at,clock_timestamp() ended_at FROM engine_cost_events WHERE id=$1",[original.call_id])).rows[0]!;
           await editorialMoney.reconcileSignalWorkspaceEngineTerminalV1({...originalToken,workspace_id:fixture.access.workspace_id,execution_id:fixture.lease.execution_id,
             expected_request_digest:batch.request_digest,verifier_user_id:fixture.access.actor_user_id,terminal:{source:"anthropic_console",provider_request_id:"req_synthetic_global_terminal",
-              provider_model:batch.configuration.model,started_at:new Date(sentAt).toISOString(),ended_at:new Date().toISOString(),http_status:499,reason:"client_disconnected",
+              provider_model:batch.configuration.model,started_at:new Date(terminalTimes.sent_at).toISOString(),ended_at:new Date(terminalTimes.ended_at).toISOString(),http_status:499,reason:"client_disconnected",
               usage:{input_tokens:100,output_tokens:50,cache_read_input_tokens:0,cache_creation_input_tokens:0},
               evidence:{storage_key:`workspace-engine/${fixture.access.workspace_id}/${fixture.lease.execution_id}/terminal-proof.json`,sha256:digest("synthetic terminal proof"),size_bytes:24}}});
           await retrySignalWorkspaceEngineV1({...fixture.access,execution_id:fixture.lease.execution_id,idempotency_key:randomUUID()});
