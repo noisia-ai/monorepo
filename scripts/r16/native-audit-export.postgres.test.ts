@@ -44,7 +44,8 @@ test("native audit export binds the exact synthetic Listening pair and completed
     assert.equal(exported.snapshot.layer_agreement?.estimation_status, "complete");
     assert.equal(exported.snapshot.layer_agreement?.kappa, 1);
     assert.equal(source.native_layer_proof.output_digest, source.source_digests.study_output);
-    assert.equal(exported.snapshot.receipts.status, "complete");
+    assert.equal(exported.snapshot.receipts.status, "complete", JSON.stringify({ limitations: exported.limitations,
+      stages: exported.snapshot.receipts.stages.map(({ stage, cost_usd, reserved_usd, elapsed_ms }) => ({ stage, cost_usd, reserved_usd, elapsed_ms })) }));
     assert.ok((exported.snapshot.receipts.total_cost_usd ?? 0) > 0);
     assert.equal(exported.snapshot.receipts.total_reserved_usd, 0);
     const measured = source.measurements as { unique_call_count: number; call_receipts: Array<{ ledger: string; call_id: string;
@@ -74,7 +75,7 @@ test("native audit export binds the exact synthetic Listening pair and completed
       listening_before_generation_id: randomUUID(), listening_after_generation_id: afterRow.generation_id,
       study_execution_id: execution.id, output_path: join(privateDir, "wrong-before.json"),
       source_manifest_path: join(privateDir, "wrong-before-manifest.json") }), /native_audit_listening_source_stale/u);
-    }), { population_count: 240 });
+    }), { population_count: 240, initial_approved: 240, complete_listening: true });
   } finally {
     // Test export contains native private source rows; remove only this unique fixture directory.
     await rm(privateDir, { recursive: true, force: true });
