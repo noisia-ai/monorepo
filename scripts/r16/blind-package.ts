@@ -2,6 +2,7 @@ import { createHash, createHmac, randomUUID } from "node:crypto";
 import { chmod, link, lstat, mkdir, mkdtemp, readFile, readdir, rename, rm, stat, unlink, writeFile } from "node:fs/promises";
 import { createReadStream } from "node:fs";
 import { dirname, resolve, sep } from "node:path";
+import { types as utilTypes } from "node:util";
 import { streamJsonV1 } from "./private-json-stream.js";
 
 export const LISTENING_COHORTS_V1 = ["C01", "C02", "C03", "C04", "C05", "C06", "C07", "C08", "C09", "C10"] as const;
@@ -424,17 +425,61 @@ export async function writeBlindPackageV1(args: BlindPackageWriteArgsV1) {
 
 /** Programmatic path for an exporter-returned object; verifies exact private-file bytes before sampling. */
 export async function writeBlindPackageFromExportedSnapshotV1(args: BlindPackageWriteArgsV1 & { snapshot: unknown }) {
+  const snapshot = freezePlainJsonSnapshotV1(args.snapshot);
   const prepared = await prepareBlindPackageWriteV1(args);
-  await assertBlindSnapshotStreamMatchesV1(args.snapshot, createReadStream(prepared.snapshotPath));
-  return publishBlindPackageV1(prepared, args.snapshot);
+  await compareFrozenBlindSnapshotV1(snapshot, () => createReadStream(prepared.snapshotPath));
+  return publishBlindPackageV1(prepared, snapshot);
 }
 
-/** Incrementally compares a stored artifact to the serialization of its supplied snapshot. */
-export async function assertBlindSnapshotStreamMatchesV1(snapshot: unknown, persistedBytes: AsyncIterable<Uint8Array>): Promise<void> {
+/** Incrementally compares a stored artifact to the serialization of a frozen, plain JSON snapshot. */
+export async function assertBlindSnapshotStreamMatchesV1(snapshot: unknown,
+  persistedBytes: () => AsyncIterable<Uint8Array>): Promise<void> {
+  const stableSnapshot = freezePlainJsonSnapshotV1(snapshot);
+  await compareFrozenBlindSnapshotV1(stableSnapshot, persistedBytes);
+}
+
+function freezePlainJsonSnapshotV1(snapshot: unknown): unknown {
+  const active = new Set<object>();
+  const freeze = (value: unknown): void => {
+    if (value === null || typeof value === "string" || typeof value === "boolean") return;
+    if (typeof value === "number") { if (!Number.isFinite(value)) throw new Error("blind_snapshot_json_plain_required"); return; }
+    if (typeof value !== "object" || value === undefined || utilTypes.isProxy(value)) throw new Error("blind_snapshot_json_plain_required");
+    if (active.has(value)) throw new Error("blind_snapshot_json_plain_required");
+    const isArray = Array.isArray(value);
+    if (isArray ? Object.getPrototypeOf(value) !== Array.prototype : Object.getPrototypeOf(value) !== Object.prototype && Object.getPrototypeOf(value) !== null) {
+      throw new Error("blind_snapshot_json_plain_required");
+    }
+    active.add(value);
+    try {
+      const ownKeys = Reflect.ownKeys(value);
+      for (const key of ownKeys) {
+        if (typeof key !== "string" || (isArray && key !== "length" && !/^(?:0|[1-9][0-9]*)$/u.test(key))) {
+          throw new Error("blind_snapshot_json_plain_required");
+        }
+        if (isArray && key === "length") continue;
+        const descriptor = Object.getOwnPropertyDescriptor(value, key);
+        if (!descriptor || !descriptor.enumerable || !("value" in descriptor)) throw new Error("blind_snapshot_json_plain_required");
+        freeze(descriptor.value);
+      }
+      if (isArray && Object.keys(value).length !== value.length) throw new Error("blind_snapshot_json_plain_required");
+      Object.freeze(value);
+    } finally { active.delete(value); }
+  };
+  freeze(snapshot);
+  return snapshot;
+}
+
+async function compareFrozenBlindSnapshotV1(snapshot: unknown, openPersistedBytes: () => AsyncIterable<Uint8Array>): Promise<void> {
   const expected = createHash("sha256");
   await streamJsonV1(snapshot, chunk => { expected.update(chunk, "utf8"); }, { pretty: true, trailing_newline: true });
   const actual = createHash("sha256");
-  for await (const chunk of persistedBytes) actual.update(chunk);
+  const persistedBytes = openPersistedBytes();
+  try { for await (const chunk of persistedBytes) actual.update(chunk); }
+  finally {
+    const close = (persistedBytes as AsyncIterable<Uint8Array> & { destroy?: () => void; destroyed?: boolean }).destroy;
+    const isDestroyed = (persistedBytes as AsyncIterable<Uint8Array> & { destroyed?: boolean }).destroyed;
+    if (close && !isDestroyed) close.call(persistedBytes);
+  }
   if (expected.digest("hex") !== actual.digest("hex")) throw new Error("blind_snapshot_file_mismatch");
 }
 

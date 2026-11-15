@@ -368,7 +368,10 @@ test("exported-object package path checks streamed private bytes before publishi
     await assert.rejects(stat(mismatchPackage), { code: "ENOENT" });
     await assert.rejects(stat(mismatchKey), { code: "ENOENT" });
 
-    await writeBlindPackageFromExportedSnapshotV1({ snapshotPath, seedPath, packageDir, custodyKeyPath: keyPath, snapshot });
+    const mutableArgs = { snapshotPath, seedPath, packageDir, custodyKeyPath: keyPath, snapshot };
+    const writing = writeBlindPackageFromExportedSnapshotV1(mutableArgs);
+    mutableArgs.snapshot = mismatch;
+    await writing;
     assert.deepEqual(await verifyBlindPackageV1(packageDir), { valid: true, files: 53 });
   } finally { await rm(temp, { recursive: true, force: true }); }
 });
@@ -377,16 +380,43 @@ test("exported-object verifier compares a virtual snapshot larger than Node's st
   const shared = "\u0000".repeat(9_000);
   const count = Math.ceil((bufferConstants.MAX_STRING_LENGTH + 1) / (shared.length * 6 + 4)) + 2;
   const snapshot = new Array(count).fill(shared);
-  const bytes = new PassThrough({ highWaterMark: 64 * 1024 });
-  const producer = (async () => {
-    try {
-      await streamJsonV1(snapshot, async chunk => {
-        if (!bytes.write(Buffer.from(chunk, "utf8"))) await once(bytes, "drain");
-      }, { pretty: true, trailing_newline: true });
-      bytes.end();
-    } catch (error) { bytes.destroy(error as Error); throw error; }
-  })();
-  await assertBlindSnapshotStreamMatchesV1(snapshot, bytes);
+  let producer: Promise<void> | undefined;
+  await assertBlindSnapshotStreamMatchesV1(snapshot, () => {
+    const bytes = new PassThrough({ highWaterMark: 64 * 1024 });
+    producer = (async () => {
+      try {
+        await streamJsonV1(snapshot, async chunk => {
+          if (!bytes.write(Buffer.from(chunk, "utf8"))) await once(bytes, "drain");
+        }, { pretty: true, trailing_newline: true });
+        bytes.end();
+      } catch (error) { bytes.destroy(error as Error); throw error; }
+    })();
+    return bytes;
+  });
   await producer;
   assert.ok(count * shared.length * 6 > bufferConstants.MAX_STRING_LENGTH);
+});
+
+test("exported snapshot preflight freezes before opening bytes and always destroys a failed reader", async () => {
+  const snapshot = { nested: { value: "sealed" } };
+  let opened = false;
+  let release!: () => void;
+  const released = new Promise<void>(resolve => { release = resolve; });
+  let destroyed = false;
+  await assert.rejects(() => assertBlindSnapshotStreamMatchesV1({ value: new Date() }, () => {
+    opened = true;
+    return (async function* () {})();
+  }), /blind_snapshot_json_plain_required/u);
+  assert.equal(opened, false, "unsupported builtins must fail before opening a file stream");
+
+  const frozen = assertBlindSnapshotStreamMatchesV1(snapshot, () => {
+    opened = true;
+    return { destroy() { destroyed = true; }, async *[Symbol.asyncIterator]() { await released; yield Buffer.from("{}\n"); throw new Error("synthetic_reader_failure"); } };
+  });
+  // The root is synchronously frozen before the verifier yields to serialize/read.
+  assert.throws(() => { snapshot.nested.value = "changed"; }, TypeError);
+  release();
+  await assert.rejects(frozen, /synthetic_reader_failure/u);
+  assert.equal(opened, true);
+  assert.equal(destroyed, true, "failed readers must be closed in finally");
 });
