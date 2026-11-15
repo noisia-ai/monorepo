@@ -274,3 +274,12 @@ test('query bias carries an actual brand baseline and promotion requires an expl
   assert.equal(proposal.target_revision,8);assert.equal(proposal.question.topic_source,'defined');assert.equal(proposal.question.human_locked,true);
   assert.equal(base.questions.length,2);
 });
+
+test('query bias stays unknown without acquisition metadata and distinguishes explicitly declared empty vocabularies',()=>{
+ const counts={subject_roots:0,brand_baseline_roots:0};
+ assert.equal(signalStudyQueryBiasV1({...counts,query_terms:[],problem_terms:[]}).status,'unknown_query_metadata');
+ assert.equal(signalStudyQueryBiasV1({...counts,query_terms:['tea'],problem_terms:[]}).status,'unknown_query_metadata');
+ assert.equal(signalStudyQueryBiasV1({...counts,query_terms:['tea'],problem_terms:['problem'],metadata:{query_terms_declared:false,problem_terms_declared:true}}).status,'unknown_query_metadata');
+ assert.equal(signalStudyQueryBiasV1({...counts,query_terms:['tea'],problem_terms:[],metadata:{query_terms_declared:true,problem_terms_declared:true}}).status,'query_not_problem_selected');
+ assert.equal(signalStudyQueryBiasV1({...counts,query_terms:['problem'],problem_terms:['problem']}).status,'possible_query_bias');
+});

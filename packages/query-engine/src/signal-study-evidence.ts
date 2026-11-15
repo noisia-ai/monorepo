@@ -168,13 +168,14 @@ export function verifySignalStudyVerbatimV1(root:SignalStudyRootV1,quote:string,
   return{root_id:root.root_id,literal_sha256:'sha256:'+createHash('sha256').update(quote).digest('hex'),display_text:display,
     redacted:display!==quote,source_url:url.href,channel:root.channel,occurred_at:root.occurred_at};
 }
-export function signalStudyQueryBiasV1(args:{query_terms:string[];problem_terms:string[];subject_roots:number;brand_baseline_roots:number}):{
-  status:'possible_query_bias'|'query_not_problem_selected';reason:string;base_ratio:number|null;subject_roots:number;brand_baseline_roots:number}{
+export function signalStudyQueryBiasV1(args:{query_terms:string[];problem_terms:string[];subject_roots:number;brand_baseline_roots:number;metadata?:{query_terms_declared:boolean;problem_terms_declared:boolean}}):{
+  status:'possible_query_bias'|'query_not_problem_selected'|'unknown_query_metadata';reason:string;base_ratio:number|null;subject_roots:number;brand_baseline_roots:number}{
   if(!Number.isSafeInteger(args.subject_roots)||!Number.isSafeInteger(args.brand_baseline_roots)||args.subject_roots<0||args.brand_baseline_roots<args.subject_roots)fail('study_baseline_invalid');
   const normalize=(s:string)=>s.normalize('NFKC').toLocaleLowerCase('und').trim();
   const problems=new Set(args.problem_terms.map(normalize)),matched=args.query_terms.filter(term=>problems.has(normalize(term)));
-  return{status:matched.length?'possible_query_bias':'query_not_problem_selected',
-    reason:matched.length?'The acquisition query includes problem vocabulary; direction partly reflects that selection.':'No configured problem term is present in the acquisition query; this does not prove absence of selection bias.',
+  const known=args.metadata?args.metadata.query_terms_declared===true&&args.metadata.problem_terms_declared===true:args.query_terms.some(t=>normalize(t))&&args.problem_terms.some(t=>normalize(t));
+  return{status:!known?'unknown_query_metadata':matched.length?'possible_query_bias':'query_not_problem_selected',
+    reason:!known?'Acquisition query or comparison vocabulary is missing or undeclared; selection bias cannot be assessed.':matched.length?'The acquisition query includes problem vocabulary; direction partly reflects that selection.':'No configured problem term is present in the acquisition query; this does not prove absence of selection bias.',
     base_ratio:args.brand_baseline_roots?args.subject_roots/args.brand_baseline_roots:null,subject_roots:args.subject_roots,brand_baseline_roots:args.brand_baseline_roots};
 }
 export function signalStudyPromotionProposalV1(args:{study:SignalStudyV1;template_snapshot?:SignalStudyTemplateSnapshotV1;motive:SignalStudyMotiveV1;explicit_action:boolean;

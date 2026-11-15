@@ -27,7 +27,7 @@ export type StudyRuntimeRootV1=Omit<SignalStudyRootV1,'axes'>&{base_answers:Reco
 export type StudyRuntimeSourceV1={configuration:SignalStudyExecutionConfigurationV1;roots:StudyRuntimeRootV1[];
  selection:{scope:'listening_consumer_cut';source_listening_digest:string;cut_digest:string;eligible_root_ids_digest:string;
   eligible_roots:number;pending_base_roots:number;corpus_roots:number};
- embedding_space_digest:string;source_preparation_run_ids:string[];sampling_seed:string;query_terms:string[];problem_terms:string[];brand_baseline_roots:number;
+ embedding_space_digest:string;source_preparation_run_ids:string[];sampling_seed:string;query_terms:string[];problem_terms:string[];query_metadata?:{query_terms_declared:boolean;problem_terms_declared:boolean};brand_baseline_roots:number;
  source_digest:string;human_revision_digest:string;max_roots:number;max_bytes:number};
 export type StudyRuntimeReceiptV1={body_base64:string;body_bytes:number;sha256:string;complete:boolean;http_status:number|null;provider_request_id:string|null};
 export type StudyRuntimeStepPlanV1={key:string;kind:'sonnet';request_body:string;request_sha256:string;source_digest:string};
@@ -256,7 +256,7 @@ export async function signalStudyRuntimeJobV1(execution_id:string,options:{store
   const axesAnswers=await jevBatch('axes',cut.map(root=>({root_id:root.root_id,request:buildSignalStudyConfiguredAxesRequestV1({text:root.text},configuration)})),signalStudyJevAxesConfigurationV1(configuration));
   const roots:SignalStudyRootV1[]=cut.map(root=>({...root,axes:resolveSignalStudyConfiguredAxesV1(configuration,axesAnswers.get(root.root_id)!)}));
   assertSignalStudyRootsV1(roots);
-  const query_bias=signalStudyQueryBiasV1({query_terms:raw.query_terms,problem_terms:raw.problem_terms,subject_roots:roots.filter(r=>r.axes.aggregate==='subject').length,brand_baseline_roots:raw.brand_baseline_roots});
+  const query_bias=signalStudyQueryBiasV1({query_terms:raw.query_terms,problem_terms:raw.problem_terms,metadata:raw.query_metadata,subject_roots:roots.filter(r=>r.axes.aggregate==='subject').length,brand_baseline_roots:raw.brand_baseline_roots});
   const population=buildSignalStudyMotivePopulationV1(roots),fit=buildSignalStudyMotiveFitPlanV1({study,template_snapshot:snapshot,roots,embedding_space_digest:raw.embedding_space_digest});
   const request_body=JSON.stringify(fit),numericPlan:StudyRuntimeNumericPlanV1={kind:'numeric',fit_plan_digest:fit.plan_digest,source_digest,request_body,request_sha256:sha(request_body),
    key:digest({execution_id,source_digest,stage:'numeric-cpu-v1',request_sha256:sha(request_body)})};
