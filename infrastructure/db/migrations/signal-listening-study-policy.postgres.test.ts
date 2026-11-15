@@ -173,7 +173,7 @@ test('native discovery sent outcome unknown and retained reservation forbid a ne
   const lease=await money.claimSignalListeningDiscoveryRoundV1({database:f.database,round_id:round.id});assert.ok(lease);
   const call=await money.reserveSignalListeningDiscoveryCallV1({database:f.database,lease,provider_available:true});
   assert.equal(await money.markSignalListeningDiscoveryCallSentV1({database:f.database,lease,call_id:call.id,attempt_token:call.attempt_token,provider_available:true}),true);
-  await money.failSignalListeningDiscoveryCallV1({database:f.database,lease,call_id:call.id,attempt_token:call.attempt_token,outcome:'outcome_unknown',error_code:'synthetic_send_ack_unknown'});
+  await money.failSignalListeningDiscoveryCallV1({database:f.database,lease,call_id:call.id,attempt_token:call.attempt_token,outcome:'outcome_unknown',error_code:'listening_discovery_send_ack_unknown'});
   const prior=(await f.database.query('SELECT id,policy_digest FROM signal_processing_policy_versions WHERE id=$1',[f.policy.id])).rows[0]!;
   await assert.rejects(quoteSignalListeningStudyPolicyV1({...access,expected_policy_id:prior.id as string,expected_policy_digest:prior.policy_digest as string,valid_until:new Date(Date.now()+3600000).toISOString(),...allocation}),/r16_policy_active_work/);
   const kept=(await f.database.query('SELECT call_state,reserved_micro_usd::text FROM engine_cost_events WHERE id=$1',[call.id])).rows[0]!;
@@ -237,11 +237,38 @@ test('native Monitoring inheritance and remove/reintroduce keep the same ledger 
 },async()=>withSignalStudyFixtureV1(async f=>{
  const {withStudyNativeRuntimeV1}=await import('./signal-study-runtime.synthetic.fixture');
  const {quoteMonitoringInsightPolicyV1,provisionMonitoringInsightPolicyV1}=await import('../signal-monitoring-insights-policy');
+ const {readClassicPolicyActiveWorkV1}=await import('../signal-classic-policy-completion');
+ const {continueSignalListeningPreparationV1}=await import('../signal-listening-preparation');
  const root=(await f.database.query('SELECT scope_id FROM signal_listening_study_policy_bindings WHERE policy_id=$1',[f.policy.id])).rows[0]!.scope_id;
  const execution=await f.request();await withStudyNativeRuntimeV1(f.database,async runtime=>{assert.equal((await runtime.run(execution.id)).status,'completed');});
  const spent=(await f.database.query('SELECT signal_listening_study_policy_exposure_v1($1)::text amount',[root])).rows[0]!.amount;
  assert.ok(BigInt(spent as string)>0n);
  const access={database:f.database,workspace_id:f.workspace_id,actor_user_id:f.actor_user_id};
+ const org=(await f.database.query('SELECT organization_id FROM signal_processing_policy_versions WHERE id=$1',[f.policy.id])).rows[0]!.organization_id as string;
+ // finishRound completes its native child run, round and parent. The ordinary
+ // preparation dispatcher still owns the final run→preparation bookkeeping.
+ const pending=(await f.database.query<{id:string}>(`SELECT flow.id FROM signal_listening_preparations flow
+  JOIN signal_listening_discovery_rounds round ON round.classification_preparation_id=flow.id
+  JOIN signal_labeling_runs run ON run.id=flow.listening_run_id
+  WHERE round.execution_id=$1 AND flow.status='labeling' AND run.status='completed' ORDER BY round.ordinal`,[f.execution.id])).rows;
+ const diagnostic=(await f.database.query(`SELECT signal_listening_study_policy_busy_v1($1) scoped_busy,
+  (SELECT count(*)::int FROM signal_listening_preparations WHERE workspace_id=$2 AND status IN('preparing','waiting_prototypes','ready_for_labeling','labeling')) pending_preparations,
+  (SELECT count(*)::int FROM signal_listening_discovery_executions WHERE workspace_id=$2 AND status IN('active','outcome_unknown')) active_listening,
+  (SELECT count(*)::int FROM signal_study_executions WHERE workspace_id=$2 AND status IN('building','queued','running','outcome_unknown')) active_studies,
+  (SELECT count(*)::int FROM signal_labeling_calls WHERE workspace_id=$2 AND(status IN('reserved','submitting','submitted','unknown') OR raw_storage_key IS NOT NULL AND NOT results_applied)) pending_labeling_calls,
+  (SELECT count(*)::int FROM engine_cost_events WHERE workspace_id=$2 AND call_state IN('reserved','in_flight','response_persisted','outcome_unknown')) pending_editorial_calls`,[org,f.workspace_id])).rows[0]!;
+ const legacyBusy=await readClassicPolicyActiveWorkV1(f.database,org),details=JSON.stringify({...diagnostic,legacy_busy:legacyBusy,completed_child_preparations:pending.length});
+ assert.equal(legacyBusy,false,details);assert.deepEqual(diagnostic,{scoped_busy:true,pending_preparations:pending.length,active_listening:0,active_studies:0,pending_labeling_calls:0,pending_editorial_calls:0},details);assert.ok(pending.length>0,details);
+ const blockedQuote=await quoteMonitoringInsightPolicyV1(access);
+ await assert.rejects(provisionMonitoringInsightPolicyV1({...access,plan_digest:blockedQuote.plan_digest}),/monitoring_insights_policy_active_work/,'pending native preparation bookkeeping must block policy rotation');
+ const calls=async()=>(await f.database.query(`SELECT (SELECT count(*) FROM signal_processing_admissions)::text admissions,
+  (SELECT count(*) FROM signal_labeling_calls)::text labeling,(SELECT count(*) FROM engine_cost_events)::text editorial,
+  (SELECT count(*) FROM signal_workspace_embedding_calls)::text embedding`)).rows[0];
+ const beforeDrain=await calls();
+ for(const flow of pending)assert.equal((await continueSignalListeningPreparationV1({...access,preparation_id:flow.id,provider_available:false})).status,'completed');
+ assert.deepEqual(await calls(),beforeDrain,'native final preparation reconciliation creates no admission or provider call');
+ assert.equal(await readClassicPolicyActiveWorkV1(f.database,org),false);
+ assert.equal((await f.database.query('SELECT signal_listening_study_policy_busy_v1($1) busy',[org])).rows[0]!.busy,false,'both native guard families must be clear before the positive rotation');
  const quote=await quoteMonitoringInsightPolicyV1(access),monitor=await provisionMonitoringInsightPolicyV1({...access,plan_digest:quote.plan_digest});
  assert.equal((await f.database.query('SELECT scope_id FROM signal_listening_study_policy_bindings WHERE policy_id=$1',[monitor.policy_id])).rows[0]!.scope_id,root);
  const c=await f.database.connect();try{await c.query('BEGIN');
