@@ -68,11 +68,11 @@ BEGIN
  IF TG_OP='INSERT' THEN
   batch_sql:='SELECT n.* FROM listening_new_calls n WHERE n.run_id=$1';
   SELECT array_agg(DISTINCT n.run_id ORDER BY n.run_id) INTO targets FROM listening_new_calls n
-   JOIN signal_listening_runs owner ON owner.run_id=n.run_id AND owner.workspace_id=n.workspace_id;
+   JOIN signal_listening_runs call_owner ON call_owner.run_id=n.run_id AND call_owner.workspace_id=n.workspace_id;
  ELSE
   batch_sql:='SELECT n.* FROM listening_new_calls n JOIN listening_old_calls o ON o.id=n.id WHERE n.run_id=$1 AND o.status=''reserved'' AND n.status=''submitting''';
   SELECT array_agg(DISTINCT n.run_id ORDER BY n.run_id) INTO targets FROM listening_new_calls n
-   JOIN listening_old_calls o ON o.id=n.id JOIN signal_listening_runs owner ON owner.run_id=n.run_id AND owner.workspace_id=n.workspace_id
+   JOIN listening_old_calls o ON o.id=n.id JOIN signal_listening_runs call_owner ON call_owner.run_id=n.run_id AND call_owner.workspace_id=n.workspace_id
    WHERE o.status='reserved' AND n.status='submitting';
  END IF;
  IF targets IS NULL THEN RETURN NULL; END IF;
