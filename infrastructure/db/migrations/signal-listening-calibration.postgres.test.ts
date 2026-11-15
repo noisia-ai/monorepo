@@ -25,7 +25,16 @@ test('calibration uses the latest32 verified normal receipts and preserves earli
   assert.equal(full.length,2004);
   const bounded=(await database.query('SELECT * FROM signal_listening_population_roots_v1($1,$2,$3,$4,$5,$6) ORDER BY root_id,question_key',[ctx.workspace_id,configuration.id,ctx.map_id,map.entity_context_digest,roots,'llm-processing'])).rows;
   assert.deepEqual(bounded,full.filter(r=>roots.includes(r.root_id)));
-  let source=(await database.query("SELECT prosrc FROM pg_proc WHERE oid='signal_listening_population_roots_v1(uuid,uuid,uuid,text,uuid[],text)'::regprocedure")).rows[0].prosrc as string;
+  const reader=(await database.query(`SELECT p.prosrc,l.lanname FROM pg_proc p JOIN pg_language l ON l.oid=p.prolang
+   WHERE p.oid='signal_listening_population_roots_v1(uuid,uuid,uuid,text,uuid[],text)'::regprocedure`)).rows[0] as {prosrc:string;lanname:string};
+  let source=reader.prosrc;
+  if(reader.lanname==='plpgsql'){
+   // Observe the actual deployed bounded query, not a separately maintained
+   // imitation. The full-population EXECUTE branch must not enter this proof.
+   const boundedBody=source.match(/\bELSE\s+RETURN QUERY\s+([\s\S]+?);\s*END IF;\s*END\s*$/iu);
+   assert.ok(boundedBody,'the native population reader must expose its static bounded query');
+   source=boundedBody[1]!;
+  }else assert.equal(reader.lanname,'sql','unsupported native population planner');
   for(const [name,value] of Object.entries({w:'$1::uuid',cid:'$2::uuid',mid:'$3::uuid',ctx:'$4::text',roots:'$5::uuid[]',purpose:'$6::text'}))source=source.replace(new RegExp('\\b'+name+'\\b','g'),value);
   const explained=(await database.query('EXPLAIN (ANALYZE,FORMAT JSON) '+source,[ctx.workspace_id,configuration.id,ctx.map_id,map.entity_context_digest,[roots[0]],'llm-processing'])).rows[0]['QUERY PLAN'][0].Plan;
   type Node={['Node Type']:string;['Relation Name']?:string;['Index Cond']?:string;['Actual Rows']:number;['Actual Loops']:number;Plans?:Node[]};
