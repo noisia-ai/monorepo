@@ -260,21 +260,6 @@ jobs:
               exit 1
             fi
           fi
-      - name: Diagnose hybrid provider-rights plan on native PostgreSQL
-        if: ${{ github.event_name == 'workflow_dispatch' && inputs.scope == 'listening-smoke' }}
-        env:
-          NOISIA_MFP_PG_CI: 'true'
-        run: |
-          set +e
-          pnpm exec node --test --test-concurrency=1 --import tsx \
-            infrastructure/db/migrations/signal-mfp-hybrid-selector.integration.test.ts | tee mfp-hybrid-rights-diagnostic.tap
-          test_status=${PIPESTATUS[0]}
-          set -e
-          if ! grep -qx '# skipped 0' mfp-hybrid-rights-diagnostic.tap; then
-            echo '::error::Hybrid provider-rights diagnostic was skipped'
-            exit 1
-          fi
-          exit "$test_status"
       - name: Run R16 listening contracts and runtime on real PostgreSQL
         if: ${{ github.event_name != 'workflow_dispatch' || inputs.scope != 'listening-smoke' }}
         env:
@@ -359,6 +344,21 @@ jobs:
             echo '::error::R16 Listening smoke tests were skipped'
             exit 1
           fi
+      - name: Diagnose hybrid provider-rights plan on native PostgreSQL
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.scope == 'listening-smoke' }}
+        env:
+          NOISIA_MFP_PG_CI: 'true'
+        run: |
+          set +e
+          pnpm exec node --test --test-concurrency=1 --import tsx \
+            infrastructure/db/migrations/signal-mfp-hybrid-selector.integration.test.ts | tee mfp-hybrid-rights-diagnostic.tap
+          test_status=${PIPESTATUS[0]}
+          set -e
+          if ! grep -qx '# skipped 0' mfp-hybrid-rights-diagnostic.tap; then
+            echo '::error::Hybrid provider-rights diagnostic was skipped'
+            exit 1
+          fi
+          exit "$test_status"
       - name: Persist synthetic second-shape component proof
         if: always()
         uses: actions/upload-artifact@v4
