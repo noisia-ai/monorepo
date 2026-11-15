@@ -156,7 +156,7 @@ export async function signalListeningJevJobV1(run_id:string,options:{
           recovery=selectSignalListeningRecoveryV1(pending,execution);
           if(recovery){
             selection=[];shapes=[];
-            recoveryProvider=createSignalListeningRecoveryProviderV1({execution:recovery.execution,external:options.provider});
+            recoveryProvider=createSignalListeningRecoveryProviderV1({execution:recovery.execution,external:options.provider,factory:options.calibrated_provider_factory});
             return{provider:recoveryProvider,execution:recovery.execution,max_windows:1,recovery_only:true};
           }
           if(leased.error_code==='labeling_outcome_unknown'||pending.some(call=>call.status==='unknown')){

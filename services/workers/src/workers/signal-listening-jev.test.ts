@@ -250,3 +250,27 @@ for(const failure of['unusable_usage','invalid_answers']as const)test(`parallel 
   assert.equal(physical,before,'ambiguous physical receipt is not resubmitted');
  }
 });
+
+test('planned page recovery reuses the injected shared-account factory for verified usage without any provider handoff',{timeout:10000},async()=>{
+ const f=fixture(signalListeningBaseTemplateV1({category:'tea',lexicon_terms:['tea']}),[['voice','promotion']]);
+ const sample=(await f.store.inputs(f.run))[0]!,inputs=Array.from({length:3},()=>({...sample,root_id:randomUUID()}));
+ const proposals=inputs.map(input=>{const request=buildSignalListeningJevRequestV1(input,f.run.identity.params.configuration as never),request_digest=signalListeningRequestDigestV1(f.run,input,request);
+  return{request,request_digest,custom_id:'listening_'+request_digest.slice(7,67),inputs:[input],reserved_micro_usd:100};});
+ await f.store.reserve(f.run,proposals);const page=randomUUID(),scope=digest('original-account-calibration');
+ for(const call of f.calls){const raw=await f.provider.evaluate(call.request as JevRequestV1);call.status='unknown';call.has_raw=true;call.raw_page_id=page;call.raw_page_size_bytes=8192;
+  call.raw_body=JSON.stringify({...raw,rate_calibration:{labeler_digest:scope,input_bytes:100,kind:'official_context_bound'}});}
+ f.requests.splice(0);f.store.fail=async(_run,code)=>{f.run.status='failed';f.run.error_code=code;};
+ f.store.refresh=async()=>({status:f.run.status,error_code:f.run.error_code??null});
+ let factoryCalls=0,observations=0,handoffs=0,closed=0;
+ const database={query:async(sql:string)=>({rows:sql.includes('signal_workspace_features')?[{enabled:true}]:[{workspace_id:f.run.workspace_id,labeler_digest:f.run.labeler_digest,recovery_only:true}]})}as NonNullable<Parameters<typeof signalListeningJevJobV1>[1]>['database'];
+ const previous={owner:process.env.NOISIA_SIGNAL_LISTENING_ENABLED,account:process.env.NOISIA_TYPESAFE_ACCOUNT_ID};
+ process.env.NOISIA_SIGNAL_LISTENING_ENABLED='true';delete process.env.NOISIA_TYPESAFE_ACCOUNT_ID;
+ try{
+  const result=await signalListeningJevJobV1(f.run.id,{database,store:f.store,execution,preflight:async()=>{},
+   calibrated_provider_factory:args=>{factoryCalls++;assert.equal(args.labeler_digest,scope);return{max_concurrency:1,max_response_bytes:16384,
+    evaluate:async()=>{handoffs++;throw Error('recovery cannot send');},observeUsage:async(_raw,tokens)=>{assert.equal(tokens,100);observations++;},close:async()=>{closed++;}};},
+   calibration:{load:async()=>{throw Error('recovery cannot invent a calibration profile');},derive:async()=>null}});
+  assert.equal(result.labeled,3);assert.equal(factoryCalls,1);assert.equal(observations,3);assert.equal(handoffs,0);assert.equal(closed,1);assert.equal(f.requests.length,0);
+  assert.ok(f.calls.every(c=>c.results_applied&&c.status==='settled'));
+ }finally{for(const[key,value]of[['NOISIA_SIGNAL_LISTENING_ENABLED',previous.owner],['NOISIA_TYPESAFE_ACCOUNT_ID',previous.account]]as const)if(value===undefined)delete process.env[key];else process.env[key]=value;}
+});
