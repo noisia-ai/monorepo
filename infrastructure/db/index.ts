@@ -180,3 +180,5 @@ export {readLatestSignalStudyExecutionStatusV1} from './signal-study-status';
 export {readSignalStudyListeningSourceV1,type SignalStudyListeningSourceV1} from './signal-study-listening-source';
 
 export {readSignalStudyStabilityProofV1} from './signal-study-replay';
+
+export {signalStudyKnownAuthorPrivacyV1,type SignalStudyAuthorMetadataV1} from './signal-study-author-privacy';
