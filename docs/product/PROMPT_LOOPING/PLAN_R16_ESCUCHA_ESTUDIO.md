@@ -12,6 +12,10 @@ No hay aprobaciones humanas intermedias en los procesos de análisis: Sonnet 4.6
 
 ## Progreso
 
+- H1 importación: 0303/d19da513 acota las búsquedas de atribución por la identidad de cada fila, preservando los filtros y la invalidación de 0082. El mismo ensayo sintético heredado de 1,537 raíces pasó de 270.24 s a 4.46 s, con idénticos censos de menciones, procedencia, raíces dirty y outbox. PostgreSQL comparó seis casos de la función anterior y la nueva, con reintentos y dos workspaces; igualdad exacta y seis buffers compartidos para el lookup puntual. Revisión independiente sin P0/P1/P2. No acredita la ruta CSV asíncrona ni explica por sí solo las seis horas históricas de R15.
+- H3 transporte integrado: 0302/f6ddd267 importado como 83f58ee5, worker revisado 37e14c26/fa27aa77 como 5a7c4bd3/8e6de114 y adaptación de hijos 182ca78c. Los doce casos PostgreSQL dedicados pasaron sin omisiones; focal worker 22/22 y suite workers 1,048/46 omisiones de entorno, tipado/lint 11/11. La integración del selector y recuperación pasó revisión independiente. Las respuestas parciales conservan su exposición y bytes sin liquidación falsa; guardar configuración, generación y fase es atómico. Aún faltan el controlador de vueltas, la reagrupación real y la aceptación UAT.
+- H3 procedencia numérica: d3b628cc expone las cadenas canónicas ya selladas de proof y vector en el mismo lector autorizado. PostgreSQL verificó sus SHA y equivalencia con los objetos parseados en seis clones/284 migraciones, sin omisiones. Esto permite reagrupar vectores pagados sin inventar un embedding_run_id ni recalcular su hash con decimales distintos.
+
 - H3 integración: 92b39fce cierra la inanición por publicaciones completadas que una edición humana volvió inválidas. El selector pagina con precisión de microsegundos, comprueba autoridad vigente y alcanza al siguiente owner válido sin cambiar los recibos históricos. La revisión independiente no encontró P0/P1/P2. La integración 733456f9/f2f2b652 lee vectores por páginas y conserva huérfanas cuando no hay candidatos: query-engine 707/707, tipado/lint 11/11 y PostgreSQL monetario 1/1 sobre seis clones independientes, 282 migraciones y cero omisiones. Evidencia privada sellada; no acredita todavía la orquestación completa H3.
 - H4: integrados los contratos de plantilla, ejes, muestras, motivos, capas, estabilidad, contraste y salida direccional, con las tres observaciones P2 corregidas y revisión independiente aprobada. La persistencia, ejecución y UI siguen pendientes; las funciones puras no se presentan como un Estudio ejecutado.
 - H1 diagnóstico: el corte combinado 31ab9c12 pasó matriz 8/8 y ensayo corto de 1,002 raíces a 488/s. No es aceptación sostenida. Continúa el cambio para alimentar ventanas mientras persisten las anteriores; los lectores nativos de V2 y Escucha excluyen reservas y resultados inciertos sin perder aislamiento.
@@ -114,6 +118,9 @@ Recibo: separar Voyage/JEV por raíz de Claude por número de grupos y vueltas; 
 
 ## Sorpresas y descubrimientos
 
+- La traza completa del importador heredado encontró unas 2.36 millones de visitas de buffers al resolver una sola raíz con 1,536 anteriores: el plan repetía escaneos de workspace antes de aplicar el ID de la transición. El INSERT principal consumía milisegundos; el costo estaba en triggers. La ruta CSV asíncrona usa una reconciliación de procedencia distinta y se mide por separado.
+- PostgreSQL no puede convertir un JSON que contiene NUL a su representación textual de valores, aunque se quiera leer otro campo. El transporte conserva raw_text intacto y verifica la gramática y bytes del cuerpo sin convertirlo a JSONB. Las pruebas incluyen NUL, BOM, UTF-8 inválido y el máximo prefijo permitido.
+
 - Una ronda completada sin snapshot puede perder legitimidad de publicación por una edición humana posterior. Reintentar siempre las más antiguas llenaba el límite del drainer y bloqueaba trabajo nuevo. Se separa la recuperación publicable de la historia inmutable y se prueba con límite uno y una admisión nativa posterior.
 - Conservar todos los vectores y textos para la revisión editorial excedía el presupuesto de memoria del corpus. Dos pasadas paginadas mantienen los mismos censos, digest, centroides y muestras; sólo se cargan los textos finalmente seleccionados. Cero evaluaciones es un estado válido de huérfanas; las probabilidades nulas siguen siendo inválidas.
 
@@ -151,6 +158,9 @@ Recibo: separar Voyage/JEV por raíz de Claude por número de grupos y vueltas; 
 - El promedio del piloto completo incluye una etapa editorial que no escala por raíz. Multiplicarlo linealmente daba USD 205.81/millón; mantener explícitamente los grupos y una vuelta de referencia produce USD 114.035250. Ambos cálculos parten del mismo recibo, cuyo uso histórico permanece USD 17.280463.
 
 ## Registro de decisiones
+
+- 2026-11-15: corregir la forma de consulta del trigger heredado mediante una migración aditiva, sin desactivar triggers, ampliar timeouts ni cambiar los predicados. Mantener equivalencia contra 0082 en PostgreSQL y separar esta evidencia del importador CSV asíncrono.
+- 2026-11-15: reutilizar las cadenas canónicas originales de PostgreSQL para verificar proof/vector en el proceso numérico; una generación o subset no se presenta como corrida de Voyage. Extender el wire numérico con una fuente explícita de caché cuando haya varias llamadas de origen.
 
 - 2026-11-15: no mutar ni retirar rondas completadas sólo para desbloquear una cola. Filtrar su recuperabilidad actual, paginar por timestamp completo e ID y mantener la validación definitiva en la activación atómica. Con el análisis desactivado, recuperar custodia financiera pendiente y publicaciones válidas sin iniciar análisis nuevo.
 - 2026-11-15: integrar la evidencia paginada sin cambiar la selección de muestras ni reemplazarla por ejemplos cercanos; preservar igualdad exacta con el constructor anterior y probar colección de vectores entre páginas.
