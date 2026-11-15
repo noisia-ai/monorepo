@@ -26,6 +26,14 @@ export type ListeningOrphanNumericResultV1={manifest:ListeningOrphanNumericManif
 const uuid=/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/u,hash=/^sha256:[a-f0-9]{64}$/u;
 const sha=(value:string)=>'sha256:'+createHash('sha256').update(value).digest('hex');
 function fail(suffix:string):never{throw Error('listening_orphan_'+suffix);}
+function validOrphanEvaluation(value:unknown){
+ if(!value||typeof value!=='object'||Array.isArray(value))return false;
+ const e=value as{probability?:unknown;human_belongs?:unknown;human_decision_id?:unknown};
+ const measured=typeof e.probability==='number'&&Number.isFinite(e.probability)&&e.probability>=0&&e.probability<=1;
+ if(e.human_belongs!==undefined&&e.human_belongs!==null)return e.human_belongs===false&&typeof e.human_decision_id==='string'&&uuid.test(e.human_decision_id)&&(e.probability===null||measured);
+ return measured&&(e.probability as number)<.7;
+}
+
 async function* jsonl(file:string){const lines=createInterface({input:createReadStream(file),crlfDelay:Infinity});
  try{for await(const line of lines){if(line.trim())yield JSON.parse(line)as Record<string,unknown>;}}finally{lines.close();}}
 
@@ -114,8 +122,7 @@ export async function regroupSignalListeningOrphansV1(args:{access:SignalListeni
     if(!uuid.test(row.root_id)||cursor&&row.root_id<=cursor||!hash.test(row.proof_digest)||typeof row.proof_json!=='string'||sha(row.proof_json)!==row.proof_digest
      ||digest(JSON.parse(row.proof_json))!==digest(row.proof)||!row.text||row.text.length>1400
      ||sha(row.text)!==row.proof.source_text_sha256||sha(row.text)!==row.proof.chunk_sha256||row.proof.in_category!==true
-     ||!Array.isArray(row.proof.evaluations)||row.proof.evaluations.some(e=>!e||typeof e!=='object'||typeof(e as{probability?:unknown}).probability!=='number'
-       ||!Number.isFinite(Number((e as{probability:number}).probability))||Number((e as{probability:number}).probability)<0||Number((e as{probability:number}).probability)>=.7))fail('source_proof_invalid');
+     ||!Array.isArray(row.proof.evaluations)||row.proof.evaluations.some(e=>!validOrphanEvaluation(e)))fail('source_proof_invalid');
     if(row.vector!==null){if(!uuid.test(String(row.proof.embedding_call_id))||typeof row.vector_json!=='string'||sha(row.vector_json)!==row.proof.embedding_sha256
       ||JSON.stringify(JSON.parse(row.vector_json))!==JSON.stringify(row.vector)||row.vector.length!==1024||row.vector.some(n=>!Number.isFinite(n))
       ||Math.abs(Math.sqrt(row.vector.reduce((n,v)=>n+v*v,0))-1)>1e-4)fail('cached_vector_invalid');

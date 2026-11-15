@@ -13,7 +13,7 @@ import * as money from '../signal-listening-discovery-money';
 import type {ListeningDiscoveryAdvanceSubsetV1,ListeningDiscoveryNumericInputV1,ListeningDiscoveryNumericStorageV1,ListeningDiscoveryNumericArtifactDescriptorV1} from '../signal-listening-discovery-advance';
 import {jevUsageV1} from '../../../services/workers/src/workers/signal-jev-labeling-page';
 const sha=(raw:string|Buffer)=>'sha256:'+createHash('sha256').update(raw).digest('hex');
-type FixtureOptions={initial_approved?:number;no_category?:boolean;cap_micro_usd?:number;org_race?:boolean};
+type FixtureOptions={initial_approved?:number;no_category?:boolean;cap_micro_usd?:number;org_race?:boolean;additional_defined_topic?:boolean};
 export async function withDiscoveryAdvanceFixtureV1(fn:(f:Awaited<ReturnType<typeof seed>>)=>Promise<void>,options:FixtureOptions={}){
  await runMassLabelingAcceptanceFixtureV1('product',{beforeProcessing:async ctx=>{
   const files=await mkdtemp(join(tmpdir(),'r16-discovery-advance-'));
@@ -26,6 +26,8 @@ async function seed(ctx:FixtureContext,files:string,options:FixtureOptions){
  await db.query("UPDATE signal_labeling_runs SET status='canceled' WHERE id=$1",[ctx.run_id]);
  const base=await saveSignalListeningConfigurationV1({...access,expected_revision:0,provenance:'human',configuration:signalListeningBaseTemplateV1({category:'bicycles',lexicon_terms:['synthetic']})});
  const proposal=await proposeSignalListeningDiscoveryBootstrapV1({...access,configuration_id:base.id,map_id:ctx.map_id});
+ if(options.additional_defined_topic){const source=proposal.configuration.questions.find(q=>q.topic_source==='discovered');assert.ok(source);
+  const key='additional_defined_topic';proposal.configuration.questions.push({...source,key,topic_source:'defined',human_locked:false});}
  const cfg=await saveSignalListeningConfigurationV1({...access,expected_revision:base.revision,provenance:'agent',source_digest:proposal.source_digest,configuration:proposal.configuration});
  const initial=await bootstrapSignalListeningDiscoveryV1({...access,configuration_id:cfg.id,map_id:ctx.map_id,bindings:proposal.bindings});
  const roots=(await db.query<{root_id:string}>('SELECT root_id FROM signal_mass_labeling_items WHERE workspace_id=$1 AND map_id=$2 ORDER BY root_id',[ctx.workspace_id,ctx.map_id])).rows.map(r=>r.root_id);

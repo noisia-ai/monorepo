@@ -1,5 +1,5 @@
 import {createHash} from 'node:crypto';
-import {LISTENING_DISCOVERY_POLICY_V1,listeningDiscoveryPolicyDigestV1,
+import {LISTENING_DISCOVERY_POLICY_V1,listeningDiscoveryPolicyDigestV1,validListeningDiscoveryEvaluationV1,effectiveListeningDiscoveryApprovalV1,
   type ListeningDiscoveryPolicyV1,type ListeningDiscoveryRootV1,type ListeningDiscoveryEvidenceV1} from './signal-listening-discovery-v1';
 
 export type ListeningDiscoveryMetadataV1=Omit<ListeningDiscoveryRootV1,'vector'>;
@@ -15,7 +15,7 @@ function jsonArrayHash(){
     finish(){if(closed)fail('stream_closed');closed=true;return'sha256:'+hash.update(']').digest('hex');}};
 }
 type Ranked={id:string;rank:string};
-type Topic={asked:number;members:string[];sum:number[]|null;memberHash:ReturnType<typeof jsonArrayHash>;
+type Topic={asked:number;approved:number;humanApproved:number;humanRemoved:number;members:string[];sum:number[]|null;memberHash:ReturnType<typeof jsonArrayHash>;
   accepted:Ranked[];rejected:Ranked[];centroid:number[]|null;memberDigest:string;centroidStatus:ListeningDiscoveryEvidenceV1['topics'][number]['centroid_status']};
 
 /** Two ordered passes reproduce the eager v1 evidence exactly. The first pass
@@ -44,9 +44,9 @@ export function createListeningDiscoveryEvidenceStreamV1(args:Header){
     ||new Set(args.topic_keys).size!==args.topic_keys.length||args.topic_keys.some(key=>!validKey.test(key))
     ||!Number.isSafeInteger(pageSize)||pageSize<1||pageSize>1024)fail('input_invalid');
   const keys=[...args.topic_keys].sort(cmp),known=new Set(keys);
-  const topics=new Map<string,Topic>(keys.map(key=>[key,{asked:0,members:[],sum:new Array<number>(1024).fill(0),
+  const topics=new Map<string,Topic>(keys.map(key=>[key,{asked:0,approved:0,humanApproved:0,humanRemoved:0,members:[],sum:new Array<number>(1024).fill(0),
     memberHash:jsonArrayHash(),accepted:[],rejected:[],centroid:null,memberDigest:'',centroidStatus:'no_confirmed_members'}]));
-  const pairs=new Map<string,{jointly_asked:number;jointly_approved:number}>(),twinKeys=new Set<string>();
+  const pairs=new Map<string,{jointly_asked:number;jointly_approved:number;confirmed_joint:number;hasHuman:boolean}>(),twinKeys=new Set<string>();
   const inputByRoot:Record<string,string>={},orphans:string[]=[];
   const census=jsonArrayHash(),evaluationsHash=jsonArrayHash();
   const censusSecond=jsonArrayHash(),evaluationsSecond=jsonArrayHash();
@@ -59,13 +59,13 @@ export function createListeningDiscoveryEvidenceStreamV1(args:Header){
       ||!Array.isArray(root.evaluations)||new Set(root.evaluations.map(e=>e.topic_key)).size!==root.evaluations.length)fail('root_invalid');
     if(last&&cmp(last,root.root_id)>=0)fail(last===root.root_id?'root_invalid':'stream_order_invalid');
     const evaluations=[...root.evaluations].sort((a,b)=>cmp(a.topic_key,b.topic_key));
-    if(evaluations.some(e=>!known.has(e.topic_key)||!Number.isFinite(e.probability)||e.probability<0||e.probability>1))fail('evaluation_invalid');
+    if(evaluations.some(e=>!known.has(e.topic_key)||!validListeningDiscoveryEvaluationV1(e)))fail('evaluation_invalid');
     return evaluations;
   }
   function pushHashes(root:ListeningDiscoveryMetadataV1,evaluations:ListeningDiscoveryMetadataV1['evaluations'],
     population:ReturnType<typeof jsonArrayHash>,evaluation:ReturnType<typeof jsonArrayHash>){
     population.push([root.root_id,root.input_sha256,root.in_category]);
-    evaluation.push([root.root_id,root.input_sha256,root.in_category,evaluations.map(e=>[e.topic_key,e.probability])]);
+    evaluation.push([root.root_id,root.input_sha256,root.in_category,evaluations.map(e=>e.human_belongs===undefined?[e.topic_key,e.probability]:[e.topic_key,e.probability,e.human_belongs,e.human_decision_id])]);
   }
   function addFirstPage(roots:ListeningDiscoveryRootV1[]):void{
     if(state!=='first')fail('stream_phase_invalid');if(roots.length>pageSize)fail('stream_page_invalid');
@@ -77,15 +77,20 @@ export function createListeningDiscoveryEvidenceStreamV1(args:Header){
       if(++count>args.expected_root_count)fail('input_invalid');
       previous=root.root_id;inputByRoot[root.root_id]=root.input_sha256;pushHashes(root,evaluations,census,evaluationsHash);
       let accepted=false;
-      for(const e of evaluations){const topic=topics.get(e.topic_key)!;topic.asked++;
-        if(e.probability>=policy.approval){accepted=true;topic.members.push(root.root_id);topic.memberHash.push([root.root_id,root.input_sha256]);
+      for(const e of evaluations){const topic=topics.get(e.topic_key)!;
+        if(e.probability!==null){topic.asked++;if(e.probability>=policy.approval)topic.approved++;}
+        if(e.human_belongs===true)topic.humanApproved++;else if(e.human_belongs===false)topic.humanRemoved++;
+        if(effectiveListeningDiscoveryApprovalV1(e,policy.approval)){accepted=true;topic.members.push(root.root_id);topic.memberHash.push([root.root_id,root.input_sha256]);
           for(let dimension=0;dimension<1024;dimension++)topic.sum![dimension]!+=root.vector[dimension]!/norm;}
       }
       if(root.in_category){categoryCount++;if(!accepted)orphans.push(root.root_id);}
       for(let a=0;a<evaluations.length;a++)for(let b=a+1;b<evaluations.length;b++){
         const left=evaluations[a]!,right=evaluations[b]!,key=left.topic_key+'\0'+right.topic_key;
-        const pair=pairs.get(key)??{jointly_asked:0,jointly_approved:0};pair.jointly_asked++;
-        if(left.probability>=policy.approval&&right.probability>=policy.approval)pair.jointly_approved++;
+        const pair=pairs.get(key)??{jointly_asked:0,jointly_approved:0,confirmed_joint:0,hasHuman:false};
+        if(left.probability!==null&&right.probability!==null)pair.jointly_asked++;
+        if(left.probability!==null&&right.probability!==null&&left.probability>=policy.approval&&right.probability>=policy.approval)pair.jointly_approved++;
+        if(effectiveListeningDiscoveryApprovalV1(left,policy.approval)&&effectiveListeningDiscoveryApprovalV1(right,policy.approval))pair.confirmed_joint++;
+        pair.hasHuman ||=left.human_belongs!==undefined||right.human_belongs!==undefined;
         pairs.set(key,pair);
       }
     }
@@ -104,11 +109,12 @@ export function createListeningDiscoveryEvidenceStreamV1(args:Header){
     }
     twins=[...pairs].sort(([a],[b])=>cmp(a,b)).flatMap(([key,pair])=>{
       const [left,right]=key.split('\0') as [string,string];
-      const union=topics.get(left)!.members.length+topics.get(right)!.members.length-pair.jointly_approved;
-      const jaccard=union?pair.jointly_approved/union:0,coapproval=pair.jointly_approved/pair.jointly_asked;
+      const union=topics.get(left)!.approved+topics.get(right)!.approved-pair.jointly_approved;
+      const confirmedUnion=topics.get(left)!.members.length+topics.get(right)!.members.length-pair.confirmed_joint;
+      const jaccard=confirmedUnion?pair.confirmed_joint/confirmedUnion:0,coapproval=pair.jointly_asked?pair.jointly_approved/pair.jointly_asked:0;
       if(pair.jointly_asked<policy.min_jointly_asked||pair.jointly_approved<policy.min_jointly_approved
         ||jaccard<policy.twin_jaccard&&coapproval<policy.twin_coapproval)return[];
-      twinKeys.add(key);return[{left,right,...pair,union_approved:union,jaccard,coapproval}];
+      twinKeys.add(key);return[{left,right,jointly_asked:pair.jointly_asked,jointly_approved:pair.jointly_approved,union_approved:union,jaccard,coapproval,...(pair.hasHuman?{union_confirmed:confirmedUnion,confirmed_intersection:pair.confirmed_joint}:{})}];
     });
     state='second';return{population_digest:populationDigest,root_count:count};
   }
@@ -124,8 +130,8 @@ export function createListeningDiscoveryEvidenceStreamV1(args:Header){
       if(++secondCount>args.expected_root_count||!Object.hasOwn(inputByRoot,root.root_id)||inputByRoot[root.root_id]!==root.input_sha256)fail('population_changed');
       secondPrevious=root.root_id;pushHashes(root,evaluations,censusSecond,evaluationsSecond);
       for(const e of evaluations){const topic=topics.get(e.topic_key)!;
-        rankExample(e.probability>=policy.approval?topic.accepted:topic.rejected,root.root_id,e.topic_key,e.probability>=policy.approval?'accepted':'rejected');}
-      if(root.in_category){const approved=evaluations.filter(e=>e.probability>=policy.approval);let twin=false;
+        if(e.probability!==null)rankExample(e.probability>=policy.approval?topic.accepted:topic.rejected,root.root_id,e.topic_key,e.probability>=policy.approval?'accepted':'rejected');}
+      if(root.in_category){const approved=evaluations.filter(e=>e.probability!==null&&e.probability>=policy.approval);let twin=false;
         for(let a=0;a<approved.length&&!twin;a++)for(let b=a+1;b<approved.length;b++)if(twinKeys.has(approved[a]!.topic_key+'\0'+approved[b]!.topic_key)){twin=true;break;}
         if(twin)twinRootCount++;
       }
@@ -139,8 +145,8 @@ export function createListeningDiscoveryEvidenceStreamV1(args:Header){
       population_digest:populationDigest,policy_digest:policyDigest,map_digest:args.map_digest,round:args.round,root_count:count,
       root_input_sha256:inputByRoot,category_root_count:categoryCount,orphan_root_ids:orphans,orphan_rate:categoryCount?orphans.length/categoryCount:null,
       twin_root_count:twinRootCount,twin_root_rate:categoryCount?twinRootCount/categoryCount:null,twins,
-      topics:keys.map(topic_key=>{const t=topics.get(topic_key)!;return{topic_key,asked:t.asked,approved:t.members.length,
-        acceptance_rate:t.asked?t.members.length/t.asked:null,confirmed_root_ids:t.members,confirmed_members_digest:t.memberDigest,
+      topics:keys.map(topic_key=>{const t=topics.get(topic_key)!;return{topic_key,asked:t.asked,approved:t.approved,
+        acceptance_rate:t.asked?t.approved/t.asked:null,...(t.humanApproved||t.humanRemoved?{human_approved:t.humanApproved,human_removed:t.humanRemoved,effective_members:t.members.length}:{}),confirmed_root_ids:t.members,confirmed_members_digest:t.memberDigest,
         centroid:t.centroid,centroid_status:t.centroidStatus,accepted_examples:t.accepted.map(row=>row.id),rejected_examples:t.rejected.map(row=>row.id)};})};
   }
   function inspectMemory(){return{population_roots:count,peak_page_roots:peakPageRoots,

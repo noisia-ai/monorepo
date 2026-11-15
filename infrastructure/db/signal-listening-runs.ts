@@ -22,7 +22,8 @@ async function owner(c:Pick<PoolClient,'query'>,run:LabelingRunV1,current=true){
  await assertMassLabelingMapCurrentV1(c,run.workspace_id,row.map_id);return row;
 }
 const population=`signal_listening_population_v1($1::uuid,$2::uuid,$3::uuid,$4::text)`;
-const pendingScope=`p.candidate AND p.scope_state='included' AND p.answer IS NULL AND NOT EXISTS(SELECT 1 FROM signal_listening_call_questions sent
+const pendingScope=`p.candidate AND p.scope_state='included' AND p.answer IS NULL
+ AND NOT signal_listening_human_decision_exists_v1($1::uuid,$2::uuid,$3::uuid,p.root_id,p.input_digest,$4::text,p.question_digest) AND NOT EXISTS(SELECT 1 FROM signal_listening_call_questions sent
  WHERE sent.run_id=$5 AND sent.workspace_id=$1 AND sent.root_id=p.root_id AND sent.question_digest=p.question_digest)`;
 async function inputMetadata(c:Pick<PoolClient,'query'>,run:LabelingRunV1,limit:number){
  const o=await owner(c,run,false);
@@ -120,8 +121,9 @@ export function createSignalListeningStoreV1(options:Omit<Parameters<typeof crea
   pending:async(c,run)=>{
    const o=await owner(c,run,false);
    if((await loadSignalListeningConfigurationWithClientV1(c,run.workspace_id))?.id!==o.configuration_id)return 0;
-   return (await c.query<{count:number}>(`SELECT count(DISTINCT root_id)::int count FROM ${population}
-    WHERE candidate AND scope_state='included' AND answer IS NULL`,[run.workspace_id,o.configuration_id,o.map_id,run.entity_context_digest])).rows[0]!.count;
+   return (await c.query<{count:number}>(`SELECT count(DISTINCT root_id)::int count FROM ${population} p
+    WHERE candidate AND scope_state='included' AND answer IS NULL
+     AND NOT signal_listening_human_decision_exists_v1($1::uuid,$2::uuid,$3::uuid,p.root_id,p.input_digest,$4::text,p.question_digest)`,[run.workspace_id,o.configuration_id,o.map_id,run.entity_context_digest])).rows[0]!.count;
   },
   write:async(c,run,pages)=>{
    await authorizeSignalListeningV1(c,{workspace_id:run.workspace_id,actor_user_id:run.actor_user_id},'process');

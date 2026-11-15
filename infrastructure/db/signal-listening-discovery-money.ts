@@ -88,7 +88,7 @@ async function nativeRequest(args:SignalListeningAccessV1&{generation_id:string;
   await mapCurrent(c,args.workspace_id,g.map_id);
   const current=(await c.query('SELECT 1 FROM signal_listening_discovery_generations WHERE id=$1 AND workspace_id=$2 AND status=\'ready\' AND snapshot_digest=$3',[g.id,args.workspace_id,g.snapshot_digest])).rows.length;
   if(!current)fail('listening_discovery_snapshot_stale');
-  const rows=(await c.query<{root_id:string;proof:{source_text_sha256:string;embedding_sha256:string|null;in_category:boolean|null;evaluations:Array<{question_key:string;probability:number|null}>};
+  const rows=(await c.query<{root_id:string;proof:{source_text_sha256:string;embedding_sha256:string|null;in_category:boolean|null;evaluations:Array<{question_key:string;probability:number|null;human_belongs?:boolean|null;human_decision_id?:string|null}>};
    vector:string|null;allowed:boolean;source_sha:string;vector_sha:string|null}>(`SELECT r.root_id,r.proof,
    ${vectors?"CASE WHEN receipt.status='settled' THEN e.embedding::text END":"NULL::text"} vector,
    signal_listening_root_right_v1($1,r.root_id,'llm-processing') allowed,
@@ -115,9 +115,9 @@ async function nativeRequest(args:SignalListeningAccessV1&{generation_id:string;
   let cursor:string|undefined;
   for(;;){const page=await readPage(cursor,vectors);
    const metadata:ListeningDiscoveryMetadataV1[]=page.map(r=>{
-    const p=r.proof;if(p.in_category===null||p.evaluations.some(e=>e.probability===null))fail('listening_discovery_classification_incomplete');
+    const p=r.proof;if(p.in_category===null||p.evaluations.some(e=>e.probability===null&&typeof e.human_belongs!=='boolean'))fail('listening_discovery_classification_incomplete');
     return{root_id:r.root_id,input_sha256:p.source_text_sha256,in_category:p.in_category,
-     evaluations:p.evaluations.map(e=>({topic_key:e.question_key,probability:e.probability!}))};
+     evaluations:p.evaluations.map(e=>({topic_key:e.question_key,probability:e.probability,...(typeof e.human_belongs==='boolean'?{human_belongs:e.human_belongs,human_decision_id:e.human_decision_id??''}:{})}))};
    });
    if(vectors)stream.addFirstPage(metadata.map((root,index)=>{
     if(!page[index]!.vector)fail('listening_discovery_classification_incomplete');

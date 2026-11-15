@@ -21,6 +21,14 @@ export const LISTENING_DISCOVERY_POLICY_V1: Readonly<ListeningDiscoveryPolicyV1>
   max_rounds: 3, examples_per_stratum: 8,
 });
 
+export type ListeningDiscoveryEvaluationV1={topic_key:string;probability:number|null;human_belongs?:boolean;human_decision_id?:string};
+export function validListeningDiscoveryEvaluationV1(e:ListeningDiscoveryEvaluationV1):boolean{
+ const measured=typeof e.probability==='number'&&Number.isFinite(e.probability)&&e.probability>=0&&e.probability<=1;
+ if(e.human_belongs!==undefined)return typeof e.human_belongs==='boolean'&&typeof e.human_decision_id==='string'
+  &&/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/iu.test(e.human_decision_id)&&(e.probability===null||measured);
+ return measured&&e.human_decision_id===undefined;
+}
+export const effectiveListeningDiscoveryApprovalV1=(e:ListeningDiscoveryEvaluationV1,threshold:number)=>e.human_belongs??(e.probability!==null&&e.probability>=threshold);
 export type ListeningDiscoveryRootV1 = {
   root_id: string;
   /** SHA-256 of the exact prepared text bytes used for this root. */
@@ -28,7 +36,7 @@ export type ListeningDiscoveryRootV1 = {
   in_category: boolean;
   /** Existing Voyage document vector. Never a provider-generated centroid. */
   vector: number[];
-  evaluations: Array<{ topic_key: string; probability: number }>;
+  evaluations: ListeningDiscoveryEvaluationV1[];
 };
 
 export type ListeningDiscoveryEvidenceV1 = {
@@ -48,6 +56,7 @@ export type ListeningDiscoveryEvidenceV1 = {
   twin_root_rate: number | null;
   topics: Array<{
     topic_key: string; asked: number; approved: number; acceptance_rate: number | null;
+    human_approved?:number;human_removed?:number;effective_members?:number;
     confirmed_root_ids: string[]; confirmed_members_digest: string;
     centroid: number[] | null;
     centroid_status: 'confirmed' | 'no_confirmed_members' | 'cancelled_vectors';
@@ -55,7 +64,7 @@ export type ListeningDiscoveryEvidenceV1 = {
   }>;
   twins: Array<{
     left: string; right: string; jointly_asked: number; jointly_approved: number;
-    union_approved: number; jaccard: number; coapproval: number;
+    union_approved: number; jaccard: number; coapproval: number;union_confirmed?:number;confirmed_intersection?:number;
   }>;
 };
 
@@ -110,10 +119,10 @@ export function buildListeningDiscoveryEvidenceV1(args: {
   const inputByRoot = new Map(rows.map(row => [row.root_id, row.input_sha256]));
   const knownTopics = new Set(keys), seen = new Set<string>();
   const byTopic = new Map(keys.map(key => [key, {
-    asked: new Set<string>(), approved: new Set<string>(), rejected: [] as string[],
+    asked: new Set<string>(), approved: new Set<string>(), confirmed:new Set<string>(),humanApproved:0,humanRemoved:0,rejected: [] as string[],
     sum: new Array<number>(1024).fill(0),
   }]));
-  const pairCounts = new Map<string, { jointly_asked: number; jointly_approved: number; roots: string[] }>();
+  const pairCounts = new Map<string, { jointly_asked: number; jointly_approved: number;confirmed_joint:number;hasHuman:boolean; roots: string[] }>();
   const orphanIds: string[] = [];
   let categoryCount = 0;
   for (const root of rows) {
@@ -128,22 +137,26 @@ export function buildListeningDiscoveryEvidenceV1(args: {
     const evaluations = [...root.evaluations].sort((a, b) => cmp(a.topic_key, b.topic_key));
     let accepted = false;
     for (const evaluation of evaluations) {
-      if (!knownTopics.has(evaluation.topic_key) || !probability(evaluation.probability))
+      if (!knownTopics.has(evaluation.topic_key) || !validListeningDiscoveryEvaluationV1(evaluation))
         fail('listening_discovery_evaluation_invalid');
       const topic = byTopic.get(evaluation.topic_key)!;
-      topic.asked.add(root.root_id);
-      if (evaluation.probability >= policy.approval) {
-        accepted = true; topic.approved.add(root.root_id);
-        for (let dimension = 0; dimension < 1024; dimension++) topic.sum[dimension]! += root.vector[dimension]! / norm;
-      } else topic.rejected.push(root.root_id);
+      if(evaluation.probability!==null){topic.asked.add(root.root_id);
+        if(evaluation.probability>=policy.approval)topic.approved.add(root.root_id);else topic.rejected.push(root.root_id);}
+      if(evaluation.human_belongs===true)topic.humanApproved++;else if(evaluation.human_belongs===false)topic.humanRemoved++;
+      if(effectiveListeningDiscoveryApprovalV1(evaluation,policy.approval)){
+        accepted=true;topic.confirmed.add(root.root_id);
+        for(let dimension=0;dimension<1024;dimension++)topic.sum[dimension]!+=root.vector[dimension]!/norm;
+      }
     }
     if (root.in_category) { categoryCount++; if (!accepted) orphanIds.push(root.root_id); }
     // Usually four candidates: O(roots * candidates²), never roots * all topics².
     for (let left = 0; left < evaluations.length; left++) for (let right = left + 1; right < evaluations.length; right++) {
       const a = evaluations[left]!, b = evaluations[right]!, pairKey = `${a.topic_key}\0${b.topic_key}`;
-      const pair = pairCounts.get(pairKey) ?? { jointly_asked: 0, jointly_approved: 0, roots: [] };
-      pair.jointly_asked++;
-      if (a.probability >= policy.approval && b.probability >= policy.approval) {
+      const pair = pairCounts.get(pairKey) ?? { jointly_asked: 0, jointly_approved: 0,confirmed_joint:0,hasHuman:false, roots: [] };
+      if(a.probability!==null&&b.probability!==null)pair.jointly_asked++;
+      if(effectiveListeningDiscoveryApprovalV1(a,policy.approval)&&effectiveListeningDiscoveryApprovalV1(b,policy.approval))pair.confirmed_joint++;
+      pair.hasHuman ||=a.human_belongs!==undefined||b.human_belongs!==undefined;
+      if (a.probability!==null&&b.probability!==null&&a.probability >= policy.approval && b.probability >= policy.approval) {
         pair.jointly_approved++; if (root.in_category) pair.roots.push(root.root_id);
       }
       pairCounts.set(pairKey, pair);
@@ -156,12 +169,13 @@ export function buildListeningDiscoveryEvidenceV1(args: {
   for (const [pairKey, pair] of [...pairCounts].sort(([a], [b]) => cmp(a, b))) {
     const [left, right] = pairKey.split('\0') as [string, string];
     const union = byTopic.get(left)!.approved.size + byTopic.get(right)!.approved.size - pair.jointly_approved;
-    const jaccard = union ? pair.jointly_approved / union : 0;
-    const coapproval = pair.jointly_approved / pair.jointly_asked;
+    const confirmedUnion=byTopic.get(left)!.confirmed.size+byTopic.get(right)!.confirmed.size-pair.confirmed_joint;
+    const jaccard = confirmedUnion ? pair.confirmed_joint / confirmedUnion : 0;
+    const coapproval = pair.jointly_asked?pair.jointly_approved / pair.jointly_asked:0;
     if (pair.jointly_asked < policy.min_jointly_asked || pair.jointly_approved < policy.min_jointly_approved
       || (jaccard < policy.twin_jaccard && coapproval < policy.twin_coapproval)) continue;
     twins.push({ left, right, jointly_asked: pair.jointly_asked, jointly_approved: pair.jointly_approved,
-      union_approved: union, jaccard, coapproval });
+      union_approved: union, jaccard, coapproval,...(pair.hasHuman?{union_confirmed:confirmedUnion,confirmed_intersection:pair.confirmed_joint}:{}) });
     for (const id of pair.roots) twinRoots.add(id);
   }
   return {
@@ -174,14 +188,15 @@ export function buildListeningDiscoveryEvidenceV1(args: {
     twin_root_count: twinRoots.size, twin_root_rate: categoryCount ? twinRoots.size / categoryCount : null,
     twins,
     topics: keys.map(topic_key => {
-      const topic = byTopic.get(topic_key)!, members = [...topic.approved].sort(cmp);
+      const topic = byTopic.get(topic_key)!, members = [...topic.confirmed].sort(cmp);
       const norm = Math.hypot(...topic.sum);
       const centroid = members.length && norm > 1e-12 ? topic.sum.map(value => value / norm) : null;
-      return { topic_key, asked: topic.asked.size, approved: members.length,
-        acceptance_rate: topic.asked.size ? members.length / topic.asked.size : null,
+      return { topic_key, asked: topic.asked.size, approved: topic.approved.size,
+        acceptance_rate: topic.asked.size ? topic.approved.size / topic.asked.size : null,
+        ...(topic.humanApproved||topic.humanRemoved?{human_approved:topic.humanApproved,human_removed:topic.humanRemoved,effective_members:members.length}:{}),
         confirmed_root_ids: members, confirmed_members_digest: sha(members.map(id => [id, inputByRoot.get(id)!])),
         centroid, centroid_status: centroid ? 'confirmed' : members.length ? 'cancelled_vectors' : 'no_confirmed_members',
-        accepted_examples: examples(members, topic_key, 'accepted', populationDigest, policy.examples_per_stratum),
+        accepted_examples: examples([...topic.approved].sort(cmp), topic_key, 'accepted', populationDigest, policy.examples_per_stratum),
         rejected_examples: examples(topic.rejected, topic_key, 'rejected', populationDigest, policy.examples_per_stratum),
       };
     }),

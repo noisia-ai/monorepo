@@ -143,3 +143,15 @@ test('empty category has no invented zero rates or unnecessary additional round'
   assert.equal(current.orphan_rate, null); assert.equal(current.twin_root_rate, null);
   assert.deepEqual(decideListeningDiscoveryStopV1({ current, previous: null }), { stop: true, reason: 'no_category_population' });
 });
+
+test('human decisions change confirmed members without inventing JEV asked or approved probabilities',()=>{
+ const rows=[root(1,.9,null),root(2,.1,null),root(3,null,null)];
+ const ids=['10000000-0000-4000-8000-000000000001','10000000-0000-4000-8000-000000000002','10000000-0000-4000-8000-000000000003'];
+ rows.forEach((r,i)=>{r.vector=vector(i?0:1,i?1:0);r.evaluations=[{topic_key:'a',probability:i===2?null:i===0?.9:.1,human_belongs:i!==0,human_decision_id:ids[i]}]as unknown as ListeningDiscoveryRootV1['evaluations'];});
+ const result=build(rows),a=result.topics.find(t=>t.topic_key==='a')!;
+ assert.equal(a.asked,2);assert.equal(a.approved,1);assert.equal(a.acceptance_rate,.5);assert.deepEqual(a.confirmed_root_ids,[rows[1]!.root_id,rows[2]!.root_id]);
+ assert.deepEqual(a.centroid,vector(0,1));assert.deepEqual(result.orphan_root_ids,[rows[0]!.root_id]);assert.deepEqual(a.accepted_examples,[rows[0]!.root_id]);assert.deepEqual(a.rejected_examples,[rows[1]!.root_id]);
+ assert.equal((a as {human_approved?:number}).human_approved,2);assert.equal((a as {human_removed?:number}).human_removed,1);
+ for(const bad of [{topic_key:'a',probability:null},{topic_key:'a',probability:null,human_belongs:true},{topic_key:'a',probability:NaN,human_belongs:true,human_decision_id:ids[0]}])
+  assert.throws(()=>build([{...rows[0]!,evaluations:[bad]as never}]),/evaluation_invalid/);
+});

@@ -134,3 +134,15 @@ test('the streaming accumulator does not retain document vectors across many pag
   const child=spawnSync(process.execPath,['--expose-gc','--import','tsx','--input-type=module','-e',script],{encoding:'utf8',timeout:60000});
   assert.equal(child.status,0,child.stderr||child.stdout);
 });
+
+test('human decisions keep streaming and eager evidence equal with separate real JEV rates',()=>{
+ const rows=[root(1,.9,null),root(2,.1,null),root(3,null,null)];
+ rows.forEach((r,i)=>{r.evaluations=[{topic_key:'a',probability:i===2?null:i===0?.9:.1,human_belongs:i!==0,
+  human_decision_id:'10000000-0000-4000-8000-'+String(i+1).padStart(12,'0')}]as unknown as ListeningDiscoveryRootV1['evaluations'];});
+ const value=run(rows,1);assert.deepEqual(value.actual,value.eager);
+ assert.equal(value.actual.topics.find(t=>t.topic_key==='a')!.asked,2);assert.equal(value.actual.topics.find(t=>t.topic_key==='a')!.approved,1);
+ assert.deepEqual(value.actual.orphan_root_ids,[rows[0]!.root_id]);
+ const args=setup(rows),stream=createListeningDiscoveryEvidenceStreamV1({...args,page_size:3});stream.addFirstPage(rows);stream.finishFirstPass();
+ const mutated=structuredClone(rows);(mutated[0]!.evaluations[0]as unknown as{human_belongs:boolean}).human_belongs=true;
+ stream.addSecondPage(mutated.map(({vector:_,...row})=>row));assert.throws(()=>stream.finish(),/stream_snapshot_changed/);
+});

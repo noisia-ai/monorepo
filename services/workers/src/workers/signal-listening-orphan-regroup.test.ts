@@ -120,3 +120,22 @@ test('the unchanged legacy guided numeric wire still fits both lanes without cac
   assert.equal('cached_vector_source'in output.input_identity,false);
  }finally{await rm(directory,{recursive:true,force:true});}
 });
+
+test('a verified human removal can orphan a raw positive or unasked topic without inventing a probability',async()=>{
+ for(const probability of [.9,null]){
+  const f=fixture(1,1),row=f.rows[0]!;
+  row.proof.evaluations=[{question_key:'topic',probability,human_belongs:false,human_decision_id:randomUUID()}];
+  row.proof_json=canonical(row.proof);row.proof_digest=hash(row.proof_json);
+  f.subset.subset_digest=digest({workspace_id:f.access.workspace_id,generation_id:f.generation.id,roots:f.rows.map(r=>[r.root_id,r.proof_digest])});
+  const result=await regroupSignalListeningOrphansV1({...f,process:async()=>{throw Error('uncached roots require no numerical call');}});
+  try{assert.equal(result.manifest.status,'no_cached_vectors');assert.equal(result.manifest.root_count,1);}
+  finally{await result.dispose();}
+ }
+});
+for(const invalid of [{probability:.1,human_belongs:true,human_decision_id:randomUUID()},
+ {probability:null,human_belongs:false},{probability:NaN,human_belongs:false,human_decision_id:randomUUID()}])
+ test('manual orphan proof still requires a false decision, valid decision identity and original finite probability',async()=>{
+  const f=fixture(1,1),row=f.rows[0]!;row.proof.evaluations=[{question_key:'topic',...invalid}];
+  row.proof_json=canonical(row.proof);row.proof_digest=hash(row.proof_json);
+  await assert.rejects(regroupSignalListeningOrphansV1({...f,process:async()=>{throw Error('invalid proof must fail before numerical work');}}),/listening_orphan_/);
+ });
