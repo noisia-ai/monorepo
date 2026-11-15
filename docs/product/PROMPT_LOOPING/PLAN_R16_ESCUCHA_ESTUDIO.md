@@ -12,6 +12,8 @@ No hay aprobaciones humanas intermedias en los procesos de análisis: Sonnet 4.6
 
 ## Progreso
 
+- Ensayo del fence híbrido 43772395521: la consulta de derechos completó en 5.817 ms, sin lecturas temporales; índice canónico, 340 probes de orígenes y una pasada de 664 memberships. El control posterior dependía del alias origin y PostgreSQL lo nombró origin_1. 389011e3 conserva la relación mentions, índice y límites sin exigir ese alias; revisión sin P0/P1/P2. La repetición completa del caso y su oracle siguen pendientes; no se presenta ese resultado parcial como CI verde.
+
 - Corrección híbrida 03164fc9/4bea683a revisada sin P0/P1/P2: materializa los orígenes solicitados antes de unir procedencias. Conserva UUID y texto exactos y filtra workspace antes de materializar; los cuatro propósitos siguen exigiendo una única procedencia completa. El oracle escalar cubre los 340 IDs y controles negativos, con límite de 20 s, índice canónico y trabajo por raíz. El ensayo independiente 43772395521 repite el prefijo completo con esa corrección y la captura anterior; resultado pendiente. No acredita capacidad.
 - Composición 4bea683a pasa tipado 11/11 y tres focales sin omisiones. La corrección 0321 y los fixtures financieros se publicarán juntos con sus jobs nativos 3/1; el siguiente control de pipeline conserva la carga y los criterios. Todavía no hay aceptación H1, ensayo DDL final, despliegue ni gasto R16.
 
