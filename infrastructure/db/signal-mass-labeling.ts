@@ -6,13 +6,13 @@ import {MASS_LABELING_FUNDING_RECEIPT_SELECT_V1,type MassLabelingFundingReceiptV
 import {massLabelingRequestPolicyWithClientV1,admitMassLabelingScopedWithClientV1,massLabelingRunPolicyWithClientV1} from "./signal-mass-labeling-scoped-policy";
 import {createHash, randomUUID} from "node:crypto";
 import type {PoolClient} from "pg";
-import {labelerDigestV1, signalWorkspaceEmbeddingDigestV1 as digest,
+import {labelerDigestV1,entityContextDigestV1, signalWorkspaceEmbeddingDigestV1 as digest,
   buildMassLabelingConsolidationRequestV1,parseMassLabelingConsolidationResponseV1,type MassLabelingSourceGroupV1,
   type SignalWorkspaceInterpretationConfigurationV1,type SignalTopicLocalizationV1,type LabelerIdentity} from "@noisia/query-engine";
 import {massLabelingJevIdentityV1, type MassLabelingInputV1, type MassLabelingResultV1} from "@noisia/query-engine/src/signal-mass-labeling-jev-v1";
 import {loadSignalWorkspaceCapabilitiesStoreV1} from "./signal-workspace-capabilities";
 import {signalWorkspaceFeatureEnabledV1} from "./signal-workspace-features";
-import {inspectFacetContextChangeV1, type LabelingDatabaseV1} from "./signal-mention-facets";
+import {inspectFacetContextChangeV1,loadFacetEntityContextV1, type LabelingDatabaseV1} from "./signal-mention-facets";
 import {createSignalLabelingStoreV1, requestMentionFacetsV1, SignalLabelingError,
   type LabelingRunV1, type LabelingCallV1} from "./signal-labeling-runs";
 import {verifyMassLabelingSourceCheckpointsWithClientV1,type MassLabelingSourceCheckpointV1} from "./signal-mass-labeling-source";
@@ -63,9 +63,23 @@ export async function mapCurrent(client: Pick<PoolClient, "query">, workspace: s
       AND engine.status='ready' AND engine.preparation_run_id=map.preparation_run_id
     WHERE map.workspace_id=$1 AND map.id=$2`, [workspace, mapId])).rows[0];
   if (!row) fail("mass_labeling_map_stale");
-  const change = await inspectFacetContextChangeV1(client, workspace);
-  if (change.digest !== row.entity_context_digest) fail("mass_labeling_context_changed");
+  // This consumer needs only the exact governed identity digest, never the
+  // full-corpus affected-root analysis used by a context transition.
+  const currentDigest=entityContextDigestV1(await loadFacetEntityContextV1(client,workspace));
+  if (currentDigest !== row.entity_context_digest) fail("mass_labeling_context_changed");
   return row;
+}
+/** Same frozen-source/context predicates without hydrating the full catalog. */
+export async function assertMassLabelingMapCurrentV1(client:Pick<PoolClient,'query'>,workspace:string,mapId:string):Promise<void>{
+ const row=(await client.query<{entity_context_digest:string}>(`SELECT map.entity_context_digest FROM signal_mass_labeling_maps map
+  JOIN signal_corpus_preparation_input_state state ON state.workspace_id=map.workspace_id AND state.input_revision=map.input_revision
+  JOIN signal_corpus_preparation_runs prep ON prep.workspace_id=map.workspace_id AND prep.id=map.preparation_run_id
+   AND prep.status='completed' AND(prep.policy_valid_until IS NULL OR prep.policy_valid_until>now())
+  JOIN signal_topic_catalog_executions engine ON engine.workspace_id=map.workspace_id AND engine.id=map.source_engine_execution_id
+   AND engine.status='ready' AND engine.preparation_run_id=map.preparation_run_id
+  WHERE map.workspace_id=$1 AND map.id=$2`,[workspace,mapId])).rows[0];
+ if(!row)fail('mass_labeling_map_stale');
+ if(entityContextDigestV1(await loadFacetEntityContextV1(client,workspace))!==row.entity_context_digest)fail('mass_labeling_context_changed');
 }
 
 /** Internal editorial action. Group identities and assignments are bound to the stored numerical artifact. */

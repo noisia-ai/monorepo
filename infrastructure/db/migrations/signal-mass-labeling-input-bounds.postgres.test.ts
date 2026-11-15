@@ -45,3 +45,18 @@ test('native Mass reader selects a byte-bounded prefix before text hydration',{
  race=true;const snapshot=await store.inputs(run,{max_rows:1,max_working_bytes:512*1024*1024});assert.equal(changed,true);assert.equal(snapshot[0]!.platform,'synthetic','metadata and hydrate share a repeatable snapshot');
  await store.release(run);
 }}));
+
+test('bounded Mass context rejection never enumerates corpus text',{
+ skip:process.env.NOISIA_R16_INPUT_BOUNDS_PG!=='true',timeout:600000,
+},async()=>runMassLabelingAcceptanceFixtureV1('product',{beforeProcessing:async ctx=>{
+ const queries:string[]=[];
+ const database={query:ctx.database.query.bind(ctx.database),connect:async()=>{const c=await ctx.database.connect();return new Proxy(c,{get(target,key){if(key==='query')return async(sql:string,...values:unknown[])=>{queries.push(sql);return(target.query as(...args:unknown[])=>Promise<unknown>)(sql,...values);};const value=Reflect.get(target,key);return typeof value==='function'?value.bind(target):value;}});}} as typeof ctx.database;
+ const store=createMassLabelingStoreV1({database,page_size:4096,storeRaw:async()=>{throw Error('no provider or raw writes');}});
+ const run=await store.claim(ctx.run_id);assert.ok(run);
+ await ctx.database.query("UPDATE brands SET display_name='Edited synthetic identity' WHERE id=(SELECT brand_id FROM signal_workspaces WHERE id=$1)",[ctx.workspace_id]);
+ queries.length=0;
+ await assert.rejects(store.inputs(run,{max_rows:1,max_working_bytes:512*1024*1024}),/mass_labeling_context_changed/);
+ assert.ok(queries.every(sql=>!sql.includes('WITH labeled_entities AS')&&!sql.includes('mention.text_clean full_text')),'reject using identity digest, without reading every canonical corpus root');
+ assert.equal((await ctx.database.query('SELECT count(*)::int n FROM signal_labeling_calls WHERE run_id=$1',[run.id])).rows[0].n,0);
+ await store.release(run);
+}}));
