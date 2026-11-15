@@ -24,12 +24,23 @@ export NOISIA_DB_SMOKE_EMULATE_SUPABASE_ROLES="true"
 export NOISIA_R16_LOCAL_PG_LAB="r16-benchmark-pg17"
 export NOISIA_R16_NATIVE_FIXTURE_PG="true"
 export NOISIA_R16_UNSENT_PG="true"
+export NOISIA_R16_RAW_PAGE_LOCKS_PG="true"
 
 corepack pnpm --filter @noisia/db db:smoke:migrations
 corepack pnpm exec tsx --test infrastructure/db/migrations/signal-client-workspace-entry.batch-equivalence.postgres.test.ts
 corepack pnpm exec tsx --test infrastructure/db/migrations/signal-client-workspace-entry.preparation-page-equivalence.postgres.test.ts
 corepack pnpm exec tsx --test infrastructure/db/migrations/signal-r16-native-fixture.postgres.test.ts
 corepack pnpm exec tsx --test infrastructure/db/migrations/signal-labeling-unsent.postgres.test.ts
+corepack pnpm exec tsx --test infrastructure/db/migrations/signal-labeling-raw-page-locks.postgres.test.ts
+export NOISIA_R16_IMPORT_INVALIDATION_PG="true"
+export NOISIA_R16_INPUT_BOUNDS_PG="true"
+corepack pnpm exec tsx --test \
+  infrastructure/db/migrations/signal-semantic-review-attribution-lookup.postgres.test.ts \
+  infrastructure/db/migrations/signal-mass-labeling-input-bounds.postgres.test.ts | tee r16-h1-native-guards.tap
+if ! grep -qx '# skipped 0' r16-h1-native-guards.tap; then
+  echo '::error::R16 import or bounded-input PostgreSQL tests were skipped'
+  exit 1
+fi
 corepack pnpm exec tsx --test services/workers/src/providers/jev-account-rate-limit.redis.test.ts
 corepack pnpm exec tsx --test scripts/r16/*.test.ts
 corepack pnpm exec tsx scripts/r16/run-fault-matrix.ts

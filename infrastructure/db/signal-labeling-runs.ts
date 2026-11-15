@@ -24,6 +24,8 @@ import {
 } from "./signal-mention-facets";
 import {createLabelingRawPageStoreV1} from "./signal-labeling-raw-page-store";
 import {LABELING_RAW_PAGE_MAX_MEMBERS_V1,type LabelingRawPageStorageV1} from "./signal-labeling-raw-pages";
+import {validateLabelingInputBoundsV1,type LabelingInputBoundsV1} from './signal-labeling-input-bounds';
+export type {LabelingInputBoundsV1} from './signal-labeling-input-bounds';
 export type LabelingPolicyV1={organization_id:string;budget_date:string;budget_timezone:string;daily_cap_micro_usd:string|null;
  max_execution_micro_usd:string|null;provider:string;model:string;action:string;funding_receipt_id?:string|null;effective_total_cap_micro_usd?:string};
 export type LabelingRequestPolicyV1=Pick<LabelingPolicyV1,"max_execution_micro_usd"|"provider"|"model">;
@@ -528,6 +530,11 @@ export function createSignalLabelingStoreV1<
     policy_action?: "concept_membership_jev" | "concept_membership_claude" | "mass_labeling_jev";
     /** H1 verifies each decision against this call's results in the same transaction. */
     persist_results_before_write?: boolean;
+    /** Native page adapters only: mutations touch disjoint calls/results and
+     * never update the run lifecycle. Requires durable page custody. */
+    parallel_native_pages?: boolean;
+    bounded_inputs?:(client:PoolClient,run:LabelingRunV1,bounds:LabelingInputBoundsV1)=>Promise<Input[]>;
+    has_inputs?:(client:PoolClient,run:LabelingRunV1)=>Promise<boolean>;
     inputs: (
       client: LabelingDatabaseV1 | PoolClient,
       run: LabelingRunV1,
@@ -577,8 +584,51 @@ export function createSignalLabelingStoreV1<
     ).rows[0];
     if (!found) fail("labeling_lease_lost");
   }
+  // Raw planning/attachment updates only its own page/calls. SHARE allows
+  // disjoint pages to progress, while conflicting with every lease UPDATE.
+  // Check the physical clock after acquiring the fence: a waiter cannot use
+  // transaction-start `now()` to attach after its lease expired behind a writer.
+  async function rawRunReadFence(c:PoolClient,run:LabelingRunV1){
+    const found=(await c.query(`WITH raw_run_fence AS MATERIALIZED(
+      SELECT id,lease_until FROM signal_labeling_runs
+      WHERE id=$1 AND lease_token=$2 AND workspace_id=$3 FOR SHARE)
+      SELECT id FROM raw_run_fence WHERE lease_until>clock_timestamp()`,
+      [run.id,run.lease_token,run.workspace_id])).rows[0];
+    if(!found)fail("labeling_lease_lost");
+  }
   const rawPages=options.rawPages?createLabelingRawPageStoreV1({database:db,storage:options.rawPages,
-    withRunLock:(run,fn)=>tx(db,async c=>{await lock(c,run);return fn(c);})}):null;
+    withRunReadFence:(run,fn)=>tx(db,async c=>{await rawRunReadFence(c,run);return fn(c);})}):null;
+  async function pageMutationFence(c:PoolClient,run:LabelingRunV1){
+    if(options.adapter?.parallel_native_pages===true&&rawPages)await rawRunReadFence(c,run);
+    else await lock(c,run);
+  }
+  async function lockMutationCalls(c:PoolClient,run:LabelingRunV1,calls:LabelingCallV1<Input>[],pages?:Array<{call:LabelingCallV1<Input>;results:Result[]}>){
+    const ids=calls.map(call=>call.id);
+    if(new Set(ids).size!==ids.length)fail('labeling_result_call_conflict');
+    // Match raw planning/attachment's global call order. PostgreSQL compares
+    // JSONB results without reserializing canonical numeric spellings in JS.
+    const found=await c.query<{id:string}>(`SELECT id FROM signal_labeling_calls
+      WHERE workspace_id=$1 AND run_id=$2 AND id=ANY($3::uuid[]) ORDER BY id FOR UPDATE`,[run.workspace_id,run.id,ids]);
+    if(found.rows.length!==calls.length)fail('labeling_result_call_conflict');
+    if(!pages)return new Set<string>();
+    // A separate statement sees the committed row after any lock wait. Never
+    // approve a divergent replay from a pre-wait snapshot of results_applied.
+    const checked=await c.query<{id:string;results_applied:boolean;replay_ok:boolean}>(`SELECT call.id,call.results_applied,
+      (NOT call.results_applied OR call.results IS NOT DISTINCT FROM planned.results) replay_ok
+      FROM signal_labeling_calls call JOIN jsonb_to_recordset($4::jsonb) planned(id uuid,results jsonb) ON planned.id=call.id
+      WHERE call.workspace_id=$1 AND call.run_id=$2 AND call.id=ANY($3::uuid[])`,
+      [run.workspace_id,run.id,ids,JSON.stringify(pages.map(page=>({id:page.call.id,results:page.results})))]);
+    if(checked.rows.length!==calls.length)fail('labeling_result_call_conflict');
+    if(checked.rows.some(row=>!row.replay_ok))fail('labeling_result_replay_conflict');
+    return new Set(checked.rows.filter(row=>row.results_applied).map(row=>row.id));
+  }
+
+  async function registerMutationFence(c:PoolClient,run:LabelingRunV1,operation:'mark'|'apply'){
+    // One deferred check per transaction covers waits after the initial fence,
+    // including a delayed COMMIT; it never upgrades SHARE to UPDATE.
+    await c.query(`INSERT INTO signal_labeling_page_mutation_fences(workspace_id,run_id,lease_token,operation)
+      VALUES($1,$2,$3,$4)`,[run.workspace_id,run.id,run.lease_token,operation]);
+  }
   async function authority(c: PoolClient, run: LabelingRunV1, amount: number) {
     // Policy lifecycle triggers take this lock. Read only after acquiring it so a
     // revocation committed while this call waited cannot leave stale authority.
@@ -759,7 +809,16 @@ export function createSignalLabelingStoreV1<
         [run.id, run.lease_token, cadence.immediate===true],
       );
     },
-    async inputs(run: LabelingRunV1) {
+    async inputs(run: LabelingRunV1,bounds?:LabelingInputBoundsV1) {
+      if(bounds){
+        let read:LabelingInputBoundsV1;try{read=validateLabelingInputBoundsV1(bounds,pageSize);}catch{fail('labeling_input_bounds_invalid',400);}
+        if(!options.adapter?.bounded_inputs)fail('labeling_bounded_inputs_unavailable',409);
+        return tx(db,async c=>{await c.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY');
+          return options.adapter!.bounded_inputs!(c,run,read);}).catch(error=>{
+            if(error instanceof Error&&['labeling_input_memory_bound','labeling_input_metadata_invalid'].includes(error.message))fail(error.message,409);
+            throw error;
+          });
+      }
       if (options.adapter) return options.adapter.inputs(db, run);
       return selectFacetInputsV1(
         db,
@@ -883,9 +942,13 @@ export function createSignalLabelingStoreV1<
     async markSubmitting(run: LabelingRunV1, calls: LabelingCallV1<Input>[]) {
       await options.assertRawReady?.();
       await tx(db, async (c) => {
-        await lock(c, run);
+        await pageMutationFence(c,run);
         await authority(c, run, 0);
+        if(options.adapter?.parallel_native_pages===true&&rawPages)await lockMutationCalls(c,run,calls);
         await options.adapter?.beforeSubmit?.(c, run, calls);
+        if(options.adapter?.parallel_native_pages===true&&rawPages){
+          await rawRunReadFence(c,run);await registerMutationFence(c,run,'mark');
+        }
         const changed = await c.query(
           `UPDATE signal_labeling_calls SET status='submitting',updated_at=now() WHERE run_id=$1 AND id=ANY($2::uuid[]) AND status='reserved' RETURNING id`,
           [run.id, calls.map((x) => x.id)],
@@ -1070,7 +1133,12 @@ export function createSignalLabelingStoreV1<
       pages: Array<{ call: LabelingCallV1<Input>; results: Result[] }>,
     ) {
       await tx(db, async (c) => {
-        await lock(c, run);
+        await pageMutationFence(c,run);
+        if(options.adapter?.parallel_native_pages===true&&rawPages){
+          const applied=await lockMutationCalls(c,run,pages.map(page=>page.call),pages);
+          pages=pages.filter(page=>!applied.has(page.call.id));if(!pages.length)return;
+          await rawRunReadFence(c,run);await registerMutationFence(c,run,'apply');
+        }
         const persistResults = async () => {
           const changed = await c.query(
           `UPDATE signal_labeling_calls call SET results_applied=true,results=page.results,updated_at=now()
@@ -1134,7 +1202,7 @@ export function createSignalLabelingStoreV1<
                 )
               ).rows[0]!.count,
             );
-        const available = (
+        const available = options.adapter?.has_inputs ? Number(await options.adapter.has_inputs(c,run)) : (
           options.adapter
             ? await options.adapter.inputs(c, run)
             : await selectFacetInputsV1(
