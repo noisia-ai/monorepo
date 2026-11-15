@@ -14,6 +14,37 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  numeric-python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: services/workers/requirements-workspace-engine.txt
+      - name: Install isolated CPU BERTopic runtime and test runner
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install --no-deps -r services/workers/requirements-workspace-engine.txt
+          python -m pip install pytest==8.3.5
+      - name: Run real BERTopic numerical regression loops without model downloads or providers
+        env:
+          PYTHONPATH: tools/signal-semantic-lab/src
+          HF_HUB_OFFLINE: '1'
+          TRANSFORMERS_OFFLINE: '1'
+          NUMBA_NUM_THREADS: '1'
+          OMP_NUM_THREADS: '1'
+          OPENBLAS_NUM_THREADS: '1'
+          MKL_NUM_THREADS: '1'
+        run: |
+          set -o pipefail
+          python -m pytest -q -ra tools/signal-semantic-lab/tests/test_workspace_engine.py tools/signal-semantic-lab/tests/test_workspace_incremental_engine.py | tee r16-numeric-python.tap
+          if grep -Eq '[1-9][0-9]* skipped' r16-numeric-python.tap; then
+            echo '::error::R16 numerical Python tests were skipped'
+            exit 1
+          fi
+
   migrated-schema:
     runs-on: ubuntu-latest
     services:
@@ -78,6 +109,9 @@ jobs:
           NOISIA_R16_LISTENING_RECOVERY_PG: 'true'
           NOISIA_R16_LISTENING_LEXICON_PG: 'true'
           NOISIA_R16_LISTENING_DISCOVERY_PG: 'true'
+          NOISIA_R16_INPUT_BOUNDS_PG: 'true'
+          NOISIA_R16_LISTENING_DISCOVERY_MONEY_PG: 'true'
+          NOISIA_R16_DISCOVERY_HARDENING_PG: 'true'
         run: |
           set -o pipefail
           pnpm exec node --test --test-concurrency=1 --import tsx \
@@ -87,7 +121,10 @@ jobs:
             infrastructure/db/migrations/signal-listening-cross-run-index.postgres.test.ts \
             infrastructure/db/migrations/signal-listening-prototypes.postgres.test.ts \
             infrastructure/db/migrations/signal-listening-lexicon.postgres.test.ts \
+            infrastructure/db/migrations/signal-listening-input-bounds.postgres.test.ts \
             infrastructure/db/migrations/signal-listening-discovery.postgres.test.ts \
+            infrastructure/db/migrations/signal-listening-discovery-money.postgres.test.ts \
+            infrastructure/db/migrations/signal-listening-discovery-hardening.postgres.test.ts \
             services/workers/src/workers/signal-listening-runtime.postgres.test.ts \
             services/workers/src/workers/signal-listening-recovery.postgres.test.ts | tee r16-listening-pg-tests.tap
           if ! grep -qx '# skipped 0' r16-listening-pg-tests.tap; then
