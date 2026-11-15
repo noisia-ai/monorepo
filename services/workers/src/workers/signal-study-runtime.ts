@@ -1,0 +1,257 @@
+import {createHash} from 'node:crypto';
+import {
+ validateSignalStudyExecutionConfigurationV1,buildSignalStudyConfiguredAxesRequestV1,resolveSignalStudyConfiguredAxesV1,signalStudyConfiguredCutV1,
+ buildSignalStudyMotiveFitPlanV1,buildSignalStudyMotivePopulationV1,sampleSignalStudyGroupV1,signalStudyConfirmedCentroidV1,
+ buildSignalStudyMotiveReviewV1,validateSignalStudyMotiveReviewV1,buildSignalStudyConfiguredLayerReviewV1,validateSignalStudyLayerReviewV1,
+ signalStudyLayerStabilityV1,applySignalStudyBoundaryRecodeV1,buildSignalStudyMotiveConfigurationV1,buildSignalStudyMotiveRequestV1,
+ signalStudyDominancePlanV1,buildSignalStudyContrastReviewV1,validateSignalStudyContrastReviewV1,buildSignalStudySummaryV1,
+ signalStudyQueryBiasV1,verifySignalStudyVerbatimV1,assertSignalStudyRootsV1,signalWorkspaceEmbeddingDigestV1 as digest,
+ type SignalStudyExecutionConfigurationV1,type SignalStudyRootV1,type SignalStudyMotiveV1,type SignalStudyMembershipV1,
+ type SignalStudyEditorialRequestV1,type SignalStudyLayerDecisionV1,
+} from '@noisia/query-engine';
+type JevRequestV1=ReturnType<typeof buildSignalStudyConfiguredAxesRequestV1>;
+type JevAnswerV1=Parameters<typeof resolveSignalStudyConfiguredAxesV1>[1][string];
+
+/** No default store/queue/provider exists here. These interfaces require a native
+ * owner, financial ledger and verified private custody before runtime wiring.
+ * Every mutation must recheck lease, source, policy and human revision under CAS.
+ * A callback implementation is not evidence that those DB guarantees exist. */
+export type StudyRuntimeLeaseV1={execution_id:string;workspace_id:string;execution_token:string;
+ source_digest:string;configuration_digest:string;human_revision_digest:string};
+export type StudyRuntimeRootV1=Omit<SignalStudyRootV1,'axes'>&{base_answers:Record<string,JevAnswerV1>;
+ attributes?:Record<string,string[]>;axes_cache?:{jev_call_id:string;text_sha256:string;request_sha256:string;question_configuration_digest:string;answers:Record<string,JevAnswerV1>};embedding_proof:{embedding_call_id:string;embedding_run_id:string;vector_digest:string;text_sha256:string}};
+/** roots is ONLY the native selected consumer cut, never the whole corpus.
+ * The DB loader must select/count IDs and octet sizes before hydration; external
+ * corpus/query baselines remain aggregate counts. A cut beyond the native bound
+ * requires a paged/spooled adapter, not silently excluding eligible roots. */
+export type StudyRuntimeSourceV1={configuration:SignalStudyExecutionConfigurationV1;roots:StudyRuntimeRootV1[];
+ selection:{scope:'listening_consumer_cut';source_listening_digest:string;cut_digest:string;eligible_root_ids_digest:string;
+  eligible_roots:number;pending_base_roots:number;corpus_roots:number};
+ embedding_space_digest:string;sampling_seed:string;query_terms:string[];problem_terms:string[];brand_baseline_roots:number;
+ source_digest:string;human_revision_digest:string;max_roots:number;max_bytes:number};
+export type StudyRuntimeReceiptV1={body_base64:string;body_bytes:number;sha256:string;complete:boolean;http_status:number|null;provider_request_id:string|null};
+export type StudyRuntimeStepPlanV1={key:string;kind:'jev'|'sonnet'|'numeric';request_body:string;request_sha256:string;source_digest:string};
+export type StudyRuntimeStepV1=StudyRuntimeStepPlanV1&{status:'planned'|'sent'|'raw'|'committed'|'unknown';
+ receipt?:StudyRuntimeReceiptV1;value?:unknown;value_digest?:string};
+export type StudyRuntimeStoreV1={
+ claim(execution_id:string):Promise<StudyRuntimeLeaseV1|null>;
+ renew(lease:StudyRuntimeLeaseV1):Promise<boolean>;release(lease:StudyRuntimeLeaseV1):Promise<void>;
+ source(lease:StudyRuntimeLeaseV1):Promise<StudyRuntimeSourceV1|null>;
+ /** Existing journal is immutable. Reading and every CAS validate owner/source.
+  * plan MUST NOT turn sent/unknown back into planned or reserve a second call. */
+ step(lease:StudyRuntimeLeaseV1,plan:StudyRuntimeStepPlanV1):Promise<StudyRuntimeStepV1|null>;
+ plan(lease:StudyRuntimeLeaseV1,plan:StudyRuntimeStepPlanV1):Promise<StudyRuntimeStepV1|null>;
+ markSent(lease:StudyRuntimeLeaseV1,plan:StudyRuntimeStepPlanV1):Promise<'sent'|'stale'|'budget_exhausted'>;
+ /** Upload + readback custody survives ACK loss. Recovery step() exposes raw;
+  * must accept observed bytes for reconciliation even after worker lease loss. */
+ persistReceipt(lease:StudyRuntimeLeaseV1,plan:StudyRuntimeStepPlanV1,receipt:StudyRuntimeReceiptV1):Promise<void>;
+ settle(lease:StudyRuntimeLeaseV1,plan:StudyRuntimeStepPlanV1):Promise<'settled'|'unknown'>;
+ commit(lease:StudyRuntimeLeaseV1,plan:StudyRuntimeStepPlanV1,value:unknown,value_digest:string):Promise<boolean>;
+ /** Retains receipt/money, never installs a fabricated technical response. */
+ unknown(lease:StudyRuntimeLeaseV1,plan:StudyRuntimeStepPlanV1,code:string):Promise<void>;
+ finish(lease:StudyRuntimeLeaseV1,output:StudyRuntimeOutputV1,output_digest:string):Promise<boolean>;
+};
+export type StudyRuntimeNumericV1={plan_digest:string;groups:Array<{key:string;root_ids:string[]}>;unassigned_root_ids:string[]};
+export type StudyRuntimeDriversV1={
+ preflight(plan:StudyRuntimeStepPlanV1):Promise<void>;
+ /** One physical HTTP request, zero SDK retries, receipt even for truncation.
+  * Sonnet transport must enforce claude-sonnet-4-6, no global key fallback. */
+ send(plan:StudyRuntimeStepPlanV1,signal:AbortSignal):Promise<StudyRuntimeReceiptV1>;
+ /** Only the existing numerical BERTopic path, sealed cached vectors, no LLM,
+  * no Voyage/import and no invented groups. Persist artifacts before returning. */
+ fit(plan:ReturnType<typeof buildSignalStudyMotiveFitPlanV1>,signal:AbortSignal):Promise<StudyRuntimeNumericV1>;
+};
+export type StudyRuntimeOutputV1={contract_version:'signal-study-runtime-output-v1';status:'directional';source_digest:string;
+ configuration_digest:string;summary:ReturnType<typeof buildSignalStudySummaryV1>;query_bias:ReturnType<typeof signalStudyQueryBiasV1>;
+ stability:ReturnType<typeof signalStudyLayerStabilityV1>|null;dominance:ReturnType<typeof signalStudyDominancePlanV1>|null;
+ verified_evidence:ReturnType<typeof verifySignalStudyVerbatimV1>[];insufficient_group_keys:string[];
+ promotion:{status:'explicit_action_required';automatic:false}};
+class Paused extends Error {constructor(readonly status:string){super(status);}}
+const sha=(value:string|Buffer)=>'sha256:'+createHash('sha256').update(value).digest('hex');
+function fail(code:string):never{throw Error('study_runtime_'+code);}
+const uuid=/^[a-f\d]{8}(?:-[a-f\d]{4}){3}-[a-f\d]{12}$/iu;
+function receiptBody(receipt:StudyRuntimeReceiptV1):string{
+ const bytes=Buffer.from(receipt.body_base64,'base64');
+ if(bytes.toString('base64')!==receipt.body_base64||bytes.length!==receipt.body_bytes||bytes.length>8*1024*1024||sha(bytes)!==receipt.sha256)fail('receipt_invalid');
+ if(!receipt.complete||receipt.http_status!==200)throw new Paused('outcome_unknown');
+ try{return new TextDecoder('utf-8',{fatal:true,ignoreBOM:true}).decode(bytes);}catch{throw new Paused('outcome_unknown');}
+}
+function jevResponse(request:JevRequestV1,value:unknown):Record<string,JevAnswerV1>{
+ const response=value as {model?:unknown;answers?:Record<string,JevAnswerV1>};
+ if(response?.model!==request.model||!response.answers||Object.keys(response.answers).sort().join(',')!==Object.keys(request.questions).sort().join(','))fail('jev_response_invalid');
+ for(const [key,q] of Object.entries(request.questions)){
+  const a=response.answers![key];if(!a||a.type!==q.type)fail('jev_response_invalid');
+  if(a.type==='noul'){if(!Number.isFinite(a.noul)||a.noul<0||a.noul>1)fail('jev_response_invalid');}
+  else{const keys=Object.keys(q.criteria??{}).sort();
+   if(!keys.includes(a.choice)||!Number.isFinite(a.confidence)||a.confidence<0||a.confidence>1
+    ||Object.keys(a.probabilities).sort().join(',')!==keys.join(',')||Object.values(a.probabilities).some(p=>!Number.isFinite(p)||p<0||p>1)
+    ||Math.abs(Object.values(a.probabilities).reduce((sum,p)=>sum+p,0)-1)>.001)fail('jev_response_invalid');
+  }
+ }
+ return response.answers!;
+}
+
+/** Runs only an already admitted owner. Restart replays pure derivation from
+ * immutable committed steps; a physical ambiguous outcome never gets resent.
+ * No latest-Listening update or automatic Brand OS promotion is possible. */
+export async function signalStudyRuntimeJobV1(execution_id:string,options:{store:StudyRuntimeStoreV1;drivers:StudyRuntimeDriversV1;
+ should_stop?:()=>boolean;renewal_ms?:number}){
+ if(!uuid.test(execution_id))fail('execution_invalid');
+ const {store,drivers}=options,claimed=await store.claim(execution_id);if(!claimed)return{status:'not_claimed'};
+ const lease:StudyRuntimeLeaseV1=claimed;
+ const abort=new AbortController();let lost=false,renewal:Promise<void>|undefined;
+ const interval=options.renewal_ms??30_000;
+ if(interval<1||interval>60_000||!Number.isSafeInteger(interval)){await store.release(lease);fail('renewal_invalid');}
+ const timer=setInterval(()=>{if(renewal||lost)return;renewal=store.renew(lease).then(ok=>{if(!ok){lost=true;abort.abort();}})
+  .catch(()=>{lost=true;abort.abort();}).finally(()=>{renewal=undefined;});},interval);timer.unref?.();
+ const active=async()=>{if(renewal)await renewal;if(lost||options.should_stop?.())throw new Paused(lost?'lease_lost':'stopped');};
+ try{
+  if(lease.execution_id!==execution_id||!uuid.test(lease.workspace_id)||!uuid.test(lease.execution_token))fail('lease_invalid');
+  const raw=await store.source(lease);if(!raw)throw new Paused('stale');
+  const configuration=validateSignalStudyExecutionConfigurationV1(raw.configuration),{source_digest,...source}=raw;
+  if(source_digest!==digest(source)||source_digest!==lease.source_digest||digest(configuration)!==lease.configuration_digest
+   ||raw.human_revision_digest!==lease.human_revision_digest||configuration.study.workspace_id!==lease.workspace_id)fail('source_binding_invalid');
+  if(!Number.isSafeInteger(raw.max_roots)||raw.max_roots<1||raw.roots.length>raw.max_roots||!Number.isSafeInteger(raw.max_bytes)
+   ||raw.max_bytes<1||Buffer.byteLength(JSON.stringify(raw))>raw.max_bytes||!raw.sampling_seed)fail('source_bound_exceeded');
+  const selection=raw.selection;
+  if(selection?.scope!=='listening_consumer_cut'||selection.source_listening_digest!==configuration.source_listening.configuration_digest
+   ||selection.cut_digest!==digest(configuration.study.cut)||selection.eligible_root_ids_digest!==digest(raw.roots.map(r=>r.root_id).sort())
+   ||selection.eligible_roots!==raw.roots.length||!Number.isSafeInteger(selection.pending_base_roots)||selection.pending_base_roots<0
+   ||!Number.isSafeInteger(selection.corpus_roots)||selection.corpus_roots<selection.eligible_roots+selection.pending_base_roots)fail('selection_binding_invalid');
+  if(selection.pending_base_roots)throw new Paused('awaiting_base');
+  if(new Set(raw.roots.map(r=>r.root_id)).size!==raw.roots.length||raw.roots.some(r=>!uuid.test(r.embedding_proof.embedding_call_id)
+   ||!uuid.test(r.embedding_proof.embedding_run_id)||r.embedding_proof.vector_digest!==digest(r.vector)
+   ||r.embedding_proof.text_sha256!==(r.selected_fragment?.text_sha256??r.text_sha256)))fail('cached_vector_proof_invalid');
+  for(const r of raw.roots){
+   const fragment=r.selected_fragment;
+   if(!r.root_id||!r.text.trim()||sha(r.text)!==r.text_sha256||!Number.isFinite(Date.parse(r.occurred_at))||!r.channel.trim()||r.vector.length!==1024||r.vector.some(v=>!Number.isFinite(v))
+    ||!Number.isFinite(Math.hypot(...r.vector))||Math.abs(Math.hypot(...r.vector)-1)>.0001
+    ||fragment&&(!Number.isSafeInteger(fragment.start)||!Number.isSafeInteger(fragment.end)||fragment.start<0||fragment.end<=fragment.start
+     ||fragment.end>r.text.length||r.text.slice(fragment.start,fragment.end)!==fragment.text||sha(fragment.text)!==fragment.text_sha256))fail('cached_source_invalid');
+   if(r.axes_cache){
+    const request=buildSignalStudyConfiguredAxesRequestV1({text:r.text},configuration);
+    if(!uuid.test(r.axes_cache.jev_call_id)||r.axes_cache.text_sha256!==r.text_sha256||r.axes_cache.request_sha256!==sha(JSON.stringify(request))
+     ||r.axes_cache.question_configuration_digest!==configuration.question_configuration_digest)fail('axes_cache_binding_invalid');
+    jevResponse(request,{model:request.model,answers:r.axes_cache.answers});
+   }
+  }
+
+  async function step<T>(stage:string,kind:StudyRuntimeStepPlanV1['kind'],request_body:string,interpret:(value:unknown)=>T,
+   compute?:()=>Promise<unknown>):Promise<T>{
+   const request_sha256=sha(request_body),plan={key:digest({execution_id,source_digest,stage,request_sha256}),kind,request_body,request_sha256,source_digest};
+   let journal=await store.step(lease,plan);
+   if(!journal){await active();journal=await store.plan(lease,plan);}
+   if(!journal)throw new Paused('stale');
+   if(journal.key!==plan.key||journal.request_sha256!==plan.request_sha256||journal.request_body!==request_body||journal.kind!==kind||journal.source_digest!==source_digest)fail('journal_binding_invalid');
+   if(journal.status==='committed'){
+    if(journal.value_digest!==digest(journal.value))fail('checkpoint_invalid');return interpret(journal.value);
+   }
+   if(journal.status==='unknown'||journal.status==='sent')throw new Paused('outcome_unknown');
+   if(journal.status==='planned'){
+    await active();await drivers.preflight(plan);await active();
+    const marked=await store.markSent(lease,plan);if(marked!=='sent')throw new Paused(marked);
+    // Nothing after this boundary may retry the physical operation. Even an ACK
+    // lost from markSent leaves sent in the native journal and blocks a resend.
+    let receipt:StudyRuntimeReceiptV1;
+    try{
+     if(compute){const body=Buffer.from(JSON.stringify(await compute()));receipt={body_base64:body.toString('base64'),body_bytes:body.length,sha256:sha(body),complete:true,http_status:200,provider_request_id:null};}
+     else receipt=await drivers.send(plan,abort.signal);
+    }catch(error){await store.unknown(lease,plan,'study_physical_outcome_unknown').catch(()=>undefined);throw error;}
+    await store.persistReceipt(lease,plan,receipt);journal=await store.step(lease,plan);
+    if(!journal?.receipt||journal.status!=='raw'||digest(journal.receipt)!==digest(receipt))throw new Paused('receipt_pending');
+   }
+   if(journal.status!=='raw'||!journal.receipt)throw new Paused('receipt_pending');
+   let value:unknown;
+   try{value=JSON.parse(receiptBody(journal.receipt));}catch(error){await store.unknown(lease,plan,'study_response_unknown').catch(()=>undefined);throw error;}
+   if(await store.settle(lease,plan)!=='settled')throw new Paused('outcome_unknown');
+   await active();let result:T;
+   try{result=interpret(value);}catch(error){await store.unknown(lease,plan,'study_response_invalid').catch(()=>undefined);throw error;}
+   if(!await store.commit(lease,plan,value,digest(value)))throw new Paused('stale');return result;
+  }
+  const paidJev=(stage:string,request:JevRequestV1)=>step(stage,'jev',JSON.stringify(request),v=>jevResponse(request,v));
+  const editorial=<T>(stage:string,request:SignalStudyEditorialRequestV1,validate:(request:SignalStudyEditorialRequestV1,value:unknown)=>T)=>
+   step(stage,'sonnet',request.request_body,value=>{
+    const body=value as {model?:string;content?:Array<{type:string;text?:string}>};
+    if(body.model!=='claude-sonnet-4-6'||!Array.isArray(body.content)||body.content.filter(c=>c.type==='text').length!==1)fail('sonnet_response_invalid');
+    return validate(request,JSON.parse(body.content!.find(c=>c.type==='text')!.text!));
+   });
+  const snapshot=configuration.template_snapshot,study=configuration.study;
+  // Base answers are native Listening cache only. Never ask/pay voice/promotion.
+  const cut=raw.roots.filter(root=>{
+   const status=signalStudyConfiguredCutV1({configuration,text:root.text,occurred_at:root.occurred_at,answers:root.base_answers,attributes:root.attributes});
+   if(status==='awaiting_base')throw new Paused('awaiting_base');if(status!=='included')fail('native_cut_mismatch');return true;
+  });
+  const roots:SignalStudyRootV1[]=[];
+  for(const root of cut){await active();const request=buildSignalStudyConfiguredAxesRequestV1({text:root.text},configuration);
+   if(root.axes_cache&&root.axes_cache.question_configuration_digest!==configuration.question_configuration_digest)fail('axes_cache_binding_invalid');
+   const answers=root.axes_cache?jevResponse(request,{model:request.model,answers:root.axes_cache.answers}):await paidJev('axes:'+root.root_id,request);
+   const axes=resolveSignalStudyConfiguredAxesV1(configuration,answers);roots.push({...root,axes});}
+  assertSignalStudyRootsV1(roots);
+  const query_bias=signalStudyQueryBiasV1({query_terms:raw.query_terms,problem_terms:raw.problem_terms,subject_roots:roots.filter(r=>r.axes.aggregate==='subject').length,brand_baseline_roots:raw.brand_baseline_roots});
+  const population=buildSignalStudyMotivePopulationV1(roots),fit=buildSignalStudyMotiveFitPlanV1({study,template_snapshot:snapshot,roots,embedding_space_digest:raw.embedding_space_digest});
+  const numeric:StudyRuntimeNumericV1=fit.fit_required?await step('numeric','numeric',JSON.stringify(fit),value=>{
+   const n=value as StudyRuntimeNumericV1;if(n?.plan_digest!==fit.plan_digest||!Array.isArray(n.groups)||!Array.isArray(n.unassigned_root_ids))fail('numeric_invalid');
+   const ids=[...n.groups.flatMap(g=>g.root_ids),...n.unassigned_root_ids],expected=population.roots.map(r=>r.root_id).sort();
+   if(new Set(n.groups.map(g=>g.key)).size!==n.groups.length||n.groups.some(g=>!g.root_ids.length||!/^[a-z][a-z0-9_]{0,63}$/u.test(g.key))
+    ||new Set(ids).size!==ids.length||ids.sort().join(',')!==expected.join(','))fail('numeric_population_invalid');return n;
+  },()=>drivers.fit(fit,abort.signal)):{plan_digest:fit.plan_digest,groups:[],unassigned_root_ids:[]};
+  const byRoot=new Map(roots.map(r=>[r.root_id,r]));
+  const samples=(key:string,ids:string[])=>{const selected=ids.map(id=>byRoot.get(id)??fail('sample_root_missing'));
+   return sampleSignalStudyGroupV1({study_digest:configuration.study_digest,group_key:key,roots:selected,centroid:signalStudyConfirmedCentroidV1(selected),seed:raw.sampling_seed,random_count:35,far_count:5});};
+  const discovered=numeric.groups.length?await editorial('motives',buildSignalStudyMotiveReviewV1({study,template_snapshot:snapshot,samples:numeric.groups.map(g=>samples(g.key,g.root_ids)[0])}),validateSignalStudyMotiveReviewV1):{motives:[],insufficient_group_keys:[]};
+  let motives:SignalStudyMotiveV1[]=discovered.motives.map(m=>({...m,centroid:signalStudyConfirmedCentroidV1(m.group_keys.flatMap(key=>numeric.groups.find(g=>g.key===key)!.root_ids).map(id=>byRoot.get(id)!)),layer:'unclear',human_locked:false}));
+  const motiveRoots=new Map(discovered.motives.map(m=>[m.key,m.group_keys.flatMap(key=>numeric.groups.find(g=>g.key===key)!.root_ids)]));
+  const pair=async(keys:string[],recode?:{attempt:1;boundary_keys:string[];contrast_rule:string})=>{
+   const decisions:SignalStudyLayerDecisionV1[]=[];
+   for(const pass of ['a','b']as const){
+    const batches:SignalStudyLayerDecisionV1[]=[];
+    for(let offset=0;offset<keys.length;offset+=40){const batch=keys.slice(offset,offset+40),request=buildSignalStudyConfiguredLayerReviewV1({configuration,pass,
+     recode:recode?{...recode,boundary_keys:batch}:undefined,
+     motives:motives.filter(m=>batch.includes(m.key)).map(m=>({...m,sample:samples(m.key,motiveRoots.get(m.key)!)[pass==='a'?0:1]}))});
+     batches.push(await editorial('layers:'+pass+':'+(recode?'repair':'initial')+':'+offset,request,validateSignalStudyLayerReviewV1));}
+    decisions.push({...batches[0]!,request_digest:digest(batches.map(b=>b.request_digest)),motives:batches.flatMap(b=>b.motives)});
+   }
+   return decisions as [SignalStudyLayerDecisionV1,SignalStudyLayerDecisionV1];
+  };
+  let stability:StudyRuntimeOutputV1['stability']=null,decisions:[SignalStudyLayerDecisionV1,SignalStudyLayerDecisionV1]|undefined;
+  if(motives.length){decisions=await pair(motives.map(m=>m.key));stability=signalStudyLayerStabilityV1(...decisions);
+   if(stability.action==='recode_boundary_once'){
+    const repaired=applySignalStudyBoundaryRecodeV1({initial:decisions,recoded:await pair(stability.boundary_keys,{attempt:1,boundary_keys:stability.boundary_keys,contrast_rule:'Recode only the recorded boundary set under the same frozen diagnostics; preserve distinct forces.'})});
+    decisions=repaired.decisions;stability=repaired.stability;
+   }
+   // Split identities remain distinct, never averaged or assigned by majority.
+   motives=decisions[0].motives.flatMap(m=>m.partitions.map(p=>({key:p.key,name:p.name,definition:p.definition,
+    centroid:signalStudyConfirmedCentroidV1(p.sample_root_ids.map(id=>byRoot.get(id)!)),layer:stability?.action==='stable'?p.layer:'unclear',human_locked:false,
+    ...(stability?.action==='stable'&&p.permission_overridden?{permission_override:{permission:p.permission,reason:p.normalization_reason??'Explicit editorial override'}}:{})})));
+  }
+  let memberships:SignalStudyMembershipV1[]=[];
+  const classify=async(selected:SignalStudyRootV1[],candidates:SignalStudyMotiveV1[],stage:string)=>{
+   const config=buildSignalStudyMotiveConfigurationV1(configuration.source_listening.configuration,candidates),rows:SignalStudyMembershipV1[]=[];
+   for(const root of selected){const request=buildSignalStudyMotiveRequestV1(root,candidates,config);if(!request)continue;
+    const answers=await paidJev(stage+':'+root.root_id,request);
+    for(const [key,answer]of Object.entries(answers)){if(answer.type!=='noul')fail('motive_response_invalid');rows.push({root_id:root.root_id,motive_key:key,probability:answer.noul,source:'jev',human_locked:false});}
+   }return rows;
+  };
+  if(motives.length)memberships=await classify(population.roots,motives,'membership');
+  let dominance=roots.length&&motives.length?signalStudyDominancePlanV1({roots,motives,memberships,cut_root_ids:roots.map(r=>r.root_id)}):null;
+  if(dominance?.motive_keys.length){
+   const affected=dominance.motive_keys,request=buildSignalStudyContrastReviewV1({study,template_snapshot:snapshot,affected_keys:affected,
+    motives:motives.map(m=>({...m,sample:samples(m.key,memberships.filter(row=>row.motive_key===m.key&&row.probability>=.7).map(row=>row.root_id).length?
+     memberships.filter(row=>row.motive_key===m.key&&row.probability>=.7).map(row=>row.root_id):population.roots.map(r=>r.root_id))[0]}))});
+   const contrasted=await editorial('dominance_contrast',request,validateSignalStudyContrastReviewV1);
+   motives=motives.map(m=>{const d=contrasted.definitions.find(d=>d.key===m.key);return d?{...m,name:d.name,definition:d.definition}:m;});
+   const target=new Set(dominance.reask_root_ids);
+   memberships=[...memberships.filter(row=>!target.has(row.root_id)||!affected.includes(row.motive_key)||row.human_locked),
+    ...await classify(population.roots.filter(r=>target.has(r.root_id)),motives.filter(m=>affected.includes(m.key)),'dominance_membership')];
+   dominance=signalStudyDominancePlanV1({roots,motives,memberships,cut_root_ids:roots.map(r=>r.root_id)});
+  }
+  const verified_evidence=decisions?.flatMap(d=>d.motives.flatMap(m=>m.partitions.flatMap(p=>[p.evidence,p.normative_evidence].filter(e=>e!==null)
+   .map(e=>verifySignalStudyVerbatimV1(byRoot.get(e.root_id)!,e.quote,e.private_person_names)))))??[];
+  const output:StudyRuntimeOutputV1={contract_version:'signal-study-runtime-output-v1',status:'directional',source_digest,configuration_digest:lease.configuration_digest,
+   summary:buildSignalStudySummaryV1({study,template_snapshot:snapshot,roots,motives,memberships,cut_root_ids:roots.map(r=>r.root_id),unresolved_root_ids:[]}),
+   query_bias,
+   stability,dominance,verified_evidence,insufficient_group_keys:discovered.insufficient_group_keys,promotion:{status:'explicit_action_required',automatic:false}};
+  await active();if(!await store.finish(lease,output,digest(output)))throw new Paused('stale');return{status:'completed',output};
+ }catch(error){if(error instanceof Paused)return{status:error.status};throw error;}
+ finally{clearInterval(timer);if(renewal)await renewal;await store.release(lease);}
+}
