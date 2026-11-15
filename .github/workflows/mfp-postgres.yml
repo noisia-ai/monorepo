@@ -225,6 +225,9 @@ jobs:
           NOISIA_R16_LISTENING_CROSS_RUN_INDEX_PG: 'true'
           NOISIA_R16_LISTENING_POPULATION_PG: 'true'
           NOISIA_R16_LISTENING_POPULATION_PLANS_PG: 'true'
+          NOISIA_R16_LISTENING_LEXICAL_PLAN_PG: 'true'
+          NOISIA_R16_LISTENING_REVISION_PLAN_PG: 'true'
+          NOISIA_R16_LISTENING_METRICS_BATCH_PG: 'true'
           NOISIA_R16_LISTENING_MONEY_BATCHES_PG: 'true'
           NOISIA_R16_LISTENING_PROTOTYPES_PG: 'true'
           NOISIA_R16_LISTENING_RUNTIME_PG: 'true'
@@ -245,6 +248,9 @@ jobs:
             infrastructure/db/migrations/signal-listening-cross-run-index.postgres.test.ts \
             infrastructure/db/migrations/signal-listening-population-batches.postgres.test.ts \
             infrastructure/db/migrations/signal-listening-population-plans.postgres.test.ts \
+            infrastructure/db/migrations/signal-listening-population-lexical-plan.postgres.test.ts \
+            infrastructure/db/migrations/signal-listening-human-revision-plan.postgres.test.ts \
+            infrastructure/db/migrations/signal-listening-question-metrics-batch.postgres.test.ts \
             infrastructure/db/migrations/signal-listening-money-batches.postgres.test.ts \
             infrastructure/db/migrations/signal-listening-prototypes.postgres.test.ts \
             infrastructure/db/migrations/signal-listening-lexicon.postgres.test.ts \
