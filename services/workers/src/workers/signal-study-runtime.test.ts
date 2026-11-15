@@ -340,3 +340,17 @@ test('V2 requires durable format-stop authority before any batch or physical sen
  const{f}=batchingFixture();delete f.store.recordFormatStop;
  await assert.rejects(signalStudyRuntimeJobV1(f.execution_id,f),/native_format_stop_store_required/u);assert.equal(f.sends.length,0);assert.equal(f.batches.size,0);assert.equal(f.fitCalls,0);
 });
+
+test('native deferred source completes the same methodology without inlining fit vectors and always disposes private custody',async()=>{
+ const{createStudySourcePagesV1,bindStudySourcePagesV1}=await import('./signal-study-source-pages');
+ const f=fixture(),pages=await createStudySourcePagesV1();
+ try{
+  for(const root of [...f.source.roots].sort((a,b)=>a.root_id<b.root_id?-1:a.root_id>b.root_id?1:0))await pages.append(root,{root_id:root.root_id});
+  const done=await pages.finish(),{roots:_roots,source_digest:_digest,...oldHeader}=f.source,header={...oldHeader,source_storage:done.manifest};
+  f.source.roots=done.roots;f.source.source_storage=done.manifest;f.source.source_digest=digest(header);f.lease.source_digest=f.source.source_digest;bindStudySourcePagesV1(f.source,pages);
+  const fit=f.drivers.fit;let observed=false;
+  f.drivers.fit=async args=>{const value=JSON.parse(args.numeric_plan.request_body);assert.equal(value.contract_version,'signal-study-motive-fit-plan-v2');assert.equal(value.vector_storage,'native_paged_cache');assert.ok(value.rows.every((row:Record<string,unknown>)=>!Object.hasOwn(row,'vector')));observed=true;return fit(args);};
+  const result=await signalStudyRuntimeJobV1(f.execution_id,f);assert.equal(result.status,'completed');assert.equal(observed,true);assert.equal(f.output?.summary.denominator,160);assert.equal(f.output?.stability?.kappa,1);
+  assert.throws(()=>done.roots[0]!.text,/disposed/);assert.throws(()=>pages.diagnostics(),/disposed/);
+ }finally{await pages.dispose();}
+});

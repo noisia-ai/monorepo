@@ -1,7 +1,7 @@
 import{signalStudyPromotionProposalV1}from'@noisia/query-engine';
 import{studyTransactionV1,studyAuthorizeV1,studyFailV1 as fail,studyDigestV1 as digest,studyUuidV1,type StudyAccessV1,type SignalStudyExecutionRecordV1}from'./signal-study-core';
 import{loadSignalListeningConfigurationWithClientV1,saveSignalListeningConfigurationWithClientV1}from'./signal-listening-configuration';
-import{readSignalStudySourceWithClientV1}from'./signal-study-source';
+import{withSignalStudySourceWithClientV1}from'./signal-study-source';
 import{replaySignalStudyWithClientV1}from'./signal-study-replay';
 /** A separate human action, never called by the Study worker. It publishes only
  * replayed committed motives and preserves current Listening, locks and history.
@@ -19,10 +19,10 @@ export async function promoteSignalStudyMotivesV1(args:StudyAccessV1&{execution_
   const p=(await c.query<SignalStudyExecutionRecordV1>('SELECT * FROM signal_study_executions WHERE id=$1 AND workspace_id=$2',[args.execution_id,args.workspace_id])).rows[0];
   if(!p||p.status!=='completed')fail('completed_report_required');
   const authorized=(await c.query('SELECT o.output_digest FROM signal_study_outputs o JOIN signal_study_configurations cfg ON cfg.id=o.configuration_id JOIN signal_study_configuration_sources_v1 s ON s.study_configuration_id=cfg.id WHERE o.execution_id=$1 AND o.workspace_id=$2 AND signal_study_generation_header_current_v1(s.generation_id) AND NOT EXISTS(SELECT 1 FROM signal_study_source_roots r WHERE r.execution_id=o.execution_id AND NOT signal_listening_root_right_v1(r.workspace_id,r.root_id,\'client-derived-metrics\'))',[p.id,args.workspace_id])).rows[0]as{output_digest:string}|undefined;
-  if(!authorized)fail('source_changed');const source=await readSignalStudySourceWithClientV1(c,p),replay=await replaySignalStudyWithClientV1(c,p.id,source);
+  if(!authorized)fail('source_changed');const{replay,configuration}=await withSignalStudySourceWithClientV1(c,p,async source=>({replay:await replaySignalStudyWithClientV1(c,p.id,source),configuration:source.configuration}));
   if(replay.operation.kind!=='output'||digest(replay.operation.output)!==authorized.output_digest||!replay.resolved_motives)fail('completed_report_required');
   const current=await loadSignalListeningConfigurationWithClientV1(c,args.workspace_id);if(!current||current.revision!==args.expected_listening_revision)fail('listening_revision_conflict');
-  const proposed=keys.map(key=>{const motive=replay.resolved_motives!.find(m=>m.key===key);if(!motive)fail('motive_unavailable');const proposal=signalStudyPromotionProposalV1({study:source.configuration.study,template_snapshot:source.configuration.template_snapshot,motive,explicit_action:true,target_revision:current.revision});
+  const proposed=keys.map(key=>{const motive=replay.resolved_motives!.find(m=>m.key===key);if(!motive)fail('motive_unavailable');const proposal=signalStudyPromotionProposalV1({study:configuration.study,template_snapshot:configuration.template_snapshot,motive,explicit_action:true,target_revision:current.revision});
    // Stable external binding avoids silently replacing another taxonomy key.
    return{...proposal.question,key:'study_'+digest({study_id:p.study_id,motive_key:key}).slice(7,39)};});
   if(proposed.some(q=>current.configuration.questions.some(old=>old.key===q.key)||current.configuration.retired_question_keys.includes(q.key)))fail('promotion_key_conflict');

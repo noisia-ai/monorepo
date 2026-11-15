@@ -4,7 +4,7 @@ import{entityContextDigestV1,signalStudyJevIdentityV1,signalStudyJevTargetDigest
 import type{StudyRuntimeJevBatchPlanV1,StudyRuntimeJevBatchCheckpointV1,StudyRuntimeLeaseV1}from'../../services/workers/src/workers/signal-study-runtime';
 import{studyTransactionV1,studyFailV1 as fail,type StudyDatabaseV1,type SignalStudyExecutionRecordV1,studyConfigurationWithClientV1}from'./signal-study-core';
 import{lockSignalStudyExecutionWithClientV1}from'./signal-study-executions';
-import{readSignalStudySourceWithClientV1}from'./signal-study-source';
+import{withSignalStudySourceWithClientV1}from'./signal-study-source';
 import{replaySignalStudyWithClientV1}from'./signal-study-replay';
 import{requestMentionFacetsV1}from'./signal-labeling-runs';
 const sha=(value:string)=>'sha256:'+createHash('sha256').update(value).digest('hex');
@@ -28,7 +28,7 @@ export async function prepareSignalStudyJevBatchV1(args:{database:StudyDatabaseV
   const p=await lockSignalStudyExecutionWithClientV1(c,lease);
   let b=(await c.query<StudyBatchRowV1>('SELECT * FROM signal_study_jev_batches WHERE execution_id=$1 AND stage=$2 AND plan_digest=$3',[p.id,plan.stage,plan.plan_digest])).rows[0];
   if(b){if(digest(b.plan_header)!==digest(header(plan))||b.request_count!==plan.requests.length)fail('batch_plan_conflict');await c.query('UPDATE signal_study_jev_batches SET parent_execution_token=$2 WHERE id=$1',[b.id,lease.execution_token]);b.parent_execution_token=lease.execution_token;return{p,b};}
-  const expected=(await replaySignalStudyWithClientV1(c,p.id,await readSignalStudySourceWithClientV1(c,p))).operation;if(expected.kind!=='jev'||digest(expected.plan)!==digest(plan))fail('batch_not_next');
+  const expected=(await withSignalStudySourceWithClientV1(c,p,source=>replaySignalStudyWithClientV1(c,p.id,source))).operation;if(expected.kind!=='jev'||digest(expected.plan)!==digest(plan))fail('batch_not_next');
   const cfg=await studyConfigurationWithClientV1(c,p.workspace_id,p.configuration_id);if(!cfg)fail('configuration_unavailable');const remaining=BigInt(p.cap_micro_usd)-BigInt((await c.query<{v:string}>('SELECT signal_study_exposure_v1($1)::text v',[p.id])).rows[0]!.v);if(remaining<=0n){await c.query("UPDATE signal_study_executions SET status='budget_exhausted',error_code='study_parent_cap_exhausted' WHERE id=$1",[p.id]);return null;}
   const policyCap=(await c.query<{max_execution_micro_usd:string|null}>("SELECT max_execution_micro_usd::text FROM signal_processing_policy_actions WHERE policy_version_id=$1 AND action='mass_labeling_jev'",[p.policy_version_id])).rows[0]?.max_execution_micro_usd;const runCap=policyCap===null||policyCap===undefined?remaining:BigInt(policyCap)<remaining?BigInt(policyCap):remaining;
   const id=randomUUID(),target=signalStudyJevTargetDigestV1(cfg.envelope),census=digest(plan.requests.map(r=>[r.root_id,r.request_sha256]));

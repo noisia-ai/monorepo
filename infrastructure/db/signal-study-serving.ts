@@ -1,11 +1,11 @@
 import type{StudyRuntimeLeaseV1,StudyRuntimeOutputV1}from'../../services/workers/src/workers/signal-study-runtime';
 import{studyTransactionV1,studyDigestV1 as digest,studyFailV1 as fail,studyAuthorizeV1,type StudyDatabaseV1,type StudyAccessV1}from'./signal-study-core';
 import{lockSignalStudyExecutionWithClientV1}from'./signal-study-executions';
-import{readSignalStudySourceWithClientV1}from'./signal-study-source';
+import{withSignalStudySourceWithClientV1}from'./signal-study-source';
 import{replaySignalStudyWithClientV1}from'./signal-study-replay';
 export async function finishSignalStudyExecutionV1(args:{database:StudyDatabaseV1;lease:StudyRuntimeLeaseV1;output:StudyRuntimeOutputV1;output_digest:string}){
  if(digest(args.output)!==args.output_digest)fail('output_digest_invalid',422);
- return studyTransactionV1(args.database,async c=>{const p=await lockSignalStudyExecutionWithClientV1(c,args.lease),next=(await replaySignalStudyWithClientV1(c,p.id,await readSignalStudySourceWithClientV1(c,p))).operation;
+ return studyTransactionV1(args.database,async c=>{const p=await lockSignalStudyExecutionWithClientV1(c,args.lease),next=(await withSignalStudySourceWithClientV1(c,p,source=>replaySignalStudyWithClientV1(c,p.id,source))).operation;
   if(next.kind!=='output'||digest(next.output)!==args.output_digest)fail('output_not_derived');
   if(BigInt((await c.query<{v:string}>('SELECT signal_study_exposure_v1($1)::text v',[p.id])).rows[0]!.v)>BigInt(p.cap_micro_usd))fail('parent_cap_exhausted');
   await c.query("SELECT set_config('noisia.study_output_v1',$1,true)",[JSON.stringify({execution_id:p.id,execution_token:args.lease.execution_token,output_digest:args.output_digest})]);

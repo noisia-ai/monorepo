@@ -73,13 +73,13 @@ export function buildSignalStudyMotivePopulationV1(roots:SignalStudyRootV1[]):{
 /** Fresh numerical fit over the shared relevant-fragment vectors. No new
  * embedding request, prior human taxonomy, direction-specific partition or
  * paused multimethod-engine execution is introduced by this manifest. */
-export function buildSignalStudyMotiveFitPlanV1(args:{study:SignalStudyV1;roots:SignalStudyRootV1[];embedding_space_digest:string;template_snapshot?:SignalStudyTemplateSnapshotV1}){
+export function buildSignalStudyMotiveFitPlanV1(args:{study:SignalStudyV1;roots:SignalStudyRootV1[];embedding_space_digest:string;template_snapshot?:SignalStudyTemplateSnapshotV1;vector_storage?:'native_paged_cache'}){
   const study=validateSignalStudyV1(args.study,args.template_snapshot),population=buildSignalStudyMotivePopulationV1(args.roots);
   if(!/^sha256:[a-f0-9]{64}$/u.test(args.embedding_space_digest))fail('study_embedding_space_invalid');
   const rows=population.roots.map(root=>({root_id:root.root_id,text:root.selected_fragment?.text??root.text,
-    text_sha256:root.selected_fragment?.text_sha256??root.text_sha256,vector:[...root.vector],vector_digest:digest(root.vector),
+    text_sha256:root.selected_fragment?.text_sha256??root.text_sha256,...(args.vector_storage?{}:{vector:[...root.vector]}),vector_digest:digest(root.vector),
     direction:root.axes.direction,target:root.axes.target,aggregate:root.axes.aggregate})).sort((a,b)=>a.root_id.localeCompare(b.root_id));
-  const body={contract_version:'signal-study-motive-fit-plan-v1' as const,study_digest:digest(study),workspace_id:study.workspace_id,
+  const body={contract_version:args.vector_storage?'signal-study-motive-fit-plan-v2' as const:'signal-study-motive-fit-plan-v1' as const,...(args.vector_storage?{vector_storage:args.vector_storage}:{}),study_digest:digest(study),workspace_id:study.workspace_id,
     corpus_id:study.corpus_id,embedding_space_digest:args.embedding_space_digest,dimensions:1024 as const,
     configuration:signalWorkspaceMassLabelingConfigV3(rows.length),pooled_directions:['trigger','barrier','mixed'],
     fit_required:rows.length>0,source:'existing_corpus_vectors' as const,guides:[],rows};
@@ -114,8 +114,8 @@ export function sampleSignalStudyGroupV1(args:{study_digest:string;group_key:str
       const holdout=[...population].filter(root=>!seen.has(root.root_id)).sort((a,b)=>rank(a).localeCompare(rank(b)))[0];
       if(holdout){randomIds.delete(randomRows[randomRows.length-1]!.root_id);randomRows[randomRows.length-1]=holdout;randomIds.add(holdout.root_id);farRows=distant();}
     }
-    const rows=[...randomRows.map(root=>({...root,source:'random' as const})),...farRows.map(root=>({...root,source:'far' as const}))]
-      .map(root=>({root_id:root.root_id,text:root.text,text_sha256:root.text_sha256,source:root.source,axes:root.axes,evidence_publishable:signalStudyEvidencePublishableV1(root)}));
+    const row=(root:SignalStudyRootV1,source:'random'|'far')=>({root_id:root.root_id,text:root.text,text_sha256:root.text_sha256,source,axes:root.axes,evidence_publishable:signalStudyEvidencePublishableV1(root)});
+    const rows=[...randomRows.map(root=>row(root,'random')),...farRows.map(root=>row(root,'far'))];
     if(pass==='a')for(const row of rows)seen.add(row.root_id);
     const sample={contract_version:'signal-study-sample-v1' as const,study_digest:args.study_digest,group_key:args.group_key,pass,
       random_count:randomRows.length,far_count:farRows.length,population_count:args.roots.length,

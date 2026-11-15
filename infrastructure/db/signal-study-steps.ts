@@ -4,7 +4,7 @@ import type{PoolClient}from'pg';
 import type{StudyRuntimeLeaseV1,StudyRuntimeStepPlanV1,StudyRuntimeStepV1,StudyRuntimeReceiptV1}from'../../services/workers/src/workers/signal-study-runtime';
 import{studyTransactionV1,studyFailV1 as fail,studyDigestV1 as digest,type StudyDatabaseV1,type SignalStudyExecutionRecordV1}from'./signal-study-core';
 import{lockSignalStudyExecutionWithClientV1,validateSignalStudyLeaseV1}from'./signal-study-executions';
-import{readSignalStudySourceWithClientV1,signalStudySourceUrlStateV1}from'./signal-study-source';
+import{withSignalStudySourceWithClientV1,signalStudySourceUrlStateV1}from'./signal-study-source';
 import{replaySignalStudyWithClientV1,validateSignalStudyCurrentStepWithClientV1}from'./signal-study-replay';
 import{admitSignalProcessingWithClientV1}from'./signal-processing-policy';
 const sha=(body:string|Buffer)=>'sha256:'+createHash('sha256').update(body).digest('hex');
@@ -37,10 +37,11 @@ export async function readSignalStudyStepV1(args:{database:StudyDatabaseV1;lease
 export async function planSignalStudyStepV1(args:{database:StudyDatabaseV1;lease:StudyRuntimeLeaseV1;plan:StudyRuntimeStepPlanV1}){
  validatePlan(args.lease,args.plan);return studyTransactionV1(args.database,async c=>{
   const p=await lockSignalStudyExecutionWithClientV1(c,args.lease),old=await readStep(c,args.lease,args.plan);if(old)return mapped(old);
-  const source=await readSignalStudySourceWithClientV1(c,p),expected=(await replaySignalStudyWithClientV1(c,p.id,source)).operation;
+  const expected=await withSignalStudySourceWithClientV1(c,p,async source=>{const expected=(await replaySignalStudyWithClientV1(c,p.id,source)).operation;
   if(expected.kind!=='sonnet'||digest(expected.plan)!==digest(args.plan))fail('step_not_next');
   const roots=new Map(source.roots.map(root=>[root.root_id,root]));
   if(expected.editorial.mode!=='reconciliation'&&expected.editorial.source_samples.some(group=>!group.rows.some(row=>{const root=roots.get(row.root_id);return root&&signalStudySourceUrlStateV1(root.source_url)==='valid';})))fail('verbatim_source_unavailable',422);
+   return expected;});
   const body=JSON.parse(args.plan.request_body)as{model:string;max_tokens:number};if(body.model!=='claude-sonnet-4-6'||body.max_tokens!==32768||Buffer.byteLength(args.plan.request_body)>524288)fail('step_request_invalid');
   const reservation=(Buffer.byteLength(args.plan.request_body)+4096)*6+body.max_tokens*15;
   const exposure=BigInt((await c.query<{v:string}>('SELECT signal_study_exposure_v1($1)::text v',[p.id])).rows[0]!.v);
@@ -105,7 +106,7 @@ export async function commitSignalStudyStepV1(args:{database:StudyDatabaseV1;lea
   if(row.status!=='raw'||!row.raw_json||row.verification_status!=='verified')return false;
   const receipt=JSON.parse(row.raw_json)as StudyRuntimeReceiptV1,rawValue=JSON.parse(new TextDecoder('utf-8',{fatal:true,ignoreBOM:true}).decode(Buffer.from(receipt.body_base64,'base64')));
   if(digest(rawValue)!==args.value_digest||!(await c.query("SELECT 1 FROM engine_cost_events WHERE study_step_id=$1 AND call_state='settled'",[row.id])).rows.length)fail('settled_receipt_required');
-  const validated=await validateSignalStudyCurrentStepWithClientV1(c,p.id,await readSignalStudySourceWithClientV1(c,p),{plan:args.plan,value:rawValue});if(!validated||validated.value_digest!==args.value_digest)fail('step_not_next');
+  const validated=await withSignalStudySourceWithClientV1(c,p,source=>validateSignalStudyCurrentStepWithClientV1(c,p.id,source,{plan:args.plan,value:rawValue}));if(!validated||validated.value_digest!==args.value_digest)fail('step_not_next');
   await c.query("SELECT set_config('noisia.study_commit_v1',$1,true)",[JSON.stringify({execution_id:p.id,execution_token:args.lease.execution_token,step_key:args.plan.key,value_digest:args.value_digest})]);
   await c.query("UPDATE signal_study_steps SET status='committed',value=$2::jsonb,value_digest=$3 WHERE id=$1",[row.id,JSON.stringify(rawValue),args.value_digest]);return true;});
 }
@@ -142,7 +143,7 @@ export async function recordSignalStudyFormatStopV1(args:{database:StudyDatabase
    // for the native parent lock. Only its exact existing receipt is a replay.
    if(error instanceof Error&&/^study_(source_changed|lease_lost)$/u.test(error.message)&&await replayed())return;throw error;
   }
-  const next=(await replaySignalStudyWithClientV1(c,p.id,await readSignalStudySourceWithClientV1(c,p))).operation;
+  const next=(await withSignalStudySourceWithClientV1(c,p,source=>replaySignalStudyWithClientV1(c,p.id,source))).operation;
   if(next.kind!=='format_stop'||digest(next.stop)!==stop_digest)fail('format_stop_not_derived');
   if(BigInt((await c.query<{v:string}>('SELECT signal_study_exposure_v1($1)::text v',[p.id])).rows[0]!.v)>BigInt(p.cap_micro_usd))fail('parent_cap_exhausted');
   await c.query("SELECT set_config('noisia.study_format_stop_v1',$1,true)",[JSON.stringify({execution_id:p.id,execution_token:args.lease.execution_token,stop_digest})]);

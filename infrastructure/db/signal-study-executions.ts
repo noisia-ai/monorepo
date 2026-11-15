@@ -5,6 +5,7 @@ import {studyTransactionV1,studyAuthorizeV1,studyPolicyLockV1,studyConfiguration
  type StudyAccessV1,type StudyDatabaseV1,type SignalStudyExecutionRecordV1} from './signal-study-core';
 import {prepareSignalStudySourceWithClientV1,readSignalStudySourceWithClientV1} from './signal-study-source';
 import {mapCurrent} from './signal-mass-labeling';
+import{disposeStudySourcePagesV1}from'../../services/workers/src/workers/signal-study-source-pages';
 export async function requestSignalStudyExecutionV1(args:StudyAccessV1&{configuration_id:string;idempotency_key:string;cap_micro_usd:number;
  query_terms?:string[];problem_terms?:string[]}){
  if(!studyUuidV1.test(args.configuration_id)||!/^[A-Za-z0-9._:-]{8,200}$/u.test(args.idempotency_key)||!Number.isSafeInteger(args.cap_micro_usd)||args.cap_micro_usd<=0)fail('request_invalid',422);
@@ -23,19 +24,21 @@ export async function requestSignalStudyExecutionV1(args:StudyAccessV1&{configur
   const snapshot=(await c.query<{map_id:string;current:boolean}>(`SELECT s.map_id,signal_listening_discovery_source_current_v1(s.generation_id) current FROM signal_study_configuration_sources_v1 s WHERE s.study_configuration_id=$1 AND s.workspace_id=$2`,[cfg.id,args.workspace_id])).rows[0];
   if(!snapshot?.current)fail('listening_source_unavailable');const map=await mapCurrent(c,args.workspace_id,snapshot.map_id);
   const id=randomUUID(),ready=await prepareSignalStudySourceWithClientV1(c,cfg,id,metadata),{roots:_roots,source_digest:_digest,...header}=ready.source;
+  try{
   await c.query(`INSERT INTO signal_study_executions(id,workspace_id,organization_id,study_id,configuration_id,actor_user_id,policy_version_id,configuration_digest,human_revision_digest,
    entity_context_digest,map_id,cap_micro_usd,idempotency_key,request_digest,source_header,source_roots,source_bytes)
-   VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15::jsonb,$16,$17)`,[id,args.workspace_id,policy.organization_id,cfg.study_id,cfg.id,args.actor_user_id,policy.id,cfg.configuration_digest,cfg.human_revision_digest,map.entity_context_digest,map.id,args.cap_micro_usd,args.idempotency_key,request_digest,JSON.stringify(header),ready.records.length,ready.working_bytes]);
-  if(ready.records.length)await c.query(`INSERT INTO signal_study_source_roots(execution_id,workspace_id,root_id,map_id,input_digest,asset_sha256,chunk_policy_version,chunk_sha256,chunk_index,start_offset,end_offset,embedding_config_digest,embedding_call_id,embedding_run_id,
+   VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15::jsonb,$16,$17)`,[id,args.workspace_id,policy.organization_id,cfg.study_id,cfg.id,args.actor_user_id,policy.id,cfg.configuration_digest,cfg.human_revision_digest,map.entity_context_digest,map.id,args.cap_micro_usd,args.idempotency_key,request_digest,JSON.stringify(header),ready.root_count,ready.working_bytes]);
+  for await(const page of ready.pages.records())await c.query(`INSERT INTO signal_study_source_roots(execution_id,workspace_id,root_id,map_id,input_digest,asset_sha256,chunk_policy_version,chunk_sha256,chunk_index,start_offset,end_offset,embedding_config_digest,embedding_call_id,embedding_run_id,
    native_vector_sha256,base_cache,attributes,listening_topic_keys,question_cache_ids,occurred_at,channel,source_url,private_person_names,proof_json,proof_digest)
    SELECT $1,$2,x.root_id,$3,x.input_digest,x.asset_sha256,x.chunk_policy_version,x.chunk_sha256,x.chunk_index,x.start_offset,x.end_offset,x.embedding_config_digest,x.embedding_call_id,x.embedding_run_id,x.native_vector_sha256,
    x.base_cache,x.attributes,x.listening_topic_keys,x.question_cache_ids,x.occurred_at,x.channel,x.source_url,x.private_person_names,x.proof_json,x.proof_digest
    FROM jsonb_to_recordset($4::jsonb)x(root_id uuid,input_digest text,asset_sha256 text,chunk_policy_version text,chunk_sha256 text,chunk_index integer,start_offset integer,end_offset integer,embedding_config_digest text,embedding_call_id uuid,embedding_run_id uuid,
     native_vector_sha256 text,base_cache jsonb,attributes jsonb,listening_topic_keys text[],question_cache_ids uuid[],occurred_at timestamptz,channel text,source_url text,private_person_names text[],proof_json text,proof_digest text)`,
-   [id,args.workspace_id,map.id,JSON.stringify(ready.records.map(({row,proof_json,proof_digest})=>{const{full_text:_text,fragment:_fragment,vector_json,...saved}=row;return{...saved,native_vector_sha256:JSON.parse(proof_json).embedding_sha256,proof_json,proof_digest};}))]);
+   [id,args.workspace_id,map.id,JSON.stringify(page)]);
   await c.query('ANALYZE signal_study_source_roots');
   await c.query("SELECT set_config('noisia.study_source_verified_v1',$1,true)",[JSON.stringify({execution_id:id,source_digest:ready.source.source_digest,source_census_digest:ready.census})]);
   return(await c.query<SignalStudyExecutionRecordV1>("UPDATE signal_study_executions SET source_digest=$2,source_census_digest=$3,status='queued' WHERE id=$1 RETURNING *",[id,ready.source.source_digest,ready.census])).rows[0]!;
+  }finally{await ready.pages.dispose();}
  });
 }
 export function validateSignalStudyLeaseV1(lease:StudyRuntimeLeaseV1){
@@ -80,9 +83,11 @@ export async function releaseSignalStudyExecutionV1(args:{database:StudyDatabase
  validateSignalStudyLeaseV1(args.lease);await args.database.query('UPDATE signal_study_executions SET execution_token=NULL,execution_expires_at=NULL,updated_at=clock_timestamp() WHERE id=$1 AND workspace_id=$2 AND execution_token=$3',[args.lease.execution_id,args.lease.workspace_id,args.lease.execution_token]);
 }
 export async function readSignalStudyRuntimeSourceV1(args:{database:StudyDatabaseV1;lease:StudyRuntimeLeaseV1}):Promise<StudyRuntimeSourceV1|null>{
- try{return await studyTransactionV1(args.database,async c=>{const p=await lockSignalStudyExecutionWithClientV1(c,args.lease);return readSignalStudySourceWithClientV1(c,p);});}
- catch(error){if(error instanceof Error&&/^study_(lease_lost|source_changed|policy_unavailable|forbidden|not_enabled)$/u.test(error.message))return null;throw error;}
+ let source:StudyRuntimeSourceV1|null=null;
+ try{return await studyTransactionV1(args.database,async c=>{const p=await lockSignalStudyExecutionWithClientV1(c,args.lease);source=await readSignalStudySourceWithClientV1(c,p);return source;});}
+ catch(error){await disposeStudySourcePagesV1(source);if(error instanceof Error&&/^study_(lease_lost|source_changed|policy_unavailable|forbidden|not_enabled)$/u.test(error.message))return null;throw error;}
 }
+
 export async function pendingSignalStudyExecutionsV1(args:{database:StudyDatabaseV1;limit?:number}){
  const limit=args.limit??20;if(!Number.isInteger(limit)||limit<1||limit>200)fail('limit_invalid',422);
  return(await args.database.query<{execution_id:string}>(`SELECT p.id execution_id FROM signal_study_executions p WHERE(

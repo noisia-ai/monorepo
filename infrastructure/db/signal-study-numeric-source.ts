@@ -3,7 +3,7 @@ import type{StudyNumericAdapterV1,StudyNumericContextV1,StudyNumericRowV1}from'@
 import type{StudyRuntimeLeaseV1,StudyRuntimeNumericPlanV1}from'../../services/workers/src/workers/signal-study-runtime';
 import{studyTransactionV1,studyFailV1 as fail,studyDigestV1 as digest,type StudyDatabaseV1,type SignalStudyExecutionRecordV1}from'./signal-study-core';
 import{lockSignalStudyExecutionWithClientV1}from'./signal-study-executions';
-import{readSignalStudySourceWithClientV1}from'./signal-study-source';
+import{withSignalStudySourceWithClientV1}from'./signal-study-source';
 import{replaySignalStudyWithClientV1}from'./signal-study-replay';
 import{selectLabelingInputPrefixV1}from'./signal-labeling-input-bounds';
 const sha=(value:string)=>'sha256:'+createHash('sha256').update(value).digest('hex');
@@ -16,7 +16,7 @@ export function createSignalStudyNumericNativeAdapterV1(options:{database:StudyD
   async load({lease,numeric_plan,fit_plan}){return studyTransactionV1(options.database,async c=>{
    const p=await lockSignalStudyExecutionWithClientV1(c,lease),old=await loadSignalStudyNumericSourceWithClientV1(c,p,numeric_plan);
    if(old){if(old.fit_plan_digest!==fit_plan.plan_digest||old.request_sha256!==numeric_plan.request_sha256)fail('numeric_plan_conflict');return old.context;}
-   const source=await readSignalStudySourceWithClientV1(c,p),next=(await replaySignalStudyWithClientV1(c,p.id,source)).operation;
+   return withSignalStudySourceWithClientV1(c,p,async source=>{const next=(await replaySignalStudyWithClientV1(c,p.id,source)).operation;
    if(next.kind!=='numeric'||digest(next.plan)!==digest(numeric_plan)||digest(next.fit)!==digest(fit_plan))fail('numeric_not_next');
    const byId=new Map(next.roots.map(root=>[root.root_id,root])),selected=next.fit.rows.map(row=>byId.get(row.root_id)??fail('numeric_root_missing'));
    const proofs=selected.map(root=>{const proof={...JSON.parse(root.embedding_proof.proof_json),contract_version:'signal-study-cached-vector-proof-v1',source_proof_digest:root.embedding_proof.proof_digest,source_digest:p.source_digest,
@@ -30,7 +30,7 @@ export function createSignalStudyNumericNativeAdapterV1(options:{database:StudyD
    await c.query('INSERT INTO signal_study_numeric_sources(id,workspace_id,execution_id,numeric_key,request_sha256,fit_plan_digest,context) VALUES($1,$2,$3,$4,$5,$6,$7::jsonb)',[id,p.workspace_id,p.id,numeric_plan.key,numeric_plan.request_sha256,fit_plan.plan_digest,JSON.stringify(context)]);
    if(proofs.length)await c.query(`INSERT INTO signal_study_numeric_source_roots(source_id,workspace_id,execution_id,root_id,proof_json,proof_digest)
     SELECT $1,$2,$3,x.root_id,x.proof_json,x.proof_digest FROM jsonb_to_recordset($4::jsonb)x(root_id uuid,proof_json text,proof_digest text)`,[id,p.workspace_id,p.id,JSON.stringify(proofs)]);
-   await c.query('ANALYZE signal_study_numeric_source_roots');return context;});},
+   await c.query('ANALYZE signal_study_numeric_source_roots');return context;});});},
   async assertCurrent({lease,context}){await studyTransactionV1(options.database,async c=>{const p=await lockSignalStudyExecutionWithClientV1(c,lease,'owner');const saved=(await c.query('SELECT context FROM signal_study_numeric_sources WHERE execution_id=$1 AND workspace_id=$2 AND fit_plan_digest=$3',[p.id,p.workspace_id,context.fit_plan_digest])).rows[0];if(!saved||digest(saved.context)!==digest(context))fail('numeric_source_changed');});},
   async read({lease,context,after_root_id,limit,max_working_bytes}){if(!Number.isSafeInteger(limit)||limit<1||limit>1024||!Number.isSafeInteger(max_working_bytes)||max_working_bytes<8192||max_working_bytes>32*1024*1024)fail('numeric_read_bounds_invalid',422);
    return studyTransactionV1(options.database,async c=>{const p=await lockSignalStudyExecutionWithClientV1(c,lease),s=(await c.query<{id:string;context:StudyNumericContextV1}>('SELECT id,context FROM signal_study_numeric_sources WHERE execution_id=$1 AND workspace_id=$2 AND fit_plan_digest=$3',[p.id,p.workspace_id,context.fit_plan_digest])).rows[0];if(!s||digest(s.context)!==digest(context))fail('numeric_source_changed');

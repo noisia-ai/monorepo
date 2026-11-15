@@ -1,6 +1,7 @@
+import{studySourceRootWithAxesV1,studySourcePagesManifestV1}from'../../services/workers/src/workers/signal-study-source-pages';
 import {createHash} from 'node:crypto';
 import{studyTransactionV1,studyAuthorizeV1,type StudyAccessV1,type SignalStudyExecutionRecordV1}from'./signal-study-core';
-import{readSignalStudySourceWithClientV1}from'./signal-study-source';
+import{withSignalStudySourceWithClientV1}from'./signal-study-source';
 import type{PoolClient}from'pg';
 import type{StudyRuntimeRootV1,StudyRuntimeSourceV1,StudyRuntimeStepPlanV1,StudyRuntimeNumericPlanV1,StudyRuntimeJevBatchPlanV1,StudyRuntimeStageDependencyV1,StudyRuntimeOutputV1,StudyRuntimeJevBatchCheckpointV1}from'../../services/workers/src/workers/signal-study-runtime';
 import{studyRuntimeJevQuestionIdentityV1}from'../../services/workers/src/workers/signal-study-runtime';
@@ -127,10 +128,10 @@ function jevResponse(request:JevRequestV1,value:unknown):Record<string,JevAnswer
    if(status==='awaiting_base')fail('base_pending');if(status!=='included')fail('native_cut_mismatch');return true;
   });
   const axesAnswers=await jevBatch('axes',cut.map(root=>({root_id:root.root_id,request:buildSignalStudyConfiguredAxesRequestV1({text:root.text},configuration)})),signalStudyJevAxesConfigurationV1(configuration));
-  const roots:Array<SignalStudyRootV1&StudyRuntimeRootV1>=cut.map(root=>({...root,axes:resolveSignalStudyConfiguredAxesV1(configuration,axesAnswers.get(root.root_id)!)}));
+  const roots:Array<SignalStudyRootV1&StudyRuntimeRootV1>=cut.map(root=>studySourceRootWithAxesV1(root,resolveSignalStudyConfiguredAxesV1(configuration,axesAnswers.get(root.root_id)!)));
   assertSignalStudyRootsV1(roots);for(const root of roots)resolvedById.set(root.root_id,root);
   const query_bias=signalStudyQueryBiasV1({query_terms:raw.query_terms,problem_terms:raw.problem_terms,metadata:raw.query_metadata,subject_roots:roots.filter(r=>r.axes.aggregate==='subject').length,brand_baseline_roots:raw.brand_baseline_roots});
-  const population=buildSignalStudyMotivePopulationV1(roots),fit=buildSignalStudyMotiveFitPlanV1({study,template_snapshot:snapshot,roots,embedding_space_digest:raw.embedding_space_digest});
+  const population=buildSignalStudyMotivePopulationV1(roots),fit=buildSignalStudyMotiveFitPlanV1({study,template_snapshot:snapshot,roots,embedding_space_digest:raw.embedding_space_digest,...(studySourcePagesManifestV1(raw)?{vector_storage:'native_paged_cache' as const}:{})});
   const request_body=JSON.stringify(fit),numericPlan:StudyRuntimeNumericPlanV1={kind:'numeric',fit_plan_digest:fit.plan_digest,source_digest,request_body,request_sha256:sha(request_body),
    key:digest({execution_id,source_digest,stage:'numeric-cpu-v1',request_sha256:sha(request_body)})};
   const checkpoint=(await c.query<{value:import('../../services/workers/src/workers/signal-study-runtime').StudyRuntimeNumericV1;value_digest:string;manifest_json:string;manifest_sha256:string;verification_status:string}>('SELECT value,value_digest,manifest_json,manifest_sha256,verification_status FROM signal_study_numeric_checkpoints WHERE execution_id=$1 AND numeric_key=$2',[execution_id,numericPlan.key])).rows[0];
@@ -260,7 +261,7 @@ export async function readSignalStudyStabilityProofV1(args:StudyAccessV1&{execut
    WHERE p.id=$1 AND p.workspace_id=$2 AND p.status='completed' AND signal_study_generation_header_current_v1(s.generation_id)
    AND NOT EXISTS(SELECT 1 FROM signal_study_source_roots root WHERE root.execution_id=p.id AND NOT signal_listening_root_right_v1(p.workspace_id,root.root_id,'client-derived-metrics'))`,[args.execution_id,args.workspace_id])).rows[0];
   if(!row)return null;
-  const replay=await replaySignalStudyWithClientV1(c,row.id,await readSignalStudySourceWithClientV1(c,row));
+  const replay=await withSignalStudySourceWithClientV1(c,row,source=>replaySignalStudyWithClientV1(c,row.id,source));
   if(replay.operation.kind!=='output'||digest(replay.operation.output)!==row.output_digest)fail('audit_output_integrity_invalid');
   const proof={contract_version:'signal-study-stability-proof-v1' as const,workspace_id:row.workspace_id,execution_id:row.id,
    compiler_version:row.source_header.editorial_compiler_version===SIGNAL_STUDY_EDITORIAL_COMPILER_V2?SIGNAL_STUDY_EDITORIAL_COMPILER_V2:'legacy-v1',configuration_digest:row.configuration_digest,source_digest:row.source_digest,output_digest:row.output_digest,stability:replay.operation.output.stability,layer_agreement:replay.layer_agreement!};
