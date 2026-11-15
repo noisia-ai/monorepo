@@ -163,8 +163,7 @@ export async function snapshotSignalListeningDiscoveryOrphansWithClientV1(c:Pool
   await c.query(`INSERT INTO signal_listening_discovery_subsets(id,workspace_id,generation_id,created_by_user_id) VALUES($1,$2,$3,$4)`,[id,args.workspace_id,args.generation_id,args.actor_user_id]);
   await c.query(`INSERT INTO signal_listening_discovery_subset_roots(subset_id,generation_id,root_id,proof_digest)
    SELECT $1,generation_id,root_id,proof_digest FROM signal_listening_discovery_roots r WHERE generation_id=$2 AND workspace_id=$3
-    AND proof->'in_category'='true'::jsonb
-    AND NOT EXISTS(SELECT 1 FROM jsonb_array_elements(proof->'evaluations') e WHERE e->>'probability' IS NULL OR(e->>'probability')::double precision>=0.7)`,[id,args.generation_id,args.workspace_id]);
+    AND signal_listening_human_orphan_proof_v1(r.proof)`,[id,args.generation_id,args.workspace_id]);
   return(await c.query<{id:string;workspace_id:string;generation_id:string;root_count:number;cached_count:number;subset_digest:string}>(`UPDATE signal_listening_discovery_subsets s SET status='ready',root_count=totals.n,cached_count=totals.cached,
    subset_digest=signal_labeling_digest_v1(jsonb_build_object('workspace_id',s.workspace_id,'generation_id',s.generation_id,'roots',totals.roots))
    FROM(SELECT count(*)::integer n,count(*) FILTER(WHERE r.proof->>'embedding_call_id' IS NOT NULL)::integer cached,

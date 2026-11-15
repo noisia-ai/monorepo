@@ -16,11 +16,11 @@ test('human edits are additive private snapshots and never a provider probabilit
  assert.ok(columns.includes('belongs'));assert.ok(columns.includes('input_digest'));assert.ok(columns.includes('question_digest'));
 }}));
 
-async function completed(fn:(f:Awaited<ReturnType<typeof seed>>)=>Promise<void>){
+async function completed(fn:(f:Awaited<ReturnType<typeof seed>>)=>Promise<void>,approved=3){
  const {withDiscoveryAdvanceFixtureV1}=await import('./signal-listening-discovery-advance.synthetic.fixture');
- await withDiscoveryAdvanceFixtureV1(async f=>fn(await seed(f)),{additional_defined_topic:true});
+ await withDiscoveryAdvanceFixtureV1(async f=>fn(await seed(f,approved)),{additional_defined_topic:true});
 }
-async function seed(f:Parameters<Parameters<typeof import('./signal-listening-discovery-advance.synthetic.fixture')['withDiscoveryAdvanceFixtureV1']>[0]>[0]){
+async function seed(f:Parameters<Parameters<typeof import('./signal-listening-discovery-advance.synthetic.fixture')['withDiscoveryAdvanceFixtureV1']>[0]>[0],approved=3){
  const {createSignalListeningDiscoveryAdvanceStoreV1}=await import('../signal-listening-discovery-advance');
  const {activateSignalListeningServingSnapshotV1}=await import('../signal-listening-discovery-money');
  const store=createSignalListeningDiscoveryAdvanceStoreV1({database:f.database,numeric_storage:f.storage});
@@ -31,7 +31,7 @@ async function seed(f:Parameters<Parameters<typeof import('./signal-listening-di
   const round=await store.enqueue({database:f.database,lease,generation_id:lease.source_generation_id,expected_ordinal:lease.next_ordinal,
    expected_policy_version_id:lease.policy_version_id,expected_policy_digest:lease.policy_digest,expected_human_revision_digest:lease.human_revision_digest,numeric_manifest_sha256:numeric.manifest_sha256,provider_available:true});
   if(!round||round.status==='budget_exhausted')throw Error('fixture native round missing');
-  await store.release({database:f.database,lease});await f.finishRound(round);await activateSignalListeningServingSnapshotV1({...f,round_id:round.id});
+  await store.release({database:f.database,lease});await f.finishRound(round,approved);await activateSignalListeningServingSnapshotV1({...f,round_id:round.id});
   const p=(await f.database.query('SELECT status FROM signal_listening_discovery_executions WHERE id=$1',[f.execution.id])).rows[0];if(p.status==='completed')break;
  }
  assert.equal((await f.database.query('SELECT status FROM signal_listening_discovery_executions WHERE id=$1',[f.execution.id])).rows[0].status,'completed');return f;
@@ -181,3 +181,41 @@ test('prepare estimates exclude only human decisions for the exact input, contex
  assert.equal((await estimate(removed.configuration_id,false,true)).roots,2,'the old revision must retain its original pending estimate');
  assert.deepEqual(await history(f),before,'estimate rehearsals must not create admissions, calls or costs');
 }));
+
+test('orphan selection and completeness respect native human membership after removal and merge',{
+ skip:!enabled,timeout:600000,
+},async()=>completed(async f=>{
+ const api=await import('../signal-listening-human-edits'),discovery=await import('../signal-listening-discovery');
+ const access={database:f.database,workspace_id:f.workspace_id,actor_user_id:f.actor_user_id};
+ let ctx=await api.getSignalListeningHumanEditContextV1(access);
+ const discovered=ctx.configuration.questions.find(q=>q.topic_source==='discovered')!.key,defined=ctx.configuration.questions.find(q=>q.topic_source==='defined')!.key;
+ const before=await history(f),removedRoot=f.roots[0]!,acceptedRoot=f.roots[1]!;
+ for(const from_question_key of [discovered,defined]){
+  await api.correctSignalListeningTopicMembershipV1({...access,expected:ctx.expected,root_id:removedRoot,from_question_key,idempotency_key:randomUUID()});
+  ctx=await api.getSignalListeningHumanEditContextV1(access);
+ }
+ async function check(generation_id:string){
+  const subset=await discovery.snapshotSignalListeningDiscoveryOrphansV1({...access,generation_id});
+  assert.equal(subset.root_count,1,'a raw-positive root excluded from every topic is an orphan');
+  const page=await discovery.readSignalListeningDiscoveryOrphanSubsetV1({...access,subset_id:subset.id});
+  assert.deepEqual(page.roots.map(row=>row.root_id),[removedRoot]);
+  assert.equal((await f.database.query('SELECT signal_listening_discovery_subset_complete_v1($1,$2) ok',[subset.id,generation_id])).rows[0]!.ok,true,'effective orphan census is complete');
+ }
+ await check(ctx.expected.source_generation_id);
+ await api.correctSignalListeningTopicMembershipV1({...access,expected:ctx.expected,root_id:acceptedRoot,from_question_key:defined,to_question_key:discovered,idempotency_key:randomUUID()});
+ ctx=await api.getSignalListeningHumanEditContextV1(access);
+ const merged=await api.mergeSignalListeningTopicsV1({...access,expected:ctx.expected,source_question_keys:[defined,discovered],target_question_key:discovered,idempotency_key:randomUUID()});
+ await check(merged.generation_id);
+ const proofs=(await f.database.query('SELECT root_id,proof FROM signal_listening_discovery_roots WHERE generation_id=$1 ORDER BY root_id',[merged.generation_id])).rows;
+ const removed=proofs.find(row=>row.root_id===removedRoot)!.proof,accepted=proofs.find(row=>row.root_id===acceptedRoot)!.proof;
+ assert.equal(removed.evaluations[0].probability,.9);assert.equal(removed.evaluations[0].human_belongs,false);
+ assert.equal(accepted.evaluations[0].probability,.1);assert.equal(accepted.evaluations[0].human_belongs,true);
+ // Exercise unasked (NULL) inputs to the shared immutable predicate without
+ // changing any stored root proof, model probability, answer or call.
+ for(const [proof,expected] of [[removed,true],[accepted,false]] as const){
+  const row=(await f.database.query(`SELECT signal_listening_human_orphan_proof_v1($1::jsonb) measured,
+   signal_listening_human_orphan_proof_v1(jsonb_set($1::jsonb,'{evaluations,0,probability}','null'::jsonb)) unasked`,[JSON.stringify(proof)])).rows[0]!;
+  assert.equal(row.measured,expected);assert.equal(row.unasked,expected);
+ }
+ assert.deepEqual(await history(f),before,'human orphan regrouping preserves original probabilities and financial receipts');
+},1));

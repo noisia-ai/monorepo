@@ -362,13 +362,30 @@ CREATE OR REPLACE FUNCTION signal_listening_discovery_counts_v1(target uuid) RET
   'topics',(SELECT count(*) FROM signal_listening_discovery_topics WHERE generation_id=target)) FROM signal_listening_discovery_roots WHERE generation_id=target
 $$;
 
+-- Selection, row admission and full-census validation share one predicate.
+-- A human false decision overrides a positive or absent model probability;
+-- a human true decision remains a member even when JEV was negative/unasked.
+CREATE FUNCTION signal_listening_human_orphan_proof_v1(proof jsonb) RETURNS boolean LANGUAGE sql IMMUTABLE SET search_path=public,extensions,pg_temp AS $$
+ SELECT COALESCE(proof->'in_category'='true'::jsonb AND NOT EXISTS(
+  SELECT 1 FROM jsonb_array_elements(proof->'evaluations') e WHERE
+   (e->>'probability' IS NULL AND jsonb_typeof(e->'human_belongs') IS DISTINCT FROM 'boolean')
+   OR signal_listening_human_evaluation_approved_v1(e)),false)
+$$;
+CREATE OR REPLACE FUNCTION signal_listening_discovery_subset_complete_v1(sid uuid,gid uuid) RETURNS boolean LANGUAGE sql STABLE SET search_path=public,extensions,pg_temp AS $$
+ SELECT COALESCE(s.status='ready' AND s.generation_id=gid AND s.workspace_id=g.workspace_id
+ AND s.root_count=(SELECT count(*) FROM signal_listening_discovery_roots r WHERE r.generation_id=g.id AND signal_listening_human_orphan_proof_v1(r.proof))
+ AND NOT EXISTS(SELECT 1 FROM signal_listening_discovery_subset_roots chosen JOIN signal_listening_discovery_roots r ON r.generation_id=chosen.generation_id AND r.root_id=chosen.root_id
+  WHERE chosen.subset_id=s.id AND(chosen.generation_id<>g.id OR chosen.proof_digest<>r.proof_digest OR NOT signal_listening_human_orphan_proof_v1(r.proof)))
+ AND s.root_count=(SELECT count(*) FROM signal_listening_discovery_subset_roots WHERE subset_id=s.id),false)
+ FROM signal_listening_discovery_subsets s JOIN signal_listening_discovery_generations g ON g.id=gid AND g.workspace_id=s.workspace_id WHERE s.id=sid
+$$;
+
 CREATE OR REPLACE FUNCTION signal_listening_discovery_subset_root_guard_v1() RETURNS trigger LANGUAGE plpgsql SET search_path=public,extensions,pg_temp AS $$
 DECLARE p jsonb;
 BEGIN
  IF TG_OP<>'INSERT' OR NOT EXISTS(SELECT 1 FROM signal_listening_discovery_subsets WHERE id=NEW.subset_id AND generation_id=NEW.generation_id AND status='building') THEN RAISE EXCEPTION 'listening_discovery_history_immutable';END IF;
  SELECT proof INTO p FROM signal_listening_discovery_roots WHERE generation_id=NEW.generation_id AND root_id=NEW.root_id AND proof_digest=NEW.proof_digest;
- IF p IS NULL OR p->'in_category' IS DISTINCT FROM 'true'::jsonb
-  OR EXISTS(SELECT 1 FROM jsonb_array_elements(p->'evaluations') e WHERE e->>'probability' IS NULL AND jsonb_typeof(e->'human_belongs') IS DISTINCT FROM 'boolean' OR signal_listening_human_evaluation_approved_v1(e)) THEN RAISE EXCEPTION 'listening_discovery_not_orphan';END IF;
+ IF p IS NULL OR NOT signal_listening_human_orphan_proof_v1(p) THEN RAISE EXCEPTION 'listening_discovery_not_orphan';END IF;
  RETURN NEW;
 END $$;
 
