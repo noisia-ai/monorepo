@@ -46,6 +46,9 @@ const results: R16BenchmarkEvidenceV1['failures'] = [];
 const runIds: string[] = [];
 let systemIdentifier = '';
 let policyConfigurationDigest = '';
+let policyConfigurationComponents: Record<string,string> | undefined;
+const policyCases: Array<{case:string; admission_id:string; policy_version_id:string; policy_digest:string;
+  execution_cap_micro_usd:string; daily_cap_micro_usd:string; action_max_execution_micro_usd:string}> = [];
 let policyDenials = 0, budgetDenials = 0, deniedRequestsNotSent = 0, deniedProviderRequests = 0;
 let duplicateSettlements = 0;
 
@@ -65,10 +68,12 @@ async function runCase(kind: Case): Promise<void> {
       admission.execution_cap_micro_usd::text execution_cap,admission.provider,admission.model,admission.configuration,
       admission.configuration_digest,admission.action,admission.policy_version_id::text policy_version_id,
       policy.policy_digest,policy.daily_cap_micro_usd::text policy_daily_cap,
-      action.max_execution_micro_usd::text policy_max_execution
+      action.max_execution_micro_usd::text policy_max_execution,workspace.organization_id::text organization_id,
+      admission.budget_date::text budget_date,policy.budget_timezone
       FROM signal_labeling_runs run JOIN signal_processing_admissions admission ON admission.id=run.processing_admission_id
       JOIN signal_processing_policy_versions policy ON policy.id=admission.policy_version_id
       JOIN signal_processing_policy_actions action ON action.policy_version_id=policy.id AND action.action=admission.action
+      JOIN signal_workspaces workspace ON workspace.id=run.workspace_id
       WHERE run.id=$1::uuid`, [context.run_id]);
     const identity = identityRow.rows[0]!;
     assert.match(String(identity.database_name), /^noisia_mfp_recovery_[a-f0-9]{32}$/u);
@@ -82,6 +87,28 @@ async function runCase(kind: Case): Promise<void> {
       policy_version_id:String(identity.policy_version_id), provider:String(identity.provider) });
     if (policyConfigurationDigest) assert.equal(casePolicyDigest, policyConfigurationDigest);
     else policyConfigurationDigest = casePolicyDigest;
+    const admissionId = String(identity.admission_id ?? '');
+    const executionCap = Number(identity.execution_cap);
+    const dailyCap = Number(identity.policy_daily_cap), actionMax = Number(identity.policy_max_execution);
+    assert.match(admissionId, /^[0-9a-f-]{36}$/u);
+    assert.equal(identity.action, 'mass_labeling_jev');
+    assert.ok(Number.isSafeInteger(executionCap) && executionCap > 0);
+    assert.ok(Number.isSafeInteger(dailyCap) && dailyCap >= executionCap);
+    assert.ok(Number.isSafeInteger(actionMax) && actionMax >= executionCap && actionMax <= dailyCap);
+    policyCases.push({ case:kind, admission_id:admissionId, policy_version_id:String(identity.policy_version_id),
+      policy_digest:String(identity.policy_digest), execution_cap_micro_usd:String(executionCap),
+      daily_cap_micro_usd:String(dailyCap), action_max_execution_micro_usd:String(actionMax) });
+    const verifyBudget = async () => {
+      const budget = await database.query(`SELECT
+          COALESCE((SELECT sum(settled_micro_usd) FROM signal_labeling_calls WHERE run_id=$1::uuid),0)::text settled,
+          exposure.total_micro_usd::text exposure
+        FROM signal_processing_org_exposure_v1($2::uuid,$3::date,$4::text) exposure`,
+      [context.run_id, identity.organization_id, identity.budget_date, identity.budget_timezone]);
+      const settled = BigInt(String(budget.rows[0]?.settled ?? '0'));
+      const exposure = BigInt(String(budget.rows[0]?.exposure ?? '0'));
+      assert.ok(settled <= BigInt(executionCap), `${kind} settled spend exceeds native execution cap`);
+      assert.ok(exposure <= BigInt(dailyCap), `${kind} daily exposure exceeds native policy cap`);
+    };
 
     const physicalBodies: string[] = [];
     const physicalStatuses: number[] = [];
@@ -111,8 +138,10 @@ async function runCase(kind: Case): Promise<void> {
     });
     const digest = String((await database.query(`SELECT labeler.labeler_digest FROM signal_labeling_runs run
       JOIN signal_labeler_versions labeler ON labeler.id=run.labeler_version_id WHERE run.id=$1::uuid`, [context.run_id])).rows[0]?.labeler_digest);
-    const execution = { max_in_flight: 1, flush_size: 1, max_flushes: 1, max_buffered_bytes: 4 * 1024 * 1024,
-      flush_interval_ms: 10, window_size: 3 };
+    const durableLeaseRecovery = kind === 'lease_expiry_after_durable';
+    const execution = { max_in_flight: durableLeaseRecovery ? 3 : 1, flush_size: durableLeaseRecovery ? 3 : 1,
+      max_flushes: 1, max_buffered_bytes: 4 * 1024 * 1024,
+      flush_interval_ms: durableLeaseRecovery ? 1_000 : 10, window_size: 3 };
     const responseBound = 16 * 1024;
     const providerClient = createCalibratedJevRuntimeProviderV2({ labeler_digest: digest, execution,
       env: { NOISIA_TYPESAFE_ACCOUNT_ID: `r16-fault-${randomUUID()}`, NOISIA_TYPESAFE_ACCOUNT_RPS: '2000',
@@ -177,10 +206,6 @@ async function runCase(kind: Case): Promise<void> {
       assert.equal(delta, 0); policyDenials++; deniedRequestsNotSent++;
       if (delta !== 0) deniedProviderRequests += delta;
 
-      const admissionId = String(identity.admission_id ?? '');
-      const executionCap = Number(identity.execution_cap);
-      assert.match(admissionId, /^[0-9a-f-]{36}$/u);
-      assert.ok(Number.isSafeInteger(executionCap) && executionCap > 0);
       const capacityProbe = (amount: number) => database.query(`SELECT signal_processing_capacity_v1(
           $1::uuid,$2::uuid,$3::uuid,$4::uuid,ARRAY['mass_labeling_jev']::text[],
           $5::text,$6::text,$7::jsonb,$8::bigint,'r16_risk_probe',NULL,$9::bigint)`,
@@ -254,6 +279,7 @@ async function runCase(kind: Case): Promise<void> {
         assert.equal(Number(unknown.rows[0]?.reserved), physicalBodies.length);
         assert.equal(assertNoReplay(physicalBodies), 0);
         assert.equal(expiryInjected, true);
+        await verifyBudget();
         results.push({ stage:'worker',kind,outcome:'contained_unknown',physical_replays:0,
           raw_page_durable:false,technical_result_applied:false,settlement_absent:true,reservation_preserved:true });
         return;
@@ -271,6 +297,7 @@ async function runCase(kind: Case): Promise<void> {
       if (kind === 'settlement_ack_lost') assert.equal(storeFaults.settlePage, true);
       if (kind === 'worker_restart_after_page') assert.equal(storeFaults.persistRawPage, true);
       if (kind === 'lease_expiry_after_durable') assert.equal(expiryInjected, true);
+      await verifyBudget();
       results.push({ stage: kind === 'raw_page_write' ? 'storage' : kind === 'lease_expiry_after_durable' || kind === 'worker_restart_after_page'
         ? 'worker' : 'database', kind, outcome: 'recovered', physical_replays: assertNoReplay(physicalBodies) });
       void firstOutcome; void recovered;
@@ -289,6 +316,7 @@ async function runCase(kind: Case): Promise<void> {
       assert.equal(physicalReplays, 0);
       const retryAfter = physicalRetryAfter.find(value => value > 0);
       assert.ok(retryAfter && physicalStatuses.includes(Number(kind)));
+      await verifyBudget();
       results.push({ stage: 'provider', kind, outcome: 'contained_unknown', retry_after_ms: retryAfter,
         physical_replays: physicalReplays, raw_page_durable: true, technical_result_applied: true,
         settlement_absent: true, reservation_preserved: true });
@@ -308,7 +336,7 @@ try {
   const output = resolve(privateRoot, `fault-matrix-${Date.now()}-${randomUUID().slice(0, 8)}.json`);
   const receipt = { completed_at: new Date().toISOString(), case_count: results.length,
     postgres: { system_identifier: systemIdentifier }, source_provenance: sourceProvenance,
-    policy_configuration_digest: policyConfigurationDigest,
+    policy_configuration_digest: policyConfigurationDigest, policy_cases: policyCases,
     failures: results, guards: { policy_denials: policyDenials, budget_denials: budgetDenials,
       denied_requests_not_sent: deniedRequestsNotSent },
     invariants: { duplicate_settlements: duplicateSettlements, denied_provider_requests: deniedProviderRequests } };

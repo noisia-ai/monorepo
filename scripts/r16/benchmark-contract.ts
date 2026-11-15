@@ -26,6 +26,8 @@ export interface R16BenchmarkEvidenceV1 {
   source_provenance: { head_sha: string; source_tree_sha256: string; tree_status_sha256: string; file_count: number;
     file_manifest: Array<{ path: string; sha256: string }> };
   policy_configuration_digest: string;
+  policy_limits: { execution_cap_micro_usd: string; action_max_execution_micro_usd: string;
+    daily_cap_micro_usd: string; settled_micro_usd: string; daily_exposure_micro_usd: string };
   run_id: string;
   started_at: string;
   ended_at: string;
@@ -119,6 +121,17 @@ export function summarizeR16BenchmarkV1(evidence: R16BenchmarkEvidenceV1, option
     || `sha256:${sha256HexV1(JSON.stringify(evidence.source_provenance.file_manifest.map(file => [file.path, file.sha256])))}`
       !== evidence.source_provenance.source_tree_sha256
     || !/^sha256:[0-9a-f]{64}$/u.test(evidence.policy_configuration_digest)) reasons.push("benchmark_provenance_missing");
+  const limits = evidence.policy_limits;
+  if ([limits.execution_cap_micro_usd, limits.action_max_execution_micro_usd, limits.daily_cap_micro_usd,
+    limits.settled_micro_usd, limits.daily_exposure_micro_usd].some(value => !/^(0|[1-9][0-9]*)$/u.test(value))) {
+    reasons.push("policy_limit_evidence_invalid");
+  } else if (BigInt(limits.execution_cap_micro_usd) <= 0n
+    || BigInt(limits.action_max_execution_micro_usd) < BigInt(limits.execution_cap_micro_usd)
+    || BigInt(limits.daily_cap_micro_usd) < BigInt(limits.execution_cap_micro_usd)
+    || BigInt(limits.settled_micro_usd) > BigInt(limits.execution_cap_micro_usd)
+    || BigInt(limits.daily_exposure_micro_usd) > BigInt(limits.daily_cap_micro_usd)) {
+    reasons.push("native_budget_cap_exceeded");
+  }
   if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || !Number.isFinite(wallMs) || wallMs <= 0) reasons.push("invalid_wall_clock");
   if (evidence.provider.kind !== "synthetic" || evidence.provider.requests !== roots) reasons.push("synthetic_provider_request_count_mismatch");
   if (evidence.provider.latency_ms.length < evidence.provider.requests) reasons.push("provider_latency_missing");
@@ -160,6 +173,9 @@ export function summarizeR16BenchmarkV1(evidence: R16BenchmarkEvidenceV1, option
     if (!injectedFailures.has(required)) reasons.push(`failure_case_missing_${required}`);
   }
   if (!evidence.samples.length) reasons.push("backpressure_samples_missing");
+  if (Object.values(evidence.stream_peaks).some(value => !Number.isSafeInteger(value) || value < 0)) {
+    reasons.push("stream_peak_telemetry_invalid");
+  }
   if (!Number.isSafeInteger(evidence.max_in_flight_allowed) || evidence.max_in_flight_allowed < 1
     || evidence.max_in_flight_allowed > 4_096 || evidence.samples.some(sample => sample.in_flight > evidence.max_in_flight_allowed)
     || evidence.stream_peaks.in_flight > evidence.max_in_flight_allowed) {

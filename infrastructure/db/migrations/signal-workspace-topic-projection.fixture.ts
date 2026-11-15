@@ -23,7 +23,7 @@ export async function loadSyntheticBudgetTimezoneV1(args:{query:(sql:string,para
 export type WorkspaceProjectionCheckpointFixtureV1={database:Pool;query:(sql:string,params?:unknown[])=>Promise<pg.QueryResult>;
  access:{database:Pool;workspace_id:string;actor_user_id:string};lease:engine.SignalWorkspaceEngineLeaseV1;
  proposals:Array<{artifact_id:string;body:string}>;bodies:Map<string,string>;budget:{cap_micro_usd:number;daily_cap_micro_usd:number|null;timezone:string}};
-export type WorkspaceProjectionFixtureOptionsV1={empty?:boolean;allow_large_population?:boolean;complete_output_bundle?:boolean;split_guided_groups?:boolean|3|4;
+export type WorkspaceProjectionFixtureOptionsV1={empty?:boolean;allow_large_population?:boolean;allow_benchmark_population?:boolean;complete_output_bundle?:boolean;split_guided_groups?:boolean|3|4;
  budget?:{cap_micro_usd:number;daily_cap_micro_usd:number|null;timezone:string};migrations?:string[];
  interpretation_configuration?:SignalWorkspaceInterpretationConfigurationV1;interpretation_definitions?:Readonly<Record<string,string>>;preserve_catalog?:boolean;
  engine_config?:Record<string,unknown>;model_configuration?:Record<string,unknown>;cluster_ids?:readonly[string,string];
@@ -80,7 +80,8 @@ export async function workspaceProjectionFixtureBodyV1(seed:{database:Pool;query
   interpretation_config:{call_configuration:configuration,budget_timezone:budget.timezone,daily_cap_micro_usd:budget.daily_cap_micro_usd}});
  await options.onStarted?.(started.execution_id);
  const lease=await engine.claimSignalWorkspaceEngineV1({database,...started,worker_job_id:'local-projection-fixture'});assert.ok(lease);
- assert.ok(lease.snapshot.expected_roots<=10||options.allow_large_population===true&&lease.snapshot.expected_roots<=1200,
+ assert.ok(lease.snapshot.expected_roots<=10||options.allow_large_population===true&&lease.snapshot.expected_roots<=1200
+  ||options.allow_benchmark_population===true&&lease.snapshot.expected_roots<=100000,
   'fixture population must be explicitly tiny or bounded synthetic-large');
  await options.onClaimed?.(started.execution_id);
  const chunks:Array<Awaited<ReturnType<typeof engine.readSignalWorkspaceEngineChunksV1>>['items'][number]>=[];

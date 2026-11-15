@@ -27,7 +27,7 @@ import {jevUsageV1} from "../../../services/workers/src/workers/signal-jev-label
 import {validateJevResponseV1} from "../../../services/workers/src/providers/typesafe-jev";
 
 export type MassLabelingAcceptanceModeV1="rotation"|"scoped"|"scoped-scale"|"scoped-funding"|"product"|"product-recovery";
-export type R16BenchmarkFixtureV1={root_count:number;execution_cap_micro_usd:number;import_batch_size?:number;
+export type R16BenchmarkFixtureV1={root_count:number;execution_cap_micro_usd:number;import_batch_size?:number;preparation_page_size?:number;embedding_page_limit?:number;
   beforeProcessing:(context:{database:import('../signal-mention-facets').LabelingDatabaseV1;run_id:string;
     workspace_id:string;actor_user_id:string;map_id:string})=>Promise<void>};
 /** Test-only fixture: native admissions, rights, preparation and provider caps
@@ -41,6 +41,8 @@ export async function runMassLabelingAcceptanceFixtureV1(authorization:MassLabel
     assert.ok(Number.isInteger(benchmark.root_count)&&benchmark.root_count>=1002&&benchmark.root_count<=100000);
     assert.ok(Number.isSafeInteger(benchmark.execution_cap_micro_usd)&&benchmark.execution_cap_micro_usd>0&&benchmark.execution_cap_micro_usd<=100000000);
     assert.ok(benchmark.import_batch_size===undefined||Number.isInteger(benchmark.import_batch_size)&&benchmark.import_batch_size>=2&&benchmark.import_batch_size<=2048);
+    assert.ok(benchmark.preparation_page_size===undefined||Number.isInteger(benchmark.preparation_page_size)&&benchmark.preparation_page_size>=1&&benchmark.preparation_page_size<=100);
+    assert.ok(benchmark.embedding_page_limit===undefined||Number.isInteger(benchmark.embedding_page_limit)&&benchmark.embedding_page_limit>=1&&benchmark.embedding_page_limit<=1000);
     assert.ok(process.env.NOISIA_R16_LOCAL_PG_LAB,'benchmark requires its accredited owned R16 Docker lab');
   }
   const localization=(authorization==="rotation"||authorization==="product"||authorization==="product-recovery")?{original_language:"pt-BR",
@@ -128,7 +130,7 @@ export async function runMassLabelingAcceptanceFixtureV1(authorization:MassLabel
     const syntheticSaves=createSignalTopicEditorialRenewalSyntheticSavesV1(undefined,{brand_name:"Synthetic fixture"});
     const seed = await seedSignalTopicEditorialRenewalSourceV1({database, scoped, query, cleanup: async () => {},
       saves:syntheticSaves,
-      root_count:rootCount,import_batch_size:benchmark?.import_batch_size,numeric_daily_cap_micro_usd: benchmark?100_000_000:10_000_000, projection: {split_guided_groups:true,interpretation_configuration:globalConfiguration,engine_config: {profile_version: "workspace-bertopic-mass-labeling-v1", fixture: true},
+      root_count:rootCount,import_batch_size:benchmark?.import_batch_size,preparation_page_size:benchmark?.preparation_page_size,embedding_page_limit:benchmark?.embedding_page_limit,allow_benchmark_population:Boolean(benchmark),numeric_daily_cap_micro_usd: benchmark?100_000_000:10_000_000, projection: {split_guided_groups:true,interpretation_configuration:globalConfiguration,engine_config: {profile_version: "workspace-bertopic-mass-labeling-v1", fixture: true},
         onCheckpoint: async fixture => {
           if(fixture.proposals.length!==2)return;
           const assignment=[...fixture.bodies.entries()].find(([key])=>key.endsWith("/assignments.guided.jsonl"))![1];

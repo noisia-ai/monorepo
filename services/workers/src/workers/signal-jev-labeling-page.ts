@@ -85,7 +85,7 @@ export async function processJevLabelingPageV1<Input extends FacetInput,Result>(
       }
       const reserved=run.error_code?[]:calls.filter(call=>call.status==="reserved"&&!call.raw_body);
       if(execution)assertJevStreamingExecutionV2(execution,provider);
-      if(reserved.length)await store.markSubmitting(run,reserved);
+      if(!execution&&reserved.length)await store.markSubmitting(run,reserved);
       if(execution) {
         const outcome = await processJevStreamingWindowV2({run,calls,send_calls:reserved,store,provider,execution:execution,price,cancellation,hooks,observe_stream:args.observe_stream});
         aggregate = { ...outcome, roots:(aggregate?.roots??0)+outcome.roots,

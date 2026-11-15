@@ -1,7 +1,7 @@
 import type { FacetInput, LlmPriceV1 } from '@noisia/query-engine';
 import { llmCostMicroUsdV1 } from '@noisia/query-engine';
 import type { createSignalLabelingStoreV1, LabelingRunV1, LabelingCallV1 } from '@noisia/db';
-import { validateJevResponseV1, jevProviderErrorV1, type JevProviderV1, type JevRawResponseV1,
+import { validateJevResponseV1, jevProviderErrorV1, isJevPreFetchCancellationV1, type JevProviderV1, type JevRawResponseV1,
   type JevResponseV1, type JevRequestV1, type JevProviderErrorV1 } from '../providers/typesafe-jev';
 const jevUsageV1 = (usage:JevResponseV1['usage']) => ({...usage,cache_read_input_tokens:0,
   cache_creation_input_tokens:0,cache_creation:{ephemeral_5m_input_tokens:0,ephemeral_1h_input_tokens:0}});
@@ -10,7 +10,7 @@ export type JevStreamingExecutionV2 = {
   max_buffered_bytes: number; flush_interval_ms: number; window_size: number;
 };
 export type JevStreamingMetricsV2 = { in_flight: number; reserved_working_bytes: number;
-  buffered_responses: number; active_flushes: number };
+  buffered_responses: number; active_flushes: number; prefetch_canceled_requests?:number };
 export function assertJevStreamingExecutionV2(e:JevStreamingExecutionV2,provider:JevProviderV1){
   for (const value of Object.values(e)) if (!Number.isSafeInteger(value) || value < 1) throw Error('jev_stream_configuration_invalid');
   if (e.max_in_flight > 4096 || e.max_flushes > 64 || e.flush_size > 4096 || e.window_size > 4096
@@ -50,7 +50,7 @@ export async function processJevStreamingWindowV2<I extends FacetInput, R>(args:
   const observe = () => {
     // Instrumentation never changes physical attempts or their financial outcome.
     try { args.observe_stream?.({ in_flight: inFlight, reserved_working_bytes: memory,
-      buffered_responses: buffered.length, active_flushes: active.size }); } catch { /* Observer only. */ }
+      buffered_responses: buffered.length, active_flushes: active.size,prefetch_canceled_requests:prefetchCanceled.length }); } catch { /* Observer only. */ }
   };
   const wake = () => { for (const resolve of waiters) resolve(); waiters.clear(); };
   const wait = () => new Promise<void>(resolve => { waiters.add(resolve); });
@@ -86,7 +86,7 @@ export async function processJevStreamingWindowV2<I extends FacetInput, R>(args:
         }
       }
       if (settled.length) await store.settlePage(run, settled);
-      if (results.length) { await store.apply(run, results); for (const row of results) applied.add(row.call.id); }
+      if (results.length) { for(const row of results)row.call.raw_body=null;await store.apply(run, results); for (const row of results) applied.add(row.call.id); }
       totalCost += settled.reduce((n, s) => n + s.settled_micro_usd, 0);
       labeled += results.filter(row => row.results.some(hooks.labeled)).length;
       // Usage affects rate scheduling only after raw durability and billing settlement.
@@ -133,10 +133,12 @@ export async function processJevStreamingWindowV2<I extends FacetInput, R>(args:
   }
   // Track the exact live send frontier even when raw recovery fails before HTTP.
   const reserved=(args.send_calls??calls.filter(call=>call.status==='reserved')).filter(call=>!call.raw_body);
-  let requeueAttempted=false;
+  let requeueAttempted=false,markingUnsent:LabelingCallV1<I>[]=[];
+  const activeSends=new Set<Promise<void>>(),prefetchCanceled:LabelingCallV1<I>[]=[];
   async function drainAndRequeue(){
+    await Promise.all(activeSends);
     while(buffered.length||active.size){flush(true);if(active.size)await Promise.all(active);}
-    const pending=reserved.slice(next);
+    const pending=[...markingUnsent,...prefetchCanceled];
     if(pending.length&&!requeueAttempted){
       requeueAttempted=true;
       if(!store.requeueUnsent)throw Error('jev_unsent_recovery_unavailable');
@@ -154,33 +156,43 @@ export async function processJevStreamingWindowV2<I extends FacetInput, R>(args:
       await consume([{ call, raw, bytes, memory_bytes: bytes }], true);
       if (fatal) throw fatal;
     }
-    // Only the caller's just-marked reservations may be sent. A submitting call
-    // recovered after a crash is ambiguous even if it has no stored bytes.
-    await Promise.all(Array.from({ length: workers }, async () => {
-      while (next < reserved.length && !fatal && !cancellation.signal.aborted) {
-        while (memory + reservationBytes > e.max_buffered_bytes && !fatal && !cancellation.signal.aborted) { flush(true); await wait(); }
-        if (fatal || cancellation.signal.aborted) return;
-        const call = reserved[next++]; if (!call) return;
-        memory += reservationBytes; inFlight++; observe();
-        try {
-          const physical = await provider.evaluate(call.request as JevRequestV1, { signal: cancellation.signal });
-          const raw = JSON.stringify(physical), bytes = Buffer.byteLength(raw);
-          if (bytes > reservationBytes) throw Error('jev_stream_response_memory_bound');
-          observedRaw.add(call.id); buffered.push({ call, raw, bytes, memory_bytes: reservationBytes }); bufferedBytes += bytes;
-          observe();
-          const throttled = [429, 529].includes(physical.http_status);
-          if (throttled) cancellation.abort();
-          flush(throttled || bufferedBytes >= e.max_buffered_bytes / 2);
-          if(physical.rate_limit_update_failed)fail(Error('jev_rate_cooldown_unavailable'));
-        } catch (error) {
-          release(reservationBytes);
-          const failure = jevProviderErrorV1(error); record(call, failure.outcome !== 'definitely_not_sent', failure.code);
-          if (hooks.fail_on_error) cancellation.abort();
-        } finally { inFlight--; observe(); }
-      }
-    }));
+    async function send(call:LabelingCallV1<I>){
+      inFlight++;observe();
+      try{
+        const physical=await provider.evaluate(call.request as JevRequestV1,{signal:cancellation.signal});
+        const raw=JSON.stringify(physical),bytes=Buffer.byteLength(raw);
+        if(bytes>reservationBytes)throw Error('jev_stream_response_memory_bound');
+        observedRaw.add(call.id);buffered.push({call,raw,bytes,memory_bytes:reservationBytes});bufferedBytes+=bytes;observe();
+        const throttled=[429,529].includes(physical.http_status);if(throttled)cancellation.abort();
+        flush(throttled||bufferedBytes>=e.max_buffered_bytes/2);
+        if(physical.rate_limit_update_failed)fail(Error('jev_rate_cooldown_unavailable'));
+      }catch(error){
+        release(reservationBytes);const failure=jevProviderErrorV1(error);
+        if(cancellation.signal.aborted&&isJevPreFetchCancellationV1(error)){
+          // First-party identity proves fetch never started. Keep the same money
+          // reservation; no physical receipt, free response or result is invented.
+          prefetchCanceled.push(call);
+        }else record(call,failure.outcome!=='definitely_not_sent',failure.code);
+        if(hooks.fail_on_error)cancellation.abort();
+      }finally{inFlight--;observe();wake();}
+    }
+    // Keep never-assigned calls reserved. Persist only a cohort whose HTTP slots
+    // and response memory are already available, using one governed bulk write.
+    while(next<reserved.length&&!fatal&&!cancellation.signal.aborted){
+      const slots=Math.min(workers-inFlight,Math.floor((e.max_buffered_bytes-memory)/reservationBytes),reserved.length-next);
+      if(slots<1){flush(true);await wait();continue;}
+      const cohort=reserved.slice(next,next+slots);memory+=reservationBytes*cohort.length;observe();markingUnsent=cohort;
+      try{await store.markSubmitting(run,cohort);}
+      catch(error){release(reservationBytes*cohort.length);fail(error);break;}
+      // There is deliberately no await/cancellation check between the successful
+      // durable handoff and delivering EVERY cohort member to evaluate. A sync
+      // provider rejection is classified normally, without stranding siblings.
+      next+=cohort.length;markingUnsent=[];
+      for(const call of cohort){const task=send(call).finally(()=>{activeSends.delete(task);});activeSends.add(task);}
+    }
+    await Promise.all(activeSends);
     // No HTTP was attempted for reserved calls left behind by cancellation or write failure.
-    const notDelivered=reserved.slice(next),notDeliveredIds=new Set(notDelivered.map(call=>call.id));
+    const notDelivered=reserved.slice(next),notDeliveredIds=new Set([...notDelivered,...prefetchCanceled].map(call=>call.id));
     // Drain paid receipts before requeue failure can finish or release the lease.
     await drainAndRequeue();
     for (const call of calls) {

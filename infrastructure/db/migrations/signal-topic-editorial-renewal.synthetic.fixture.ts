@@ -42,6 +42,9 @@ export type SignalTopicEditorialRenewalSyntheticSeedArgsV1 = SyntheticTransactio
     identity: { organization_id: string; actor_user_id: string; brand_id: string; workspace_id: string } }) => Promise<void>;
   root_count?: number;
   import_batch_size?: number;
+  preparation_page_size?: number;
+  embedding_page_limit?: number;
+  allow_benchmark_population?: boolean;
   long_text?: boolean;
   skip_topic_prototypes?: boolean;
   runtime?: SignalBrandContextPreparationRuntimeV1;
@@ -261,8 +264,11 @@ export async function seedSignalTopicEditorialRenewalSourceV1(args: SignalTopicE
   const clusterIds = args.projection?.cluster_ids ?? [randomUUID(), randomUUID()] as const;
   const projection = await syntheticClientWorkspaceFixtureV1({ database, scoped, query, cleanup: async () => {} }, {
     identity, root_count: args.root_count, long_text: args.long_text, import_batch_size: args.import_batch_size,
+    preparation_page_size: args.preparation_page_size,
+    embedding_page_limit: args.embedding_page_limit,
     skip_topic_prototypes: args.skip_topic_prototypes,
     projection: { ...args.projection, cluster_ids: clusterIds,
+      ...(args.allow_benchmark_population ? { allow_benchmark_population: true } : {}),
       ...(args.root_count && args.root_count > 10 ? { allow_large_population: true } : {}) },
   });
   assert.equal(projection.roots.length, args.root_count ?? 3, "the requested invented canonical root count is used");
@@ -321,8 +327,15 @@ export async function seedSignalTopicEditorialRenewalSourceV1(args: SignalTopicE
   const lease = await claimSignalTopicConsolidationExecutionV1({ database, ...requested, lease_seconds: 300 });
   assert.ok(lease && !("completed" in lease), "real numeric owner must yield a current execution lease");
   const configuration = (await query("SELECT signal_topic_consolidation_numeric_configuration_v1() value")).rows[0]?.value as SignalTopicConsolidationConfigurationV1;
-  const metadata = await loadSignalTopicConsolidationRootMetadataV1({ queryable: database,
-    workspace_id: created.workspace_id, root_ids: projection.roots.map(root => root.root_id) });
+  const metadata: Awaited<ReturnType<typeof loadSignalTopicConsolidationRootMetadataV1>> = [];
+  const rootIds = projection.roots.map(root => root.root_id);
+  for (let offset = 0; offset < rootIds.length; offset += 2_000) {
+    metadata.push(...await loadSignalTopicConsolidationRootMetadataV1({ queryable: database,
+      workspace_id: created.workspace_id, root_ids: rootIds.slice(offset, offset + 2_000) }));
+  }
+  assert.equal(metadata.length, rootIds.length, "batched official metadata reads cover every governed root");
+  assert.equal(new Set(metadata.map(row => row.root_id)).size, rootIds.length,
+    "batched official metadata reads do not duplicate canonical roots");
   const byRoot = new Map(metadata.map(row => [row.root_id, row]));
   const counts = (values: Array<string | null>) => [...new Set(values.filter((value): value is string => value !== null))]
     .sort().map(key => ({ key, count: values.filter(value => value === key).length }));

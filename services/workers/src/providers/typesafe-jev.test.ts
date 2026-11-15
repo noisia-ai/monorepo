@@ -152,3 +152,25 @@ test('failed shared cooldown preserves its receipt and closes subsequent admissi
     && error.outcome === 'definitely_not_sent' && error.code === 'jev_rate_limiter_unavailable');
   assert.equal(sends, 1);
 });
+test('only first-party prefetch cancellation carries a live nonserializable witness',async()=>{
+ const {isJevPreFetchCancellationV1}=await import('./typesafe-jev');
+ assert.equal(isJevPreFetchCancellationV1(new JevProviderErrorV1('jev_send_canceled','definitely_not_sent')),false);
+ assert.equal(isJevPreFetchCancellationV1({code:'jev_send_canceled',outcome:'definitely_not_sent'}),false);
+ let fetches=0;const canceled=new AbortController();canceled.abort();
+ const client=createTypesafeJevClientV1({enabled:true,api_key:'test',fetch:async()=>{fetches++;return Response.json(response());}});
+ await assert.rejects(client.evaluate(request,{signal:canceled.signal}),error=>isJevPreFetchCancellationV1(error));assert.equal(fetches,0);
+ let release!:()=>void;const held=new Promise<void>(resolve=>{release=resolve;});
+ const fifo=createTypesafeJevClientV1({enabled:true,api_key:'test',concurrency:1,fetch:async()=>{fetches++;await held;return Response.json(response());}});
+ const first=fifo.evaluate(request),controller=new AbortController(),queued=fifo.evaluate(request,{signal:controller.signal});controller.abort();
+ await assert.rejects(queued,error=>isJevPreFetchCancellationV1(error));release();await first;assert.equal(fetches,1);
+ const limiterAbort=new AbortController();
+ const limiter=createTypesafeJevClientV1({enabled:true,api_key:'test',fetch:async()=>{fetches++;return Response.json(response());},
+  estimate_input_tokens:()=>100,rate_limiter:{acquire:async()=>{limiterAbort.abort();throw Error('canceled');},observe:async()=>{},throttle:async()=>{}}});
+ await assert.rejects(limiter.evaluate(request,{signal:limiterAbort.signal}),error=>isJevPreFetchCancellationV1(error));assert.equal(fetches,1);
+ const keepAlive=setTimeout(()=>undefined,100);
+ try{await assert.rejects(createTypesafeJevClientV1({enabled:true,api_key:'test',timeout_ms:5,fetch:async(_url,options)=>new Promise((_resolve,reject)=>{
+  fetches++;options?.signal?.addEventListener('abort',()=>reject(Error('aborted after fetch started')));
+ })}).evaluate(request),error=>error instanceof JevProviderErrorV1&&error.outcome==='outcome_unknown'&&!isJevPreFetchCancellationV1(error));}
+ finally{clearTimeout(keepAlive);}
+ assert.equal(fetches,2);
+});

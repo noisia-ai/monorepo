@@ -104,6 +104,8 @@ export async function syntheticClientWorkspaceFixtureV1(tx:SyntheticTransactionV
  root_count?:number;
  long_text?:boolean;
  import_batch_size?:number;
+ preparation_page_size?:number;
+ embedding_page_limit?:number;
  skip_topic_prototypes?:boolean;
  projection?:Parameters<typeof workspaceProjectionFixtureBodyV1>[1];
 }={}){
@@ -112,13 +114,16 @@ export async function syntheticClientWorkspaceFixtureV1(tx:SyntheticTransactionV
  const access={database,workspace_id,actor_user_id};
  const prep=await requestSignalWorkspaceCorpusPreparationStoreV1({...access,idempotency_key:randomUUID()});
  const prepJob=(await query('SELECT worker_job_id FROM signal_corpus_preparation_runs WHERE id=$1',[prep.run_id])).rows[0]!.worker_job_id;
- await signalWorkspaceCorpusPreparationJobV1({id:prepJob,data:{run_id:prep.run_id},updateProgress:async()=>{}},{database,page_size:3});
+ const preparationPageSize=options.preparation_page_size??3;
+ if(!Number.isSafeInteger(preparationPageSize)||preparationPageSize<1||preparationPageSize>100)
+  throw new Error('synthetic corpus preparation page size must be between 1 and the production limit of 100');
+ await signalWorkspaceCorpusPreparationJobV1({id:prepJob,data:{run_id:prep.run_id},updateProgress:async()=>{}},{database,page_size:preparationPageSize});
  const prepared=await loadSignalWorkspaceCorpusPreparationStoreV1({queryable:database,workspace_id});
  assert.equal(prepared.is_current,true);assert.equal(prepared.latest_completed?.counts.eligible_roots,options.root_count??3);
  const quoted=await quoteSignalWorkspaceEmbeddingsStoreV1({...access,profile});
  const embedded=await requestSignalWorkspaceEmbeddingsStoreV1({...access,profile,preparation_run_id:quoted.preparation_run_id,
   quote_digest:quoted.quote_digest,idempotency_key:randomUUID(),hard_cap_micro_usd:1_000_000,provider_available:true});
- await embedSyntheticRunV1(tx,embedded.run_id);
+ await embedSyntheticRunV1(tx,embedded.run_id,options.embedding_page_limit);
  const context=await loadSignalTopicInheritedContextStoreV1({queryable:database,workspace_id,complete_context:true});
  await insertSignalTaxonomyDraftCoreV1({client:scoped,workspace_id,kind:'topic',context_hash:fixtureSha('synthetic-empty-catalog'),terms:[],rules:{topics:[]},
   rule_set_metadata:{},provider:'operator',model_version:'synthetic-test',prompt_hash:fixtureSha('synthetic'),model_metadata:{},
@@ -133,12 +138,13 @@ export async function syntheticClientWorkspaceFixtureV1(tx:SyntheticTransactionV
  // existing projection body uses real guards/receipts with explicit numerical data.
  return workspaceProjectionFixtureBodyV1({...tx,workspace_id,actor_user_id,embedding_run_id:embedded.run_id},options.projection);
 }
-async function embedSyntheticRunV1(tx:SyntheticTransactionV1,run_id:string){
+async function embedSyntheticRunV1(tx:SyntheticTransactionV1,run_id:string,maxPages=8){
  const {database,query}=tx;
+ if(!Number.isSafeInteger(maxPages)||maxPages<1||maxPages>1000)throw new Error('synthetic embedding page limit is invalid');
  const worker_job_id=(await query('SELECT worker_job_id FROM signal_workspace_embedding_runs WHERE id=$1',[run_id])).rows[0]!.worker_job_id;
  let lease=await embeddings.claimSignalWorkspaceEmbeddingRunV1({database,run_id,worker_job_id});assert.ok(lease);
  for(let page=0;;page++){
-  assert.ok(page<8,'tiny synthetic fixture must remain bounded');
+  assert.ok(page<maxPages,'synthetic fixture embedding must remain bounded by its explicit page limit');
   const batch=await embeddings.readSignalWorkspaceEmbeddingBatchV1({database,lease});if(!batch.items.length)break;
   const call=await embeddings.reserveSignalWorkspaceEmbeddingCallV1({database,lease,batch});
   if(call){
