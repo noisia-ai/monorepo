@@ -27,8 +27,10 @@ export type BlindSnapshotV1 = {
     estimation_status: "complete" | "not_estimable"; not_estimable_reason: "no_passes" | "incomplete_coverage" | "expected_agreement_one" | null;
     action: "stable" | "recode_boundary_once" | "unstable_report" | "not_estimable";
     status: "not_measured" | "insufficient_data" | "not_estimable" | "below_threshold" | "acceptable"; boundary_recoded_count: number } | null;
-  receipts: { status: "complete" | "incomplete"; total_cost_usd: number | null; total_elapsed_ms: number | null;
-    stages: Array<{ stage: string; cost_usd: number | null; elapsed_ms: number | null }> };
+  receipts: { status: "complete" | "incomplete"; cost_scope: "native_provider_ledgers";
+    total_cost_usd: number | null; total_reserved_usd: number | null;
+    total_elapsed_ms: number | null; timing_scope: "wall_span" | "unknown";
+    stages: Array<{ stage: string; cost_usd: number | null; reserved_usd: number | null; elapsed_ms: number | null }> };
   listening: Array<{ mention_id: string; redacted_text: string; stage: "before" | "after";
     assignments: Array<{ topic_key: string; topic_name: string; topic_definition: string; volume_cohort: string; assigned: boolean }> }>;
   study: Array<{ mention_id: string; redacted_text: string; axes_status: "observed" | "not_asked_outside_cut";
@@ -70,17 +72,21 @@ export function validateSnapshotV1(value: unknown): BlindSnapshotV1 {
       || !["psychological", "personal", "social", "cultural"].includes(d.layer))
     || (s.layer_agreement !== null && s.layer_agreement !== undefined && !validLayerAgreement(s.layer_agreement))
     || !s.receipts || !["complete", "incomplete"].includes(s.receipts.status)
+    || s.receipts.cost_scope !== "native_provider_ledgers"
     || (s.receipts.total_cost_usd !== null && !finiteNonNegative(s.receipts.total_cost_usd))
+    || (s.receipts.total_reserved_usd !== null && !finiteNonNegative(s.receipts.total_reserved_usd))
     || (s.receipts.total_elapsed_ms !== null && !finiteNonNegative(s.receipts.total_elapsed_ms))
+    || !["wall_span", "unknown"].includes(s.receipts.timing_scope)
     || !Array.isArray(s.receipts.stages) || !s.receipts.stages.length || s.receipts.stages.some(x => !x || typeof x.stage !== "string" || !x.stage.trim()
-      || (x.cost_usd !== null && !finiteNonNegative(x.cost_usd)) || (x.elapsed_ms !== null && !finiteNonNegative(x.elapsed_ms)))
+      || (x.cost_usd !== null && !finiteNonNegative(x.cost_usd)) || (x.reserved_usd !== null && !finiteNonNegative(x.reserved_usd))
+      || (x.elapsed_ms !== null && !finiteNonNegative(x.elapsed_ms)))
     || !Array.isArray(s.listening) || !Array.isArray(s.study)) fail();
   if (new Set(s.receipts.stages.map(x => x.stage)).size !== s.receipts.stages.length) fail();
-  const allReceiptsMeasured = s.receipts.total_cost_usd !== null && s.receipts.total_elapsed_ms !== null
-    && s.receipts.stages.every(x => x.cost_usd !== null && x.elapsed_ms !== null);
+  const allReceiptsMeasured = s.receipts.total_cost_usd !== null && s.receipts.total_reserved_usd === 0 && s.receipts.total_elapsed_ms !== null
+    && s.receipts.timing_scope === "wall_span" && s.receipts.stages.every(x => x.cost_usd !== null && x.reserved_usd !== null && x.elapsed_ms !== null);
   if (s.receipts.status === "complete" && !allReceiptsMeasured || s.receipts.status === "incomplete" && allReceiptsMeasured
     || allReceiptsMeasured && (Math.abs(s.receipts.stages.reduce((n, x) => n + x.cost_usd!, 0) - s.receipts.total_cost_usd!) > .000001
-      || Math.abs(s.receipts.stages.reduce((n, x) => n + x.elapsed_ms!, 0) - s.receipts.total_elapsed_ms!) > 1)) fail();
+      || Math.abs(s.receipts.stages.reduce((n, x) => n + x.reserved_usd!, 0) - s.receipts.total_reserved_usd!) > .000001)) fail();
   for (const row of [...s.listening, ...s.study]) {
     if (!row || typeof row.mention_id !== "string" || !row.mention_id || typeof row.redacted_text !== "string" || !row.redacted_text.trim()) fail();
   }
@@ -276,7 +282,6 @@ export function buildBlindPackageV1(snapshotValue: unknown, seed: string) {
     coverage.required = 40; coverage.selected += already; coverage.shortfall = Math.max(0, 40 - coverage.selected);
   }
   takeAxis("false_none_inside", t.filter(r => r.direction === "none" && r.in_cut && r.review_flags.includes("false_none_candidate")), 30);
-  takeAxis("false_none_outside", t.filter(r => r.direction === "none" && !r.in_cut && r.review_flags.includes("false_none_candidate")), 30);
   takeAxis("axes_total", t.filter(r => r.axes_status === "observed" && r.direction !== "none"), Math.max(0, 200 - axisSelected.length), false);
   const guidance = s.study_guidance;
   const axisContext = [guidance.subject_context,
@@ -285,14 +290,16 @@ export function buildBlindPackageV1(snapshotValue: unknown, seed: string) {
     `Use options: ${guidance.use_options.map(o => `${o.key}: ${o.definition}`).join("; ")}`].join("\n");
   const axisCases = axisSelected.map(r => ({ id: r.mention_id, text: r.redacted_text,
     prompt: "Independently code all three axes for this mention: direction, target, and use, using the definitions below.", context: axisContext,
-    answer: { axes_status: r.axes_status, direction: r.direction, target: r.target, use: r.use, in_cut: r.in_cut, review_flags: r.review_flags } }));
+    answer: { axes_status: r.axes_status, candidate_source: "native_observed_axes", direction: r.direction, target: r.target, use: r.use,
+      in_cut: r.in_cut, review_flags: r.review_flags } }));
   const axisPopulation = new Set(t.filter(r => r.axes_status === "observed" && !usedIdentities.has(r.mention_id)).map(r => r.mention_id)).size;
   add("TAX", axisCases, 200, true, axisPopulation);
 
   const outsideLexical = t.filter(r => r.axes_status === "not_asked_outside_cut" && !r.in_cut && !r.lexical_filter_match && r.base_voice_valid);
   const outsidePrompt = "Independently code direction, target, and use for this mention, using the configured definitions below.";
   add("TAX-OUTSIDE", outsideLexical.map(r => ({ id: r.mention_id, text: r.redacted_text, prompt: outsidePrompt, context: axisContext,
-    answer: { axes_status: r.axes_status, direction: r.direction, target: r.target, use: r.use, review_flags: r.review_flags } })), 30);
+    answer: { axes_status: r.axes_status, candidate_source: "outside_lexical_cut", direction: r.direction, target: r.target,
+      use: r.use, review_flags: r.review_flags } })), 30);
   axisCoverage.push({ code: "outside_lexical_missing_axes", required: 30, selected: Math.min(30, outsideLexical.length),
     shortfall: Math.max(0, 30 - outsideLexical.length) });
 

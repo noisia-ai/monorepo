@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
-import { chmod, mkdir, open, link, lstat, unlink } from "node:fs/promises";
+import { chmod, mkdir, open, link, lstat, unlink, readFile } from "node:fs/promises";
 import { dirname, resolve, sep } from "node:path";
 import {
   authorizeSignalListeningV1,
@@ -14,11 +14,11 @@ type ReadClientV1 = { query<T extends Record<string, unknown> = Record<string, u
 type ReadPoolV1 = LabelingDatabaseV1 & { connect(): Promise<ReadClientV1>; end(): Promise<void> };
 const requireStudio = createRequire(new URL("../../apps/studio/package.json", import.meta.url));
 import { validateSignalStudyExecutionConfigurationV1 } from "../../packages/query-engine/src/signal-study-configuration.js";
-import { applySignalStudyBoundaryRecodeV1, signalStudyLayerStabilityV1, validateSignalStudyLayerReviewV1,
-  type SignalStudyEditorialRequestV1, type SignalStudyLayerDecisionV1 } from "../../packages/query-engine/src/signal-study-editorial.js";
-import type { SignalStudySampleV1 } from "../../packages/query-engine/src/signal-study-evidence.js";
 import { redactSignalStudyTextV1 } from "../../packages/query-engine/src/signal-study-evidence.js";
+import { signalStudyKnownAuthorPrivacyV1 } from "../../infrastructure/db/signal-study-author-privacy.js";
+import { readSignalStudyStabilityProofV1, type SignalStudyLayerAgreementProofV1 } from "../../infrastructure/db/signal-study-replay.js";
 import { LISTENING_COHORTS_V1, validateSnapshotV1, type BlindSnapshotV1 } from "./blind-package.js";
+import { loadNativeReceiptEvidenceV1 } from "./native-audit-export-receipts.js";
 
 const BATCH_SIZE = 512;
 const PRIVATE_ROOT = resolve(".data/piloto-masivo/r16");
@@ -27,13 +27,14 @@ const sha256 = (text: string) => createHash("sha256").update(text, "utf8").diges
 
 type GenerationRow = {
   id: string; workspace_id: string; configuration_id: string; map_id: string; status: string; kind: string;
+  preparation_run_id: string;
   snapshot_digest: string | null; actual_digest: string; source_current: boolean; counts: Record<string, unknown> | null;
   entity_context_digest: string; configuration_digest: string; created_at: Date | string;
 };
 type TopicRow = { question_key: string; definition: Record<string, unknown>; member_count: number; cohort_no: number };
 type ListeningRootRow = { root_id: string; proof: Record<string, unknown>; proof_digest: string; text: string; assigned_keys: string[] };
 type StudyExecutionRow = {
-  id: string; workspace_id: string; actor_user_id: string; study_id: string; configuration_id: string; status: string;
+  id: string; workspace_id: string; actor_user_id: string; study_id: string; configuration_id: string; configuration_digest: string; status: string;
   output: Record<string, unknown> | null; output_digest: string | null; actual_output_digest: string | null;
   source_current: boolean; owner_current: boolean; envelope: Record<string, unknown>;
   listening_generation_id: string | null; listening_source_digest: string | null; source_roots: number; source_digest: string;
@@ -43,6 +44,9 @@ type StudyExecutionRow = {
 };
 type StudyRootRow = { root_id: string; asset_sha256: string; full_text: string; private_person_names: string[];
   occurred_at: Date | string; channel: string; source_url: string; axes: Record<string, unknown>; listening_topic_keys: string[] };
+type AuthorPrivacyProofV1 = { root_id: string; scope: "frozen_study_source" | "current_author_metadata";
+  policy: "known_author_labels" | "recorded_suppressed" | "legacy_none" | "historical_policy_unknown";
+  metadata_digest: string | null; roster_digest: string; provenance: Array<{ field: string; sha256: string }> };
 
 function configListeningConfigurationId(envelope: Record<string, unknown>): string {
   const source = envelope.source_listening as { configuration_id?: unknown } | undefined;
@@ -74,6 +78,53 @@ export function sourceStudyAxesForAuditV1(axes: Record<string, unknown>): {
   return { direction: direction as "trigger" | "barrier" | "mixed" | "none",
     target: target as "category" | "own_brand" | "competitor_brand" | "alternative",
     use: use as "literal" | "figurative_or_ironic" | "other", alternative_inverted: axes.alternative_inverted };
+}
+
+/** Candidate-only strata derived directly from observed native axes. These flags
+ * do not claim a false classification or establish that a brand mention is
+ * ambiguous; they only make plausible review cases available to the auditor. */
+export function nativeAxisCandidateFlagsV1(axes: Record<string, unknown>): string[] {
+  const observed = sourceStudyAxesForAuditV1(axes), flags: string[] = [];
+  if (observed.direction === "none") flags.push("false_none_candidate");
+  if (observed.use === "figurative_or_ironic") flags.push("false_irony_candidate");
+  if (observed.target === "own_brand" || observed.target === "competitor_brand") flags.push("ambiguous_brand_candidate");
+  return flags;
+}
+
+export function frozenStudyAuthorRosterV1(args: { root_id: string; private_person_names: string[]; proof_json: string }): {
+  names: string[]; proof: AuthorPrivacyProofV1;
+} {
+  if (!Array.isArray(args.private_person_names) || args.private_person_names.some(name => typeof name !== "string")) {
+    throw new Error("native_audit_frozen_author_roster_invalid");
+  }
+  let source: Record<string, unknown>;
+  try { source = JSON.parse(args.proof_json) as Record<string, unknown>; } catch { throw new Error("native_audit_frozen_author_proof_invalid"); }
+  const savedNames = [...new Set(args.private_person_names.map(name => name.normalize("NFC").trim()).filter(Boolean))].sort();
+  const authorPrivacy = source.author_privacy as { contract_version?: unknown; metadata_snapshot?: unknown; metadata_digest?: unknown;
+    roster_digest?: unknown; provenance?: unknown } | undefined;
+  if (!authorPrivacy) return { names: savedNames, proof: { root_id: args.root_id, scope: "frozen_study_source",
+    policy: "historical_policy_unknown", metadata_digest: null, roster_digest: digest(savedNames), provenance: [] } };
+  if (authorPrivacy.contract_version !== "signal-study-known-author-privacy-v1" || !authorPrivacy.metadata_snapshot
+    || typeof authorPrivacy.metadata_snapshot !== "object" || !Array.isArray(authorPrivacy.provenance)) {
+    throw new Error("native_audit_frozen_author_proof_invalid");
+  }
+  const metadata = authorPrivacy.metadata_snapshot as { contract_version?: unknown; source_author_label_recorded?: unknown; fields?: unknown };
+  if (metadata.contract_version !== "signal-study-known-author-privacy-v1" || typeof metadata.source_author_label_recorded !== "boolean"
+    || !metadata.fields || typeof metadata.fields !== "object" || Array.isArray(metadata.fields)) throw new Error("native_audit_frozen_author_proof_invalid");
+  const fields = metadata.fields as Record<string, unknown>;
+  const computed = signalStudyKnownAuthorPrivacyV1({ source_author_label_recorded: metadata.source_author_label_recorded,
+    source_author_label: typeof fields.source_author_label === "string" ? fields.source_author_label : null,
+    legacy_author: typeof fields.legacy_author === "string" ? fields.legacy_author : null,
+    linked_author_display_name: typeof fields.linked_author_display_name === "string" ? fields.linked_author_display_name : null,
+    linked_author_handle: typeof fields.linked_author_handle === "string" ? fields.linked_author_handle : null });
+  if (computed.metadata_digest !== authorPrivacy.metadata_digest || computed.roster_digest !== authorPrivacy.roster_digest
+    || digest(computed.provenance) !== digest(authorPrivacy.provenance) || digest(computed.private_person_names) !== digest(savedNames)) {
+    throw new Error("native_audit_frozen_author_proof_mismatch");
+  }
+  const policy = computed.private_person_names.length ? "known_author_labels"
+    : metadata.source_author_label_recorded ? "recorded_suppressed" : "legacy_none";
+  return { names: savedNames, proof: { root_id: args.root_id, scope: "frozen_study_source", policy,
+    metadata_digest: computed.metadata_digest, roster_digest: computed.roster_digest, provenance: computed.provenance } };
 }
 
 export type NativeAuditMotiveDefinitionV1 = { key: string; name: string; layer: string };
@@ -126,6 +177,8 @@ export type NativeAuditExportArgsV1 = {
   study_execution_id: string;
   output_path: string;
   source_manifest_path: string;
+  supplemental_stage_receipts?: Array<{ stage: "csv_import" | "voyage_corpus" | "runtime_envelope";
+    period: "historical_reused" | "current"; path: string; sha256: string; include_in_current_totals: boolean }>;
 };
 
 /**
@@ -141,6 +194,7 @@ export async function exportNativeAuditSnapshotV1(args: NativeAuditExportArgsV1)
   assertInput(args);
   const snapshotPath = privatePath(args.output_path), manifestPath = privatePath(args.source_manifest_path);
   if (snapshotPath === manifestPath) throw new Error("native_audit_output_paths_must_differ");
+  const supplementalReceiptRefs = await validateSupplementalReceiptFilesV1(args.supplemental_stage_receipts ?? []);
 
   const collected = await listeningTransactionV1(args.database, async client => {
     await client.query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY");
@@ -167,26 +221,33 @@ export async function exportNativeAuditSnapshotV1(args: NativeAuditExportArgsV1)
     }
     const beforeTopics = await loadTopics(client, before);
     const afterTopics = await loadTopics(client, after);
-    const privateNamesByRoot = await loadStudyPrivateNames(client, study);
+    const privacyEvidence: AuthorPrivacyProofV1[] = [];
     const listening = [
-      ...(await loadListeningRows(client, before, beforeTopics, "before", privateNamesByRoot)),
-      ...(await loadListeningRows(client, after, afterTopics, "after", privateNamesByRoot)),
+      ...(await loadListeningRows(client, before, beforeTopics, "before", privacyEvidence)),
+      ...(await loadListeningRows(client, after, afterTopics, "after", privacyEvidence)),
     ];
     const config = validateSignalStudyExecutionConfigurationV1(study.envelope);
-    const studyRows = await loadStudyRows(client, study, config, after);
+    const studyRows = await loadStudyRows(client, study, config, after, privacyEvidence);
     const membershipEvidence = await loadNativeMembershipEvidence(client, study, studyRows);
-    const receiptRows = await loadStudyReceipts(client, study.id);
-    const layerAgreement = await loadNativeLayerAgreement(client, study);
-    return { before, after, study, config, listening, studyRows, membershipEvidence, receiptRows, layerAgreement };
+    const receiptRows = await loadNativeReceiptEvidenceV1(client, before, after, study);
+    return { before, after, study, config, listening, studyRows, membershipEvidence, receiptRows, privacyEvidence };
   });
 
   const { before, after, study, config } = collected;
+  const layerProof = await readSignalStudyStabilityProofV1({ database: args.database, workspace_id: args.workspace_id,
+    actor_user_id: args.actor_user_id, execution_id: study.id });
+  if (layerProof && (layerProof.workspace_id !== study.workspace_id || layerProof.execution_id !== study.id
+    || layerProof.source_digest !== study.source_digest || layerProof.output_digest !== study.output_digest
+    || layerProof.configuration_digest !== study.configuration_digest)) throw new Error("native_audit_layer_proof_scope_mismatch");
+  const layerAgreement = layerProof ? nativeLayerAgreementFromProofV1(layerProof.layer_agreement) : null;
   const limitations = [
-    "native_candidate_flags_unavailable",
-    ...(!collected.layerAgreement ? ["native_layer_agreement_pair_unavailable"] : []),
+    ...(!layerAgreement ? ["native_layer_agreement_pair_unavailable"] : []),
     ...(!collected.membershipEvidence.nearest_candidate_sets_available ? ["native_nearest_candidate_sets_unavailable"] : []),
     ...(!collected.membershipEvidence.motive_memberships_available ? ["native_motive_membership_cache_unavailable"] : []),
-    "outside_private_person_name_roster_unavailable_for_outside_cut_roots",
+    ...(collected.privacyEvidence.length ? [] : ["native_author_privacy_roster_unavailable"]),
+    ...(collected.privacyEvidence.some(item => item.policy === "legacy_none" || item.policy === "historical_policy_unknown")
+      ? ["some_author_privacy_rosters_have_no_known_label_or_frozen_policy"] : []),
+    "author_roster_redacts_known_labels_only_no_person_detection",
     ...collected.receiptRows.limitations,
   ];
   const totalCost = collected.receiptRows.complete ? collected.receiptRows.total_cost_usd : null;
@@ -209,11 +270,12 @@ export async function exportNativeAuditSnapshotV1(args: NativeAuditExportArgsV1)
       layer_diagnostics: template.template.diagnostics.map(item => ({ key: item.key, layer: item.layer,
         question: item.question, definition: item.question })),
     },
-    layer_agreement: collected.layerAgreement,
-    receipts: { status: collected.receiptRows.complete ? "complete" as const : "incomplete" as const,
-      total_cost_usd: totalCost, total_elapsed_ms: totalElapsed,
+    layer_agreement: layerAgreement,
+    receipts: { status: collected.receiptRows.complete ? "complete" as const : "incomplete" as const, cost_scope: "native_provider_ledgers" as const,
+      total_cost_usd: totalCost, total_reserved_usd: collected.receiptRows.total_reserved_usd,
+      total_elapsed_ms: totalElapsed, timing_scope: collected.receiptRows.timing_scope,
       stages: collected.receiptRows.stages.length ? collected.receiptRows.stages
-        : [{ stage: "native_measurements", cost_usd: null, elapsed_ms: null }] },
+        : [{ stage: "native_measurements", cost_usd: null, reserved_usd: null, elapsed_ms: null }] },
     listening: collected.listening,
     study: collected.studyRows,
   };
@@ -232,7 +294,15 @@ export async function exportNativeAuditSnapshotV1(args: NativeAuditExportArgsV1)
       generation_id: study.frozen_generation_id, snapshot_digest: study.frozen_source_digest },
     source_row_counts: { before_roots: Number(before.counts?.roots ?? 0), after_roots: Number(after.counts?.roots ?? 0),
       listening_rows: collected.listening.length, study_roots: study.source_roots, study_rows: collected.studyRows.length },
+    native_axis_candidate_flags: { source: "persisted_study_axes_candidate_only", none: collected.studyRows.filter(row => row.review_flags.includes("false_none_candidate")).length,
+      figurative_or_ironic: collected.studyRows.filter(row => row.review_flags.includes("false_irony_candidate")).length,
+      branded_targets: collected.studyRows.filter(row => row.review_flags.includes("ambiguous_brand_candidate")).length },
     measurements: collected.receiptRows.manifest,
+    supplemental_stage_receipts: supplementalReceiptRefs,
+    author_privacy_rosters: collected.privacyEvidence,
+    native_layer_proof: layerProof ? { contract_version: layerProof.contract_version, compiler_version: layerProof.compiler_version,
+      configuration_digest: layerProof.configuration_digest, source_digest: layerProof.source_digest, output_digest: layerProof.output_digest,
+      proof_digest: layerProof.proof_digest } : null,
     limitations,
   };
   const sourceDigest = stripSha(digest(sourceManifest));
@@ -241,6 +311,33 @@ export async function exportNativeAuditSnapshotV1(args: NativeAuditExportArgsV1)
   await writePrivateJson(manifestPath, sourceManifest);
   await writePrivateJson(snapshotPath, snapshot);
   return { snapshot, snapshot_path: snapshotPath, source_manifest_path: manifestPath, limitations };
+}
+
+export async function validateSupplementalReceiptFilesV1(receipts: NonNullable<NativeAuditExportArgsV1["supplemental_stage_receipts"]>) {
+  if (!Array.isArray(receipts) || receipts.length > 16) throw new Error("native_audit_supplemental_receipts_invalid");
+  const seen = new Set<string>();
+  const refs = [];
+  for (const receipt of receipts) {
+    if (!receipt || !["csv_import", "voyage_corpus", "runtime_envelope"].includes(receipt.stage)
+      || !["historical_reused", "current"].includes(receipt.period) || typeof receipt.include_in_current_totals !== "boolean"
+      || receipt.period === "historical_reused" && receipt.include_in_current_totals
+      || !/^\/[\s\S]+$/u.test(receipt.path) || !/^[a-f0-9]{64}$/u.test(receipt.sha256)) {
+      throw new Error("native_audit_supplemental_receipts_invalid");
+    }
+    const path = privatePath(receipt.path);
+    if (seen.has(path)) throw new Error("native_audit_supplemental_receipts_duplicate");
+    seen.add(path); await rejectSymlinkComponents(path);
+    const stat = await lstat(path);
+    if (!stat.isFile() || stat.size > 1_048_576 || (stat.mode & 0o077) !== 0) throw new Error("native_audit_supplemental_receipt_file_invalid");
+    const bytes = await readFile(path);
+    if (bytes.length !== stat.size || createHash("sha256").update(bytes).digest("hex") !== receipt.sha256) {
+      throw new Error("native_audit_supplemental_receipt_digest_mismatch");
+    }
+    refs.push({ stage: receipt.stage, period: receipt.period, path, sha256: receipt.sha256,
+      size_bytes: bytes.length, include_in_current_totals: receipt.include_in_current_totals,
+      interpretation: "opaque_verified_attachment_not_recounted_by_exporter" });
+  }
+  return refs;
 }
 
 async function loadGeneration(client: ReadClientV1, workspaceId: string, actorId: string, generationId: string): Promise<GenerationRow> {
@@ -258,7 +355,7 @@ async function loadGeneration(client: ReadClientV1, workspaceId: string, actorId
 }
 
 async function loadStudyExecution(client: ReadClientV1, workspaceId: string, executionId: string): Promise<StudyExecutionRow> {
-  const row = (await client.query<StudyExecutionRow>(`SELECT e.id,e.workspace_id,e.actor_user_id,e.study_id,e.configuration_id,e.status,e.output,e.output_digest,e.source_digest,
+  const row = (await client.query<StudyExecutionRow>(`SELECT e.id,e.workspace_id,e.actor_user_id,e.study_id,e.configuration_id,e.configuration_digest,e.status,e.output,e.output_digest,e.source_digest,
       signal_labeling_digest_v1(e.output) actual_output_digest,signal_study_source_current_v1(e.id) source_current,
       signal_study_owner_current_v1(e.id) owner_current,cfg.envelope,cfg.listening_generation_id,cfg.listening_source_digest,e.source_roots,
       source.source_kind frozen_source_kind,source.id frozen_source_id,source.base_snapshot_id frozen_base_snapshot_id,
@@ -300,9 +397,10 @@ async function loadTopics(client: ReadClientV1, generation: GenerationRow): Prom
 }
 
 async function loadListeningRows(client: ReadClientV1, generation: GenerationRow, topics: Map<string, { name: string; definition: string; cohort: string }>,
-  stage: "before" | "after", privateNamesByRoot: Map<string, string[]>): Promise<BlindSnapshotV1["listening"]> {
+  stage: "before" | "after", privacyEvidence: AuthorPrivacyProofV1[]): Promise<BlindSnapshotV1["listening"]> {
   const rootIds = await readRootIds(client, `SELECT root_id FROM signal_listening_discovery_roots
     WHERE workspace_id=$1 AND generation_id=$2`, [generation.workspace_id, generation.id]);
+  const privateNamesByRoot = await loadNativeAuthorPrivacy(client, generation.workspace_id, rootIds, privacyEvidence);
   const rows: BlindSnapshotV1["listening"] = [];
   for (let offset = 0; offset < rootIds.length; offset += BATCH_SIZE) {
     const batch = rootIds.slice(offset, offset + BATCH_SIZE);
@@ -333,22 +431,50 @@ async function loadListeningRows(client: ReadClientV1, generation: GenerationRow
   return rows;
 }
 
-async function loadStudyPrivateNames(client: ReadClientV1, execution: StudyExecutionRow): Promise<Map<string, string[]>> {
+async function loadStudyPrivateNames(client: ReadClientV1, execution: StudyExecutionRow, privacyEvidence: AuthorPrivacyProofV1[]): Promise<Map<string, string[]>> {
+  const rows = (await client.query<{ root_id: string; private_person_names: string[]; proof_json: string }>(`SELECT root_id,private_person_names,proof_json
+    FROM signal_study_source_roots WHERE workspace_id=$1 AND execution_id=$2 ORDER BY root_id`, [execution.workspace_id, execution.id])).rows;
   const rootIds = await readRootIds(client, `SELECT root_id FROM signal_study_source_roots
     WHERE workspace_id=$1 AND execution_id=$2`, [execution.workspace_id, execution.id]);
+  if (rows.length !== rootIds.length) throw new Error("native_audit_study_privacy_source_incomplete");
+  const names = new Map<string, string[]>();
+  for (const row of rows) {
+    const roster = frozenStudyAuthorRosterV1({ root_id: row.root_id, private_person_names: row.private_person_names ?? [], proof_json: row.proof_json });
+    names.set(row.root_id, roster.names);
+    privacyEvidence.push(roster.proof);
+  }
+  return names;
+}
+
+async function loadNativeAuthorPrivacy(client: ReadClientV1, workspaceId: string, rootIds: string[], evidence: AuthorPrivacyProofV1[]): Promise<Map<string, string[]>> {
   const names = new Map<string, string[]>();
   for (let offset = 0; offset < rootIds.length; offset += BATCH_SIZE) {
     const batch = rootIds.slice(offset, offset + BATCH_SIZE);
-    const rows = (await client.query<{ root_id: string; private_person_names: string[] }>(`SELECT root_id,private_person_names
-      FROM signal_study_source_roots WHERE workspace_id=$1 AND execution_id=$2 AND root_id=ANY($3::uuid[]) ORDER BY root_id`,
-    [execution.workspace_id, execution.id, batch])).rows;
-    for (const row of rows) names.set(row.root_id, row.private_person_names ?? []);
+    const rows = (await client.query<{ root_id: string; source_author_label_recorded: boolean; source_author_label: string | null;
+      legacy_author: string | null; linked_author_display_name: string | null; linked_author_handle: string | null }>(`SELECT m.id root_id,
+        m.source_author_label_recorded,m.source_author_label,
+        CASE WHEN jsonb_typeof(m.raw_metadata->'author')='string' THEN m.raw_metadata->>'author' END legacy_author,
+        a.display_name linked_author_display_name,a.handle linked_author_handle
+      FROM mentions m LEFT JOIN authors a ON a.id=m.author_id
+      WHERE m.workspace_id=$1 AND m.id=ANY($2::uuid[]) AND m.canonical_mention_id=m.id
+        AND signal_listening_root_right_v1(m.workspace_id,m.id,'client-derived-metrics') ORDER BY m.id`, [workspaceId, batch])).rows;
+    if (rows.length !== batch.length) throw new Error("native_audit_author_privacy_source_incomplete");
+    for (const row of rows) {
+      const privacy = signalStudyKnownAuthorPrivacyV1(row);
+      names.set(row.root_id, privacy.private_person_names);
+    const policy = privacy.private_person_names.length ? "known_author_labels"
+      : row.source_author_label_recorded ? "recorded_suppressed" : "legacy_none";
+    evidence.push({ root_id: row.root_id, scope: "current_author_metadata", policy, metadata_digest: privacy.metadata_digest, roster_digest: privacy.roster_digest,
+        provenance: privacy.provenance });
+    }
   }
   return names;
 }
 
 async function loadStudyRows(client: ReadClientV1, execution: StudyExecutionRow,
-  config: ReturnType<typeof validateSignalStudyExecutionConfigurationV1>, after: GenerationRow): Promise<BlindSnapshotV1["study"]> {
+  config: ReturnType<typeof validateSignalStudyExecutionConfigurationV1>, after: GenerationRow,
+  privacyEvidence: AuthorPrivacyProofV1[]): Promise<BlindSnapshotV1["study"]> {
+  const privateNamesByRoot = await loadStudyPrivateNames(client, execution, privacyEvidence);
   const rootIds = await readRootIds(client, `SELECT root_id FROM signal_study_source_roots
     WHERE workspace_id=$1 AND execution_id=$2`, [execution.workspace_id, execution.id]);
   if (rootIds.length !== execution.source_roots) throw new Error("native_audit_study_root_count_mismatch");
@@ -367,13 +493,13 @@ async function loadStudyRows(client: ReadClientV1, execution: StudyExecutionRow,
     for (const row of page) {
       if (row.asset_sha256 !== `sha256:${sha256(row.full_text)}`) throw new Error("native_audit_study_text_digest_mismatch");
       const axes = sourceStudyAxesForAuditV1(row.axes);
-      rows.push({ mention_id: row.root_id, redacted_text: safeDisplayText(row.full_text, row.private_person_names ?? []),
+      rows.push({ mention_id: row.root_id, redacted_text: safeDisplayText(row.full_text, privateNamesByRoot.get(row.root_id) ?? []),
         axes_status: "observed", direction: axes.direction, target: axes.target, use: axes.use, alternative_inverted: axes.alternative_inverted,
         in_cut: true, lexical_filter_match: true, base_voice_valid: true,
-        review_flags: [] });
+        review_flags: nativeAxisCandidateFlagsV1(row.axes) });
     }
   }
-  rows.push(...await loadOutsideLexicalRows(client, execution, config, after));
+  rows.push(...await loadOutsideLexicalRows(client, execution, config, after, privacyEvidence));
   return rows;
 }
 
@@ -470,7 +596,8 @@ async function loadNativeMembershipEvidence(client: ReadClientV1, execution: Stu
 }
 
 async function loadOutsideLexicalRows(client: ReadClientV1, execution: StudyExecutionRow,
-  config: ReturnType<typeof validateSignalStudyExecutionConfigurationV1>, after: GenerationRow): Promise<BlindSnapshotV1["study"]> {
+  config: ReturnType<typeof validateSignalStudyExecutionConfigurationV1>, after: GenerationRow,
+  privacyEvidence: AuthorPrivacyProofV1[]): Promise<BlindSnapshotV1["study"]> {
   const rootIds = await readRootIds(client, `SELECT root_id FROM signal_listening_discovery_roots
     WHERE workspace_id=$1 AND generation_id=$2`, [execution.workspace_id, after.id]);
   const result: BlindSnapshotV1["study"] = [];
@@ -501,11 +628,12 @@ async function loadOutsideLexicalRows(client: ReadClientV1, execution: StudyExec
       ORDER BY source.root_id`, [execution.workspace_id, after.configuration_id, after.map_id, after.entity_context_digest, batch,
       after.id, config.study.listening_configuration_id, after.entity_context_digest, JSON.stringify(config.study),
       JSON.stringify(config.source_listening.configuration), execution.id])).rows;
+    const pageNames = await loadNativeAuthorPrivacy(client, execution.workspace_id, page.map(row => row.root_id), privacyEvidence);
     for (const row of page) {
       if (row.proof.source_text_sha256 !== `sha256:${sha256(row.body)}`) {
         throw new Error("native_audit_outside_source_proof_invalid");
       }
-      result.push({ mention_id: row.root_id, redacted_text: safeDisplayText(row.body, []), axes_status: "not_asked_outside_cut",
+      result.push({ mention_id: row.root_id, redacted_text: safeDisplayText(row.body, pageNames.get(row.root_id) ?? []), axes_status: "not_asked_outside_cut",
         direction: null, target: null, use: null, in_cut: false, lexical_filter_match: false, base_voice_valid: true, review_flags: [] });
     }
   }
@@ -522,157 +650,24 @@ async function readRootIds(client: ReadClientV1, query: string, values: unknown[
   }
 }
 
-async function loadStudyReceipts(client: ReadClientV1, executionId: string): Promise<{
-  complete: boolean; total_cost_usd: number | null; total_elapsed_ms: number | null;
-  stages: BlindSnapshotV1["receipts"]["stages"]; manifest: Record<string, unknown>; limitations: string[];
-}> {
-  const rows = (await client.query<{ stage: string; call_count: number; cost_micro: string | null; timed_count: number; elapsed_ms: string | null }>(`SELECT s.mode stage,
-      count(*)::int call_count,sum(c.settled_micro_usd) FILTER(WHERE c.call_state='settled')::text cost_micro,
-      count(*) FILTER(WHERE c.call_state='settled' AND c.sent_at IS NOT NULL AND c.response_received_at IS NOT NULL)::int timed_count,
-      sum(extract(epoch FROM(c.response_received_at-c.sent_at))*1000) FILTER(WHERE c.call_state='settled')::text elapsed_ms
-    FROM signal_study_steps s LEFT JOIN engine_cost_events c ON c.study_step_id=s.id AND c.workspace_id=s.workspace_id
-    WHERE s.execution_id=$1 AND s.status='committed' GROUP BY s.mode ORDER BY s.mode`, [executionId])).rows;
-  const stages = rows.map(row => ({ stage: `study_${row.stage}`,
-    cost_usd: row.cost_micro === null ? null : Number(row.cost_micro) / 1_000_000,
-    elapsed_ms: Number(row.timed_count) === Number(row.call_count) && row.elapsed_ms !== null ? Number(row.elapsed_ms) : null }));
-  const allMeasured = stages.length > 0 && stages.every(stage => stage.cost_usd !== null && stage.elapsed_ms !== null);
-  return { complete: false, total_cost_usd: null, total_elapsed_ms: null,
-    stages: stages.length ? stages : [{ stage: "native_measurements", cost_usd: null, elapsed_ms: null }],
-    manifest: { study_stage_receipts: rows, study_stage_totals_complete: allMeasured, listening_stage_receipts: "not_joined_to_exact_shared-ledger_run_lineage" },
-    limitations: ["native_total_cost_and_timing_incomplete_across_listening_and_study_stages"] };
-}
-
-type NativeLayerStepV1 = { step_key: string; request_body: string; request_sha256: string; source_digest: string;
-  mode: string; status: string; value: Record<string, unknown> | null; value_digest: string | null };
-type RecoveredLayerStageV1 = { pass: "a" | "b"; repair: boolean; offset: number; decision: SignalStudyLayerDecisionV1 };
-
-/** Rebuilds only what the native committed layer steps prove. The sample envelope is
- * reconstructed from the exact request payload solely to re-run the product parser;
- * its synthetic bookkeeping is never exported as a measurement. */
-export function reconstructNativeLayerStageV1(args: { step: NativeLayerStepV1; execution_id: string; execution_source_digest: string }): RecoveredLayerStageV1 | null {
-  const { step } = args;
-  if (step.mode !== "layers" || step.status !== "committed" || !step.value || !step.value_digest
-    || step.source_digest !== args.execution_source_digest || step.value_digest !== digest(step.value)
-    || step.request_sha256 !== `sha256:${sha256(step.request_body)}`) return null;
-  let recovered: { pass: "a" | "b"; repair: boolean; offset: number } | undefined;
-  for (const pass of ["a", "b"] as const) for (const repair of [false, true]) for (let offset = 0; offset <= 160; offset += 40) {
-    const stage = `layers:${pass}:${repair ? "repair" : "initial"}:${offset}`;
-    if (step.step_key === digest({ execution_id: args.execution_id, source_digest: step.source_digest, stage,
-      request_sha256: step.request_sha256 })) recovered = { pass, repair, offset };
-  }
-  if (!recovered) return null;
-  const { pass, repair, offset } = recovered;
-  try {
-    const body = JSON.parse(step.request_body) as { messages?: Array<{ content?: unknown }> };
-    const message = JSON.parse(String(body.messages?.[0]?.content)) as { input_digest?: string; untrusted_data?: Record<string, unknown> };
-    const payload = message.untrusted_data;
-    if (!payload || typeof message.input_digest !== "string" || digest(payload) !== message.input_digest
-      || typeof payload.study_digest !== "string" || !Array.isArray(payload.motives)) return null;
-    const samples: SignalStudySampleV1[] = [];
-    const motiveKeys: string[] = [];
-    for (const raw of payload.motives) {
-      if (!raw || typeof raw !== "object") return null;
-      const motive = raw as { key?: unknown; sampling?: Record<string, unknown>; sample?: unknown };
-      const rows = motive.sample;
-      if (typeof motive.key !== "string" || !motive.sampling || !Array.isArray(rows)) return null;
-      const random = motive.sampling.random, far = motive.sampling.far;
-      if (!Number.isSafeInteger(random) || !Number.isSafeInteger(far) || typeof motive.sampling.insufficient !== "boolean"
-        || !["disjoint", "overlapping", "small_group"].includes(String(motive.sampling.independence))) return null;
-      const sampleBody = { contract_version: "signal-study-sample-v1" as const, study_digest: payload.study_digest,
-        group_key: motive.key, pass, random_count: random as number, far_count: far as number, population_count: rows.length,
-        independence: motive.sampling.independence as SignalStudySampleV1["independence"],
-        sampling_policy: { seed_digest: digest({ step_key: step.step_key, key: motive.key }),
-          population_digest: digest(rows), centroid_digest: digest({ step_key: step.step_key, centroid: motive.key }),
-          requested_random: random as number, requested_far: far as number }, insufficient_sample: motive.sampling.insufficient,
-        rows: rows as SignalStudySampleV1["rows"] };
-      samples.push({ ...sampleBody, sample_digest: digest(sampleBody) });
-      motiveKeys.push(motive.key);
-    }
-    if (!samples.length || new Set(motiveKeys).size !== motiveKeys.length || motiveKeys.length > 40) return null;
-    const reviewBody = { contract_version: "signal-study-editorial-request-v1" as const, mode: "layers" as const,
-      model: "claude-sonnet-4-6" as const, study_digest: payload.study_digest, input_digest: message.input_digest,
-      request_body: step.request_body, source_samples: samples, motive_keys: [...motiveKeys].sort(), pass,
-      recode_attempt: repair ? 1 as const : 0 as const, boundary_keys: repair ? [...motiveKeys].sort() : [] };
-    const review: SignalStudyEditorialRequestV1 = { ...reviewBody, request_digest: digest(reviewBody) };
-    const content = step.value.content;
-    if (!Array.isArray(content) || content.length !== 1 || !content[0] || typeof content[0] !== "object"
-      || typeof (content[0] as { text?: unknown }).text !== "string") return null;
-    const parsed = JSON.parse((content[0] as { text: string }).text) as unknown;
-    const decision = validateSignalStudyLayerReviewV1(review, parsed);
-    return { pass, repair, offset, decision };
-  } catch { return null; }
-}
-
-export function nativeLayerAgreementReceiptV1(args: { initial: [SignalStudyLayerDecisionV1, SignalStudyLayerDecisionV1];
-  repairs?: [SignalStudyLayerDecisionV1, SignalStudyLayerDecisionV1]; expectedOutput?: unknown; passDigests?: [string, string] }): BlindSnapshotV1["layer_agreement"] {
-  try {
-    let decisions = args.initial;
-    let stability = signalStudyLayerStabilityV1(...decisions);
-    if (stability.action === "recode_boundary_once") {
-      if (!args.repairs) return null;
-      const repaired = applySignalStudyBoundaryRecodeV1({ initial: decisions, recoded: args.repairs });
-      decisions = repaired.decisions; stability = repaired.stability;
-    } else if (args.repairs) return null;
-    if (args.expectedOutput !== undefined && digest(args.expectedOutput) !== digest(stability)) return null;
-    const eligible = stability.total_motives;
-    const passA = args.initial[0].motives.length, passB = args.initial[1].motives.length;
-    const denominator = stability.compared_motives, complete = denominator === eligible && passA === eligible && passB === eligible;
-    const noPasses = passA === 0 && passB === 0;
-    const expectedOne = complete && stability.expected_agreement === 1;
-    const status = noPasses ? "not_measured" : !complete ? "insufficient_data"
-      : expectedOne ? "not_estimable" : stability.kappa !== null && stability.kappa >= .8 ? "acceptable" : "below_threshold";
-    const estimationStatus = stability.kappa === null ? "not_estimable" : "complete";
-    return { eligible_count: eligible, pass_a_count: passA, pass_a_digest: passA ? stripSha(args.passDigests?.[0] ?? digest(args.initial[0])) : null,
-      pass_b_count: passB, pass_b_digest: passB ? stripSha(args.passDigests?.[1] ?? digest(args.initial[1])) : null,
-      denominator, coverage: eligible ? denominator / eligible : 0,
-      observed_agreement: complete ? stability.observed_agreement : null,
-      expected_agreement: complete ? stability.expected_agreement : null,
-      kappa: complete ? stability.kappa : null, estimation_status: estimationStatus,
-      not_estimable_reason: noPasses ? "no_passes" : !complete ? "incomplete_coverage" : expectedOne ? "expected_agreement_one" : null,
-      action: stability.action, status, boundary_recoded_count: args.repairs ? args.repairs[0].motives.length : 0 };
-  } catch { return null; }
-}
-
-async function loadNativeLayerAgreement(client: ReadClientV1, execution: StudyExecutionRow): Promise<BlindSnapshotV1["layer_agreement"]> {
-  const expectedOutput = execution.output?.stability;
-  if (expectedOutput === null || expectedOutput === undefined) return null;
-  const rows = (await client.query<NativeLayerStepV1>(`SELECT step_key,request_body,request_sha256,source_digest,mode,status,value,value_digest
-    FROM signal_study_steps WHERE workspace_id=$1 AND execution_id=$2 AND mode='layers' ORDER BY step_key`,
-  [execution.workspace_id, execution.id])).rows;
-  if (!rows.length || rows.length > 100 || rows.some(row => row.status !== "committed")) return null;
-  const stages = rows.map(step => reconstructNativeLayerStageV1({ step, execution_id: execution.id, execution_source_digest: execution.source_digest }));
-  if (stages.some(stage => stage === null)) return null;
-  const recovered = stages as RecoveredLayerStageV1[];
-  const selectPair = (repair: boolean): [SignalStudyLayerDecisionV1, SignalStudyLayerDecisionV1] | null => {
-    const pass = (which: "a" | "b") => {
-      const items = recovered.filter(item => item.repair === repair && item.pass === which).sort((a, b) => a.offset - b.offset);
-      if (!items.length || items.some((item, index) => item.offset !== index * 40)
-        || new Set(items.flatMap(item => item.decision.motives.map(m => m.motive_key))).size
-          !== items.reduce((n, item) => n + item.decision.motives.length, 0)) return null;
-      const first = items[0]!.decision;
-      return { ...first, request_digest: digest(items.map(item => item.decision.request_digest)),
-        motives: items.flatMap(item => item.decision.motives) };
-    };
-    const a = pass("a"), b = pass("b");
-    return a && b ? [a, b] : null;
-  };
-  const initial = selectPair(false); if (!initial) return null;
-  const repairs = selectPair(true);
-  if (recovered.some(item => item.repair) && !repairs) return null;
-  const passDigest = (pass: "a" | "b") => digest(rows.filter(row => {
-    const recovered = recoveredByStep.get(row.step_key);
-    return recovered?.pass === pass;
-  }).map(row => ({ step_key: row.step_key, request_sha256: row.request_sha256, value_digest: row.value_digest })));
-  const recoveredByStep = new Map(recovered.map((stage, index) => [rows[index]!.step_key, stage]));
-  return nativeLayerAgreementReceiptV1({ initial, ...(repairs ? { repairs } : {}), expectedOutput,
-    passDigests: [passDigest("a"), passDigest("b")] });
-}
-
 function configuredOptions(config: ReturnType<typeof validateSignalStudyExecutionConfigurationV1>["question_configuration"], role: string) {
   const roleKey = config.roles[role];
   const question = config.questions.find(item => item.key === roleKey);
   if (!question || question.type !== "choice") throw new Error("native_audit_study_guidance_missing");
   return question.options.map(option => ({ key: option.key, definition: option.definition }));
+}
+
+export function nativeLayerAgreementFromProofV1(value: SignalStudyLayerAgreementProofV1): BlindSnapshotV1["layer_agreement"] {
+  if (!value || !Number.isSafeInteger(value.eligible_count) || !Number.isSafeInteger(value.pass_a_count)
+    || !Number.isSafeInteger(value.pass_b_count) || !Number.isSafeInteger(value.denominator)
+    || (value.pass_a_count === 0 ? value.pass_a_digest !== null : !/^sha256:[a-f0-9]{64}$/u.test(value.pass_a_digest ?? ""))
+    || (value.pass_b_count === 0 ? value.pass_b_digest !== null : !/^sha256:[a-f0-9]{64}$/u.test(value.pass_b_digest ?? ""))) {
+    throw new Error("native_audit_layer_proof_invalid");
+  }
+  const receipt: NonNullable<BlindSnapshotV1["layer_agreement"]> = { ...value,
+    pass_a_digest: value.pass_a_digest === null ? null : stripSha(value.pass_a_digest),
+    pass_b_digest: value.pass_b_digest === null ? null : stripSha(value.pass_b_digest) };
+  return receipt;
 }
 
 function stripSha(value: string): string {

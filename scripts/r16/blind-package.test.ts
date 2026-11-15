@@ -27,7 +27,6 @@ function syntheticSnapshot(): BlindSnapshotV1 {
   for (let i = 0; i < 35; i++) add(`false-irony-${i}`, { review_flags: ["false_irony_candidate"] });
   for (let i = 0; i < 35; i++) add(`ambiguous-brand-${i}`, { review_flags: ["ambiguous_brand_candidate"] });
   for (let i = 0; i < 35; i++) add(`false-none-in-${i}`, { direction: "none", review_flags: ["false_none_candidate"] });
-  for (let i = 0; i < 35; i++) add(`false-none-out-${i}`, { direction: "none", in_cut: false, review_flags: ["false_none_candidate"] });
   for (let motive = 0; motive < 20; motive++) for (let i = 0; i < 25; i++) add(`motive-${motive}-${i}`, { motive_key: `m${motive}`, motive_name: `Motive ${motive}`,
     motive_definition: "Synthetic motive", motive_volume_cohort: LISTENING_COHORTS_V1[motive % 10], layer: "social",
     nearest_motives: LISTENING_COHORTS_V1.slice(0, 4).map((c, n) => ({ motive_key: `n${n}`, volume_cohort: c, name: `Candidate ${n}`, definition: "Synthetic candidate" })) });
@@ -47,7 +46,9 @@ function syntheticSnapshot(): BlindSnapshotV1 {
     layer_agreement: { eligible_count: 10, pass_a_count: 10, pass_a_digest: "d".repeat(64), pass_b_count: 10, pass_b_digest: "e".repeat(64),
       denominator: 10, coverage: 1, observed_agreement: .91, expected_agreement: .5, kappa: .82, estimation_status: "complete" as const,
       not_estimable_reason: null, action: "stable" as const, status: "acceptable" as const, boundary_recoded_count: 2 },
-    receipts: { status: "complete" as const, total_cost_usd: 0, total_elapsed_ms: 0, stages: [{ stage: "synthetic", cost_usd: 0, elapsed_ms: 0 }] }, listening, study };
+    receipts: { status: "complete" as const, cost_scope: "native_provider_ledgers" as const, total_cost_usd: 0, total_reserved_usd: 0,
+      total_elapsed_ms: 0, timing_scope: "wall_span" as const,
+      stages: [{ stage: "synthetic", cost_usd: 0, reserved_usd: 0, elapsed_ms: 0 }] }, listening, study };
 }
 
 test("same synthetic snapshot and custody seed produce identical blind packets and key", () => {
@@ -80,15 +81,16 @@ test("private answer key carries identity and labels while blind payloads omit t
   for (const target of ["category", "own_brand", "competitor_brand", "alternative"]) assert.ok(axisAnswers.filter(a => a.target === target).length >= 40);
   assert.ok(axisAnswers.filter(a => a.review_flags.includes("false_irony_candidate")).length >= 30);
   assert.ok(axisAnswers.filter(a => a.review_flags.includes("ambiguous_brand_candidate")).length >= 30);
-  assert.ok(axisAnswers.filter(a => a.direction === "none" && a.review_flags.includes("false_none_candidate")).length >= 60);
+  assert.ok(axisAnswers.filter(a => a.direction === "none" && a.review_flags.includes("false_none_candidate")).length >= 30);
   const outside = built.key.rows.filter(row => row.sample_code === "TAX-OUTSIDE");
   assert.equal(outside.length, 30);
   const outsideCoverage = built.key.custody_manifest.axis_coverage.find(item => item.code === "outside_lexical_missing_axes");
   assert.deepEqual([outsideCoverage?.required, outsideCoverage?.selected, outsideCoverage?.shortfall], [30, 30, 0]);
   assert.ok(built.key.rows.filter(row => row.sample_code === "TAX").every(row => (row.answer as { axes_status: string }).axes_status === "observed"));
   assert.ok(outside.every(row => {
-    const answer = row.answer as { axes_status: string; direction: null; target: null; use: null };
-    return answer.axes_status === "not_asked_outside_cut" && answer.direction === null && answer.target === null && answer.use === null;
+    const answer = row.answer as { axes_status: string; candidate_source: string; direction: null; target: null; use: null };
+    return answer.axes_status === "not_asked_outside_cut" && answer.candidate_source === "outside_lexical_cut"
+      && answer.direction === null && answer.target === null && answer.use === null;
   }));
   const visibleOutside = built.packets.flatMap(packet => packet.cases).filter(row => outside.some(key => key.blind_id === row.blind_id));
   assert.equal(visibleOutside.length, 30);
@@ -192,12 +194,14 @@ test("unmeasured two-pass kappa stays null and marks package evidence incomplete
 
 test("missing native cost or timing stays null and marks package incomplete instead of inventing zero", () => {
   const snapshot = syntheticSnapshot();
-  snapshot.receipts = { status: "incomplete", total_cost_usd: null, total_elapsed_ms: null,
-    stages: [{ stage: "study_execution", cost_usd: null, elapsed_ms: null }] };
+  snapshot.receipts = { status: "incomplete", cost_scope: "native_provider_ledgers", total_cost_usd: null, total_reserved_usd: null,
+    total_elapsed_ms: null, timing_scope: "unknown",
+    stages: [{ stage: "study_execution", cost_usd: null, reserved_usd: null, elapsed_ms: null }] };
   const built = buildBlindPackageV1(snapshot, seed);
   assert.equal(built.manifest.completeness, "evidence_incomplete");
   assert.equal(built.manifest.receipts.total_cost_usd, null);
   assert.equal(built.manifest.receipts.total_elapsed_ms, null);
+  assert.equal(built.manifest.receipts.total_reserved_usd, null);
   assert.equal(built.manifest.receipts.stages[0]?.cost_usd, null);
   assert.ok(built.manifest.incompleteness_reasons.includes("required_metric_receipt_missing"));
   snapshot.receipts.total_cost_usd = 0;
@@ -205,6 +209,16 @@ test("missing native cost or timing stays null and marks package incomplete inst
   assert.equal(partialMeasured.manifest.completeness, "evidence_incomplete");
   assert.equal(partialMeasured.manifest.receipts.total_cost_usd, 0);
   assert.equal(partialMeasured.manifest.receipts.total_elapsed_ms, null);
+});
+
+test("receipt timing is a measured wall span and does not sum overlapping stage intervals", () => {
+  const snapshot = syntheticSnapshot();
+  snapshot.receipts = { status: "complete", cost_scope: "native_provider_ledgers", total_cost_usd: 3.5, total_reserved_usd: 0, total_elapsed_ms: 1500,
+    timing_scope: "wall_span", stages: [
+      { stage: "listening_review", cost_usd: 1.5, reserved_usd: 0, elapsed_ms: 1500 },
+      { stage: "study_editorial", cost_usd: 2, reserved_usd: 0, elapsed_ms: 900 },
+    ] };
+  assert.doesNotThrow(() => buildBlindPackageV1(snapshot, seed), "overlapping stage windows can exceed the total wall span when summed");
 });
 
 test("partial agreement coverage cannot carry numeric kappa, while full low-kappa evidence remains reportable", () => {

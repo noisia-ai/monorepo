@@ -1,10 +1,8 @@
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
 import test from "node:test";
-import { assertStudyListeningSourceBindingV1, nativeLayerAgreementReceiptV1, nativeNearestCandidateSetV1,
-  reconstructNativeLayerStageV1, sourceStudyAxesForAuditV1 } from "./native-audit-export.js";
-import type { SignalStudyLayerDecisionV1 } from "../../packages/query-engine/src/signal-study-editorial.js";
-import { signalWorkspaceEmbeddingDigestV1 as digest } from "../../packages/query-engine/src/signal-workspace-embeddings-v1.js";
+import { assertStudyListeningSourceBindingV1, nativeNearestCandidateSetV1, nativeAxisCandidateFlagsV1,
+  nativeLayerAgreementFromProofV1, sourceStudyAxesForAuditV1, validateSupplementalReceiptFilesV1, frozenStudyAuthorRosterV1 } from "./native-audit-export.js";
+import { signalStudyKnownAuthorPrivacyV1 } from "../../infrastructure/db/signal-study-author-privacy.js";
 
 const id = (n: string) => `${n.repeat(8)}-${n.repeat(4)}-${n.repeat(4)}-${n.repeat(4)}-${n.repeat(12)}`;
 const sha = (c: string) => `sha256:${c.repeat(64)}`;
@@ -46,58 +44,44 @@ test("audit direction uses the saved source axis rather than alternative inversi
     use: "literal", alternative_inverted: true }), { direction: "barrier", target: "category", use: "literal", alternative_inverted: true });
 });
 
-test("κ receipt uses the native paired-pass helper and leaves missing recodes incomplete", () => {
-  const decision = (pass: "a" | "b", layers: string[], split = false): SignalStudyLayerDecisionV1 => ({
-    contract_version: "signal-study-layer-decision-v1", request_digest: sha(pass === "a" ? "a" : "b"),
-    study_digest: sha("c"), pass, recode_attempt: 0,
-    motives: layers.map((layer, index) => ({ motive_key: `motive_${index}`, partitions: split && index === 0
-      ? [{ layer }, { layer }] : [{ layer }] } as unknown as SignalStudyLayerDecisionV1["motives"][number])),
-  });
-  const initial: [SignalStudyLayerDecisionV1, SignalStudyLayerDecisionV1] = [
-    decision("a", ["personal", "social", "cultural", "psychological"]),
-    decision("b", ["personal", "social", "cultural", "psychological"]),
-  ];
-  const complete = nativeLayerAgreementReceiptV1({ initial });
-  assert.equal(complete?.kappa, 1);
-  assert.equal(complete?.status, "acceptable");
-  assert.equal(complete?.denominator, 4);
-  assert.equal(complete?.pass_a_count, 4);
-  assert.equal(complete?.pass_b_count, 4);
-  assert.equal(complete?.pass_a_digest?.length, 64);
-  const incomplete: [SignalStudyLayerDecisionV1, SignalStudyLayerDecisionV1] = [
-    decision("a", ["personal", "social"], true), decision("b", ["personal", "social"]),
-  ];
-  assert.equal(nativeLayerAgreementReceiptV1({ initial: incomplete }), null,
-    "a split boundary requests a native recode pair; no substitute κ is emitted");
-  assert.equal(nativeLayerAgreementReceiptV1({ initial, expectedOutput: { kappa: 0 } }), null,
-    "persisted output disagreement makes the reconstructed receipt incomplete");
+test("candidate strata come from observed axes and never assert an error or an outside none answer", () => {
+  assert.deepEqual(nativeAxisCandidateFlagsV1({ source_direction: "none", direction: "trigger", target: "own_brand",
+    use: "figurative_or_ironic", alternative_inverted: true }),
+  ["false_none_candidate", "false_irony_candidate", "ambiguous_brand_candidate"]);
+  assert.deepEqual(nativeAxisCandidateFlagsV1({ source_direction: "barrier", direction: "barrier", target: "category",
+    use: "literal", alternative_inverted: false }), []);
 });
 
-test("committed layer step is reconstructed from its exact request/value and corrupted evidence stays unavailable", () => {
-  const execution_id = id("4"), source_digest = sha("d"), text = "literal proof text";
-  const axes = { direction: "mixed", source_direction: "mixed", target: "category", use: "literal", aggregate: "subject", alternative_inverted: false };
-  const row = { root_id: id("5"), text, text_sha256: `sha256:${createHash("sha256").update(text).digest("hex")}`,
-    source: "random", axes, evidence_publishable: true };
-  const payload = { study_digest: sha("c"), diagnostics: [
-    { key: "island", layer: "personal", question: "Question" },
-    { key: "money_time", layer: "psychological", question: "Question" },
-    { key: "nobody_knows", layer: "social", question: "Question" },
-    { key: "without_network", layer: "cultural", question: "Question" },
-  ], motives: [{ key: "motive_0", name: "Motive", definition: "Definition",
-    sampling: { random: 1, far: 0, insufficient: true, independence: "small_group" }, sample: [row] }] };
-  const input_digest = digest(payload), pass = "a" as const, stage = "layers:a:initial:0";
-  const request_body = JSON.stringify({ messages: [{ content: JSON.stringify({ input_digest, untrusted_data: payload }) }] });
-  const value = { content: [{ type: "text", text: JSON.stringify({ contract_version: "signal-study-layer-output-v1", input_digest,
-    motives: [{ motive_key: "motive_0", partitions: [{ key: "motive_0", name: "Motive", definition: "Definition",
-      sample_root_ids: [row.root_id], layer: "personal", diagnostics: ["island", "money_time", "nobody_knows", "without_network"].map((key, index) => ({
-        key, result: index === 0 ? "yes" : "no", force_disappears_without: index === 0, reason: "reason" })),
-      evidence: { root_id: row.root_id, quote: text, private_person_names: [] }, normative_evidence: null, permission_override: null }] }] }) }] };
-  const request_sha256 = `sha256:${createHash("sha256").update(request_body).digest("hex")}`;
-  const step = { step_key: digest({ execution_id, source_digest, stage, request_sha256 }), request_body, request_sha256,
-    source_digest, mode: "layers", status: "committed", value, value_digest: digest(value) };
-  const recovered = reconstructNativeLayerStageV1({ step, execution_id, execution_source_digest: source_digest });
-  assert.equal(recovered?.pass, pass);
-  assert.equal(recovered?.decision.motives[0]?.partitions[0]?.layer, "personal");
-  assert.equal(reconstructNativeLayerStageV1({ step: { ...step, value_digest: sha("f") }, execution_id,
-    execution_source_digest: source_digest }), null);
+test("κ proof adapter preserves canonical per-pass hashes and observed boundary recode count", () => {
+  const proof = { eligible_count: 10, pass_a_count: 10, pass_a_digest: sha("a"), pass_b_count: 10, pass_b_digest: sha("b"),
+    denominator: 10, coverage: 1, observed_agreement: .9, expected_agreement: .5, kappa: .8,
+    estimation_status: "complete" as const, not_estimable_reason: null, action: "recode_boundary_once" as const,
+    status: "acceptable" as const, boundary_recoded_count: 2 };
+  const receipt = nativeLayerAgreementFromProofV1(proof);
+  assert.equal(receipt?.kappa, .8);
+  assert.equal(receipt?.boundary_recoded_count, 2);
+  assert.equal(receipt?.pass_a_digest, "a".repeat(64));
+  assert.equal(receipt?.pass_b_digest, "b".repeat(64));
+  assert.notEqual(receipt?.pass_a_digest, receipt?.pass_b_digest);
+  assert.throws(() => nativeLayerAgreementFromProofV1({ ...proof, pass_b_digest: "not-a-digest" }), /layer_proof_invalid/u);
+});
+
+test("supplemental historical receipts cannot be included in current cost totals", async () => {
+  await assert.rejects(() => validateSupplementalReceiptFilesV1([{ stage: "csv_import", period: "historical_reused",
+    path: "/tmp/never-read.json", sha256: "a".repeat(64), include_in_current_totals: true }]), /supplemental_receipts_invalid/u);
+});
+
+test("frozen author proof honors recorded null suppression and distinguishes unknown historical policy", () => {
+  const computed = signalStudyKnownAuthorPrivacyV1({ source_author_label_recorded: true, source_author_label: null,
+    legacy_author: "Old fallback", linked_author_display_name: "Linked fallback", linked_author_handle: "@linked" });
+  const proof_json = JSON.stringify({ author_privacy: { contract_version: computed.contract_version,
+    metadata_snapshot: { contract_version: computed.contract_version, source_author_label_recorded: true, fields: { source_author_label: null } },
+    metadata_digest: computed.metadata_digest, roster_digest: computed.roster_digest, provenance: computed.provenance } });
+  const suppressed = frozenStudyAuthorRosterV1({ root_id: id("1"), private_person_names: [], proof_json });
+  assert.deepEqual(suppressed.names, []);
+  assert.equal(suppressed.proof.policy, "recorded_suppressed");
+  assert.throws(() => frozenStudyAuthorRosterV1({ root_id: id("1"), private_person_names: ["Linked fallback"], proof_json }),
+    /frozen_author_proof_mismatch/u);
+  const historical = frozenStudyAuthorRosterV1({ root_id: id("2"), private_person_names: [], proof_json: "{}" });
+  assert.equal(historical.proof.policy, "historical_policy_unknown");
 });
