@@ -11,7 +11,8 @@ export async function ensureSignalStudyCorpusV1(args:StudyAccessV1){
    ON CONFLICT(workspace_id) DO UPDATE SET workspace_id=EXCLUDED.workspace_id RETURNING id,workspace_id`,[args.workspace_id,args.actor_user_id])).rows[0]!;
  });
 }
-export async function saveSignalStudyConfigurationV1(args:StudyAccessV1&{study_id?:string;expected_revision:number;configuration:unknown;listening_snapshot_id:string;provenance:'human'|'agent';idempotency_key?:string}){
+export async function saveSignalStudyConfigurationV1(args:StudyAccessV1&{study_id?:string;expected_revision:number;configuration:unknown;listening_snapshot_id:string;provenance:'human'|'agent';idempotency_key?:string;listening_source_kind?:'serving'|'human_edit'}){
+ if(args.listening_source_kind!==undefined&&!['serving','human_edit'].includes(args.listening_source_kind))fail('listening_source_invalid',422);
  if(args.idempotency_key!==undefined&&!/^[A-Za-z0-9._:-]{8,200}$/u.test(args.idempotency_key))fail('idempotency_key_invalid',422);
  const envelope=validateSignalStudyExecutionConfigurationV1(args.configuration);if(envelope.study.workspace_id!==args.workspace_id||envelope.question_configuration.provenance!==args.provenance)fail('configuration_scope_invalid',422);
  return studyTransactionV1(args.database,async c=>{
@@ -19,16 +20,17 @@ export async function saveSignalStudyConfigurationV1(args:StudyAccessV1&{study_i
   const request_digest=digest({study_id:args.study_id??null,expected_revision:args.expected_revision,configuration:envelope,listening_snapshot_id:args.listening_snapshot_id,provenance:args.provenance});
   if(args.idempotency_key){await c.query("SELECT pg_advisory_xact_lock(hashtextextended('signal-study-save:'||$1||':'||$2||':'||$3,0))",[args.workspace_id,args.actor_user_id,args.idempotency_key]);
    const prior=(await c.query<SignalStudyConfigurationRecordV1&{request_digest:string}>('SELECT * FROM signal_study_configurations WHERE workspace_id=$1 AND created_by_user_id=$2 AND idempotency_key=$3',[args.workspace_id,args.actor_user_id,args.idempotency_key])).rows[0];
-   if(prior){if(prior.request_digest!==request_digest)fail('idempotency_conflict');return prior;}
+   if(prior){if(prior.request_digest!==request_digest||args.listening_source_kind!==undefined&&(prior.listening_source_kind??'serving')!==args.listening_source_kind)fail('idempotency_conflict');return prior;}
   }
   if(!(await c.query('SELECT 1 FROM signal_study_corpora WHERE id=$1 AND workspace_id=$2',[envelope.study.corpus_id,args.workspace_id])).rows.length)fail('corpus_unavailable');
-  const snapshot=(await c.query<{map_id:string;configuration_id:string;current:boolean}>(`SELECT s.map_id,s.configuration_id,signal_listening_discovery_source_current_v1(s.generation_id) current
-   FROM signal_listening_serving_snapshots s WHERE s.id=$1 AND s.workspace_id=$2`,[args.listening_snapshot_id,args.workspace_id])).rows[0];
+  const snapshots=(await c.query<{id:string;map_id:string;configuration_id:string;source_kind:'serving'|'human_edit';base_snapshot_id:string;generation_id:string;snapshot_digest:string;human_edit_id:string|null;current:boolean}>(`SELECT s.*,signal_listening_discovery_source_current_v1(s.generation_id) current
+   FROM signal_study_listening_sources_v1 s WHERE s.id=$1 AND s.workspace_id=$2 AND($3::text IS NULL OR s.source_kind=$3)`,[args.listening_snapshot_id,args.workspace_id,args.listening_source_kind??null])).rows;
+  if(snapshots.length!==1)fail('listening_source_unavailable');const snapshot=snapshots[0]!;
   if(!snapshot?.current||snapshot.configuration_id!==envelope.source_listening.configuration_id)fail('listening_source_unavailable');await mapCurrent(c,args.workspace_id,snapshot.map_id);
   let study=args.study_id;
   if(study){
    const current=(await c.query<SignalStudyConfigurationRecordV1>('SELECT * FROM signal_study_configurations WHERE study_id=$1 AND workspace_id=$2 ORDER BY revision DESC LIMIT 1',[study,args.workspace_id])).rows[0];
-   if(!current||current.revision!==args.expected_revision||current.listening_snapshot_id!==args.listening_snapshot_id)fail('configuration_revision_conflict');
+   if(!current||current.revision!==args.expected_revision||(current.listening_source_id??current.listening_snapshot_id)!==args.listening_snapshot_id||(current.listening_source_kind??'serving')!==snapshot.source_kind)fail('configuration_revision_conflict');
    assertSignalStudyConfigurationRevisionV1({current:current.envelope,next:envelope,actor:args.provenance,expected_revision:args.expected_revision});
   }else{
    if(args.expected_revision!==0||envelope.question_configuration.revision!==1||envelope.study.revision!==1)fail('configuration_revision_conflict');study=randomUUID();
@@ -36,9 +38,9 @@ export async function saveSignalStudyConfigurationV1(args:StudyAccessV1&{study_i
    await c.query('INSERT INTO signal_studies(id,workspace_id,corpus_id,definition,definition_digest,created_by_user_id) VALUES($1,$2,$3,$4::jsonb,$5,$6)',[study,args.workspace_id,envelope.study.corpus_id,JSON.stringify(definition),digest(definition),args.actor_user_id]);
   }
   return(await c.query<SignalStudyConfigurationRecordV1>(`INSERT INTO signal_study_configurations(workspace_id,study_id,revision,envelope,configuration_digest,human_revision_digest,provenance,
-   listening_snapshot_id,listening_configuration_id,listening_configuration_digest,created_by_user_id,idempotency_key,request_digest)
-   VALUES($1,$2,$3,$4::jsonb,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING *`,[args.workspace_id,study,envelope.question_configuration.revision,JSON.stringify(envelope),digest(envelope),
-   digest({study_id:study,revision:envelope.question_configuration.revision,configuration_digest:digest(envelope),questions:envelope.question_configuration}),args.provenance,args.listening_snapshot_id,envelope.source_listening.configuration_id,envelope.source_listening.configuration_digest,args.actor_user_id,args.idempotency_key??null,args.idempotency_key?request_digest:null])).rows[0]!;
+   listening_snapshot_id,listening_configuration_id,listening_configuration_digest,created_by_user_id,idempotency_key,request_digest,listening_source_kind,listening_source_id,listening_generation_id,listening_source_digest,listening_human_edit_id)
+   VALUES($1,$2,$3,$4::jsonb,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18) RETURNING *`,[args.workspace_id,study,envelope.question_configuration.revision,JSON.stringify(envelope),digest(envelope),
+   digest({study_id:study,revision:envelope.question_configuration.revision,configuration_digest:digest(envelope),questions:envelope.question_configuration}),args.provenance,snapshot.base_snapshot_id,envelope.source_listening.configuration_id,envelope.source_listening.configuration_digest,args.actor_user_id,args.idempotency_key??null,args.idempotency_key?request_digest:null,snapshot.source_kind,snapshot.id,snapshot.generation_id,snapshot.snapshot_digest,snapshot.human_edit_id])).rows[0]!;
  });
 }
 export async function readSignalStudyConfigurationV1(args:StudyAccessV1&{configuration_id:string}){

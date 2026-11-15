@@ -20,7 +20,7 @@ export async function requestSignalStudyExecutionV1(args:StudyAccessV1&{configur
   const old=(await c.query<SignalStudyExecutionRecordV1&{request_digest:string}>('SELECT * FROM signal_study_executions WHERE workspace_id=$1 AND actor_user_id=$2 AND idempotency_key=$3',[args.workspace_id,args.actor_user_id,args.idempotency_key])).rows[0];
   if(old){if(old.request_digest!==request_digest)fail('idempotency_conflict');return old;}
   if((await c.query("SELECT 1 FROM signal_study_executions WHERE study_id=$1 AND status IN('building','queued','running','outcome_unknown')",[cfg.study_id])).rows.length)fail('already_active');
-  const snapshot=(await c.query<{map_id:string;current:boolean}>(`SELECT s.map_id,signal_listening_discovery_source_current_v1(s.generation_id) current FROM signal_listening_serving_snapshots s WHERE s.id=$1 AND s.workspace_id=$2`,[cfg.listening_snapshot_id,args.workspace_id])).rows[0];
+  const snapshot=(await c.query<{map_id:string;current:boolean}>(`SELECT s.map_id,signal_listening_discovery_source_current_v1(s.generation_id) current FROM signal_study_configuration_sources_v1 s WHERE s.study_configuration_id=$1 AND s.workspace_id=$2`,[cfg.id,args.workspace_id])).rows[0];
   if(!snapshot?.current)fail('listening_source_unavailable');const map=await mapCurrent(c,args.workspace_id,snapshot.map_id);
   const id=randomUUID(),ready=await prepareSignalStudySourceWithClientV1(c,cfg,id,metadata),{roots:_roots,source_digest:_digest,...header}=ready.source;
   await c.query(`INSERT INTO signal_study_executions(id,workspace_id,organization_id,study_id,configuration_id,actor_user_id,policy_version_id,configuration_digest,human_revision_digest,

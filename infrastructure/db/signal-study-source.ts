@@ -7,7 +7,7 @@ export function signalStudySourceUrlStateV1(value:string):'valid'|'missing'|'inv
 export const STUDY_SOURCE_MAX_ROOTS_V1=32768;
 export const STUDY_SOURCE_MAX_BYTES_V1=128*1024*1024;
 const sha=(body:string)=>'sha256:'+createHash('sha256').update(body).digest('hex');
-const baseSql=`FROM signal_listening_serving_snapshots snapshot
+const baseSql=`FROM signal_study_configuration_sources_v1 snapshot
  JOIN signal_listening_configurations cfg ON cfg.id=snapshot.configuration_id AND cfg.workspace_id=snapshot.workspace_id
  JOIN signal_listening_discovery_roots frozen ON frozen.generation_id=snapshot.generation_id AND frozen.workspace_id=snapshot.workspace_id
  JOIN signal_mass_labeling_maps map ON map.id=snapshot.map_id AND map.workspace_id=snapshot.workspace_id
@@ -32,7 +32,7 @@ const baseSql=`FROM signal_listening_serving_snapshots snapshot
  CROSS JOIN LATERAL(SELECT COALESCE(array_agg(a.id ORDER BY a.id),'{}'::uuid[]) ids,COALESCE(sum(octet_length(a.answer::text)+1024),0)::bigint bytes
   FROM signal_study_answers a WHERE a.workspace_id=item.workspace_id AND a.root_id=item.root_id AND a.target_digest=$4
    AND a.state_sha256 IN(prepared.asset_sha256,item.chunk_sha256)) hints
- WHERE snapshot.id=$1 AND snapshot.workspace_id=$2 AND($5::uuid[] IS NULL OR frozen.root_id=ANY($5))`;
+ WHERE snapshot.study_configuration_id=$1 AND snapshot.workspace_id=$2 AND($5::uuid[] IS NULL OR frozen.root_id=ANY($5))`;
 const filteredSql=`mention.published_at>=($3::jsonb#>>'{study,cut,start_at}')::timestamptz AND mention.published_at<($3::jsonb#>>'{study,cut,end_at}')::timestamptz
  AND NOT EXISTS(SELECT 1 FROM jsonb_each($3::jsonb#>'{study,cut,filters}') f WHERE NOT EXISTS(
   SELECT 1 FROM jsonb_array_elements_text(f.value) allowed(value) WHERE attributes.value->f.key ? allowed.value))`;
@@ -53,7 +53,7 @@ type NativeRow={root_id:string;listening_proof_digest:string;listening_evaluatio
  embedding_response_index:number;embedding_input_contract:string;embedding_profile:Record<string,unknown>;embedding_request_digest:string;embedding_batch_digest:string;embedding_raw_sha256:string;embedding_config_digest:string;
  base_cache:Record<string,{answer:StudyRuntimeRootV1['base_answers'][string];call_id:string;question_digest:string}>;attributes:Record<string,string[]>;listening_topic_keys:string[];question_cache_ids:string[];
  occurred_at:Date|string;channel:string;source_url:string};
-function params(cfg:SignalStudyConfigurationRecordV1,ids:string[]|null=null){return[cfg.listening_snapshot_id,cfg.workspace_id,JSON.stringify(cfg.envelope),signalStudyJevTargetDigestV1(cfg.envelope),ids];}
+function params(cfg:SignalStudyConfigurationRecordV1,ids:string[]|null=null){return[cfg.id,cfg.workspace_id,JSON.stringify(cfg.envelope),signalStudyJevTargetDigestV1(cfg.envelope),ids];}
 export async function prepareSignalStudySourceWithClientV1(c:PoolClient,cfg:SignalStudyConfigurationRecordV1,executionId:string,metadata:{query_terms:string[];problem_terms:string[]}){
  const configuration=validateSignalStudyExecutionConfigurationV1(cfg.envelope),validFilters=new Set(['platform','channel','topic',...configuration.source_listening.configuration.questions.map(q=>q.key)]);
  if(Object.keys(configuration.study.cut.filters).some(key=>!validFilters.has(key)))fail('cut_filter_invalid',422);
@@ -93,12 +93,14 @@ export async function prepareSignalStudySourceWithClientV1(c:PoolClient,cfg:Sign
   return{row,root,proof_json,proof_digest};
  });
  const baseline=(await c.query<{corpus:number;brand:number}>(`SELECT count(*)::int corpus,count(*) FILTER(WHERE mention.published_at>=($3::jsonb#>>'{study,cut,start_at}')::timestamptz AND mention.published_at<($3::jsonb#>>'{study,cut,end_at}')::timestamptz)::int brand
-  FROM signal_listening_serving_snapshots snapshot JOIN signal_listening_discovery_roots r ON r.generation_id=snapshot.generation_id AND r.workspace_id=snapshot.workspace_id
-  JOIN mentions mention ON mention.id=r.root_id AND mention.workspace_id=r.workspace_id WHERE snapshot.id=$1 AND snapshot.workspace_id=$2 AND signal_listening_root_right_v1(r.workspace_id,r.root_id,'client-derived-metrics')`,params(cfg).slice(0,3))).rows[0]!;
+  FROM signal_study_configuration_sources_v1 snapshot JOIN signal_listening_discovery_roots r ON r.generation_id=snapshot.generation_id AND r.workspace_id=snapshot.workspace_id
+  JOIN mentions mention ON mention.id=r.root_id AND mention.workspace_id=r.workspace_id WHERE snapshot.study_configuration_id=$1 AND snapshot.workspace_id=$2 AND signal_listening_root_right_v1(r.workspace_id,r.root_id,'client-derived-metrics')`,params(cfg).slice(0,3))).rows[0]!;
  const roots=records.map(r=>r.root),evidence_source_census={valid_url_roots:roots.filter(r=>signalStudySourceUrlStateV1(r.source_url)==='valid').length,missing_url_roots:roots.filter(r=>signalStudySourceUrlStateV1(r.source_url)==='missing').length,invalid_url_roots:roots.filter(r=>signalStudySourceUrlStateV1(r.source_url)==='invalid').length};
- const body:Omit<StudyRuntimeSourceV1,'source_digest'>&{evidence_source_census:typeof evidence_source_census}={configuration,roots,evidence_source_census,
+ const binding=(await c.query<{source_kind:'serving'|'human_edit';id:string;configuration_id:string;generation_id:string;snapshot_digest:string;base_snapshot_id:string}>('SELECT * FROM signal_study_configuration_sources_v1 WHERE study_configuration_id=$1 AND workspace_id=$2',[cfg.id,cfg.workspace_id])).rows[0];if(!binding)fail('listening_source_unavailable');
+ const listening_source_binding={kind:binding.source_kind,id:binding.id,configuration_id:binding.configuration_id,generation_id:binding.generation_id,source_digest:binding.snapshot_digest,base_snapshot_id:binding.base_snapshot_id};
+ const body:Omit<StudyRuntimeSourceV1,'source_digest'>&{evidence_source_census:typeof evidence_source_census;listening_source_binding:typeof listening_source_binding}={configuration,roots,evidence_source_census,listening_source_binding,
   selection:{scope:'listening_consumer_cut',source_listening_digest:configuration.source_listening.configuration_digest,cut_digest:digest(configuration.study.cut),eligible_root_ids_digest:digest(roots.map(r=>r.root_id).sort()),eligible_roots:roots.length,pending_base_roots:0,corpus_roots:baseline.corpus},
-  embedding_space_digest:rows[0]?.embedding_config_digest??String((await c.query('SELECT m.embedding_config_digest FROM signal_listening_serving_snapshots s JOIN signal_mass_labeling_maps m ON m.id=s.map_id WHERE s.id=$1',[cfg.listening_snapshot_id])).rows[0].embedding_config_digest),
+  embedding_space_digest:rows[0]?.embedding_config_digest??String((await c.query('SELECT m.embedding_config_digest FROM signal_study_configuration_sources_v1 s JOIN signal_mass_labeling_maps m ON m.id=s.map_id WHERE s.study_configuration_id=$1',[cfg.id])).rows[0].embedding_config_digest),
   source_preparation_run_ids:[...new Set(rows.flatMap(r=>r.embedding_preparation_run_id?[r.embedding_preparation_run_id]:[]))].sort(),sampling_seed:digest({execution_id:executionId,study_digest:configuration.study_digest}),
   query_terms:metadata.query_terms,problem_terms:metadata.problem_terms,query_metadata:{query_terms_declared:metadata.query_terms.length>0,problem_terms_declared:metadata.problem_terms.length>0},brand_baseline_roots:baseline.brand,human_revision_digest:cfg.human_revision_digest,max_roots:STUDY_SOURCE_MAX_ROOTS_V1,max_bytes:STUDY_SOURCE_MAX_BYTES_V1};
  const source={...body,source_digest:digest(body)};if(Buffer.byteLength(JSON.stringify(source))>STUDY_SOURCE_MAX_BYTES_V1)fail('source_requires_paged_spool',422);

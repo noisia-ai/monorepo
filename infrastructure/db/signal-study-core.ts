@@ -4,7 +4,7 @@ import {signalWorkspaceEmbeddingDigestV1 as digest,type SignalStudyExecutionConf
 export type StudyAccessV1=SignalListeningAccessV1;
 export type StudyDatabaseV1=StudyAccessV1['database'];
 export type SignalStudyConfigurationRecordV1={id:string;workspace_id:string;study_id:string;revision:number;envelope:SignalStudyExecutionConfigurationV1;
- configuration_digest:string;human_revision_digest:string;provenance:'human'|'agent';listening_snapshot_id:string;listening_configuration_id:string;listening_configuration_digest:string};
+ configuration_digest:string;human_revision_digest:string;provenance:'human'|'agent';listening_snapshot_id:string;listening_source_kind?:'serving'|'human_edit'|null;listening_source_id?:string|null;listening_generation_id?:string|null;listening_source_digest?:string|null;listening_human_edit_id?:string|null;listening_configuration_id:string;listening_configuration_digest:string};
 export type SignalStudyExecutionRecordV1={id:string;workspace_id:string;organization_id:string;study_id:string;configuration_id:string;actor_user_id:string;
  policy_version_id:string;configuration_digest:string;human_revision_digest:string;entity_context_digest:string;map_id:string;cap_micro_usd:string;
  source_header:Record<string,unknown>;source_digest:string;source_census_digest:string;source_roots:number;source_bytes:string;

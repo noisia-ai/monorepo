@@ -5,14 +5,20 @@ import{enqueueSignalListeningDiscoveryRoundV1,activateSignalListeningServingSnap
 import{ensureSignalStudyCorpusV1,saveSignalStudyConfigurationV1}from'../signal-study-configuration';
 import{requestSignalStudyExecutionV1}from'../signal-study-executions';
 import{SIGNAL_STUDY_TB_TEMPLATE_V1,SIGNAL_STUDY_TB_ROLES_V1,createSignalStudyTemplateSnapshotV1,buildSignalStudyExecutionConfigurationV1,signalWorkspaceEmbeddingDigestV1 as digest,type SignalListeningConfigurationV1,type SignalStudyV1}from'@noisia/query-engine';
-export async function withSignalStudyFixtureV1(fn:(f:Awaited<ReturnType<typeof seed>>)=>Promise<void>,options:{population_count?:number}={}){
- await withDiscoveryAdvanceFixtureV1(async f=>fn(await seed(f)),options);
+export async function withSignalStudyFixtureV1(fn:(f:Awaited<ReturnType<typeof seed>>)=>Promise<void>,options:{population_count?:number;additional_defined_topic?:boolean;complete_listening?:boolean}={}){
+ await withDiscoveryAdvanceFixtureV1(async f=>fn(await seed(f,options)),options);
 }
-async function seed(f:Parameters<Parameters<typeof withDiscoveryAdvanceFixtureV1>[0]>[0]){
+async function seed(f:Parameters<Parameters<typeof withDiscoveryAdvanceFixtureV1>[0]>[0],options:{complete_listening?:boolean}={}){
  const db=f.database,access={database:db,workspace_id:f.workspace_id,actor_user_id:f.actor_user_id};
  const round=await enqueueSignalListeningDiscoveryRoundV1({...access,execution_id:f.execution.id,generation_id:f.confirmed.id,orphan_groups:[],provider_available:true});
  assert.equal((await f.finishRound(round)).status,'completed');
- const listeningSnapshot=await activateSignalListeningServingSnapshotV1({...access,round_id:round.id});
+ let listeningSnapshot=await activateSignalListeningServingSnapshotV1({...access,round_id:round.id});
+ if(options.complete_listening){const {createSignalListeningDiscoveryAdvanceStoreV1}=await import('../signal-listening-discovery-advance');const advance=createSignalListeningDiscoveryAdvanceStoreV1({database:db,numeric_storage:f.storage});
+  for(let ordinal=2;ordinal<=3;ordinal++){if((await db.query('SELECT status FROM signal_listening_discovery_executions WHERE id=$1',[f.execution.id])).rows[0].status==='completed')break;
+   const lease=await advance.claim({database:db,execution_id:f.execution.id});assert.ok(lease);const subset=await advance.ensureSubset({database:db,lease,generation_id:lease.source_generation_id}),numeric=await f.emptyNumeric(subset);await advance.persistNumeric({database:db,lease,subset_id:subset.id,numeric});
+   const next=await advance.enqueue({database:db,lease,generation_id:lease.source_generation_id,expected_ordinal:lease.next_ordinal,expected_policy_version_id:lease.policy_version_id,expected_policy_digest:lease.policy_digest,expected_human_revision_digest:lease.human_revision_digest,numeric_manifest_sha256:numeric.manifest_sha256,provider_available:true});if(!next||next.status==='budget_exhausted')throw Error('Study fixture Listening did not complete');await advance.release({database:db,lease});await f.finishRound(next);listeningSnapshot=await activateSignalListeningServingSnapshotV1({...access,round_id:next.id});
+  }assert.equal((await db.query('SELECT status FROM signal_listening_discovery_executions WHERE id=$1',[f.execution.id])).rows[0].status,'completed');
+ }
  const serving=(await db.query('SELECT * FROM signal_listening_serving_snapshots WHERE id=$1',[listeningSnapshot.id])).rows[0]!;
  const listening=(await db.query<{id:string;configuration_digest:string;configuration:SignalListeningConfigurationV1}>('SELECT * FROM signal_listening_configurations WHERE id=$1 AND workspace_id=$2',[serving.configuration_id,f.workspace_id])).rows[0]!;
  // Legitimate synthetic organization policy, never a test admission bypass.
