@@ -29,6 +29,25 @@ function priceOf(run:LabelingRunV1){
   configurationOf(run);
   return llmPriceV1('typesafe',run.identity.model,'sync',Number(run.identity.params.input_usd_per_mtok));
 }
+/** Page-local intersection only: this index never grants authority or supplies
+ * cached inputs. It returns the last matching supplied input in selection order. */
+export function createSignalListeningSelectionIndexV1(key:(input:SignalListeningInputV1)=>string){
+  let page:SignalListeningInputV1[]|undefined,positions=new Map<string,number[]>();
+  return{invalidate(){page=undefined;positions=new Map();},
+    select(inputs:SignalListeningInputV1[],selection:SignalListeningInputV1[]|undefined,limit:number){
+      if(!selection){page=undefined;positions=new Map();return inputs.slice(0,limit);}
+      if(page!==selection){
+        positions=new Map();selection.forEach((input,index)=>{const id=key(input),found=positions.get(id);if(found)found.push(index);else positions.set(id,[index]);});page=selection;
+      }
+      // feed_next calls propose with one input at a time. Do not walk or hash
+      // the complete selected page again for each singleton.
+      if(inputs.length===1){const input=inputs[0]!,found=positions.get(key(input));return found?Array.from({length:Math.min(found.length,limit)},()=>input):[];}
+      const available=new Map(inputs.map(input=>[key(input),input]));
+      const matches:Array<{index:number;input:SignalListeningInputV1}>=[];
+      for(const [id,input]of available)for(const index of positions.get(id)??[])matches.push({index,input});
+      return matches.sort((a,b)=>a.index-b.index).slice(0,limit).map(row=>row.input);
+    }};
+}
 /** The DB adapter selects only eligible missing question digests. This transport
  * never invents questions, negative labels, eligibility or a second provider attempt. */
 export function processSignalListeningJevV1(args:{run_id:string;store:Store;provider:JevProviderV1;
@@ -40,11 +59,8 @@ export function processSignalListeningJevV1(args:{run_id:string;store:Store;prov
   let preparedExecution=args.execution,preparedProvider=args.provider;
   let windowSize=args.execution.window_size;
   const key=(input:SignalListeningInputV1)=>digest({root_id:input.root_id,input_digest:input.input_digest,question_digests:input.question_digests});
-  const select=(inputs:SignalListeningInputV1[])=>{
-    const selection=args.selection?.();if(!selection)return inputs.slice(0,windowSize);
-    const available=new Map(inputs.map(input=>[key(input),input]));
-    return selection.flatMap(input=>{const found=available.get(key(input));return found?[found]:[];}).slice(0,windowSize);
-  };
+  const selectionIndex=createSignalListeningSelectionIndexV1(key);
+  const select=(inputs:SignalListeningInputV1[])=>selectionIndex.select(inputs,args.selection?.(),windowSize);
   const schedulerStore={...args.store,async inputs(run:LabelingRunV1,bounds?:Parameters<Store['inputs']>[1]){
     const selection=args.selection?.();
     if(!selection)return args.store.inputs(run,bounds);
@@ -71,8 +87,8 @@ export function processSignalListeningJevV1(args:{run_id:string;store:Store;prov
     // Subsequent windows must read fresh native pending identities, never the
     // retained initial calibration selection.
     read_next_inputs:args.read_next_inputs??((run,bounds)=>args.store.inputs(run,{...bounds,on_oversize:'empty'})),
-    prepare:args.prepare?async run=>{const prepared=await args.prepare!(run);preparedExecution=prepared.execution;preparedProvider=prepared.provider;windowSize=prepared.execution.window_size;return prepared;}:undefined,hooks:{
-    price:priceOf,prepare_next:args.prepare_next,
+    prepare:args.prepare?async run=>{try{const prepared=await args.prepare!(run);preparedExecution=prepared.execution;preparedProvider=prepared.provider;windowSize=prepared.execution.window_size;return prepared;}finally{selectionIndex.invalidate();}}:undefined,hooks:{
+    price:priceOf,prepare_next:args.prepare_next?async(run,inputs)=>{try{return await args.prepare_next!(run,inputs);}finally{selectionIndex.invalidate();}}:undefined,
     propose:(run,inputs)=>select(inputs).map(input=>{
       const request=buildSignalListeningJevRequestV1(input,configurationOf(run));
       const request_digest=signalListeningRequestDigestV1(run,input,request);
