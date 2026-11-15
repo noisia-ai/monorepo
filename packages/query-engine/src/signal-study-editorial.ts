@@ -7,6 +7,7 @@ import {validateSignalStudyExecutionConfigurationV1,type SignalStudyExecutionCon
 import {SIGNAL_STUDY_TB_TEMPLATE_DIGEST_V1}from'./signal-study-template-data';
 import type {SignalStudySampleV1} from './signal-study-evidence';
 
+export class SignalStudyEditorialRequestSizeErrorV1 extends Error{constructor(readonly request_bytes:number){super('study_editorial_request_size_exceeded');}}
 function fail(code:string):never{throw Error('study_editorial_'+code);}
 const text=z.string().trim().min(1),key=text.regex(/^[a-z][a-z0-9_]{0,63}$/u);
 const quoteSchema=z.object({root_id:text,quote:text.max(4000),private_person_names:z.array(text.max(160)).max(30)}).strict();
@@ -70,7 +71,7 @@ function request(args:{mode:'motives'|'layers'|'contrast';study_digest:string;pa
       'A server-calculated motive or layer exceeded half of the cut. Rewrite ONLY the supplied motive keys in contrast to their neighbors, with explicit inclusion and exclusion boundaries grounded in the sample. neighbor_context is read-only reference material: never modify or return its keys. Keep exact affected keys, one result per key; never alter a human-locked definition. Do not infer new counts. Return name<=160, definition<=1200, contrast_reason<=1600 characters and exact sample evidence IDs.'),
     output_config:{format:{type:'json_schema',schema:args.mode==='layers'?layerWire(args.samples):args.mode==='motives'?DISCOVERY_WIRE:CONTRAST_WIRE}},
     messages:[{role:'user',content:JSON.stringify({input_digest,untrusted_data:args.payload})}]});
-  if(Buffer.byteLength(request_body,'utf8')>512*1024)fail('request_size_exceeded');
+  const bytes=Buffer.byteLength(request_body,'utf8');if(bytes>512*1024)throw new SignalStudyEditorialRequestSizeErrorV1(bytes);
   const body={contract_version:'signal-study-editorial-request-v1' as const,mode:args.mode,model:'claude-sonnet-4-6' as const,
     study_digest:args.study_digest,input_digest,request_body,source_samples:structuredClone(args.samples),motive_keys:args.motive_keys,
     pass:args.pass,recode_attempt:args.recode_attempt,boundary_keys:args.boundary_keys};
