@@ -1301,3 +1301,5 @@ export * from './signal-study-editorial';
 
 export * from './signal-study-output';
 export * from './signal-listening-discovery-streaming-v1';
+
+export * from './signal-study-jev-contracts';
