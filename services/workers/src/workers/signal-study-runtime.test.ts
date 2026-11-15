@@ -4,6 +4,7 @@ import {createHash,randomUUID} from 'node:crypto';
 import {SIGNAL_STUDY_TB_TEMPLATE_V1,SIGNAL_STUDY_TB_ROLES_V1,createSignalStudyTemplateSnapshotV1,
  buildSignalStudyExecutionConfigurationV1,buildSignalStudyConfiguredAxesRequestV1,signalListeningBaseTemplateV1,signalWorkspaceEmbeddingDigestV1 as digest,
  type SignalStudyV1} from '@noisia/query-engine';
+import type{StudyNumericManifestV1}from'./signal-study-numeric';
 import {signalStudyRuntimeJobV1,studyRuntimeJevQuestionIdentityV1,type StudyRuntimeJevBatchPlanV1,type StudyRuntimeJevBatchCheckpointV1,type StudyRuntimeStoreV1,type StudyRuntimeLeaseV1,type StudyRuntimeSourceV1,
  type StudyRuntimeStepV1,type StudyRuntimeStepPlanV1,type StudyRuntimeReceiptV1,type StudyRuntimeOutputV1,type StudyRuntimeNumericComputedV1,type StudyRuntimeNumericPlanV1,type StudyRuntimeStoredNumericV1} from './signal-study-runtime';
 const sha=(s:string|Buffer)=>'sha256:'+createHash('sha256').update(s).digest('hex');
@@ -80,8 +81,13 @@ function fixture(count=160){
   fit:async(args:{numeric_plan:StudyRuntimeNumericPlanV1;fit_plan:{plan_digest:string;configuration:unknown;rows:Array<{root_id:string}>}}):Promise<StudyRuntimeNumericComputedV1>=>{
    fitCalls++;const plan=args.fit_plan,value={plan_digest:plan.plan_digest,groups:plan.rows.length?[{key:'group_a',root_ids:plan.rows.filter(r=>Number(r.root_id.slice(5))%2===0).map(r=>r.root_id)},
     {key:'group_b',root_ids:plan.rows.filter(r=>Number(r.root_id.slice(5))%2===1).map(r=>r.root_id)}].filter(g=>g.root_ids.length):[],unassigned_root_ids:[]};
-   const manifest_json=JSON.stringify({contract_version:'signal-study-numeric-v1',workspace_id,execution_id,source_digest:source.source_digest,study_digest:source.configuration.study_digest,cut_digest:digest(source.configuration.study.cut),
-    request_sha256:args.numeric_plan.request_sha256,fit_plan_digest:plan.plan_digest,numeric_config_digest:digest(plan.configuration),seed_digest:digest(source.sampling_seed)});
+   const manifest:StudyNumericManifestV1={contract_version:'signal-study-numeric-v1',workspace_id,execution_id,source_digest:source.source_digest,study_digest:source.configuration.study_digest,cut_digest:digest(source.configuration.study.cut),
+    request_sha256:args.numeric_plan.request_sha256,fit_plan_digest:plan.plan_digest,numeric_config:plan.configuration as StudyNumericManifestV1['numeric_config'],numeric_config_digest:digest(plan.configuration),seed_digest:digest(source.sampling_seed),
+    embedding_space_digest:source.embedding_space_digest,proof_census_digest:digest(plan.rows.map(r=>r.root_id)),source_proofs_sha256:digest('synthetic-source-proofs'),
+    source_preparation_run_ids:[],preparation_unknown_root_ids:plan.rows.map(r=>r.root_id),preparation_unknown_count:plan.rows.length,
+    root_count:plan.rows.length,grouped_count:value.groups.reduce((n,g)=>n+g.root_ids.length,0),unassigned_count:value.unassigned_root_ids.length,status:plan.rows.length?'completed':'empty',
+    input_manifest_sha256:digest('synthetic-input'),output_manifest_sha256:plan.rows.length?digest('synthetic-output'):null,groups:value.groups,unassigned_root_ids:value.unassigned_root_ids,artifacts:[]};
+   const manifest_json=JSON.stringify(manifest);
    return{value,manifest_json,manifest_sha256:sha(manifest_json),artifacts:[],dispose:async()=>{}};
   },
   runJevBatch:async(args:{batch_id:string;signal:AbortSignal;should_stop:()=>boolean})=>{
@@ -196,7 +202,9 @@ test('lease expiration drains its HTTP cohort to page custody and admits no next
  if(f.sends.length)assert.ok(f.pageWrites>=1);
 });
 test('numerical output cannot invent roots or omit members from the sealed pooled census',async()=>{
- const f=fixture(2);const fit=f.drivers.fit;f.drivers.fit=async args=>{const result=await fit(args);return{...result,value:{plan_digest:args.fit_plan.plan_digest,groups:[{key:'invented',root_ids:['unseen-root']}],unassigned_root_ids:[]}};};
+ const f=fixture(2);const fit=f.drivers.fit;f.drivers.fit=async args=>{const result=await fit(args),value={plan_digest:args.fit_plan.plan_digest,groups:[{key:'invented',root_ids:['unseen-root']}],unassigned_root_ids:['another-unseen-root']};
+  const manifest=JSON.parse(result.manifest_json);Object.assign(manifest,{groups:value.groups,unassigned_root_ids:value.unassigned_root_ids,grouped_count:1,unassigned_count:1});
+  const manifest_json=JSON.stringify(manifest);return{...result,value,manifest_json,manifest_sha256:sha(manifest_json)};};
  await assert.rejects(signalStudyRuntimeJobV1(f.execution_id,f),/numeric_population_invalid/);
  assert.equal(f.sends.filter(p=>p.kind==='sonnet').length,0);assert.equal(f.output,undefined);
 });
@@ -249,4 +257,26 @@ test('numeric verified checkpoint survives lost persistence ACK with no refit an
  f.store.persistNumeric=async(...args)=>{const result=await persist(...args);if(first){first=false;throw Error('lost numeric checkpoint ACK');}return result;};
  await assert.rejects(signalStudyRuntimeJobV1(f.execution_id,f),/lost numeric checkpoint ACK/);assert.equal(disposed,1);
  assert.equal((await signalStudyRuntimeJobV1(f.execution_id,f)).status,'completed');assert.equal(f.fitCalls,1);assert.equal(f.events.includes('mark'),false);
+});
+
+test('numeric checkpoint rejects rehashed value-only or manifest-only group swaps and inconsistent sealed counts/config before Sonnet',async()=>{
+ for(const tamper of ['value_groups','manifest_groups','root_count','grouped_count','unassigned_count','empty_status','insufficient_status','numeric_config']as const){
+  const f=fixture(),persist=f.store.persistNumeric;
+  f.store.persistNumeric=async(...args)=>{const checkpoint=structuredClone(await persist(...args));assert.ok('verified'in checkpoint);
+   const manifest=JSON.parse(checkpoint.manifest_json)as StudyNumericManifestV1;
+   if(tamper==='value_groups'){const groups=checkpoint.value.groups;[groups[0]!.root_ids,groups[1]!.root_ids]=[groups[1]!.root_ids,groups[0]!.root_ids];checkpoint.value_digest=digest(checkpoint.value);}
+   if(tamper==='manifest_groups')[manifest.groups[0]!.root_ids,manifest.groups[1]!.root_ids]=[manifest.groups[1]!.root_ids,manifest.groups[0]!.root_ids];
+   if(tamper==='root_count')manifest.root_count++;if(tamper==='grouped_count')manifest.grouped_count--;if(tamper==='unassigned_count')manifest.unassigned_count++;
+   if(tamper==='empty_status')manifest.status='empty';if(tamper==='insufficient_status')manifest.status='insufficient_population';
+   if(tamper==='numeric_config')(manifest.numeric_config as{seed:number}).seed++;
+   checkpoint.manifest_json=JSON.stringify(manifest);checkpoint.manifest_sha256=sha(checkpoint.manifest_json);return checkpoint;
+  };
+  await assert.rejects(signalStudyRuntimeJobV1(f.execution_id,f),/study_runtime_numeric_/,'must reject '+tamper);
+  assert.equal(f.sends.filter(p=>p.kind==='sonnet').length,0,tamper);assert.equal(f.output,undefined,tamper);assert.equal(f.journal.size,0,tamper);
+ }
+});
+test('empty numeric census cannot be relabeled completed by rehashing its manifest',async()=>{
+ const f=fixture(0),persist=f.store.persistNumeric;f.store.persistNumeric=async(...args)=>{const checkpoint=await persist(...args);assert.ok('verified'in checkpoint);
+  const manifest=JSON.parse(checkpoint.manifest_json);manifest.status='completed';checkpoint.manifest_json=JSON.stringify(manifest);checkpoint.manifest_sha256=sha(checkpoint.manifest_json);return checkpoint;};
+ await assert.rejects(signalStudyRuntimeJobV1(f.execution_id,f),/study_runtime_numeric_/);assert.equal(f.sends.length,0);assert.equal(f.output,undefined);
 });

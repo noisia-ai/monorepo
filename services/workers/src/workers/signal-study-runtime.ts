@@ -1,4 +1,5 @@
 import {createHash} from 'node:crypto';
+import type{StudyNumericManifestV1}from'./signal-study-numeric';
 import {
  validateSignalStudyExecutionConfigurationV1,buildSignalStudyConfiguredAxesRequestV1,resolveSignalStudyConfiguredAxesV1,signalStudyConfiguredCutV1,
  buildSignalStudyMotiveFitPlanV1,buildSignalStudyMotivePopulationV1,sampleSignalStudyGroupV1,signalStudyConfirmedCentroidV1,
@@ -266,13 +267,27 @@ export async function signalStudyRuntimeJobV1(execution_id:string,options:{store
   }
   if('status'in checkpoint)throw new Paused('waiting_numeric');
   if(checkpoint.verified!==true||sha(checkpoint.manifest_json)!==checkpoint.manifest_sha256||digest(checkpoint.value)!==checkpoint.value_digest)fail('numeric_checkpoint_invalid');
-  const manifest=JSON.parse(checkpoint.manifest_json);
+  let manifest:StudyNumericManifestV1;try{manifest=JSON.parse(checkpoint.manifest_json);}catch{fail('numeric_checkpoint_invalid');}
+  if(!manifest||typeof manifest!=='object'||Array.isArray(manifest))fail('numeric_checkpoint_invalid');
   if(manifest.contract_version!=='signal-study-numeric-v1'||manifest.source_digest!==source_digest||manifest.request_sha256!==numericPlan.request_sha256
    ||manifest.fit_plan_digest!==fit.plan_digest||manifest.execution_id!==execution_id||manifest.workspace_id!==lease.workspace_id||manifest.study_digest!==configuration.study_digest
    ||manifest.cut_digest!==digest(study.cut)||manifest.numeric_config_digest!==digest(fit.configuration)||manifest.seed_digest!==digest(raw.sampling_seed))fail('numeric_checkpoint_invalid');
   const numeric=checkpoint.value;
-  if(numeric.plan_digest!==fit.plan_digest||!Array.isArray(numeric.groups)||!Array.isArray(numeric.unassigned_root_ids))fail('numeric_invalid');
+  if(!numeric||numeric.plan_digest!==fit.plan_digest||!Array.isArray(numeric.groups)||!Array.isArray(numeric.unassigned_root_ids)
+   ||numeric.groups.some(g=>!g||typeof g.key!=='string'||!Array.isArray(g.root_ids)||g.root_ids.some(id=>typeof id!=='string'||!id))
+   ||numeric.unassigned_root_ids.some(id=>typeof id!=='string'||!id))fail('numeric_invalid');
   const ids=[...numeric.groups.flatMap(g=>g.root_ids),...numeric.unassigned_root_ids],expected=population.roots.map(r=>r.root_id).sort();
+  const grouped=numeric.groups.reduce((sum,g)=>sum+g.root_ids.length,0),unassigned=numeric.unassigned_root_ids.length;
+  // A separately rehashed value is not a second authority over the sealed
+  // manifest. Bind the exact grouping before it can select paid editorial data.
+  if(!Array.isArray(manifest.groups)||!Array.isArray(manifest.unassigned_root_ids)
+   ||digest(numeric)!==digest({plan_digest:manifest.fit_plan_digest,groups:manifest.groups,unassigned_root_ids:manifest.unassigned_root_ids})
+   ||digest(manifest.numeric_config)!==digest(fit.configuration)||manifest.embedding_space_digest!==raw.embedding_space_digest
+   ||manifest.root_count!==expected.length||manifest.grouped_count!==grouped||manifest.unassigned_count!==unassigned
+   ||grouped+unassigned!==manifest.root_count||!/^sha256:[a-f0-9]{64}$/u.test(manifest.input_manifest_sha256)
+   ||(expected.length===0?manifest.status!=='empty'||manifest.output_manifest_sha256!==null
+    :!['completed','insufficient_population'].includes(manifest.status)||!/^sha256:[a-f0-9]{64}$/u.test(manifest.output_manifest_sha256??''))
+   ||manifest.status==='insufficient_population'&&(grouped!==0||unassigned!==expected.length))fail('numeric_checkpoint_invalid');
   if(new Set(numeric.groups.map(g=>g.key)).size!==numeric.groups.length||numeric.groups.some(g=>!g.root_ids.length||!/^[a-z][a-z0-9_]{0,63}$/u.test(g.key))
    ||new Set(ids).size!==ids.length||ids.sort().join(',')!==expected.join(','))fail('numeric_population_invalid');
   dependency({kind:'numeric_checkpoint',key:numericPlan.key,digest:checkpoint.manifest_sha256});
