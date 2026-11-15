@@ -68,3 +68,9 @@ b0f8485a7a776b6ae81ecb66712c0d5cb8e87fc6:scripts/eval/fixture-identity.test.mjs:
 # R16 loopback-only fake provider key, verified against the synthetic HTTP adapter.
 # Exact historical fingerprint only; future credential changes remain scanned.
 3b1c689a6698af44812fd055911650f93d278558:scripts/r16/run-fault-matrix.ts:generic-api-key:136
+
+# R16 reviewed synthetic topic identifiers and loopback-only Storage placeholder.
+# Exact historical fingerprints; full history and future values remain scanned.
+6cad52d3f5198ae6ba6359805a68646e1303163d:scripts/r16/listening-workload.ts:generic-api-key:21
+6cad52d3f5198ae6ba6359805a68646e1303163d:scripts/r16/listening-workload.ts:generic-api-key:23
+4e62e62ac00d7ea518fb977734faa5082f39fc38:scripts/r16/run-fault-matrix.ts:generic-api-key:120
