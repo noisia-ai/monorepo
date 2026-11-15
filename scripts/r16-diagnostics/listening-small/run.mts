@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
+import {execFileSync} from 'node:child_process';
 import {mkdir,open,readFile} from 'node:fs/promises';
 import {join,resolve,sep} from 'node:path';
 import {fileURLToPath,pathToFileURL} from 'node:url';
@@ -8,7 +9,10 @@ import {performance} from 'node:perf_hooks';
 const ROOT_COUNT=4096;
 const MAX_MS=9*60*1000;
 const NOOP={diagnostic_only:true,h1_accepted:false,status:'no_database_action'} as const;
-const providerSecrets=['ANTHROPIC_API_KEY','OPENAI_API_KEY','TYPESAFE_API_KEY','NOISIA_TYPESAFE_API_KEY'];
+const providerSecrets=['ANTHROPIC_API_KEY','ANTHROPIC_AUTH_TOKEN','OPENAI_API_KEY','TYPESAFE_API_KEY',
+  'NOISIA_TYPESAFE_API_KEY','VOYAGE_API_KEY','VOYAGEAI_API_KEY','SONNET_API_KEY'];
+const probeFiles=['.github/workflows/r16-listening-small-diagnostic.yml',
+  'scripts/r16-diagnostics/listening-small/run.mts','scripts/r16-diagnostics/listening-small/run.test.mts'] as const;
 const sha=(value:string)=>`sha256:${createHash('sha256').update(value).digest('hex')}`;
 const percentile=(xs:number[],p:number)=>{if(!xs.length)return 0;const s=[...xs].sort((a,b)=>a-b);return s[Math.ceil(s.length*p)-1]!;};
 
@@ -16,10 +20,14 @@ export function assertListeningSmallGuardV1(env:NodeJS.ProcessEnv,args:string[])
   if(!args.includes('--run'))return;
   assert.equal(env.GITHUB_ACTIONS,'true','diagnostic_requires_github_actions');
   assert.equal(env.NOISIA_R16_SMALL_DIAGNOSTIC,'true','diagnostic_opt_in_required');
-  for(const key of providerSecrets)assert.equal(env[key],undefined,'provider_credentials_forbidden');
+  if(providerSecrets.some(key=>env[key]!==undefined)||Object.keys(env).some(key=>/(?:SONNET|VOYAGE)/u.test(key)&&/(?:API_KEY|TOKEN)/u.test(key)))
+    throw Error('provider_credentials_forbidden');
   assert.ok(env.R16_DIAGNOSTIC_TARGET_ROOT,'target_root_required');
   const root=resolve(env.R16_DIAGNOSTIC_TARGET_ROOT!);
   assert.equal(root,resolve(env.GITHUB_WORKSPACE??'', 'target'),'target_root_outside_workspace');
+  assert.equal(resolve(env.R16_DIAGNOSTIC_PROBE_ROOT??''),resolve(env.GITHUB_WORKSPACE??'','probe'),'probe_root_outside_workspace');
+  assert.ok(/^[0-9a-f]{40}$/u.test(env.R16_DIAGNOSTIC_TARGET_REF_REQUESTED??''),'target_ref_required');
+  assert.ok(/^[0-9a-f]{40}$/u.test(env.R16_DIAGNOSTIC_PROBE_REF_REQUESTED??''),'probe_ref_required');
   const pg=new URL(env.DATABASE_URL??'');
   const redis=new URL(env.R16BENCH_REDIS_URL??'');
   assert.equal(pg.protocol,'postgresql:');assert.equal(pg.hostname,'127.0.0.1');
@@ -36,14 +44,20 @@ async function atomicJson(path:string,value:unknown){
 }
 function moduleAt<T>(root:string,relative:string):Promise<T>{return import(pathToFileURL(join(root,relative)).href) as Promise<T>;}
 function safeError(error:unknown){return error instanceof Error&&/^(?:r16|listening|mass_labeling|labeling|workspace_engine|jev)_[a-z0-9_]{1,100}$/u.test(error.message)?error.message:'listening_small_diagnostic_failed';}
+const gitHead=(root:string)=>execFileSync('git',['rev-parse','HEAD'],{cwd:root,encoding:'utf8',stdio:['ignore','pipe','ignore']}).trim();
+async function probeFileHashes(root:string){return Object.fromEntries(await Promise.all(probeFiles.map(async path=>[path,sha(await readFile(join(root,path),'utf8'))])));}
 
 export async function runListeningSmallDiagnosticV1(){
   if(!process.argv.slice(2).includes('--run'))return NOOP;
   assertListeningSmallGuardV1(process.env,process.argv.slice(2));
   const target=resolve(process.env.R16_DIAGNOSTIC_TARGET_ROOT!);
+  const probe=resolve(process.env.R16_DIAGNOSTIC_PROBE_ROOT!);
   const artifact=resolve(process.env.R16_DIAGNOSTIC_ARTIFACT!);
   const outputRoot=resolve(process.env.GITHUB_WORKSPACE??'','artifacts','r16-listening-small');
   assert.ok(artifact.startsWith(outputRoot+sep),'artifact_path_not_bound');
+  const targetHeadBefore=gitHead(target),probeHeadBefore=gitHead(probe),probeHashesBefore=await probeFileHashes(probe);
+  assert.equal(targetHeadBefore,process.env.R16_DIAGNOSTIC_TARGET_REF_REQUESTED,'target_ref_checkout_mismatch');
+  assert.equal(probeHeadBefore,process.env.R16_DIAGNOSTIC_PROBE_REF_REQUESTED,'probe_ref_checkout_mismatch');
   const started=performance.now();
   let stage='imports';
   let storageServer:any;
@@ -52,7 +66,7 @@ export async function runListeningSmallDiagnosticV1(){
       NOISIA_SIGNAL_LISTENING_ENABLED:'true',NOISIA_JEV_PROVIDER_ENABLED:'true',NOISIA_JEV_STREAMING_V2_ENABLED:'true',
       NOISIA_JEV_STREAM_BUFFER_BYTES:String(512*1024*1024),NOISIA_MASS_LABELING_ENABLED:'true'});
     const [fixture,localPg,workloadModule,configurationModule,preparationModule,censusModule,servingModule,
-      jobModule,providerModule,storageModule,syntheticModule,filesystemModule,profilerModule,provenanceModule,preflightModule]
+      jobModule,providerModule,storageModule,syntheticModule,filesystemModule,profilerModule,provenanceModule,preflightModule,queryModule]
       =await Promise.all([
         moduleAt<any>(target,'infrastructure/db/migrations/signal-mass-labeling-acceptance.synthetic.fixture.ts'),
         moduleAt<any>(target,'infrastructure/db/migrations/signal-r16-local-pg.fixture.ts'),
@@ -69,6 +83,7 @@ export async function runListeningSmallDiagnosticV1(){
         moduleAt<any>(target,'scripts/r16/query-profiler.ts'),
         moduleAt<any>(target,'scripts/r16/source-provenance.ts'),
         moduleAt<any>(target,'scripts/r16/listening-preflight.ts'),
+        moduleAt<any>(target,'packages/query-engine/src/index.ts'),
       ]);
     const source=await provenanceModule.captureR16SourceProvenanceV1(target);
     assert.equal(source.tree_status_sha256,'sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855','target_tree_must_be_clean');
@@ -141,8 +156,19 @@ export async function runListeningSmallDiagnosticV1(){
         assert.equal(serving.length,workload.question_keys.length,'serving_metrics_missing');
         assert.ok(serving.every((item:any)=>item.counts.pending===0&&item.counts.awaiting_base===0),'serving_has_unresolved_work');
         const warmups=calibrations.filter((item:any)=>item.warmup);
-        assert.equal(warmups.length,1,'expected_one_native_warmup');
-        assert.equal(warmups[0]?.selected_roots,32,'expected_32_root_native_warmup');
+        const phaseByShape=new Map<string,string>();
+        for(const group of ['base','consumer_category'] as const){
+          const keys=workload.configuration.questions.filter((question:any)=>group==='base'?question.origin==='base':question.scope==='consumer_category').map((question:any)=>question.key);
+          for(let mask=1;mask<(1<<keys.length);mask++){
+            const subset=keys.filter((_:string,index:number)=>(mask&(1<<index))!==0);
+            const shape=queryModule.signalListeningCalibrationShapeV1(workload.configuration,{question_keys:subset});
+            phaseByShape.set(shape.shape_digest,shape.phase);
+          }
+        }
+        assert.equal(warmups.length,2,'expected_base_and_consumer_native_warmups');
+        assert.ok(warmups.every((item:any)=>item.selected_roots===32&&item.shape_digests.length===1),'expected_32_root_warmup_per_phase');
+        const warmupPhases=warmups.map((item:any)=>phaseByShape.get(item.shape_digests[0])).sort();
+        assert.deepEqual(warmupPhases,['base','consumer_category'],'unexpected_native_warmup_phases');
         const latencySummary={count:latencies.length,min_ms:Math.min(...latencies),p50_ms:percentile(latencies,.5),p95_ms:percentile(latencies,.95),max_ms:Math.max(...latencies)};
         assert.equal(requests,ROOT_COUNT*2,'expected_two_provider_requests_per_root');
         const counts=await db.query(`SELECT count(*)::int job_count FROM signal_labeling_calls WHERE run_id=$1`,[prepared.run_id]);
@@ -150,9 +176,18 @@ export async function runListeningSmallDiagnosticV1(){
         assert.equal(provenanceAfter.source_tree_sha256,source.source_tree_sha256,'target_source_changed_during_run');
         const runInstrument=sha(await readFile(new URL(import.meta.url),'utf8'));
         assert.equal(runInstrument,instrument,'diagnostic_instrument_changed_during_run');
+        const targetHeadAfter=gitHead(target),probeHeadAfter=gitHead(probe),probeHashesAfter=await probeFileHashes(probe);
+        assert.equal(targetHeadAfter,targetHeadBefore,'target_head_changed_during_run');
+        assert.equal(probeHeadAfter,probeHeadBefore,'probe_head_changed_during_run');
+        assert.deepEqual(probeHashesAfter,probeHashesBefore,'probe_files_changed_during_run');
         result={contract_version:'r16-listening-small-diagnostic-v1',diagnostic_only:true,h1_accepted:false,
+          a_b_source_verified:false,
           target_label:process.env.R16_DIAGNOSTIC_TARGET_LABEL??'unspecified',
-          target_ref:process.env.R16_DIAGNOSTIC_TARGET_REF??'unspecified',
+          target_ref_requested:process.env.R16_DIAGNOSTIC_TARGET_REF_REQUESTED,
+          target_head_before:targetHeadBefore,target_head_after:targetHeadAfter,
+          probe_ref_requested:process.env.R16_DIAGNOSTIC_PROBE_REF_REQUESTED,
+          probe_head_before:probeHeadBefore,probe_head_after:probeHeadAfter,
+          probe_file_sha256_before:probeHashesBefore,probe_file_sha256_after:probeHashesAfter,
           acceptance_thresholds_applied:false,root_count:ROOT_COUNT,expected_http_requests:ROOT_COUNT*2,observed_http_requests:requests,
           source_tree_sha256_before:source.source_tree_sha256,source_tree_sha256_after:provenanceAfter.source_tree_sha256,
           source_status_sha256:source.tree_status_sha256,instrument_sha256_before:instrument,instrument_sha256_after:runInstrument,
@@ -160,7 +195,7 @@ export async function runListeningSmallDiagnosticV1(){
           native:{status:runStatus.run?.status,resolved_roots:rootSet.size,reserved_micro_usd:runStatus.run?.reserved_micro_usd,
             unknown_micro_usd:runStatus.run?.unknown_micro_usd,job_count:jobs,call_count:counts.rows[0]?.job_count,
             preparation_admission_wall_ms:startedProcessing-admissionStarted,classification_serving_wall_ms:performance.now()-startedProcessing,
-            warmups:warmups.length,calibrations,commit_batch_count:commits.length},
+            warmups:warmups.length,warmup_phases:warmupPhases,calibrations,commit_batch_count:commits.length},
           observed_http_latency:latencySummary,storage:storageServer.metrics(),sql_profile:profile.snapshot(),
           root_census_sha256:sha([...rootSet].sort().join('\n')),
           serving_question_count:serving.length,total_wall_ms:performance.now()-started};

@@ -15,13 +15,18 @@ test('diagnostic run requires real GitHub Actions and explicit opt-in',()=>{
 });
 
 test('diagnostic run rejects provider credentials before any target access',()=>{
-  const env={GITHUB_ACTIONS:'true',NOISIA_R16_SMALL_DIAGNOSTIC:'true',TYPESAFE_API_KEY:'unexpected'};
+  const env:NodeJS.ProcessEnv={GITHUB_ACTIONS:'true',NOISIA_R16_SMALL_DIAGNOSTIC:'true',TYPESAFE_API_KEY:'unexpected'};
+  assert.throws(()=>assertListeningSmallGuardV1(env,['--run']),/provider_credentials_forbidden/u);
+  delete env.TYPESAFE_API_KEY;
+  env.NOISIA_R16_SONNET_API_KEY='unexpected';
   assert.throws(()=>assertListeningSmallGuardV1(env,['--run']),/provider_credentials_forbidden/u);
 });
 
 test('diagnostic run binds target and artifact to this workflow workspace',()=>{
   const env={GITHUB_ACTIONS:'true',NOISIA_R16_SMALL_DIAGNOSTIC:'true',GITHUB_WORKSPACE:'/tmp/work',
-    R16_DIAGNOSTIC_TARGET_ROOT:'/tmp/work/target',R16_DIAGNOSTIC_ARTIFACT:'/tmp/work/evil/result.json',
+    R16_DIAGNOSTIC_TARGET_ROOT:'/tmp/work/target',R16_DIAGNOSTIC_PROBE_ROOT:'/tmp/work/probe',
+    R16_DIAGNOSTIC_TARGET_REF_REQUESTED:'a'.repeat(40),R16_DIAGNOSTIC_PROBE_REF_REQUESTED:'b'.repeat(40),
+    R16_DIAGNOSTIC_ARTIFACT:'/tmp/work/evil/result.json',
     DATABASE_URL:'postgresql://postgres:pw@127.0.0.1:5432/noisia_mfp_ci',
     R16BENCH_REDIS_URL:'redis://127.0.0.1:6379'};
   assert.throws(()=>assertListeningSmallGuardV1(env,['--run']),/artifact_path_not_bound/u);
