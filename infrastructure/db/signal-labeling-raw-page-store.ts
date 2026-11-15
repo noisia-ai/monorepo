@@ -17,11 +17,11 @@ const sameMembers=(a:LabelingRawPageMemberV1[],b:LabelingRawPageMemberV1[])=>a.l
     &&x.raw_size_bytes===Number(y.raw_size_bytes)&&x.byte_offset===Number(y.byte_offset)&&x.byte_length===Number(y.byte_length);
 });
 
-/** References are planned under the existing run lease before uploading. No
+/** References are planned under a shared fence on the existing run lease before uploading. No
  * provider retry permission is created by planning, loading or attaching a page. */
 export function createLabelingRawPageStoreV1(options:{database:LabelingDatabaseV1;storage:LabelingRawPageStorageV1;
-  withRunLock<T>(run:LabelingRunV1,fn:(client:PoolClient)=>Promise<T>):Promise<T>}){
-  const {database,storage,withRunLock}=options;
+  withRunReadFence<T>(run:LabelingRunV1,fn:(client:PoolClient)=>Promise<T>):Promise<T>}){
+  const {database,storage,withRunReadFence}=options;
   async function members(db:Pick<PoolClient,'query'>,page:Page):Promise<Member[]>{
     const rows=(await db.query<Member>(`SELECT call_id,request_digest,raw_sha256,raw_size_bytes,byte_offset,byte_length,page_id
       FROM signal_labeling_raw_page_members WHERE workspace_id=$1 AND run_id=$2 AND page_id=$3 ORDER BY byte_offset`,
@@ -29,7 +29,7 @@ export function createLabelingRawPageStoreV1(options:{database:LabelingDatabaseV
     if(rows.length!==page.member_count)invalid();return rows;
   }
   async function attach(run:LabelingRunV1,page:Page){
-    await withRunLock(run,async c=>{
+    await withRunReadFence(run,async c=>{
       const row=(await c.query<Page>('SELECT * FROM signal_labeling_raw_pages WHERE id=$1 AND workspace_id=$2 AND run_id=$3 FOR UPDATE',
         [page.id,run.workspace_id,run.id])).rows[0];
       if(!row||row.sha256!==page.sha256||row.storage_key!==page.storage_key||Number(row.size_bytes)!==Number(page.size_bytes))invalid();
@@ -53,7 +53,7 @@ export function createLabelingRawPageStoreV1(options:{database:LabelingDatabaseV
         raw_sha256:built.raw_sha256,size_bytes:built.size_bytes};
       const reference=storage.reference(input);
       if(!reference.storage_key||reference.storage_key.length>2048)invalid();
-      const page=await withRunLock(run,async c=>{
+      const page=await withRunReadFence(run,async c=>{
         const calls=(await c.query<{id:string;request_digest:string;raw_sha256:string|null;raw_storage_key:string|null}>(
           'SELECT id,request_digest,raw_sha256,raw_storage_key FROM signal_labeling_calls WHERE workspace_id=$1 AND run_id=$2 AND id=ANY($3::uuid[]) ORDER BY id FOR UPDATE',
           [run.workspace_id,run.id,built.members.map(x=>x.call_id)])).rows;

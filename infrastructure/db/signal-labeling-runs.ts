@@ -577,8 +577,20 @@ export function createSignalLabelingStoreV1<
     ).rows[0];
     if (!found) fail("labeling_lease_lost");
   }
+  // Raw planning/attachment updates only its own page/calls. SHARE allows
+  // disjoint pages to progress, while conflicting with every lease UPDATE.
+  // Check the physical clock after acquiring the fence: a waiter cannot use
+  // transaction-start `now()` to attach after its lease expired behind a writer.
+  async function rawRunReadFence(c:PoolClient,run:LabelingRunV1){
+    const found=(await c.query(`WITH raw_run_fence AS MATERIALIZED(
+      SELECT id,lease_until FROM signal_labeling_runs
+      WHERE id=$1 AND lease_token=$2 AND workspace_id=$3 FOR SHARE)
+      SELECT id FROM raw_run_fence WHERE lease_until>clock_timestamp()`,
+      [run.id,run.lease_token,run.workspace_id])).rows[0];
+    if(!found)fail("labeling_lease_lost");
+  }
   const rawPages=options.rawPages?createLabelingRawPageStoreV1({database:db,storage:options.rawPages,
-    withRunLock:(run,fn)=>tx(db,async c=>{await lock(c,run);return fn(c);})}):null;
+    withRunReadFence:(run,fn)=>tx(db,async c=>{await rawRunReadFence(c,run);return fn(c);})}):null;
   async function authority(c: PoolClient, run: LabelingRunV1, amount: number) {
     // Policy lifecycle triggers take this lock. Read only after acquiring it so a
     // revocation committed while this call waited cannot leave stale authority.
