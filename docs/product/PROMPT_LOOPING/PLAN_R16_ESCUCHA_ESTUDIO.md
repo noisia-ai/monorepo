@@ -12,6 +12,14 @@ No hay aprobaciones humanas intermedias en los procesos de análisis: Sonnet 4.6
 
 ## Progreso
 
+- H1 integración del nuevo consumidor: warmup paralelo acotado con estimador conservador intacto, preflight real de Storage y configuración normalizada antes de preregistrar. El reloj ya incluye admisión nativa y censo inicial; la revisión cerró ese P2. Ocho pruebas de contratos/scripts pasan. La matriz nueva de ocho casos aún no se ejecutó: la revisión detectó que dos escenarios cubrían pérdidas de ACK y faltaban rechazo de escritura y rollback reales; se amplía la cobertura antes del laboratorio. Las cuotas de 10,000 RPS/10 millones TPS son exclusivamente sintéticas; las reales no se modifican.
+
+- H4 transporte integrado 2605b6e0, revisado sin P0/P1/P2: Sonnet 4.6 recibe el cuerpo canónico intacto, una credencial explícita y una sola tentativa con abort/timeout y bytes acotados. Los recibos usan Storage privado con fsync, dirección de contenido y readback real. Runtime y transporte pasan 26/26 sin omisiones, tipado/lint 11/11. El estado incierto persistido se muestra inmediatamente como outcome_unknown, sin reinterpretar 529/truncados ni reenviar. Faltan el ensamblado productivo y la aceptación UAT; ninguna llamada real R16 se ha enviado.
+
+- Verificación local integrada antes del último DTO estrecho: Studio 1,369 aprobadas/7 omisiones de entorno; workers 1,159/56; DB 665/260; cero fallos. El DTO posterior y los transportes se verificaron juntos con 26 casos adicionales focales. No se presenta esta evidencia como CI remoto ni como PostgreSQL completo de 0306: ese owner sigue ejecutando su suite dedicada.
+
+- Revisión 0306: sin P0/P1 confirmados y dos P2 por cerrar antes del gasto: la muestra debe indicar qué filas tienen evidencia publicable con URL original válida; y un Estudio nuevo debe admitir el binding efectivo de una edición humana H5, congelando configuración/generación en lugar de volver al snapshot anterior. El owner prepara 0309 aditivo; los informes históricos conservan su identidad. Studio usa wrappers nativos paginados; su implementación sigue en verificación.
+
 - 2026-11-15, integración H5: catálogo publicado y correcciones humanas en Brand OS/Menciones/Tópicos integrados tras revisión sin P0/P1/P2 (2cdf3998, 08a91dc0, 5d7a0504). Sesenta y dos focales montados pasan sin omisiones. Los dos P2 de seguimiento están cerrados: completar H3 actualiza el catálogo incluso con la misma configuración/revisión; una respuesta tardía no reabre una mención cerrada ni desplaza el foco elegido después. Tipado/lint integrados 11/11; la suite completa encontró cinco fixtures antiguos que no admitían el nuevo import, se amplió únicamente su allowlist de presentación y el conjunto termina con 1,369 aprobadas, cero fallos y siete omisiones de entorno. Sigue pendiente UAT.
 
 - 2026-11-15, H3 numérico conjunto: tres casos PostgreSQL/Python pasan sin omisiones, con 288 migraciones por clon y 70.74 s: base-only y base+definidos de tres raíces declaran insuficiencia; el caso base-only de 240 raíces obtiene grupos BERTopic reales, reutiliza vectores y encola la primera revisión. No envía Sonnet ni crea nuevos embeddings. Esta evidencia sustituye la anterior espera por transporte local; el ciclo pagado completo y UAT siguen pendientes.
@@ -160,6 +168,12 @@ Recibo: separar Voyage/JEV por raíz de Claude por número de grupos y vueltas; 
 
 ## Sorpresas y descubrimientos
 
+- El contrato editorial de Study omite stream; el transporte de otro consumidor exigía stream=false. Reutilizarlo directamente habría rechazado la solicitud o alterado los bytes sellados. El transporte Study acepta la omisión canónica y conserva request_body/digest exactos.
+
+- Una pérdida de ACK después de COMMIT/put no demuestra un fallo real de COMMIT/escritura. Si se rechaza el primer put y no existe ninguna copia productiva durable, el arnés no puede resucitar el recibo mediante una copia propia: debe probar contención de incertidumbre y cero reenvíos. Los casos recuperables con blobs reales conservan la exigencia de completar todas las preguntas.
+
+- Las correcciones H5 crean un binding efectivo humano distinto del snapshot automático original. El FK inicial de Study sólo representaba el segundo; la aceptación conjunta debe incluir un Estudio nuevo después de quitar/mover/fusionar y preservar el reporte anterior.
+
 - La instrumentación histórica medía un adaptador diferente al consumidor final: Mass V2 escribía etiquetas e intereses heredados; Listening resuelve preguntas configurables, caché por pregunta y alcance después de la base. Cambiar el consumidor exige nueva preregistración y evidencia nativa, sin borrar el resultado fallido ni reducir los umbrales. En el censo, una respuesta de base cacheada no equivale a una raíz resuelta cuando quedan tópicos elegibles pendientes.
 
 - La integración del catálogo introdujo un import que cinco fixtures antiguos de presentación rechazaban antes de montar el componente. Se corrige el arnés, conservando sus verificaciones de navegación/inspección y la cobertura montada propia del catálogo. Los fallos y la repetición quedan registrados; no se usan como evidencia de un problema en UAT.
@@ -229,6 +243,12 @@ Recibo: separar Voyage/JEV por raíz de Claude por número de grupos y vueltas; 
 - El promedio del piloto completo incluye una etapa editorial que no escala por raíz. Multiplicarlo linealmente daba USD 205.81/millón; mantener explícitamente los grupos y una vuelta de referencia produce USD 114.035250. Ambos cálculos parten del mismo recibo, cuyo uso histórico permanece USD 17.280463.
 
 ## Registro de decisiones
+
+- Antes de etapas pagadas, añadir a la muestra sólo metadatos verificables de evidencia publicable, sin eliminar raíces, cambiar agrupaciones ni reducir denominadores. La selección de citas debe usar esas filas; una partición sin prueba sigue las reglas de unclear. Conservar el preflight nativo anterior al gasto y la verificación literal/fuente al publicar.
+
+- Congelar en Study el tipo, ID, base, configuración, generación y digest del binding efectivo original o humano. Resolver ese binding fijo durante replay; una lectura de latest no puede sustituirlo. Implementar la compatibilidad H5 mediante migración aditiva posterior a 0307, manteniendo las referencias históricas originales.
+
+- Las pruebas de recuperación sólo pueden usar custodia que conserva el producto real. No añadir al inyector un archivo privado que después se use como respaldo inexistente en producción. Separar ACK perdido recuperable de escritura rechazada sin bytes durables y registrar explícitamente incertidumbre/exposición/preguntas pendientes en el segundo caso.
 
 - 2026-11-15: contar capacidad de Listening por raíces distintas con TODAS sus preguntas elegibles resueltas o excluidas por el selector nativo. Sellar owner/run/configuración/mapa/contexto y comprobar acceso vigente en cada lectura; muestrear después del apply en lotes de hasta 1,024 y hacer el censo total final sin acreditar progreso tardío. El helper es de laboratorio, sólo lectura, sin exportación productiva ni respuestas/perfiles/admisiones fabricadas.
 
