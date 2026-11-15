@@ -53,7 +53,7 @@ export async function assertSignalStudyMoneyV1(f:SignalStudySyntheticFixtureV1,r
  const expiredOwner=await f.createStudy(),expired=await expiredOwner.request(),beforeLease=r.metrics();let expire=true;
  r.onSonnet(async()=>{if(expire){expire=false;await f.database.query("UPDATE signal_study_executions SET execution_expires_at=clock_timestamp()+interval '1 second' WHERE id=$1",[expired.id]);await delay(1100);}});
  try{await r.run(expired.id).catch(error=>{assert.match(error.message,/study_lease_lost/);});}finally{r.onSonnet(undefined);}
- assert.equal((await steps(expired.id))[0].call_state,'settled');assert.equal((await r.run(expired.id)).status,'completed');assert.equal(r.metrics().fitCalls-beforeLease.fitCalls,1);
+ assert.equal((await steps(expired.id))[0].call_state,'response_persisted');const observedBefore=r.metrics();r.setAnalysisEnabled(false);assert.equal((await r.run(expired.id)).status,'not_claimed');assert.equal((await steps(expired.id))[0].call_state,'settled','observed receipt bookkeeping survives lease loss and flag off');assert.equal(r.metrics().sonnetCalls,observedBefore.sonnetCalls);assert.equal(r.metrics().jevCalls,observedBefore.jevCalls);r.setAnalysisEnabled(true);assert.equal((await r.run(expired.id)).status,'completed');assert.equal(r.metrics().fitCalls-beforeLease.fitCalls,1);
  // Exact insufficient total cap: no admission, HTTP, successor or fake stop.
  const tinyOwner=await f.createStudy(),tiny=await tinyOwner.request(1),beforeTiny=r.metrics().sonnetCalls;await r.run(tiny.id);assert.equal((await state(tiny.id)).status,'budget_exhausted');assert.equal((await steps(tiny.id)).length,0);assert.equal(r.metrics().sonnetCalls,beforeTiny);
  // Human revision wins atomically; a known unsent reservation is released by
