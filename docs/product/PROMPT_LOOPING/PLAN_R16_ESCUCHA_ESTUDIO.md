@@ -248,6 +248,8 @@ Recibo: separar Voyage/JEV por raíz de Claude por número de grupos y vueltas; 
 
 ## Resultado y retrospectiva
 
+La integración local vigente pasa 17 pruebas dedicadas PostgreSQL sin omisiones (285 migraciones), incluidas la continuación automática y la recuperación de custodia/admisión. Catorce pruebas con Python real verifican por separado la reagrupación no vacía. Los checkpoints de H4 todavía necesitan owner y driver nativos; el primer worker fue devuelto a corrección por serializar JEV. El ensayo completo más reciente de capacidad terminó 32,768 raíces a 564.30/s y sigue rechazado. Ninguna de estas pruebas acredita la ejecución real de R16, sus muestras o su calidad. UAT conserva R15; R16 no ha consumido nuevas llamadas pagadas ni desplegado migraciones allí.
+
 R16 sigue en ejecución con alcance completo H0–H6. ADR033 y el modelo condicional de costo están integrados en develop. H1, H2 y la persistencia inicial H3 están implementados en ramas revisadas; H5 tiene léxico genérico con pruebas locales y nativas. H3 monetario y H4 siguen en desarrollo. Las pruebas por contrato y PostgreSQL sostienen estos avances, pero no sustituyen la aceptación integral.
 
 El primer ensayo completo de transporte terminó 32,768 raíces con sus recibos y resultados íntegros, pero dio 485.19 raíces/s. H1 no está aceptado: falta resolver el cuello de botella y repetir el benchmark de al menos 1,000/s, seguido de la medición real con los límites de la cuenta. El setup sintético y las fases solapadas se informan por separado.
