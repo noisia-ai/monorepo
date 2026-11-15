@@ -78,3 +78,19 @@ test('warmup selects an outlier at33 and pending byte extrema instead of a cover
   loadProfile:async()=>({...f.profile,sample_count:32,source_call_ids:Array.from({length:32},()=>randomUUID())})});
  assert.equal(cachedRemoved.warmup,false);assert.equal(cachedRemoved.calibration_shapes.length,0,'covered batches retain their measured coverage instead of replacing it with latest32');
 });
+
+test('continuous preflight reuses only original measured shapes and byte coverage without creating clients for an unseen shape',async()=>{
+ const f=fixture(),profile={...f.profile,sample_count:32,source_call_ids:Array.from({length:32},()=>randomUUID())};
+ const plan=await planSignalListeningCalibrationV1({...f,inputs:[f.input],execution,loadProfile:async()=>profile});let clients=0;
+ const runtime=createSignalListeningCalibratedProviderV1({plan,factory:()=>{clients++;return{evaluate:async()=>{throw Error('no HTTP in preflight');}};}});
+ const request=buildSignalListeningJevRequestV1(f.input,f.configuration);
+ runtime.prepareRequests([request]);assert.equal(clients,1);
+ assert.equal(runtime.prepareMeasuredRequests([request]),true);
+ assert.equal(runtime.prepareMeasuredRequests([{...request,state:'x'.repeat(10000)}]),false);
+ assert.equal(runtime.prepareMeasuredRequests([{...request,questions:{voice:request.questions.voice!}}]),false);
+ assert.equal(clients,1,'rejected next-page inputs cannot prepare new transport shapes');
+ const finite=await planSignalListeningCalibrationV1({...f,inputs:[f.input],execution,loadProfile:async()=>f.profile});
+ assert.equal(createSignalListeningCalibratedProviderV1({plan:finite,factory:()=>{throw Error('finite profile cannot prefetch');}}).prepareMeasuredRequests([request]),false);
+ const warmup=await planSignalListeningCalibrationV1({...f,inputs:[f.input],execution,loadProfile:async()=>null});
+ assert.equal(createSignalListeningCalibratedProviderV1({plan:warmup,factory:()=>{throw Error('no warmup prefetch');}}).prepareMeasuredRequests([request]),false);
+});

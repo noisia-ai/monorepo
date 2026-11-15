@@ -106,5 +106,18 @@ export function createSignalListeningCalibratedProviderV1(args:{plan:SignalListe
     },
     async close(){await warmupTail;await Promise.all([...clients.values()].map(provider=>provider.close?.()));},
   };
-  return{provider,usedShapes:()=>[...usedShapes],prepareRequests:(requests:JevRequestV1[])=>{for(const request of requests)client(request);}};
+  return{provider,usedShapes:()=>[...usedShapes],prepareRequests:(requests:JevRequestV1[])=>{for(const request of requests)client(request);},
+    /** Continuity may reuse only the original measured coverage and response
+     * bound. A new shape/byte extreme yields to the next ordinary warmup job. */
+    prepareMeasuredRequests:(requests:Iterable<JevRequestV1>)=>{
+      if(plan.warmup)return false;
+      for(const request of requests){
+        const bytes=assertSignalListeningRequestTransportV1(request),shape=signalListeningCalibrationShapeV1(plan.configuration,{question_keys:Object.keys(request.questions)});
+        const profile=plan.profiles.get(shape.shape_digest);
+        if(!profile||profile.sample_count<32||request.model!==shape.model||bytes<profile.request_min_bytes||bytes>profile.request_max_bytes
+          ||signalListeningResponseBoundV1(request)>plan.response_bound_bytes)return false;
+        validateProfile(profile,plan.scope,shape);assertSignalListeningMeasuredContextV1(request,profile.max_input_tokens_per_byte);
+      }
+      return true;
+    }};
 }

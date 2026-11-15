@@ -12,6 +12,8 @@ No hay aprobaciones humanas intermedias en los procesos de análisis: Sonnet 4.6
 
 ## Progreso
 
+- Integración H1/H2 en rama separada: la matriz de fallos de a1ec18b5 terminó correctamente y el nuevo ensayo de 32,768 raíces sigue en curso, sin aceptación de velocidad. El arranque de Escucha ahora lee una página acotada antes de calibrar y reutiliza la selección exacta de extremos bajo la lease; las siguientes ventanas leen pendientes nuevos y sólo usan perfiles medidos con cobertura suficiente. Catorce focales y 1,064 pruebas workers pasan (46 omisiones de entorno); tipado/lint 11/11 y lector nativo PostgreSQL 1/1, 284 migraciones sin omisiones. Revisión independiente y aceptación integrada pendientes; sin despliegue ni gasto R16 en UAT.
+
 - H1 nuevo ensayo completo 35934893: 32,768 raíces y sus recibos íntegros, 188 páginas, 58.29 s y 562.15 raíces/s; rechazado. El mínimo por ventana siguió en cero y 158 latencias observadas del simulador superaron 500 ms. La preparación sintética separada tardó 660.92 s. El perfil registra páginas de mediana 179/max256, apply 33.69 s y markSubmitting 22.59 s, con duraciones solapadas. 4fa57f4d elimina un perfil menor del harness y usa la factory del runtime con sus defaults de página 1,024/250 ms y el mismo sobre de memoria de 512 MiB. Los trece tests del harness, tipado aislado de scripts y tipado/lint del monorepo pasan; falta revisión y otra medición completa sin relajar criterios.
 
 - H1 lectura a escala: la matriz exacta de 13cad16a pasó 8/8, pero su ensayo de 32,768 se detuvo al identificar un plan patológico del nuevo lector de metadatos, con cero HTTP en vuelo. Se conservaron las 32,768 raíces, 23,114 resultados liquidados y las reservas restantes, sin presentarlo como ensayo completo ni aceptado. a59fa664 sella primero la página de IDs y después calcula tamaños/hidrata por identidad. Sobre el mismo snapshot, 1,024 IDs y pesos fueron idénticos: 69.19 s antes y 0.36 s después. 0f8836a8 restaura la observación del test con marcador de hidratación y control positivo. Cuatro pruebas dedicadas sin omisiones, tipado/lint 11/11 y revisión independiente sin P0/P1/P2. Se repetirá matriz y capacidad con fuente nueva congelada.
@@ -124,6 +126,8 @@ Recibo: separar Voyage/JEV por raíz de Claude por número de grupos y vueltas; 
 
 ## Sorpresas y descubrimientos
 
+- Al unir el transporte continuo con la calibración, una segunda lectura limitada al tamaño de warmup podía perder los extremos seleccionados fuera de sus primeras 32 raíces. Los stores simulados que ignoraban los límites no lo revelaban. La regresión ahora respeta el contrato de filas/bytes, incluye extremos posteriores al índice 32 y comprueba que cada raíz se envía una sola vez; un caso que supera la memoria disponible falla antes de reservar o enviar. La prueba nativa del lector verifica por separado la selección previa a hidratar y el rechazo de autoridad obsoleta; no se presenta como prueba end-to-end de calibración.
+
 - Corregir el plan del lector no bastó para alcanzar capacidad: el siguiente ensayo íntegro quedó en 562/s. El harness conservaba páginas de 256 y 100 ms, distintas de los defaults reales 1,024/250 ms. Las 188 páginas pequeñas aumentaron los pasos de persistencia y aplicación. Se alinea la configuración con la factory compartida; la hipótesis se comprobará con otro ensayo, sin darla por probada.
 
 - Limitar filas al final de una consulta no limita el trabajo previo del plan: el lector de metadatos materializaba unas veinte mil reservas y recorría treinta y dos mil menciones antes de resolver identidad. Seleccionar los IDs en un CTE materializado, con predicados constantes del owner y búsquedas parametrizadas posteriores, conserva la salida y elimina ese cruce.
@@ -172,6 +176,8 @@ Recibo: separar Voyage/JEV por raíz de Claude por número de grupos y vueltas; 
 - El promedio del piloto completo incluye una etapa editorial que no escala por raíz. Multiplicarlo linealmente daba USD 205.81/millón; mantener explícitamente los grupos y una vuelta de referencia produce USD 114.035250. Ambos cálculos parten del mismo recibo, cuyo uso histórico permanece USD 17.280463.
 
 ## Registro de decisiones
+
+- 2026-11-15: conservar congelada la fuente del benchmark en un checkout y realizar la integración completa en otro. Reutilizar en el primer envío la selección nativa ya calibrada bajo lease, sin volver a recortarla al prefijo de warmup; comprobar memoria de solicitudes y respuesta antes de reservar. Las ventanas posteriores siempre consultan pendientes nuevos y ceden si aparece una forma no cubierta, sin nuevo cobro de calibración sobre raíces ya clasificadas.
 
 - 2026-11-15: rechazar explícitamente 35934893 aunque completó toda la población. Usar la configuración productiva compartida en lugar de copiar un perfil de batching menor en el harness; mantener latencias, memoria, integridad y throughput exigidos. Conservar por separado tiempos de preparación sintética y de clasificación, sin sumar spans solapados.
 

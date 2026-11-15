@@ -10,10 +10,10 @@ import {
 import {assertMassJevConsumerV1} from '../providers/mass-labeling-consumer';
 import {jevStreamingExecutionFromEnvV2} from '../providers/jev-streaming-runtime';
 import {JevProviderErrorV1,type JevProviderV1} from '../providers/typesafe-jev';
-import {processJevLabelingPageV1,jevUsageV1,type JevPreparedExecutionV1} from './signal-jev-labeling-page';
+import {processJevLabelingPageV1,jevUsageV1,type JevPreparedExecutionV1,type JevNextInputBoundsV2} from './signal-jev-labeling-page';
 import {createLabelingRawPagesStorageV1} from './signal-labeling-receipt-storage';
 import {createWorkspaceEngineStorageV1,type WorkspaceEngineStorageV1} from './signal-workspace-engine-storage';
-import type {JevStreamingExecutionV2} from './signal-jev-streaming-window';
+import {assertJevStreamingExecutionV2,jevCallWorkingBytesV2,type JevStreamingExecutionV2} from './signal-jev-streaming-window';
 
 import {listeningHasRawV1,selectSignalListeningRecoveryV1,createSignalListeningRecoveryProviderV1} from './signal-listening-recovery';
 import {planSignalListeningCalibrationV1,createSignalListeningCalibratedProviderV1} from './signal-listening-calibration';
@@ -34,7 +34,10 @@ function priceOf(run:LabelingRunV1){
 export function processSignalListeningJevV1(args:{run_id:string;store:Store;provider:JevProviderV1;
   execution:JevStreamingExecutionV2;lease_renewal_ms?:number;recovery_only?:boolean;
   prepare?(run:Readonly<LabelingRunV1>):Promise<JevPreparedExecutionV1>;
-  selection?:()=>SignalListeningInputV1[]|undefined}){
+  selection?:()=>SignalListeningInputV1[]|undefined;
+  read_next_inputs?(run:LabelingRunV1,bounds:JevNextInputBoundsV2):Promise<SignalListeningInputV1[]>;
+  prepare_next?(run:LabelingRunV1,inputs:SignalListeningInputV1[]):Promise<boolean>}){
+  let preparedExecution=args.execution,preparedProvider=args.provider;
   let windowSize=args.execution.window_size;
   const key=(input:SignalListeningInputV1)=>digest({root_id:input.root_id,input_digest:input.input_digest,question_digests:input.question_digests});
   const select=(inputs:SignalListeningInputV1[])=>{
@@ -42,7 +45,22 @@ export function processSignalListeningJevV1(args:{run_id:string;store:Store;prov
     const available=new Map(inputs.map(input=>[key(input),input]));
     return selection.flatMap(input=>{const found=available.get(key(input));return found?[found]:[];}).slice(0,windowSize);
   };
-  const schedulerStore={...args.store,async calls(run:LabelingRunV1){
+  const schedulerStore={...args.store,async inputs(run:LabelingRunV1,bounds?:Parameters<Store['inputs']>[1]){
+    const selection=args.selection?.();
+    if(!selection)return args.store.inputs(run,bounds);
+    // The lease-held planner already hydrated a bounded server selection. Its
+    // extrema may lie outside a warmup-sized prefix; never reread that prefix
+    // and silently discard the anchors. Reserve still validates native rights.
+    const budget=Math.min(bounds?.max_working_bytes??Infinity,
+      preparedExecution.max_buffered_bytes-assertJevStreamingExecutionV2(preparedExecution,preparedProvider));
+    if(selection.length>Math.min(windowSize,bounds?.max_rows??Infinity))throw Error('listening_selection_memory_bound');
+    let bytes=0;
+    for(const input of selection){
+      bytes+=jevCallWorkingBytesV2({request:buildSignalListeningJevRequestV1(input,configurationOf(run)),inputs:[input]})+8192;
+      if(bytes>budget)throw Error('listening_selection_memory_bound');
+    }
+    return selection;
+  },async calls(run:LabelingRunV1){
     const rows=await args.store.calls(run),selection=args.selection?.();if(!selection)return rows;
     const order=new Map(selection.map((input,index)=>[key(input),index]));
     // Unknown physical attempts always remain visible to the shared money guard.
@@ -50,8 +68,11 @@ export function processSignalListeningJevV1(args:{run_id:string;store:Store;prov
       .sort((a,b)=>Number(Boolean(b.raw_body))-Number(Boolean(a.raw_body))||(a.inputs[0]?order.get(key(a.inputs[0]))??-1:-1)-(b.inputs[0]?order.get(key(b.inputs[0]))??-1:-1));
   }};
   return processJevLabelingPageV1<SignalListeningInputV1,SignalListeningResultV1>({...args,store:schedulerStore,
-    prepare:args.prepare?async run=>{const prepared=await args.prepare!(run);windowSize=prepared.execution.window_size;return prepared;}:undefined,hooks:{
-    price:priceOf,
+    // Subsequent windows must read fresh native pending identities, never the
+    // retained initial calibration selection.
+    read_next_inputs:args.read_next_inputs??((run,bounds)=>args.store.inputs(run,{...bounds,on_oversize:'empty'})),
+    prepare:args.prepare?async run=>{const prepared=await args.prepare!(run);preparedExecution=prepared.execution;preparedProvider=prepared.provider;windowSize=prepared.execution.window_size;return prepared;}:undefined,hooks:{
+    price:priceOf,prepare_next:args.prepare_next,
     propose:(run,inputs)=>select(inputs).map(input=>{
       const request=buildSignalListeningJevRequestV1(input,configurationOf(run));
       const request_digest=signalListeningRequestDigestV1(run,input,request);
@@ -119,6 +140,12 @@ export async function signalListeningJevJobV1(run_id:string,options:{
   }};
   try{
     return await processSignalListeningJevV1({run_id,execution,store:boundedStore,provider:unavailable,recovery_only:run.recovery_only,selection:()=>selection,
+      prepare_next:async(_leased,inputs)=>{
+        const next=inputs.slice(0,execution.window_size);
+        function* requests(){for(const input of next)yield buildSignalListeningJevRequestV1(input,configurationOf(_leased));}
+        if(!calibrated?.prepareMeasuredRequests(requests()))return false;
+        selection=next;return true;
+      },
       prepare:async leased=>{
         calibrationRun=leased;
         try{
@@ -145,14 +172,14 @@ export async function signalListeningJevJobV1(run_id:string,options:{
             if(!ids.length)throw Error('listening_recovery_memory_budget_exceeded');
             hydrated=await store.calls(leased,{call_ids:ids});
           }
-          const inputs=pending.length?(hydrated??pending).filter(call=>!call.results_applied&&(!run.recovery_only||Boolean(call.raw_body))).flatMap(call=>call.inputs):await store.inputs(leased);
+          const inputs=pending.length?(hydrated??pending).filter(call=>!call.results_applied&&(!run.recovery_only||Boolean(call.raw_body))).flatMap(call=>call.inputs):await store.inputs(leased,{max_rows:execution.window_size,max_working_bytes:execution.max_buffered_bytes,on_oversize:'error'});
           const plan=await planSignalListeningCalibrationV1({workspace_id:leased.workspace_id,configuration_digest:digest(configuration),
             configuration,inputs,execution,loadProfile:shape_digest=>(options.calibration?.load??loadSignalListeningCalibrationV1)({database,
               workspace_id:leased.workspace_id,actor_user_id:leased.actor_user_id,configuration_digest:digest(configuration),model:configuration.model,shape_digest})});
           selection=plan.selected_inputs;shapes=plan.calibration_shapes;
           calibrated=createSignalListeningCalibratedProviderV1({plan,...(options.provider?{factory:()=>({...options.provider!,close:undefined})}:{})});
           calibrated.prepareRequests(selection.map(input=>buildSignalListeningJevRequestV1(input,configuration)));
-          return{provider:calibrated.provider,execution:plan.execution,max_windows:1};
+          return{provider:calibrated.provider,execution:plan.execution,...(plan.warmup?{max_windows:1}:{continuous_windows:true})};
         }catch(error){
           const knownConfiguration=error instanceof Error&&[
             'listening_configuration_invalid','listening_identity_invalid','jev_stream_runtime_configuration_invalid',

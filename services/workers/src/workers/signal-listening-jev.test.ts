@@ -116,7 +116,10 @@ test('heterogeneous pending batches warm their extremes once then remain paralle
  corpus[32]!.text='x'.repeat(600);corpus[70]!.text='x'.repeat(1000);corpus[90]!.text='a';
  const cached=Array.from({length:3},()=>({...sample,root_id:randomUUID(),text:'cached root must not be sent'}));
  const pending=new Map<string,SignalListeningInputV1>(corpus.map(input=>[input.root_id,input]));
- f.store.inputs=async()=>[...pending.values()];
+ let boundedReads=0;
+ f.store.inputs=async(_run,bounds)=>{assert.ok(bounds,'every native hydration must receive a byte and row budget');boundedReads++;
+  assert.ok(bounds.max_working_bytes>0&&bounds.max_working_bytes<=execution.max_buffered_bytes);
+  return[...pending.values()].filter(input=>!f.calls.some(call=>call.inputs.some(sent=>sent.root_id===input.root_id))).slice(0,bounds.max_rows);};
  const apply=f.store.apply;f.store.apply=async(run,rows)=>{await apply(run,rows);for(const row of rows)pending.delete(row.call.inputs[0]!.root_id);};
  f.store.finish=async()=>{const status=pending.size?'running' as const:'completed' as const;f.run.status=status;return status;};
  const bytes=(request:JevRequestV1)=>Buffer.byteLength(JSON.stringify(request)),normalBytes=bytes(buildSignalListeningJevRequestV1(sample,configuration));
@@ -132,7 +135,7 @@ test('heterogeneous pending batches warm their extremes once then remain paralle
  process.env.NOISIA_SIGNAL_LISTENING_ENABLED='true';process.env.NOISIA_JEV_PROVIDER_ENABLED='true';
  try{
   while(pending.size){peak=0;const before=f.requests.length;
-   await signalListeningJevJobV1(f.run.id,{database,store:f.store,provider:f.provider,execution:{...execution,window_size:40},preflight:async()=>{},
+   await signalListeningJevJobV1(f.run.id,{database,store:f.store,provider:f.provider,execution:{...execution,window_size:200},preflight:async()=>{},
     calibration:{load:async()=>profile,derive:async()=>{
      derivations++;const receipts=f.calls.filter(call=>call.status==='settled'&&call.results_applied).slice(-32);assert.equal(receipts.length,32);
      const sizes=receipts.map(call=>bytes(call.request as JevRequestV1));
@@ -141,7 +144,7 @@ test('heterogeneous pending batches warm their extremes once then remain paralle
     }}});
    peaks.push(peak);windows.push(f.requests.slice(before));assert.ok(windows.length<10,'bounded progress must finish rather than warming covered prefixes forever');
   }
-  assert.equal(windows[0]!.length,32);assert.equal(peaks[0],1);
+  assert.equal(windows[0]!.length,32);assert.equal(peaks[0],1);assert.ok(boundedReads>=2);
   for(const index of [32,70,90])assert.ok(windows[0]!.some(request=>request.state===corpus[index]!.text));
   assert.ok(peaks.slice(1).every(value=>value>1));assert.equal(derivations,1);assert.equal(f.requests.length,corpus.length);
   assert.equal(f.calls.length,corpus.length);assert.equal(new Set(f.calls.map(call=>call.inputs[0]!.root_id)).size,corpus.length);
@@ -184,4 +187,46 @@ for(const withUnknownWithoutRaw of [false,true])test(`recovery precedes an outli
   if(withUnknownWithoutRaw){assert.equal(f.calls[39]!.status,'unknown');assert.equal(f.calls[39]!.results_applied,false);assert.equal(f.run.error_code,'labeling_outcome_unknown');}
   else assert.equal(f.run.error_code,null);
  }finally{if(previous===undefined)delete process.env.NOISIA_SIGNAL_LISTENING_ENABLED;else process.env.NOISIA_SIGNAL_LISTENING_ENABLED=previous;}
+});
+
+test('automatic measured listening stops before reserving or sending the next page of an unseen question shape',async()=>{
+ const configuration=signalListeningBaseTemplateV1({category:'tea',lexicon_terms:['tea']}),f=fixture(configuration,[['voice','promotion']]);
+ const sample=(await f.store.inputs(f.run))[0]!,shape=signalListeningCalibrationShapeV1(configuration,sample);
+ const corpus=[{...sample,root_id:randomUUID()},{...sample,root_id:randomUUID()},
+  {...sample,root_id:randomUUID(),question_keys:['promotion'],question_digests:{promotion:sample.question_digests.promotion!}}];
+ f.store.inputs=async()=>corpus.filter(input=>!f.calls.some(call=>call.inputs.some(sent=>sent.root_id===input.root_id))).slice(0,2);
+ f.store.finish=async()=>f.calls.length===3?'completed':'running';
+ const bytes=Buffer.byteLength(JSON.stringify(buildSignalListeningJevRequestV1(sample,configuration))),scope={workspace_id:f.run.workspace_id,
+  configuration_digest:digest(configuration),model:shape.model,compiler_version:shape.compiler_version,phase:shape.phase,shape_digest:shape.shape_digest};
+ const profile:SignalListeningCalibrationProfileV1={scope,scope_digest:digest(scope),source_digest:digest('measured'),source_call_ids:Array.from({length:32},()=>randomUUID()),
+  source_run_id:f.run.id,request_min_bytes:bytes,request_max_bytes:bytes+100,max_input_tokens_per_byte:.25,sample_count:32,status:'measured'};
+ const database={async query(sql:string){if(sql.includes('SELECT run.workspace_id'))return{rows:[{workspace_id:f.run.workspace_id,labeler_digest:f.run.labeler_digest,recovery_only:false}]};
+  if(sql.includes('signal_workspace_features'))return{rows:[{enabled:true}]};throw Error('unexpected query');
+ }}as NonNullable<Parameters<typeof signalListeningJevJobV1>[1]>['database'];
+ const names=['NOISIA_SIGNAL_LISTENING_ENABLED','NOISIA_JEV_PROVIDER_ENABLED']as const,previous=names.map(key=>process.env[key]);
+ try{
+  for(const name of names)process.env[name]='true';
+  const result=await signalListeningJevJobV1(f.run.id,{database,store:f.store,provider:f.provider,execution:{...execution,window_size:2},
+   preflight:async()=>{},calibration:{load:async()=>profile,derive:async()=>{throw Error('measured continuity cannot derive a warmup');}}});
+  assert.equal(result.status,'running');assert.equal(f.requests.length,2);assert.equal(f.calls.length,2);
+  assert.ok(f.calls.every(call=>call.inputs[0]!.root_id!==corpus[2]!.root_id));
+  assert.ok(f.requests.every(request=>Object.keys(request.questions).sort().join(',')==='promotion,voice'));
+ }finally{names.forEach((key,i)=>{if(previous[i]===undefined)delete process.env[key];else process.env[key]=previous[i];});}
+});
+
+
+test('prepared selection exceeding retained request and response memory reserves and sends nothing',async()=>{
+ const configuration=signalListeningBaseTemplateV1({category:'tea',lexicon_terms:['tea']}),f=fixture(configuration,[['voice','promotion']]);
+ const sample=(await f.store.inputs(f.run))[0]!;let reads=0,reserves=0;
+ f.store.inputs=async(_run,bounds)=>{reads++;assert.ok(bounds);assert.equal(bounds.max_working_bytes,512*1024);
+  return[{...sample,text:'tea '.repeat(8000)}];};
+ f.store.reserve=async()=>{reserves++;throw Error('must not reserve oversized initial selection');};
+ const database={query:async(sql:string)=>({rows:sql.includes('signal_workspace_features')?[{enabled:true}]:[{workspace_id:f.run.workspace_id,labeler_digest:f.run.labeler_digest,recovery_only:false}]})}as NonNullable<Parameters<typeof signalListeningJevJobV1>[1]>['database'];
+ const names=['NOISIA_SIGNAL_LISTENING_ENABLED','NOISIA_JEV_PROVIDER_ENABLED']as const,previous=names.map(key=>process.env[key]);
+ try{
+  for(const name of names)process.env[name]='true';
+  await assert.rejects(signalListeningJevJobV1(f.run.id,{database,store:f.store,provider:f.provider,
+   execution:{...execution,max_buffered_bytes:512*1024},preflight:async()=>{},calibration:{load:async()=>null,derive:async()=>null}}),/listening_selection_memory_bound/);
+  assert.equal(reads,1);assert.equal(reserves,0);assert.equal(f.requests.length,0);
+ }finally{names.forEach((key,i)=>{if(previous[i]===undefined)delete process.env[key];else process.env[key]=previous[i];});}
 });
