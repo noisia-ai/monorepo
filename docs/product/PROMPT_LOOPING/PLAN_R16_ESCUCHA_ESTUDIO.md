@@ -12,6 +12,8 @@ No hay aprobaciones humanas intermedias en los procesos de análisis: Sonnet 4.6
 
 ## Progreso
 
+- H1 nuevo ensayo completo 35934893: 32,768 raíces y sus recibos íntegros, 188 páginas, 58.29 s y 562.15 raíces/s; rechazado. El mínimo por ventana siguió en cero y 158 latencias observadas del simulador superaron 500 ms. La preparación sintética separada tardó 660.92 s. El perfil registra páginas de mediana 179/max256, apply 33.69 s y markSubmitting 22.59 s, con duraciones solapadas. 4fa57f4d elimina un perfil menor del harness y usa la factory del runtime con sus defaults de página 1,024/250 ms y el mismo sobre de memoria de 512 MiB. Los trece tests del harness, tipado aislado de scripts y tipado/lint del monorepo pasan; falta revisión y otra medición completa sin relajar criterios.
+
 - H1 lectura a escala: la matriz exacta de 13cad16a pasó 8/8, pero su ensayo de 32,768 se detuvo al identificar un plan patológico del nuevo lector de metadatos, con cero HTTP en vuelo. Se conservaron las 32,768 raíces, 23,114 resultados liquidados y las reservas restantes, sin presentarlo como ensayo completo ni aceptado. a59fa664 sella primero la página de IDs y después calcula tamaños/hidrata por identidad. Sobre el mismo snapshot, 1,024 IDs y pesos fueron idénticos: 69.19 s antes y 0.36 s después. 0f8836a8 restaura la observación del test con marcador de hidratación y control positivo. Cuatro pruebas dedicadas sin omisiones, tipado/lint 11/11 y revisión independiente sin P0/P1/P2. Se repetirá matriz y capacidad con fuente nueva congelada.
 
 - H1 candidato integrado: rama independiente con ventanas continuas, parada de admisión tras respuesta inválida, locks compartidos de crudos con orden consistente, lectura inicial y posterior limitada por bytes y corrección 0303 del lookup heredado. Tipado/lint 11/11, 62 focales, workers 1,023 aprobadas/44 omisiones por entorno y diez pruebas PostgreSQL dedicadas sin omisiones sobre 277 migraciones. El P2 de recorrido completo del corpus al comprobar contexto obsoleto se corrigió con el mismo digest histórico y sin calcular raíces afectadas; revisión final en curso. Matriz exacta y ensayo completo de 32,768 raíces todavía pendientes; no hay aceptación de velocidad.
@@ -122,6 +124,8 @@ Recibo: separar Voyage/JEV por raíz de Claude por número de grupos y vueltas; 
 
 ## Sorpresas y descubrimientos
 
+- Corregir el plan del lector no bastó para alcanzar capacidad: el siguiente ensayo íntegro quedó en 562/s. El harness conservaba páginas de 256 y 100 ms, distintas de los defaults reales 1,024/250 ms. Las 188 páginas pequeñas aumentaron los pasos de persistencia y aplicación. Se alinea la configuración con la factory compartida; la hipótesis se comprobará con otro ensayo, sin darla por probada.
+
 - Limitar filas al final de una consulta no limita el trabajo previo del plan: el lector de metadatos materializaba unas veinte mil reservas y recorría treinta y dos mil menciones antes de resolver identidad. Seleccionar los IDs en un CTE materializado, con predicados constantes del owner y búsquedas parametrizadas posteriores, conserva la salida y elimina ese cruce.
 - Al anteponer WITH a la consulta de hidratación, un detector del test basado en startsWith dejó de observarla. El revisor encontró el falso verde: ahora un marcador específico y una lectura válida de control prueban que el contador realmente funciona antes de aceptar ausencia de hidrataciones.
 
@@ -168,6 +172,8 @@ Recibo: separar Voyage/JEV por raíz de Claude por número de grupos y vueltas; 
 - El promedio del piloto completo incluye una etapa editorial que no escala por raíz. Multiplicarlo linealmente daba USD 205.81/millón; mantener explícitamente los grupos y una vuelta de referencia produce USD 114.035250. Ambos cálculos parten del mismo recibo, cuyo uso histórico permanece USD 17.280463.
 
 ## Registro de decisiones
+
+- 2026-11-15: rechazar explícitamente 35934893 aunque completó toda la población. Usar la configuración productiva compartida en lugar de copiar un perfil de batching menor en el harness; mantener latencias, memoria, integridad y throughput exigidos. Conservar por separado tiempos de preparación sintética y de clasificación, sin sumar spans solapados.
 
 - 2026-11-15: detener expresamente el ensayo 13cad16a por un defecto demostrado del plan SQL, no por una demora sin explicación. Verificar el PID y su directorio, cero solicitudes físicas en curso y conservar todas las bases, crudos y llamadas; sellar el recibo de parada. No reutilizar esa población para otro intento: dump con SHA, renombrado y base vacía nueva.
 - 2026-11-15: validar la corrección a escala en sólo lectura sobre el mismo snapshot anterior, comparando exactamente IDs y pesos antes/después. La caída de tiempo de una consulta no sustituye el benchmark integral de capacidad.
