@@ -22,20 +22,39 @@ async function owner(c:Pick<PoolClient,'query'>,run:LabelingRunV1,current=true){
  await assertMassLabelingMapCurrentV1(c,run.workspace_id,row.map_id);return row;
 }
 const population=`signal_listening_population_v1($1::uuid,$2::uuid,$3::uuid,$4::text)`;
-const pendingScope=`p.candidate AND p.scope_state='included' AND p.answer IS NULL
- AND NOT signal_listening_human_decision_exists_v1($1::uuid,$2::uuid,$3::uuid,p.root_id,p.input_digest,$4::text,p.question_digest) AND NOT EXISTS(SELECT 1 FROM signal_listening_call_questions sent
+const unansweredScope=`p.candidate AND p.scope_state='included' AND p.answer IS NULL
+ AND NOT signal_listening_human_decision_exists_v1($1::uuid,$2::uuid,$3::uuid,p.root_id,p.input_digest,$4::text,p.question_digest)`;
+const pendingScope=`${unansweredScope} AND NOT EXISTS(SELECT 1 FROM signal_listening_call_questions sent
  WHERE sent.run_id=$5 AND sent.workspace_id=$1 AND sent.root_id=p.root_id AND sent.question_digest=p.question_digest)`;
 async function inputMetadata(c:Pick<PoolClient,'query'>,run:LabelingRunV1,limit:number){
  const o=await owner(c,run,false);
  if(await latestConfigurationId(c,run.workspace_id)!==o.configuration_id)return{o,rows:[]};
  const fixed=Buffer.byteLength(JSON.stringify(run.identity))+Buffer.byteLength(JSON.stringify(run.context))+Buffer.byteLength(JSON.stringify(config(run)));
- const rows=(await c.query<{root_id:string;working_bytes:string}>(`/* labeling_listening_input_metadata_v1 */ WITH pending AS MATERIALIZED(
-  SELECT p.root_id,p.question_key,octet_length(p.body)::bigint text_bytes,octet_length(p.wire::text)::bigint wire_bytes,
-   (octet_length(p.question_key)+octet_length(p.question_digest)+octet_length(COALESCE(p.scope_basis,'')))::bigint question_metadata_bytes,
-   octet_length(COALESCE(p.platform,''))::bigint platform_bytes,row_number() OVER(PARTITION BY p.root_id ORDER BY p.question_key) n
-  FROM ${population} p WHERE ${pendingScope})
-  SELECT root_id,(4::bigint*(12*max(text_bytes)+2*sum(wire_bytes)+6*sum(question_metadata_bytes)+6*max(platform_bytes)+$7::bigint+2048)+8192)::text working_bytes
-  FROM pending WHERE n<=256 GROUP BY root_id ORDER BY root_id LIMIT $6`,[run.workspace_id,o.configuration_id,o.map_id,run.entity_context_digest,run.id,limit,fixed])).rows;
+ // This cursor belongs only to the caller's RR snapshot. Never retain it on
+ // the run: applying base answers may enable an earlier consumer root next TX.
+ const rows:Array<{root_id:string;working_bytes:string}>=[];
+ let cursor:string|null=null;
+ const sliceSize=Math.min(4096,Math.max(64,limit));
+ while(rows.length<limit){
+  const ids:string[]=(await c.query<{root_id:string}>(`/* labeling_listening_root_page_v1 */
+   SELECT root_id FROM signal_mass_labeling_items WHERE workspace_id=$1 AND map_id=$2
+    ${cursor?'AND root_id>$4::uuid':''} ORDER BY root_id LIMIT $3`,
+   [run.workspace_id,o.map_id,sliceSize,...(cursor?[cursor]:[])])).rows.map(row=>row.root_id);
+  if(!ids.length)break;
+  const page=(await c.query<{root_id:string;working_bytes:string}>(`/* labeling_listening_input_metadata_v1 */ WITH pending AS MATERIALIZED(
+   SELECT p.root_id,p.question_key,octet_length(p.body)::bigint text_bytes,octet_length(p.wire::text)::bigint wire_bytes,
+    (octet_length(p.question_key)+octet_length(p.question_digest)+octet_length(COALESCE(p.scope_basis,'')))::bigint question_metadata_bytes,
+    octet_length(COALESCE(p.platform,''))::bigint platform_bytes,row_number() OVER(PARTITION BY p.root_id ORDER BY p.question_key) n
+   FROM signal_listening_population_roots_v1($1::uuid,$2::uuid,$3::uuid,$4::text,$8::uuid[],'llm-processing') p WHERE ${pendingScope})
+   SELECT root_id,(4::bigint*(12*max(text_bytes)+2*sum(wire_bytes)+6*sum(question_metadata_bytes)+6*max(platform_bytes)+$7::bigint+2048)+8192)::text working_bytes
+   FROM pending WHERE n<=256 GROUP BY root_id ORDER BY root_id LIMIT $6`,
+   [run.workspace_id,o.configuration_id,o.map_id,run.entity_context_digest,run.id,limit-rows.length,fixed,ids])).rows;
+  rows.push(...page);cursor=ids.at(-1)!;
+  // An excluded/awaiting-base/reserved slice is not exhaustion. Only the
+  // source ID page can establish that there are no later roots in this TX.
+  if(ids.length<sliceSize)break;
+ }
+
  return{o,rows};
 }
 async function inputs(c:Pick<PoolClient,'query'>,run:LabelingRunV1,limit:number,bounds?:LabelingInputBoundsV1):Promise<SignalListeningInputV1[]>{
@@ -56,6 +75,18 @@ async function inputs(c:Pick<PoolClient,'query'>,run:LabelingRunV1,limit:number,
  return rows.map(row=>({root_id:row.root_id,input_digest:row.input_digest,text:row.body,title:null,platform:row.platform,
   content_type:null,author:null,published_at:new Date(row.published_at).toISOString(),language:null,map_id:o.map_id,
   configuration_digest:o.configuration_digest,question_keys:row.question_keys,question_digests:row.question_digests,scope_basis:row.scope_basis}));
+}
+async function pendingAndAvailable(c:Pick<PoolClient,'query'>,run:LabelingRunV1):Promise<{pending:number;available:boolean}>{
+ const o=await owner(c,run,false);
+ const row=(await c.query<{pending:number;available:boolean}>(`/* labeling_listening_pending_available_v1 */
+  WITH pending AS MATERIALIZED(
+   SELECT p.root_id,p.question_digest FROM ${population} p WHERE ${unansweredScope}
+    AND $2::uuid=(SELECT id FROM signal_listening_configurations WHERE workspace_id=$1 AND state='published' ORDER BY revision DESC LIMIT 1)
+  ) SELECT count(DISTINCT root_id)::int pending,EXISTS(
+   SELECT 1 FROM pending p WHERE NOT EXISTS(SELECT 1 FROM signal_listening_call_questions sent
+    WHERE sent.run_id=$5 AND sent.workspace_id=$1 AND sent.root_id=p.root_id AND sent.question_digest=p.question_digest)
+  ) available FROM pending`,[run.workspace_id,o.configuration_id,o.map_id,run.entity_context_digest,run.id])).rows[0]!;
+ return row;
 }
 export async function requestSignalListeningV1(args:SignalListeningAccessV1&{configuration_id:string;map_id:string;
  idempotency_key:string;cap_micro_usd:number;provider_available:boolean;preparation_id?:string;initial_discovery?:boolean}){
@@ -119,13 +150,8 @@ export function createSignalListeningStoreV1(options:Omit<Parameters<typeof crea
    const configuration=config(run);
    for(const call of calls){if(call.inputs.length!==1||digest(call.request)!==digest(buildSignalListeningJevRequestV1(call.inputs[0]!,configuration)))fail('listening_request_invalid');}
   },
-  pending:async(c,run)=>{
-   const o=await owner(c,run,false);
-   if((await loadSignalListeningConfigurationWithClientV1(c,run.workspace_id))?.id!==o.configuration_id)return 0;
-   return (await c.query<{count:number}>(`SELECT count(DISTINCT root_id)::int count FROM ${population} p
-    WHERE candidate AND scope_state='included' AND answer IS NULL
-     AND NOT signal_listening_human_decision_exists_v1($1::uuid,$2::uuid,$3::uuid,p.root_id,p.input_digest,$4::text,p.question_digest)`,[run.workspace_id,o.configuration_id,o.map_id,run.entity_context_digest])).rows[0]!.count;
-  },
+  pending:async(c,run)=>(await pendingAndAvailable(c,run)).pending,
+  pending_and_available:pendingAndAvailable,
   write:async(c,run,pages)=>{
    await authorizeSignalListeningV1(c,{workspace_id:run.workspace_id,actor_user_id:run.actor_user_id},'process');
    // Paid receipts retain their frozen semantic identity when another
