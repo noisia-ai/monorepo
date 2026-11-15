@@ -88,7 +88,7 @@ export async function runR16ListeningBenchmarkV1(args:{arm:R16ListeningArmV1;obj
   const capacity=summarizeR16ListeningCapacityV1({wall_elapsed_ms,resolved_roots:resolved.size,commits,latency_ms});
   const capacity_gates={...capacity.gates,
    serving:metrics.every(m=>m.counts.pending===0&&m.counts.awaiting_base===0&&m.distribution.length>0&&m.trend.length>0
-    &&(args.arm!=='discovered_four'||m.topic_cross.length>0))};
+    &&m.topic_cross.length>0)};
   assert.equal((await captureR16SourceProvenanceV1(repo)).source_tree_sha256,source_provenance.source_tree_sha256,'source changed during measurement');
   return{contract_version:'r16-listening-capacity-measurement-v1',acceptance:'pending_native_fault_and_census_validation',
    capacity_gates,capacity,source_provenance,job_spans,warmup_wall_ms:job_spans.filter(span=>span.warmup).reduce((sum,span)=>sum+span.end_ms-span.start_ms,0),workload,root_census_digest:digest([...expected].sort()),cold_elapsed_ms:performance.now()-coldStart,wall_elapsed_ms,classification_wall_elapsed_ms,

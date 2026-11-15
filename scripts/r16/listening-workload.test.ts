@@ -7,7 +7,7 @@ test('preregistered R16 workloads bind generic Listening identity and consumer s
  const a=r16ListeningWorkloadV1('defined_consumer_second_pass'),b=r16ListeningWorkloadV1('discovered_four');
  for(const w of[a,b]){validateSignalListeningConfigurationV1(w.configuration);assert.equal(w.configuration_digest,digest(w.configuration));
  assert.equal(w.preregistration_digest,digest(registration));assert.equal(w.configuration.model,'jev-1.13.0');
- assert.ok(w.configuration.questions.filter(q=>q.origin==='brand_os').every(q=>q.scope==='consumer_category'));
+ assert.ok(w.configuration.questions.filter(q=>q.origin==='brand_os').every(q=>q.scope==='consumer_category'&&q.type==='noul'&&q.topic_source==='defined'&&q.human_locked));
  assert.ok(!w.question_keys.includes('trigger_barrier'));}
  assert.equal(a.question_keys.length,4);assert.equal(b.question_keys.length,8);
  assert.equal(b.configuration.questions.filter(q=>'topic_source'in q&&q.topic_source==='discovered').length,4);

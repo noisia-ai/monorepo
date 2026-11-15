@@ -29,10 +29,10 @@ export function createR16ListeningNativeFixtureV1(options:{
     const cfg=await saveSignalListeningConfigurationV1({...access,expected_revision:0,provenance:'human',configuration:context.workload.configuration});
     const prepared=await prepareSignalListeningV1({...access,configuration_id:cfg.id,map_id:ctx.map_id,
      idempotency_key:`r16-listening-benchmark:${randomUUID()}`,cap_micro_usd:20000000,provider_available:true,prototype_provider_available:false});
-    assert.ok(prepared.listening_run_id,'native preparation must admit a Listening run; no handwritten admission');
+    assert.ok(prepared.status==='labeling'&&prepared.run_id,'native preparation must admit a Listening run; no handwritten admission');
     const binding={...access,configuration_id:cfg.id,map_id:ctx.map_id,question_key:'voice'};
-    const census=await options.loadNativeCensus({...binding,run_id:prepared.listening_run_id});
-    result={value:await run({...census,access:binding,run_id:prepared.listening_run_id})};
+    const census=await options.loadNativeCensus({...binding,run_id:prepared.run_id});
+    result={value:await run({...census,access:binding,run_id:prepared.run_id})};
    }}});
   assert.ok(result,'native fixture callback did not run');return result.value;
  };

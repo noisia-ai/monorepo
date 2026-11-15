@@ -5,7 +5,7 @@ The source commit/tree, configuration, policy, root census, model and this contr
 must be frozen before starting either arm. No provider network or paid stage is allowed.
 
 The primary arm contains 32,768 synthetic corpus roots and the exact published
-Brand OS configuration: voice, promotion, and two versioned defined questions with
+Brand OS configuration: voice, promotion, and two versioned defined NOUL topics (Brand OS, human locked) with
 consumer_category scope. A second native pass resolves the defined questions only
 after the original base answers establish eligibility. A separate optional arm adds
 four discovered topic questions through their native owner/prototypes. That arm is
@@ -35,7 +35,7 @@ must bind this exact source/policy/system identifier and Listening identity. Leg
 Mass fault artifacts are regression evidence, not acceptance for this arm.
 
 Serving uses readSignalListeningQuestionMetricsV1 for every question and checks
-pending/awaiting_base zero, distribution, trend and topic cross (where a topic exists).
+pending/awaiting_base zero, distribution, trend and nonempty topic cross.
 Native census must reconcile eligible/excluded/pending question digests and fully
 resolved DISTINCT roots with original root IDs. No synthetic projection substitutes
 for native serving or proves native admission. Until an approved R16 native fixture,

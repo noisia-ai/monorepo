@@ -18,10 +18,10 @@ export type R16ListeningArmV1='defined_consumer_second_pass'|'discovered_four';
 export function r16ListeningWorkloadV1(arm:R16ListeningArmV1){
   const configuration=signalListeningBaseTemplateV1({category:'synthetic fixture category',lexicon_terms:['synthetic']});
   const defined:SignalListeningConfigurationV1['questions']=[
-    {key:'occasion_v1',type:'choice',text:'When is the synthetic item consumed?',scope:'consumer_category',origin:'brand_os',human_locked:true,
-      options:[{key:'day',definition:'Daytime consumption'},{key:'night',definition:'Nighttime consumption'}]},
-    {key:'quality_v1',type:'noul',text:'Is synthetic item quality evaluated?',scope:'consumer_category',origin:'brand_os',human_locked:true,
-      positive:'An explicit evaluation of synthetic item quality',negative:'No synthetic item quality evaluation'},
+    {key:'bicycle_repairs_v1',type:'noul',text:'Does the text discuss synthetic bicycle repairs?',scope:'consumer_category',origin:'brand_os',human_locked:true,topic_source:'defined',
+      positive:'Synthetic bicycle repairs are discussed',negative:'Synthetic bicycle repairs are not discussed'},
+    {key:'bicycle_maintenance_v1',type:'noul',text:'Does the text discuss synthetic bicycle maintenance?',scope:'consumer_category',origin:'brand_os',human_locked:true,topic_source:'defined',
+      positive:'Synthetic bicycle maintenance is discussed',negative:'Synthetic bicycle maintenance is not discussed'},
   ];
   configuration.questions.push(...defined);
   if(arm==='discovered_four')for(let i=1;i<=4;i++)configuration.questions.push({key:`discovered_${i}_v1`,type:'noul',
