@@ -1,0 +1,66 @@
+name: R16 cold Listening plan diagnostic
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/r16-cold-plan-diagnostic.yml'
+      - 'scripts/r16-diagnostics/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  cold-plan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      NODE_OPTIONS: --max-old-space-size=4096
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Enable pinned pnpm
+        run: corepack enable && corepack prepare pnpm@10.33.2 --activate
+      - name: Install dependencies
+        run: corepack pnpm install --frozen-lockfile
+      - name: Diagnose first Listening quote in a new isolated lab
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "${GITHUB_ACTIONS:-}" = true
+          if docker inspect r16-benchmark-pg17 >/dev/null 2>&1 || docker volume inspect r16bench-benchmark-pg17_postgres-data >/dev/null 2>&1; then
+            echo '::error::Cold diagnostic requires a new independent container and volume'
+            exit 1
+          fi
+          export R16BENCH_RUN_ID=benchmark-pg17
+          export R16BENCH_SERVICES=postgres,redis
+          scripts/r16/lab-up.sh
+          trap 'scripts/r16/lab-down.sh' EXIT
+          set -a
+          source .data/piloto-masivo/r16/labs/benchmark-pg17/connection.env
+          set +a
+          export NOISIA_R16_LOCAL_PG_LAB=r16-benchmark-pg17
+          export DATABASE_SSL=false
+          export NOISIA_DB_SMOKE_ALLOW_REMOTE=false
+          export NOISIA_DB_SMOKE_RESET_SCHEMA=true
+          export NOISIA_DB_SMOKE_EMULATE_SUPABASE_ROLES=true
+          export NOISIA_R16_NATIVE_FIXTURE_PG=true
+          export NOISIA_SIGNAL_LISTENING_ENABLED=true
+          unset ANTHROPIC_API_KEY TYPESAFE_API_KEY VOYAGE_API_KEY
+          corepack pnpm --filter @noisia/db db:smoke:migrations
+          corepack pnpm exec tsx --test scripts/r16-diagnostics/cold-listening-plan-diagnostic.test.mts | tee r16-cold-plan-contracts.tap
+          if ! grep -qx '# skipped 0' r16-cold-plan-contracts.tap; then
+            echo '::error::Cold diagnostic contract tests were skipped'
+            exit 1
+          fi
+          corepack pnpm exec tsx scripts/r16-diagnostics/cold-listening-plan-diagnostic.mts --roots 1002 --output-directory .data/piloto-masivo/r16
+      - name: Retain synthetic diagnostic evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: r16-cold-listening-plan-diagnostic
+          path: .data/piloto-masivo/r16/cold-listening-plan-diagnostic-*/*.json
+          if-no-files-found: warn
+          retention-days: 14
