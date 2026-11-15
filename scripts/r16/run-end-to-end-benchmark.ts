@@ -14,6 +14,7 @@ import { deterministicR16LatencyV1, createSyntheticJevFetchV1 } from "./syntheti
 import { R16BenchmarkRecorderV1 } from "./benchmark-recorder";
 import { summarizeR16BenchmarkV1, type R16BenchmarkEvidenceV1, type R16PhaseV1 } from "./benchmark-contract";
 import { captureR16SourceProvenanceV1, r16PolicyConfigurationDigestV1 } from "./source-provenance";
+import { R16QueryProfilerV1 } from "./query-profiler";
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const privateRoot = resolve(repo, ".data/piloto-masivo/r16");
@@ -73,26 +74,13 @@ const fetchWithConcurrency: typeof fetch = async (input, init) => {
 type QueryResult = { rows: Array<Record<string, unknown>>; rowCount?: number | null };
 type DbLike = { query: (...args: any[]) => Promise<QueryResult>; connect?: () => Promise<any> };
 const sqlMetrics = { queries: 0, total_ms: 0, max_ms: 0 };
-function instrumentDatabase<T extends DbLike>(database: T): T {
-  const wrapQuery = (query: (...args: any[]) => Promise<QueryResult>) => async (...args: any[]) => {
-    const start = performance.now(), start_ms = recorder.elapsedMs();
-    try { return await query(...args); }
-    finally { const elapsed = performance.now() - start; sqlMetrics.queries++; sqlMetrics.total_ms += elapsed; sqlMetrics.max_ms = Math.max(sqlMetrics.max_ms, elapsed);
-      spans.push({ phase: "postgres", start_ms, end_ms: recorder.elapsedMs(), roots: 0 }); }
-  };
-  return new Proxy(database, { get(target, property, receiver) {
-    if (property === "query") return wrapQuery(target.query.bind(target));
-    if (property === "connect" && target.connect) return async () => {
-      const client = await target.connect!();
-      return new Proxy(client, { get(clientTarget, clientProperty, clientReceiver) {
-        if (clientProperty === "query") return wrapQuery(clientTarget.query.bind(clientTarget));
-        const value = Reflect.get(clientTarget, clientProperty, clientReceiver);
-        return typeof value === "function" ? value.bind(clientTarget) : value;
-      } });
-    };
-    return Reflect.get(target, property, receiver);
-  } });
-}
+const queryProfiler = new R16QueryProfilerV1();
+const postgresDatabase = <T extends DbLike>(database: T): T => queryProfiler.wrapDatabase(database,
+  ({ start_ms, end_ms }) => {
+    const elapsed = end_ms - start_ms;
+    sqlMetrics.queries++; sqlMetrics.total_ms += elapsed; sqlMetrics.max_ms = Math.max(sqlMetrics.max_ms, elapsed);
+    spans.push({ phase: "postgres", start_ms, end_ms, roots: 0 });
+  }, () => recorder.elapsedMs());
 
 let sampleTimer: NodeJS.Timeout | undefined;
 let sustainedStartMs = 5_000;
@@ -135,7 +123,7 @@ try {
       sustainedStartMs = 5_000;
       streamMetrics = { in_flight: 0, reserved_working_bytes: 0, buffered_responses: 0, active_flushes: 0 };
       recorder.observeStream(streamMetrics);
-      sampleDb = instrumentDatabase(context.database as unknown as DbLike);
+      sampleDb = postgresDatabase(context.database as unknown as DbLike);
       sampleRunId = context.run_id;
       const db = sampleDb;
       const identity = await db.query(`SELECT current_database() database_name,version() verified_version,
@@ -222,17 +210,9 @@ try {
         service_role_key: "r16-synthetic-local-key", bucket: "private-r16", timeout_ms: 120_000, fetch: storageFetch });
       const baseStore = createMassLabelingRuntimeStoreV1(db as never,
         { product_v2: true, execution, storage: httpStorage });
-      const store = new Proxy(baseStore, { get(target, property, receiver) {
-        if (property === "apply") return async (run: Parameters<typeof target.apply>[0],
-          results: Parameters<typeof target.apply>[1]) => {
-          const start_ms = recorder.elapsedMs();
-          const result = await target.apply(run, results);
-          spans.push({ phase: "signal", start_ms, end_ms: recorder.elapsedMs(), roots: results.length });
-          return result;
-        };
-        const value = Reflect.get(target, property, receiver);
-        return typeof value === "function" ? value.bind(target) : value;
-      } });
+      const store = queryProfiler.wrapStore(baseStore as unknown as Record<string, unknown>,
+        ({ start_ms, end_ms, roots }) => spans.push({ phase: "signal", start_ms, end_ms, roots }),
+        () => recorder.elapsedMs()) as typeof baseStore;
       const before = recorder.elapsedMs();
       let outcome = await processMassLabelingProductPageV2({ run_id: context.run_id, database: db as never,
         store, provider, execution, observe_stream: observeStream });
@@ -321,12 +301,13 @@ try {
         fixture_allow_benchmark_population: true,
         synthetic_provider_limits: { requests_per_second: 2_000, input_tokens_per_second: 10_000_000 },
         evidence: { ...evidence, phases: phaseSpans }, summary: finalSummary,
-        measurement: { sql: { ...sqlMetrics }, storage: disk, max_in_flight_observed: maxInFlight } }, null, 2)}\n`, { mode: 0o600, flag: "wx" });
+        measurement: { sql: { ...sqlMetrics }, sql_profile: queryProfiler.snapshot(), storage: disk,
+          max_in_flight_observed: maxInFlight } }, null, 2)}\n`, { mode: 0o600, flag: "wx" });
       process.stdout.write(`${JSON.stringify({ evidence_path_private: output, fixture_setup_ms: fixtureSetupMs,
         fixture_import_batch_size: 512, fixture_preparation_page_size: 100,
         fixture_embedding_page_limit: Math.ceil(rootCount / 128) + 8,
         fixture_allow_benchmark_population: true,
-        summary: finalSummary, sql: sqlMetrics, storage: disk,
+        summary: finalSummary, sql: sqlMetrics, sql_profile: queryProfiler.snapshot(), storage: disk,
         max_in_flight_observed: maxInFlight })}\n`);
       if (!finalSummary.accepted) process.exitCode = 1;
     },
