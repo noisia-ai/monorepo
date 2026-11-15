@@ -29,9 +29,9 @@ export default async function ReportPage({ params }: { params: Promise<Params> }
   const report = getInsightReport(slug);
   if (!report) notFound();
   const id = `/insights/reportes/${report.slug}`;
-  const jsonLd = pageGraph(id, locale, {
+  const jsonLd = await pageGraph(id, locale, {
     nodes: [
-      articleNode(id, locale, {
+      await articleNode(id, locale, {
         type: ["Article", "Report"],
         headline: report.meta.study,
         description: report.meta.subtitle,

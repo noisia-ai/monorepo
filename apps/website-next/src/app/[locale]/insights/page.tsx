@@ -24,7 +24,7 @@ export default async function InsightsPage({
   const stories = await getFeedStories(locale);
   const collection = query.coleccion ?? query.collection;
   const industry = query.industria ?? query.industry;
-  const jsonLd = pageGraph("/insights", locale, { type: "CollectionPage", nodes: [itemListNode("/insights", locale, childItems("/insights", locale))] });
+  const jsonLd = await pageGraph("/insights", locale, { type: "CollectionPage", nodes: [await itemListNode("/insights", locale, await childItems("/insights", locale))] });
   return (
     <>
       <Feed

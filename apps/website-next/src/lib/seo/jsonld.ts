@@ -94,8 +94,8 @@ type Options = {
 };
 
 /** The @graph of a registered page. `id` is its Spanish path. */
-export function pageGraph(id: string, locale: string, options: Options = {}): object | null {
-  const page = seoPage(id);
+export async function pageGraph(id: string, locale: string, options: Options = {}): Promise<object | null> {
+  const page = await seoPage(id);
   if (!page) return null;
   const lang = toLang(locale);
   return {
@@ -111,8 +111,8 @@ export function pageGraph(id: string, locale: string, options: Options = {}): ob
 }
 
 /** An ordered list of pages (a hub's children), for ItemList. */
-export function itemListNode(id: string, locale: string, items: { name: string; url: string; description?: string }[], name?: string): Node {
-  const page = seoPage(id);
+export async function itemListNode(id: string, locale: string, items: { name: string; url: string; description?: string }[], name?: string): Promise<Node> {
+  const page = await seoPage(id);
   const lang = toLang(locale);
   const url = page ? pageUrl(page, lang) : SITE_URL;
   return {
@@ -131,17 +131,17 @@ export function itemListNode(id: string, locale: string, items: { name: string; 
 }
 
 /** The registered child pages of a hub, in registry order. */
-export function childItems(parentId: string, locale: string, filter?: (page: SeoPage) => boolean) {
+export async function childItems(parentId: string, locale: string, filter?: (page: SeoPage) => boolean) {
   const lang = toLang(locale);
-  return seoPages()
+  return (await seoPages())
     .filter((page) => page.parent === parentId)
     .filter((page) => !page.noindex && (!filter || filter(page)))
     .map((page) => ({ name: page[lang].name, url: page[lang].path, description: page[lang].description }));
 }
 
 /** A service Noisia provides, tied to the page that describes it. */
-export function serviceNode(id: string, locale: string, fields: { name: string; description: string; serviceType: string; category?: string }): Node {
-  const page = seoPage(id);
+export async function serviceNode(id: string, locale: string, fields: { name: string; description: string; serviceType: string; category?: string }): Promise<Node> {
+  const page = await seoPage(id);
   const lang = toLang(locale);
   const url = page ? pageUrl(page, lang) : SITE_URL;
   return {
@@ -159,12 +159,12 @@ export function serviceNode(id: string, locale: string, fields: { name: string; 
 }
 
 /** An article (or report) published by Noisia on this page. */
-export function articleNode(
+export async function articleNode(
   id: string,
   locale: string,
   fields: { type?: string | string[]; headline: string; description: string; datePublished?: string; image?: string; about?: unknown; isPartOf?: string; extra?: Node }
-): Node {
-  const page = seoPage(id);
+): Promise<Node> {
+  const page = await seoPage(id);
   const lang = toLang(locale);
   if (!page) return {};
   const url = pageUrl(page, lang);

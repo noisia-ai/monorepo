@@ -23,7 +23,7 @@ export default async function ComparePage({ params }: { params: Promise<{ locale
   const lang = locale === "en" ? "en" : "es";
   const c = compareUi[lang];
   const Us = COMPARE_ICONS.us;
-  const jsonLd = pageGraph("/comparar", locale, { type: "CollectionPage", nodes: [itemListNode("/comparar", locale, childItems("/comparar", locale))] });
+  const jsonLd = await pageGraph("/comparar", locale, { type: "CollectionPage", nodes: [await itemListNode("/comparar", locale, await childItems("/comparar", locale))] });
 
   return (
     <div className={styles.page}>

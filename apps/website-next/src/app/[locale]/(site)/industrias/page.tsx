@@ -18,7 +18,7 @@ export default async function IndustriesPage({ params }: { params: Promise<{ loc
   setRequestLocale(locale);
   const lang = locale === "en" ? "en" : "es";
   const c = industriesPage[lang];
-  const jsonLd = pageGraph("/industrias", locale, { type: "CollectionPage", nodes: [itemListNode("/industrias", locale, childItems("/industrias", locale))] });
+  const jsonLd = await pageGraph("/industrias", locale, { type: "CollectionPage", nodes: [await itemListNode("/industrias", locale, await childItems("/industrias", locale))] });
   const items = industryEntries.map((entry) => {
     const copy = entry[lang];
     return {

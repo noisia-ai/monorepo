@@ -30,8 +30,8 @@ export function robotsFor(page?: Pick<SeoPage, "noindex">): Metadata["robots"] {
  * Full metadata of a registered page: title, description, self canonical, hreflang alternates,
  * Open Graph and Twitter card. `id` is the page's Spanish path.
  */
-export function pageMetadata(id: string, locale: string): Metadata {
-  const page = seoPage(id);
+export async function pageMetadata(id: string, locale: string): Promise<Metadata> {
+  const page = await seoPage(id);
   if (!page) return { robots: robotsFor() ?? { index: false, follow: true } };
   const lang = toLang(locale);
   const copy = page[lang];

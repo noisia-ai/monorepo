@@ -12,29 +12,30 @@ import { pageMetadata } from "@/lib/seo/metadata";
 
 type Params = { locale: string; slug: string };
 
-export function generateStaticParams() {
-  return routing.locales.flatMap((locale) => getStories().map((story) => ({ locale, slug: story.id })));
+export async function generateStaticParams() {
+  const stories = await getStories();
+  return routing.locales.flatMap((locale) => stories.map((story) => ({ locale, slug: story.id })));
 }
 
 export async function generateMetadata({ params }: { params: Promise<Params> }): Promise<Metadata> {
   const { locale, slug } = await params;
-  if (!getStory(slug)) return {};
+  if (!(await getStory(slug))) return {};
   return pageMetadata(`/insights/${slug}`, locale);
 }
 
 export default async function InsightPage({ params }: { params: Promise<Params> }) {
   const { locale, slug } = await params;
   setRequestLocale(locale);
-  const story = getStory(slug);
+  const story = await getStory(slug);
   if (!story) notFound();
   const content = locale === "en" ? story.en : story.es;
   const stories = await getFeedStories(locale);
   const report = story.report ? insightsReports.find((r) => story.report?.endsWith(`/${r.slug}`)) : undefined;
   const industries = await getTranslations({ locale, namespace: "industries" });
   const id = `/insights/${slug}`;
-  const jsonLd = pageGraph(id, locale, {
+  const jsonLd = await pageGraph(id, locale, {
     nodes: [
-      articleNode(id, locale, {
+      await articleNode(id, locale, {
         headline: content.title,
         description: content.dek,
         datePublished: report?.meta.analysis_date,

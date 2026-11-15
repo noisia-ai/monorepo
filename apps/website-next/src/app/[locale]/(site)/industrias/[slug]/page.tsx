@@ -50,7 +50,7 @@ export default async function IndustryPage({ params }: { params: Promise<Params>
   // The next four industries in the list, wrapping around, so every page links onward.
   const index = industryEntries.indexOf(entry);
   const related = [1, 2, 3, 4].map((k) => industryEntries[(index + k) % industryEntries.length]!);
-  const jsonLd = pageGraph(`/industrias/${entry.slug.es}`, locale, { page: { about: { "@type": "Thing", name: copy.name } } });
+  const jsonLd = await pageGraph(`/industrias/${entry.slug.es}`, locale, { page: { about: { "@type": "Thing", name: copy.name } } });
 
   return (
     <div className={styles.page}>

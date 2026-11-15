@@ -34,7 +34,7 @@ export default async function PrivacyPage({ params }: { params: Promise<{ locale
   setRequestLocale(locale);
   const c = privacy[locale === "en" ? "en" : "es"];
 
-  const jsonLd = pageGraph("/privacidad", locale);
+  const jsonLd = await pageGraph("/privacidad", locale);
 
   return (
     <div className={styles.page}>

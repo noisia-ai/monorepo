@@ -57,8 +57,8 @@ export default async function Page({ params }: { params: Promise<Params> }) {
   const others = moments.filter((mo) => mo.slug.es !== key);
   const MetaIcon = META_ICONS[moment.deliverable];
   const delay = (ms: number) => ({ "--reveal-delay": `${ms}ms` }) as CSSProperties;
-  const jsonLd = pageGraph(`/soluciones/${key}`, locale, {
-    nodes: [serviceNode(`/soluciones/${key}`, locale, { name: moment[lang].name, description: d.summary ?? moment[lang].summary, serviceType: deliverable[moment.deliverable], category: lang === "en" ? "Social intelligence" : "Inteligencia social" })]
+  const jsonLd = await pageGraph(`/soluciones/${key}`, locale, {
+    nodes: [await serviceNode(`/soluciones/${key}`, locale, { name: moment[lang].name, description: d.summary ?? moment[lang].summary, serviceType: deliverable[moment.deliverable], category: lang === "en" ? "Social intelligence" : "Inteligencia social" })]
   });
 
   return (

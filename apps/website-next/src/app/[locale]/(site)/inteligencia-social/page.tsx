@@ -30,7 +30,7 @@ export default async function SocialIntelligencePage({ params }: { params: Promi
   const c = socialIntelligence[lang];
   const Check = LEARN_ICONS.check;
   const url = absoluteUrl(lang === "en" ? "/en/social-intelligence" : "/inteligencia-social");
-  const jsonLd = pageGraph("/inteligencia-social", locale, {
+  const jsonLd = await pageGraph("/inteligencia-social", locale, {
     page: { mainEntity: { "@id": `${url}#term` } },
     nodes: [
       {

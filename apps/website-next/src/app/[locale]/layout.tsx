@@ -8,7 +8,7 @@ import { googleSans } from "@/lib/fonts";
 import { SITE_URL } from "@/lib/site";
 import { OG_LOCALE, toLang } from "@/lib/seo/config";
 import { ogImageUrl, robotsFor } from "@/lib/seo/metadata";
-import { seoPage } from "@/lib/seo/pages";
+import { staticSeoPage } from "@/lib/seo/pages";
 import "@/styles/base.css";
 
 const LANG_FADE_IN = `try{if(!matchMedia("(prefers-reduced-motion: reduce)").matches)document.documentElement.classList.add("js-reveal")}catch(e){}try{if(sessionStorage.getItem("noisia-lang-switch")){sessionStorage.removeItem("noisia-lang-switch");document.documentElement.dataset.lang="in";setTimeout(function(){delete document.documentElement.dataset.lang},700)}}catch(e){}`;
@@ -21,7 +21,7 @@ export async function generateMetadata({ params }: { params: Promise<{ locale: s
   const { locale } = await params;
   const t = await getTranslations({ locale, namespace: "meta" });
   const lang = toLang(locale);
-  const home = seoPage("/");
+  const home = staticSeoPage("/");
   return {
     metadataBase: new URL(SITE_URL),
     title: { default: t("defaultTitle"), template: `%s · Noisia` },

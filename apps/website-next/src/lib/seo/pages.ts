@@ -15,6 +15,7 @@ import { industriesPage, industryEntries } from "@/content/pages/industries";
 import { moments } from "@/content/moments";
 import { insightsReports } from "@/content/reports/reports";
 import { getStories } from "@/content/stories";
+import type { Story } from "@/content/stories/schema";
 import { SITE_UPDATED, type Lang } from "./config";
 
 /**
@@ -68,7 +69,8 @@ function both(build: (lang: Lang) => SeoLocaleCopy): { es: SeoLocaleCopy; en: Se
   return { es: build("es"), en: build("en") };
 }
 
-function build(): SeoPage[] {
+/** Every page that does not come from the content database. */
+function buildStatic(): SeoPage[] {
   const pages: SeoPage[] = [];
 
   pages.push({
@@ -272,26 +274,6 @@ function build(): SeoPage[] {
     });
   }
 
-  for (const story of getStories()) {
-    const report = story.report ? insightsReports.find((r) => story.report?.endsWith(`/${r.slug}`)) : undefined;
-    pages.push({
-      id: `/insights/${story.id}`,
-      parent: "/insights",
-      kind: "story",
-      // Illustrative examples are for the feed experience, not for search results.
-      noindex: story.kind !== "editorial",
-      lastModified: report?.meta.analysis_date ?? SITE_UPDATED,
-      ...both((lang) => ({
-        path: lang === "en" ? en(`/insights/${story.id}`) : `/insights/${story.id}`,
-        title: story[lang].title,
-        description: story[lang].dek,
-        name: story[lang].title,
-        headline: story[lang].title,
-        kicker: `${(messages[lang].industries as Record<string, string>)[story.industry] ?? story.industry} · ${story.market}`
-      }))
-    });
-  }
-
   pages.push({
     id: "/nosotros",
     parent: "/",
@@ -340,35 +322,72 @@ function build(): SeoPage[] {
   return pages;
 }
 
-let cache: SeoPage[] | null = null;
+/** One page per Insights piece. Pieces come from the content database (or the JSON fallback). */
+function storyPages(stories: Story[]): SeoPage[] {
+  const pages: SeoPage[] = [];
+  for (const story of stories) {
+    const report = story.report ? insightsReports.find((r) => story.report?.endsWith(`/${r.slug}`)) : undefined;
+    pages.push({
+      id: `/insights/${story.id}`,
+      parent: "/insights",
+      kind: "story",
+      // Illustrative examples are for the feed experience, not for search results.
+      noindex: story.kind !== "editorial",
+      lastModified: report?.meta.analysis_date ?? SITE_UPDATED,
+      ...both((lang) => ({
+        path: lang === "en" ? en(`/insights/${story.id}`) : `/insights/${story.id}`,
+        title: story[lang].title,
+        description: story[lang].dek,
+        name: story[lang].title,
+        headline: story[lang].title,
+        kicker: `${(messages[lang].industries as Record<string, string>)[story.industry] ?? story.industry} · ${story.market}`
+      }))
+    });
+  }
 
-export function seoPages(): SeoPage[] {
+  return pages;
+}
+
+let staticCache: SeoPage[] | null = null;
+
+function staticPages(): SeoPage[] {
   // Rebuilt on every call in development so copy edits show up without a restart.
-  if (process.env.NODE_ENV !== "production") return build();
-  cache ??= build();
-  return cache;
+  if (process.env.NODE_ENV !== "production") return buildStatic();
+  staticCache ??= buildStatic();
+  return staticCache;
+}
+
+/** Every registered page. Static pages first, then the Insights pieces. */
+export async function seoPages(): Promise<SeoPage[]> {
+  return [...staticPages(), ...storyPages(await getStories())];
+}
+
+/** A static page (anything but an Insights piece) by its Spanish path, without touching the database. */
+export function staticSeoPage(id: string): SeoPage | undefined {
+  return staticPages().find((page) => page.id === id);
 }
 
 /** A page by its Spanish path (the registry key). */
-export function seoPage(id: string): SeoPage | undefined {
-  return seoPages().find((page) => page.id === id);
+export async function seoPage(id: string): Promise<SeoPage | undefined> {
+  return staticPages().find((page) => page.id === id) ?? (await seoPages()).find((page) => page.id === id);
 }
 
 /** A page by its public path in either language ("/en/solutions/launch" or "/soluciones/lanzar"). */
-export function seoPageByPath(path: string): { page: SeoPage; lang: Lang } | undefined {
-  for (const page of seoPages()) {
+export async function seoPageByPath(path: string): Promise<{ page: SeoPage; lang: Lang } | undefined> {
+  for (const page of await seoPages()) {
     if (page.es.path === path) return { page, lang: "es" };
     if (page.en.path === path) return { page, lang: "en" };
   }
   return undefined;
 }
 
-/** The chain of pages from the home to this one, for breadcrumbs. */
+/** The chain of pages from the home to this one, for breadcrumbs. Parents are always static pages. */
 export function seoTrail(page: SeoPage): SeoPage[] {
   const trail: SeoPage[] = [page];
   let current = page;
   while (current.parent) {
-    const parent = seoPage(current.parent);
+    const parentId = current.parent;
+    const parent = staticPages().find((item) => item.id === parentId);
     if (!parent) break;
     trail.unshift(parent);
     current = parent;
