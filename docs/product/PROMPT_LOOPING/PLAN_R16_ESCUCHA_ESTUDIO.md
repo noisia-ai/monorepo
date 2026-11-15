@@ -12,6 +12,8 @@ No hay aprobaciones humanas intermedias en los procesos de análisis: Sonnet 4.6
 
 ## Progreso
 
+- H1 diagnóstico corto c6bd1c50: 4,096 raíces completas, 18 páginas y 9.93 s (412.50 raíces/s), con preparación sintética separada de 24.99 s. Rechazado y demasiado corto para aceptación sostenida; no se compara directamente con la población de 32,768. La corrección de flush conserva validez funcional, pero no acredita velocidad. Se investiga el presupuesto máximo retenido después de conocer el tamaño real de cada respuesta, sin reducir la memoria de custodia necesaria ni fingir persistencia.
+
 - H3 integración 58c4f522: las dieciséis pruebas nativas de avances y la nueva prueba del drainer completo pasaron 17/17, sin omisiones, con 285 migraciones por clon y 94.77 s. El caso nuevo usa el lector y el ajuste numérico de producción sobre un subset vacío legítimo, Storage privado de fixture con fsync/readback y admisión PostgreSQL real; no envía Sonnet ni reclasifica raíces. La reagrupación BERTopic no vacía se probó por separado con Python real, 14/14 sin omisiones. CI incorpora ambos recorridos explícitos; falta ejecutar el workflow remoto y el ciclo completo en UAT.
 
 - H3 0304: el seguimiento f0a9a7e5 corrige los dos P2 con tres regresiones que fallaban antes del cambio. PostgreSQL dedicado 16/16, sin omisiones, y tipado/lint 11/11; la revisión confirma el cierre de ambos. La integración contiene el drainer nativo y la activación previa al aviso de avance, revisados sin P0/P1/P2. Falta la validación PostgreSQL conjunta de esta rama y el inicio inicial ligado a intención/cap original (0305 en implementación).
