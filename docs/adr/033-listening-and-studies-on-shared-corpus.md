@@ -47,7 +47,7 @@ JEV es un clasificador masivo. El transporte desacopla solicitudes, páginas dur
 
 Los crudos nuevos se almacenan por página JSONL inmutable. El manifiesto de página y cada miembro preservan ámbitos, digest de solicitud, bytes y hashes. La página debe estar durable y verificada antes de liquidar o aplicar resultados. Los lectores mantienen compatibilidad con objetos históricos individuales. La recuperación no vuelve a llamar al proveedor para una respuesta ya guardada.
 
-La base ya dispone de operaciones por lote y proyecciones incrementales; se reutilizan y se miden. No se elimina un control de lease, permisos, política, derechos, presupuesto o identidad para obtener throughput. La aceptación de capacidad interna usa el pipeline completo con PostgreSQL y almacenamiento durables, no sólo fetch simulado o un store en memoria. La medición con proveedor real informa separadamente el límite de su cuenta.
+La base ya dispone de operaciones por lote y proyecciones incrementales; se reutilizan y se miden. No se elimina un control de lease, permisos, política, derechos, presupuesto o identidad para obtener throughput. La aceptación de capacidad interna usa el pipeline completo con PostgreSQL y almacenamiento durables, no sólo fetch simulado o un store en memoria. La medición con proveedor real informa separadamente el límite de su cuenta. Las poblaciones acotadas planifican el SQL con los parámetros del lote actual mediante EXECUTE y valores ligados; conservan los mismos filtros y campos que la población completa. Este cambio evita que un plan reutilizado para una muestra pequeña multiplique el recorrido del lote grande; no persiste resultados de autoridad entre sentencias.
 
 ### Operación y costo
 
