@@ -41,6 +41,8 @@ async function policyLock(c:PoolClient,workspace:string){
  if(!p)return fail('listening_discovery_policy_unavailable');
  await c.query('SELECT signal_processing_lock_v1($1,(clock_timestamp() AT TIME ZONE $2)::date)',[p.organization_id,p.budget_timezone]);return p;
 }
+/** Internal transaction hook; retains the same organization/day money locks. */
+export const lockSignalListeningDiscoveryPolicyWithClientV1=policyLock;
 async function moneyLock(c:PoolClient,roundId:string){
  const a=(await c.query<{organization_id:string;budget_date:string}>(`SELECT a.organization_id,a.budget_date::text FROM signal_listening_discovery_rounds r JOIN signal_processing_admissions a ON a.id=r.admission_id WHERE r.id=$1`,[roundId])).rows[0];
  if(!a)return fail('listening_discovery_round_unavailable');await c.query("SELECT pg_advisory_xact_lock(hashtextextended('signal-processing-policy:'||$1,0))",[a.organization_id]);await c.query('SELECT signal_processing_lock_v1($1,$2::date)',[a.organization_id,a.budget_date]);
@@ -136,6 +138,9 @@ async function nativeRequest(args:SignalListeningAccessV1&{generation_id:string;
  const request=buildListeningDiscoveryEditorialRequestV1({configuration:cfg.configuration,evidence,orphan_groups:groups,excerpts:used.map(id=>texts.get(id)!)});
  return{request,g,cfg};
 }
+/** Read-only build; admission is always revalidated in its committing transaction. */
+export const buildSignalListeningDiscoveryRoundV1=nativeRequest;
+export type SignalListeningDiscoveryBuiltRoundV1=Awaited<ReturnType<typeof nativeRequest>>;
 export async function quoteSignalListeningDiscoveryRoundV1(args:SignalListeningAccessV1&{generation_id:string;ordinal:number;orphan_groups:ListeningDiscoveryOrphanManifestV1[]}){
  const {request,g}=await nativeRequest(args);const input_token_upper_bound=Buffer.byteLength(request.request_body)+4096;if(input_token_upper_bound+64000>1000000)fail('listening_discovery_context_bound_exceeded',422);return{contract_version:'listening-discovery-review-quote-v1' as const,generation_id:g.id,source_digest:g.snapshot_digest,request_digest:request.request_digest,input_token_upper_bound,maximum_output_tokens:64000,reservation_micro_usd:input_token_upper_bound*6+64000*15};
 }
@@ -146,18 +151,24 @@ export async function enqueueSignalListeningDiscoveryRoundV1(args:SignalListenin
  if(current.last&&current.last.status!=='completed'){if(current.last.input_generation_id!==args.generation_id)fail('listening_discovery_round_active');return current.last;}
  const ordinal=(current.last?.ordinal??0)+1;if(ordinal>3)fail('listening_discovery_max_rounds');
  const built=await nativeRequest({...args,ordinal});
- return listeningTransactionV1(args.database,async c=>{
+ return listeningTransactionV1(args.database,c=>enqueueSignalListeningDiscoveryRoundWithClientV1(c,{...args,ordinal,built}));
+}
+/** The caller owns one real transaction; all native admission guards remain. */
+export async function enqueueSignalListeningDiscoveryRoundWithClientV1(c:PoolClient,args:SignalListeningAccessV1&{
+ execution_id:string;generation_id:string;orphan_groups:ListeningDiscoveryOrphanManifestV1[];provider_available:boolean;
+ ordinal:number;built:SignalListeningDiscoveryBuiltRoundV1;advance_id?:string;advance_token?:string}){
+  if(!args.provider_available)fail('listening_discovery_provider_unavailable',503);
+  const {ordinal,built}=args;
   const policy=await policyLock(c,args.workspace_id);await authorizeSignalListeningV1(c,args,'process');const p=await owner(c,args,args.execution_id);
   if(p.policy_version_id!==policy.id)fail('listening_discovery_policy_changed');await mapCurrent(c,args.workspace_id,p.map_id);
   const id=randomUUID(),reservation=(Buffer.byteLength(built.request.request_body)+4096)*6+64000*15;
   const row=(await c.query<ListeningDiscoveryRoundV1>(`INSERT INTO signal_listening_discovery_rounds(id,workspace_id,execution_id,ordinal,input_generation_id,configuration_id,configuration,configuration_digest,
-   request_body,request_digest,request_sha256,source_digest,population_digest,quote,reservation_micro_usd)
-   VALUES($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9,$10,$11,$12,signal_listening_discovery_census_v1($5),$13::jsonb,$14) RETURNING *`,
+   request_body,request_digest,request_sha256,source_digest,population_digest,quote,reservation_micro_usd${args.advance_id?',advance_id,advance_token':''})
+   VALUES($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9,$10,$11,$12,signal_listening_discovery_census_v1($5),$13::jsonb,$14${args.advance_id?',$15,$16':''}) RETURNING *`,
    [id,args.workspace_id,p.id,ordinal,built.g.id,built.cfg.id,JSON.stringify(built.cfg.configuration),built.cfg.configuration_digest,built.request.request_body,built.request.request_digest,sha(built.request.request_body),built.g.snapshot_digest,
-    JSON.stringify({contract_version:'listening-discovery-review-quote-v1',input_token_upper_bound:Buffer.byteLength(built.request.request_body)+4096,maximum_output_tokens:64000,reservation_micro_usd:reservation,pricing:policy.configuration,orphan_groups:args.orphan_groups}),reservation])).rows[0]!;
+    JSON.stringify({contract_version:'listening-discovery-review-quote-v1',input_token_upper_bound:Buffer.byteLength(built.request.request_body)+4096,maximum_output_tokens:64000,reservation_micro_usd:reservation,pricing:policy.configuration,orphan_groups:args.orphan_groups}),reservation,...(args.advance_id?[args.advance_id,args.advance_token]:[])])).rows[0]!;
   const admitted=await admitSignalProcessingWithClientV1(c,{...args,action:'listening_discovery_review',target_id:id,idempotency_key:'listening-round:'+id,request_digest:row.request_digest,execution_cap_micro_usd:String(reservation),automatic:false});
   await c.query('UPDATE signal_listening_discovery_rounds SET admission_id=$2 WHERE id=$1',[id,admitted.receipt.id]);return{...row,admission_id:admitted.receipt.id};
- });
 }
 export async function claimSignalListeningDiscoveryRoundV1(args:{database:SignalListeningAccessV1['database'];round_id:string}):Promise<ListeningDiscoveryLeaseV1|null>{
  return listeningTransactionV1(args.database,async c=>{
