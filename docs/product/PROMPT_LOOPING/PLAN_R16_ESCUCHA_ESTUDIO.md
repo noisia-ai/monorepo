@@ -12,6 +12,9 @@ No hay aprobaciones humanas intermedias en los procesos de análisis: Sonnet 4.6
 
 ## Progreso
 
+- H1 CI en 841042c5: verify y PostgreSQL verdes; benchmark falló antes de JEV por statement_timeout en la invalidación semántica heredada durante INSERT de menciones. Se conserva la traza del trigger y se investigará una corrección productiva aditiva, sin ampliar timeouts ni saltar guards. El perfil por operación 1a9b4a28 y su matriz 8/8 están en diagnóstico de 1,002 raíces.
+- H4: recibido el contrato puro aa9f12f5; revisión detectó tres P2: contraste sin definiciones vecinas, κ parcial ante particiones y dirección que mezclaba ironía. Se corrigen antes de integrar. El objeto persistente, sus owners y la ejecución siguen pendientes.
+
 - H3 parcial: integrados 280e7e21 y los contratos puros canónicos de e961a366 como abde5169/f9dedc78, conservando H2 y H5. Tipado/lint 11/11, query-engine 678/678, DB 658/184 omisiones por entorno. La prueba dedicada conjunta de descubrimiento, léxico, runtime y recuperación pasó 4/4 sin omisiones, con 281 migraciones por clon. El owner monetario, la orquestación de vueltas y la aceptación real siguen pendientes.
 
 - H1: el ensayo completo sobre 36668da1 terminó 32,768/32,768 raíces con crudos y aplicación íntegros, pero sólo 485.19 raíces/s y una ventana completa de cero. Proveedor simulado p50 301 ms/p95 459 ms; 147 páginas. El resultado rechaza H1 y exige localizar las pausas de SQL/materialización antes de otra corrida o proveedor real.
@@ -105,6 +108,9 @@ Recibo: separar Voyage/JEV por raíz de Claude por número de grupos y vueltas; 
 
 ## Sorpresas y descubrimientos
 
+- El fixture de capacidad conserva de forma persistente los datos tras completar la corrida. Para perfilar sin alterar resultados se selló un pg_dump del laboratorio propio, se renombró la base sintética completa y se creó otra vacía. No se reiniciaron estados de llamadas ni se eliminó el corpus o sus recibos.
+- La traza CI distingue el timeout de importación del throughput JEV: sync_signal_mention_governance invoca la procedencia por raíz y ésta dispara invalidate_signal_semantic_review_from_attributions_v1. Los límites de fixture ya no explican esa interrupción; falta medir y corregir el costo de esa ruta sin omitir su invalidación.
+
 - El primer benchmark integral que completó toda la población conservó integridad y recuperabilidad, pero no velocidad: wall 67.54 s, 485.19 raíces/s. El setup de importación/preparación sintética tardó 827.58 s y se informa separado. Las duraciones de SQL y Signal se solapan; no se suman para inventar un tiempo de extremo a extremo.
 
 - El fixture ampliado también heredaba un máximo de ocho páginas de embeddings y 1,200 raíces de proyección; después alcanzó el lector productivo limitado a 2,000 IDs. Se conservan esos límites por omisión y se pagina el lector oficial. Todos esos fallos fueron anteriores a la medición JEV: no son pruebas de velocidad ni justifican reiniciar un proceso vivo por tiempo de espera.
@@ -136,6 +142,8 @@ Recibo: separar Voyage/JEV por raíz de Claude por número de grupos y vueltas; 
 - El promedio del piloto completo incluye una etapa editorial que no escala por raíz. Multiplicarlo linealmente daba USD 205.81/millón; mantener explícitamente los grupos y una vuelta de referencia produce USD 114.035250. Ambos cálculos parten del mismo recibo, cuyo uso histórico permanece USD 17.280463.
 
 ## Registro de decisiones
+
+- 2026-11-14: conservar la base sintética completada como archivo y respaldarla con SHA antes de crear un laboratorio lógico vacío para el perfil siguiente. No reutilizar el map_id único mediante UPDATE de estados o recibos. Corregir el cuello de botella de importación por una migración posterior revisada; no elevar statement_timeout para ocultarlo.
 
 - 2026-11-14: un tópico conservado sin miembros confirmados debe expresar esa ausencia. Se permite una extensión aditiva posterior con source_seed de cero miembros, centroide NULL y lineage no_confirmed_members verificado; permanece inactivo para candidatura hasta tener evidencia. No se inventan vectores, etiquetas ni cargos, y las preguntas no formuladas no cuentan como negativas.
 
