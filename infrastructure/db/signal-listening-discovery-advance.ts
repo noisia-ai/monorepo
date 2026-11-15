@@ -170,6 +170,9 @@ async function verifyArtifacts(c:NumericRow,storage:ListeningDiscoveryNumericSto
 }
 async function markNumericVerified(args:LeaseArgs,c:NumericRow):Promise<ListeningDiscoveryStoredNumericV1>{
  return listeningTransactionV1(args.database,async client=>{
+  // Byte custody survives authority changes, but a new verified checkpoint
+  // still requires the same current policy/source/human seals as its intent.
+  if(c.verification_status==='planned'&&!await readyAuthority(client,args.lease.execution_id,args.lease))fail('listening_discovery_advance_source_invalid');
   const h=await lockedHop(client,args.lease);
   const current=(await client.query<NumericRow>('SELECT * FROM signal_listening_discovery_numeric_checkpoints WHERE id=$1 AND advance_id=$2 AND workspace_id=$3 FOR UPDATE',[c.id,h.id,h.workspace_id])).rows[0];
   if(!current||current.manifest_sha256!==c.manifest_sha256||current.artifacts_digest!==c.artifacts_digest)fail('listening_discovery_numeric_intent_immutable');

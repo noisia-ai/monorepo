@@ -36,7 +36,8 @@ LANGUAGE sql STABLE SET search_path=public,extensions,pg_temp AS $$
  AND COALESCE(signal_listening_discovery_current_v1(g.id),false)
  AND signal_listening_discovery_census_v1(g.id)=p.root_census_digest AND(g.counts->>'roots')::integer=p.root_count
  AND p.policy_digest=signal_labeling_digest_v1(jsonb_build_array('listening-discovery-policy-v1',0.7,0.6,0.8,20,10,0.01,3,8))
- AND signal_listening_discovery_exposure_v1(p.id)<p.cap_micro_usd
+ -- Even an exactly exhausted parent must reach the locked budget-failure
+ -- path; financial admission remains guarded by its immutable composite cap.
  AND(last.id IS NULL OR last.status='completed' AND last.ordinal<3 AND last.stop_decision='{"stop":false,"reason":"continue"}'::jsonb
   AND EXISTS(SELECT 1 FROM signal_listening_serving_snapshots s WHERE s.workspace_id=p.workspace_id AND s.execution_id=p.id AND s.round_id=last.id
    AND s.configuration_id=last.output_configuration_id AND s.generation_id=last.output_generation_id AND s.classification_run_id=last.classification_run_id))
@@ -174,9 +175,13 @@ BEGIN
  IF TG_OP='DELETE' THEN RAISE EXCEPTION 'listening_discovery_numeric_immutable';END IF;
  SELECT * INTO h FROM signal_listening_discovery_advances WHERE id=NEW.advance_id AND workspace_id=NEW.workspace_id;
  IF TG_OP='UPDATE' THEN
+  SELECT * INTO source FROM signal_listening_discovery_advance_source_v1(NEW.execution_id);
   marker:=NULLIF(current_setting('noisia.listening_discovery_numeric_verification_v1',true),'')::jsonb;
   IF(to_jsonb(NEW)-ARRAY['verification_status','verified_at','verification_token']) IS DISTINCT FROM(to_jsonb(OLD)-ARRAY['verification_status','verified_at','verification_token'])
    OR OLD.verification_status<>'planned' OR NEW.verification_status<>'verified' OR NEW.verified_at IS NULL
+   OR source.source_generation_id IS NULL OR source.stop_decision->'stop'<>'false'::jsonb
+   OR ROW(h.workspace_id,h.actor_user_id,h.source_generation_id,h.configuration_id,h.next_ordinal,h.policy_version_id,h.policy_digest,h.human_revision_digest)
+    IS DISTINCT FROM ROW(source.workspace_id,source.actor_user_id,source.source_generation_id,source.configuration_id,source.next_ordinal,source.policy_version_id,source.policy_digest,source.human_revision_digest)
    OR h.execution_token IS NULL OR NEW.verification_token IS DISTINCT FROM h.execution_token OR h.execution_expires_at<=clock_timestamp()
    OR marker IS DISTINCT FROM jsonb_build_object('contract_version','listening-discovery-numeric-verification-v1','checkpoint_id',NEW.id,'execution_token',h.execution_token,'manifest_sha256',NEW.manifest_sha256,'artifacts_digest',NEW.artifacts_digest)
    THEN RAISE EXCEPTION 'listening_discovery_numeric_immutable';END IF;

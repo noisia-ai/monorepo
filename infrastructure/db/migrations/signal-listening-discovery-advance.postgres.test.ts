@@ -140,6 +140,49 @@ for(const phase of ['planned','verified'] as const)test('numeric '+phase+' COMMI
  await store.release({database:db,lease});
 }));
 
+for(const event of ['policy','human'] as const)test('planned custody then '+event+' change cannot verify or admit but preserves every staged byte',{
+ skip:!enabled,timeout:600000,
+},async()=>withDiscoveryAdvanceFixtureV1(async f=>{
+ const db=f.database,store=createSignalListeningDiscoveryAdvanceStoreV1({database:db,numeric_storage:f.storage}),lease=(await store.claim({database:db,execution_id:f.execution.id}))!;
+ const subset=await store.ensureSubset({database:db,lease,generation_id:lease.source_generation_id}),numeric=await f.emptyNumeric(subset);
+ let armed=false,fired=false;
+ const proxy={query:db.query.bind(db),connect:async()=>{const c=await db.connect();return new Proxy(c,{get(target,key){if(key==='query')return async(sql:string,...values:unknown[])=>{
+  if(sql.startsWith('INSERT INTO signal_listening_discovery_numeric_checkpoints'))armed=true;
+  const result=await(target.query as(...a:unknown[])=>Promise<unknown>)(sql,...values);if(sql==='COMMIT'&&armed&&!fired){fired=true;throw Error('synthetic_planned_ack_lost');}return result;
+ };const value=Reflect.get(target,key);return typeof value==='function'?value.bind(target):value;}});}} as typeof db;
+ await assert.rejects(persistSignalListeningDiscoveryAdvanceNumericV1({database:proxy,lease,subset_id:subset.id,numeric,numeric_storage:f.storage}),/synthetic_planned_ack_lost/);assert.equal(fired,true);
+ const checkpoint=(await db.query('SELECT * FROM signal_listening_discovery_numeric_checkpoints WHERE execution_id=$1',[f.execution.id])).rows[0];assert.equal(checkpoint.verification_status,'planned');
+ const writes=f.uploads();f.setAllowUploads(false);
+ if(event==='policy')await db.query("UPDATE signal_processing_policy_versions SET status='revoked' WHERE id=$1",[f.policy.id]);
+ else await saveSignalListeningConfigurationV1({...f,expected_revision:f.cfg.revision,provenance:'human',configuration:{...f.cfg.configuration,instructions:f.cfg.configuration.instructions+' Human edit after custody.'}});
+ for(let attempt=0;attempt<2;attempt++)await assert.rejects(store.loadNumeric({database:db,lease,subset_id:subset.id,numeric_config_digest:configuration(numeric)}),/source_invalid|policy_unavailable/);
+ const c=await db.connect();try{
+  await c.query('BEGIN');
+  await c.query("SELECT set_config('noisia.listening_discovery_numeric_verification_v1',$1,true)",[JSON.stringify({contract_version:'listening-discovery-numeric-verification-v1',checkpoint_id:checkpoint.id,execution_token:lease.execution_token,manifest_sha256:checkpoint.manifest_sha256,artifacts_digest:checkpoint.artifacts_digest})]);
+  await assert.rejects(c.query("UPDATE signal_listening_discovery_numeric_checkpoints SET verification_status='verified',verified_at=clock_timestamp(),verification_token=$2 WHERE id=$1",[checkpoint.id,lease.execution_token]),/numeric_immutable/);
+ }finally{await c.query('ROLLBACK');c.release();}
+ assert.equal((await db.query('SELECT verification_status FROM signal_listening_discovery_numeric_checkpoints WHERE id=$1',[checkpoint.id])).rows[0].verification_status,'planned');
+ for(const a of checkpoint.artifact_manifest)assert.equal(await f.storage.verify({workspace_id:f.workspace_id,execution_id:f.execution.id,checkpoint_id:checkpoint.id,...a}),true);
+ assert.equal(f.uploads(),writes);assert.equal((await db.query("SELECT count(*)::int n FROM signal_processing_admissions WHERE workspace_id=$1 AND action='listening_discovery_review'",[f.workspace_id])).rows[0].n,0);
+ await store.release({database:db,lease});
+}));
+
+test('exactly exhausted parent cap reaches a terminal budget outcome without admission',{
+ skip:!enabled,timeout:600000,
+},async()=>withDiscoveryAdvanceFixtureV1(async f=>{
+ const db=f.database,store=createSignalListeningDiscoveryAdvanceStoreV1({database:db,numeric_storage:f.storage});
+ assert.equal((await db.query('SELECT signal_listening_discovery_exposure_v1($1)::text exposure',[f.execution.id])).rows[0].exposure,'18');
+ assert.equal((await store.pending({database:db,limit:20})).some(p=>p.execution_id===f.execution.id),true,'the exact-cap owner must reach budget closure');
+ const lease=await store.claim({database:db,execution_id:f.execution.id});assert.ok(lease);
+ const subset=await store.ensureSubset({database:db,lease,generation_id:lease.source_generation_id}),numeric=await f.emptyNumeric(subset);await store.persistNumeric({database:db,lease,subset_id:subset.id,numeric});
+ const outcome=await store.enqueue({database:db,lease,generation_id:lease.source_generation_id,expected_ordinal:1,expected_policy_version_id:lease.policy_version_id,expected_policy_digest:lease.policy_digest,expected_human_revision_digest:lease.human_revision_digest,numeric_manifest_sha256:numeric.manifest_sha256,provider_available:true});
+ assert.ok(outcome?.status==='budget_exhausted');assert.equal(outcome.cap_micro_usd,'18');assert.equal(outcome.exposure_micro_usd,'18');
+ assert.equal((await db.query('SELECT status,error_code FROM signal_listening_discovery_executions WHERE id=$1',[f.execution.id])).rows[0].status,'failed');
+ assert.equal(await store.claim({database:db,execution_id:f.execution.id}),null);assert.ok(!(await store.pending({database:db,limit:20})).some(p=>p.execution_id===f.execution.id));
+ assert.equal((await db.query("SELECT count(*)::int n FROM signal_processing_admissions WHERE workspace_id=$1 AND action='listening_discovery_review'",[f.workspace_id])).rows[0].n,0);
+ assert.equal((await db.query("SELECT count(*)::int n FROM engine_cost_events WHERE workspace_id=$1 AND workspace_contract='listening-discovery-round-v1'",[f.workspace_id])).rows[0].n,0);
+},{cap_micro_usd:18}));
+
 for(const event of ['policy','human','actor','lease'] as const)test('staging then '+event+' change cannot create a result intent or review admission',{
  skip:!enabled,timeout:600000,
 },async()=>withDiscoveryAdvanceFixtureV1(async f=>{
