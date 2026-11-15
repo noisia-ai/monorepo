@@ -12,6 +12,8 @@ No hay aprobaciones humanas intermedias en los procesos de análisis: Sonnet 4.6
 
 ## Progreso
 
+- H2: integración 92888e83 conserva H1 completo y las correcciones revisadas de calibración heterogénea, selección visible y recuperación anterior a nuevos envíos. Tipado/lint 11/11, workers 1,026 aprobadas/46 omisiones de entorno, Studio 1,339/7 y DB 658/182; build completo de Studio aprobado. Las dos pruebas dedicadas PostgreSQL pasaron 2/2 sin omisiones, con 280 migraciones por clon. Se añade un paso CI explícito para los cinco contratos DB y ambos runtimes, que falla ante cualquier omisión. Publicación/revisión final/CI y UAT siguen pendientes.
+
 - H1: CI y PostgreSQL verdes en 5b2729a6. Su benchmark falló antes de JEV al alcanzar el límite del fixture de proyección. Los ajustes revisados 2c0f5e6d y 36668da1 mantienen límites ordinarios y productivos, habilitan explícitamente la población sintética y paginan metadatos en lotes de 2,000. La matriz posterior pasó 8/8 sobre 36668da1; el ensayo de 32,768 sigue activo y no acredita todavía throughput.
 
 - H1: repetida la matriz 8/8 sobre 2f477597 después de ajustar únicamente el setup sintético; recibo SHA-256 022542af9f46c0723400897b69cb20e602e3f1420eee5935ed80f6b4c89cf6bc. Las páginas de preparación 3 y 100 produjeron idénticos textos, hashes, chunks, disposiciones y censo en PostgreSQL. El benchmark ahora usa 100, máximo admitido por el contrato productivo; los demás casos conservan 3. La cohorte de 32,768 está en ejecución y su throughput sigue sin acreditarse.
@@ -127,6 +129,8 @@ Recibo: separar Voyage/JEV por raíz de Claude por número de grupos y vueltas; 
 - El promedio del piloto completo incluye una etapa editorial que no escala por raíz. Multiplicarlo linealmente daba USD 205.81/millón; mantener explícitamente los grupos y una vuelta de referencia produce USD 114.035250. Ambos cálculos parten del mismo recibo, cuyo uso histórico permanece USD 17.280463.
 
 ## Registro de decisiones
+
+- 2026-11-14: integrar la preparación y recuperación H2 sobre las cohortes H1 sin marcar toda la ventana como enviada. Incluir pruebas PostgreSQL de Escucha expresamente en CI; los skips esperados de suites sin entorno no sustituyen esas pruebas dedicadas.
 
 - 2026-11-14: ampliar sólo las opciones explícitas del benchmark y paginar los metadatos sintéticos; no elevar el límite productivo de 2,000 raíces por lectura. Conservar el recibo fallido de CI y exigir una nueva matriz con la misma huella de fuente que la corrida sostenida.
 
