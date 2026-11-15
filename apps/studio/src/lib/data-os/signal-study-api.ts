@@ -25,6 +25,7 @@ export type StudyApiDependenciesV1={
  load(workspace_id:string):Promise<StudyScopeV1|{response:Response}>;
  ready():boolean;
  canEdit(scope:StudyScopeV1):Promise<boolean>;
+ canExecute(scope:StudyScopeV1):Promise<boolean>;
  source(scope:StudyScopeV1):Promise<StudySourceV1|null>;
  list(scope:StudyScopeV1,args:{limit:number;after_study_id?:string}):Promise<unknown>;
  create(scope:StudyScopeV1,body:StudyCreateRequestV1,key:string):Promise<StudyMetadataV1>;
@@ -63,7 +64,7 @@ export function createSignalStudyApiV1(deps:StudyApiDependenciesV1){
  return{
   list:(workspace_id:string,request:Request)=>scoped(workspace_id,async scope=>{
    const search=new URL(request.url).searchParams;
-   if(search.get('context')==='true')return studyResponseV1({source:await deps.source(scope),processing_ready:deps.ready(),can_edit:await deps.canEdit(scope)});
+   if(search.get('context')==='true')return studyResponseV1({source:await deps.source(scope),processing_ready:deps.ready(),can_edit:await deps.canEdit(scope),can_execute:await deps.canExecute(scope)});
    const args=z.object({limit:z.coerce.number().int().min(1).max(100).default(20),after_study_id:uuid.optional()}).strict().parse(Object.fromEntries(search));
    return studyResponseV1(await deps.list(scope,args));
   }),
@@ -89,7 +90,7 @@ export function createSignalStudyApiV1(deps:StudyApiDependenciesV1){
    if(!reportCfg||reportCfg.study_id!==study_id)return studyResponseV1({error:'study_configuration_unavailable'},409);
    const raw=status?.status==='completed'?await deps.overview(scope,status.id):null;
    const overview:StudyOverviewV1|null=raw?{execution_id:raw.execution_id,study_id:raw.study_id,configuration_id:raw.configuration_id,configuration_is_latest:raw.configuration_is_latest,source_digest:raw.source_digest,output_digest:raw.output_digest,listening_source_binding:raw.listening_source_binding,overview:raw.overview,section_counts:raw.section_counts}:null;
-   return studyResponseV1({configuration:studyMetadataV1(reportCfg),configuration_is_latest:reportCfg.id===cfg.id,execution:status,overview,processing_ready:deps.ready(),can_edit:await deps.canEdit(scope),current_listening_revision:await deps.currentListeningRevision(scope)});
+   return studyResponseV1({configuration:studyMetadataV1(reportCfg),configuration_is_latest:reportCfg.id===cfg.id,execution:status,overview,processing_ready:deps.ready(),can_edit:await deps.canEdit(scope),can_execute:await deps.canExecute(scope),current_listening_revision:await deps.currentListeningRevision(scope)});
   }),
   mutate:(workspace_id:string,study_id:string,request:Request)=>scoped(workspace_id,async scope=>{
    uuid.parse(study_id);const key=requestKey(request),body=mutation.parse(await request.json()),cfg=await deps.configuration(scope,study_id);

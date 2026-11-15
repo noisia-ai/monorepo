@@ -10,7 +10,7 @@ function harness(){
  const configuration={id:cfgid,workspace_id:workspace,study_id:study,revision:1,envelope:{study:{...create,workspace_id:workspace,corpus_id:snapshot,methodology:{key:'triggers_barriers',version:'r16-v1',template_digest:sha},template_snapshot:{private:'template'}}},configuration_digest:sha,listening_snapshot_id:snapshot} as unknown as NonNullable<Awaited<ReturnType<StudyApiDependenciesV1['configuration']>>>;
  const status=()=>({id:execution,study_id:statusStudy,configuration_id:statusConfig,status:'completed'}) as NonNullable<Awaited<ReturnType<StudyApiDependenciesV1['status']>>>;
  const record=(operation:string,scope:unknown,args:unknown)=>{calls.push({operation,scope,args});if(nativeError)throw nativeError;};
- const deps:StudyApiDependenciesV1={load:async()=>denied?{response:Response.json({error:'forbidden'},{status:403})}:{workspace_id:workspace,actor_user_id:'session-user'},ready:()=>ready,canEdit:async()=>true,
+ const deps:StudyApiDependenciesV1={load:async()=>denied?{response:Response.json({error:'forbidden'},{status:403})}:{workspace_id:workspace,actor_user_id:'session-user'},ready:()=>ready,canEdit:async()=>true,canExecute:async()=>true,
   source:async()=>create.source as Awaited<ReturnType<StudyApiDependenciesV1['source']>>,list:async(s,a)=>{record('list',s,a);return{studies:[],next_after_study_id:null};},
   create:async(s,a,k)=>{record('create',s,{...a,idempotency_key:k});return{study_id:study}as Awaited<ReturnType<StudyApiDependenciesV1['create']>>;},
   configuration:async()=>configuration,executionConfiguration:async()=>({...configuration,id:statusConfig,revision:2}),latestExecution:async()=>status(),status:async()=>status(),
@@ -50,11 +50,12 @@ test('historical execution metadata comes from its exact configuration, not the 
  const f=harness();f.setOldExecution();const body=await(await f.invoke('detail','GET')).json();assert.equal(body.configuration.configuration_id,snapshot);assert.equal(body.configuration_is_latest,false);
 });
 test('forged authority, missing keys and malformed cap/cut never reach native writes',async()=>{
- const f=harness();for(const extra of [{actor_user_id:study},{workspace_id:study},{provider:'anthropic'},{model:'other'},{analysis_enabled:true},{methodology:{key:'other'}}])assert.equal((await f.invoke('collection','POST',{...create,...extra})).status,422);
+ const f=harness();for(const extra of [{actor_user_id:study},{workspace_id:study},{provider:'anthropic'},{model:'other'},{analysis_enabled:true},{can_execute:true},{can_request_processing:true},{methodology:{key:'other'}}])assert.equal((await f.invoke('collection','POST',{...create,...extra})).status,422);
  assert.equal((await f.invoke('collection','POST',create,'','bad key')).status,422);
  assert.equal((await f.invoke('collection','POST',{...create,cut:{...create.cut,timezone:'invalid'}})).status,422);
  assert.equal((await f.invoke('collection','POST',{...create,cut:{...create.cut,end_at:create.cut.start_at}})).status,422);
  for(const cap of [0,-1,1.5,Number.MAX_SAFE_INTEGER+1])assert.equal((await f.invoke('detail','POST',{operation:'execute',configuration_id:cfgid,cap_micro_usd:cap})).status,422);
+ assert.equal((await f.invoke('detail','POST',{operation:'execute',configuration_id:cfgid,cap_micro_usd:1,can_execute:true})).status,422);
  assert.equal((await f.invoke('detail','POST',{operation:'execute',configuration_id:snapshot,cap_micro_usd:1})).status,409);assert.equal(f.calls.length,0);
 });
 test('readiness blocks processing only; promotion is explicit, CAS-bound and does not use paid admission',async()=>{

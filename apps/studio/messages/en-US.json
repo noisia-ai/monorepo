@@ -5154,6 +5154,7 @@
     },
     "saved": "Request applied.",
     "sourceHuman": "This source includes the published human corrections.",
-    "invalidCut": "Select a valid date range and timezone."
+    "invalidCut": "Select a valid date range and timezone.",
+    "processingNotAllowed": "This account cannot start paid processing. Editing and promotion permissions are separate."
   }
 }

@@ -1,4 +1,4 @@
-import {getSignalListeningHumanEditContextV1,ensureSignalStudyCorpusV1,saveSignalStudyConfigurationV1,getSignalListeningEffectiveServingSnapshotV1,getSignalListeningConfigurationV1,
+import {getSignalListeningStatusV1,getSignalListeningHumanEditContextV1,ensureSignalStudyCorpusV1,saveSignalStudyConfigurationV1,getSignalListeningEffectiveServingSnapshotV1,getSignalListeningConfigurationV1,
  readSignalStudyConfigurationV1,listSignalStudiesV1,readLatestSignalStudyConfigurationV1,readLatestSignalStudyExecutionStatusV1,readSignalStudyExecutionStatusV1,
  requestSignalStudyExecutionV1,promoteSignalStudyMotivesV1,readSignalStudyReportOverviewV1,readSignalStudyReportPageV1} from '@noisia/db';
 import {buildSignalStudyExecutionConfigurationV1,createSignalStudyTemplateSnapshotV1,SIGNAL_STUDY_TB_TEMPLATE_V1,SIGNAL_STUDY_TB_ROLES_V1,validateSignalStudyV1} from '@noisia/query-engine';
@@ -14,6 +14,7 @@ export async function loadSignalWorkspaceContextForStudyV1(workspace_id:string){
  return{api:createSignalStudyApiV1({
   load:async id=>id===scope.workspace_id?scope:{response:studyResponseV1({error:'study_forbidden'},403)},
   ready:()=>process.env.NOISIA_STUDY_SCOPED_PROVIDER_READY==='true',
+  canExecute:async s=>(await getSignalListeningStatusV1(access(s))).capabilities.can_request_processing,
   canEdit:async s=>{try{return(await getSignalListeningHumanEditContextV1(access(s))).can_edit;}catch(error){
    if(error instanceof Error&&'status'in error&&error.status===404)return false;throw error;
   }},

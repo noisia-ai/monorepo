@@ -7,7 +7,7 @@ import type {SignalStudyExecutionStatusV1,SignalStudyReportRowsV1,SignalStudyRep
 import {signalListeningDateBoundaryV1} from '@/lib/data-os/signal-listening-date';
 import type {StudyMetadataV1,StudyOverviewV1,StudySourceV1} from '@/lib/data-os/signal-study-api';
 type ListRow={study_id:string;subject_name:string;methodology:string;execution:SignalStudyExecutionStatusV1|null};
-type Detail={configuration:StudyMetadataV1;configuration_is_latest:boolean;execution:SignalStudyExecutionStatusV1|null;overview:StudyOverviewV1|null;processing_ready:boolean;can_edit:boolean;current_listening_revision:number|null};
+type Detail={configuration:StudyMetadataV1;configuration_is_latest:boolean;execution:SignalStudyExecutionStatusV1|null;overview:StudyOverviewV1|null;processing_ready:boolean;can_edit:boolean;can_execute:boolean;current_listening_revision:number|null};
 type Pending={body:string;key:string};
 const endpoint=(workspaceId:string)=>`/api/data-os/signal/${encodeURIComponent(workspaceId)}/studies`;
 const active=(status:string)=>['building','queued','running','outcome_unknown'].includes(status);
@@ -83,6 +83,8 @@ export function StudioStudyDetail({workspaceId,studyId}:{workspaceId:string;stud
  const invalidate=useCallback(()=>{sequence.current++;request.current?.abort();},[]);
  useEffect(()=>{setDetail(null);void load();return invalidate;},[load,invalidate]);
  const mutation=useStudyMutationV1(url,async()=>{await load();});
+ const retryIsExecution=mutation.pending?(JSON.parse(mutation.pending.body)as{operation?:string}).operation==='execute':false;
+ const canRetry=detail!==null&&(retryIsExecution?detail.processing_ready&&detail.can_execute:detail.can_edit);
  // An acknowledged queue request starts a fresh cancellable polling cycle.
  const executionId=detail?.execution?.id,status=detail?.execution?.status;
  useEffect(()=>{if(!executionId||!status||!active(status))return;let closed=false;let timer:ReturnType<typeof setTimeout>;
@@ -98,14 +100,14 @@ export function StudioStudyDetail({workspaceId,studyId}:{workspaceId:string;stud
     <dt>{t('corpus')}</dt><dd>{detail.configuration.study.corpus_id}</dd><dt>{t('revision')}</dt><dd>{detail.configuration.revision}</dd></dl>
    <p>{t('automatic')}</p>{!detail.can_edit?<p>{t('readOnly')}</p>:null}
    {detail.execution?<p role="status">{t(`status.${detail.execution.status}`)} · {t('roots',{count:detail.execution.source_roots})} · {t('steps',{done:detail.execution.steps_committed,total:detail.execution.steps_total})} · {t('exposure',{amount:(Number(detail.execution.exposure_micro_usd)/1e6).toFixed(4)})}</p>:null}
-   {!detail.processing_ready?<p>{t('notReady')}</p>:null}
-   {!detail.execution?<form onSubmit={event=>{event.preventDefault();const amount=Number(cap);if(Number.isFinite(amount)&&amount>0&&Number.isSafeInteger(Math.round(amount*1e6)))void mutation.submit({operation:'execute',configuration_id:detail.configuration.configuration_id,cap_micro_usd:Math.round(amount*1e6)});}}>
+   {!detail.processing_ready?<p>{t('notReady')}</p>:null}{!detail.can_execute?<p>{t('processingNotAllowed')}</p>:null}
+   {!detail.execution?<form onSubmit={event=>{event.preventDefault();if(!detail.can_execute||!detail.processing_ready||mutation.locked)return;const amount=Number(cap);if(Number.isFinite(amount)&&amount>0&&Number.isSafeInteger(Math.round(amount*1e6)))void mutation.submit({operation:'execute',configuration_id:detail.configuration.configuration_id,cap_micro_usd:Math.round(amount*1e6)});}}>
     <label className="admin-form-field">{t('cap')}<input type="number" min="0.000001" step="0.000001" required value={cap} onChange={e=>setCap(e.target.value)} disabled={mutation.locked}/></label><p>{t('capExplanation')}</p>
-    <button disabled={!detail.processing_ready||!detail.can_edit||mutation.locked} type="submit">{t('run')}</button>
+    <button disabled={!detail.processing_ready||!detail.can_execute||mutation.locked} type="submit">{t('run')}</button>
    </form>:null}
    {detail.overview?<StudyReport key={JSON.stringify([url,detail.overview.study_id,detail.overview.configuration_id,detail.overview.execution_id,detail.overview.output_digest,detail.overview.source_digest])} workspaceUrl={url} value={detail.overview} currentRevision={detail.current_listening_revision} onPromote={keys=>void mutation.submit({operation:'promote',execution_id:detail.overview!.execution_id,motive_keys:keys,expected_listening_revision:detail.current_listening_revision})} locked={mutation.locked||!detail.can_edit}/>:detail.execution?.status==='completed'?<p role="alert">{t('outputUnavailable')}</p>:null}
   </>}
-  {mutation.phase==='uncertain'?<p role="alert">{t('uncertain')} <button onClick={()=>void mutation.submit(null)}>{t('retrySame')}</button></p>:mutation.phase==='failed'?<p role="alert">{t('mutationFailed')} <button onClick={()=>void load()}>{t('refresh')}</button></p>:mutation.phase==='saved'?<p role="status">{t('saved')}</p>:null}
+  {mutation.phase==='uncertain'?<p role="alert">{t('uncertain')} <button disabled={!canRetry} onClick={()=>{if(canRetry)void mutation.submit(null);}}>{t('retrySame')}</button></p>:mutation.phase==='failed'?<p role="alert">{t('mutationFailed')} <button onClick={()=>void load()}>{t('refresh')}</button></p>:mutation.phase==='saved'?<p role="status">{t('saved')}</p>:null}
  </section>;
 }
 type Page={[S in SignalStudyReportSectionV1]:{section:S;rows:SignalStudyReportRowsV1[S];offset:number;next_offset:number|null;total:number}}[SignalStudyReportSectionV1];

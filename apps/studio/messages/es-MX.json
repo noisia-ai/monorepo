@@ -5154,6 +5154,7 @@
     },
     "saved": "Solicitud aplicada.",
     "sourceHuman": "Esta fuente incluye las correcciones humanas publicadas.",
-    "invalidCut": "Elige un periodo y una zona horaria válidos."
+    "invalidCut": "Elige un periodo y una zona horaria válidos.",
+    "processingNotAllowed": "Esta cuenta no puede iniciar procesamiento pagado. Los permisos para editar y promover son independientes."
   }
 }
