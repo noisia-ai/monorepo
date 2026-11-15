@@ -102,13 +102,16 @@ function proposals(f:Requests,amount:number){return f.inputs.map(input=>{
  return{id:randomUUID(),custom_id:'listening_'+request_digest.slice(7,67),request_digest,request,inputs:[input],reserved_micro_usd:amount};
 });}
 async function insert(c:PoolClient,f:Requests,amount:number,inputs=f.inputs){
+ return insertPrepared(c,f,proposals({...f,inputs},amount));
+}
+async function insertPrepared(c:PoolClient,f:Requests,rows:ReturnType<typeof proposals>){
  return c.query(`INSERT INTO signal_labeling_calls(id,run_id,workspace_id,provider,model,transport,custom_id,
   request_digest,request,inputs,reserved_micro_usd,budget_date,budget_timezone)
  SELECT x.id,$1,$2,'typesafe','jev-1.13.0','sync',x.custom_id,x.request_digest,x.request,x.inputs,x.reserved_micro_usd,
   a.budget_date,a.budget_timezone FROM jsonb_to_recordset($3::jsonb) x(id uuid,custom_id text,request_digest text,
    request jsonb,inputs jsonb,reserved_micro_usd bigint)
  JOIN signal_processing_admissions a ON a.id=$4 RETURNING id`,
- [f.run.id,f.run.workspace_id,JSON.stringify(proposals({...f,inputs},amount)),f.run.processing_admission_id]);
+ [f.run.id,f.run.workspace_id,JSON.stringify(rows),f.run.processing_admission_id]);
 }
 async function transaction(f:NativeFixture,body:(c:PoolClient)=>Promise<void>){
  const c=await f.database.connect();try{await c.query('BEGIN');await c.query("SET LOCAL statement_timeout='20s'; SET LOCAL lock_timeout='5s'");
@@ -118,6 +121,54 @@ async function exposureCalls(c:PoolClient,fn='signal_processing_org_exposure_v1(
  return Number((await c.query(`SELECT COALESCE((SELECT calls FROM pg_stat_xact_user_functions
   WHERE funcid=$1::regprocedure),0)::int n`,[fn])).rows[0].n);
 }
+test('native Listening evaluates one fresh bounded population per reserve and mark statement, not per call',{
+ skip:!enabled,timeout:600000,
+},async()=>withMoneyFixture(1000000,async f=>{
+ await transaction(f,async c=>{
+  await c.query("SET LOCAL track_functions='all'");
+  const population='signal_listening_population_roots_v1(uuid,uuid,uuid,text,uuid[],text)';
+  const authority='signal_listening_call_authority_v1(uuid,date,text,timestamptz)';
+  const beforePopulation=await exposureCalls(c,population),beforeAuthority=await exposureCalls(c,authority);
+  const calls=(await insert(c,f,1000)).rows;assert.equal(calls.length,3);
+  assert.equal(await exposureCalls(c,population)-beforePopulation,1,'all three roots must share one statement-local population');
+  assert.equal(await exposureCalls(c,authority)-beforeAuthority,2,'authority is checked before validation and after final exposure');
+  const beforeMark=await exposureCalls(c,population),beforeMarkAuthority=await exposureCalls(c,authority);
+  await c.query("UPDATE signal_labeling_calls SET status='submitting' WHERE id=ANY($1::uuid[])",[calls.map(row=>row.id)]);
+  assert.equal(await exposureCalls(c,population)-beforeMark,1,'mark must read another population even in the same transaction');
+  assert.equal(await exposureCalls(c,authority)-beforeMarkAuthority,2,'mark retains both physical authority fences');
+ });
+}));
+
+for(const defect of ['text','digest','question_digest','duplicate_question']as const)test('native Listening batch rejects '+defect+' and rolls back valid siblings',{
+ skip:!enabled,timeout:600000,
+},async()=>withMoneyFixture(1000000,async f=>{
+ const rows=proposals(f,1000),bad=rows[1]!,input=bad.inputs[0]!;
+ if(defect==='text'){input.text+=' forged text';bad.request={...bad.request,state:input.text};}
+ if(defect==='question_digest')input.question_digests={...input.question_digests,voice:'sha256:'+'f'.repeat(64)};
+ if(defect==='duplicate_question'){
+  input.question_keys=['voice','voice'];input.question_digests={voice:input.question_digests.voice!};input.scope_basis={};
+  bad.request={...bad.request,questions:{voice:bad.request.questions.voice!}};
+ }
+ bad.request_digest=signalListeningRequestDigestV1(f.run,input,bad.request);
+ if(defect==='digest')bad.request_digest='sha256:'+'e'.repeat(64);
+ bad.custom_id='listening_'+bad.request_digest.slice(7,67);
+ await assert.rejects(transaction(f,c=>insertPrepared(c,f,rows).then(()=>{})),
+  defect==='text'||defect==='digest'?/listening_request_invalid/:/listening_call_questions_invalid/);
+ assert.equal((await f.database.query('SELECT count(*)::int n FROM signal_labeling_calls WHERE run_id=$1',[f.run.id])).rows[0].n,0);
+ assert.equal((await f.database.query('SELECT count(*)::int n FROM signal_listening_call_questions WHERE run_id=$1',[f.run.id])).rows[0].n,0);
+}));
+
+test('native statement root selector deduplicates before bounding and never accepts NULL as full population',{
+ skip:!enabled,timeout:600000,
+},async()=>withMoneyFixture(1000000,async f=>{
+ const root=f.inputs[0]!.root_id;
+ assert.deepEqual((await f.database.query('SELECT signal_listening_statement_roots_v1($1::uuid[]) roots',[Array(8192).fill(root)])).rows[0].roots,[root]);
+ for(const values of [null,[],[null]])await assert.rejects(
+  f.database.query('SELECT signal_listening_statement_roots_v1($1::uuid[])',[values]),/listening_statement_roots_invalid/);
+ assert.equal((await f.database.query('SELECT cardinality(signal_listening_statement_roots_v1(ARRAY(SELECT gen_random_uuid() FROM generate_series(1,4096)))) n')).rows[0].n,4096);
+ await assert.rejects(f.database.query('SELECT signal_listening_statement_roots_v1(ARRAY(SELECT gen_random_uuid() FROM generate_series(1,4097)))'),/listening_statement_roots_invalid/);
+ assert.equal((await f.database.query('SELECT count(*)::int n FROM signal_labeling_calls WHERE run_id=$1',[f.run.id])).rows[0].n,0);
+}));
 test('native SQL rolls back an entire Listening batch when each reservation fits but their sum exceeds the run cap',{
  skip:!enabled,timeout:600000,
 },async()=>withMoneyFixture(1500,async f=>{
