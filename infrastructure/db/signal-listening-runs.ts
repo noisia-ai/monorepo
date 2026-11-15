@@ -1,3 +1,4 @@
+import {assertSignalListeningDiscoveryInitialPreparationWithClientV1,bindSignalListeningDiscoveryInitialAdmissionWithClientV1} from './signal-listening-discovery-initial';
 import type {PoolClient} from 'pg';
 import {signalListeningJevIdentityV1,validateSignalListeningConfigurationV1,labelerDigestV1,buildSignalListeningJevRequestV1,
  signalWorkspaceEmbeddingDigestV1 as digest,type SignalListeningInputV1,type SignalListeningResultV1,type SignalListeningConfigurationV1} from '@noisia/query-engine';
@@ -56,14 +57,15 @@ async function inputs(c:Pick<PoolClient,'query'>,run:LabelingRunV1,limit:number,
   configuration_digest:o.configuration_digest,question_keys:row.question_keys,question_digests:row.question_digests,scope_basis:row.scope_basis}));
 }
 export async function requestSignalListeningV1(args:SignalListeningAccessV1&{configuration_id:string;map_id:string;
- idempotency_key:string;cap_micro_usd:number;provider_available:boolean;preparation_id?:string}){
+ idempotency_key:string;cap_micro_usd:number;provider_available:boolean;preparation_id?:string;initial_discovery?:boolean}){
  const stored=await getForRequest(args),identity=signalListeningJevIdentityV1(stored.configuration);
  return requestMentionFacetsV1({...args,identity,full_recalculation:true,adapter:{
-  request_identity:{contract_version:'signal-listening-run-v1',configuration_id:stored.id,map_id:args.map_id,full_corpus:true,...(args.preparation_id?{preparation_id:args.preparation_id}:{})},
+  request_identity:{contract_version:'signal-listening-run-v1',configuration_id:stored.id,map_id:args.map_id,full_corpus:true,...(args.preparation_id?{preparation_id:args.preparation_id}:{}),...(args.initial_discovery?{initial_discovery:true}:{})},
   policy_action:'mass_labeling_jev',feature:'mass_labeling',select_labeler:false,
   validateIdentity:candidate=>{if(labelerDigestV1(candidate)!==labelerDigestV1(identity))fail('listening_identity_invalid');},
   prepare:async(c,workspace,_run,_labeler,context)=>{
    await authorizeSignalListeningV1(c,args,'process');
+   if(args.initial_discovery){if(!args.preparation_id)return fail('listening_discovery_initial_preparation_required');await assertSignalListeningDiscoveryInitialPreparationWithClientV1(c,{...args,preparation_id:args.preparation_id});}
    if(args.preparation_id){
     const flow=(await c.query<{configuration_id:string;map_id:string;cap_micro_usd:string;status:string;actor_user_id:string;spent:string}>(`SELECT f.*,
      COALESCE(p.settled_micro_usd,0)::text spent FROM signal_listening_preparations f
@@ -90,6 +92,7 @@ export async function requestSignalListeningV1(args:SignalListeningAccessV1&{con
    await c.query(`INSERT INTO signal_listening_runs(run_id,workspace_id,configuration_id,map_id,configuration_digest${args.preparation_id?',preparation_id':''})
     VALUES($1,$2,$3,$4,$5${args.preparation_id?',$6':''})`,[run,args.workspace_id,stored.id,args.map_id,stored.configuration_digest,...(args.preparation_id?[args.preparation_id]:[])]);
    if(args.preparation_id)await c.query("UPDATE signal_listening_preparations SET status='labeling',listening_run_id=$2,updated_at=clock_timestamp() WHERE id=$1",[args.preparation_id,run]);
+   if(args.initial_discovery&&args.preparation_id)await bindSignalListeningDiscoveryInitialAdmissionWithClientV1(c,{...args,preparation_id:args.preparation_id,run_id:run});
   },
  }});
 }

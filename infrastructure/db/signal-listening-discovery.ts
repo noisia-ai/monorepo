@@ -93,14 +93,17 @@ async function emptyTopics(c:PoolClient,g:ListeningDiscoveryGenerationV1,configu
  }
 }
 export async function refreshSignalListeningDiscoveryV1(args:SignalListeningAccessV1&{configuration_id:string;map_id:string;round:number;source_generation_id:string}){
- return tx(args,async c=>{const {row:g,cfg}=await start(c,args,'confirmed_members',args.source_generation_id);await emptyTopics(c,g,cfg.configuration,'confirmed_members');await roots(c,g);
+ return tx(args,c=>refreshSignalListeningDiscoveryWithClientV1(c,args));
+}
+/** Internal caller owns one real transaction and the original source binding. */
+export async function refreshSignalListeningDiscoveryWithClientV1(c:PoolClient,args:SignalListeningAccessV1&{configuration_id:string;map_id:string;round:number;source_generation_id:string}){
+ await authorizeSignalListeningV1(c,args,'process');const {row:g,cfg}=await start(c,args,'confirmed_members',args.source_generation_id);await emptyTopics(c,g,cfg.configuration,'confirmed_members');await roots(c,g);
   await c.query(`INSERT INTO signal_listening_discovery_members(generation_id,workspace_id,question_key,root_id,evidence)
    SELECT r.generation_id,r.workspace_id,e->>'question_key',r.root_id,jsonb_build_object('kind',CASE WHEN e->>'manual_id' IS NULL THEN 'jev' ELSE 'manual' END,'evaluation',e)
    FROM signal_listening_discovery_roots r CROSS JOIN LATERAL jsonb_array_elements(r.proof->'evaluations') e
    JOIN signal_listening_discovery_topics t ON t.generation_id=r.generation_id AND t.question_key=e->>'question_key'
    WHERE r.generation_id=$1 AND r.proof->>'embedding_call_id' IS NOT NULL AND (e->>'probability')::double precision>=0.7`,[g.id]);
   return seal(c,g);
- });
 }
 export async function seedSignalListeningDiscoveryV1(args:SignalListeningAccessV1&{configuration_id:string;map_id:string;round:number;source_generation_id:string;seeds:ListeningDiscoverySeedV1[]}){
  return tx(args,c=>seedSignalListeningDiscoveryWithClientV1(c,args));

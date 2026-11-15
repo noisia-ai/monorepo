@@ -57,7 +57,10 @@ async function owner(c:PoolClient,args:SignalListeningAccessV1,id:string){
 }
 export async function startSignalListeningDiscoveryExecutionV1(args:SignalListeningAccessV1&{generation_id:string;classification_run_id:string;preparation_id?:string;cap_micro_usd:number;idempotency_key:string}){
  if(!Number.isSafeInteger(args.cap_micro_usd)||args.cap_micro_usd<=0||!/^[A-Za-z0-9._:-]{8,200}$/u.test(args.idempotency_key))fail('listening_discovery_request_invalid',422);
- return listeningTransactionV1(args.database,async c=>{
+ return listeningTransactionV1(args.database,c=>startSignalListeningDiscoveryExecutionWithClientV1(c,args));
+}
+/** Same native owner guards inside the caller's real transaction. */
+export async function startSignalListeningDiscoveryExecutionWithClientV1(c:PoolClient,args:SignalListeningAccessV1&{generation_id:string;classification_run_id:string;preparation_id?:string;cap_micro_usd:number;idempotency_key:string;initial_intent_id?:string}){
   const policy=await policyLock(c,args.workspace_id);await authorizeSignalListeningV1(c,args,'process');if(policy.max_execution_micro_usd!==null&&args.cap_micro_usd>number(policy.max_execution_micro_usd))fail('listening_discovery_policy_cap_exceeded');
   const g=(await c.query<ListeningDiscoveryGenerationV1>("SELECT * FROM signal_listening_discovery_generations WHERE id=$1 AND workspace_id=$2 AND status='ready'",[args.generation_id,args.workspace_id])).rows[0];
   if(!g)fail('listening_discovery_generation_unavailable');await mapCurrent(c,args.workspace_id,g.map_id);
@@ -67,14 +70,14 @@ export async function startSignalListeningDiscoveryExecutionV1(args:SignalListen
   const old=(await c.query<ListeningDiscoveryExecutionV1&{request_digest:string}>('SELECT * FROM signal_listening_discovery_executions WHERE workspace_id=$1 AND actor_user_id=$2 AND idempotency_key=$3',[args.workspace_id,args.actor_user_id,args.idempotency_key])).rows[0];
   if(old){if(old.request_digest!==request_digest)fail('listening_discovery_idempotency_conflict');return old;}
   const row=(await c.query<ListeningDiscoveryExecutionV1>(`INSERT INTO signal_listening_discovery_executions(workspace_id,organization_id,actor_user_id,map_id,initial_configuration_id,initial_generation_id,
-   initial_preparation_id,initial_classification_run_id,policy_version_id,configuration,configuration_digest,policy,policy_digest,root_census_digest,root_count,cap_micro_usd,idempotency_key,request_digest)
-   VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11,$12::jsonb,$13,signal_listening_discovery_census_v1($6),$14,$15,$16,$17) RETURNING *`,
+   initial_preparation_id,initial_classification_run_id,policy_version_id,configuration,configuration_digest,policy,policy_digest,root_census_digest,root_count,cap_micro_usd,idempotency_key,request_digest${args.initial_intent_id?',initial_intent_id':''})
+   VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11,$12::jsonb,$13,signal_listening_discovery_census_v1($6),$14,$15,$16,$17${args.initial_intent_id?',$18':''}) RETURNING *`,
    [args.workspace_id,policy.organization_id,args.actor_user_id,g.map_id,cfg.id,g.id,preparation_id,args.classification_run_id,policy.id,JSON.stringify(cfg.configuration),cfg.configuration_digest,
-    JSON.stringify(LISTENING_DISCOVERY_POLICY_V1),listeningDiscoveryPolicyDigestV1(LISTENING_DISCOVERY_POLICY_V1),g.counts.roots,args.cap_micro_usd,args.idempotency_key,request_digest])).rows[0]!;
+    JSON.stringify(LISTENING_DISCOVERY_POLICY_V1),listeningDiscoveryPolicyDigestV1(LISTENING_DISCOVERY_POLICY_V1),g.counts.roots,args.cap_micro_usd,args.idempotency_key,request_digest,...(args.initial_intent_id?[args.initial_intent_id]:[])])).rows[0]!;
   await c.query('INSERT INTO signal_listening_discovery_children(execution_id,workspace_id,run_id,preparation_id) VALUES($1,$2,$3,$4)',[row.id,row.workspace_id,args.classification_run_id,preparation_id]);
   if(number((await c.query('SELECT signal_listening_discovery_exposure_v1($1)::text n',[row.id])).rows[0].n)>args.cap_micro_usd)fail('listening_discovery_parent_cap_exhausted');return row;
- });
 }
+
 async function nativeRequest(args:SignalListeningAccessV1&{generation_id:string;ordinal:number;orphan_groups:ListeningDiscoveryOrphanManifestV1[]}){
  const g=await getSignalListeningDiscoveryGenerationV1(args);if(!g)fail('listening_discovery_generation_unavailable');
  const cfg=await listeningTransactionV1(args.database,c=>loadSignalListeningConfigurationWithClientV1(c,args.workspace_id,g.configuration_id));if(!cfg)fail('listening_discovery_configuration_unavailable');
@@ -363,7 +366,7 @@ export async function prepareSignalListeningDiscoveryChildV1(args:SignalListenin
  const cap=await listeningTransactionV1(args.database,async c=>{await mutationAuthority(c,args,r.id);
   if((await loadSignalListeningConfigurationWithClientV1(c,args.workspace_id))?.id!==r.output_configuration_id)fail('listening_discovery_human_configuration_changed');
   const action=(await c.query<{max_execution_micro_usd:string|null}>("SELECT max_execution_micro_usd::text FROM signal_processing_policy_actions WHERE policy_version_id=$1 AND action='mass_labeling_jev'",[p.policy_version_id])).rows[0];if(!action)fail('listening_discovery_child_policy_missing');return Math.min(number(r.planned_child_cap_micro_usd),action.max_execution_micro_usd===null?Number.MAX_SAFE_INTEGER:number(action.max_execution_micro_usd));});
- const result=await prepareSignalListeningV1({...args,configuration_id:r.output_configuration_id,map_id:p.map_id,idempotency_key:'listening-discovery-child:'+r.id,cap_micro_usd:cap});
+ const result=await prepareSignalListeningV1({...args,configuration_id:r.output_configuration_id,map_id:p.map_id,idempotency_key:'listening-discovery-child:'+r.id,cap_micro_usd:cap,origin:'discovery_child',auto_discovery:false});
  const prepared=(await args.database.query<SignalListeningPreparationV1>('SELECT * FROM signal_listening_preparations WHERE id=$1 AND workspace_id=$2',[result.preparation_id,args.workspace_id])).rows[0];if(!prepared)fail('listening_discovery_child_not_ready');
  await listeningTransactionV1(args.database,async c=>{await moneyLock(c,r.id);
   const binding={...r,classification_preparation_id:prepared.id,classification_run_id:prepared.listening_run_id};const state=await childState(c,binding);

@@ -8,6 +8,7 @@ import {authorizeSignalListeningV1,listeningTransactionV1,loadSignalListeningCon
 import {admitSignalProcessingWithClientV1} from './signal-processing-policy';
 import {mapCurrent} from './signal-mass-labeling';
 import {requestSignalListeningV1} from './signal-listening-runs';
+import {lockSignalListeningDiscoveryInitialRequestWithClientV1,createSignalListeningDiscoveryInitialIntentWithClientV1} from './signal-listening-discovery-initial';
 
 export type SignalListeningPreparationQuoteV1={contract_version:'signal-listening-preparation-quote-v1';workspace_id:string;
  configuration_id:string;map_id:string;policy_version_id:string;prototype_plan:SignalListeningPrototypePlanV1;
@@ -16,7 +17,8 @@ export type SignalListeningPreparationQuoteV1={contract_version:'signal-listenin
 export type SignalListeningPreparationV1={id:string;workspace_id:string;configuration_id:string;map_id:string;actor_user_id:string;
  policy_version_id:string;idempotency_key:string;request_digest:string;cap_micro_usd:string;prototype_cap_micro_usd:string;
  quote:SignalListeningPreparationQuoteV1;planned_prototype_run_id:string|null;prototype_run_id:string|null;listening_run_id:string|null;
- status:'preparing'|'waiting_prototypes'|'ready_for_labeling'|'labeling'|'completed'|'failed';error_code:string|null};
+ status:'preparing'|'waiting_prototypes'|'ready_for_labeling'|'labeling'|'completed'|'failed';error_code:string|null;
+ discovery_origin?:'initial'|'discovery_child'|null;auto_discovery?:boolean|null};
 const count=(v:unknown)=>{const n=Number(v);if(!Number.isSafeInteger(n)||n<0)fail('listening_count_invalid',503);return n;};
 async function budget(c:PoolClient,args:Omit<SignalListeningAccessV1,'database'>,policy?:string){
  const row=(await c.query<{id:string;organization_id:string;budget_timezone:string;configuration:unknown;provider:string;model:string;
@@ -84,26 +86,31 @@ async function bindCached(c:PoolClient,args:SignalListeningAccessV1,plan:SignalL
  [args.workspace_id,plan.configuration_id,plan.embedding_profile.config_digest,JSON.stringify(plan.inputs),args.actor_user_id]);
 }
 export async function prepareSignalListeningV1(args:SignalListeningAccessV1&{configuration_id:string;map_id:string;idempotency_key:string;
- cap_micro_usd:number;provider_available:boolean;prototype_provider_available?:boolean}){
+ cap_micro_usd:number;provider_available:boolean;prototype_provider_available?:boolean;auto_discovery?:boolean;origin?:'initial'|'discovery_child';automatic?:boolean}){
  if(!Number.isSafeInteger(args.cap_micro_usd)||args.cap_micro_usd<=0||!/^[A-Za-z0-9._:-]{8,200}$/u.test(args.idempotency_key))fail('listening_request_invalid',422);
+ if(args.automatic===true||args.origin!==undefined&&!['initial','discovery_child'].includes(args.origin)||args.auto_discovery===true&&args.origin==='discovery_child')fail('listening_discovery_initial_origin_invalid',422);
+ const provenance=args.origin!==undefined||args.auto_discovery!==undefined;
  const flow=await listeningTransactionV1(args.database,async c=>{
+  if(args.auto_discovery)await lockSignalListeningDiscoveryInitialRequestWithClientV1(c,args);
   const policy=await budget(c,args);
   if(policy.max_execution_micro_usd!==null&&args.cap_micro_usd>count(policy.max_execution_micro_usd))fail('listening_policy_cap_exceeded');
   await c.query("SELECT pg_advisory_xact_lock(hashtextextended('listening-preparation:'||$1,0))",[args.workspace_id]);
   const old=(await c.query<SignalListeningPreparationV1>('SELECT * FROM signal_listening_preparations WHERE workspace_id=$1 AND actor_user_id=$2 AND idempotency_key=$3',
    [args.workspace_id,args.actor_user_id,args.idempotency_key])).rows[0];
-  if(old){if(old.configuration_id!==args.configuration_id||old.map_id!==args.map_id||count(old.cap_micro_usd)!==args.cap_micro_usd)fail('listening_idempotency_conflict');return old;}
+  if(old){if(old.configuration_id!==args.configuration_id||old.map_id!==args.map_id||count(old.cap_micro_usd)!==args.cap_micro_usd||Boolean(old.auto_discovery)!==Boolean(args.auto_discovery)||old.discovery_origin&&args.origin&&old.discovery_origin!==args.origin)fail('listening_idempotency_conflict');return old;}
   const quote=await quoteWithClient(c,args),prototypeCap=quote.prototype_quote.estimated_upper_micro_usd;
   if(prototypeCap>=args.cap_micro_usd)fail('listening_cap_exhausted');
   if(quote.prototype_quote.missing_inputs&&!args.prototype_provider_available)fail('listening_prototype_provider_unavailable',503);
   await bindCached(c,args,quote.prototype_plan);
   const id=randomUUID(),request_digest=digest({version:'signal-listening-preparation-v1',configuration_id:args.configuration_id,
-   map_id:args.map_id,cap_micro_usd:args.cap_micro_usd,quote_digest:quote.quote_digest});
-  return (await c.query<SignalListeningPreparationV1>(`INSERT INTO signal_listening_preparations(id,workspace_id,configuration_id,map_id,actor_user_id,
-   policy_version_id,idempotency_key,request_digest,cap_micro_usd,prototype_cap_micro_usd,quote,planned_prototype_run_id,status)
-   VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb,$12,$13) RETURNING *`,[id,args.workspace_id,args.configuration_id,args.map_id,args.actor_user_id,
+   map_id:args.map_id,cap_micro_usd:args.cap_micro_usd,quote_digest:quote.quote_digest,...(provenance?{origin:args.origin??'initial',auto_discovery:args.auto_discovery??false}:{})});
+  const created=(await c.query<SignalListeningPreparationV1>(`INSERT INTO signal_listening_preparations(id,workspace_id,configuration_id,map_id,actor_user_id,
+   policy_version_id,idempotency_key,request_digest,cap_micro_usd,prototype_cap_micro_usd,quote,planned_prototype_run_id,status${provenance?',discovery_origin,auto_discovery':''})
+   VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb,$12,$13${provenance?',$14,$15':''}) RETURNING *`,[id,args.workspace_id,args.configuration_id,args.map_id,args.actor_user_id,
    quote.policy_version_id,args.idempotency_key,request_digest,args.cap_micro_usd,prototypeCap,JSON.stringify(quote),prototypeCap?randomUUID():null,
-   prototypeCap?'preparing':'ready_for_labeling'])).rows[0]!;
+   prototypeCap?'preparing':'ready_for_labeling',...(provenance?[args.origin??'initial',args.auto_discovery??false]:[])])).rows[0]!;
+  if(args.auto_discovery)await createSignalListeningDiscoveryInitialIntentWithClientV1(c,{...args,preparation:created});
+  return created;
  });
  return continueSignalListeningPreparationV1({...args,preparation_id:flow.id});
 }
@@ -167,7 +174,7 @@ export async function continueSignalListeningPreparationV1(args:SignalListeningA
   const spent=flow.prototype_run_id?count((await args.database.query<{spent:string}>('SELECT settled_micro_usd::text spent FROM signal_workspace_embedding_runs WHERE id=$1',[flow.prototype_run_id])).rows[0]!.spent):0;
   const admitted=await requestSignalListeningV1({...args,configuration_id:flow.configuration_id,map_id:flow.map_id,
    idempotency_key:'listening-preparation:'+flow.id,cap_micro_usd:count(flow.cap_micro_usd)-spent,
-   provider_available:args.provider_available??true,preparation_id:flow.id});
+   provider_available:args.provider_available??true,preparation_id:flow.id,...(flow.auto_discovery?{initial_discovery:true}:{})});
   return {preparation_id:flow.id,status:'labeling' as const,prototype_run_id:flow.prototype_run_id,run_id:admitted.run_id,
    cap_micro_usd:count(flow.cap_micro_usd),remaining_cap_micro_usd:count(flow.cap_micro_usd)-spent};
  }
