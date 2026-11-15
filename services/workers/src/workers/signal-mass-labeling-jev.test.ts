@@ -936,3 +936,20 @@ test('semantic closure during an admitted next reserve drains its ACK and preser
  assert.ok(f.calls.slice(2).every(call=>call.status==='reserved'&&!call.results_applied&&!call.raw_body));
  assert.ok(f.calls.slice(0,2).every(call=>call.status==='settled'&&call.results_applied),'already sent siblings retain their valid observed usage');
 });
+
+test('occupied HTTP slots do not force tiny raw pages while response memory remains available',{timeout:10000},async()=>{
+ const f=fixture(4,true),batches:string[][]=[];
+ const deferred=()=>{let resolve!:()=>void;const promise=new Promise<void>(done=>{resolve=done;});return{promise,resolve};};
+ const allow=Array.from({length:4},deferred),thirdStarted=deferred();
+ f.store.persistRawPage=async(_run,rows)=>{batches.push(rows.map(row=>row.call.id));for(const row of rows)row.call.raw_body=row.raw;};
+ const provider:JevProviderV1={max_concurrency:2,max_response_bytes:16384,async evaluate(request){
+  const call=f.calls.find(row=>row.request===request)!,index=Number(call.id.slice(5));
+  if(index===2)thirdStarted.resolve();await allow[index]!.promise;return f.response(request);
+ }};
+ const task=processMassLabelingJevV1({run_id:f.run.id,store:f.store,provider,
+  execution:{...streaming,max_in_flight:2,flush_size:4,max_flushes:1,flush_interval_ms:60000,window_size:4}});
+ try{allow[0]!.resolve();await thirdStarted.promise;await delay(0);
+  assert.deepEqual(batches,[],'a full HTTP frontier is not response-memory pressure');
+ }finally{allow.forEach(gate=>gate.resolve());await task;}
+ assert.equal(f.results.length,4);assert.deepEqual(batches,[['call-0','call-1','call-2','call-3']]);
+});

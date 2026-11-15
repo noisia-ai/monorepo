@@ -247,7 +247,14 @@ export async function processJevStreamingWindowV2<I extends FacetInput, R>(args:
         feedClosed=true;break;
       }
       const slots=Math.min(workers-inFlight,Math.floor((e.max_buffered_bytes-memory)/reservationBytes),reserved.length);
-      if(slots<1){if(feeding){await feeding;continue;}if(!inFlight&&!active.size&&!buffered.length)throw Error('jev_stream_memory_budget_invalid');flush(true);await wait();continue;}
+      if(slots<1){
+        if(feeding){await feeding;continue;}
+        if(!inFlight&&!active.size&&!buffered.length)throw Error('jev_stream_memory_budget_invalid');
+        // Occupied HTTP slots are not buffer pressure. Preserve batching until
+        // its size/timer boundary unless responses actually need memory to move.
+        if(!inFlight||e.max_buffered_bytes-memory<reservationBytes)flush(true);
+        await wait();continue;
+      }
       const cohort=reserved.slice(0,slots);memory+=reservationBytes*cohort.length;observe();markingUnsent=cohort;
       try{await store.markSubmitting(run,cohort);}
       catch(error){release(reservationBytes*cohort.length);fail(error);break;}

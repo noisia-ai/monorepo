@@ -12,6 +12,11 @@ No hay aprobaciones humanas intermedias en los procesos de análisis: Sonnet 4.6
 
 ## Progreso
 
+- H3 0304: el seguimiento f0a9a7e5 corrige los dos P2 con tres regresiones que fallaban antes del cambio. PostgreSQL dedicado 16/16, sin omisiones, y tipado/lint 11/11; la revisión confirma el cierre de ambos. La integración contiene el drainer nativo y la activación previa al aviso de avance, revisados sin P0/P1/P2. Falta la validación PostgreSQL conjunta de esta rama y el inicio inicial ligado a intención/cap original (0305 en implementación).
+- H4 configuración: integrados la plantilla JSON y el envelope explícito a3ca3f18/512712ef. Los pasos de ajuste, interpretación, contraste, salida y promoción reciben el snapshot externo sin alterar la identidad del Study; query-engine 713/713. El primer checkpoint del worker fue rechazado por imponer JEV por raíz en serie; se cambia al contrato masivo H1 antes de integrar. Persistencia y ejecución nativa siguen pendientes.
+
+- H1 batching: se reprodujo con cuatro llamadas y memoria libre que ocupar todos los slots HTTP forzaba una página de una sola respuesta antes del temporizador. La corrección distingue saturación HTTP de presión de memoria y conserva los límites de tamaño/tiempo y el drenaje final. La regresión falló en a1ec18b5 y pasa con el cambio; sesenta pruebas focales pasan. Falta revisión, matriz y nueva medición completa; no se atribuye una mejora de velocidad a la prueba unitaria.
+
 - H1 a1ec18b5 terminó 32,768 raíces y 177 páginas en 58.07 s: 564.30 raíces/s, mínimo de una ventana completa igual a cero. Rechazado por velocidad sostenida y latencia observada fuera de 100–500 ms; usar los defaults de la factory no bastó. La preparación sintética separada tardó 641.21 s. Recibo completo conservado en privado; sigue pendiente localizar el cuello y alcanzar la meta antes de usar JEV real.
 - H3 integración local: reagrupación con vectores existentes, controlador de avances y almacenamiento privado revisados se integraron con el adaptador PostgreSQL 0304. La revisión de 0304 encontró dos P2: agotamiento exactamente igual al límite y autoridad entre intent y verificación; se corrigen antes de publicar. Se añade el arranque del drainer nativo y el aviso posterior a activar una ronda, con sondeo persistente para recuperar avisos perdidos. Veintiocho focales pasan; revisión y PostgreSQL conjunto del runtime siguen pendientes. No constituye aceptación del ciclo H3.
 - H6 herramientas de muestras integradas localmente: ocho pruebas y TypeScript estricto pasan; revisión cerrada sin P0/P1/P2. La cobertura parcial no produce κ numérico y la degeneración completa se declara no estimable, conservando la evidencia. Faltan el exportador nativo y los paquetes de ejecuciones reales; no se ha evaluado calidad R16.
@@ -130,6 +135,8 @@ Recibo: separar Voyage/JEV por raíz de Claude por número de grupos y vueltas; 
 
 ## Sorpresas y descubrimientos
 
+- La condición de espera por slots HTTP llamaba al mismo flush forzado que la falta de memoria. Una respuesta temprana seguida de otra cohorte llena podía partir el lote antes del temporizador. El caso mínimo deja todas las respuestas y presupuesto intactos y muestra una página prematura de una fila; el cambio la conserva hasta el límite normal o el drenaje final.
+
 - El segundo ensayo completo con la factory compartida quedó prácticamente igual al anterior (564 frente a 562 raíces/s): las páginas tuvieron mediana de 164 filas aunque el máximo configurado era 1,024. El tamaño configurado no equivale al lote efectivamente persistido; el perfil y el calendario de admisiones deben explicar las pausas antes de otra medición.
 
 - Al unir el transporte continuo con la calibración, una segunda lectura limitada al tamaño de warmup podía perder los extremos seleccionados fuera de sus primeras 32 raíces. Los stores simulados que ignoraban los límites no lo revelaban. La regresión ahora respeta el contrato de filas/bytes, incluye extremos posteriores al índice 32 y comprueba que cada raíz se envía una sola vez; un caso que supera la memoria disponible falla antes de reservar o enviar. La prueba nativa del lector verifica por separado la selección previa a hidratar y el rechazo de autoridad obsoleta; no se presenta como prueba end-to-end de calibración.
@@ -182,6 +189,8 @@ Recibo: separar Voyage/JEV por raíz de Claude por número de grupos y vueltas; 
 - El promedio del piloto completo incluye una etapa editorial que no escala por raíz. Multiplicarlo linealmente daba USD 205.81/millón; mantener explícitamente los grupos y una vuelta de referencia produce USD 114.035250. Ambos cálculos parten del mismo recibo, cuyo uso histórico permanece USD 17.280463.
 
 ## Registro de decisiones
+
+- 2026-11-15: tratar por separado slots HTTP ocupados y memoria insuficiente. Con memoria disponible, esperar otra respuesta sin forzar un lote pequeño; mantener flush por tamaño, temporizador, presión real y drenaje al finalizar. Verificar la hipótesis con mediciones de lotes reales antes de atribuirle capacidad sostenida.
 
 - 2026-11-15: rechazar a1ec18b5 con los mismos criterios de latencia y capacidad. Conservar evidencia y toda la base sintética; no repetir la corrida ni aumentar concurrencia a ciegas. Perfilar lotes reales y pausas antes del siguiente cambio. El drainer automático sólo continúa padres admitidos; el inicio inicial sigue pendiente de una intención explícita ligada al límite original, nunca de inferir autorización por encontrar filas del ledger.
 
