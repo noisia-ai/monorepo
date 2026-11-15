@@ -112,3 +112,15 @@ test('an existing legacy planned numeric checkpoint stays pending without recomp
  const next=fixture();next.stores.pending=async()=>[{execution_id:'bad-owner-identity'},{execution_id:next.execution_id}];
  assert.deepEqual(await drainSignalListeningDiscoveryAdvancesOnceV1(next.options),{candidates:2,advanced:1,failed:1});
 });
+
+test('native parent budget exhaustion is reported as financial failure without another admission or scientific stop',async()=>{
+ const f=fixture(),budget={status:'budget_exhausted' as const,execution_id:f.execution_id,workspace_id:f.context.execution.workspace_id,
+  error_code:'listening_discovery_parent_budget_exhausted' as const,cap_micro_usd:'1000',exposure_micro_usd:'900',reservation_micro_usd:'250'};
+ f.stores.enqueue=async()=>{f.context.execution.status='failed';return budget;};
+ const result=await signalListeningDiscoveryAdvanceJobV1(f.execution_id,f.options);assert.deepEqual(result,budget);
+ assert.equal('reason'in result,false);assert.equal(f.counts().admissions,0);
+ assert.equal((await signalListeningDiscoveryAdvanceJobV1(f.execution_id,f.options)).status,'failed');
+ assert.equal(f.counts().computations,1);assert.equal(f.counts().persists,1);assert.equal(f.counts().admissions,0);
+ const invalid=fixture();invalid.stores.enqueue=async()=>({...budget,execution_id:invalid.execution_id,workspace_id:invalid.context.execution.workspace_id,reservation_micro_usd:'1'});
+ await assert.rejects(signalListeningDiscoveryAdvanceJobV1(invalid.execution_id,invalid.options),/budget_outcome_invalid/);
+});

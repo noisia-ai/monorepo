@@ -10,6 +10,8 @@ export type ListeningDiscoveryAdvanceContextV1={execution:ListeningDiscoveryExec
  source_generation:ListeningDiscoveryGenerationV1|null;stop_decision?:{stop:boolean;reason:string};classification_status:string;policy_version_id:string;policy_digest:string;human_revision_digest:string};
 export type ListeningDiscoveryStoredNumericV1={manifest_json:string;manifest_sha256:string;verified:true};
 export type ListeningDiscoveryNumericCheckpointV1=ListeningDiscoveryStoredNumericV1|{status:'pending';manifest_sha256:string};
+export type ListeningDiscoveryBudgetExhaustedV1={status:'budget_exhausted';execution_id:string;workspace_id:string;
+ error_code:'listening_discovery_parent_budget_exhausted';cap_micro_usd:string;exposure_micro_usd:string;reservation_micro_usd:string};
 type LeaseArgs={database:Database;lease:ListeningDiscoveryAdvanceLeaseV1};
 /** Required native DB contracts; deliberately no SQL fallback or local state.
  * claim/context revalidate admission, map/policy and human precedence. ensureSubset
@@ -29,7 +31,7 @@ export type ListeningDiscoveryAdvanceStoresV1={
  loadNumeric(args:LeaseArgs&{subset_id:string;numeric_config_digest:string}):Promise<ListeningDiscoveryNumericCheckpointV1|null>;
  persistNumeric(args:LeaseArgs&{subset_id:string;numeric:ListeningOrphanNumericResultV1}):Promise<ListeningDiscoveryNumericCheckpointV1>;
  enqueue(args:LeaseArgs&{generation_id:string;expected_ordinal:number;expected_policy_version_id:string;expected_policy_digest:string;expected_human_revision_digest:string;
-  numeric_manifest_sha256:string;provider_available:boolean}):Promise<ListeningDiscoveryRoundV1|null>;
+  numeric_manifest_sha256:string;provider_available:boolean}):Promise<ListeningDiscoveryRoundV1|ListeningDiscoveryBudgetExhaustedV1|null>;
  pending?(args:{database:Database;limit:number}):Promise<Array<{execution_id:string}>>;
 };
 type Options={database:Database;stores:ListeningDiscoveryAdvanceStoresV1;enabled?:boolean;provider_available?:boolean;
@@ -92,6 +94,16 @@ export async function signalListeningDiscoveryAdvanceJobV1(execution_id:string,o
   const round=await stores.enqueue({...args,generation_id:g.id,expected_ordinal:ordinal,expected_policy_version_id:lease.policy_version_id,expected_policy_digest:lease.policy_digest,
    expected_human_revision_digest:lease.human_revision_digest,numeric_manifest_sha256:checkpoint.manifest_sha256,provider_available:true});
   if(!round)return{status:'not_enqueued' as const};
+  if(round.status==='budget_exhausted'){
+   const decimal=(value:string)=>typeof value==='string'&&value.length<=20&&/^(?:0|[1-9][0-9]*)$/u.test(value);
+   if(round.execution_id!==execution_id||round.workspace_id!==lease.workspace_id||round.error_code!=='listening_discovery_parent_budget_exhausted'
+    ||![round.cap_micro_usd,round.exposure_micro_usd,round.reservation_micro_usd].every(decimal)
+    ||BigInt(round.cap_micro_usd)<=0n||BigInt(round.reservation_micro_usd)<=0n
+    ||BigInt(round.exposure_micro_usd)+BigInt(round.reservation_micro_usd)<=BigInt(round.cap_micro_usd))fail('budget_outcome_invalid');
+   // Native CAS committed a financial failure with zero new admission. This
+   // is an auditable budget result, never a scientific convergence decision.
+   return round;
+  }
   if(round.execution_id!==execution_id||round.workspace_id!==lease.workspace_id||round.ordinal!==ordinal||round.input_generation_id!==g.id)fail('round_binding_invalid');
   return{status:'enqueued' as const,round_id:round.id,ordinal};
  }finally{clearInterval(timer);if(renewing)await renewing;try{await numeric?.dispose();}finally{await stores.release(args).catch(()=>undefined);}}
