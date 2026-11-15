@@ -63,8 +63,20 @@ export type SignalWorkspaceEngineSnapshotV1 = {
   // Server-owned, versioned parameters; never accepted from a browser request.
   config: Record<string, unknown>;
 };
-export type SignalWorkspaceEngineInputManifestV1 = Omit<SignalWorkspaceEngineSnapshotV1,
-  "roots" | "chunks" | "guides" | "dimensions"> & {
+export type SignalWorkspaceCachedVectorSourceV1 = {
+  kind:"sealed-listening-orphan-subset-v1";generation_id:string;generation_digest:string;
+  subset_id:string;subset_digest:string;root_count:number;cached_count:number;
+  proofs:{file:"source-proofs.jsonl";sha256:string;rows:number};
+};
+/** Cached calls can span embedding runs; none is invented as their owner. */
+export type SignalWorkspaceCachedVectorSnapshotV1 = Omit<SignalWorkspaceEngineSnapshotV1,"embedding_run_id">&{
+  embedding_run_id?:never;cached_vector_source:SignalWorkspaceCachedVectorSourceV1;
+};
+export type SignalWorkspaceNumericSnapshotV1=SignalWorkspaceEngineSnapshotV1|SignalWorkspaceCachedVectorSnapshotV1;
+export type SignalWorkspaceEngineInputManifestV1 = (
+  (Omit<SignalWorkspaceEngineSnapshotV1,"roots"|"chunks"|"guides"|"dimensions">&{cached_vector_source?:never})
+  |Omit<SignalWorkspaceCachedVectorSnapshotV1,"roots"|"chunks"|"guides"|"dimensions">
+) & {
   contract_version: typeof SIGNAL_WORKSPACE_ENGINE_INPUT_V1;
   records: { file: "chunks.jsonl"; sha256: string; rows: number; roots: number };
   vectors: { file: "vectors.npy"; sha256: string; rows: number; dimensions: 1024; dtype: "float32" };
