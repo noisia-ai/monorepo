@@ -39,7 +39,7 @@ export async function readSignalProcessingPolicyWithQueryableV1(args: { queryabl
   type Row = { id: string; version: string; status: "draft" | "active" | "revoked"; policy_digest: string;
     valid_from: string; valid_until: string; budget_timezone: string; daily_cap_micro_usd: string | null;
     budget_date: string; current: boolean; exposure: SignalProcessingExposureV1;
-    actions: Omit<SignalProcessingPolicyActionV1, "available">[] };
+    actions: Array<Omit<SignalProcessingPolicyActionV1, "available"> & { scope_allowed?: boolean }> };
   const row = (await args.queryable.query<Row>(`
     SELECT p.id,p.version::text,p.status,p.policy_digest,p.valid_from::text,p.valid_until::text,
       p.budget_timezone,p.daily_cap_micro_usd::text,
@@ -47,10 +47,11 @@ export async function readSignalProcessingPolicyWithQueryableV1(args: { queryabl
       (p.status='active' AND p.valid_from<=clock_timestamp() AND p.valid_until>clock_timestamp()) current,
       jsonb_build_object('confirmed_micro_usd',e.confirmed_micro_usd::text,'reserved_micro_usd',e.reserved_micro_usd::text,
         'ambiguous_micro_usd',e.ambiguous_micro_usd::text,'total_micro_usd',e.total_micro_usd::text) exposure,
-      COALESCE((SELECT jsonb_agg(jsonb_build_object('action',a.action,'kind',a.kind,'provider',a.provider,'model',a.model,
+      COALESCE((WITH scope_authority AS MATERIALIZED(SELECT signal_listening_study_policy_denied_actions_v1(p.id,w.id) denied)
+       SELECT jsonb_agg(jsonb_build_object('action',a.action,'kind',a.kind,'provider',a.provider,'model',a.model,
         'configuration_digest',a.configuration_digest,'max_execution_micro_usd',a.max_execution_micro_usd::text,
-        'automatic_allowed',a.automatic_allowed) ORDER BY a.action)
-        FROM signal_processing_policy_actions a WHERE a.policy_version_id=p.id),'[]'::jsonb) actions
+        'automatic_allowed',a.automatic_allowed,'scope_allowed',NOT(a.action=ANY(scope_authority.denied))) ORDER BY a.action)
+        FROM signal_processing_policy_actions a CROSS JOIN scope_authority WHERE a.policy_version_id=p.id),'[]'::jsonb) actions
     FROM signal_workspaces w JOIN LATERAL (
       SELECT policy.* FROM signal_processing_policy_versions policy WHERE policy.organization_id=w.organization_id
         AND policy.status<>'draft' ORDER BY (policy.status='active') DESC,policy.version DESC LIMIT 1
@@ -63,13 +64,17 @@ export async function readSignalProcessingPolicyWithQueryableV1(args: { queryabl
   const remaining = row.daily_cap_micro_usd === null ? null : BigInt(row.daily_cap_micro_usd) > BigInt(row.exposure.total_micro_usd)
     ? BigInt(row.daily_cap_micro_usd) - BigInt(row.exposure.total_micro_usd) : 0n;
   const availability = args.action_availability ?? {};
-  const actions = row.actions.map(action => ({ ...action, available: capability.can_request_processing && row.current
-    && (action.kind === "free" || availability[action.action] === true
-      && (remaining === null || remaining > 0n || action.max_execution_micro_usd === "0")) }));
-  const providerActions = row.actions.filter(action => action.kind === "provider");
+  const scopeAllowed = (action: Row["actions"][number]) => action.scope_allowed === true
+    || action.scope_allowed === undefined && !["listening_discovery_review", "study_analysis"].includes(action.action);
+  const actions = row.actions.map(({ scope_allowed, ...action }) => ({ ...action,
+    available: scopeAllowed({ ...action, scope_allowed }) && capability.can_request_processing && row.current
+      && (action.kind === "free" || availability[action.action] === true
+        && (remaining === null || remaining > 0n || action.max_execution_micro_usd === "0")) }));
+  const providerActions = row.actions.filter(action => action.kind === "provider" && scopeAllowed(action));
+  const noAllowedAction = row.actions.length > 0 && row.actions.every(action => !scopeAllowed(action));
   const status: SignalProcessingPolicyStatusV1 = row.status === "revoked" ? "revoked" : !row.current ? "expired"
     : remaining === 0n && providerActions.some(action => (action.max_execution_micro_usd === null || BigInt(action.max_execution_micro_usd) > 0n)) ? "daily_cap_exhausted"
-    : providerActions.length > 0 && providerActions.every(action => availability[action.action] !== true) ? "provider_unavailable" : "ready";
+    : noAllowedAction || providerActions.length > 0 && providerActions.every(action => availability[action.action] !== true) ? "provider_unavailable" : "ready";
   return { contract_version: "signal-processing-policy-view-v1", workspace_id: args.workspace_id,
     can_request_processing: capability.can_request_processing, status,
     policy: { id: row.id, version: row.version, digest: row.policy_digest, valid_from: row.valid_from, valid_until: row.valid_until,

@@ -58,7 +58,8 @@ export async function completeSignalClassicPolicyV1(args:Args):Promise<SignalCla
   if(!missing.length)return await commit('existing_policy');
   // A terminal run can still hold a paid response awaiting free application.
   // Keep its original policy active until both active owners and stored results drain.
-  if(await readClassicPolicyActiveWorkV1(client,scope.organization_id))return await commit('active_work');
+  if(await readClassicPolicyActiveWorkV1(client,scope.organization_id)
+   ||(await client.query<{busy:boolean}>('SELECT signal_listening_study_policy_busy_v1($1) busy',[scope.organization_id])).rows[0]?.busy)return await commit('active_work');
   const configuration=signalClassicPolicyCompletionConfigurationV1(args.env??process.env);
   if(!configuration.available||!configuration.creatorUserId||!uuid.test(configuration.creatorUserId)||!configuration.semanticConfiguration)return await commit('configuration_required');
   const creator=(await client.query(`SELECT id FROM users WHERE id=$1 AND status='active' AND user_type='noisia_internal'
@@ -86,6 +87,7 @@ export async function completeSignalClassicPolicyV1(args:Args):Promise<SignalCla
     semantic?configuration.semanticConfiguration.model:SIGNAL_WORKSPACE_EMBEDDING_PROFILE_V1.model,JSON.stringify(config),
     semantic?configuration.semanticCap:configuration.prototypeCap,!semantic]);
   }
+  await client.query('SELECT signal_listening_study_policy_inherit_v1($1,$2,$3)',[prior.id,next.id,args.actor_user_id]);
   await client.query("UPDATE signal_processing_policy_versions SET status='revoked' WHERE id=$1 AND status='active'",[prior.id]);
   const activated=await client.query("UPDATE signal_processing_policy_versions SET status='active' WHERE id=$1 AND status='draft' RETURNING id",[next.id]);
   if(activated.rows.length!==1)throw new Error('classic_policy_completion_incomplete');

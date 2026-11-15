@@ -10,7 +10,7 @@ const sha=(s:string)=>'sha256:'+createHash('sha256').update(s).digest('hex');
 test('native Study freezes scoped known-author privacy from original imports without rewriting historical sources',{
  skip:process.env.NOISIA_R16_STUDY_PG!=='true',timeout:180000,
 },async()=>withSignalStudyFixtureV1(async f=>{
- const first=await f.request(),lease=await claimSignalStudyExecutionV1({database:f.database,execution_id:first.id});assert.ok(lease);
+ const first=await f.request(1000000),lease=await claimSignalStudyExecutionV1({database:f.database,execution_id:first.id});assert.ok(lease);
  const source=await readSignalStudyRuntimeSourceV1({database:f.database,lease});assert.ok(source);assert.equal(source.roots.length,3);
  const rows=(await f.database.query<SignalStudyAuthorMetadataV1&{id:string;author_id:string}>(`SELECT m.id,m.source_author_label_recorded,m.source_author_label,m.raw_metadata->>'author' legacy_author,a.display_name linked_author_display_name,a.handle linked_author_handle,a.id author_id
   FROM mentions m LEFT JOIN authors a ON a.id=m.author_id WHERE m.workspace_id=$1 AND m.id=ANY($2::uuid[]) ORDER BY m.id`,[f.workspace_id,f.roots])).rows;
@@ -24,6 +24,6 @@ test('native Study freezes scoped known-author privacy from original imports wit
  await assert.rejects(readSignalStudyRuntimeSourceV1({database:f.database,lease:{...lease,workspace_id:randomUUID()}}),/study_execution_unavailable/);
  const legacy=rows.find(r=>!r.source_author_label_recorded)!;await f.database.query('UPDATE authors SET display_name=$2 WHERE id=$1',[legacy.author_id,'Changed Known Alias']);
  const frozen=await readSignalStudyRuntimeSourceV1({database:f.database,lease});assert.ok(frozen);assert.equal(frozen.source_digest,source.source_digest);assert.deepEqual(frozen.roots.map(r=>r.private_person_names),source.roots.map(r=>r.private_person_names),'later linked metadata is not overlaid on a frozen cut');
- const secondStudy=await f.createStudy(),second=await secondStudy.request(),nextLease=await claimSignalStudyExecutionV1({database:f.database,execution_id:second.id});assert.ok(nextLease);const next=await readSignalStudyRuntimeSourceV1({database:f.database,lease:nextLease});assert.ok(next);assert.ok(next.roots.find(r=>r.root_id===legacy.id)!.private_person_names.includes('Changed Known Alias'),'only a new admitted source snapshots new known metadata');
+ const secondStudy=await f.createStudy(),second=await secondStudy.request(1000000),nextLease=await claimSignalStudyExecutionV1({database:f.database,execution_id:second.id});assert.ok(nextLease);const next=await readSignalStudyRuntimeSourceV1({database:f.database,lease:nextLease});assert.ok(next);assert.ok(next.roots.find(r=>r.root_id===legacy.id)!.private_person_names.includes('Changed Known Alias'),'only a new admitted source snapshots new known metadata');
  await releaseSignalStudyExecutionV1({database:f.database,lease});await releaseSignalStudyExecutionV1({database:f.database,lease:nextLease});
 },{study_author_metadata:true}));

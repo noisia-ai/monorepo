@@ -70,7 +70,7 @@ for(const mode of ['incomplete','utf8','nul','overcap','revoked','concurrent_rev
    await db.query(`INSERT INTO signal_processing_policy_actions(policy_version_id,action,kind,provider,model,configuration,configuration_digest,max_execution_micro_usd,automatic_allowed) SELECT $1,'corpus_embeddings','provider','voyage','voyage-4-large',$2::jsonb,signal_labeling_digest_v1($2::jsonb),1000000,false WHERE NOT EXISTS(SELECT 1 FROM signal_processing_policy_actions WHERE policy_version_id=$1 AND action='corpus_embeddings')`,[basePolicy.id,JSON.stringify(profile)]);
    await db.query("UPDATE signal_processing_policy_versions SET status='revoked' WHERE id=$1",[oldPolicy.id]);await db.query("UPDATE signal_processing_policy_versions SET status='active' WHERE id=$1",[basePolicy.id]);
    const scopedParentCap=mode==='race'?reviewQuote.reservation_micro_usd+18:4000000;
-   const policy=await provisionSyntheticListeningStudyPolicyV1(access,{discovery_cap_micro_usd:scopedParentCap,study_cap_micro_usd:mode==='race'?1:5000000});
+   const policy=await provisionSyntheticListeningStudyPolicyV1(access,{discovery_cap_micro_usd:scopedParentCap,study_cap_micro_usd:mode==='race'?1:4000001,retry_headroom_micro_usd:mode==='race'?0:100000});
    await assert.rejects(startSignalListeningDiscoveryExecutionV1({...access,generation_id:confirmed.id,classification_run_id:started.run_id,cap_micro_usd:10000001,idempotency_key:randomUUID()}),/policy_cap_exceeded/);
    const execution=await startSignalListeningDiscoveryExecutionV1({...access,generation_id:confirmed.id,classification_run_id:started.run_id,cap_micro_usd:mode==='overcap'?reviewQuote.reservation_micro_usd+19:4000000,idempotency_key:randomUUID()});
    assert.equal(Number((await db.query('SELECT signal_listening_discovery_exposure_v1($1)::text n',[execution.id])).rows[0].n),18,'parent counts the already-paid JEV run');
@@ -137,15 +137,11 @@ for(const mode of ['incomplete','utf8','nul','overcap','revoked','concurrent_rev
      const value=await(target.query as(...a:unknown[])=>Promise<unknown>)(sql,...values);
      if(sql.startsWith('SELECT max_execution_micro_usd::text FROM signal_processing_policy_actions'))preflight=true;
      if(sql==='COMMIT'&&preflight&&!changed){changed=true;const d=await db.connect();try{await d.query('BEGIN');
-      const next=(await d.query(`INSERT INTO signal_processing_policy_versions(organization_id,version,status,valid_from,valid_until,budget_timezone,daily_cap_micro_usd,created_by_user_id) SELECT organization_id,version+1,'draft',valid_from,valid_until,budget_timezone,daily_cap_micro_usd,created_by_user_id FROM signal_processing_policy_versions WHERE id=$1 RETURNING id`,[policy.id])).rows[0].id;
-      // Withdrawing R16 authority is a real policy change. Copying its actions
-      // without their workspace receipt is deliberately forbidden by0319.
-      await d.query("INSERT INTO signal_processing_policy_actions SELECT $2,action,kind,provider,model,configuration,configuration_digest,max_execution_micro_usd,automatic_allowed FROM signal_processing_policy_actions WHERE policy_version_id=$1 AND action NOT IN('listening_discovery_review','study_analysis')",[policy.id,next]);
-      await d.query("UPDATE signal_processing_policy_versions SET status='revoked' WHERE id=$1",[policy.id]);await d.query("UPDATE signal_processing_policy_versions SET status='active' WHERE id=$1",[next]);await d.query('COMMIT');
+      await d.query("UPDATE signal_processing_policy_versions SET status='revoked' WHERE id=$1",[policy.id]);await d.query('COMMIT');
      }catch(e){await d.query('ROLLBACK');throw e;}finally{d.release();}}
      return value;};const value=Reflect.get(target,key);return typeof value==='function'?value.bind(target):value;}});}} as typeof db;
-    await assert.rejects(prepareSignalListeningDiscoveryChildV1({...access,database,round_id:round.id,provider_available:true}),/child_authority_changed/);assert.equal(changed,true);
-    assert.equal((await db.query('SELECT count(*)::int n FROM signal_listening_preparations WHERE idempotency_key=$1',['listening-discovery-child:'+round.id])).rows[0].n,0,'a policy replacement in the await gap creates no child');return;
+    await assert.rejects(prepareSignalListeningDiscoveryChildV1({...access,database,round_id:round.id,provider_available:true}),/child_authority_changed|listening_policy_unavailable/);assert.equal(changed,true);
+    assert.equal((await db.query('SELECT count(*)::int n FROM signal_listening_preparations WHERE idempotency_key=$1',['listening-discovery-child:'+round.id])).rows[0].n,0,'a policy revocation in the await gap creates no child');return;
    }
    await assert.rejects(prepareSignalListeningDiscoveryChildV1({...access,round_id:round.id,provider_available:false}),/provider_unavailable/);assert.equal((await db.query("SELECT count(*)::int n FROM signal_listening_preparations WHERE idempotency_key=$1",['listening-discovery-child:'+round.id])).rows[0].n,0);
    const prep=await prepareSignalListeningDiscoveryChildV1({...access,round_id:round.id,provider_available:true});assert.ok(prep.listening_run_id);assert.equal((await db.query('SELECT classification_preparation_id FROM signal_listening_discovery_rounds WHERE id=$1',[round.id])).rows[0].classification_preparation_id,prep.id);

@@ -66,7 +66,7 @@ async function seed(ctx:FixtureContext,files:string,options:FixtureOptions){
   SELECT $1,'mention_facets','provider','typesafe','jev-1.13.0',c,signal_labeling_digest_v1(c),1000000,false FROM(SELECT '{"contract_version":"mention-facets-jev-v1"}'::jsonb c)x`,[basePolicy.id]);
  await db.query("UPDATE signal_processing_policy_versions SET status='revoked' WHERE id=$1",[prior.id]);await db.query("UPDATE signal_processing_policy_versions SET status='active' WHERE id=$1",[basePolicy.id]);
  const scopedParentCap=quote?quote.reservation_micro_usd+18:4000000;
- const policy=await provisionSyntheticListeningStudyPolicyV1(access,{discovery_cap_micro_usd:scopedParentCap,study_cap_micro_usd:quote?1:5000000});
+ const policy=await provisionSyntheticListeningStudyPolicyV1(access,{discovery_cap_micro_usd:scopedParentCap,study_cap_micro_usd:quote?1:4000001,retry_headroom_micro_usd:quote?0:100000});
  const execution=await money.startSignalListeningDiscoveryExecutionV1({...access,generation_id:confirmed.id,classification_run_id:first.run_id,cap_micro_usd:options.cap_micro_usd??scopedParentCap,idempotency_key:randomUUID()});
  const artifacts=new Map<string,Buffer>(),remote=new Map<string,string>();let uploads=0,allowUploads=true;
  let afterPut:((d:ListeningDiscoveryNumericArtifactDescriptorV1)=>Promise<void>)|undefined;

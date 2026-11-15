@@ -3,14 +3,14 @@ import {SIGNAL_WORKSPACE_EMBEDDING_PROFILE_V1,signalWorkspaceEmbeddingDigestV1 a
 import {loadSignalWorkspaceCapabilitiesStoreV1} from './signal-workspace-capabilities';
 
 /** Internal operator setup, never called implicitly by save/start/execute. Caps
- * allocate one Listening cycle and one Study, not unlimited future executions. */
+ * reserve each active owner against one shared, persistent pilot allocation. */
 export type SignalListeningStudyPolicyArgsV1={database:Pick<Pool,'connect'>;workspace_id:string;actor_user_id:string;
  expected_policy_id:string;expected_policy_digest:string;valid_until:string;budget_micro_usd:number;
  discovery_cap_micro_usd:number;study_cap_micro_usd:number;prototype_cap_micro_usd?:number|null};
 type Request=Omit<SignalListeningStudyPolicyArgsV1,'database'|'prototype_cap_micro_usd'>&{contract_version:'signal-listening-study-policy-request-v1';prototype_cap_micro_usd:number|null};
 type Prior={id:string;organization_id:string;version:string;policy_digest:string;valid_from:string;valid_until:string;budget_timezone:string;daily_cap_micro_usd:string|null};
 type Action={action:string;kind:string;provider:string|null;model:string|null;configuration:unknown;configuration_digest:string;max_execution_micro_usd:string|null;automatic_allowed:boolean};
-type Scope={id:string;workspace_id:string;actor_user_id:string;policy_id:string;request_digest:string;plan_digest:string;restricted_actions:string[];
+type Scope={id:string;ledger_root_id:string;workspace_id:string;actor_user_id:string;policy_id:string;request_digest:string;plan_digest:string;restricted_actions:string[];
  budget_micro_usd:string;discovery_cap_micro_usd:string;study_cap_micro_usd:string;prototype_cap_micro_usd:string|null};
 export class SignalListeningStudyPolicyErrorV1 extends Error{
  constructor(readonly code:string,readonly status=409){super(code);this.name='SignalListeningStudyPolicyErrorV1';}
@@ -60,14 +60,16 @@ async function readPlan(c:PoolClient,args:SignalListeningStudyPolicyArgsV1,org:s
  const exposure=(await c.query<{total_micro_usd:string;reserved_micro_usd:string;ambiguous_micro_usd:string}>(`SELECT total_micro_usd::text,reserved_micro_usd::text,ambiguous_micro_usd::text
   FROM signal_processing_org_exposure_v1($1,(clock_timestamp() AT TIME ZONE $2)::date,$2)`,[org,prior.budget_timezone])).rows[0]!;
  if(BigInt(exposure.reserved_micro_usd)>0n||BigInt(exposure.ambiguous_micro_usd)>0n)fail('active_work');
- if(prior.daily_cap_micro_usd!==null&&BigInt(exposure.total_micro_usd)+BigInt(request.budget_micro_usd)>BigInt(prior.daily_cap_micro_usd))fail('daily_limit');
  const actions=(await c.query<Action>(`SELECT action,kind,provider,model,configuration,configuration_digest,max_execution_micro_usd::text,automatic_allowed
   FROM signal_processing_policy_actions WHERE policy_version_id=$1 ORDER BY action`,[prior.id])).rows;
  if(!actions.some(a=>a.action==='mass_labeling_jev'&&a.kind==='provider'&&a.provider==='typesafe'&&a.model==='jev-1.13.0'))fail('base_jev_action_required');
- const inherited=(await c.query<Scope>('SELECT *,discovery_cap_micro_usd::text,study_cap_micro_usd::text,prototype_cap_micro_usd::text FROM signal_listening_study_policy_scopes WHERE policy_id=$1',[prior.id])).rows[0];
- if(inherited&&(inherited.workspace_id!==args.workspace_id||BigInt(request.budget_micro_usd)>BigInt(inherited.budget_micro_usd)||BigInt(request.discovery_cap_micro_usd)>BigInt(inherited.discovery_cap_micro_usd)
-  ||BigInt(request.study_cap_micro_usd)>BigInt(inherited.study_cap_micro_usd)||inherited.prototype_cap_micro_usd!==null
-   &&(request.prototype_cap_micro_usd===null||BigInt(request.prototype_cap_micro_usd)>BigInt(inherited.prototype_cap_micro_usd))))fail('scope_widened');
+ const inherited=(await c.query<Scope>('SELECT scope.*,scope.discovery_cap_micro_usd::text,scope.study_cap_micro_usd::text,scope.prototype_cap_micro_usd::text FROM signal_listening_study_policy_bindings binding JOIN signal_listening_study_policy_scopes scope ON scope.id=binding.scope_id WHERE binding.policy_id=$1',[prior.id])).rows[0];
+ if(inherited&&(inherited.workspace_id!==args.workspace_id||request.budget_micro_usd!==Number(inherited.budget_micro_usd)
+  ||request.discovery_cap_micro_usd!==Number(inherited.discovery_cap_micro_usd)||request.study_cap_micro_usd!==Number(inherited.study_cap_micro_usd)
+  ||request.prototype_cap_micro_usd!==(inherited.prototype_cap_micro_usd===null?null:Number(inherited.prototype_cap_micro_usd))))fail('scope_widened');
+ const existing_scope_exposure=inherited?(await c.query<{amount:string}>('SELECT signal_listening_study_policy_exposure_v1($1)::text amount',[inherited.id])).rows[0]!.amount:'0';
+ const remaining_scope=BigInt(request.budget_micro_usd)>BigInt(existing_scope_exposure)?BigInt(request.budget_micro_usd)-BigInt(existing_scope_exposure):0n;
+ if(prior.daily_cap_micro_usd!==null&&BigInt(exposure.total_micro_usd)+remaining_scope>BigInt(prior.daily_cap_micro_usd))fail('daily_limit');
  const configurations=(await c.query<{discovery:unknown;study:unknown}>('SELECT signal_listening_discovery_review_configuration_v1() discovery,signal_study_analysis_configuration_v1() study')).rows[0]!;
  const required:Array<{action:string;provider:string;model:string;configuration:unknown;cap:number}>=[
   {action:'listening_discovery_review',provider:'anthropic',model:'claude-sonnet-4-6',configuration:configurations.discovery,cap:request.discovery_cap_micro_usd},
@@ -81,11 +83,11 @@ async function readPlan(c:PoolClient,args:SignalListeningStudyPolicyArgsV1,org:s
  const request_digest=digest(request);
  const plan={contract_version:'signal-listening-study-policy-plan-v1' as const,scope:'workspace' as const,workspace_id:args.workspace_id,actor_user_id:args.actor_user_id,
   organization_id:org,request_digest,prior,next_version,valid_until:request.valid_until,budget_micro_usd:request.budget_micro_usd,
-  allocation:{discovery_cap_micro_usd:request.discovery_cap_micro_usd,study_cap_micro_usd:request.study_cap_micro_usd,prototype_cap_micro_usd:request.prototype_cap_micro_usd},
+  prototype_cap_is_listening_subcap:true,allocation:{discovery_cap_micro_usd:request.discovery_cap_micro_usd,study_cap_micro_usd:request.study_cap_micro_usd,prototype_cap_micro_usd:request.prototype_cap_micro_usd},
   inherited_actions:actions,added_actions:additions.map(a=>a.action),restricted_actions,
   additions:additions.map(a=>({...a,kind:'provider',max_execution_micro_usd:a.cap,automatic_allowed:false,configuration_digest:digest(a.configuration)})),
   prototype_configuration:request.prototype_cap_micro_usd===null?null:SIGNAL_WORKSPACE_EMBEDDING_PROFILE_V1,
-  allocation_semantics:'one_listening_cycle_plus_one_study_not_an_organization_wide_or_multi_execution_spend_quote' as const};
+  ledger_root_id:inherited?.id??null,existing_scope_exposure_micro_usd:existing_scope_exposure,remaining_scope_micro_usd:remaining_scope.toString(),allocation_semantics:'shared_scope_budget_with_full_active_owner_reservations_and_terminal_actual_exposure' as const};
  return{prior,request,request_digest,plan,plan_digest:digest(plan)};
 }
 async function transaction<T>(args:SignalListeningStudyPolicyArgsV1,run:(c:PoolClient,org:string,request:Request)=>Promise<T>){
@@ -105,7 +107,7 @@ export function provisionSignalListeningStudyPolicyV1(args:SignalListeningStudyP
   if(replay){if(replay.request_digest!==digest(request)||replay.plan_digest!==args.plan_digest)fail('idempotency_conflict');
    if(!(await c.query<{valid:boolean}>(`SELECT status='active' AND valid_from<=clock_timestamp() AND valid_until>clock_timestamp() valid
     FROM signal_processing_policy_versions WHERE id=$1 AND organization_id=$2`,[replay.policy_id,org])).rows[0]?.valid)fail('changed');
-   return{scope_id:replay.id,policy_id:replay.policy_id,replayed:true};
+   return{receipt_id:replay.id,scope_id:replay.ledger_root_id,policy_id:replay.policy_id,replayed:true};
   }
   const read=await readPlan(c,args,org,request);if(read.plan_digest!==args.plan_digest)fail('plan_changed');
   const next=(await c.query<{id:string}>(`INSERT INTO signal_processing_policy_versions(organization_id,version,status,valid_from,valid_until,budget_timezone,daily_cap_micro_usd,created_by_user_id)
@@ -114,14 +116,14 @@ export function provisionSignalListeningStudyPolicyV1(args:SignalListeningStudyP
    FROM signal_processing_policy_actions WHERE policy_version_id=$2`,[next.id,read.prior.id]);
   for(const addition of read.plan.additions)await c.query(`INSERT INTO signal_processing_policy_actions(policy_version_id,action,kind,provider,model,configuration,configuration_digest,max_execution_micro_usd,automatic_allowed)
    VALUES($1,$2,'provider',$3,$4,$5::jsonb,signal_semantic_context_digest_json_v2($5::jsonb),$6,false)`,[next.id,addition.action,addition.provider,addition.model,JSON.stringify(addition.configuration),addition.max_execution_micro_usd]);
-  const receipt=(await c.query<{id:string}>(`INSERT INTO signal_listening_study_policy_scopes(organization_id,workspace_id,actor_user_id,prior_policy_id,prior_policy_digest,policy_id,idempotency_key,
+  const receipt=(await c.query<{id:string;ledger_root_id:string}>(`INSERT INTO signal_listening_study_policy_scopes(organization_id,workspace_id,actor_user_id,prior_policy_id,prior_policy_digest,policy_id,idempotency_key,
    request,request_digest,plan,plan_digest,budget_micro_usd,discovery_cap_micro_usd,study_cap_micro_usd,prototype_cap_micro_usd,restricted_actions)
-   VALUES($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9,$10::jsonb,$11,$12,$13,$14,$15,$16) RETURNING id`,
+   VALUES($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9,$10::jsonb,$11,$12,$13,$14,$15,$16) RETURNING id,ledger_root_id`,
   [org,args.workspace_id,args.actor_user_id,read.prior.id,read.prior.policy_digest,next.id,args.idempotency_key,JSON.stringify(request),read.request_digest,JSON.stringify(read.plan),read.plan_digest,
    request.budget_micro_usd,request.discovery_cap_micro_usd,request.study_cap_micro_usd,request.prototype_cap_micro_usd,read.plan.restricted_actions])).rows[0]!;
   const revoked=await c.query("UPDATE signal_processing_policy_versions SET status='revoked' WHERE id=$1 AND status='active' RETURNING id",[read.prior.id]);
   const activated=await c.query("UPDATE signal_processing_policy_versions SET status='active' WHERE id=$1 AND status='draft' RETURNING id",[next.id]);
   if(revoked.rows.length!==1||activated.rows.length!==1)fail('activation_incomplete');
-  return{scope_id:receipt.id,policy_id:next.id,replayed:false};
+  return{receipt_id:receipt.id,scope_id:receipt.ledger_root_id,policy_id:next.id,replayed:false};
  });
 }
