@@ -7,6 +7,7 @@ import {hybridJevCallProposalV1,runHybridMembershipTickV1} from "../../../servic
 import {JevProviderErrorV1,type JevRequestV1} from "../../../services/workers/src/providers/typesafe-jev";
 import type {LabelingRunV1} from "../signal-labeling-runs";
 import type {ConceptForJudgeV1} from "@noisia/query-engine";
+import {verifyHybridProviderRightsOracleV1} from './signal-hybrid-provider-rights.assertions';
 const sha=(s:string)=>`sha256:${createHash("sha256").update(s).digest("hex")}`;
 /** Real migrated tables and normal store operations; only provider/storage are simulated. */
 export async function verifyHybridJevPageContinuationV1(a:{client:PoolClient;database:Pool;workspace:string;
@@ -78,12 +79,41 @@ export async function verifyHybridJevPageContinuationV1(a:{client:PoolClient;dat
  phase("reservations_completed");const calls=await store.calls(run);assert.equal(calls.length,662);
  const prior=calls.slice(0,340),priorRequests=new Set(prior.map(call=>JSON.stringify(call.request)));
  const rightsArgs=[run.id,workspace,prior.map(call=>call.id)];
- const rightsPlan=(await client.query('EXPLAIN (FORMAT JSON) '+HYBRID_PROVIDER_RIGHTS_BEFORE_SUBMIT_SQL_V1,rightsArgs)).rows[0]!['QUERY PLAN'][0].Plan;
- type RightsPlan={"Index Cond"?:string;"Subplan Name"?:string;Plans?:RightsPlan[]};
+ const rightsPlan=(await client.query('EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) '+HYBRID_PROVIDER_RIGHTS_BEFORE_SUBMIT_SQL_V1,rightsArgs)).rows[0]!['QUERY PLAN'][0].Plan;
+ type RightsPlan={"Index Cond"?:string;"Subplan Name"?:string;Plans?:RightsPlan[];[key:string]:unknown};
  const nodes=(plan:RightsPlan):RightsPlan[]=>[plan,...(plan.Plans??[]).flatMap(nodes)];
+ const redact=(value:unknown)=>String(value).replace(/'(?:[^']|'')*'/gu,"'<literal>'")
+  .replace(/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/giu,'<uuid>');
+ const planDiagnostic=nodes(rightsPlan).map(node=>{
+  const fields:Array<[string,unknown]>=[
+   ['node_type',node['Node Type']],['relation',node['Relation Name']],['alias',node['Alias']],['index',node['Index Name']],
+   ['index_cond',node['Index Cond']],['recheck_cond',node['Recheck Cond']],['filter',node['Filter']],['join_filter',node['Join Filter']],
+   ['plan_rows',node['Plan Rows']],['actual_rows',node['Actual Rows']],['actual_loops',node['Actual Loops']],
+   ['rows_removed_by_filter',node['Rows Removed by Filter']],['rows_removed_by_join_filter',node['Rows Removed by Join Filter']],
+   ['startup_cost',node['Startup Cost']],['total_cost',node['Total Cost']],['actual_startup_ms',node['Actual Startup Time']],
+   ['actual_total_ms',node['Actual Total Time']],['shared_hit_blocks',node['Shared Hit Blocks']],['shared_read_blocks',node['Shared Read Blocks']],
+  ];
+  return Object.fromEntries(fields.filter(([,value])=>value!==undefined)
+   .map(([key,value])=>[key,typeof value==='string'?redact(value):value]));
+ });
+ console.log(JSON.stringify({gate:'mfp_hybrid_rights_plan_diagnostic',nodes:planDiagnostic}));
  assert.equal(nodes(rightsPlan).filter(n=>n['Subplan Name']==='CTE eligible_batches').length,1,'current provenance policy is planned once per statement');
  assert.ok(nodes(rightsPlan).some(n=>n['Index Cond']?.includes('canonical_mention_id =')&&n['Index Cond'].includes('.root_id')&&!n['Index Cond'].includes('::text')),'requested canonical UUIDs retain the root index lookup');
+ const rootCount=new Set(prior.flatMap(call=>call.inputs.map(input=>input.root_id))).size;
+ const originProbes=nodes(rightsPlan).filter(n=>n['Relation Name']==='mentions');
+ assert.ok(originProbes.length>0,'the actual plan includes the origin lookup');
+ assert.ok(originProbes.every(n=>Number(n['Actual Loops'])<=rootCount),
+  'origin lookups are bounded by distinct requested roots, independent of import-path multiplicity');
+ const membershipRowsVisited=nodes(rightsPlan).filter(n=>n['Relation Name']==='signal_mention_import_memberships')
+  .reduce((sum,node)=>sum+Number(node['Actual Loops'])*(Number(node['Actual Rows'])+Number(node['Rows Removed by Filter']??0)),0);
+ const membershipRows=Number((await client.query('SELECT count(*)::int n FROM signal_mention_import_memberships')).rows[0].n);
+ console.log(JSON.stringify({gate:'mfp_hybrid_rights_bounded_work',requested_roots:rootCount,
+  origin_probe_loops:originProbes.map(node=>node['Actual Loops']),membership_rows_visited:membershipRowsVisited,membership_rows:membershipRows}));
+ assert.ok(membershipRowsVisited<=membershipRows+rootCount,
+  'membership work is bounded by one relation scan or requested-origin lookups, not their Cartesian product');
  assert.deepEqual((await client.query(HYBRID_PROVIDER_RIGHTS_BEFORE_SUBMIT_SQL_V1,rightsArgs)).rows[0],{found:340,allowed:340,input_count:340});
+ assert.deepEqual(await verifyHybridProviderRightsOracleV1(client,run.id,workspace,[...prior.map(call=>call.id),prior[0]!.id]),
+  {found:340,allowed:340,input_count:340});
  phase("prior_rights_verified");
  await store.markSubmitting(run,prior);
  await store.persistRawPage(run,prior.map(call=>({call,raw:JSON.stringify(reply(call.request as JevRequestV1))})));

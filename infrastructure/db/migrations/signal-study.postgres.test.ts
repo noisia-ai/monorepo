@@ -47,7 +47,7 @@ test('Study freezes only its native consumer cut and exact external configuratio
 }finally{for(const source of sources)await disposeStudySourcePagesV1(source);}
 }));
 import{withStudyNativeRuntimeV1}from'./signal-study-runtime.synthetic.fixture';
-import{assertSignalStudyMoneyV1}from'./signal-study-money.assertions';
+import{assertSignalStudyMoneyV1,assertSignalStudyDailyMoneyRaceV1}from'./signal-study-money.assertions';
 import{readSignalStudyOutputV1}from'../signal-study-serving';
 import{pendingSignalStudyExecutionsV1}from'../signal-study-executions';
 import{disposeStudySourcePagesV1}from'../../../services/workers/src/workers/signal-study-source-pages';
@@ -108,12 +108,22 @@ test('Study full native pipeline uses real BERTopic groups, native Sonnet money,
  assert.equal((await readSignalStudyOutputV1({...f,execution_id:execution.id}))?.output_digest,reported.output_digest,'explicit promotion never mutates the completed Study');
 }),{population_count:240}));
 
-test('Study money and custody survive native races, revocation, uncertainty and lost acknowledgements',{
+test('Study money and custody retain five funded uncertainties after native races and ACK recovery',{
  skip:!enabled,timeout:1800000,
 },async()=>withSignalStudyFixtureV1(async f=>withStudyNativeRuntimeV1(f.database,async runtime=>{
- const initial=await f.request();assert.equal((await runtime.run(initial.id)).status,'completed');
+ const initial=await f.request();assert.equal(initial.source_roots,240);assert.equal((await runtime.run(initial.id)).status,'completed');
  await assertSignalStudyMoneyV1(f,runtime);
-}),{population_count:240}));
+ // Financial corpus: Listening already covers every root via the synthetic
+ // JEV provider. Its genuinely empty orphan subset can finish natively before
+ // independent Study faults; the Study corpus and real fit remain240 roots.
+}),{population_count:240,initial_approved:240,complete_listening:true}));
+
+test('Study organization/day reservations race independently after a conservative quiescent policy inheritance',{
+ skip:!enabled,timeout:1200000,
+},async()=>withSignalStudyFixtureV1(async f=>withStudyNativeRuntimeV1(f.database,async runtime=>{
+ const reference=await f.request();assert.equal(reference.source_roots,240);assert.equal((await runtime.run(reference.id)).status,'completed');assert.ok(runtime.metrics().sonnetCalls>0,'the financial reference must contain a real native Sonnet step');
+ await assertSignalStudyDailyMoneyRaceV1(f,runtime,reference.id);
+}),{population_count:240,initial_approved:240,complete_listening:true}));
 
 import{buildSignalStudyExecutionConfigurationV1}from'@noisia/query-engine';
 test('Study cache keys change only with the individual question, instructions, model or target',{
