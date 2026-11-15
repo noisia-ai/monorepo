@@ -115,6 +115,47 @@ test('completed discovery polling adopts a clean configuration and its CAS witho
   }
 });
 
+test('overlapping polls and stale later snapshots cannot roll back the configuration, status or CAS',async()=>{
+  const messages=JSON.parse(await readFile(new URL('../../../messages/en-US.json',import.meta.url),'utf8'));
+  const configuration=signalListeningBaseTemplateV1({category:'tea',lexicon_terms:['tea']});
+  const savedFetch=globalThis.fetch,savedInterval=globalThis.setInterval,savedClear=globalThis.clearInterval;
+  try{for(const mode of ['out_of_order','stale_later_request','same_revision_status','dirty_later_stale']as const){
+    let poll:(()=>void)|undefined,initial=true,body:{expected_revision:number;configuration:{category:string}}|undefined;
+    const pending:Array<(response:Response)=>void>=[],dirty=mode==='dirty_later_stale';
+    const snapshot=(revision:number,canEdit=true,active=true)=>Response.json({
+      configuration:{id:revision===1?'old':'new',revision,configuration:revision===1?configuration:{...configuration,category:'updated tea'}},
+      map:{id:'map',root_count:12},run:{id:'run',status:'completed'},
+      discovery:{intent_id:'intent',status:'started',execution_status:active?'active':'completed'},
+      capabilities:{can_edit_topics:canEdit,can_request_processing:canEdit}});
+    globalThis.setInterval=((callback:()=>void)=>{poll=callback;return 1;})as unknown as typeof setInterval;
+    globalThis.clearInterval=(()=>undefined)as typeof clearInterval;
+    globalThis.fetch=async(_url,options)=>{
+      if(options?.method==='PUT'){body=JSON.parse(String(options.body));return Response.json({error:'synthetic_save_unavailable'},{status:503});}
+      if(initial){initial=false;return snapshot(1);}
+      return new Promise<Response>(resolve=>pending.push(resolve));
+    };
+    const host=document.createElement('div');document.body.appendChild(host);const root=createRoot(host);
+    try{
+      await act(async()=>{root.render(<NextIntlClientProvider locale="en-US" messages={messages} timeZone="UTC"><SignalListeningConfiguration workspaceId="workspace"/></NextIntlClientProvider>);});
+      assert.ok(poll);
+      if(dirty){const add=[...host.querySelectorAll('button')].find(button=>button.textContent===messages.Listening.addQuestion)!;await act(async()=>add.click());}
+      await act(async()=>{poll!();poll!();});assert.equal(pending.length,2);
+      const latestIndex=mode==='stale_later_request'||dirty?0:1;
+      await act(async()=>{pending[latestIndex]!(snapshot(2));});
+      await act(async()=>{pending[1-latestIndex]!(snapshot(mode==='same_revision_status'?2:1,false));});
+      assert.equal(host.querySelector('input')!.value,dirty?'tea':'updated tea',mode);
+      const activeSave=[...host.querySelectorAll('button')].find(button=>button.textContent===messages.Listening.save);
+      assert.ok(activeSave,'a stale status cannot remove the current edit controls');assert.equal(activeSave.disabled,true);
+      if(dirty){assert.ok(host.textContent?.includes(messages.LabelingStudySettings.conflict));assert.equal(host.querySelectorAll('fieldset').length,3);}
+      else assert.equal(host.querySelector('[role="alert"]'),null);
+      await act(async()=>{poll!();pending[2]!(snapshot(2,true,false));});
+      const save=[...host.querySelectorAll('button')].find(button=>button.textContent===messages.Listening.save)!;
+      await act(async()=>{save.click();});
+      assert.equal(body?.expected_revision,dirty?1:2);assert.equal(body?.configuration.category,dirty?'tea':'updated tea');
+    }finally{await act(async()=>root.unmount());host.remove();}
+  }}finally{globalThis.fetch=savedFetch;globalThis.setInterval=savedInterval;globalThis.clearInterval=savedClear;}
+});
+
 test('polling a newer configuration never advances the CAS revision of an unsaved draft',async()=>{
   const messages=JSON.parse(await readFile(new URL('../../../messages/en-US.json',import.meta.url),'utf8'));
   const configuration=signalListeningBaseTemplateV1({category:'tea',lexicon_terms:['tea']});

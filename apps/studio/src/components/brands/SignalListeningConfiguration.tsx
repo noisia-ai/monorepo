@@ -13,6 +13,8 @@ export function SignalListeningConfiguration({workspaceId,editable=true}:{worksp
   const [busy,setBusy]=useState(false),[error,setError]=useState(false),[saved,setSaved]=useState(false),[unavailable,setUnavailable]=useState(false),[retry,setRetry]=useState(0);
   const key=useRef<string|null>(null),generation=useRef(0);
   const draftValue=useRef<SignalListeningConfigurationV1|null>(null),draftBase=useRef<Status['configuration']>(null);
+  const statusValue=useRef<Status|null>(null);
+  const updateStatus=useCallback((next:Status|null)=>{statusValue.current=next;setStatus(next);},[]);
   const updateDraft=useCallback((next:SignalListeningConfigurationV1|null|((current:SignalListeningConfigurationV1|null)=>SignalListeningConfigurationV1|null))=>{
     const value=typeof next==='function'?next(draftValue.current):next;
     draftValue.current=value;setDraft(value);
@@ -21,34 +23,39 @@ export function SignalListeningConfiguration({workspaceId,editable=true}:{worksp
     draftBase.current=next;updateDraft(next?.configuration??null);setDraftRevision(next?.revision??0);
   },[updateDraft]);
   const reconcileStatus=useCallback((next:Status)=>{
+    const current=statusValue.current?.configuration;
+    // A newer request can still read an older transaction snapshot. Neither
+    // the draft nor processing/permission status may move back to that revision.
+    if(current&&(!next.configuration||next.configuration.revision<current.revision))return;
     // Compare with the draft's own base, never with the newly published map.
     // A response arriving after a local edit must preserve that edit and its CAS.
     if(JSON.stringify(draftValue.current)===JSON.stringify(draftBase.current?.configuration??null)
       &&next.configuration?.id!==draftBase.current?.id){
       adoptConfiguration(next.configuration);setSaved(false);key.current=null;
     }
-    setStatus(next);
-  },[adoptConfiguration]);
+    updateStatus(next);
+  },[adoptConfiguration,updateStatus]);
   const url=`/api/data-os/signal/${encodeURIComponent(workspaceId)}/listening`;
   useEffect(()=>{
     const controller=new AbortController(),current=++generation.current;
-    setStatus(null);adoptConfiguration(null);setError(false);setSaved(false);setUnavailable(false);setBusy(false);key.current=null;
+    updateStatus(null);adoptConfiguration(null);setError(false);setSaved(false);setUnavailable(false);setBusy(false);key.current=null;
     fetch(url,{signal:controller.signal,cache:'no-store'}).then(async response=>{
       if([403,404].includes(response.status)){if(generation.current===current)setUnavailable(true);return;}
       if(!response.ok)throw Error();const result=await response.json()as Status;
-      if(generation.current===current){setStatus(result);adoptConfiguration(result.configuration);}
+      if(generation.current===current){updateStatus(result);adoptConfiguration(result.configuration);}
     }).catch(()=>{if(!controller.signal.aborted&&generation.current===current)setError(true);});
     return()=>{controller.abort();generation.current=current+1;};
-  },[url,retry,adoptConfiguration]);
+  },[url,retry,adoptConfiguration,updateStatus]);
   const runId=status?.run?.id,runState=status?.run?.status,preparationId=status?.preparation?.id,preparationState=status?.preparation?.status;
   const preparing=Boolean(preparationState&&['preparing','waiting_prototypes','ready_for_labeling','labeling'].includes(preparationState));
   const discoveryState=status?.discovery?.status,executionState=status?.discovery?.execution_status;
   const discovering=Boolean(discoveryState&&['preparing','admitted','waiting_recovery'].includes(discoveryState)||executionState==='active');
   useEffect(()=>{
     if((!runId||!['queued','running'].includes(runState??''))&&(!preparationId||!preparing)&&!discovering)return;
-    const controller=new AbortController();
-    const timer=setInterval(()=>{fetch(url,{signal:controller.signal,cache:'no-store'}).then(async response=>{
-      if(response.ok){const result=await response.json()as Status;if(!controller.signal.aborted)reconcileStatus(result);}
+    const controller=new AbortController();let issued=0,received=0;
+    const timer=setInterval(()=>{const request=++issued;fetch(url,{signal:controller.signal,cache:'no-store'}).then(async response=>{
+      if(response.ok){const result=await response.json()as Status;
+        if(!controller.signal.aborted&&request>received){received=request;reconcileStatus(result);}}
     }).catch(()=>undefined);},3000);
     return()=>{clearInterval(timer);controller.abort();};
   },[url,runId,runState,preparationId,preparing,discovering,reconcileStatus]);
@@ -66,7 +73,7 @@ export function SignalListeningConfiguration({workspaceId,editable=true}:{worksp
       const response=await fetch(url,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
       if(!response.ok)throw Error();
       const latest=await fetch(url,{cache:'no-store'});if(!latest.ok)throw Error();const result=await latest.json()as Status;
-      if(generation.current===current){setStatus(result);adoptConfiguration(result.configuration);setSaved(true);key.current=null;}
+      if(generation.current===current){updateStatus(result);adoptConfiguration(result.configuration);setSaved(true);key.current=null;}
     }catch{if(generation.current===current)setError(true);}finally{if(generation.current===current)setBusy(false);}
   }
   async function run(){
