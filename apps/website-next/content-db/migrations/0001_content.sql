@@ -49,7 +49,7 @@ create table if not exists content.studies (
   base jsonb not null default '{}'::jsonb,
   -- { es: { title, dek, findings, stats, quote, method_note }, en: { ... } }
   summary jsonb not null default '{}'::jsonb,
-  full_language text not null default 'es' check (full_language in ('es', 'en')),
+  full_language text not null default 'es' check (full_language in ('es', 'en', 'pt', 'de')),
   cover_path text,
   deck_path text,
   pdf_path text,
