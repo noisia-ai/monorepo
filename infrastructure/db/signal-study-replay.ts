@@ -29,7 +29,8 @@ export type SignalStudyReplayOperationV1=
  |{kind:'numeric';plan:StudyRuntimeNumericPlanV1;fit:ReturnType<typeof buildSignalStudyMotiveFitPlanV1>;roots:Array<SignalStudyRootV1&StudyRuntimeRootV1>}
  |{kind:'output';output:StudyRuntimeOutputV1}
  |{kind:'format_stop';stop:SignalStudyEditorialFormatStopV1};
-type ReplayNextV1={operation:SignalStudyReplayOperationV1;override_validated:false;resolved_motives?:SignalStudyMotiveV1[]};
+export type SignalStudyLayerAgreementProofV1={eligible_count:number;pass_a_count:number;pass_a_digest:string|null;pass_b_count:number;pass_b_digest:string|null;denominator:number;coverage:number;observed_agreement:number|null;expected_agreement:number|null;kappa:number|null;estimation_status:'complete'|'not_estimable';not_estimable_reason:'no_passes'|'incomplete_coverage'|'expected_agreement_one'|null;action:'stable'|'recode_boundary_once'|'unstable_report'|'not_estimable';status:'not_measured'|'insufficient_data'|'not_estimable'|'below_threshold'|'acceptable';boundary_recoded_count:number};
+type ReplayNextV1={operation:SignalStudyReplayOperationV1;override_validated:false;resolved_motives?:SignalStudyMotiveV1[];layer_agreement?:SignalStudyLayerAgreementProofV1};
 export type SignalStudyCurrentStepValidationV1={plan:StudyRuntimeStepPlanV1;value_digest:string;checkpoint_digest:string};
 class NextOperation extends Error{constructor(readonly operation:SignalStudyReplayOperationV1){super('study_next_operation');}}
 class CurrentOperationValidated extends Error{constructor(readonly validation:SignalStudyCurrentStepValidationV1){super('study_current_operation_validated');}}
@@ -56,6 +57,7 @@ async function replayStudy(c:PoolClient,execution_id:string,raw:StudyRuntimeSour
  if(raw.editorial_compiler_version!==undefined&&!useV2)fail('editorial_compiler_invalid');
  const dependencies=new Map<string,StudyRuntimeStageDependencyV1>();
  const dependency=(d:StudyRuntimeStageDependencyV1)=>dependencies.set(d.kind+':'+d.key,d);
+ const layerReceipts=new Map<'a'|'b',Array<{step_key:string;value_digest:string}>>();
  const sourceById=new Map(raw.roots.map(root=>[root.root_id,root])),resolvedById=new Map<string,SignalStudyRootV1>(),layerPrefixes=new Map<string,SignalStudyLayerDecisionV1[]>();
  async function editorial<T,R extends EditorialRequestV1>(stage:string,request:R,validate:(request:R,value:unknown)=>T):Promise<T>{
   const request_body=request.request_body,request_sha256=sha(request_body),plan:StudyRuntimeStepPlanV1={kind:'sonnet',request_body,request_sha256,source_digest,key:digest({execution_id,source_digest,stage,request_sha256})};
@@ -70,6 +72,7 @@ async function replayStudy(c:PoolClient,execution_id:string,raw:StudyRuntimeSour
   if(body.model!=='claude-sonnet-4-6'||body.stop_reason!=='end_turn'||!Array.isArray(body.content)||body.content.filter(e=>e.type==='text').length!==1)fail('sonnet_response_invalid');
   const result=validate(request,JSON.parse(body.content.find(e=>e.type==='text')!.text!));
   if(request.mode==='layers'){
+   if(!replacement&&saved?.status==='committed'&&request.pass){const receipts=layerReceipts.get(request.pass)??[];receipts.push({step_key:plan.key,value_digest:saved.value_digest});layerReceipts.set(request.pass,receipts);}
    const decision=result as SignalStudyLayerDecisionV1,scope=decision.pass+':'+decision.recode_attempt,previous=layerPrefixes.get(scope)??[];
    assertSignalStudyLayerDecisionPrefixV1(previous,decision);layerPrefixes.set(scope,[...previous,decision]);
    for(const motive of decision.motives)for(const partition of motive.partitions)for(const evidence of[partition.evidence,partition.normative_evidence])if(evidence){
@@ -191,11 +194,12 @@ function jevResponse(request:JevRequestV1,value:unknown):Record<string,JevAnswer
    }
    return decisions as [SignalStudyLayerDecisionV1,SignalStudyLayerDecisionV1];
   };
+  let boundary_recoded_count=0;
   let stability:StudyRuntimeOutputV1['stability']=null,decisions:[SignalStudyLayerDecisionV1,SignalStudyLayerDecisionV1]|undefined;
   if(motives.length){decisions=await pair(motives.map(m=>m.key));stability=signalStudyLayerStabilityV1(...decisions);
    if(stability.action==='recode_boundary_once'){
     const repaired=applySignalStudyBoundaryRecodeV1({initial:decisions,recoded:await pair(stability.boundary_keys,{attempt:1,boundary_keys:stability.boundary_keys,contrast_rule:'Recode only the recorded boundary set under the same frozen diagnostics; preserve distinct forces.'})});
-    decisions=repaired.decisions;stability=repaired.stability;
+    boundary_recoded_count=stability.boundary_keys.length;decisions=repaired.decisions;stability=repaired.stability;
    }
    // Split identities remain distinct, never averaged or assigned by majority.
    motives=decisions[0].motives.flatMap(m=>m.partitions.map(p=>({key:p.key,name:p.name,definition:p.definition,
@@ -235,7 +239,11 @@ function jevResponse(request:JevRequestV1,value:unknown):Record<string,JevAnswer
    query_bias,
    stability,dominance,verified_evidence,insufficient_group_keys:discovered.insufficient_group_keys,promotion:{status:'explicit_action_required',automatic:false}};
 
- return{operation:{kind:'output',output},override_validated:false,resolved_motives:motives};
+ const eligible_count=stability?.total_motives??0,denominator=stability?.compared_motives??0;
+ const pass=(index:0|1)=>{const decision=decisions?.[index],receipts=layerReceipts.get(index===0?'a':'b')??[];return{count:decision?.motives.length??0,digest:decision?.motives.length?digest({contract_version:'signal-study-layer-pass-proof-v1',execution_id,source_digest,pass:index===0?'a':'b',decision,committed_steps:receipts}):null};};
+ const a=pass(0),b=pass(1),incomplete=denominator<eligible_count;
+ const layer_agreement:SignalStudyLayerAgreementProofV1={eligible_count,pass_a_count:a.count,pass_a_digest:a.digest,pass_b_count:b.count,pass_b_digest:b.digest,denominator,coverage:eligible_count?denominator/eligible_count:0,observed_agreement:stability?.observed_agreement??null,expected_agreement:stability?.expected_agreement??null,kappa:stability?.kappa??null,estimation_status:stability?.estimation_status??'not_estimable',not_estimable_reason:!decisions?'no_passes':incomplete?'incomplete_coverage':stability?.expected_agreement===1?'expected_agreement_one':null,action:stability?.action??'not_estimable',status:!decisions?'not_measured':incomplete?'insufficient_data':stability?.kappa===null?'not_estimable':stability&&stability.kappa!==null&&stability.kappa<.8?'below_threshold':'acceptable',boundary_recoded_count};
+ return{operation:{kind:'output',output},override_validated:false,resolved_motives:motives,layer_agreement};
  }catch(error){if(error instanceof CurrentOperationValidated)return{validation:error.validation};if(error instanceof NextOperation)return{operation:error.operation,override_validated:false};
   if(raw.editorial_compiler_version===undefined&&error instanceof SignalStudyEditorialRequestSizeErrorV1)return{operation:{kind:'format_stop',stop:{status:'format_stop',compiler_version:'legacy-v1',phase:'legacy-editorial',unit_keys:[],reason:'request_bytes',observed:error.request_bytes,limit:524288,estimate_profile:null}},override_validated:false};throw error;}
 
@@ -255,7 +263,7 @@ export async function readSignalStudyStabilityProofV1(args:StudyAccessV1&{execut
   const replay=await replaySignalStudyWithClientV1(c,row.id,await readSignalStudySourceWithClientV1(c,row));
   if(replay.operation.kind!=='output'||digest(replay.operation.output)!==row.output_digest)fail('audit_output_integrity_invalid');
   const proof={contract_version:'signal-study-stability-proof-v1' as const,workspace_id:row.workspace_id,execution_id:row.id,
-   compiler_version:row.source_header.editorial_compiler_version===SIGNAL_STUDY_EDITORIAL_COMPILER_V2?SIGNAL_STUDY_EDITORIAL_COMPILER_V2:'legacy-v1',configuration_digest:row.configuration_digest,source_digest:row.source_digest,output_digest:row.output_digest,stability:replay.operation.output.stability};
+   compiler_version:row.source_header.editorial_compiler_version===SIGNAL_STUDY_EDITORIAL_COMPILER_V2?SIGNAL_STUDY_EDITORIAL_COMPILER_V2:'legacy-v1',configuration_digest:row.configuration_digest,source_digest:row.source_digest,output_digest:row.output_digest,stability:replay.operation.output.stability,layer_agreement:replay.layer_agreement!};
   return{...proof,proof_digest:digest(proof)};
  });
 }
