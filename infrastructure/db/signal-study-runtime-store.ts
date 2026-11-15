@@ -3,7 +3,7 @@ import type{LabelingRawPageStorageV1}from'./signal-labeling-raw-pages';
 import type{ListeningDiscoveryNumericStorageV1}from'./signal-listening-discovery-advance';
 import type{StudyDatabaseV1}from'./signal-study-core';
 import{claimSignalStudyExecutionV1,renewSignalStudyExecutionV1,releaseSignalStudyExecutionV1,readSignalStudyRuntimeSourceV1}from'./signal-study-executions';
-import{reconcileSignalStudyReceiptsV1,readSignalStudyStepV1,planSignalStudyStepV1,markSignalStudyStepSentV1,persistSignalStudyReceiptV1,settleSignalStudyStepV1,commitSignalStudyStepV1,markSignalStudyUnknownV1,type SignalStudyRawStorageV1}from'./signal-study-steps';
+import{reconcileSignalStudyReceiptsV1,readSignalStudyStepV1,planSignalStudyStepV1,markSignalStudyStepSentV1,persistSignalStudyReceiptV1,settleSignalStudyStepV1,commitSignalStudyStepV1,markSignalStudyUnknownV1,recordSignalStudyFormatStopV1,type SignalStudyRawStorageV1}from'./signal-study-steps';
 import{readSignalStudyNumericCheckpointV1,persistSignalStudyNumericV1}from'./signal-study-numeric-checkpoints';
 import{prepareSignalStudyJevBatchV1}from'./signal-study-jev-batches';
 import{readSignalStudyJevBatchCheckpointV1}from'./signal-study-jev-checkpoints';
@@ -20,6 +20,7 @@ export function createSignalStudyRuntimeStoreV1(options:{database:StudyDatabaseV
   prepareJevBatch:(lease,plan)=>options.analysis_enabled()&&options.sonnet_provider_available()?prepareSignalStudyJevBatchV1({database,lease,plan,provider_available:options.jev_provider_available()}):Promise.resolve(null),jevBatchCheckpoint:(lease,batch_id)=>readSignalStudyJevBatchCheckpointV1({database,lease,batch_id,raw_pages:options.raw_pages}),
   step:(lease,plan)=>readSignalStudyStepV1({database,lease,plan}),plan:(lease,plan)=>options.analysis_enabled()&&options.sonnet_provider_available()?planSignalStudyStepV1({database,lease,plan}):Promise.resolve(null),markSent:(lease,plan)=>markSignalStudyStepSentV1({database,lease,plan,provider_available:options.analysis_enabled()&&options.sonnet_provider_available()}),
   persistReceipt:(lease,plan,receipt)=>persistSignalStudyReceiptV1({database,lease,plan,receipt,storage:options.raw_storage}),settle:(lease,plan)=>settleSignalStudyStepV1({database,lease,plan}),commit:(lease,plan,value,value_digest)=>options.analysis_enabled()?commitSignalStudyStepV1({database,lease,plan,value,value_digest}):Promise.resolve(false),unknown:(lease,plan,code)=>markSignalStudyUnknownV1({database,lease,plan,code}),
+  recordFormatStop:(lease,stop)=>recordSignalStudyFormatStopV1({database,lease,stop}),
   finish:(lease,output,output_digest)=>options.analysis_enabled()?finishSignalStudyExecutionV1({database,lease,output,output_digest}):Promise.resolve(false),
  };
 }

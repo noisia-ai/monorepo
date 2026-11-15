@@ -1,10 +1,11 @@
+import type{SignalStudyEditorialFormatStopV1}from'@noisia/query-engine';
 import{createHash,randomUUID}from'node:crypto';
 import type{PoolClient}from'pg';
 import type{StudyRuntimeLeaseV1,StudyRuntimeStepPlanV1,StudyRuntimeStepV1,StudyRuntimeReceiptV1}from'../../services/workers/src/workers/signal-study-runtime';
 import{studyTransactionV1,studyFailV1 as fail,studyDigestV1 as digest,type StudyDatabaseV1,type SignalStudyExecutionRecordV1}from'./signal-study-core';
 import{lockSignalStudyExecutionWithClientV1,validateSignalStudyLeaseV1}from'./signal-study-executions';
 import{readSignalStudySourceWithClientV1,signalStudySourceUrlStateV1}from'./signal-study-source';
-import{replaySignalStudyWithClientV1}from'./signal-study-replay';
+import{replaySignalStudyWithClientV1,validateSignalStudyCurrentStepWithClientV1}from'./signal-study-replay';
 import{admitSignalProcessingWithClientV1}from'./signal-processing-policy';
 const sha=(body:string|Buffer)=>'sha256:'+createHash('sha256').update(body).digest('hex');
 export type SignalStudyRawDescriptorV1={workspace_id:string;execution_id:string;step_id:string;name:string;raw_text:string;raw_sha256:string;size_bytes:number};
@@ -39,7 +40,7 @@ export async function planSignalStudyStepV1(args:{database:StudyDatabaseV1;lease
   const source=await readSignalStudySourceWithClientV1(c,p),expected=(await replaySignalStudyWithClientV1(c,p.id,source)).operation;
   if(expected.kind!=='sonnet'||digest(expected.plan)!==digest(args.plan))fail('step_not_next');
   const roots=new Map(source.roots.map(root=>[root.root_id,root]));
-  if(expected.editorial.source_samples.some(group=>!group.rows.some(row=>{const root=roots.get(row.root_id);return root&&signalStudySourceUrlStateV1(root.source_url)==='valid';})))fail('verbatim_source_unavailable',422);
+  if(expected.editorial.mode!=='reconciliation'&&expected.editorial.source_samples.some(group=>!group.rows.some(row=>{const root=roots.get(row.root_id);return root&&signalStudySourceUrlStateV1(root.source_url)==='valid';})))fail('verbatim_source_unavailable',422);
   const body=JSON.parse(args.plan.request_body)as{model:string;max_tokens:number};if(body.model!=='claude-sonnet-4-6'||body.max_tokens!==32768||Buffer.byteLength(args.plan.request_body)>524288)fail('step_request_invalid');
   const reservation=(Buffer.byteLength(args.plan.request_body)+4096)*6+body.max_tokens*15;
   const exposure=BigInt((await c.query<{v:string}>('SELECT signal_study_exposure_v1($1)::text v',[p.id])).rows[0]!.v);
@@ -99,10 +100,12 @@ export async function settleSignalStudyStepV1(args:{database:StudyDatabaseV1;lea
 }
 export async function commitSignalStudyStepV1(args:{database:StudyDatabaseV1;lease:StudyRuntimeLeaseV1;plan:StudyRuntimeStepPlanV1;value:unknown;value_digest:string}){
  validatePlan(args.lease,args.plan);if(digest(args.value)!==args.value_digest)fail('step_value_digest_invalid');return studyTransactionV1(args.database,async c=>{const p=await lockSignalStudyExecutionWithClientV1(c,args.lease),row=await readStep(c,args.lease,args.plan);if(!row)fail('step_unavailable');
-  if(row.status==='committed')return row.value_digest===args.value_digest;if(row.status!=='raw'||!row.raw_json||row.verification_status!=='verified')return false;
+  if(row.status==='committed')return row.value_digest===args.value_digest;
+  if(BigInt((await c.query<{v:string}>('SELECT signal_study_exposure_v1($1)::text v',[p.id])).rows[0]!.v)>BigInt(p.cap_micro_usd))fail('parent_cap_exhausted');
+  if(row.status!=='raw'||!row.raw_json||row.verification_status!=='verified')return false;
   const receipt=JSON.parse(row.raw_json)as StudyRuntimeReceiptV1,rawValue=JSON.parse(new TextDecoder('utf-8',{fatal:true,ignoreBOM:true}).decode(Buffer.from(receipt.body_base64,'base64')));
   if(digest(rawValue)!==args.value_digest||!(await c.query("SELECT 1 FROM engine_cost_events WHERE study_step_id=$1 AND call_state='settled'",[row.id])).rows.length)fail('settled_receipt_required');
-  const replay=await replaySignalStudyWithClientV1(c,p.id,await readSignalStudySourceWithClientV1(c,p),{key:args.plan.key,value:rawValue});if(!replay.override_validated)fail('step_not_next');
+  const validated=await validateSignalStudyCurrentStepWithClientV1(c,p.id,await readSignalStudySourceWithClientV1(c,p),{plan:args.plan,value:rawValue});if(!validated||validated.value_digest!==args.value_digest)fail('step_not_next');
   await c.query("SELECT set_config('noisia.study_commit_v1',$1,true)",[JSON.stringify({execution_id:p.id,execution_token:args.lease.execution_token,step_key:args.plan.key,value_digest:args.value_digest})]);
   await c.query("UPDATE signal_study_steps SET status='committed',value=$2::jsonb,value_digest=$3 WHERE id=$1",[row.id,JSON.stringify(rawValue),args.value_digest]);return true;});
 }
@@ -122,4 +125,29 @@ export async function reconcileSignalStudyReceiptsV1(args:{database:StudyDatabas
   WHERE s.execution_id=$1 AND c.call_state<>'settled' ORDER BY s.created_at,s.id`,[p.id])).rows;
  for(const row of rows){const plan=mapped(row),{contract_version:_contract,...receipt}=JSON.parse(row.raw_json!)as StudyRuntimeReceiptV1&{contract_version:string};
   await persistSignalStudyReceiptV1({database:args.database,lease,plan,receipt,storage:args.storage});await settleSignalStudyStepV1({database:args.database,lease,plan});}
+}
+
+/** The stop is recompiled from the native frozen source and committed prefix.
+ * Caller diagnostics never create authority, usage, an admission or a receipt. */
+export async function recordSignalStudyFormatStopV1(args:{database:StudyDatabaseV1;lease:StudyRuntimeLeaseV1;stop:SignalStudyEditorialFormatStopV1}):Promise<void>{
+ validateSignalStudyLeaseV1(args.lease);const stop_digest=digest(args.stop),stop_json=JSON.stringify(args.stop);if(Buffer.byteLength(stop_json)>8192)fail('format_stop_invalid',422);
+ await studyTransactionV1(args.database,async c=>{
+  const scope=(await c.query<SignalStudyExecutionRecordV1>('SELECT * FROM signal_study_executions WHERE id=$1 AND workspace_id=$2',[args.lease.execution_id,args.lease.workspace_id])).rows[0];
+  if(!scope||scope.source_digest!==args.lease.source_digest||scope.configuration_digest!==args.lease.configuration_digest||scope.human_revision_digest!==args.lease.human_revision_digest)fail('execution_unavailable');
+  const replayed=async()=>{const prior=(await c.query<{stop_digest:string;stop_json:unknown;recorded_by_token:string;source_digest:string}>('SELECT * FROM signal_study_format_stops WHERE execution_id=$1 AND workspace_id=$2',[scope.id,scope.workspace_id])).rows[0];
+   if(!prior)return false;if(prior.stop_digest!==stop_digest||digest(prior.stop_json)!==stop_digest||prior.recorded_by_token!==args.lease.execution_token||prior.source_digest!==args.lease.source_digest)fail('format_stop_conflict');return true;};
+  if(await replayed())return;
+  let p:SignalStudyExecutionRecordV1;try{p=await lockSignalStudyExecutionWithClientV1(c,args.lease);}catch(error){
+   // A concurrent identical recorder can commit while this transaction waits
+   // for the native parent lock. Only its exact existing receipt is a replay.
+   if(error instanceof Error&&/^study_(source_changed|lease_lost)$/u.test(error.message)&&await replayed())return;throw error;
+  }
+  const next=(await replaySignalStudyWithClientV1(c,p.id,await readSignalStudySourceWithClientV1(c,p))).operation;
+  if(next.kind!=='format_stop'||digest(next.stop)!==stop_digest)fail('format_stop_not_derived');
+  if(BigInt((await c.query<{v:string}>('SELECT signal_study_exposure_v1($1)::text v',[p.id])).rows[0]!.v)>BigInt(p.cap_micro_usd))fail('parent_cap_exhausted');
+  await c.query("SELECT set_config('noisia.study_format_stop_v1',$1,true)",[JSON.stringify({execution_id:p.id,execution_token:args.lease.execution_token,stop_digest})]);
+  await c.query(`INSERT INTO signal_study_format_stops(execution_id,workspace_id,actor_user_id,source_digest,compiler_version,stop_json,stop_digest,recorded_by_token)
+   VALUES($1,$2,$3,$4,$5,$6::jsonb,$7,$8)`,[p.id,p.workspace_id,p.actor_user_id,p.source_digest,next.stop.compiler_version,stop_json,stop_digest,args.lease.execution_token]);
+  await c.query("UPDATE signal_study_executions SET status='failed',error_code='study_editorial_format_stop',updated_at=clock_timestamp() WHERE id=$1",[p.id]);
+ });
 }

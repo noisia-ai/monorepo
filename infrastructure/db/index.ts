@@ -178,3 +178,5 @@ export {readSignalStudyReportOverviewV1,readSignalStudyReportPageV1} from './sig
 export type {SignalStudyReportSectionV1,SignalStudyReportRowsV1,SignalStudyReportOverviewV1} from './signal-study-serving';
 export {readLatestSignalStudyExecutionStatusV1} from './signal-study-status';
 export {readSignalStudyListeningSourceV1,type SignalStudyListeningSourceV1} from './signal-study-listening-source';
+
+export {readSignalStudyStabilityProofV1} from './signal-study-replay';

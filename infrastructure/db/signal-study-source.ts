@@ -1,6 +1,6 @@
 import {createHash} from 'node:crypto';
 import type {PoolClient} from 'pg';
-import {signalStudyConfiguredCutV1,signalStudyJevTargetDigestV1,validateSignalStudyExecutionConfigurationV1,signalStudySourceUrlStateV1,type SignalStudyExecutionConfigurationV1} from '@noisia/query-engine';
+import {signalStudyConfiguredCutV1,signalStudyJevTargetDigestV1,validateSignalStudyExecutionConfigurationV1,signalStudySourceUrlStateV1,SIGNAL_STUDY_EDITORIAL_COMPILER_V2,type SignalStudyExecutionConfigurationV1} from '@noisia/query-engine';
 import type {StudyRuntimeRootV1,StudyRuntimeSourceV1} from '../../services/workers/src/workers/signal-study-runtime';
 import {studyDigestV1 as digest,studyFailV1 as fail,type SignalStudyConfigurationRecordV1,type SignalStudyExecutionRecordV1} from './signal-study-core';
 export {signalStudySourceUrlStateV1} from '@noisia/query-engine';
@@ -98,7 +98,7 @@ export async function prepareSignalStudySourceWithClientV1(c:PoolClient,cfg:Sign
  const roots=records.map(r=>r.root),evidence_source_census={valid_url_roots:roots.filter(r=>signalStudySourceUrlStateV1(r.source_url)==='valid').length,missing_url_roots:roots.filter(r=>signalStudySourceUrlStateV1(r.source_url)==='missing').length,invalid_url_roots:roots.filter(r=>signalStudySourceUrlStateV1(r.source_url)==='invalid').length};
  const binding=(await c.query<{source_kind:'serving'|'human_edit';id:string;configuration_id:string;generation_id:string;snapshot_digest:string;base_snapshot_id:string}>('SELECT * FROM signal_study_configuration_sources_v1 WHERE study_configuration_id=$1 AND workspace_id=$2',[cfg.id,cfg.workspace_id])).rows[0];if(!binding)fail('listening_source_unavailable');
  const listening_source_binding={kind:binding.source_kind,id:binding.id,configuration_id:binding.configuration_id,generation_id:binding.generation_id,source_digest:binding.snapshot_digest,base_snapshot_id:binding.base_snapshot_id};
- const body:Omit<StudyRuntimeSourceV1,'source_digest'>&{evidence_source_census:typeof evidence_source_census;listening_source_binding:typeof listening_source_binding}={configuration,roots,evidence_source_census,listening_source_binding,
+ const body:Omit<StudyRuntimeSourceV1,'source_digest'>&{evidence_source_census:typeof evidence_source_census;listening_source_binding:typeof listening_source_binding}={configuration,roots,evidence_source_census,listening_source_binding,editorial_compiler_version:SIGNAL_STUDY_EDITORIAL_COMPILER_V2,
   selection:{scope:'listening_consumer_cut',source_listening_digest:configuration.source_listening.configuration_digest,cut_digest:digest(configuration.study.cut),eligible_root_ids_digest:digest(roots.map(r=>r.root_id).sort()),eligible_roots:roots.length,pending_base_roots:0,corpus_roots:baseline.corpus},
   embedding_space_digest:rows[0]?.embedding_config_digest??String((await c.query('SELECT m.embedding_config_digest FROM signal_study_configuration_sources_v1 s JOIN signal_mass_labeling_maps m ON m.id=s.map_id WHERE s.study_configuration_id=$1',[cfg.id])).rows[0].embedding_config_digest),
   source_preparation_run_ids:[...new Set(rows.flatMap(r=>r.embedding_preparation_run_id?[r.embedding_preparation_run_id]:[]))].sort(),sampling_seed:digest({execution_id:executionId,study_digest:configuration.study_digest}),
@@ -109,7 +109,7 @@ export async function prepareSignalStudySourceWithClientV1(c:PoolClient,cfg:Sign
 
 /** Reload the exact cut and frozen cache hints. Source metadata never switches
  * to latest Listening or hydrates an outside-cut root. */
-export async function readSignalStudySourceWithClientV1(c:PoolClient,execution:SignalStudyExecutionRecordV1):Promise<StudyRuntimeSourceV1>{
+export async function readSignalStudySourceWithClientV1(c:PoolClient,execution:Pick<SignalStudyExecutionRecordV1,'id'|'workspace_id'|'configuration_id'|'source_roots'|'source_header'|'source_digest'>):Promise<StudyRuntimeSourceV1>{
  const cfg=(await c.query<SignalStudyConfigurationRecordV1>('SELECT * FROM signal_study_configurations WHERE id=$1 AND workspace_id=$2',[execution.configuration_id,execution.workspace_id])).rows[0]!;
  const bounds=(await c.query<{n:number;bytes:string}>(`SELECT count(*)::int n,COALESCE(sum(4*(octet_length(asset.full_text)+octet_length(cached.embedding::text)+octet_length(saved.base_cache::text)+octet_length(saved.attributes::text)+octet_length(saved.proof_json)+8192+cardinality(saved.question_cache_ids)*2048)),0)::text bytes
   FROM signal_study_source_roots saved JOIN signal_corpus_text_assets asset ON asset.workspace_id=saved.workspace_id AND asset.text_sha256=saved.asset_sha256 AND asset.chunk_policy_version=saved.chunk_policy_version
