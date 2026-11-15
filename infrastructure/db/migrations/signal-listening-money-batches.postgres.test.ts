@@ -19,7 +19,7 @@ import {quoteSignalTopicEditorialChunkedAdmissionV3,requestSignalTopicEditorialC
 import {prepareSignalTopicEditorialBatchV2} from '../signal-topic-editorial-batch-v2';
 import {withDiscoveryAdvanceFixtureV1} from './signal-listening-discovery-advance.synthetic.fixture';
 import {createSignalListeningDiscoveryAdvanceStoreV1} from '../signal-listening-discovery-advance';
-import {activateSignalListeningServingSnapshotV1,type ListeningDiscoveryRoundV1} from '../signal-listening-discovery-money';
+import {activateSignalListeningServingSnapshotV1,lockSignalListeningDiscoveryPolicyWithClientV1,type ListeningDiscoveryRoundV1} from '../signal-listening-discovery-money';
 
 const enabled=process.env.NOISIA_R16_LISTENING_MONEY_BATCHES_PG==='true';
 type NativeFixture={database:Parameters<typeof createSignalListeningStoreV1>[0]['database'];
@@ -195,7 +195,7 @@ test('native insert and mark statements each evaluate organization exposure once
  }),/listening_call_invalid|labeling_lease_lost|processing_admission_invalid/);
 }));
 
-async function waitForBlock(f:NativeFixture,pid:number,blocker:number){
+async function waitForBlock(f:Pick<NativeFixture,'database'>,pid:number,blocker:number){
  const deadline=Date.now()+5000;
  while(Date.now()<deadline){
   if((await f.database.query('SELECT $2::int=ANY(pg_blocking_pids($1::int)) blocked',[pid,blocker])).rows[0].blocked)return;
@@ -319,6 +319,54 @@ test('a final native child batch includes its siblings and checks parent exposur
    assert.equal(BigInt((await f.database.query('SELECT signal_listening_discovery_exposure_v1($1)::text n',[f.execution.id])).rows[0].n),parentBefore);
   }finally{await c.query('ROLLBACK').catch(()=>{});c.release();await labeling.release(run);}
  });
+}));
+
+for(const operation of ['insert','mark']as const)test('direct native child '+operation+' waits for policy before locking the parent',{
+ skip:!enabled,timeout:600000,
+},async()=>withDiscoveryAdvanceFixtureV1(async f=>{
+ const advances=createSignalListeningDiscoveryAdvanceStoreV1({database:f.database,numeric_storage:f.storage});
+ const lease=await advances.claim({database:f.database,execution_id:f.execution.id});assert.ok(lease);
+ const subset=await advances.ensureSubset({database:f.database,lease,generation_id:lease.source_generation_id});
+ const numeric=await f.emptyNumeric(subset);await advances.persistNumeric({database:f.database,lease,subset_id:subset.id,numeric});
+ const round=await advances.enqueue({database:f.database,lease,generation_id:lease.source_generation_id,expected_ordinal:lease.next_ordinal,
+  expected_policy_version_id:lease.policy_version_id,expected_policy_digest:lease.policy_digest,expected_human_revision_digest:lease.human_revision_digest,
+  numeric_manifest_sha256:numeric.manifest_sha256,provider_available:true});assert.ok(round&&round.status!=='budget_exhausted');
+ await advances.release({database:f.database,lease});
+ const child=await f.prepareRoundChild(round as ListeningDiscoveryRoundV1);
+ const labeling=createSignalListeningStoreV1({database:f.database,storeRaw:async()=>{throw Error('no provider or receipt writes in lock-order acceptance');}});
+ const run=await labeling.claim(child.run_id);assert.ok(run);const inputs=await labeling.inputs(run);assert.equal(inputs.length,3);
+ const requests={run,inputs,configuration:child.configuration};
+ if(operation==='mark'){
+  const setup=await f.database.connect();try{await setup.query('BEGIN');await insert(setup,requests,1000);await setup.query('COMMIT');}
+  catch(error){await setup.query('ROLLBACK');throw error;}finally{setup.release();}
+ }
+ const holder=await f.database.connect(),sender=await f.database.connect();let pending:Promise<{error?:Error;value?:unknown}>|undefined;
+ try{
+  await holder.query('BEGIN');await sender.query('BEGIN');
+  await holder.query("SET LOCAL statement_timeout='15s'");await sender.query("SET LOCAL statement_timeout='15s'");
+  const holderPid=Number((await holder.query('SELECT pg_backend_pid() pid')).rows[0].pid);
+  const senderPid=Number((await sender.query('SELECT pg_backend_pid() pid')).rows[0].pid);
+  // This is the native complete/advance order: policy, organization day,
+  // mutable actor, then parent. The competing SQL has no adapter prelock.
+  await lockSignalListeningDiscoveryPolicyWithClientV1(holder,f.workspace_id);
+  await holder.query('SELECT signal_processing_lock_actor_v1($1,$2)',[f.workspace_id,f.actor_user_id]);
+  pending=(operation==='insert'?insert(sender,requests,1000):sender.query(
+   "UPDATE signal_labeling_calls SET status='submitting' WHERE run_id=$1 AND status='reserved' RETURNING id",[run.id]))
+   .then(value=>({value}),error=>({error}));
+  await waitForBlock(f,senderPid,holderPid);
+  // Before the fix z_child_capacity held this row while waiting for the
+  // holder's policy lock. NOWAIT proves absence of that reversed lock edge.
+  assert.equal((await holder.query('SELECT id FROM signal_listening_discovery_executions WHERE id=$1 FOR UPDATE NOWAIT',[f.execution.id])).rows.length,1);
+  await holder.query('COMMIT');const outcome=await pending;
+  assert.equal(outcome.error,undefined,'the direct SQL must finish without deadlock after policy is released');
+  const states=(await sender.query('SELECT status FROM signal_labeling_calls WHERE run_id=$1',[run.id])).rows;
+  assert.equal(states.length,3);assert.ok(states.every(row=>row.status===(operation==='insert'?'reserved':'submitting')));
+  await sender.query('ROLLBACK');
+  assert.equal((await f.database.query('SELECT count(*)::int n FROM signal_labeling_calls WHERE run_id=$1',[run.id])).rows[0].n,operation==='insert'?0:3);
+ }finally{
+  await holder.query('ROLLBACK').catch(()=>{});await sender.query('ROLLBACK').catch(()=>{});await pending;
+  holder.release();sender.release();await labeling.release(run);
+ }
 }));
 
 test('RAW-backed settlement recovery and unsent requeue preserve Listening money after the statement guard',{

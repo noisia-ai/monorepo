@@ -185,6 +185,34 @@ BEGIN
  END LOOP;
  RETURN NULL;
 END $$;
+CREATE OR REPLACE FUNCTION signal_listening_discovery_child_capacity_v1() RETURNS trigger LANGUAGE plpgsql SET search_path=public,extensions,pg_temp AS $$
+DECLARE parent_id uuid;cap bigint;amount bigint;kind text;
+BEGIN
+ IF TG_TABLE_NAME='signal_labeling_calls' THEN
+  -- Listening validates its parent cap once in the transition-table guard,
+  -- after native policy/day/actor locks. Taking parent here first would invert
+  -- the complete/advance order for direct SQL callers. Other owners and the
+  -- entire Voyage branch retain their original row-level checks below.
+  IF EXISTS(SELECT 1 FROM signal_listening_runs owner WHERE owner.run_id=NEW.run_id AND owner.workspace_id=NEW.workspace_id) THEN RETURN NEW; END IF;
+ SELECT execution_id INTO parent_id FROM signal_listening_discovery_children WHERE run_id=NEW.run_id;
+ kind:='labeling';
+ IF parent_id IS NULL OR NOT(TG_OP='INSERT' OR OLD.status='reserved' AND NEW.status='submitting') THEN RETURN NEW;END IF;
+ -- Keep the same parent lock before any row can become sendable.
+ -- The final transition-table check below includes every sibling at once.
+ PERFORM 1 FROM signal_listening_discovery_executions WHERE id=parent_id FOR UPDATE;
+ RETURN NEW;
+ ELSE
+ SELECT p.id INTO parent_id FROM signal_listening_discovery_executions p WHERE p.initial_preparation_id IN(SELECT id FROM signal_listening_preparations WHERE prototype_run_id=NEW.run_id)
+ UNION SELECT execution_id FROM signal_listening_discovery_children child JOIN signal_listening_preparations flow ON flow.id=child.preparation_id WHERE flow.prototype_run_id=NEW.run_id UNION SELECT r.execution_id FROM signal_listening_discovery_rounds r JOIN signal_listening_preparations flow ON flow.id=r.classification_preparation_id WHERE flow.prototype_run_id=NEW.run_id LIMIT 1;
+ kind:='voyage';
+ IF parent_id IS NULL OR NOT(TG_OP='INSERT' OR OLD.status='reserved' AND NEW.status='in_flight') THEN RETURN NEW;END IF;
+ amount:=NEW.reserved_micro_usd;
+ END IF;
+ SELECT cap_micro_usd INTO cap FROM signal_listening_discovery_executions WHERE id=parent_id FOR UPDATE;
+ IF signal_listening_discovery_exposure_v1(parent_id,kind,NEW.id)+amount>cap THEN RAISE EXCEPTION 'listening_discovery_parent_cap_exhausted';END IF;
+ RETURN NEW;
+END $$;
+
 -- Its exact unresolved-physical-attempt predicate is now evaluated above using
 -- the same fresh materialized population. The public admission helper remains
 -- unchanged; only this redundant per-row trigger is retired.
