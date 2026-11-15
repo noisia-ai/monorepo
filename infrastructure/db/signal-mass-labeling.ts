@@ -316,14 +316,39 @@ const itemPageSql = `SELECT item.root_id,item.input_digest,item.text,NULL::text 
 // include every candidate/localization, catalog, identity/config and fixed
 // question wording. Four retained/serialization copies plus 8KiB match H1's
 // working-memory policy; the extra 2KiB covers field names and root metadata.
-const itemMetadataSql=`/* labeling_mass_input_metadata_v1 */ SELECT item.root_id,
- (4::bigint*(12*octet_length(item.text)::bigint+2*octet_length(item.candidates::text)::bigint
+// Seal the bounded UUID page before joining mention text or calculating JSON
+// sizes. Constants in the anti-join preserve the (run_id,root_id) index path;
+// transition aliases must not turn it into a corpus x prior-call-root join.
+const itemBoundedOwnerSql=`WITH owner AS MATERIALIZED(
+ SELECT workspace_id,map_id,smoke_root_limit FROM signal_mass_labeling_runs WHERE run_id=$1 AND workspace_id=$2)`;
+const itemBoundedRowsSql=`FROM chosen wanted CROSS JOIN owner mass
+ CROSS JOIN LATERAL(SELECT i.* FROM signal_mass_labeling_items i
+  WHERE i.workspace_id=$2 AND i.map_id=mass.map_id AND i.root_id=wanted.root_id
+   AND(mass.smoke_root_limit IS NULL OR i.ordinal<=mass.smoke_root_limit)
+   AND NOT EXISTS(SELECT 1 FROM signal_mass_labeling_call_roots sent WHERE sent.run_id=$1 AND sent.root_id=i.root_id)
+  OFFSET 0) item
+ CROSS JOIN LATERAL(SELECT m.platform,m.content_type,m.published_at,m.language FROM mentions m
+  WHERE m.workspace_id=$2 AND m.id=item.root_id OFFSET 0) mention
+ CROSS JOIN LATERAL(SELECT m.map_digest,m.catalog FROM signal_mass_labeling_maps m
+  WHERE m.workspace_id=$2 AND m.id=mass.map_id OFFSET 0) map`;
+const itemMetadataSql=`/* labeling_mass_input_metadata_v2 */ ${itemBoundedOwnerSql},chosen AS MATERIALIZED(
+ SELECT item.root_id FROM signal_mass_labeling_items item
+ WHERE item.workspace_id=$2 AND item.map_id=(SELECT map_id FROM owner)
+  AND((SELECT smoke_root_limit FROM owner) IS NULL OR item.ordinal<=(SELECT smoke_root_limit FROM owner))
+  AND NOT EXISTS(SELECT 1 FROM signal_mass_labeling_call_roots sent WHERE sent.run_id=$1 AND sent.root_id=item.root_id)
+ ORDER BY item.root_id LIMIT $3)
+ SELECT item.root_id,
+(4::bigint*(12*octet_length(item.text)::bigint+2*octet_length(item.candidates::text)::bigint
   +2*octet_length(map.catalog::text)::bigint
   +2*COALESCE((SELECT sum(octet_length(COALESCE(NULLIF((SELECT t->'localization' FROM jsonb_array_elements(map.catalog)t WHERE t->>'topic_key'=c->>'topic_key'),'null'::jsonb),
    (SELECT l.localization FROM signal_mass_labeling_localizations l WHERE l.workspace_id=mass.workspace_id AND l.map_id=mass.map_id AND l.topic_key=c->>'topic_key'),'{}'::jsonb)::text))
    FROM jsonb_array_elements(item.candidates)c),0)
   +6*(octet_length(COALESCE(mention.platform,''))+octet_length(COALESCE(mention.content_type,''))+octet_length(COALESCE(mention.language,'')))::bigint
-  +$4::bigint+2048)+8192)::text working_bytes ${itemPageScopeSql} ORDER BY item.root_id LIMIT $3`;
+  +$4::bigint+2048)+8192)::text working_bytes ${itemBoundedRowsSql} ORDER BY item.root_id`;
+const itemBoundedPageSql=`${itemBoundedOwnerSql},chosen AS MATERIALIZED(SELECT unnest($4::uuid[]) root_id)
+ SELECT item.root_id,item.input_digest,item.text,NULL::text title,mention.platform,
+ mention.content_type,NULL::text author,mention.published_at::text,mention.language,item.chunk_index,
+ item.map_id,map.map_digest,item.candidates ${itemBoundedRowsSql} ORDER BY item.root_id LIMIT $3`;
 function fixedMassInputBytes(run:LabelingRunV1){
  const localization={original_language:'en',original:{name:'x',definition:'x'},en:{name:'x',definition:'x'},es:{name:'x',definition:'x'}};
  const sample={root_id:'x',input_digest:'x',text:'x',title:null,platform:null,content_type:null,author:null,published_at:'2026-01-01T00:00:00.000Z',language:null,
@@ -337,7 +362,7 @@ export function createMassLabelingStoreV1(options: Omit<Parameters<typeof create
       let ids:string[]|null=null;
       if(bounds){const metadata=(await client.query<{root_id:string;working_bytes:string}>(itemMetadataSql,[run.id,run.workspace_id,bounds.max_rows,fixedMassInputBytes(run)])).rows;
         ids=selectLabelingInputPrefixV1(metadata,bounds);if(!ids.length)return [];}
-      const rows=(await client.query<MassLabelingInputV1>(itemPageSql,[run.id,run.workspace_id,bounds?.max_rows??options.page_size??200,ids])).rows;
+      const rows=(await client.query<MassLabelingInputV1>(bounds?itemBoundedPageSql:itemPageSql,[run.id,run.workspace_id,bounds?.max_rows??options.page_size??200,ids])).rows;
       if(run.identity.params.request_version!=="mass-labeling-jev-v2"||!rows.length)return rows;
       const map=await mapCurrent(client,run.workspace_id,rows[0]!.map_id);
       const imported=(await client.query<{topic_key:string;localization:SignalTopicLocalizationV1}>(

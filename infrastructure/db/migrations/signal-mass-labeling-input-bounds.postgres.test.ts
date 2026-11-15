@@ -11,7 +11,7 @@ test('native Mass reader selects a byte-bounded prefix before text hydration',{
  const reads:{ids:string[];costs:number[]}[]=[];let hydrated=0,race=false,changed=false;
  const database={query:ctx.database.query.bind(ctx.database),connect:async()=>{const c=await ctx.database.connect();return new Proxy(c,{get(target,key){if(key==='query')return async(sql:string,...values:unknown[])=>{
   const result=await(target.query as(...args:unknown[])=>Promise<{rows:Record<string,unknown>[]}>) (sql,...values);
-  if(sql.includes('labeling_mass_input_metadata_v1')){
+  if(sql.includes('labeling_mass_input_metadata_v')){
    assert.ok(result.rows.every(row=>Object.keys(row).sort().join(',')==='root_id,working_bytes'),'metadata must not return text, candidate definitions or query wire');
    assert.ok(Buffer.byteLength(JSON.stringify(result.rows))<4096);
    reads.push({ids:result.rows.map(row=>String(row.root_id)),costs:result.rows.map(row=>Number(row.working_bytes))});
