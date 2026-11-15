@@ -71,6 +71,7 @@ export async function runListeningSmallDiagnosticV1(){
   let stage='imports';
   let storageServer:any;
   const observer=createListeningObserver();
+  observer.setInnerPlanRootCount(ROOT_COUNT);
   try{
     Object.assign(process.env,{NOISIA_R16_LOCAL_PG_LAB:'r16-benchmark-pg17',NOISIA_R16_NATIVE_FIXTURE_PG:'true',
       NOISIA_SIGNAL_LISTENING_ENABLED:'true',NOISIA_JEV_PROVIDER_ENABLED:'true',NOISIA_JEV_STREAMING_V2_ENABLED:'true',
@@ -209,6 +210,7 @@ export async function runListeningSmallDiagnosticV1(){
             preparation_admission_wall_ms:startedProcessing-admissionStarted,classification_serving_wall_ms:performance.now()-startedProcessing,
             warmups:warmups.length,warmup_phases:warmupPhases,calibrations,commit_batch_count:commits.length},
           observed_http_latency:latencySummary,storage:storageServer.metrics(),sql_profile:profile.snapshot(),
+          inner_plan_capture:{diagnostic_only:true,threshold_roots:1024,max_captures_per_query_hash:2,observations:observer.snapshot().inner_plan_observations},
           root_census_sha256:sha([...rootSet].sort().join('\n')),
           serving_question_count:serving.length,total_wall_ms:performance.now()-started};
       }} });

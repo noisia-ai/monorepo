@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import {readFile} from 'node:fs/promises';
 import {join} from 'node:path';
 import {pathToFileURL} from 'node:url';
 import {assertListeningSmallGuardV1,captureCalibrationObservationV1,runListeningSmallDiagnosticV1} from './run.mjs';
@@ -102,4 +103,108 @@ test('final observer snapshot includes late cleanup events with consistent count
  assert.deepEqual(early,{events:[],dropped:0,limit:1});
  assert.deepEqual(final,{events:[{kind:'late_child_sample'}],dropped:1,limit:1});
  events.push({kind:'after_cutoff'});assert.equal(final.dropped,1);assert.equal(final.events.length,1);
+});
+
+test('inner-plan guard is limited to the owned CI loopback database and role',async()=>{
+ const {assertInnerPlanCaptureGuard,innerPlanQueryLabel,verifiedInnerPlanScopeV1}=await import('./observer.mjs');
+ const env:NodeJS.ProcessEnv={GITHUB_ACTIONS:'true',NOISIA_R16_SMALL_DIAGNOSTIC:'true',DATABASE_URL:'postgresql://postgres:synthetic@127.0.0.1:54321/noisia_mfp_ci'};
+ assert.doesNotThrow(()=>assertInnerPlanCaptureGuard(env,'noisia_mfp_ci','postgres'));
+ assert.throws(()=>assertInnerPlanCaptureGuard({...env,GITHUB_ACTIONS:'false'},'noisia_mfp_ci','postgres'),/capture_denied/u);
+ assert.throws(()=>assertInnerPlanCaptureGuard({...env,DATABASE_URL:'postgresql://postgres@db.example.test/noisia_mfp_ci'},'noisia_mfp_ci','postgres'),/capture_denied/u);
+ assert.throws(()=>assertInnerPlanCaptureGuard(env,'private_database','postgres'),/capture_denied/u);
+ assert.throws(()=>assertInnerPlanCaptureGuard(env,'noisia_mfp_ci','other_role'),/capture_denied/u);
+ assert.equal(innerPlanQueryLabel('sha256:d0ecbbfdca3d93e069a3ca03367439fa25ce54164efaf3135c80b27c91ed2680'),'metadata');
+ assert.equal(innerPlanQueryLabel('sha256:82fa4fc106842d6422046aefb067a0a7dbaf5bb28de04c0b9147854091410c04'),'hydrate');
+ assert.equal(innerPlanQueryLabel('sha256:unknown'),null);
+ assert.equal(verifiedInnerPlanScopeV1({database:'noisia_mfp_ci',role:'postgres',isolation:'repeatable read',read_only:'on',superuser:true},'noisia_mfp_ci','postgres'),true);
+ assert.equal(verifiedInnerPlanScopeV1({database:'noisia_mfp_ci',role:'postgres',isolation:'read committed',read_only:'off',superuser:true},'noisia_mfp_ci','postgres'),false);
+});
+
+test('capture scope matches the real bounded-labeling transaction path and not the unbounded path',async()=>{
+ const target=process.env.R16_DIAGNOSTIC_TARGET_ROOT;assert.ok(target,'scope contract test needs checked out public target root');
+ const labeling=await readFile(join(target,'infrastructure/db/signal-labeling-runs.ts'),'utf8');
+ const listening=await readFile(join(target,'infrastructure/db/signal-listening-runs.ts'),'utf8');
+ const begin=labeling.match(/await c\.query\(["']BEGIN["']\)/u)?.[0];
+ const setReadOnly=labeling.match(/await c\.query\(["']SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY["']\)/u)?.[0];
+ assert.ok(begin,'transaction helper must begin with its native BEGIN statement');
+ assert.ok(setReadOnly,'bounded path must set its native RR/RO transaction before adapter work');
+ const boundedPath=/if\(bounds\)[\s\S]{0,450}return tx\(db,async c=>\{await c\.query\(["']SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY["']\);\s*return options\.adapter!\.bounded_inputs!\(c,run,read\);\}\)/u;
+ assert.match(labeling,boundedPath);
+ assert.match(listening,/bounded_inputs:\(c,run,bounds\)=>inputs\(c,run,limit,bounds\)/u);
+ assert.match(listening,/const metadata=bounds\?await inputMetadata\(c,run,bounds\.max_rows\):null/u);
+ assert.match(listening,/const rows=\(await c\.query[\s\S]{0,700}FROM \$\{hydratePopulation\}/u);
+ const statements:string[]=[];let isolation='read committed',readOnly='off';
+ const client={async query(sql:string){statements.push(sql);if(sql===begin[0]){isolation='read committed';readOnly='off';}
+  if(sql===setReadOnly[0]){isolation='repeatable read';readOnly='on';}return{rows:[]};}};
+ await client.query(begin[0]);await client.query(setReadOnly[0]);
+ const {verifiedInnerPlanScopeV1}=await import('./observer.mjs');
+ assert.equal(verifiedInnerPlanScopeV1({database:'noisia_mfp_ci',role:'postgres',isolation,read_only:readOnly,superuser:true},'noisia_mfp_ci','postgres'),true);
+ assert.deepEqual(statements,[begin[0],setReadOnly[0]]);
+ isolation='read committed';readOnly='off';
+ assert.equal(verifiedInnerPlanScopeV1({database:'noisia_mfp_ci',role:'postgres',isolation,read_only:readOnly,superuser:true},'noisia_mfp_ci','postgres'),false);
+});
+
+test('auto_explain notice parser keeps only safe plan node fields',async()=>{
+ const {safeAutoExplainNotice}=await import('./observer.mjs');
+ const plan=safeAutoExplainNotice({message:'duration: 1.2 ms  plan:\n'+JSON.stringify({'Planning Time':.1,'Execution Time':1.2,Plan:{'Node Type':'Index Scan','Relation Name':'mentions','Alias':'m','Index Name':'mentions_root_idx','Plan Rows':12,'Actual Rows':7,'Actual Loops':2,'Index Cond':"(root_id = 'private-uuid')",Output:['private_value'],Plans:[{'Node Type':'Seq Scan','Relation Name':'mentions','CTE Name':'allowed_roots','Subplan Name':'private_cte','Filter':"credential = 'private'",'Actual Rows':1}]}})});
+ const serialized=JSON.stringify(plan);
+ assert.deepEqual(plan,{planning_time_ms:.1,execution_time_ms:1.2,plan:{'Node Type':'Index Scan','Relation Name':'mentions',Alias:'m','Index Name':'mentions_root_idx','Plan Rows':12,'Actual Rows':7,'Actual Loops':2,Plans:[{'Node Type':'Seq Scan','Relation Name':'mentions','CTE Name':'allowed_roots','Actual Rows':1}]}});
+ for(const forbidden of ['private-uuid','private_value','credential','Filter','Output','Index Cond'])assert.ok(!serialized.includes(forbidden));
+ assert.equal(safeAutoExplainNotice({message:'ERROR: private SQL and params'}),null);
+ assert.equal(safeAutoExplainNotice({message:'x'.repeat(1_000_001)}),null);
+});
+
+test('inner-plan setup failure rolls back its savepoint then runs the original query once without retaining the error',async()=>{
+ const {EventEmitter}=await import('node:events');const {captureInnerPlanQueryV1}=await import('./observer.mjs');
+ const prior={GITHUB_ACTIONS:process.env.GITHUB_ACTIONS,NOISIA_R16_SMALL_DIAGNOSTIC:process.env.NOISIA_R16_SMALL_DIAGNOSTIC,DATABASE_URL:process.env.DATABASE_URL};
+ Object.assign(process.env,{GITHUB_ACTIONS:'true',NOISIA_R16_SMALL_DIAGNOSTIC:'true',DATABASE_URL:'postgresql://postgres:synthetic@127.0.0.1:54321/noisia_mfp_ci'});
+ try{
+  const client=new EventEmitter() as any;let originalCalls=0;const statements:string[]=[];
+  client.query=async(sql:string)=>{statements.push(sql);if(sql.startsWith('SAVEPOINT')||sql.startsWith('ROLLBACK TO')||sql.startsWith('RELEASE'))return{rows:[]};
+   if(sql.startsWith('SELECT current_database'))return{rows:[{database:'noisia_mfp_ci',role:'postgres',isolation:'repeatable read',read_only:'on',superuser:true}]};
+   if(sql.startsWith('LOAD'))throw Error('extension unavailable with private text');return{rows:[]};};
+  const captured=await captureInnerPlanQueryV1({client,query:async()=>{originalCalls++;return{rows:[{ok:true}]}},
+   query_hash:'sha256:d0ecbbfdca3d93e069a3ca03367439fa25ce54164efaf3135c80b27c91ed2680',root_count:4096,database:'noisia_mfp_ci',role:'postgres'});
+  assert.deepEqual(captured.result,{rows:[{ok:true}]});assert.equal(originalCalls,1);assert.equal(client.listenerCount('notice'),0);
+  assert.equal(captured.observation.status,'inner_plan_unavailable');assert.equal(captured.observation.reason,'auto_explain_load_unavailable');
+  for(const statement of ['SAVEPOINT r16_inner_plan_capture_v1','ROLLBACK TO SAVEPOINT r16_inner_plan_capture_v1','RELEASE SAVEPOINT r16_inner_plan_capture_v1'])assert.ok(statements.includes(statement));
+  assert.ok(statements.includes("SET LOCAL log_min_messages = 'WARNING'"));assert.ok(statements.includes("SET LOCAL client_min_messages = 'NOTICE'"));
+  assert.ok(statements.includes('LOAD \'auto_explain\''));
+  const serialized=JSON.stringify(captured);assert.ok(!serialized.includes('private setup details'));assert.ok(!serialized.includes('extension unavailable'));
+ }finally{
+  for(const key of ['GITHUB_ACTIONS','NOISIA_R16_SMALL_DIAGNOSTIC','DATABASE_URL'] as const){const value=prior[key];if(value===undefined)delete process.env[key];else process.env[key]=value;}
+ }
+});
+
+test('inner-plan capture measures instrumentation separately and removes its temporary handler',async()=>{
+ const {EventEmitter}=await import('node:events');const {captureInnerPlanQueryV1}=await import('./observer.mjs');
+ const prior={GITHUB_ACTIONS:process.env.GITHUB_ACTIONS,NOISIA_R16_SMALL_DIAGNOSTIC:process.env.NOISIA_R16_SMALL_DIAGNOSTIC,DATABASE_URL:process.env.DATABASE_URL};
+ Object.assign(process.env,{GITHUB_ACTIONS:'true',NOISIA_R16_SMALL_DIAGNOSTIC:'true',DATABASE_URL:'postgresql://postgres:synthetic@127.0.0.1:54321/noisia_mfp_ci'});
+ try{
+  const client=new EventEmitter() as any,statements:string[]=[];let originalCalls=0;
+  client.query=async(sql:string)=>{statements.push(sql);if(sql.startsWith('SELECT current_database'))return{rows:[{database:'noisia_mfp_ci',role:'postgres',isolation:'repeatable read',read_only:'on',superuser:true}]};return{rows:[]};};
+  const captured=await captureInnerPlanQueryV1({client,query:async()=>{originalCalls++;client.emit('notice',{message:'duration: 4 ms plan: '+JSON.stringify({Plan:{'Node Type':'Index Scan','Relation Name':'mentions','Actual Rows':64,'Actual Loops':3}})});return{rows:[{ok:true}]}},
+   query_hash:'sha256:d0ecbbfdca3d93e069a3ca03367439fa25ce54164efaf3135c80b27c91ed2680',root_count:4096,database:'noisia_mfp_ci',role:'postgres'});
+  assert.equal(originalCalls,1);assert.equal(captured.observation.status,'captured');
+  assert.equal(captured.observation.plan.plan['Actual Rows'],64);assert.ok(captured.observation.instrumentation_overhead_ms>=0);
+  assert.ok(statements.some(sql=>sql.startsWith("SET LOCAL auto_explain.log_level")));
+  assert.ok(statements.includes('ROLLBACK TO SAVEPOINT r16_inner_plan_capture_v1'));assert.equal(client.listenerCount('notice'),0);
+ }finally{
+  for(const key of ['GITHUB_ACTIONS','NOISIA_R16_SMALL_DIAGNOSTIC','DATABASE_URL'] as const){const value=prior[key];if(value===undefined)delete process.env[key];else process.env[key]=value;}
+ }
+});
+
+test('inner-plan query failure clears the listener and rolls back without swallowing the query failure',async()=>{
+ const {EventEmitter}=await import('node:events');const {captureInnerPlanQueryV1}=await import('./observer.mjs');
+ const prior={GITHUB_ACTIONS:process.env.GITHUB_ACTIONS,NOISIA_R16_SMALL_DIAGNOSTIC:process.env.NOISIA_R16_SMALL_DIAGNOSTIC,DATABASE_URL:process.env.DATABASE_URL};
+ Object.assign(process.env,{GITHUB_ACTIONS:'true',NOISIA_R16_SMALL_DIAGNOSTIC:'true',DATABASE_URL:'postgresql://postgres:synthetic@127.0.0.1:54321/noisia_mfp_ci'});
+ try{
+  const client=new EventEmitter() as any,statements:string[]=[];
+  client.query=async(sql:string)=>{statements.push(sql);if(sql.startsWith('SELECT current_database'))return{rows:[{database:'noisia_mfp_ci',role:'postgres',isolation:'repeatable read',read_only:'on',superuser:true}]};return{rows:[]};};
+  await assert.rejects(captureInnerPlanQueryV1({client,query:async()=>{throw Error('original query failure')},
+   query_hash:'sha256:82fa4fc106842d6422046aefb067a0a7dbaf5bb28de04c0b9147854091410c04',root_count:4096,database:'noisia_mfp_ci',role:'postgres'}),/original query failure/u);
+  assert.equal(client.listenerCount('notice'),0);assert.ok(statements.includes('ROLLBACK TO SAVEPOINT r16_inner_plan_capture_v1'));
+ }finally{
+  for(const key of ['GITHUB_ACTIONS','NOISIA_R16_SMALL_DIAGNOSTIC','DATABASE_URL'] as const){const value=prior[key];if(value===undefined)delete process.env[key];else process.env[key]=value;}
+ }
 });
