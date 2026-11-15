@@ -345,7 +345,7 @@ const itemMetadataSql=`/* labeling_mass_input_metadata_v2 */ ${itemBoundedOwnerS
    FROM jsonb_array_elements(item.candidates)c),0)
   +6*(octet_length(COALESCE(mention.platform,''))+octet_length(COALESCE(mention.content_type,''))+octet_length(COALESCE(mention.language,'')))::bigint
   +$4::bigint+2048)+8192)::text working_bytes ${itemBoundedRowsSql} ORDER BY item.root_id`;
-const itemBoundedPageSql=`${itemBoundedOwnerSql},chosen AS MATERIALIZED(SELECT unnest($4::uuid[]) root_id)
+const itemBoundedPageSql=`/* labeling_mass_input_hydrate_v1 */ ${itemBoundedOwnerSql},chosen AS MATERIALIZED(SELECT unnest($4::uuid[]) root_id)
  SELECT item.root_id,item.input_digest,item.text,NULL::text title,mention.platform,
  mention.content_type,NULL::text author,mention.published_at::text,mention.language,item.chunk_index,
  item.map_id,map.map_digest,item.candidates ${itemBoundedRowsSql} ORDER BY item.root_id LIMIT $3`;

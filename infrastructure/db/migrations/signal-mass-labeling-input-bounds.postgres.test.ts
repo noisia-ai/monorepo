@@ -17,7 +17,7 @@ test('native Mass reader selects a byte-bounded prefix before text hydration',{
    reads.push({ids:result.rows.map(row=>String(row.root_id)),costs:result.rows.map(row=>Number(row.working_bytes))});
    if(race&&!changed&&result.rows.length){changed=true;await ctx.database.query("UPDATE mentions SET platform='changed' WHERE workspace_id=$1 AND id=$2",[ctx.workspace_id,result.rows[0]!.root_id]);}
   }
-  if(sql.startsWith('SELECT item.root_id,item.input_digest,item.text')){
+  if(sql.includes('labeling_mass_input_hydrate_v1')){
    hydrated++;const params=values[0] as unknown[];assert.ok(Array.isArray(params[3]),'bounded hydrate must use explicit selected IDs');
    assert.ok(result.rows.every(row=>(params[3] as string[]).includes(String(row.root_id))));
   }return result;
@@ -28,7 +28,7 @@ test('native Mass reader selects a byte-bounded prefix before text hydration',{
  assert.deepEqual(await store.inputs(run,{max_rows:3,max_working_bytes:1}),[],'residual memory must never hydrate a root that cannot fit');
  assert.equal(hydrated,0);
  await assert.rejects(store.inputs(run,{max_rows:3,max_working_bytes:1,on_oversize:'error'}),/labeling_input_memory_bound/);
- const one=await store.inputs(run,{max_rows:1,max_working_bytes:512*1024*1024});assert.equal(one.length,1);
+ const one=await store.inputs(run,{max_rows:1,max_working_bytes:512*1024*1024});assert.equal(one.length,1);assert.equal(hydrated,1,'positive control observes exactly one bounded hydration after both oversize paths');
  const all=await store.inputs(run,{max_rows:3,max_working_bytes:512*1024*1024});assert.equal(all.length,3);
  const meta=reads.at(-1)!;const request=buildMassLabelingJevRequestV2(all[0]!,run.context,massLabelingConfigurationV2(run.identity.params));
  assert.ok(Buffer.byteLength(JSON.stringify({request,inputs:[all[0]]}))*4+8192<=meta.costs[0]!,'metadata bounds actual retained request plus input');
