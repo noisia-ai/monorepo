@@ -4,7 +4,7 @@ import {createHash,randomUUID} from 'node:crypto';
 import {SIGNAL_STUDY_TB_TEMPLATE_V1,SIGNAL_STUDY_TB_ROLES_V1,createSignalStudyTemplateSnapshotV1,
  buildSignalStudyExecutionConfigurationV1,buildSignalStudyConfiguredAxesRequestV1,signalListeningBaseTemplateV1,signalWorkspaceEmbeddingDigestV1 as digest,
  type SignalStudyV1} from '@noisia/query-engine';
-import {signalStudyRuntimeJobV1,type StudyRuntimeStoreV1,type StudyRuntimeLeaseV1,type StudyRuntimeSourceV1,
+import {signalStudyRuntimeJobV1,studyRuntimeJevQuestionIdentityV1,type StudyRuntimeJevBatchPlanV1,type StudyRuntimeJevBatchCheckpointV1,type StudyRuntimeStoreV1,type StudyRuntimeLeaseV1,type StudyRuntimeSourceV1,
  type StudyRuntimeStepV1,type StudyRuntimeStepPlanV1,type StudyRuntimeReceiptV1,type StudyRuntimeOutputV1} from './signal-study-runtime';
 const sha=(s:string|Buffer)=>'sha256:'+createHash('sha256').update(s).digest('hex');
 const receipt=(value:unknown):StudyRuntimeReceiptV1=>{const b=Buffer.from(JSON.stringify(value));return{body_base64:b.toString('base64'),body_bytes:b.length,sha256:sha(b),complete:true,http_status:200,provider_request_id:'synthetic-request'};};
@@ -28,9 +28,19 @@ function fixture(count=160){
   embedding_space_digest:digest('synthetic-vectors'),sampling_seed:'sealed-synthetic-seed',query_terms:['bicycle'],problem_terms:['problem'],brand_baseline_roots:count,human_revision_digest:digest('human-2'),max_roots:1000,max_bytes:8*1024*1024};
  const source:StudyRuntimeSourceV1={...body,source_digest:digest(body)};
  const lease:StudyRuntimeLeaseV1={execution_id,workspace_id,execution_token:randomUUID(),source_digest:source.source_digest,configuration_digest:digest(configuration),human_revision_digest:body.human_revision_digest};
- const journal=new Map<string,StudyRuntimeStepV1>(),sends:StudyRuntimeStepPlanV1[]=[],events:string[]=[];
+ type LoggedPlan=Omit<StudyRuntimeStepPlanV1,'kind'>&{kind:'jev'|'sonnet'|'numeric'};
+ const journal=new Map<string,StudyRuntimeStepV1>(),sends:LoggedPlan[]=[],events:string[]=[];
+ const batches=new Map<string,{plan:StudyRuntimeJevBatchPlanV1;status:StudyRuntimeJevBatchCheckpointV1['status'];results:StudyRuntimeJevBatchCheckpointV1['results'];
+  raw:Array<{requests:StudyRuntimeJevBatchPlanV1['requests'];receipts:StudyRuntimeReceiptV1[];page_id:string;sha256:string}>}>();
+ let inFlight=0,maxInFlight=0,maxBuffered=0,pageWrites=0,batchStop=false,batchRawAck=false,batchIncomplete=false,override=false;
  let output:StudyRuntimeOutputV1|undefined,mark:'sent'|'stale'|'budget_exhausted'='sent',renew=true,preflightError=false,sendError=false,persistAck=false,commitAck=false,finish=true,repair=false,dominant=false,fitCalls=0;
  const store:StudyRuntimeStoreV1={claim:async()=>lease,renew:async()=>renew,release:async()=>{events.push('release');},source:async()=>source,
+  prepareJevBatch:async(_l,plan)=>{
+   let entry=[...batches.entries()].find(([,b])=>b.plan.plan_digest===plan.plan_digest);
+   if(!entry){const id=randomUUID(),value={plan,status:'planned' as const,results:[],raw:[]};batches.set(id,value);entry=[id,value];}
+   return{batch_id:entry[0],plan_digest:plan.plan_digest};
+  },
+  jevBatchCheckpoint:async(_l,id)=>{const b=batches.get(id)!;const body={batch_id:id,plan_digest:b.plan.plan_digest,status:b.status,results:b.results};return{...body,checkpoint_digest:digest(body)};},
   step:async(_l,p)=>journal.get(p.key)??null,
   plan:async(_l,p)=>{const value={...p,status:'planned' as const};journal.set(p.key,value);return value;},
   markSent:async(_l,p)=>{events.push('mark');if(mark==='sent')journal.get(p.key)!.status='sent';return mark;},
@@ -38,11 +48,7 @@ function fixture(count=160){
   settle:async()=>{events.push('settle');return'settled';},
   commit:async(_l,p,value,value_digest)=>{events.push('commit');Object.assign(journal.get(p.key)!,{status:'committed',value,value_digest});if(commitAck){commitAck=false;throw Error('lost commit ACK');}return true;},
   unknown:async(_l,p)=>{journal.get(p.key)!.status='unknown';},finish:async(_l,value)=>{output=value;return finish;}};
- const drivers={preflight:async()=>{if(preflightError)throw Error('not ready');},
-  fit:async(plan:{plan_digest:string;rows:Array<{root_id:string}>})=>{fitCalls++;return{plan_digest:plan.plan_digest,
-   groups:plan.rows.length?[{key:'group_a',root_ids:plan.rows.filter(r=>Number(r.root_id.slice(5))%2===0).map(r=>r.root_id)},
-    {key:'group_b',root_ids:plan.rows.filter(r=>Number(r.root_id.slice(5))%2===1).map(r=>r.root_id)}].filter(g=>g.root_ids.length):[],unassigned_root_ids:[]};},
-  send:async(plan:StudyRuntimeStepPlanV1)=>{
+ const physicalSend=async(plan:LoggedPlan):Promise<StudyRuntimeReceiptV1>=>{
    sends.push(plan);events.push('send');if(sendError)throw Error('physical timeout');const body=JSON.parse(plan.request_body);
    if(plan.kind==='jev'){
     const id=Number(/id=(\d+)/u.exec(body.state)?.[1]);
@@ -60,17 +66,61 @@ function fixture(count=160){
      const a=m.key==='motive_a',layer=repair&&!payload.contrast_rule&&passB?(a?'personal':'psychological'):(a?'psychological':'personal');
      return{motive_key:m.key,partitions:[{key:a?'force_a':'force_b',name:'Partition '+m.key,definition:'Evidence-backed synthetic force',sample_root_ids:m.sample.map(r=>r.root_id),layer,
       diagnostics:payload.diagnostics.map((d:{key:string;layer:string})=>({key:d.key,result:d.layer===layer?'yes':'no',force_disappears_without:d.layer===layer,reason:'Synthetic counterfactual'})),
-      evidence:{root_id:m.sample[0]!.root_id,quote:'feel calm',private_person_names:[]},normative_evidence:null,permission_override:null}]};})};
+      evidence:{root_id:m.sample[0]!.root_id,quote:'feel calm',private_person_names:[]},normative_evidence:null,permission_override:override&&a?{permission:'partial',reason:'Exact stored analyst justification.'}:null}]};})};
    }
    return receipt({model:'claude-sonnet-4-6',content:[{type:'text',text:JSON.stringify(value)}],usage:{input_tokens:10,output_tokens:5}});
-  }};
- return{execution_id,lease,source,journal,sends,events,store,drivers,get output(){return output;},get fitCalls(){return fitCalls;},
+  };
+ const drivers={preflight:async()=>{if(preflightError)throw Error('not ready');},
+  send:(plan:StudyRuntimeStepPlanV1)=>physicalSend(plan),
+  fit:async(plan:{plan_digest:string;rows:Array<{root_id:string}>})=>{fitCalls++;return{plan_digest:plan.plan_digest,
+   groups:plan.rows.length?[{key:'group_a',root_ids:plan.rows.filter(r=>Number(r.root_id.slice(5))%2===0).map(r=>r.root_id)},
+    {key:'group_b',root_ids:plan.rows.filter(r=>Number(r.root_id.slice(5))%2===1).map(r=>r.root_id)}].filter(g=>g.root_ids.length):[],unassigned_root_ids:[]};},
+
+  runJevBatch:async(args:{batch_id:string;signal:AbortSignal;should_stop:()=>boolean})=>{
+   const b=batches.get(args.batch_id)!;if(preflightError)throw Error('not ready');
+   if(mark!=='sent'){b.status=mark;return;}
+   const isUnknown=()=>b.status==='outcome_unknown';
+   const applyPages=()=>{let unknown=false;
+    for(const page of b.raw){
+     for(const [i,request]of page.requests.entries())if(!b.results.some(r=>r.root_id===request.root_id)){
+      const observed=page.receipts[i]!;if(!observed.complete||observed.http_status!==200){unknown=true;continue;}b.results.push({root_id:request.root_id,request_sha256:request.request_sha256,call_id:randomUUID(),complete:true,http_status:200,
+       receipt_page:{page_id:page.page_id,sha256:page.sha256,verified:true},response:JSON.parse(Buffer.from(observed.body_base64,'base64').toString('utf8'))});
+     }
+    }b.raw=[];if(unknown)b.status='outcome_unknown';return !unknown;
+   };
+   if(!applyPages())return;b.status='running';
+   let pending:StudyRuntimeJevBatchPlanV1['requests']=[],receipts:StudyRuntimeReceiptV1[]=[];
+   const flush=()=>{if(!pending.length)return;const page={requests:pending,receipts,page_id:randomUUID(),sha256:digest(receipts)};
+    b.raw.push(page);pageWrites++;events.push('jev_page');pending=[];receipts=[];
+    if(batchRawAck){batchRawAck=false;throw Error('lost page raw ACK');}applyPages();events.push('jev_settle_batch');
+   };
+   const missing=b.plan.requests.filter(r=>!b.results.some(v=>v.root_id===r.root_id));
+   for(let offset=0;offset<missing.length;offset+=4){
+    if(args.signal.aborted||args.should_stop())break;
+    // HTTP concurrency only. Custody, settlement and apply happen ONCE per page.
+    const cohort=missing.slice(offset,offset+4),observed=await Promise.all(cohort.map(async request=>{
+     inFlight++;maxInFlight=Math.max(maxInFlight,inFlight);
+     try{await new Promise(resolve=>setTimeout(resolve,1));const r=await physicalSend({key:digest({batch:args.batch_id,root:request.root_id}),kind:'jev',source_digest:b.plan.source_digest,request_body:request.request_body,request_sha256:request.request_sha256});
+      return batchIncomplete&&request.root_id===b.plan.requests[0]?.root_id?{...r,complete:false}:r;
+     }catch{return{body_base64:'',body_bytes:0,sha256:sha(''),complete:false,http_status:null,provider_request_id:null};}
+     finally{inFlight--;}
+    }));
+    pending.push(...cohort);receipts.push(...observed);maxBuffered=Math.max(maxBuffered,pending.length);
+    if(pending.length>=8||args.signal.aborted||offset+4>=missing.length)flush();
+    if(isUnknown())return;if(batchStop&&pageWrites){batchStop=false;return;}
+   }
+   flush();if(!isUnknown()&&b.results.length===b.plan.requests.length)b.status='completed';
+  },
+ };
+ return{execution_id,lease,source,journal,sends,events,store,drivers,batches,get output(){return output;},get fitCalls(){return fitCalls;},
+  get maxInFlight(){return maxInFlight;},get maxBuffered(){return maxBuffered;},get pageWrites(){return pageWrites;},
+  set batchStop(v:boolean){batchStop=v;},set batchRawAck(v:boolean){batchRawAck=v;},set batchIncomplete(v:boolean){batchIncomplete=v;},set override(v:boolean){override=v;},
   set mark(v:typeof mark){mark=v;},set renew(v:boolean){renew=v;},set preflightError(v:boolean){preflightError=v;},set sendError(v:boolean){sendError=v;},
   set persistAck(v:boolean){persistAck=v;},set commitAck(v:boolean){commitAck=v;},set finish(v:boolean){finish=v;},set repair(v:boolean){repair=v;},set dominant(v:boolean){dominant=v;}};
 }
 
 test('automatic saved-template pipeline pools directions, blind samples, cached vectors and directional output; restart sends nothing',async()=>{
- const f=fixture(),result=await signalStudyRuntimeJobV1(f.execution_id,f);assert.equal(result.status,'completed');assert.equal(f.fitCalls,1);
+ const f=fixture(),result=await signalStudyRuntimeJobV1(f.execution_id,f);assert.equal(result.status,'completed');assert.equal(f.fitCalls,1);assert.ok(f.maxInFlight>=2);assert.ok(f.maxBuffered<=8);assert.equal(f.pageWrites,40);
  assert.equal(f.source.selection.corpus_roots,83_000);assert.equal(f.source.roots.length,160); // Outside vectors are neither requested nor required.
  assert.equal(f.output?.summary.denominator,160);assert.equal(f.output?.stability?.kappa,1);assert.equal(f.output?.promotion.automatic,false);
  const jev=f.sends.filter(s=>s.kind==='jev');assert.equal(jev.length,320);for(const p of jev){const q=JSON.parse(p.request_body).questions;assert.equal('voice'in q,false);assert.equal('promotion'in q,false);assert.ok(Object.keys(q).length<=4);}
@@ -86,8 +136,8 @@ test('CAS, preflight and cap block all physical requests',async()=>{
  const f=fixture(2);f.preflightError=true;await assert.rejects(signalStudyRuntimeJobV1(f.execution_id,f),/not ready/);assert.equal(f.sends.length,0);assert.equal(f.events.includes('mark'),false);
 });
 test('physical ambiguity never resends, while lost raw/commit ACK recovers original paid response',async()=>{
- const f=fixture(2);f.sendError=true;await assert.rejects(signalStudyRuntimeJobV1(f.execution_id,f),/physical timeout/);f.sendError=false;
- assert.equal((await signalStudyRuntimeJobV1(f.execution_id,f)).status,'outcome_unknown');assert.equal(f.sends.length,1);
+ const f=fixture(2);f.sendError=true;assert.equal((await signalStudyRuntimeJobV1(f.execution_id,f)).status,'outcome_unknown');f.sendError=false;
+ assert.equal((await signalStudyRuntimeJobV1(f.execution_id,f)).status,'outcome_unknown');assert.equal(f.sends.length,2);
  for(const flag of ['persistAck','commitAck']as const){const g=fixture(0); // No paid calls in the empty control.
   assert.equal((await signalStudyRuntimeJobV1(g.execution_id,g)).status,'completed');
   const h=fixture();h[flag]=true;await assert.rejects(signalStudyRuntimeJobV1(h.execution_id,h),/lost .* ACK/);
@@ -95,9 +145,9 @@ test('physical ambiguity never resends, while lost raw/commit ACK recovers origi
  }
 });
 test('invalid complete flag or UTF-8 remains unknown even if JSON body could parse',async()=>{
- for(const mode of ['incomplete','invalid_utf8']as const){const f=fixture(2),send=f.drivers.send;
+ for(const mode of ['incomplete','invalid_utf8']as const){const f=fixture(),send=f.drivers.send;
   f.drivers.send=async p=>{const r=await send(p);if(mode==='incomplete')return{...r,complete:false};const b=Buffer.from([255]);return{...r,body_base64:b.toString('base64'),body_bytes:1,sha256:sha(b)};};
-  assert.equal((await signalStudyRuntimeJobV1(f.execution_id,f)).status,'outcome_unknown');assert.equal((await signalStudyRuntimeJobV1(f.execution_id,f)).status,'outcome_unknown');assert.equal(f.sends.length,1);assert.equal(f.events.includes('settle'),false);
+  assert.equal((await signalStudyRuntimeJobV1(f.execution_id,f)).status,'outcome_unknown');assert.equal((await signalStudyRuntimeJobV1(f.execution_id,f)).status,'outcome_unknown');assert.equal(f.sends.filter(p=>p.kind==='sonnet').length,1);
  }
 });
 test('frozen source mismatch, base pending and human CAS win without publication',async()=>{
@@ -114,21 +164,28 @@ test('one boundary repair uses two new blind requests and dominance only reasks 
  const requests=f.sends.filter(p=>p.kind==='jev').map(p=>JSON.parse(p.request_body));assert.equal(requests.filter(r=>Object.keys(r.questions).join(',')==='force_a').length,160);
 });
 function sealSource(f:ReturnType<typeof fixture>){const{source_digest:_old,...body}=f.source;f.source.source_digest=digest(body);f.lease.source_digest=f.source.source_digest;}
-test('matching persisted axes cache avoids new axes charges; an incompatible cache and bad vector fail before transport',async()=>{
- const f=fixture();for(const [i,root]of f.source.roots.entries())root.axes_cache={jev_call_id:randomUUID(),text_sha256:root.text_sha256,request_sha256:sha(JSON.stringify(buildSignalStudyConfiguredAxesRequestV1({text:root.text},f.source.configuration))),question_configuration_digest:f.source.configuration.question_configuration_digest,
-  answers:{study_direction:choice(['trigger','barrier','mixed','none'],i%2?'barrier':'trigger'),study_target:choice(['category','own_brand','competitor_brand','alternative'],'category'),study_use:choice(['literal','figurative_or_ironic','other'],'literal')}};
- sealSource(f);assert.equal((await signalStudyRuntimeJobV1(f.execution_id,f)).status,'completed');
- assert.equal(f.sends.filter(p=>p.kind==='jev'&&p.request_body.includes('study_direction')).length,0);assert.equal(f.sends.filter(p=>p.kind==='jev').length,160);
- const g=fixture(2);g.source.roots[0]!.axes_cache={jev_call_id:randomUUID(),text_sha256:'wrong',request_sha256:'wrong',question_configuration_digest:digest('wrong-config'),answers:{}};sealSource(g);
- await assert.rejects(signalStudyRuntimeJobV1(g.execution_id,g),/axes_cache_binding_invalid/);assert.equal(g.sends.length,0);
+test('individual question cache survives unrelated configuration revisions and emits only missing questions',async()=>{
+ const f=fixture();for(const [i,root]of f.source.roots.entries()){
+  const request=buildSignalStudyConfiguredAxesRequestV1({text:root.text},f.source.configuration),answer=choice(['trigger','barrier','mixed','none'],i%2?'barrier':'trigger');
+  root.question_cache=[{question_key:'study_direction',identity_digest:studyRuntimeJevQuestionIdentityV1(request,'study_direction'),state_sha256:root.text_sha256,jev_call_id:randomUUID(),answer,
+   receipt_page:{page_id:randomUUID(),sha256:digest('saved-page'),verified:true}}];
+ }
+ const c=f.source.configuration;c.study.revision++;c.study_digest=digest(c.study);c.question_configuration.study_digest=c.study_digest;c.question_configuration.revision++;
+ c.question_configuration_digest=digest(c.question_configuration);f.lease.configuration_digest=digest(c);sealSource(f);
+ assert.equal((await signalStudyRuntimeJobV1(f.execution_id,f)).status,'completed');
+ assert.equal(f.sends.filter(p=>p.kind==='jev'&&p.request_body.includes('study_direction')).length,0);
+ const axes=f.sends.filter(p=>p.kind==='jev'&&p.request_body.includes('study_target'));assert.equal(axes.length,160);
+ for(const p of axes)assert.equal(Object.keys(JSON.parse(p.request_body).questions).length,2);
+ const g=fixture(2);g.source.roots[0]!.question_cache=[{question_key:'study_direction',identity_digest:digest('old'),state_sha256:'wrong',jev_call_id:randomUUID(),answer:{type:'noul',noul:0},receipt_page:{page_id:randomUUID(),sha256:digest('page'),verified:true}}];sealSource(g);
+ await assert.rejects(signalStudyRuntimeJobV1(g.execution_id,g),/question_cache_binding_invalid/);assert.equal(g.sends.length,0);
  const h=fixture(2);h.source.roots[0]!.vector=Array(1024).fill(0);h.source.roots[0]!.embedding_proof.vector_digest=digest(h.source.roots[0]!.vector);sealSource(h);
  await assert.rejects(signalStudyRuntimeJobV1(h.execution_id,h),/cached_source_invalid/);assert.equal(h.sends.length,0);
 });
-test('lease expiration drains observed receipt but authorizes no further sends or interpretation',async()=>{
- const f=fixture(2),send=f.drivers.send;f.renew=false;
- f.drivers.send=async plan=>{const observed=await send(plan);await new Promise(resolve=>setTimeout(resolve,12));return observed;};
+test('lease expiration drains its HTTP cohort to page custody and admits no next cohort',async()=>{
+ const f=fixture();f.renew=false;
  assert.equal((await signalStudyRuntimeJobV1(f.execution_id,{...f,renewal_ms:1})).status,'lease_lost');
- assert.equal(f.sends.length,1);assert.equal(f.journal.values().next().value?.status,'raw');assert.equal(f.events.includes('commit'),false);assert.equal(f.output,undefined);
+ assert.ok(f.sends.length<=4);assert.equal(f.sends.filter(p=>p.kind==='sonnet').length,0);assert.equal(f.events.includes('commit'),false);assert.equal(f.output,undefined);
+ if(f.sends.length)assert.ok(f.pageWrites>=1);
 });
 test('numerical output cannot invent roots or omit members from the sealed pooled census',async()=>{
  const f=fixture(2);f.drivers.fit=async plan=>({plan_digest:plan.plan_digest,groups:[{key:'invented',root_ids:['unseen-root']}],unassigned_root_ids:[]});
@@ -136,11 +193,36 @@ test('numerical output cannot invent roots or omit members from the sealed poole
  assert.equal(f.sends.filter(p=>p.kind==='sonnet').length,0);assert.equal(f.output,undefined);
 });
 test('lost markSent ACK never causes HTTP and native cut/count/bounds remain mandatory',async()=>{
- const f=fixture(2),mark=f.store.markSent;f.store.markSent=async(...args)=>{await mark(...args);throw Error('lost sent ACK');};
- await assert.rejects(signalStudyRuntimeJobV1(f.execution_id,f),/lost sent ACK/);assert.equal(f.sends.length,0);
- assert.equal((await signalStudyRuntimeJobV1(f.execution_id,f)).status,'outcome_unknown');assert.equal(f.sends.length,0);
+ const f=fixture(),mark=f.store.markSent;f.store.markSent=async(...args)=>{await mark(...args);throw Error('lost sent ACK');};
+ await assert.rejects(signalStudyRuntimeJobV1(f.execution_id,f),/lost sent ACK/);assert.equal(f.sends.filter(p=>p.kind==='sonnet').length,0);
+ assert.equal((await signalStudyRuntimeJobV1(f.execution_id,f)).status,'outcome_unknown');assert.equal(f.sends.filter(p=>p.kind==='sonnet').length,0);
  const g=fixture(2);g.source.selection.eligible_roots=1;sealSource(g);await assert.rejects(signalStudyRuntimeJobV1(g.execution_id,g),/selection_binding_invalid/);assert.equal(g.sends.length,0);
  const h=fixture(2);h.source.max_bytes=100;sealSource(h);await assert.rejects(signalStudyRuntimeJobV1(h.execution_id,h),/source_bound_exceeded/);assert.equal(h.sends.length,0);
  const i=fixture(2);i.source.roots[0]!.base_answers.promotion={type:'noul',noul:.9};sealSource(i);
  await assert.rejects(signalStudyRuntimeJobV1(i.execution_id,i),/native_cut_mismatch/);assert.equal(i.sends.length,0);
+});
+
+test('partial durable batch pauses; restart reuses committed page and never repeats its HTTP',async()=>{
+ const f=fixture();f.batchStop=true;const paused=await signalStudyRuntimeJobV1(f.execution_id,f);assert.equal(paused.status,'waiting_batch');assert.equal('progress'in paused?paused.progress?.completed:undefined,8);
+ assert.equal(f.output,undefined);assert.equal(f.sends.length,8);assert.equal(f.pageWrites,1);
+ const first=f.sends.map(p=>p.key);assert.equal((await signalStudyRuntimeJobV1(f.execution_id,f)).status,'completed');
+ for(const key of first)assert.equal(f.sends.filter(p=>p.key===key).length,1);assert.ok(f.maxInFlight>=2);assert.ok(f.maxBuffered<=8);
+ assert.equal([...f.journal.values()].some(p=>(p.kind as string)==='jev'),false);assert.equal(f.pageWrites,40);
+});
+test('page raw ACK loss replays page settlement without HTTP; incomplete batch is never auto resent',async()=>{
+ const f=fixture();f.batchRawAck=true;await assert.rejects(signalStudyRuntimeJobV1(f.execution_id,f),/lost page raw ACK/);
+ const first=f.sends.map(p=>p.key);assert.equal(f.pageWrites,1);assert.equal((await signalStudyRuntimeJobV1(f.execution_id,f)).status,'completed');
+ for(const key of first)assert.equal(f.sends.filter(p=>p.key===key).length,1);
+ const g=fixture();g.batchIncomplete=true;assert.equal((await signalStudyRuntimeJobV1(g.execution_id,g)).status,'outcome_unknown');assert.equal([...g.batches.values()][0]!.results.length,7);const count=g.sends.length;
+ assert.equal((await signalStudyRuntimeJobV1(g.execution_id,g)).status,'outcome_unknown');assert.equal(g.sends.length,count);assert.equal(g.output,undefined);
+});
+test('stable explicit permission override keeps the exact recorded reason in final summary',async()=>{
+ const f=fixture();f.override=true;assert.equal((await signalStudyRuntimeJobV1(f.execution_id,f)).status,'completed');
+ const motive=f.output!.summary.motives.find(m=>m.key==='force_a')!;assert.equal(motive.permission,'partial');assert.equal(motive.permission_overridden,true);
+ assert.equal(motive.permission_override_reason,'Exact stored analyst justification.');
+});
+
+test('shutdown closes batch admission between cohorts and drains the admitted cohort as a page',async()=>{
+ const f=fixture();assert.equal((await signalStudyRuntimeJobV1(f.execution_id,{...f,should_stop:()=>f.sends.length>=4})).status,'stopped');
+ assert.equal(f.sends.length,4);assert.equal(f.pageWrites,1);assert.equal(f.output,undefined);assert.equal(f.sends.some(p=>p.kind==='sonnet'),false);
 });

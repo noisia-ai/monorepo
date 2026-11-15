@@ -19,7 +19,7 @@ type JevAnswerV1=Parameters<typeof resolveSignalStudyConfiguredAxesV1>[1][string
 export type StudyRuntimeLeaseV1={execution_id:string;workspace_id:string;execution_token:string;
  source_digest:string;configuration_digest:string;human_revision_digest:string};
 export type StudyRuntimeRootV1=Omit<SignalStudyRootV1,'axes'>&{base_answers:Record<string,JevAnswerV1>;
- attributes?:Record<string,string[]>;axes_cache?:{jev_call_id:string;text_sha256:string;request_sha256:string;question_configuration_digest:string;answers:Record<string,JevAnswerV1>};embedding_proof:{embedding_call_id:string;embedding_run_id:string;vector_digest:string;text_sha256:string}};
+ attributes?:Record<string,string[]>;question_cache?:StudyRuntimeJevCacheV1[];embedding_proof:{embedding_call_id:string;embedding_run_id:string;vector_digest:string;text_sha256:string}};
 /** roots is ONLY the native selected consumer cut, never the whole corpus.
  * The DB loader must select/count IDs and octet sizes before hydration; external
  * corpus/query baselines remain aggregate counts. A cut beyond the native bound
@@ -30,13 +30,32 @@ export type StudyRuntimeSourceV1={configuration:SignalStudyExecutionConfiguratio
  embedding_space_digest:string;sampling_seed:string;query_terms:string[];problem_terms:string[];brand_baseline_roots:number;
  source_digest:string;human_revision_digest:string;max_roots:number;max_bytes:number};
 export type StudyRuntimeReceiptV1={body_base64:string;body_bytes:number;sha256:string;complete:boolean;http_status:number|null;provider_request_id:string|null};
-export type StudyRuntimeStepPlanV1={key:string;kind:'jev'|'sonnet'|'numeric';request_body:string;request_sha256:string;source_digest:string};
+export type StudyRuntimeStepPlanV1={key:string;kind:'sonnet'|'numeric';request_body:string;request_sha256:string;source_digest:string};
 export type StudyRuntimeStepV1=StudyRuntimeStepPlanV1&{status:'planned'|'sent'|'raw'|'committed'|'unknown';
  receipt?:StudyRuntimeReceiptV1;value?:unknown;value_digest?:string};
+export type StudyRuntimeJevCacheV1={question_key:string;identity_digest:string;state_sha256:string;jev_call_id:string;answer:JevAnswerV1;
+ receipt_page:{page_id:string;sha256:string;verified:true}};
+export type StudyRuntimeJevBatchPlanV1={contract_version:'signal-study-jev-batch-v1';execution_id:string;workspace_id:string;
+ source_digest:string;stage:string;model:'jev-1.13.0';requests:Array<{root_id:string;request_body:string;request_sha256:string}>;plan_digest:string};
+export type StudyRuntimeJevBatchCheckpointV1={batch_id:string;plan_digest:string;
+ status:'planned'|'running'|'completed'|'outcome_unknown'|'stale'|'budget_exhausted';checkpoint_digest:string;
+ results:Array<{root_id:string;request_sha256:string;call_id:string;complete:boolean;http_status:number;
+ receipt_page:{page_id:string;sha256:string;verified:true};response:unknown}>};
+/** Cache identity is individual question + exact input/model, not an unrelated
+ * global configuration revision. A human edit invalidates only that identity. */
+export function studyRuntimeJevQuestionIdentityV1(request:JevRequestV1,key:string){
+ if(!request.questions[key])throw Error('study_runtime_question_missing');
+ return digest({contract_version:'signal-study-jev-question-identity-v1',model:request.model,state:request.state,key,question:request.questions[key]});
+}
 export type StudyRuntimeStoreV1={
  claim(execution_id:string):Promise<StudyRuntimeLeaseV1|null>;
  renew(lease:StudyRuntimeLeaseV1):Promise<boolean>;release(lease:StudyRuntimeLeaseV1):Promise<void>;
  source(lease:StudyRuntimeLeaseV1):Promise<StudyRuntimeSourceV1|null>;
+ /** Native H1 consumer owner: immutable plan, per-identity financial admission,
+  * partial cached answers, page-custody/batch-settlement and memory/rate gates.
+  * Preparing/reloading MUST NOT reset sent/unknown calls or reserve them again. */
+ prepareJevBatch(lease:StudyRuntimeLeaseV1,plan:StudyRuntimeJevBatchPlanV1):Promise<{batch_id:string;plan_digest:string}|null>;
+ jevBatchCheckpoint(lease:StudyRuntimeLeaseV1,batch_id:string):Promise<StudyRuntimeJevBatchCheckpointV1|null>;
  /** Existing journal is immutable. Reading and every CAS validate owner/source.
   * plan MUST NOT turn sent/unknown back into planned or reserve a second call. */
  step(lease:StudyRuntimeLeaseV1,plan:StudyRuntimeStepPlanV1):Promise<StudyRuntimeStepV1|null>;
@@ -53,6 +72,11 @@ export type StudyRuntimeStoreV1={
 };
 export type StudyRuntimeNumericV1={plan_digest:string;groups:Array<{key:string;root_ids:string[]}>;unassigned_root_ids:string[]};
 export type StudyRuntimeDriversV1={
+ /** Uses the SAME native H1 shared-account factory/calibration, RPS/TPS,
+  * cohort concurrency, memory bounds, page receipts and batch settlement as
+  * Listening. Reads persisted plan by ID; no per-root artifacts or retries.
+  * Must stop new sends on lease/flag loss and drain/custody admitted siblings. */
+ runJevBatch(args:{lease:StudyRuntimeLeaseV1;batch_id:string;plan_digest:string;signal:AbortSignal;should_stop:()=>boolean}):Promise<void>;
  preflight(plan:StudyRuntimeStepPlanV1):Promise<void>;
  /** One physical HTTP request, zero SDK retries, receipt even for truncation.
   * Sonnet transport must enforce claude-sonnet-4-6, no global key fallback. */
@@ -66,7 +90,7 @@ export type StudyRuntimeOutputV1={contract_version:'signal-study-runtime-output-
  stability:ReturnType<typeof signalStudyLayerStabilityV1>|null;dominance:ReturnType<typeof signalStudyDominancePlanV1>|null;
  verified_evidence:ReturnType<typeof verifySignalStudyVerbatimV1>[];insufficient_group_keys:string[];
  promotion:{status:'explicit_action_required';automatic:false}};
-class Paused extends Error {constructor(readonly status:string){super(status);}}
+class Paused extends Error {constructor(readonly status:string,readonly progress?:{batch_id:string;completed:number;total:number}){super(status);}}
 const sha=(value:string|Buffer)=>'sha256:'+createHash('sha256').update(value).digest('hex');
 function fail(code:string):never{throw Error('study_runtime_'+code);}
 const uuid=/^[a-f\d]{8}(?:-[a-f\d]{4}){3}-[a-f\d]{12}$/iu;
@@ -128,12 +152,9 @@ export async function signalStudyRuntimeJobV1(execution_id:string,options:{store
     ||!Number.isFinite(Math.hypot(...r.vector))||Math.abs(Math.hypot(...r.vector)-1)>.0001
     ||fragment&&(!Number.isSafeInteger(fragment.start)||!Number.isSafeInteger(fragment.end)||fragment.start<0||fragment.end<=fragment.start
      ||fragment.end>r.text.length||r.text.slice(fragment.start,fragment.end)!==fragment.text||sha(fragment.text)!==fragment.text_sha256))fail('cached_source_invalid');
-   if(r.axes_cache){
-    const request=buildSignalStudyConfiguredAxesRequestV1({text:r.text},configuration);
-    if(!uuid.test(r.axes_cache.jev_call_id)||r.axes_cache.text_sha256!==r.text_sha256||r.axes_cache.request_sha256!==sha(JSON.stringify(request))
-     ||r.axes_cache.question_configuration_digest!==configuration.question_configuration_digest)fail('axes_cache_binding_invalid');
-    jevResponse(request,{model:request.model,answers:r.axes_cache.answers});
-   }
+   if(r.question_cache&&(new Set(r.question_cache.map(c=>c.identity_digest)).size!==r.question_cache.length
+    ||r.question_cache.some(c=>!uuid.test(c.jev_call_id)||!uuid.test(c.receipt_page.page_id)||c.receipt_page.verified!==true
+     ||!/^sha256:[a-f0-9]{64}$/u.test(c.receipt_page.sha256)||![r.text_sha256,r.selected_fragment?.text_sha256].includes(c.state_sha256))))fail('question_cache_binding_invalid');
   }
 
   async function step<T>(stage:string,kind:StudyRuntimeStepPlanV1['kind'],request_body:string,interpret:(value:unknown)=>T,
@@ -168,7 +189,46 @@ export async function signalStudyRuntimeJobV1(execution_id:string,options:{store
    try{result=interpret(value);}catch(error){await store.unknown(lease,plan,'study_response_invalid').catch(()=>undefined);throw error;}
    if(!await store.commit(lease,plan,value,digest(value)))throw new Paused('stale');return result;
   }
-  const paidJev=(stage:string,request:JevRequestV1)=>step(stage,'jev',JSON.stringify(request),v=>jevResponse(request,v));
+  const sourceById=new Map(raw.roots.map(root=>[root.root_id,root]));
+  async function jevBatch(stage:string,inputs:Array<{root_id:string;request:JevRequestV1}>){
+   const answers=new Map<string,Record<string,JevAnswerV1>>(),requests:StudyRuntimeJevBatchPlanV1['requests']=[];
+   for(const {root_id,request}of inputs){
+    const cache=sourceById.get(root_id)?.question_cache??[],known:Record<string,JevAnswerV1>={},missing:JevRequestV1['questions']={};
+    for(const [key,question]of Object.entries(request.questions)){
+     const hit=cache.find(c=>c.question_key===key&&c.identity_digest===studyRuntimeJevQuestionIdentityV1(request,key));
+     if(hit)Object.assign(known,jevResponse({...request,questions:{[key]:question}},{model:request.model,answers:{[key]:hit.answer}}));else missing[key]=question;
+    }
+    answers.set(root_id,known);
+    if(Object.keys(missing).length){const request_body=JSON.stringify({...request,questions:missing});requests.push({root_id,request_body,request_sha256:sha(request_body)});}
+   }
+   if(!requests.length)return answers;
+   const body={contract_version:'signal-study-jev-batch-v1' as const,execution_id,workspace_id:lease.workspace_id,source_digest,stage,model:'jev-1.13.0' as const,requests};
+   const plan={...body,plan_digest:digest(body)};await active();const owner=await store.prepareJevBatch(lease,plan);
+   if(!owner)throw new Paused('stale');if(!uuid.test(owner.batch_id)||owner.plan_digest!==plan.plan_digest)fail('batch_owner_invalid');
+   let checkpoint=await store.jevBatchCheckpoint(lease,owner.batch_id);
+   const checked=()=>{
+    if(!checkpoint)return;
+    const {checkpoint_digest,...value}=checkpoint;
+    if(checkpoint.batch_id!==owner.batch_id||checkpoint.plan_digest!==plan.plan_digest||digest(value)!==checkpoint_digest)fail('batch_checkpoint_invalid');
+   };
+   checked();
+   if(checkpoint?.status==='outcome_unknown'||checkpoint?.status==='stale'||checkpoint?.status==='budget_exhausted')throw new Paused(checkpoint.status);
+   if(checkpoint?.status!=='completed'){
+    await active();await drivers.runJevBatch({lease,batch_id:owner.batch_id,plan_digest:plan.plan_digest,signal:abort.signal,should_stop:()=>lost||Boolean(options.should_stop?.())});
+    checkpoint=await store.jevBatchCheckpoint(lease,owner.batch_id);checked();await active();
+   }
+   if(!checkpoint||checkpoint.status==='planned'||checkpoint.status==='running')throw new Paused('waiting_batch',{batch_id:owner.batch_id,completed:checkpoint?.results.length??0,total:requests.length});
+   if(checkpoint.status!=='completed')throw new Paused(checkpoint.status);
+   const expected=new Map(requests.map(r=>[r.root_id,r]));
+   if(checkpoint.results.length!==expected.size||new Set(checkpoint.results.map(r=>r.root_id)).size!==expected.size)fail('batch_coverage_incomplete');
+   for(const row of checkpoint.results){const request=expected.get(row.root_id);
+    if(!request||row.request_sha256!==request.request_sha256||!uuid.test(row.call_id)||!uuid.test(row.receipt_page.page_id)
+     ||row.receipt_page.verified!==true||!/^sha256:[a-f0-9]{64}$/u.test(row.receipt_page.sha256))fail('batch_custody_invalid');
+    if(!row.complete||row.http_status!==200)throw new Paused('outcome_unknown');
+    Object.assign(answers.get(row.root_id)!,jevResponse(JSON.parse(request.request_body),row.response));
+   }
+   return answers;
+  }
   const editorial=<T>(stage:string,request:SignalStudyEditorialRequestV1,validate:(request:SignalStudyEditorialRequestV1,value:unknown)=>T)=>
    step(stage,'sonnet',request.request_body,value=>{
     const body=value as {model?:string;content?:Array<{type:string;text?:string}>};
@@ -181,11 +241,8 @@ export async function signalStudyRuntimeJobV1(execution_id:string,options:{store
    const status=signalStudyConfiguredCutV1({configuration,text:root.text,occurred_at:root.occurred_at,answers:root.base_answers,attributes:root.attributes});
    if(status==='awaiting_base')throw new Paused('awaiting_base');if(status!=='included')fail('native_cut_mismatch');return true;
   });
-  const roots:SignalStudyRootV1[]=[];
-  for(const root of cut){await active();const request=buildSignalStudyConfiguredAxesRequestV1({text:root.text},configuration);
-   if(root.axes_cache&&root.axes_cache.question_configuration_digest!==configuration.question_configuration_digest)fail('axes_cache_binding_invalid');
-   const answers=root.axes_cache?jevResponse(request,{model:request.model,answers:root.axes_cache.answers}):await paidJev('axes:'+root.root_id,request);
-   const axes=resolveSignalStudyConfiguredAxesV1(configuration,answers);roots.push({...root,axes});}
+  const axesAnswers=await jevBatch('axes',cut.map(root=>({root_id:root.root_id,request:buildSignalStudyConfiguredAxesRequestV1({text:root.text},configuration)})));
+  const roots:SignalStudyRootV1[]=cut.map(root=>({...root,axes:resolveSignalStudyConfiguredAxesV1(configuration,axesAnswers.get(root.root_id)!)}));
   assertSignalStudyRootsV1(roots);
   const query_bias=signalStudyQueryBiasV1({query_terms:raw.query_terms,problem_terms:raw.problem_terms,subject_roots:roots.filter(r=>r.axes.aggregate==='subject').length,brand_baseline_roots:raw.brand_baseline_roots});
   const population=buildSignalStudyMotivePopulationV1(roots),fit=buildSignalStudyMotiveFitPlanV1({study,template_snapshot:snapshot,roots,embedding_space_digest:raw.embedding_space_digest});
@@ -222,14 +279,15 @@ export async function signalStudyRuntimeJobV1(execution_id:string,options:{store
    // Split identities remain distinct, never averaged or assigned by majority.
    motives=decisions[0].motives.flatMap(m=>m.partitions.map(p=>({key:p.key,name:p.name,definition:p.definition,
     centroid:signalStudyConfirmedCentroidV1(p.sample_root_ids.map(id=>byRoot.get(id)!)),layer:stability?.action==='stable'?p.layer:'unclear',human_locked:false,
-    ...(stability?.action==='stable'&&p.permission_overridden?{permission_override:{permission:p.permission,reason:p.normalization_reason??'Explicit editorial override'}}:{})})));
+    ...(stability?.action==='stable'&&p.permission_overridden?{permission_override:{permission:p.permission,reason:p.permission_override!.reason}}:{})})));
   }
   let memberships:SignalStudyMembershipV1[]=[];
   const classify=async(selected:SignalStudyRootV1[],candidates:SignalStudyMotiveV1[],stage:string)=>{
    const config=buildSignalStudyMotiveConfigurationV1(configuration.source_listening.configuration,candidates),rows:SignalStudyMembershipV1[]=[];
-   for(const root of selected){const request=buildSignalStudyMotiveRequestV1(root,candidates,config);if(!request)continue;
-    const answers=await paidJev(stage+':'+root.root_id,request);
-    for(const [key,answer]of Object.entries(answers)){if(answer.type!=='noul')fail('motive_response_invalid');rows.push({root_id:root.root_id,motive_key:key,probability:answer.noul,source:'jev',human_locked:false});}
+   const inputs=selected.flatMap(root=>{const request=buildSignalStudyMotiveRequestV1(root,candidates,config);return request?[{root_id:root.root_id,request}]:[];});
+   const result=await jevBatch(stage,inputs);
+   for(const root of inputs)for(const [key,answer]of Object.entries(result.get(root.root_id)!)){
+    if(answer.type!=='noul')fail('motive_response_invalid');rows.push({root_id:root.root_id,motive_key:key,probability:answer.noul,source:'jev',human_locked:false});
    }return rows;
   };
   if(motives.length)memberships=await classify(population.roots,motives,'membership');
@@ -252,6 +310,6 @@ export async function signalStudyRuntimeJobV1(execution_id:string,options:{store
    query_bias,
    stability,dominance,verified_evidence,insufficient_group_keys:discovered.insufficient_group_keys,promotion:{status:'explicit_action_required',automatic:false}};
   await active();if(!await store.finish(lease,output,digest(output)))throw new Paused('stale');return{status:'completed',output};
- }catch(error){if(error instanceof Paused)return{status:error.status};throw error;}
+ }catch(error){if(error instanceof Paused)return{status:error.status,...(error.progress?{progress:error.progress}:{})};throw error;}
  finally{clearInterval(timer);if(renewal)await renewal;await store.release(lease);}
 }
