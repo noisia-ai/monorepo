@@ -16,11 +16,39 @@ const PLAN_NAMES=['Node Type','Relation Name','Alias','Index Name','Join Type'];
 const SAFE_CTE_NAMES=new Set(['allowed_roots','selected_items','items','prepared','qs']);
 const MAX_INNER_PLANS_PER_QUERY=32;
 export const INNER_PLAN_MIN_DURATION_MS=50;
+export const DML_PLAN_MIN_DURATION_MS=50;
+export const DML_PLAN_MIN_BATCH=256;
+export const DML_PLAN_MAX_PLANS=8;
+const DML_PLAN_QUERY_SPECS=new Map([
+ ['sha256:1e5b3d3837b8c7354d6c25d941461f0d36e55d5cc3d42cbd31c627ba0662859b',
+  {label:'mark_submitting',values_count:2,batch_value_index:1,batch_kind:'array'}],
+ ['sha256:7a86df2f02e720b156e7f9d7132eba342080fc9d169d7cf8e1cbdfa74de067a7',
+  {label:'listening_answers_insert',values_count:4,batch_value_index:3,batch_kind:'json_array'}],
+]);
+const SAFE_DML_TRIGGER_NAMES=new Set(['aac_signal_study_call_guard','listening_statement_money_update','mass_labeling_scoped_money',
+ 'mass_labeling_scoped_update_total','signal_listening_answer_guard','signal_listening_call_guard','z_listening_discovery_child_capacity']);
+const DML_BASE_GUCS=['log_min_messages','client_min_messages','log_statement','log_parameter_max_length'];
+const DML_AUTO_EXPLAIN_GUCS=['auto_explain.log_parameter_max_length','auto_explain.log_level','auto_explain.log_min_duration','auto_explain.log_nested_statements',
+ 'auto_explain.log_analyze','auto_explain.log_buffers','auto_explain.log_timing','auto_explain.log_format','auto_explain.log_verbose','auto_explain.log_triggers'];
 const SAFE_NODE_TYPES=new Set(['Aggregate','Append','Bitmap Heap Scan','Bitmap Index Scan','CTE Scan','Custom Scan','Foreign Scan','Function Scan',
  'Gather','Gather Merge','GroupAggregate','Hash','HashAggregate','Hash Join','Incremental Sort','Index Only Scan','Index Scan','Limit','LockRows',
  'Materialize','Memoize','Merge Append','Merge Join','ModifyTable','Nested Loop','ProjectSet','Recursive Union','Result','Sample Scan','Seq Scan',
  'SetOp','Sort','Subquery Scan','Tid Scan','Unique','Values Scan','WindowAgg','WorkTable Scan']);
 export function queryHash(value:unknown){const sql=typeof value==='string'?value:(value as {text?:unknown})?.text;return typeof sql==='string'?'sha256:'+createHash('sha256').update(sql.replace(/\s+/gu,' ').trim()).digest('hex'):null;}
+export function dmlPlanQuerySpec(hash:string|null){return hash?DML_PLAN_QUERY_SPECS.get(hash)??null:null;}
+export function dmlPlanBatchSize(hash:string|null,args:unknown[]){
+ const spec=dmlPlanQuerySpec(hash);if(!spec||args.length!==2||!Array.isArray(args[1])||args[1].length!==spec.values_count)return null;
+ const value=(args[1] as unknown[])[spec.batch_value_index];
+ if(spec.batch_kind==='array')return Array.isArray(value)?value.length:null;
+ if(typeof value!=='string')return null;
+ try{const rows=JSON.parse(value);return Array.isArray(rows)?rows.length:null;}catch{return null;}
+}
+export function dmlPlanCaptureEnvironmentAllowed(env:NodeJS.ProcessEnv){
+ if(env.GITHUB_ACTIONS!=='true'||env.NOISIA_R16_SMALL_DIAGNOSTIC!=='true'||env.NOISIA_R16_LISTENING_DML_PLAN_PG!=='true'
+  ||env.NOISIA_R16_LOCAL_PG_LAB!=='r16-benchmark-pg17')return false;
+ try{const url=new URL(env.DATABASE_URL??'');return url.protocol==='postgresql:'&&url.hostname==='127.0.0.1'&&url.pathname==='/noisia_mfp_ci'
+   &&url.username==='postgres'&&!!url.port&&!url.search&&!url.hash;}catch{return false;}
+}
 function safeName(value:unknown){return typeof value==='string'&&/^[A-Za-z_][A-Za-z0-9_$]{0,127}$/u.test(value)?value:'redacted';}
 function safePlanNode(value:any):any{
  if(!value||typeof value!=='object'||Array.isArray(value))return null;
@@ -47,6 +75,21 @@ export function safeAutoExplainNotice(notice:unknown){
     execution_time_ms:typeof parsed['Execution Time']==='number'&&Number.isFinite(parsed['Execution Time'])?parsed['Execution Time']:null,plan};
  }catch{return null;}
 }
+function autoExplainPayload(notice:unknown){
+ const message=(notice as {message?:unknown}|null)?.message;if(typeof message!=='string'||message.length>1_000_000)return null;
+ const start=message.indexOf('{');if(start<0)return null;try{return JSON.parse(message.slice(start));}catch{return null;}
+}
+export function safeDmlAutoExplainNotice(notice:unknown){
+ const base=safeAutoExplainNotice(notice),payload=autoExplainPayload(notice);if(!base||!payload)return null;
+ const source=Array.isArray(payload.Triggers)?payload.Triggers:[];let omitted=0;
+ const triggers:Array<{name:string;relation:string|null;time_ms:number;calls:number}>=[];
+ for(const row of source){
+  if(!row||typeof row!=='object'||typeof row['Trigger Name']!=='string'||!SAFE_DML_TRIGGER_NAMES.has(row['Trigger Name'])
+   ||typeof row.Time!=='number'||!Number.isFinite(row.Time)||typeof row.Calls!=='number'||!Number.isSafeInteger(row.Calls)||row.Calls<0){omitted++;continue;}
+  triggers.push({name:row['Trigger Name'],relation:row.Relation===undefined?null:safeName(row.Relation),time_ms:row.Time,calls:row.Calls});
+ }
+ return{...base,triggers,triggers_seen:source.length,triggers_omitted:omitted};
+}
 export function innerPlanQueryLabel(hash:string|null){return hash?INNER_PLAN_QUERY_LABELS.get(hash)??null:null;}
 export function assertInnerPlanCaptureGuard(env:NodeJS.ProcessEnv,database:string,role:string){
  if(env.GITHUB_ACTIONS!=='true'||env.NOISIA_R16_SMALL_DIAGNOSTIC!=='true'||database!=='noisia_mfp_ci'||role!=='postgres')
@@ -62,6 +105,91 @@ type InnerPlanTimingV1={capture_wall_ms:number;setup_ms:number;query_wall_ms:num
 export type InnerPlanObservationV1=
  |({query_hash:string;label:string;status:'inner_plan_unavailable';reason:'transaction_scope_unverified'|'auto_explain_load_unavailable'|'capture_setup_unavailable'}&InnerPlanTimingV1)
  |({query_hash:string;label:string;status:'captured'|'plan_notice_unavailable';plans:Array<{sequence:number;query_text_sha256:string|null;planning_time_ms:number|null;execution_time_ms:number|null;plan:Record<string,unknown>}>;plan_notices_seen:number;plans_dropped:number}&InnerPlanTimingV1);
+type DmlPlanV1={sequence:number;query_text_sha256:string|null;planning_time_ms:number|null;execution_time_ms:number|null;
+ plan:Record<string,unknown>;triggers:Array<{name:string;relation:string|null;time_ms:number;calls:number}>;triggers_seen:number;triggers_omitted:number};
+type DmlPlanTimingV1={setup_ms:number;query_wall_ms:number;cleanup_ms:number;setup_cleanup_wall_ms:number;analyze_overhead_measured:false};
+export type DmlPlanObservationV1=({query_hash:string;label:string;batch_size:number;batch_unit:'call_ids'|'answer_rows';status:'setup_unavailable';
+ reason:'transaction_scope_unverified'|'auto_explain_load_unavailable'|'capture_setup_unavailable';plans:DmlPlanV1[];plan_notices_seen:number;plans_dropped:number;
+ triggers_omitted_count:number}&DmlPlanTimingV1)|({query_hash:string;label:string;batch_size:number;batch_unit:'call_ids'|'answer_rows';status:'captured'|'plan_notice_unavailable';
+ plans:DmlPlanV1[];plan_notices_seen:number;plans_dropped:number;triggers_omitted_count:number}&DmlPlanTimingV1);
+function dmlCaptureGucs(prior:Map<string,string>){
+ const names=['auto_explain.log_min_duration',...DML_AUTO_EXPLAIN_GUCS.filter(name=>name!=='auto_explain.log_min_duration'),
+  'log_statement','log_parameter_max_length','client_min_messages','log_min_messages','auto_explain.log_min_duration'];
+ const values=['-1',...names.slice(1,-2).map(name=>prior.get(name)!),prior.get('log_min_messages')!,prior.get('auto_explain.log_min_duration')!];
+ return names.map((name,index)=>[name,values[index]!] as const);
+}
+/** Instruments one already-issued write only after setup is complete. The setup savepoint is released before the original DML and is never rolled back afterward. */
+export async function captureDmlPlanQueryV1(args:{client:any;query:()=>Promise<any>;query_hash:string;batch_size:number;database:string;role:string;env:NodeJS.ProcessEnv}):Promise<{result:any;observation:DmlPlanObservationV1|null}>{
+ const {client,query,query_hash,batch_size,database,role,env}=args,spec=dmlPlanQuerySpec(query_hash);
+ if(!spec||batch_size<DML_PLAN_MIN_BATCH||!dmlPlanCaptureEnvironmentAllowed(env)||database!=='noisia_mfp_ci'||role!=='postgres')
+  return{result:await query(),observation:null};
+ const started=performance.now(),plans:DmlPlanV1[]=[];let planNoticesSeen=0,plansDropped=0,triggersOmittedCount=0;
+ let savepoint=false,dmlStarted=false,setupStage='savepoint',setupMs=0,queryWallMs=0,cleanupMs=0,prior=new Map<string,string>(),detached=false;
+ const onNotice=(notice:unknown)=>{const plan=safeDmlAutoExplainNotice(notice);if(!plan)return;planNoticesSeen++;
+  triggersOmittedCount+=plan.triggers_omitted;
+  if(plans.length<DML_PLAN_MAX_PLANS)plans.push({sequence:planNoticesSeen,...plan});else plansDropped++;};
+ const detach=()=>{if(!detached){detached=true;client.off('notice',onNotice);}};
+ const rollbackSetup=async()=>{if(savepoint){await client.query('ROLLBACK TO SAVEPOINT r16_dml_plan_capture_v1');await client.query('RELEASE SAVEPOINT r16_dml_plan_capture_v1');savepoint=false;}};
+ const restoreSettings=async()=>{
+  const cleanupStarted=performance.now();
+  let firstError:unknown;
+  try{for(const [name,value] of dmlCaptureGucs(prior)){try{await client.query('SELECT set_config($1,$2,true)',[name,value]);}catch(error){firstError??=error;}}if(firstError)throw firstError;}
+  finally{cleanupMs+=performance.now()-cleanupStarted;}
+ };
+ client.on('notice',onNotice);
+ try{
+  const setupStarted=performance.now();
+  try{
+   await client.query('SAVEPOINT r16_dml_plan_capture_v1');savepoint=true;
+   setupStage='verify_transaction_scope';
+   const identity=await client.query(`SELECT current_database() AS database,current_user AS role,
+    current_setting('transaction_read_only') AS read_only,r.rolsuper AS superuser
+    FROM pg_roles r WHERE r.rolname=current_user`);
+   const row=identity.rows?.[0];
+   if(row?.database!==database||row?.role!==role||row?.read_only!=='off'||row?.superuser!==true)throw Error('dml_capture_scope_unverified');
+   setupStage='load_auto_explain';
+   await client.query("LOAD 'auto_explain'");
+   setupStage='read_prior_settings';
+   const settings=await client.query(`SELECT name,current_setting(name,true) AS value
+    FROM unnest($1::text[]) AS settings(name)`,[[...DML_BASE_GUCS,...DML_AUTO_EXPLAIN_GUCS]]);
+   for(const setting of settings.rows??[]){if(typeof setting.name!=='string'||typeof setting.value!=='string')throw Error('dml_capture_settings_unavailable');prior.set(setting.name,setting.value);}
+   if(prior.size!==DML_BASE_GUCS.length+DML_AUTO_EXPLAIN_GUCS.length)throw Error('dml_capture_settings_unavailable');
+   setupStage='configure_auto_explain';
+   await client.query("SET LOCAL log_min_messages = 'WARNING'");
+   await client.query("SET LOCAL client_min_messages = 'NOTICE'");
+   await client.query("SET LOCAL log_statement = 'none'");
+   await client.query('SET LOCAL log_parameter_max_length = 0');
+   await client.query('SET LOCAL auto_explain.log_parameter_max_length = 0');
+   await client.query("SET LOCAL auto_explain.log_level = 'NOTICE'");
+   await client.query(`SET LOCAL auto_explain.log_min_duration = ${DML_PLAN_MIN_DURATION_MS}`);
+   await client.query('SET LOCAL auto_explain.log_nested_statements = on');
+   await client.query('SET LOCAL auto_explain.log_analyze = on');
+   await client.query('SET LOCAL auto_explain.log_buffers = on');
+   await client.query('SET LOCAL auto_explain.log_timing = off');
+   await client.query("SET LOCAL auto_explain.log_format = 'json'");
+   await client.query('SET LOCAL auto_explain.log_verbose = off');
+   await client.query('SET LOCAL auto_explain.log_triggers = on');
+   await client.query('RELEASE SAVEPOINT r16_dml_plan_capture_v1');savepoint=false;
+  }catch{
+   setupMs=performance.now()-setupStarted;
+   await rollbackSetup();detach();
+   const queryStarted=performance.now();const original=await query();queryWallMs=performance.now()-queryStarted;
+   const reason=setupStage==='verify_transaction_scope'?'transaction_scope_unverified':setupStage==='load_auto_explain'
+    ?'auto_explain_load_unavailable':'capture_setup_unavailable';
+   return{result:original,observation:{query_hash,label:spec.label,batch_size,batch_unit:spec.label==='mark_submitting'?'call_ids':'answer_rows',
+    status:'setup_unavailable',reason,plans,plan_notices_seen:planNoticesSeen,plans_dropped:plansDropped,triggers_omitted_count:triggersOmittedCount,
+    setup_ms:setupMs,query_wall_ms:queryWallMs,cleanup_ms:cleanupMs,setup_cleanup_wall_ms:setupMs+cleanupMs,analyze_overhead_measured:false}};
+  }
+  setupMs=performance.now()-setupStarted;dmlStarted=true;
+  const queryStarted=performance.now();const result=await query();queryWallMs=performance.now()-queryStarted;
+  detach();await restoreSettings();
+  return{result,observation:{query_hash,label:spec.label,batch_size,batch_unit:spec.label==='mark_submitting'?'call_ids':'answer_rows',
+   status:plans.length?'captured':'plan_notice_unavailable',plans,plan_notices_seen:planNoticesSeen,plans_dropped:plansDropped,triggers_omitted_count:triggersOmittedCount,
+   setup_ms:setupMs,query_wall_ms:queryWallMs,cleanup_ms:cleanupMs,setup_cleanup_wall_ms:setupMs+cleanupMs,analyze_overhead_measured:false}};
+ }finally{
+  try{if(savepoint&&!dmlStarted)await rollbackSetup();}finally{detach();}
+ }
+}
 /** Capture a single original SELECT inside a verified RR/RO transaction. Setup failures roll back to the owned savepoint and do not retry setup. */
 export async function captureInnerPlanQueryV1(args:{client:any;query:()=>Promise<any>;query_hash:string;root_count:number;database:string;role:string}):Promise<{result:any;observation:InnerPlanObservationV1|null}>{
  const {client,query,query_hash,root_count,database,role}=args;
@@ -143,8 +271,16 @@ export function createListeningObserver(){
  const gc=new PerformanceObserver(list=>{for(const entry of list.getEntries())events.push({kind:'gc',at_ms:now(),start_ms:entry.startTime-performanceOrigin,end_ms:entry.startTime-performanceOrigin+entry.duration,duration_ms:entry.duration,gc_kind:(entry as any).detail?.kind??null});});gc.observe({entryTypes:['gc']});
  let closing=false;const detach:Array<()=>void>=[];let child:ChildProcess|undefined;const pids=new Set<number>();let samplerStatus='not_started';
  let planRootCount=0;const planCounts=new Map<string,number>(),planObservations:unknown[]=[];
+ const dmlPlanCounts=new Map<string,number>(),dmlPlanObservations:unknown[]=[];
  function pid(value:any){if(Number.isSafeInteger(value?.processID)&&value.processID>0&&!pids.has(value.processID)){pids.add(value.processID);if(child?.connected)child.send({kind:'pids',pids:[...pids]},()=>{});}}
  function query(owner:any){return async(...args:any[])=>{pid(owner);const start=now(),op=scope.getStore()??'unlabeled',hash=queryHash(args[0]);try{
+  const dmlSpec=dmlPlanQuerySpec(hash),dmlBatch=dmlSpec?dmlPlanBatchSize(hash,args):null;
+  if(dmlSpec&&dmlBatch!==null&&dmlBatch>=DML_PLAN_MIN_BATCH&&(dmlPlanCounts.get(hash!)??0)<1
+   &&dmlPlanCaptureEnvironmentAllowed(process.env)&&typeof owner.on==='function'&&typeof owner.off==='function'){
+   dmlPlanCounts.set(hash!,1);
+   const captured=await captureDmlPlanQueryV1({client:owner,query:()=>owner.query(...args),query_hash:hash!,batch_size:dmlBatch,database:'noisia_mfp_ci',role:'postgres',env:process.env});
+   if(captured.observation)dmlPlanObservations.push(captured.observation);return captured.result;
+  }
   const label=innerPlanQueryLabel(hash),count=label?(planCounts.get(hash!)??0):0;
   if(label&&planRootCount>=1024&&count<2&&typeof owner.on==='function'&&typeof owner.off==='function'){
    planCounts.set(hash!,count+1);
@@ -164,7 +300,8 @@ export function createListeningObserver(){
   child.on('error',()=>{samplerStatus='failed';});child.on('exit',()=>{if(!closing)samplerStatus='exited_early';});child.send({kind:'init',...args,origin:String(origin),pids:[...pids]},()=>{});
  },
  setInnerPlanRootCount(value:number){if(!Number.isSafeInteger(value)||value<0)throw Error('observer_invalid_root_count');planRootCount=value;},
- snapshot(){return{contract_version:'r16-neutral-observer-v1',...events.snapshot(),sampler_status:samplerStatus,fixture_pids:[...pids],inner_plan_observations:[...planObservations],event_loop_delay_ms:{min:delay.count?delay.min/1e6:0,max:delay.max/1e6,mean:delay.count?delay.mean/1e6:0,p50:delay.percentile(50)/1e6,p99:delay.percentile(99)/1e6},diagnostic_only:true,h1_accepted:false};},
+ snapshot(){return{contract_version:'r16-neutral-observer-v1',...events.snapshot(),sampler_status:samplerStatus,fixture_pids:[...pids],inner_plan_observations:[...planObservations],
+  dml_plan_observations:[...dmlPlanObservations],event_loop_delay_ms:{min:delay.count?delay.min/1e6:0,max:delay.max/1e6,mean:delay.count?delay.mean/1e6:0,p50:delay.percentile(50)/1e6,p99:delay.percentile(99)/1e6},diagnostic_only:true,h1_accepted:false};},
  async close(){closing=true;clearInterval(heartbeat);gc.disconnect();delay.disable();for(const remove of detach)remove();if(child)await closeOwnedChild(child);},
  };
 }

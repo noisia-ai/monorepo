@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
+import {EventEmitter} from 'node:events';
 import {readFile} from 'node:fs/promises';
 import {join} from 'node:path';
 import {pathToFileURL} from 'node:url';
@@ -235,3 +236,121 @@ test('inner-plan rollback failure propagates, never replays the query, and still
   for(const key of ['GITHUB_ACTIONS','NOISIA_R16_SMALL_DIAGNOSTIC','DATABASE_URL'] as const){const value=prior[key];if(value===undefined)delete process.env[key];else process.env[key]=value;}
  }
 });
+
+const DML_PLAN_TEST_ENV={GITHUB_ACTIONS:'true',NOISIA_R16_SMALL_DIAGNOSTIC:'true',NOISIA_R16_LISTENING_DML_PLAN_PG:'true',
+ NOISIA_R16_LOCAL_PG_LAB:'r16-benchmark-pg17',DATABASE_URL:'postgresql://postgres:synthetic@127.0.0.1:54321/noisia_mfp_ci'};
+async function withDmlPlanTestEnv<T>(action:()=>Promise<T>){
+ const keys=Object.keys(DML_PLAN_TEST_ENV) as Array<keyof typeof DML_PLAN_TEST_ENV>,prior=Object.fromEntries(keys.map(key=>[key,process.env[key]]));
+ Object.assign(process.env,DML_PLAN_TEST_ENV);
+ try{return await action();}finally{for(const key of keys){const value=prior[key];if(value===undefined)delete process.env[key];else process.env[key]=value;}}
+}
+function fakeDmlPlanClient(options:{readOnly?:string;failLoad?:boolean;failRestore?:boolean}={}){
+ const client=new EventEmitter() as any,statements:string[]=[],events:string[]=[],restores:Array<{name:string;value:string;local:boolean}>=[];
+ const oldValues:Record<string,string>={log_min_messages:'warning',client_min_messages:'notice',log_statement:'none',log_parameter_max_length:'0',
+  'auto_explain.log_parameter_max_length':'0','auto_explain.log_level':'notice','auto_explain.log_min_duration':'-1',
+  'auto_explain.log_nested_statements':'off','auto_explain.log_analyze':'off','auto_explain.log_buffers':'off',
+  'auto_explain.log_timing':'on','auto_explain.log_format':'text','auto_explain.log_verbose':'off','auto_explain.log_triggers':'off'};
+ client.query=async(sql:string,values?:unknown[])=>{
+  statements.push(sql);
+  if(sql.startsWith('SAVEPOINT')){events.push('savepoint');return{rows:[]};}
+  if(sql.startsWith('SELECT current_database'))return{rows:[{database:'noisia_mfp_ci',role:'postgres',read_only:options.readOnly??'off',superuser:true}]};
+  if(sql.startsWith("LOAD 'auto_explain'")){events.push('load');if(options.failLoad)throw Error('private extension failure');return{rows:[]};}
+  if(sql.startsWith('SELECT name,current_setting'))return{rows:(values?.[0] as string[]).map(name=>({name,value:oldValues[name]}))};
+  if(sql.startsWith('RELEASE SAVEPOINT')){events.push('release');return{rows:[]};}
+  if(sql.startsWith('ROLLBACK TO SAVEPOINT')){events.push('rollback');return{rows:[]};}
+  if(sql.startsWith('SELECT set_config')){events.push('restore');restores.push({name:String(values?.[0]),value:String(values?.[1]),local:sql.includes('true')});if(options.failRestore)throw Error('private restore failure');return{rows:[]};}
+  return{rows:[]};
+ };
+ return{client,statements,events,restores,oldValues};
+}
+
+test('DML plan specs match the complete source SQL, bind arity and batch-value positions',async()=>{
+ const target=process.env.R16_DIAGNOSTIC_TARGET_ROOT;assert.ok(target,'DML SQL contract test needs checked out public target root');
+ const labeling=await readFile(join(target,'infrastructure/db/signal-labeling-runs.ts'),'utf8');
+ const listening=await readFile(join(target,'infrastructure/db/signal-listening-runs.ts'),'utf8');
+ const mark=labeling.match(/`(UPDATE signal_labeling_calls SET status='submitting',[\s\S]*?RETURNING id)`\s*,\s*\[run\.id,\s*calls\.map/u);
+ const answers=listening.match(/`(INSERT INTO signal_listening_answers\([\s\S]*?DO NOTHING)`\s*,\s*\[run\.workspace_id,\s*run\.entity_context_digest,\s*run\.id,\s*JSON\.stringify\(rows\)\]/u);
+ assert.ok(mark,'markSubmitting SQL and run.id/calls batch position must match');assert.ok(answers,'answers INSERT SQL and $4 row batch position must match');
+ const {queryHash,dmlPlanQuerySpec,dmlPlanBatchSize}=await import('./observer.mjs');
+ const markHash=queryHash(mark[1]),answersHash=queryHash(answers[1]);
+ assert.equal(markHash,'sha256:1e5b3d3837b8c7354d6c25d941461f0d36e55d5cc3d42cbd31c627ba0662859b');
+ assert.equal(answersHash,'sha256:7a86df2f02e720b156e7f9d7132eba342080fc9d169d7cf8e1cbdfa74de067a7');
+ assert.deepEqual(dmlPlanQuerySpec(markHash),{label:'mark_submitting',values_count:2,batch_value_index:1,batch_kind:'array'});
+ assert.deepEqual(dmlPlanQuerySpec(answersHash),{label:'listening_answers_insert',values_count:4,batch_value_index:3,batch_kind:'json_array'});
+ assert.equal(dmlPlanBatchSize(markHash,['UPDATE', ['run',Array(256).fill('synthetic-id')]]),256);
+ assert.equal(dmlPlanBatchSize(markHash,['UPDATE', ['run',Array(255).fill('synthetic-id')]]),255);
+ assert.equal(dmlPlanBatchSize(markHash,['UPDATE', ['run']]),null);
+ assert.equal(dmlPlanBatchSize(answersHash,['INSERT', ['workspace','context','run',JSON.stringify(Array(256).fill({synthetic:true}))]]),256);
+ assert.equal(dmlPlanBatchSize(answersHash,['INSERT', ['workspace','context','run','not-json']]),null);
+});
+
+test('DML capture guard requires the explicit owned CI loopback lab opt-in',async()=>{
+ const {dmlPlanCaptureEnvironmentAllowed}=await import('./observer.mjs');
+ assert.equal(dmlPlanCaptureEnvironmentAllowed(DML_PLAN_TEST_ENV),true);
+ assert.equal(dmlPlanCaptureEnvironmentAllowed({...DML_PLAN_TEST_ENV,NOISIA_R16_LISTENING_DML_PLAN_PG:'false'}),false);
+ assert.equal(dmlPlanCaptureEnvironmentAllowed({...DML_PLAN_TEST_ENV,GITHUB_ACTIONS:'false'}),false);
+ assert.equal(dmlPlanCaptureEnvironmentAllowed({...DML_PLAN_TEST_ENV,NOISIA_R16_LOCAL_PG_LAB:'other'}),false);
+ assert.equal(dmlPlanCaptureEnvironmentAllowed({...DML_PLAN_TEST_ENV,DATABASE_URL:'postgresql://postgres@db.example.test/noisia_mfp_ci'}),false);
+});
+
+test('DML plan notice exposes allowlisted trigger metrics and omits query text, binds and unknown trigger names',async()=>{
+ const {safeDmlAutoExplainNotice}=await import('./observer.mjs');
+ const queryText="INSERT INTO signal_listening_answers VALUES ('private-id', '{}'::jsonb)";
+ const note=safeDmlAutoExplainNotice({message:'duration: 62 ms plan: '+JSON.stringify({'Query Text':queryText,'Execution Time':62,
+  Plan:{'Node Type':'ModifyTable','Relation Name':'signal_listening_answers','Actual Rows':256,'Actual Loops':1},
+  Triggers:[{'Trigger Name':'signal_listening_answer_guard',Relation:'signal_listening_answers',Time:48.2,Calls:256},
+   {'Trigger Name':'private_dynamic_trigger',Relation:'private_table',Time:9,Calls:1}]})});
+ assert.deepEqual(note?.triggers,[{name:'signal_listening_answer_guard',relation:'signal_listening_answers',time_ms:48.2,calls:256}]);
+ assert.equal(note?.triggers_seen,2);assert.equal(note?.triggers_omitted,1);assert.match(note?.query_text_sha256??'/',/^sha256:[0-9a-f]{64}$/u);
+ const serialized=JSON.stringify(note);
+ for(const forbidden of ['private-id','private_dynamic_trigger','private_table','Query Text','INSERT INTO','{}'])assert.ok(!serialized.includes(forbidden));
+});
+
+test('DML savepoint releases before the original write, captures once and keeps one ledger write in outer transaction',async()=>withDmlPlanTestEnv(async()=>{
+ const {captureDmlPlanQueryV1,DML_PLAN_MAX_PLANS}=await import('./observer.mjs');const {client,statements,events,restores,oldValues}=fakeDmlPlanClient();let writes=0;
+ const query=async()=>{writes++;events.push('write');for(let i=0;i<10;i++)client.emit('notice',{message:'duration: 61 ms plan: '+JSON.stringify({'Query Text':`UPDATE synthetic_table SET value='private_${i}'`,
+  'Execution Time':61+i,Plan:{'Node Type':'ModifyTable','Relation Name':'signal_labeling_calls','Actual Rows':256,'Actual Loops':1},
+  Triggers:[{'Trigger Name':'mass_labeling_scoped_update_total',Relation:'signal_labeling_calls',Time:50+i,Calls:256},
+   {'Trigger Name':'unknown_private_trigger',Relation:'hidden',Time:9,Calls:1}]})});return{rows:[],rowCount:256};};
+ const captured=await captureDmlPlanQueryV1({client,query,query_hash:'sha256:1e5b3d3837b8c7354d6c25d941461f0d36e55d5cc3d42cbd31c627ba0662859b',
+  batch_size:256,database:'noisia_mfp_ci',role:'postgres',env:process.env});
+ assert.equal(writes,1);assert.equal(captured.result.rowCount,256);assert.ok(captured.observation?.status==='captured');
+ assert.equal(captured.observation.plans.length,DML_PLAN_MAX_PLANS);assert.equal(captured.observation.plans_dropped,2);
+ assert.equal(captured.observation.triggers_omitted_count,10);assert.equal(captured.observation.plans[0]?.triggers[0]?.calls,256);
+ assert.equal(captured.observation.analyze_overhead_measured,false);assert.equal(client.listenerCount('notice'),0);
+ assert.ok(events.indexOf('release')<events.indexOf('write'));assert.equal(events.filter(x=>x==='rollback').length,0);
+ assert.ok(events.lastIndexOf('restore')>events.indexOf('write'));
+ assert.equal(restores.length,15);assert.ok(restores.every(row=>row.local));
+ assert.deepEqual(restores[0],{name:'auto_explain.log_min_duration',value:'-1',local:true});
+ assert.deepEqual(restores.at(-1),{name:'auto_explain.log_min_duration',value:oldValues['auto_explain.log_min_duration'],local:true});
+ for(const {name,value} of restores.slice(1,-1))assert.equal(value,oldValues[name]);
+ assert.equal(statements.includes('SET LOCAL auto_explain.log_triggers = on'),true);
+ assert.equal(statements.some(sql=>sql.startsWith('ROLLBACK TO SAVEPOINT')),false);
+ const serialized=JSON.stringify(captured);for(const forbidden of ['private_0','unknown_private_trigger','hidden','UPDATE synthetic_table'])assert.ok(!serialized.includes(forbidden));
+}));
+
+test('DML setup fallback rolls back before exactly one write and leaves it in the outer transaction ledger',async()=>withDmlPlanTestEnv(async()=>{
+ const {captureDmlPlanQueryV1}=await import('./observer.mjs');const {client,events}=fakeDmlPlanClient({failLoad:true});let writes=0;
+ const captured=await captureDmlPlanQueryV1({client,query:async()=>{assert.equal(client.listenerCount('notice'),0);writes++;events.push('write');return{rowCount:256};},
+  query_hash:'sha256:7a86df2f02e720b156e7f9d7132eba342080fc9d169d7cf8e1cbdfa74de067a7',batch_size:256,database:'noisia_mfp_ci',role:'postgres',env:process.env});
+ assert.equal(writes,1);assert.equal(captured.result.rowCount,256);assert.ok(captured.observation?.status==='setup_unavailable');
+ assert.equal(captured.observation.reason,'auto_explain_load_unavailable');assert.ok(events.indexOf('rollback')<events.indexOf('write'));
+ assert.equal(events.filter(x=>x==='write').length,1);
+}));
+
+test('DML read-only scope mismatch falls back before write, while DML and cleanup errors never replay or leave a listener',async()=>withDmlPlanTestEnv(async()=>{
+ const {captureDmlPlanQueryV1}=await import('./observer.mjs');const hash='sha256:1e5b3d3837b8c7354d6c25d941461f0d36e55d5cc3d42cbd31c627ba0662859b';
+ const readonly=fakeDmlPlanClient({readOnly:'on'});let fallbackWrites=0;
+ const fallback=await captureDmlPlanQueryV1({client:readonly.client,query:async()=>{fallbackWrites++;readonly.events.push('write');return{rowCount:256};},
+  query_hash:hash,batch_size:256,database:'noisia_mfp_ci',role:'postgres',env:process.env});
+ assert.equal(fallbackWrites,1);assert.ok(fallback.observation?.status==='setup_unavailable');assert.equal(fallback.observation.reason,'transaction_scope_unverified');
+ assert.ok(readonly.events.indexOf('rollback')<readonly.events.indexOf('write'));assert.equal(readonly.client.listenerCount('notice'),0);
+ const queryError=fakeDmlPlanClient();let failedWrites=0;
+ await assert.rejects(captureDmlPlanQueryV1({client:queryError.client,query:async()=>{failedWrites++;queryError.events.push('write');throw Error('synthetic_dml_error');},
+  query_hash:hash,batch_size:256,database:'noisia_mfp_ci',role:'postgres',env:process.env}),/synthetic_dml_error/u);
+ assert.equal(failedWrites,1);assert.equal(queryError.client.listenerCount('notice'),0);assert.equal(queryError.events.includes('rollback'),false);
+ const cleanupError=fakeDmlPlanClient({failRestore:true});let cleanupWrites=0;
+ await assert.rejects(captureDmlPlanQueryV1({client:cleanupError.client,query:async()=>{cleanupWrites++;cleanupError.events.push('write');return{rowCount:256};},
+  query_hash:hash,batch_size:256,database:'noisia_mfp_ci',role:'postgres',env:process.env}),/private restore failure/u);
+ assert.equal(cleanupWrites,1);assert.equal(cleanupError.client.listenerCount('notice'),0);assert.equal(cleanupError.events.includes('rollback'),false);
+}));

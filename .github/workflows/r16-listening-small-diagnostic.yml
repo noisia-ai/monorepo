@@ -93,6 +93,7 @@ jobs:
           NOISIA_R16_LOCAL_PG_LAB: r16-benchmark-pg17
           NOISIA_R16_NATIVE_FIXTURE_PG: 'true'
           NOISIA_R16_SMALL_DIAGNOSTIC: 'true'
+          NOISIA_R16_LISTENING_DML_PLAN_PG: 'true'
           NOISIA_DB_SMOKE_ALLOW_REMOTE: 'false'
           NOISIA_DB_SMOKE_RESET_SCHEMA: 'true'
           NOISIA_DB_SMOKE_EMULATE_SUPABASE_ROLES: 'true'

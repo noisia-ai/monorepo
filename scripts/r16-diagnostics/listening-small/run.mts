@@ -5,7 +5,7 @@ import {mkdir,open,readFile} from 'node:fs/promises';
 import {join,resolve,sep} from 'node:path';
 import {fileURLToPath,pathToFileURL} from 'node:url';
 import {performance} from 'node:perf_hooks';
-import {createListeningObserver,finishListeningObserver,INNER_PLAN_MIN_DURATION_MS} from './observer.mjs';
+import {createListeningObserver,DML_PLAN_MAX_PLANS,DML_PLAN_MIN_BATCH,DML_PLAN_MIN_DURATION_MS,finishListeningObserver,INNER_PLAN_MIN_DURATION_MS} from './observer.mjs';
 
 const ROOT_COUNT=4096;
 const MAX_MS=9*60*1000;
@@ -212,6 +212,9 @@ export async function runListeningSmallDiagnosticV1(){
           observed_http_latency:latencySummary,storage:storageServer.metrics(),sql_profile:profile.snapshot(),
           inner_plan_capture:{diagnostic_only:true,threshold_roots:1024,max_captures_per_query_hash:2,min_duration_ms:INNER_PLAN_MIN_DURATION_MS,
             plans_below_min_duration_captured:false,observations:observer.snapshot().inner_plan_observations},
+          dml_plan_capture:{diagnostic_only:true,opt_in_required:true,min_batch_size:DML_PLAN_MIN_BATCH,max_captures_per_query_hash:1,min_duration_ms:DML_PLAN_MIN_DURATION_MS,
+            plans_below_min_duration_captured:false,max_plans_per_capture:DML_PLAN_MAX_PLANS,trigger_names_allowlisted:true,raw_query_or_values_recorded:false,analyze_overhead_measured:false,
+            observations:observer.snapshot().dml_plan_observations},
           root_census_sha256:sha([...rootSet].sort().join('\n')),
           serving_question_count:serving.length,total_wall_ms:performance.now()-started};
       }} });
@@ -226,7 +229,10 @@ export async function runListeningSmallDiagnosticV1(){
     const failure={contract_version:'r16-listening-small-diagnostic-v1',diagnostic_only:true,h1_accepted:false,
       status:'failed',stage,code:safeError(error),total_wall_ms:performance.now()-started,observer:observerSnapshot,
       inner_plan_capture:{diagnostic_only:true,threshold_roots:1024,max_captures_per_query_hash:2,min_duration_ms:INNER_PLAN_MIN_DURATION_MS,
-        plans_below_min_duration_captured:false,observations:observerSnapshot.inner_plan_observations}};
+        plans_below_min_duration_captured:false,observations:observerSnapshot.inner_plan_observations},
+      dml_plan_capture:{diagnostic_only:true,opt_in_required:true,min_batch_size:DML_PLAN_MIN_BATCH,max_captures_per_query_hash:1,min_duration_ms:DML_PLAN_MIN_DURATION_MS,
+        plans_below_min_duration_captured:false,max_plans_per_capture:DML_PLAN_MAX_PLANS,trigger_names_allowlisted:true,raw_query_or_values_recorded:false,analyze_overhead_measured:false,
+        observations:observerSnapshot.dml_plan_observations}};
     await atomicJson(artifact,failure).catch(()=>undefined);
     await storageServer?.close().catch(()=>undefined);
     process.stderr.write('listening_small_diagnostic_failed; sanitized artifact written\n');
