@@ -12,6 +12,8 @@ No hay aprobaciones humanas intermedias en los procesos de análisis: Sonnet 4.6
 
 ## Progreso
 
+- H5 integración local: edición nativa versionada para quitar/mover/fusionar, filtros de pendientes y estimación humana, selector/guard/completitud de huérfanas efectivos. La API montada conserva actor de sesión, CAS completo, idempotencia y permiso de edición, sin autoridad de procesamiento. Menciones recibe un namespace separado con snapshot ligado, probabilidades originales y decisiones humanas independientes; cubre lista y foco y rechaza carreras de snapshot. Veinticuatro focales API/lectura pasan; tipado/lint 11/11. Los seis casos PostgreSQL del owner y la corrección Python se revisaron por separado; falta validar la integración conjunta, terminar UI y aceptación UAT.
+
 - H3 revisión del arranque encontró que el builder de evidencia aún rechazaba cero tópicos después de crear el parent base-only. Se elimina esa exigencia, manteniendo censo, unicidad y máximo 256; evidencia paginada/pura y solicitud editorial vacías pasan 28 focales, y query-engine 714/714. La prueba nueva conjunta PostgreSQL/Python debe verificar el avance desde base-only hasta encolar la revisión con vectores cacheados e insuficiencia explícita para tres raíces; sigue pendiente por transporte local. Tipado/lint 11/11. No se presenta ese caso pequeño como ajuste BERTopic con grupos.
 
 - H3 arranque inicial integrado localmente: 0305 conserva la intención, configuración, seed y cap originales; el worker selecciona sólo esas intenciones explícitas, inicia su parent nativo y continúa el avance automático. La API acepta auto_discovery con actor de sesión y rechaza origen/admisión/automatic del navegador; la UI mantiene cerrado el botón mientras el ciclo sigue o queda exposición incierta. Una configuración base/definidos sin descubiertos crea una semilla nativa vacía en la misma transacción, sin aprobación intermedia. Diecinueve casos iniciales nativos pasan y dos casos de automatización pasan por separado, sin omisiones en esas ejecuciones seleccionadas. Tipado/lint 11/11; Studio 1,344/7 omisiones y DB 664/243 de entorno. Workers: 1,111 aprobadas y 51 omisiones de entorno al ejecutar el mismo conjunto con concurrencia acotada; la primera ejecución conjunta terminó sin resumen y no se usa como evidencia. Revisión del candidato final pendiente.
@@ -150,6 +152,8 @@ Recibo: separar Voyage/JEV por raíz de Claude por número de grupos y vueltas; 
 
 ## Sorpresas y descubrimientos
 
+- El drawer de Menciones del workspace oculta deliberadamente los tags heredados. Añadir etiquetas a ese campo no habría mostrado las correcciones; se conecta una sección explícita de Escucha y un namespace nuevo, preservando la semántica histórica. Los lotes de lectura respetan ocho claves y hasta doscientas raíces; una relectura del snapshot evita devolver etiquetas mezcladas si ocurre una edición durante la carga.
+
 - Crear la intención y el parent no acreditaba el inicio automático completo: una validación posterior exigía al menos un tópico. La revisión independiente lo detectó antes de publicar este arranque. Se extiende la aceptación hasta la revisión encolada y se incorpora al job que combina PostgreSQL con el runtime Python, sin fabricar un tema para pasar la validación.
 
 - El primer inicio automático exigía una generación lista de tópicos descubiertos para la misma configuración, que una configuración nueva de base/definidos aún no puede tener. La semilla de cero tópicos conserva el censo/procedencia reales y permite que, después de la base, la evidencia de huérfanas inicie el descubrimiento; no inventa temas ni vectores. Una prueba de integración también necesitó exponer el directorio privado del fixture para verificar fsync/readback: el fallo de ese test no era permiso de gasto ni una llamada duplicada.
@@ -213,6 +217,8 @@ Recibo: separar Voyage/JEV por raíz de Claude por número de grupos y vueltas; 
 - El promedio del piloto completo incluye una etapa editorial que no escala por raíz. Multiplicarlo linealmente daba USD 205.81/millón; mantener explícitamente los grupos y una vuelta de referencia produce USD 114.035250. Ambos cálculos parten del mismo recibo, cuyo uso histórico permanece USD 17.280463.
 
 ## Registro de decisiones
+
+- H5: las expectativas de snapshot recibidas del navegador sólo sirven para CAS; los stores vuelven a validar permiso, fuente y finalización. Ninguna acción humana crea admisión o llamada al proveedor. Conservar probability JEV, effective_belongs y procedencia humana por separado, y mantener el catálogo R15 fuera de las claves de Escucha.
 
 - Admitir cero tópicos en la primera evidencia, con raíces y huérfanas reales, es parte del descubrimiento inicial. Mantener una prueba pequeña de insuficiencia separada de las pruebas de ajuste con grupos y de la aceptación UAT sobre el corpus real.
 

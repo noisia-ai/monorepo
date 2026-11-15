@@ -37,9 +37,10 @@ export function createSignalListeningHumanApiV1(deps:SignalListeningHumanApiDepe
    const body=mutation.parse(await request.json()),idempotency_key=request.headers.get('Idempotency-Key')?.trim()??'';
    if(!/^[A-Za-z0-9._:-]{8,200}$/u.test(idempotency_key))return respond({error:'listening_human_idempotency_required'},422);
    if(body.operation==='membership'){
-    const {operation:_,...args}=body;return respond(await deps.membership(scope,{...args,idempotency_key}));
+    return respond(await deps.membership(scope,{expected:body.expected,root_id:body.root_id,from_question_key:body.from_question_key,
+     ...(body.to_question_key!==undefined?{to_question_key:body.to_question_key}:{}),idempotency_key}));
    }
-   const {operation:_,...args}=body;
+   const args={expected:body.expected,source_question_keys:body.source_question_keys,target_question_key:body.target_question_key};
    if(new Set(args.source_question_keys).size!==args.source_question_keys.length||!args.source_question_keys.includes(args.target_question_key))return respond({error:'listening_human_request_invalid'},422);
    return respond(await deps.merge(scope,{...args,idempotency_key}));
   }),

@@ -953,6 +953,7 @@ export type SignalMentionTbClassificationV1 = {
 };
 
 export type SignalMentionRecordV1 = {
+  listening_labels?: import('./signal-listening-human-contract').SignalMentionListeningLabelsV1;
   subject_id: string;
   occurred_at: string;
   text_snippet: string;
