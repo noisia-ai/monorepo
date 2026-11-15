@@ -5,7 +5,7 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import test from 'node:test';
 import {assertDiscoveryRuntimeLeaseV1} from './signal-listening-discovery-runtime.assertions';
-import {getSignalListeningDiscoveryPublicationRecoveryV1} from '../signal-listening-discovery-runtime';
+import {getSignalListeningDiscoveryPublicationRecoveryV1,releaseSignalListeningDiscoveryRoundV1} from '../signal-listening-discovery-runtime';
 import {runMassLabelingAcceptanceFixtureV1} from './signal-mass-labeling-acceptance.synthetic.fixture';
 import {signalListeningBaseTemplateV1,buildSignalListeningJevRequestV1,signalListeningRequestDigestV1,mapSignalListeningJevResponseV1} from '@noisia/query-engine';
 import {saveSignalListeningConfigurationV1} from '../signal-listening-configuration';
@@ -20,7 +20,7 @@ import {claimSignalWorkspaceEmbeddingRunV1,readSignalWorkspaceEmbeddingBatchV1,r
 const sha=(s:string)=>'sha256:'+createHash('sha256').update(s).digest('hex');
 import {quoteSignalListeningDiscoveryRoundV1,startSignalListeningDiscoveryExecutionV1,enqueueSignalListeningDiscoveryRoundV1,claimSignalListeningDiscoveryRoundV1,reserveSignalListeningDiscoveryCallV1,markSignalListeningDiscoveryCallSentV1,persistSignalListeningDiscoveryRawV1,loadSignalListeningDiscoveryRawIntentV1,pendingSignalListeningDiscoveryRoundsV1,settleSignalListeningDiscoveryCallV1,applySignalListeningDiscoveryReviewV1,prepareSignalListeningDiscoveryChildV1,completeSignalListeningDiscoveryRoundV1,activateSignalListeningServingSnapshotV1,getSignalListeningServingSnapshotV1} from '../signal-listening-discovery-money';
 test('discovery reviews use native admissions, durable receipts and one shared ledger',{skip:process.env.NOISIA_R16_LISTENING_DISCOVERY_MONEY_PG!=='true',timeout:600000},async()=>{
- for(const mode of ['happy','unknown','human','race','zero'] as const)await runMassLabelingAcceptanceFixtureV1('product',{beforeProcessing:async ctx=>{
+ for(const mode of ['happy','unknown','human','race','zero','publication_stale'] as const)await runMassLabelingAcceptanceFixtureV1('product',{beforeProcessing:async ctx=>{
   const db=ctx.database,access={database:db,workspace_id:ctx.workspace_id,actor_user_id:ctx.actor_user_id};
   for(const table of ['signal_listening_discovery_generations','signal_listening_discovery_topics','signal_listening_discovery_roots','signal_listening_discovery_members','signal_listening_discovery_subsets','signal_listening_discovery_subset_roots','signal_listening_discovery_manual'])
    assert.ok((await db.query('SELECT to_regclass($1) table',[table])).rows[0].table,table+' must exist on migrated PostgreSQL');
@@ -150,6 +150,11 @@ test('discovery reviews use native admissions, durable receipts and one shared l
    const paid=await settleSignalListeningDiscoveryCallV1({database:db,call_id:review.id,attempt_token:review.attempt_token});assert.equal(paid.cost_micro_usd,600);
    assert.equal((await settleSignalListeningDiscoveryCallV1({database:db,call_id:review.id,attempt_token:review.attempt_token})).replayed,true,'lost settlement ACK never recharges');
    assert.equal(Number((await db.query('SELECT signal_listening_discovery_exposure_v1($1)::text n',[execution.id])).rows[0].n),618);
+   if(mode==='happy'){
+    assert.equal(await releaseSignalListeningDiscoveryRoundV1({database:db,lease}),true);
+    assert.ok(!(await pendingSignalListeningDiscoveryRoundsV1({database:db,enabled:false})).some(r=>r.round_id===round.id),
+     'disabled analysis does not repeatedly poll an already settled review');
+   }
    await assert.rejects(applySignalListeningDiscoveryReviewV1({...access,round_id:round.id}),/not_enabled/,'revocation after send preserves money but forbids publication');
    await db.query("INSERT INTO signal_workspace_features(workspace_id,feature,enabled_by) VALUES($1,'mass_labeling',$2)",[ctx.workspace_id,ctx.actor_user_id]);
    assert.equal(await getSignalListeningServingSnapshotV1(access),null,'ready centroid generation is not a serving publication');
@@ -170,6 +175,26 @@ test('discovery reviews use native admissions, durable receipts and one shared l
    assert.ok((await pendingSignalListeningDiscoveryRoundsV1({database:db,enabled:false})).some(r=>r.round_id===round.id),
     'lost completion ACK still schedules publication with provider disabled');
    assert.equal(await claimSignalListeningDiscoveryRoundV1({database:db,round_id:round.id}),null,'publication recovery never reacquires a terminal processing lease');
+   if(mode==='publication_stale'){
+    const current=(await db.query('SELECT revision,configuration FROM signal_listening_configurations WHERE workspace_id=$1 AND id=$2',
+     [access.workspace_id,applied.configuration_id])).rows[0];
+    const human=await saveSignalListeningConfigurationV1({...access,expected_revision:current.revision,provenance:'human',configuration:current.configuration});
+    assert.equal(await getSignalListeningDiscoveryPublicationRecoveryV1({database:db,round_id:round.id}),null,
+     'a human revision makes an unpublished historical completion ineligible');
+    // Arrange a retired prior owner without changing its immutable completed
+    // round or any paid receipt; the new owner still uses native admission.
+    await db.query("UPDATE signal_listening_discovery_executions SET status='stale',error_code='listening_discovery_human_configuration_changed' WHERE id=$1",[execution.id]);
+    const seed=await bootstrapSignalListeningDiscoveryV1({...access,configuration_id:human.id,map_id:ctx.map_id,bindings:proposed.bindings});
+    const fresh=await requestSignalListeningV1({...access,configuration_id:human.id,map_id:ctx.map_id,idempotency_key:randomUUID(),cap_micro_usd:1000000,provider_available:true});
+    const freshRun=await store.claim(fresh.run_id);assert.ok(freshRun);assert.equal((await store.inputs(freshRun)).length,0);
+    assert.equal(await store.finish(freshRun),'completed');await store.release(freshRun);
+    const generation=await refreshSignalListeningDiscoveryV1({...access,configuration_id:human.id,map_id:ctx.map_id,round:1,source_generation_id:seed.id});
+    const parent=await startSignalListeningDiscoveryExecutionV1({...access,generation_id:generation.id,classification_run_id:fresh.run_id,cap_micro_usd:4000000,idempotency_key:randomUUID()});
+    const queued=await enqueueSignalListeningDiscoveryRoundV1({...access,execution_id:parent.id,generation_id:generation.id,orphan_groups:[],provider_available:true});
+    assert.deepEqual((await pendingSignalListeningDiscoveryRoundsV1({database:db,enabled:true,limit:1})).map(row=>row.round_id),[queued.id],
+     'pagination skips an older immutable stale completion instead of starving the next valid owner');
+    assert.equal((await db.query('SELECT count(*)::int n FROM engine_cost_events WHERE listening_round_id=$1',[queued.id])).rows[0].n,0);return;
+   }
    const snapshot=await activateSignalListeningServingSnapshotV1({...access,round_id:round.id});assert.ok(snapshot.id);
    assert.equal(await getSignalListeningDiscoveryPublicationRecoveryV1({database:db,round_id:round.id}),null);
    const served=await getSignalListeningServingSnapshotV1(access);assert.equal(served?.classification_run_id,child.listening_run_id);assert.equal(served?.configuration_id,applied.configuration_id);

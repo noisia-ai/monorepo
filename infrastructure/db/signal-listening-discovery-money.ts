@@ -314,15 +314,32 @@ export async function getSignalListeningServingSnapshotV1(args:SignalListeningAc
 /** Only already admitted owners are drained. This function creates no authority. */
 export async function pendingSignalListeningDiscoveryRoundsV1(args:{database:SignalListeningAccessV1['database'];limit?:number;enabled?:boolean}){
  const limit=args.limit??20;if(!Number.isSafeInteger(limit)||limit<1||limit>100)fail('listening_discovery_limit_invalid',422);
- return(await args.database.query<{round_id:string;workspace_id:string;actor_user_id:string;status:string}>(`SELECT r.id round_id,r.workspace_id,p.actor_user_id,r.status
- FROM signal_listening_discovery_rounds r JOIN signal_listening_discovery_executions p ON p.id=r.execution_id
- WHERE(r.status IN('queued','reviewing','reviewed','classifying') OR r.status='outcome_unknown' AND EXISTS(SELECT 1 FROM engine_cost_events c WHERE c.listening_round_id=r.id AND (c.call_state IN('response_persisted','settled') OR EXISTS(SELECT 1 FROM signal_listening_discovery_raw_receipts raw WHERE raw.call_id=c.id AND raw.verification_status='planned')))
-   OR r.status='completed' AND NOT EXISTS(SELECT 1 FROM signal_listening_serving_snapshots s WHERE s.round_id=r.id AND s.workspace_id=r.workspace_id))
- AND ($2::boolean OR r.status IN('reviewed','classifying','outcome_unknown','completed')
-   OR EXISTS(SELECT 1 FROM engine_cost_events c WHERE c.listening_round_id=r.id
-     AND (c.call_state IN('response_persisted','settled') OR EXISTS(
+ type Candidate={round_id:string;workspace_id:string;actor_user_id:string;status:string;created_at:string};
+ const ready:Array<Omit<Candidate,'created_at'>>=[];let cursor:Candidate|undefined;
+ const {getSignalListeningDiscoveryPublicationRecoveryV1}=await import('./signal-listening-discovery-runtime');
+ // Page past immutable completed rows that can no longer publish. A rejected
+ // historical publication must not occupy LIMIT forever and starve live work.
+ while(ready.length<limit){
+  const page=(await args.database.query<Candidate>(`SELECT r.id round_id,r.workspace_id,p.actor_user_id,r.status,
+   to_char(r.created_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') created_at
+   FROM signal_listening_discovery_rounds r JOIN signal_listening_discovery_executions p ON p.id=r.execution_id
+   WHERE(r.status IN('queued','reviewing','reviewed','classifying') OR r.status='outcome_unknown' AND EXISTS(
+     SELECT 1 FROM engine_cost_events c WHERE c.listening_round_id=r.id AND(c.call_state IN('response_persisted','settled') OR EXISTS(
+       SELECT 1 FROM signal_listening_discovery_raw_receipts raw WHERE raw.call_id=c.id AND raw.verification_status='planned')))
+    OR r.status='completed' AND NOT EXISTS(SELECT 1 FROM signal_listening_serving_snapshots s WHERE s.round_id=r.id AND s.workspace_id=r.workspace_id))
+   AND ($2::boolean OR r.status='completed' OR EXISTS(SELECT 1 FROM engine_cost_events c WHERE c.listening_round_id=r.id
+     AND(c.call_state='response_persisted' OR c.call_state<>'settled' AND EXISTS(
        SELECT 1 FROM signal_listening_discovery_raw_receipts raw WHERE raw.call_id=c.id AND raw.verification_status='planned'))))
- AND(r.execution_token IS NULL OR r.execution_expires_at<=clock_timestamp()) ORDER BY r.created_at,r.id LIMIT $1`,[limit,args.enabled===true])).rows;
+   AND(r.execution_token IS NULL OR r.execution_expires_at<=clock_timestamp())
+   AND($3::timestamptz IS NULL OR(r.created_at,r.id)>($3::timestamptz,$4::uuid))
+   ORDER BY r.created_at,r.id LIMIT $1`,[limit,args.enabled===true,cursor?.created_at??null,cursor?.round_id??null])).rows;
+  for(const row of page){
+   if(row.status==='completed'&&!await getSignalListeningDiscoveryPublicationRecoveryV1({database:args.database,round_id:row.round_id}))continue;
+   const {created_at:_,...item}=row;ready.push(item);if(ready.length===limit)break;
+  }
+  if(page.length<limit)break;cursor=page.at(-1)!;
+ }
+ return ready;
 }
 
 /** A durable planned wrapper recovers storage/attach ACK loss without a provider. */

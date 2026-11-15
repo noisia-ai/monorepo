@@ -1,5 +1,7 @@
 import type {SignalListeningAccessV1} from './signal-listening-configuration';
-import {listeningFailV1 as fail} from './signal-listening-configuration';
+import {listeningFailV1 as fail,authorizeSignalListeningV1,listeningTransactionV1} from './signal-listening-configuration';
+import {SignalLabelingError} from './signal-labeling-runs';
+import {mapCurrent} from './signal-mass-labeling';
 import type {ListeningDiscoveryLeaseV1,ListeningDiscoveryRoundV1} from './signal-listening-discovery-money';
 
 type WorkerArgs={database:SignalListeningAccessV1['database'];lease:ListeningDiscoveryLeaseV1};
@@ -55,10 +57,36 @@ export async function releaseSignalListeningDiscoveryRoundV1(args:WorkerArgs):Pr
  * and serializes idempotently, so this path cannot create a provider attempt. */
 export async function getSignalListeningDiscoveryPublicationRecoveryV1(args:{database:WorkerArgs['database'];round_id:string}){
   if(!uuid.test(args.round_id))fail('listening_discovery_round_invalid',422);
-  return(await args.database.query<{round_id:string;workspace_id:string;actor_user_id:string}>(`
+  return listeningTransactionV1(args.database,async client=>{
+    const row=(await client.query<{round_id:string;workspace_id:string;actor_user_id:string}>(`
     SELECT r.id round_id,r.workspace_id,p.actor_user_id FROM signal_listening_discovery_rounds r
     JOIN signal_listening_discovery_executions p ON p.id=r.execution_id AND p.workspace_id=r.workspace_id
-    WHERE r.id=$1::uuid AND r.status='completed'
+    JOIN signal_processing_policy_versions policy ON policy.id=p.policy_version_id AND policy.organization_id=p.organization_id
+      AND policy.status='active' AND policy.valid_from<=clock_timestamp() AND policy.valid_until>clock_timestamp()
+    JOIN signal_listening_configurations cfg ON cfg.id=r.output_configuration_id AND cfg.workspace_id=r.workspace_id
+      AND cfg.state='published' AND cfg.revision=(SELECT max(revision) FROM signal_listening_configurations
+        WHERE workspace_id=r.workspace_id AND state='published')
+    WHERE r.id=$1::uuid AND r.status='completed' AND p.status IN('active','completed')
+      AND signal_listening_discovery_exposure_v1(p.id)<=p.cap_micro_usd
+      AND NOT EXISTS(SELECT 1 FROM signal_listening_discovery_rounds stage JOIN engine_cost_events call ON call.listening_round_id=stage.id
+        WHERE stage.execution_id=p.id AND call.call_state<>'settled')
       AND NOT EXISTS(SELECT 1 FROM signal_listening_serving_snapshots snapshot
-        WHERE snapshot.round_id=r.id AND snapshot.workspace_id=r.workspace_id)`,[args.round_id])).rows[0]??null;
+        WHERE snapshot.round_id=r.id AND snapshot.workspace_id=r.workspace_id)`,[args.round_id])).rows[0];
+    if(!row)return null;
+    try{
+      const capabilities=await authorizeSignalListeningV1(client,row);
+      if(!capabilities.can_edit_topics||!capabilities.can_request_processing)return null;
+      const source=(await client.query<{map_id:string;current:boolean}>(`SELECT map_id,
+        signal_listening_discovery_current_v1(id) current FROM signal_listening_discovery_generations
+        WHERE workspace_id=$1 AND id=(SELECT output_generation_id FROM signal_listening_discovery_rounds WHERE id=$2 AND workspace_id=$1)`,
+        [row.workspace_id,row.round_id])).rows[0];
+      if(!source?.current)return null;
+      await mapCurrent(client,row.workspace_id,source.map_id);
+      return {round_id:row.round_id,workspace_id:row.workspace_id,actor_user_id:row.actor_user_id};
+    }catch(error){
+      if(error instanceof SignalLabelingError&&([403,404].includes(error.status)
+        ||['mass_labeling_map_stale','mass_labeling_context_changed'].includes(error.code)))return null;
+      throw error;
+    }
+  });
 }
