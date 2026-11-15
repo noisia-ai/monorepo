@@ -6,7 +6,7 @@ import {buildSignalListeningJevRequestV1,signalListeningRequestDigestV1,signalLi
   type SignalListeningCalibrationProfileV1,type SignalListeningConfigurationV1,type SignalListeningInputV1,type SignalListeningResultV1} from '@noisia/query-engine';
 import type {LabelingRunV1,LabelingCallV1} from '@noisia/db';
 import type {JevProviderV1,JevRequestV1} from '../providers/typesafe-jev';
-import {processSignalListeningJevV1,signalListeningJevJobV1} from './signal-listening-jev';
+import {processSignalListeningJevV1,signalListeningJevJobV1,createSignalListeningSelectionIndexV1} from './signal-listening-jev';
 const execution={max_in_flight:8,flush_size:8,max_flushes:1,max_buffered_bytes:16*1024*1024,flush_interval_ms:5,window_size:200};
 function fixture(configuration:SignalListeningConfigurationV1,windows:string[][],cache:Record<string,unknown>={}){
   const context={entities:[{entity_id:'category',kind:'category' as const,name:'tea',aliases:[],disambiguation:null}]};
@@ -300,4 +300,35 @@ test('measured prefetch loads an existing second-phase profile before reserving 
   assert.ok(f.calls.every(call=>call.status==='settled'&&call.results_applied));assert.equal(loads.length,2);assert.equal(new Set(loads).size,2);
   assert.ok(f.requests.some(request=>Object.keys(request.questions).join(',')==='consumer_topic'));
  }finally{names.forEach((key,i)=>{if(previous[i]===undefined)delete process.env[key];else process.env[key]=previous[i];});}
+});
+
+
+test('indexed Listening selection preserves the original intersection oracle across order, duplicates, subsets and replacement',()=>{
+ const key=(input:SignalListeningInputV1)=>digest({root_id:input.root_id,input_digest:input.input_digest,question_digests:input.question_digests});
+ const oracle=(inputs:SignalListeningInputV1[],selection:SignalListeningInputV1[]|undefined,limit:number)=>{
+  if(!selection)return inputs.slice(0,limit);const available=new Map(inputs.map(input=>[key(input),input]));
+  return selection.flatMap(input=>{const found=available.get(key(input));return found?[found]:[];}).slice(0,limit);
+ };
+ const index=createSignalListeningSelectionIndexV1(key);let seed=97;const random=(n:number)=>{seed=(Math.imul(seed,1664525)+1013904223)>>>0;return seed%n;};
+ const pool=Array.from({length:20},(_,i)=>({root_id:`root-${i%5}`,input_digest:digest(`input-${i%3}`),question_digests:{q:digest(`q-${i%4}`)},text:'synthetic',title:null,platform:null,content_type:null,author:null,published_at:'2026-01-01T00:00:00Z',language:'en',map_id:'synthetic',question_keys:['q'],scope_basis:{q:'all'},configuration_digest:digest('configuration')}));
+ for(let trial=0;trial<160;trial++){
+  const selection=trial%13===0?undefined:Array.from({length:random(25)},()=>pool[random(pool.length)]!);
+  const inputs=Array.from({length:random(25)},()=>({...pool[random(pool.length)]!,text:`payload-${random(100)}`}));
+  const limit=random(20);assert.deepEqual(index.select(inputs,selection,limit),oracle(inputs,selection,limit));
+  for(const input of inputs)assert.deepEqual(index.select([input],selection,limit),oracle([input],selection,limit));
+ }
+ const original=pool[0]!,replacement={...original,text:'last input payload'},selection=[original,original,pool[1]!];
+ assert.deepEqual(index.select([original,replacement],selection,5),[replacement,replacement]);
+ for(const changed of [{...original,root_id:'other'},{...original,input_digest:digest('different')},{...original,question_digests:{q:digest('changed')}}])assert.deepEqual(index.select([changed],selection,5),[]);
+ selection.splice(0,selection.length,pool[2]!);index.invalidate();assert.deepEqual(index.select([original,pool[2]!],selection,5),[pool[2]!]);
+ assert.deepEqual(index.select([original],undefined,5),[original]);assert.deepEqual(index.select([original],[],5),[]);
+});
+
+test('a4096-root continuation hashes selection once and each singleton once, then invalidates per page',()=>{
+ let hashes=0;const key=(input:SignalListeningInputV1)=>{hashes++;return digest({root_id:input.root_id,input_digest:input.input_digest,question_digests:input.question_digests});};
+ const index=createSignalListeningSelectionIndexV1(key),selection=Array.from({length:4096},(_,i)=>({root_id:`root-${i}`,input_digest:digest(`input-${i}`),question_digests:{q:digest('q')},text:'synthetic',title:null,platform:null,content_type:null,author:null,published_at:'2026-01-01T00:00:00Z',language:'en',map_id:'synthetic',question_keys:['q'],scope_basis:{q:'all'},configuration_digest:digest('configuration')}));
+ for(const input of selection)assert.deepEqual(index.select([input],selection,4096),[input]);
+ assert.equal(hashes,8192,'N page keys + N supplied keys; never N*(N+1)');
+ const next=selection.slice().reverse();assert.deepEqual(index.select([selection[0]!],next,4096),[selection[0]!]);assert.equal(hashes,12289);
+ index.invalidate();assert.deepEqual(index.select([selection[0]!],next,4096),[selection[0]!]);assert.equal(hashes,16386);
 });
