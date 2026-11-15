@@ -48,3 +48,12 @@ test('one-of-three page and transaction oracles select only the affected IDs, no
  for(const ids of[[],['a','a'],['foreign']])assert.throws(()=>select(rows,ids),/affected_calls_invalid/);
  assert.throws(()=>select([...rows,rows[0]!],['a']),/affected_calls_invalid/);
 });
+
+test('planned ACK custody permits recovery then the next scoped job; an absent blob never authorizes continuation',async()=>{
+ const {continueR16ListeningFaultJobsV1:next}=await import('./listening-fault-injections');
+ assert.equal(next({kind:'raw_page_ack_lost',unknown_without_call_raw:true,verified_affected_page:true,attempt:0}),true);
+ assert.equal(next({kind:'raw_page_ack_lost',unknown_without_call_raw:false,verified_affected_page:true,attempt:1}),true);
+ assert.equal(next({kind:'raw_page_ack_lost',unknown_without_call_raw:true,verified_affected_page:false,attempt:0}),false);
+ assert.equal(next({kind:'raw_page_write',unknown_without_call_raw:true,verified_affected_page:false,attempt:0}),false);
+ assert.equal(next({kind:'lease_expiry',unknown_without_call_raw:false,verified_affected_page:false,attempt:1}),false);
+});

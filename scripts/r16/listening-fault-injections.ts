@@ -29,3 +29,12 @@ export function r16AffectedPageMembersV1(page:{sha256:string;member_count:number
   ||call_ids.length!==page.member_count||new Set(call_ids).size!==call_ids.length)throw Error('r16_fault_affected_page_invalid');
  return[...call_ids];
 }
+
+/** One recovery-only job settles existing custody; a later normal job may then
+ * classify newly eligible questions. A real readback witness is mandatory when
+ * an ACK loss left the exact page planned but call-level references unattached. */
+export function continueR16ListeningFaultJobsV1(args:{kind:string;unknown_without_call_raw:boolean;verified_affected_page:boolean;attempt:number}){
+ if(args.unknown_without_call_raw&&!(args.kind==='raw_page_ack_lost'&&args.verified_affected_page))return false;
+ if(['429','529','lease_expiry','raw_page_write'].includes(args.kind)&&args.attempt>=1)return false;
+ return true;
+}

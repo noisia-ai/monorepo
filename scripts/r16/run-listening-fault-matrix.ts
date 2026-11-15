@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import {mkdtemp} from 'node:fs/promises';
 import {join} from 'node:path';
-import {createR16PutFaultV1,r16NativeCommitBoundaryV1,selectR16AffectedCallsV1,r16AffectedPageMembersV1} from './listening-fault-injections';
+import {createR16PutFaultV1,r16NativeCommitBoundaryV1,selectR16AffectedCallsV1,r16AffectedPageMembersV1,continueR16ListeningFaultJobsV1} from './listening-fault-injections';
 import {randomUUID} from 'node:crypto';
 import {performance} from 'node:perf_hooks';
 import {dirname,resolve} from 'node:path';
@@ -173,7 +173,7 @@ export async function runR16ListeningFaultMatrixV1(args:{object_directory:string
      }
      witnessed=true;
     }
-    if(rows.some(c=>c.status==='unknown'&&!c.raw_storage_key)||['429','529','lease_expiry','raw_page_write'].includes(kind)&&attempt>=1)break;
+    if(!continueR16ListeningFaultJobsV1({kind,unknown_without_call_raw:rows.some(c=>c.status==='unknown'&&!c.raw_storage_key),verified_affected_page:kind==='raw_page_ack_lost'&&witnessed,attempt}))break;
     if((await census.readResolvedRootIds()).length===3)break;
    }
    const first=await calls(),affectedPhysicalBefore=physical.filter(p=>affectedCallIds.includes(p.call_id)).length;
