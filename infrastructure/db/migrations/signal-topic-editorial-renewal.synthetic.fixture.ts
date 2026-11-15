@@ -1,3 +1,4 @@
+import {indexSyntheticTopicAssignmentsByRootV1} from './signal-topic-assignment-index.synthetic.fixture';
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import {
@@ -341,12 +342,13 @@ export async function seedSignalTopicEditorialRenewalSourceV1(args: SignalTopicE
   const byRoot = new Map(metadata.map(row => [row.root_id, row]));
   const counts = (values: Array<string | null>) => [...new Set(values.filter((value): value is string => value !== null))]
     .sort().map(key => ({ key, count: values.filter(value => value === key).length }));
+  const assignments = projection.chunks.map((chunk, ordinal) => ({ ordinal, root_id: chunk.root_id,
+    chunk_index: chunk.chunk_index, start: chunk.start, end: chunk.end, chunk_sha256: chunk.chunk_sha256 }));
+  const assignmentsByRoot = indexSyntheticTopicAssignmentsByRootV1(assignments);
   const groups: SignalTopicAtomicGroupV1[] = (["open", "guided"] as const).map((lane, index) => {
     const stable_cluster_id = clusterIds[index]!, group_key = `${lane}:${stable_cluster_id}`;
-    const assignments = projection.chunks.map((chunk, ordinal) => ({ ordinal, root_id: chunk.root_id,
-      chunk_index: chunk.chunk_index, start: chunk.start, end: chunk.end, chunk_sha256: chunk.chunk_sha256 }));
     const roots = projection.roots.map(root => ({ root_id: root.root_id, chunk_count: root.chunk_count,
-      strength: 0.8, assignment_digest: digest(assignments.filter(item => item.root_id === root.root_id).map(item => ({ ...item, strength: 0.8 }))) })).sort((a, b) => a.root_id.localeCompare(b.root_id));
+      strength: 0.8, assignment_digest: digest((assignmentsByRoot.get(root.root_id) ?? []).map(item => ({ ...item, strength: 0.8 }))) })).sort((a, b) => a.root_id.localeCompare(b.root_id));
     const scope_counts = { brand: 0, competitor: 0, category: 0, unknown: 0 };
     for (const row of metadata) scope_counts[row.scope]++;
     const evidence = projection.chunks.slice(0, 10).map(chunk => {
