@@ -80,6 +80,20 @@ permissions:
   contents: read
 
 jobs:
+  calibration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Enable pinned pnpm
+        run: corepack enable && corepack prepare pnpm@10.33.2 --activate
+      - name: Install dependencies
+        run: corepack pnpm install --frozen-lockfile
+      - name: Verify calibration in a separate empty accredited lab
+        run: bash scripts/r16/ci-calibration.sh
   benchmark:
     runs-on: ubuntu-latest
     timeout-minutes: 90
