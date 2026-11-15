@@ -1,0 +1,1 @@
+{"extends":"../../tsconfig.base.json","compilerOptions":{"noEmit":true,"incremental":false},"include":["listening-native-fixture.ts","listening-workload.ts","listening-workload.test.ts","run-listening-benchmark.ts"]}

@@ -8,7 +8,7 @@ import {
   signalListeningCalibrationShapeV1,signalWorkspaceEmbeddingDigestV1 as digest,type SignalListeningInputV1,type SignalListeningResultV1,
 } from '@noisia/query-engine';
 import {assertMassJevConsumerV1} from '../providers/mass-labeling-consumer';
-import {jevStreamingExecutionFromEnvV2} from '../providers/jev-streaming-runtime';
+import {createCalibratedJevRuntimeProviderV2,jevStreamingExecutionFromEnvV2} from '../providers/jev-streaming-runtime';
 import {JevProviderErrorV1,type JevProviderV1} from '../providers/typesafe-jev';
 import {processJevLabelingPageV1,jevUsageV1,type JevPreparedExecutionV1,type JevNextInputBoundsV2} from './signal-jev-labeling-page';
 import {createLabelingRawPagesStorageV1} from './signal-labeling-receipt-storage';
@@ -99,6 +99,9 @@ export function createSignalListeningRuntimeStoreV1(database:Parameters<typeof c
 export async function signalListeningJevJobV1(run_id:string,options:{
   database?:Parameters<typeof createSignalListeningStoreV1>[0]['database'];store?:Store;provider?:JevProviderV1;
   execution?:JevStreamingExecutionV2;preflight?:()=>Promise<void>;
+  /** Instrumentation sees copied scalar metadata, never the mutable plan. */
+  observe_calibration?:(event:{warmup:boolean;selected_roots:number;max_in_flight:number;shape_digests:string[]})=>void;
+  calibrated_provider_factory?:typeof createCalibratedJevRuntimeProviderV2;
   calibration?:{load:typeof loadSignalListeningCalibrationV1;derive:typeof deriveSignalListeningCalibrationV1};
 }={}){
   if(process.env.NOISIA_SIGNAL_LISTENING_ENABLED!=='true'||process.env.NOISIA_JEV_PROVIDER_ENABLED==='false')
@@ -177,7 +180,9 @@ export async function signalListeningJevJobV1(run_id:string,options:{
             configuration,inputs,execution,loadProfile:shape_digest=>(options.calibration?.load??loadSignalListeningCalibrationV1)({database,
               workspace_id:leased.workspace_id,actor_user_id:leased.actor_user_id,configuration_digest:digest(configuration),model:configuration.model,shape_digest})});
           selection=plan.selected_inputs;shapes=plan.calibration_shapes;
-          calibrated=createSignalListeningCalibratedProviderV1({plan,...(options.provider?{factory:()=>({...options.provider!,close:undefined})}:{})});
+          try{options.observe_calibration?.({warmup:plan.warmup,selected_roots:plan.selected_inputs.length,
+            max_in_flight:plan.execution.max_in_flight,shape_digests:[...plan.calibration_shapes]});}catch{/* Observation cannot change execution. */}
+          calibrated=createSignalListeningCalibratedProviderV1({plan,...(options.calibrated_provider_factory?{factory:options.calibrated_provider_factory}:{}),...(options.provider?{factory:()=>({...options.provider!,close:undefined})}:{})});
           calibrated.prepareRequests(selection.map(input=>buildSignalListeningJevRequestV1(input,configuration)));
           return{provider:calibrated.provider,execution:plan.execution,...(plan.warmup?{max_windows:1}:{continuous_windows:true})};
         }catch(error){
