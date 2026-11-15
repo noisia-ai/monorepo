@@ -268,7 +268,7 @@ DECLARE previous uuid;inherited signal_listening_study_policy_scopes;scope signa
 BEGIN
  IF NEW.status<>'active' OR OLD.status<>'draft' THEN RETURN NEW;END IF;
  SELECT id INTO previous FROM signal_processing_policy_versions WHERE organization_id=NEW.organization_id AND status<>'draft' AND version<NEW.version ORDER BY version DESC LIMIT 1;
- SELECT scope.* INTO inherited FROM signal_listening_study_policy_bindings binding JOIN signal_listening_study_policy_scopes scope ON scope.id=binding.scope_id WHERE binding.policy_id=previous;
+ SELECT receipt.* INTO inherited FROM signal_listening_study_policy_bindings binding JOIN signal_listening_study_policy_scopes receipt ON receipt.id=binding.scope_id WHERE binding.policy_id=previous;
  IF inherited.id IS NOT NULL THEN
   SELECT receipt.* INTO scope FROM signal_listening_study_policy_bindings binding JOIN signal_listening_study_policy_scopes receipt ON receipt.id=binding.scope_id WHERE binding.policy_id=NEW.id;
   IF scope.id IS NULL OR scope.id<>inherited.id OR scope.workspace_id<>inherited.workspace_id THEN RAISE EXCEPTION 'r16_policy_scope_required';END IF;
