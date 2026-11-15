@@ -13,12 +13,14 @@
     "start": "next start -H 0.0.0.0 -p ${PORT:-3000}",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
-    "test": "node --test --import tsx src/motion/runtime.test.ts src/content/stories/schema.test.ts scripts/content/lint.test.ts",
+    "test": "node --test --import tsx src/motion/runtime.test.ts src/content/stories/schema.test.ts src/content/studies/schema.test.ts scripts/content/lint.test.ts",
     "export:story": "node scripts/export-story.mjs",
     "smoke:feed": "node scripts/smoke-feed.mjs",
     "content:migrate": "tsx scripts/content/migrate.ts",
     "content:load": "tsx scripts/content/load.ts",
-    "content:publish": "tsx scripts/content/publish.ts"
+    "content:publish": "tsx scripts/content/publish.ts",
+    "content:study": "tsx scripts/content/study.ts",
+    "content:links": "tsx scripts/content/links.ts"
   },
   "dependencies": {
     "clsx": "^2.1.1",
