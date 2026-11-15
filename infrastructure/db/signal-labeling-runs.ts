@@ -24,6 +24,8 @@ import {
 } from "./signal-mention-facets";
 import {createLabelingRawPageStoreV1} from "./signal-labeling-raw-page-store";
 import {LABELING_RAW_PAGE_MAX_MEMBERS_V1,type LabelingRawPageStorageV1} from "./signal-labeling-raw-pages";
+import {validateLabelingInputBoundsV1,type LabelingInputBoundsV1} from './signal-labeling-input-bounds';
+export type {LabelingInputBoundsV1} from './signal-labeling-input-bounds';
 export type LabelingPolicyV1={organization_id:string;budget_date:string;budget_timezone:string;daily_cap_micro_usd:string|null;
  max_execution_micro_usd:string|null;provider:string;model:string;action:string;funding_receipt_id?:string|null;effective_total_cap_micro_usd?:string};
 export type LabelingRequestPolicyV1=Pick<LabelingPolicyV1,"max_execution_micro_usd"|"provider"|"model">;
@@ -528,6 +530,8 @@ export function createSignalLabelingStoreV1<
     policy_action?: "concept_membership_jev" | "concept_membership_claude" | "mass_labeling_jev";
     /** H1 verifies each decision against this call's results in the same transaction. */
     persist_results_before_write?: boolean;
+    bounded_inputs?:(client:PoolClient,run:LabelingRunV1,bounds:LabelingInputBoundsV1)=>Promise<Input[]>;
+    has_inputs?:(client:PoolClient,run:LabelingRunV1)=>Promise<boolean>;
     inputs: (
       client: LabelingDatabaseV1 | PoolClient,
       run: LabelingRunV1,
@@ -771,7 +775,16 @@ export function createSignalLabelingStoreV1<
         [run.id, run.lease_token, cadence.immediate===true],
       );
     },
-    async inputs(run: LabelingRunV1) {
+    async inputs(run: LabelingRunV1,bounds?:LabelingInputBoundsV1) {
+      if(bounds){
+        let read:LabelingInputBoundsV1;try{read=validateLabelingInputBoundsV1(bounds,pageSize);}catch{fail('labeling_input_bounds_invalid',400);}
+        if(!options.adapter?.bounded_inputs)fail('labeling_bounded_inputs_unavailable',409);
+        return tx(db,async c=>{await c.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY');
+          return options.adapter!.bounded_inputs!(c,run,read);}).catch(error=>{
+            if(error instanceof Error&&['labeling_input_memory_bound','labeling_input_metadata_invalid'].includes(error.message))fail(error.message,409);
+            throw error;
+          });
+      }
       if (options.adapter) return options.adapter.inputs(db, run);
       return selectFacetInputsV1(
         db,
@@ -1146,7 +1159,7 @@ export function createSignalLabelingStoreV1<
                 )
               ).rows[0]!.count,
             );
-        const available = (
+        const available = options.adapter?.has_inputs ? Number(await options.adapter.has_inputs(c,run)) : (
           options.adapter
             ? await options.adapter.inputs(c, run)
             : await selectFacetInputsV1(
