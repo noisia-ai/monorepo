@@ -2,37 +2,55 @@ import type {PoolClient} from 'pg';
 import {signalListeningJevIdentityV1,validateSignalListeningConfigurationV1,labelerDigestV1,buildSignalListeningJevRequestV1,
  signalWorkspaceEmbeddingDigestV1 as digest,type SignalListeningInputV1,type SignalListeningResultV1,type SignalListeningConfigurationV1} from '@noisia/query-engine';
 import {requestMentionFacetsV1,createSignalLabelingStoreV1,type LabelingRunV1,type LabelingCallV1} from './signal-labeling-runs';
+import {selectLabelingInputPrefixV1,type LabelingInputBoundsV1} from './signal-labeling-input-bounds';
 import type {LabelingDatabaseV1} from './signal-mention-facets';
-import {mapCurrent} from './signal-mass-labeling';
+import {mapCurrent,assertMassLabelingMapCurrentV1} from './signal-mass-labeling';
 import {authorizeSignalListeningV1,loadSignalListeningConfigurationWithClientV1,listeningFailV1 as fail,
  listeningTransactionV1,type SignalListeningAccessV1} from './signal-listening-configuration';
 
 const config=(run:LabelingRunV1):SignalListeningConfigurationV1=>validateSignalListeningConfigurationV1(run.identity.params.configuration);
+async function latestConfigurationId(c:Pick<PoolClient,'query'>,workspace:string){return(await c.query<{id:string}>("SELECT id FROM signal_listening_configurations WHERE workspace_id=$1 AND state='published' ORDER BY revision DESC LIMIT 1",[workspace])).rows[0]?.id;}
 async function owner(c:Pick<PoolClient,'query'>,run:LabelingRunV1,current=true){
  const row=(await c.query<{configuration_id:string;map_id:string;configuration_digest:string}>(`SELECT o.* FROM signal_listening_runs o
   WHERE workspace_id=$1 AND run_id=$2`,[run.workspace_id,run.id])).rows[0];
  if(!row||run.identity.params.request_version!=='listening-jev-v1')return fail('listening_run_unavailable');
  if(labelerDigestV1(run.identity)!==labelerDigestV1(signalListeningJevIdentityV1(config(run))))fail('listening_identity_invalid');
  if(current){
-  const latest=await loadSignalListeningConfigurationWithClientV1(c,run.workspace_id);
-  if(latest?.id!==row.configuration_id)fail('listening_configuration_changed');
+  if(await latestConfigurationId(c,run.workspace_id)!==row.configuration_id)fail('listening_configuration_changed');
  }
- await mapCurrent(c,run.workspace_id,row.map_id);return row;
+ await assertMassLabelingMapCurrentV1(c,run.workspace_id,row.map_id);return row;
 }
 const population=`signal_listening_population_v1($1::uuid,$2::uuid,$3::uuid,$4::text)`;
-async function inputs(c:Pick<PoolClient,'query'>,run:LabelingRunV1,limit:number):Promise<SignalListeningInputV1[]>{
+const pendingScope=`p.candidate AND p.scope_state='included' AND p.answer IS NULL AND NOT EXISTS(SELECT 1 FROM signal_listening_call_questions sent
+ WHERE sent.run_id=$5 AND sent.workspace_id=$1 AND sent.root_id=p.root_id AND sent.question_digest=p.question_digest)`;
+async function inputMetadata(c:Pick<PoolClient,'query'>,run:LabelingRunV1,limit:number){
  const o=await owner(c,run,false);
- if((await loadSignalListeningConfigurationWithClientV1(c,run.workspace_id))?.id!==o.configuration_id)return [];
+ if(await latestConfigurationId(c,run.workspace_id)!==o.configuration_id)return{o,rows:[]};
+ const fixed=Buffer.byteLength(JSON.stringify(run.identity))+Buffer.byteLength(JSON.stringify(run.context))+Buffer.byteLength(JSON.stringify(config(run)));
+ const rows=(await c.query<{root_id:string;working_bytes:string}>(`/* labeling_listening_input_metadata_v1 */ WITH pending AS MATERIALIZED(
+  SELECT p.root_id,p.question_key,octet_length(p.body)::bigint text_bytes,octet_length(p.wire::text)::bigint wire_bytes,
+   (octet_length(p.question_key)+octet_length(p.question_digest)+octet_length(COALESCE(p.scope_basis,'')))::bigint question_metadata_bytes,
+   octet_length(COALESCE(p.platform,''))::bigint platform_bytes,row_number() OVER(PARTITION BY p.root_id ORDER BY p.question_key) n
+  FROM ${population} p WHERE ${pendingScope})
+  SELECT root_id,(4::bigint*(12*max(text_bytes)+2*sum(wire_bytes)+6*sum(question_metadata_bytes)+6*max(platform_bytes)+$7::bigint+2048)+8192)::text working_bytes
+  FROM pending WHERE n<=256 GROUP BY root_id ORDER BY root_id LIMIT $6`,[run.workspace_id,o.configuration_id,o.map_id,run.entity_context_digest,run.id,limit,fixed])).rows;
+ return{o,rows};
+}
+async function inputs(c:Pick<PoolClient,'query'>,run:LabelingRunV1,limit:number,bounds?:LabelingInputBoundsV1):Promise<SignalListeningInputV1[]>{
+ const metadata=bounds?await inputMetadata(c,run,bounds.max_rows):null;
+ const selected=metadata?selectLabelingInputPrefixV1(metadata.rows,bounds!):null;if(selected&&!selected.length)return [];
+ const o=metadata?.o??await owner(c,run,false);
+ if(!metadata&&await latestConfigurationId(c,run.workspace_id)!==o.configuration_id)return [];
+ const hydratePopulation=selected?`signal_listening_population_roots_v1($1::uuid,$2::uuid,$3::uuid,$4::text,$7::uuid[],'llm-processing')`:population;
  const rows=(await c.query<{root_id:string;input_digest:string;body:string;published_at:Date|string;platform:string|null;
   question_keys:string[];question_digests:Record<string,string>;scope_basis:Record<string,string>}>(`WITH pending AS MATERIALIZED(
-  SELECT p.*,row_number() OVER(PARTITION BY root_id ORDER BY question_key) n FROM ${population} p
-  WHERE p.candidate AND p.scope_state='included' AND p.answer IS NULL AND NOT EXISTS(SELECT 1 FROM signal_listening_call_questions sent
-   WHERE sent.run_id=$5 AND sent.root_id=p.root_id AND sent.question_digest=p.question_digest))
+  SELECT p.*,row_number() OVER(PARTITION BY root_id ORDER BY question_key) n FROM ${hydratePopulation} p
+  WHERE ${pendingScope})
   SELECT root_id,input_digest,body,published_at,platform,array_agg(question_key ORDER BY question_key) question_keys,
    jsonb_object_agg(question_key,question_digest) question_digests,
    COALESCE(jsonb_object_agg(question_key,scope_basis) FILTER(WHERE scope_basis IS NOT NULL),'{}'::jsonb) scope_basis
   FROM pending WHERE n<=256 GROUP BY root_id,input_digest,body,published_at,platform ORDER BY root_id LIMIT $6`,
-  [run.workspace_id,o.configuration_id,o.map_id,run.entity_context_digest,run.id,limit])).rows;
+  [run.workspace_id,o.configuration_id,o.map_id,run.entity_context_digest,run.id,bounds?.max_rows??limit,...(selected?[selected]:[])])).rows;
  return rows.map(row=>({root_id:row.root_id,input_digest:row.input_digest,text:row.body,title:null,platform:row.platform,
   content_type:null,author:null,published_at:new Date(row.published_at).toISOString(),language:null,map_id:o.map_id,
   configuration_digest:o.configuration_digest,question_keys:row.question_keys,question_digests:row.question_digests,scope_basis:row.scope_basis}));
@@ -88,6 +106,8 @@ export function createSignalListeningStoreV1(options:Omit<Parameters<typeof crea
  const store=createSignalLabelingStoreV1<SignalListeningInputV1,SignalListeningResultV1>({...options,adapter:{
   kind:'mass_labeling',recover_failed_raw:true,policy_action:'mass_labeling_jev',feature:'mass_labeling',pending_calls_only:true,persist_results_before_write:true,
   inputs:(c,run)=>inputs(c,run,limit),
+  bounded_inputs:(c,run,bounds)=>inputs(c,run,limit,bounds),
+  has_inputs:async(c,run)=>(await inputMetadata(c,run,1)).rows.length>0,
   authority:async(c,run)=>{await owner(c,run,false);},
   beforeSubmit:async(c,run,calls)=>{
    await owner(c,run);
