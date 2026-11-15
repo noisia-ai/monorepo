@@ -25,9 +25,18 @@ async function nativeFirstStepBudgetV1(f:SignalStudySyntheticFixtureV1,execution
  // duplicating a quote formula or provider prices in this fixture.
  const cap=reserve+observed;assert.ok(reserve>0n&&observed>0n&&cap<2n*reserve&&cap<=BigInt(Number.MAX_SAFE_INTEGER));return Number(cap);
 }
+async function requireQuiescentMoneyListeningV1(f:SignalStudySyntheticFixtureV1){
+ assert.equal((await f.database.query('SELECT status FROM signal_listening_discovery_executions WHERE id=$1',[f.execution.id])).rows[0].status,'completed');
+ const pending=(await f.database.query<{id:string}>(`SELECT flow.id FROM signal_listening_preparations flow JOIN signal_listening_discovery_rounds round ON round.classification_preparation_id=flow.id
+  JOIN signal_labeling_runs run ON run.id=flow.listening_run_id WHERE round.execution_id=$1 AND flow.status='labeling' AND run.status='completed' ORDER BY round.ordinal`,[f.execution.id])).rows;
+ for(const flow of pending)assert.equal((await continueSignalListeningPreparationV1({...f,preparation_id:flow.id,provider_available:false})).status,'completed');
+ assert.equal(await readClassicPolicyActiveWorkV1(f.database,f.policy.organization_id),false);
+ assert.equal((await f.database.query('SELECT signal_listening_study_policy_busy_v1($1) busy',[f.policy.organization_id])).rows[0].busy,false,'both native guard families must confirm quiescence before isolated financial faults');
+}
 /** These are faults around REAL native commits, not substitute stores/guards.
  * A lost acknowledgement throws only after the native method has committed. */
 export async function assertSignalStudyMoneyV1(f:SignalStudySyntheticFixtureV1,r:StudyNativeRuntimeFixtureV1){
+ await requireQuiescentMoneyListeningV1(f);
  const capture=(cap_micro_usd=4000000)=>captureStudyStepV1(f,r,cap_micro_usd),state=(id:string)=>studyMoneyStateV1(f,id),steps=(id:string)=>studyMoneyStepsV1(f,id);
  for(const fault of ['persistReceipt','settle','commit']as const){
   const owner=await f.createStudy(),execution=await owner.request(),before=r.metrics();let once=true;
@@ -85,10 +94,22 @@ export async function assertSignalStudyMoneyV1(f:SignalStudySyntheticFixtureV1,r
   FROM signal_listening_study_policy_owners owner JOIN signal_study_executions parent ON parent.id=owner.owner_id AND owner.kind='study'
   WHERE owner.scope_id=$1 AND parent.status='outcome_unknown'`,[root])).rows[0];
  assert.equal(census.owners,5);assert.equal(BigInt(census.caps),5n*BigInt(uncertaintyCap));
- assert.equal(BigInt((await allocation()).held),BigInt(beforeUncertainty.held)+BigInt(census.caps),'all five ambiguous owners retain their full declared caps beside prior actual costs and the active Listening cycle');
+ assert.equal(BigInt((await allocation()).held),BigInt(beforeUncertainty.held)+BigInt(census.caps),'all five ambiguous owners retain their full declared caps beside prior actual costs, including the completed Listening cycle');
  assert.equal(r.metrics().jevCalls,jevBeforeUncertainty,'the exact cached questions need no new JEV spend before these first-step faults');
  const persisted=async()=>(await f.database.query('SELECT (SELECT count(*)::int FROM signal_study_executions) executions,(SELECT count(*)::int FROM signal_processing_admissions) admissions')).rows[0];
- const overflow=await f.createStudy(),beforeOverflow=r.metrics(),persistedBefore=await persisted();await assert.rejects(overflow.request(),/r16_policy_scope_budget_exhausted/,'another ordinary four-dollar owner must remain denied by the real aggregate guard');assert.deepEqual(r.metrics(),beforeOverflow);assert.deepEqual(await persisted(),persistedBefore,'an unfunded attempt creates neither another owner nor an admission');
+ let boundary=await allocation();const ordinaryCap=4000000n;
+ if(BigInt(boundary.budget)-BigInt(boundary.held)>=ordinaryCap){
+  const funded=await f.createStudy(),beforeFunded=r.metrics(),fundedCensus=await persisted();
+  assert.equal((await funded.request(Number(ordinaryCap))).status,'queued','a legitimately funded owner may hold unused capacity without executing');
+  const afterFunded=await allocation();assert.equal(BigInt(afterFunded.held),BigInt(boundary.held)+ordinaryCap);
+  assert.deepEqual(r.metrics(),beforeFunded,'funding an idle owner makes no provider or storage HTTP request');
+  assert.deepEqual(await persisted(),{executions:fundedCensus.executions+1,admissions:fundedCensus.admissions},'only the native owner is created; no provider admission');boundary=afterFunded;
+ }
+ const remaining=BigInt(boundary.budget)-BigInt(boundary.held);assert.ok(remaining>=0n&&remaining<ordinaryCap);
+ const overflow=await f.createStudy(),beforeOverflow=r.metrics(),persistedBefore=await persisted();
+ await assert.rejects(overflow.request(Number(remaining+1n)),/r16_policy_scope_budget_exhausted/,'one micro-dollar beyond actual remaining scope capacity is denied within the ordinary owner cap');
+ assert.deepEqual(r.metrics(),beforeOverflow);assert.deepEqual(await persisted(),persistedBefore,'an unfunded attempt creates neither another owner nor an admission');
+ assert.deepEqual(await allocation(),boundary,'neither the five uncertain reservations nor the immutable budget is released by an unfunded attempt');
  assert.ok(r.sentStepKeys().every((key,index,all)=>all.indexOf(key)===index),'no physical step repeats across ACK loss, lease loss or uncertainty');
 }
 
@@ -96,12 +117,7 @@ export async function assertSignalStudyMoneyV1(f:SignalStudySyntheticFixtureV1,r
  * five intentionally durable uncertainties above. */
 export async function assertSignalStudyDailyMoneyRaceV1(f:SignalStudySyntheticFixtureV1,r:StudyNativeRuntimeFixtureV1,reference_execution_id:string){
  const capture=()=>captureStudyStepV1(f,r),state=(id:string)=>studyMoneyStateV1(f,id),steps=(id:string)=>studyMoneyStepsV1(f,id);
- assert.equal((await f.database.query('SELECT status FROM signal_listening_discovery_executions WHERE id=$1',[f.execution.id])).rows[0].status,'completed');
- const pending=(await f.database.query<{id:string}>(`SELECT flow.id FROM signal_listening_preparations flow JOIN signal_listening_discovery_rounds round ON round.classification_preparation_id=flow.id
-  JOIN signal_labeling_runs run ON run.id=flow.listening_run_id WHERE round.execution_id=$1 AND flow.status='labeling' AND run.status='completed' ORDER BY round.ordinal`,[f.execution.id])).rows;
- for(const flow of pending)assert.equal((await continueSignalListeningPreparationV1({...f,preparation_id:flow.id,provider_available:false})).status,'completed');
- assert.equal(await readClassicPolicyActiveWorkV1(f.database,f.policy.organization_id),false);
- assert.equal((await f.database.query('SELECT signal_listening_study_policy_busy_v1($1) busy',[f.policy.organization_id])).rows[0].busy,false,'both native guard families must confirm quiescence before the conservative rotation');
+ await requireQuiescentMoneyListeningV1(f);
  // The organization/day ledger counts Study alongside the prior actual costs.
  // First-step reserve is observed from the completed native reference owner.
  const active=(await f.database.query("SELECT * FROM signal_processing_policy_versions WHERE organization_id=$1 AND status='active'",[f.policy.organization_id])).rows[0];
