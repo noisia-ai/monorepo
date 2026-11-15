@@ -12,7 +12,16 @@ export type SignalStudyMotiveV1={key:string;name:string;definition:string;centro
 export type SignalStudySampleV1={contract_version:'signal-study-sample-v1';study_digest:string;group_key:string;pass:'a'|'b';
   random_count:number;far_count:number;population_count:number;independence:'disjoint'|'overlapping'|'small_group';
   sampling_policy:{seed_digest:string;population_digest:string;centroid_digest:string;requested_random:number;requested_far:number};
-  insufficient_sample:boolean;rows:Array<{root_id:string;text:string;text_sha256:string;source:'random'|'far';axes:SignalStudyAxesV1}>;sample_digest:string};
+  insufficient_sample:boolean;rows:Array<{root_id:string;text:string;text_sha256:string;source:'random'|'far';axes:SignalStudyAxesV1;evidence_publishable:boolean}>;sample_digest:string};
+/** Canon shared by native source preflight, sample construction and final
+ * verbatim verification. Original source only: no link inference or fallback. */
+export function signalStudySourceUrlStateV1(value:string):'valid'|'missing'|'invalid'{
+  if(typeof value!=='string')return'invalid';if(!value.trim())return'missing';
+  try{const url=new URL(value);return['http:','https:'].includes(url.protocol)&&!url.username&&!url.password?'valid':'invalid';}catch{return'invalid';}
+}
+export function signalStudyEvidencePublishableV1(root:Pick<SignalStudyRootV1,'source_url'>):boolean{
+  return signalStudySourceUrlStateV1(root.source_url)==='valid';
+}
 function fail(code:string):never{throw Error(code);}
 function assertVector(vector:number[]):void{
   if(vector.length!==1024||vector.some(x=>!Number.isFinite(x))||!vector.some(x=>x!==0)||!Number.isFinite(Math.hypot(...vector)))fail('study_vector_invalid');
@@ -106,7 +115,7 @@ export function sampleSignalStudyGroupV1(args:{study_digest:string;group_key:str
       if(holdout){randomIds.delete(randomRows[randomRows.length-1]!.root_id);randomRows[randomRows.length-1]=holdout;randomIds.add(holdout.root_id);farRows=distant();}
     }
     const rows=[...randomRows.map(root=>({...root,source:'random' as const})),...farRows.map(root=>({...root,source:'far' as const}))]
-      .map(root=>({root_id:root.root_id,text:root.text,text_sha256:root.text_sha256,source:root.source,axes:root.axes}));
+      .map(root=>({root_id:root.root_id,text:root.text,text_sha256:root.text_sha256,source:root.source,axes:root.axes,evidence_publishable:signalStudyEvidencePublishableV1(root)}));
     if(pass==='a')for(const row of rows)seen.add(row.root_id);
     const sample={contract_version:'signal-study-sample-v1' as const,study_digest:args.study_digest,group_key:args.group_key,pass,
       random_count:randomRows.length,far_count:farRows.length,population_count:args.roots.length,
@@ -157,8 +166,8 @@ export function verifySignalStudyVerbatimV1(root:SignalStudyRootV1,quote:string,
   root_id:string;literal_sha256:string;display_text:string;redacted:boolean;source_url:string;channel:string;occurred_at:string}{
   assertSignalStudyRootsV1([root]);
   if(!quote.trim()||!root.text.includes(quote))fail('study_verbatim_not_literal');
-  let url:URL;try{url=new URL(root.source_url);}catch{return fail('study_verbatim_source_invalid');}
-  if(!['http:','https:'].includes(url.protocol)||url.username||url.password)fail('study_verbatim_source_invalid');
+  if(!signalStudyEvidencePublishableV1(root))fail('study_verbatim_source_invalid');
+  const url=new URL(root.source_url);
   if(additional_private_person_names.some(name=>!name.trim()||!quote.includes(name)))fail('study_verbatim_privacy_invalid');
   let display=quote.normalize('NFC').replace(/@[\p{L}\p{N}_.-]+/gu,'[usuario]');
   for(const name of [...root.private_person_names,...additional_private_person_names].map(name=>name.normalize('NFC')).filter(name=>name.trim()).sort((a,b)=>b.length-a.length)){

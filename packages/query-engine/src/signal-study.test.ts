@@ -7,7 +7,7 @@ import {SIGNAL_STUDY_TB_TEMPLATE_V1,SIGNAL_STUDY_TB_TEMPLATE_DIGEST_V1,validateS
 import {signalListeningBaseTemplateV1,buildSignalListeningJevRequestV1} from './signal-listening-contracts';
 import {signalWorkspaceEmbeddingDigestV1 as digest} from './signal-workspace-embeddings-v1';
 import {buildSignalStudyMotivePopulationV1,buildSignalStudyMotiveFitPlanV1,sampleSignalStudyGroupV1,signalStudyConfirmedCentroidV1,signalStudyNearestMotivesV1,
-  signalStudyDominancePlanV1,verifySignalStudyVerbatimV1,signalStudyQueryBiasV1,signalStudyPromotionProposalV1,
+  signalStudySourceUrlStateV1,signalStudyEvidencePublishableV1,signalStudyDominancePlanV1,verifySignalStudyVerbatimV1,signalStudyQueryBiasV1,signalStudyPromotionProposalV1,
   type SignalStudyRootV1,type SignalStudyMotiveV1,type SignalStudySampleV1} from './signal-study-evidence';
 import {buildSignalStudyMotiveReviewV1,validateSignalStudyMotiveReviewV1,buildSignalStudyLayerReviewV1,
   validateSignalStudyLayerReviewV1,signalStudyLayerStabilityV1,applySignalStudyBoundaryRecodeV1,
@@ -282,4 +282,66 @@ test('query bias stays unknown without acquisition metadata and distinguishes ex
  assert.equal(signalStudyQueryBiasV1({...counts,query_terms:['tea'],problem_terms:['problem'],metadata:{query_terms_declared:false,problem_terms_declared:true}}).status,'unknown_query_metadata');
  assert.equal(signalStudyQueryBiasV1({...counts,query_terms:['tea'],problem_terms:[],metadata:{query_terms_declared:true,problem_terms_declared:true}}).status,'query_not_problem_selected');
  assert.equal(signalStudyQueryBiasV1({...counts,query_terms:['problem'],problem_terms:['problem']}).status,'possible_query_bias');
+});
+
+test('original URL publishability is canonical and does not alter roots, axes, sampling IDs or denominators',()=>{
+ const urls=['https://example.invalid/p','http://example.invalid/p','','  ','not a URL','ftp://example.invalid/p','https://fixture:placeholder@example.invalid/p'];
+ assert.deepEqual(urls.map(signalStudySourceUrlStateV1),['valid','valid','missing','missing','invalid','invalid','invalid']);
+ const roots=Array.from({length:100},(_,i)=>root(i)),mixed=roots.map((r,i)=>({...r,source_url:urls[i%urls.length]!}));
+ const args={study_digest:digest(study),group_key:'enjoyment',centroid:signalStudyConfirmedCentroidV1(roots),seed:'same-frozen-seed'};
+ const original=sampleSignalStudyGroupV1({...args,roots}),changed=sampleSignalStudyGroupV1({...args,roots:mixed});
+ assert.equal(buildSignalStudyMotivePopulationV1(mixed).population_digest,buildSignalStudyMotivePopulationV1(roots).population_digest);
+ for(const pass of[0,1]as const){const a=original[pass],b=changed[pass];
+  assert.deepEqual(b.rows.map(({evidence_publishable,...row})=>row),a.rows.map(({evidence_publishable,...row})=>row));
+  assert.deepEqual(b.sampling_policy,a.sampling_policy);assert.equal(b.population_count,100);assert.equal(b.random_count,35);assert.equal(b.far_count,5);
+  assert.equal(b.independence,a.independence);assert.equal(b.insufficient_sample,a.insufficient_sample);assert.notEqual(b.sample_digest,a.sample_digest);
+  const before=layerReview(a),after=layerReview(b);assert.notEqual(after.input_digest,before.input_digest);assert.notEqual(after.request_digest,before.request_digest);
+  const body=JSON.parse(after.request_body);assert.equal(body.model,'claude-sonnet-4-6');assert.equal(body.max_tokens,32768);
+  for(const row of b.rows)assert.equal(row.evidence_publishable,signalStudyEvidencePublishableV1(mixed.find(r=>r.root_id===row.root_id)!));
+ }
+ const invalid=mixed.find(r=>!signalStudyEvidencePublishableV1(r))!;
+ assert.throws(()=>verifySignalStudyVerbatimV1(invalid,'I enjoy it'),/source_invalid/);
+});
+
+test('layer schema and parser allow literal quotes only from publishable original rows while diagnosing the entire sample',()=>{
+ const roots=Array.from({length:100},(_,i)=>({...root(i),source_url:i%2?'https://example.invalid/p/'+i:''}));
+ const [sample]=sampleSignalStudyGroupV1({study_digest:digest(study),group_key:'enjoyment',roots,centroid:signalStudyConfirmedCentroidV1(roots),seed:'publishability-mixed'});
+ const review=layerReview(sample),body=JSON.parse(review.request_body),payload=JSON.parse(body.messages[0].content).untrusted_data;
+ const pub=sample.rows.filter(r=>r.evidence_publishable),unpub=sample.rows.filter(r=>!r.evidence_publishable);assert.ok(pub.length&&unpub.length);
+ assert.deepEqual(payload.motives[0].sample,sample.rows);assert.match(body.system,/ALL supplied sample rows/);assert.match(body.system,/OWN partition/);
+ const wire=body.output_config.format.schema.properties.motives.items.properties.partitions.items.properties;
+ assert.deepEqual(wire.evidence.anyOf[0].properties.root_id.enum,pub.map(r=>r.root_id).sort());
+ assert.deepEqual(wire.normative_evidence.anyOf[0].properties.root_id.enum,pub.map(r=>r.root_id).sort());
+ const output=layerOutput(review),partition=output.motives[0]!.partitions[0]!;
+ partition.evidence.root_id=unpub[0]!.root_id;assert.throws(()=>validateSignalStudyLayerReviewV1(review,output),/evidence_not_literal/);
+ partition.evidence.root_id=pub[0]!.root_id;assert.equal(validateSignalStudyLayerReviewV1(review,output).motives[0]!.partitions[0]!.layer,'psychological');
+ const cultural=layerOutput(review,'cultural');cultural.motives[0]!.partitions[0]!.evidence.root_id=pub[0]!.root_id;
+ cultural.motives[0]!.partitions[0]!.normative_evidence!.root_id=unpub[0]!.root_id;
+ assert.throws(()=>validateSignalStudyLayerReviewV1(review,cultural),/evidence_not_literal/);
+ const basePartition=output.motives[0]!.partitions[0]!;
+ const split={...output,motives:[{motive_key:'enjoyment',partitions:[
+  {...basePartition,key:'unpublishable',sample_root_ids:unpub.map(r=>r.root_id),evidence:{root_id:pub[0]!.root_id,quote:'I enjoy it',private_person_names:[]}},
+  {...basePartition,key:'publishable',sample_root_ids:pub.map(r=>r.root_id)},
+ ]}]};
+ assert.throws(()=>validateSignalStudyLayerReviewV1(review,split),/evidence_not_literal/,'publishable root in another partition is not usable proof');
+ const validSplit={...split,motives:[{...split.motives[0]!,partitions:split.motives[0]!.partitions.map(p=>p.key==='unpublishable'?{...p,evidence:null,layer:'unclear'}:p)}]};
+ const result=validateSignalStudyLayerReviewV1(review,validSplit);assert.equal(result.motives[0]!.partitions[0]!.layer,'unclear');
+ assert.equal(result.motives[0]!.partitions.reduce((n,p)=>n+p.sample_root_ids.length,0),sample.rows.length);
+ assert.equal(result.motives[0]!.partitions[0]!.diagnostics.length,4);
+});
+
+test('zero publishable rows use null-only quote schema and preserve an unclear full-population blind assessment',()=>{
+ const roots=Array.from({length:100},(_,i)=>({...root(i),source_url:''}));
+ const pair=sampleSignalStudyGroupV1({study_digest:digest(study),group_key:'enjoyment',roots,centroid:signalStudyConfirmedCentroidV1(roots),seed:'no-url'});
+ const decisions=pair.map(sample=>{const review=layerReview(sample),body=JSON.parse(review.request_body);
+  const wire=body.output_config.format.schema.properties.motives.items.properties.partitions.items.properties;
+  assert.deepEqual(wire.evidence,{type:'null'});assert.deepEqual(wire.normative_evidence,{type:'null'});
+  assert.ok(!JSON.stringify(body.output_config).includes('"enum":[]'));
+  const output=layerOutput(review),p=output.motives[0]!.partitions[0]!;
+  return validateSignalStudyLayerReviewV1(review,{...output,motives:[{...output.motives[0]!,partitions:[{...p,evidence:null,normative_evidence:null}]}]});
+ });
+ assert.ok(decisions.every(d=>d.motives[0]!.partitions[0]!.layer==='unclear'&&d.motives[0]!.partitions[0]!.permission==='no_permission'));
+ const stability=signalStudyLayerStabilityV1(decisions[0]!,decisions[1]!);assert.equal(stability.kappa,null);assert.notEqual(stability.action,'stable');
+ const sample=pair[0],missing={...sample,rows:sample.rows.map(({evidence_publishable,...row})=>row)};const {sample_digest,...rest}=missing;
+ assert.throws(()=>layerReview({...rest,sample_digest:digest(rest)}as SignalStudySampleV1),/sample_invalid/);
 });
