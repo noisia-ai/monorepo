@@ -12,6 +12,21 @@ No hay aprobaciones humanas intermedias en los procesos de análisis: Sonnet 4.6
 
 ## Progreso
 
+Corte vigente del 15 de noviembre: estas entradas prevalecen sobre el historial anterior. El objetivo completo H0–H6 sigue abierto; no hubo despliegue ni gasto R16 en UAT.
+
+- H4: integrados y revisados los lotes editoriales V2, identidades semánticas estables, 0310 y privacidad de autores conocidos. Dos casos PostgreSQL sin omisiones cubren ejecución completa con BERTopic real, segunda ejecución sin JEV nuevo, κ y digest, y prefijo liquidado ante desborde posterior con parada durable y reinicio sin HTTP. El caso de privacidad pasó después de reproducir el roster vacío original; congela etiquetas y procedencia, incluido el valor registrado nulo que suprime fallback.
+- H1: 0311 pasó nueve casos PostgreSQL sin omisiones: límites de run/organización, carreras entre conexiones, cruce de ledgers, hijos y recuperación monetaria. 0312 pasó tres sin omisiones, conservando población, caché y precedencia de políticas específicas. Revisión final de SQL, tests y CI sin P0/P1/P2. La capacidad completa sigue sin acreditar; el siguiente ensayo conserva los umbrales originales y usa la ruta Listening nativa.
+- H6: el exportador nativo está integrado y revisado; la prueba conjunta sobre la fuente canónica completó Study y falló después en la validación del paquete. Se aisló una incompatibilidad entre la versión de plantilla externa del fixture y un literal de versión en el validador. Se corrigen ese contrato y el ancla financiera de las ediciones humanas antes de repetir la prueba; no hay paquete real aceptado.
+- Verificación integrada ec320e45: tipado y lint 11/11; DB 676 aprobadas, cero fallos y 281 omisiones de entorno. Las pruebas nativas citadas se ejecutaron por separado sin omisiones; las omisiones del conjunto general no se presentan como PostgreSQL acreditado. El tipado aislado de scripts también pasó.
+- Operación: el saldo visible verificado es USD 26.05 editorial y USD 28.77 JEV. La cuota vigente es compartida entre todas las claves de la organización: 80 solicitudes/s y 100,000 tokens de entrada/s. Sin compras ni cambio de plan. Se mide mediante lectura gobernada el tamaño del corte histórico real antes de asumir que los límites de Source permiten el Estudio R16; no se sustituye ese diagnóstico por aceptación R16.
+
+### Historial de avances y diagnósticos
+
+- 15 nov.: la matriz nativa de Escucha cerró 10/10 sobre c5586619, con crudos reales de fixture, PostgreSQL, Redis y cero repetición física en recuperación. El ensayo posterior de 32,768 raíces se rechazó: sólo la consulta inicial de presupuesto superó 133 s; reservas y marcado también repetían exposición por fila. Se detuvo únicamente su proceso, conservando dump y estados parciales. No acredita capacidad ni autoriza proveedor real.
+- 15 nov.: el prototipo SQL en copia conserva exactamente las 32 filas verificadas de ocho raíces y reduce la consulta completa de presupuesto a 2.86 s. La migración aditiva 0312 está en pruebas nativas y revisión; 0311 implementa límites monetarios por statement, con límites de run y organización comprobados dentro de PostgreSQL. Los dos tests iniciales de 0311 fallaron en la fuente anterior y confirmaron el problema; falta comprobar la corrección.
+- 15 nov.: integrados el compilador editorial por lotes y el runtime V2, revisados. Un control posterior detectó claves de motivo dependientes de la semilla que invalidaban la caché entre ejecuciones; el parche de identidad semántica está en revisión. V2 no se habilita antes de 0310 ni de sus pruebas de persistencia, recuperación y reutilización.
+- 15 nov.: UAT conserva 83,962 raíces incluidas en 96,150 filas de menciones; lectura repetible con TLS y sólo lectura. Escucha y Estudios R16 aún no están migrados en UAT. El exportador corrige binding histórico, conjunto de cuatro candidatos sin ranking ficticio y dirección original; la reconstrucción de κ V2 depende del replay nativo 0310 y sigue pendiente. Sin llamadas pagadas ni despliegue R16.
+
 - H1 integración del nuevo consumidor: warmup paralelo acotado con estimador conservador intacto, preflight real de Storage y configuración normalizada antes de preregistrar. El reloj ya incluye admisión nativa y censo inicial; la revisión cerró ese P2. Ocho pruebas de contratos/scripts pasan. La matriz nueva de ocho casos aún no se ejecutó: la revisión detectó que dos escenarios cubrían pérdidas de ACK y faltaban rechazo de escritura y rollback reales; se amplía la cobertura antes del laboratorio. Las cuotas de 10,000 RPS/10 millones TPS son exclusivamente sintéticas; las reales no se modifican.
 
 - H4 transporte integrado 2605b6e0, revisado sin P0/P1/P2: Sonnet 4.6 recibe el cuerpo canónico intacto, una credencial explícita y una sola tentativa con abort/timeout y bytes acotados. Los recibos usan Storage privado con fsync, dirección de contenido y readback real. Runtime y transporte pasan 26/26 sin omisiones, tipado/lint 11/11. El estado incierto persistido se muestra inmediatamente como outcome_unknown, sin reinterpretar 529/truncados ni reenviar. Faltan el ensamblado productivo y la aceptación UAT; ninguna llamada real R16 se ha enviado.
@@ -168,6 +183,13 @@ Recibo: separar Voyage/JEV por raíz de Claude por número de grupos y vueltas; 
 
 ## Sorpresas y descubrimientos
 
+- El runtime canónico de Study sí completó la prueba conjunta que en una rama parcial fallaba por autoridad. El fallo siguiente pertenece al exportador: el fixture usa una plantilla externa versionada y el validador ciego exigía literalmente r16-v1. Se conserva el digest y la procedencia; no se altera el procesamiento para satisfacer el exportador.
+
+- La fuente nativa congelaba el roster de nombres vacío. Se comprobaron los campos reales de etiqueta de autor y su bandera de registro: un valor registrado nulo debe suprimir el fallback histórico. El seguimiento conserva sólo etiquetas conocidas y su procedencia; no inventa nombres ni incorpora NER. Los snapshots históricos se mantienen intactos.
+
+- El primer ensayo de Escucha real del harness descubrió dos costos ocultos que el benchmark heredado no cubría: preparar todo el presupuesto con la población completa, y volver a sumar la exposición histórica por cada fila de reserva y marcado. Se conserva el diagnóstico rechazado; cambiar a un guard por lote no sustituye comprobar los importes agregados dentro de SQL.
+- La identidad de los motivos no puede depender del identificador operativo de un lote o de su semilla. Los recibos y pasos mantienen identidad por ejecución; las preguntas equivalentes conservan identidad semántica para reutilizar la caché.
+
 - El contrato editorial de Study omite stream; el transporte de otro consumidor exigía stream=false. Reutilizarlo directamente habría rechazado la solicitud o alterado los bytes sellados. El transporte Study acepta la omisión canónica y conserva request_body/digest exactos.
 
 - Una pérdida de ACK después de COMMIT/put no demuestra un fallo real de COMMIT/escritura. Si se rechaza el primer put y no existe ninguna copia productiva durable, el arnés no puede resucitar el recibo mediante una copia propia: debe probar contención de incertidumbre y cero reenvíos. Los casos recuperables con blobs reales conservan la exigencia de completar todas las preguntas.
@@ -243,6 +265,15 @@ Recibo: separar Voyage/JEV por raíz de Claude por número de grupos y vueltas; 
 - El promedio del piloto completo incluye una etapa editorial que no escala por raíz. Multiplicarlo linealmente daba USD 205.81/millón; mantener explícitamente los grupos y una vuelta de referencia produce USD 114.035250. Ambos cálculos parten del mismo recibo, cuyo uso histórico permanece USD 17.280463.
 
 ## Registro de decisiones
+
+- 15 nov.: la fuente canónica de integración es la rama codex/r16-integrated-runtime. Una prueba fallida sobre una rama parcial no justifica debilitar permisos: se reproduce primero en la integración revisada. Los paquetes y la capacidad se aceptan sólo sobre esa fuente y con recibos completos.
+- 15 nov.: antes de una ejecución real pagada se verifica el tamaño del corte histórico por lectura TLS, transacción repetible de sólo lectura, actor y mapa vigentes. Superar el límite inferior de memoria requiere una fuente paginada real; no autoriza subir límites ni recortar el corte.
+
+- 2026-11-15: obtener κ del replay nativo probado y adjuntar evidencia real; los campos de prueba no observados pueden ser nulos, pero no se sustituye un hash global por dos hashes de pasada. Los treinta casos externos al léxico evalúan omisión por filtro y conservan ejes no preguntados; nunca se fabrica una predicción JEV «none».
+
+- 2026-11-15: detener un benchmark ya descalificado por una cota matemática observable, conservando snapshot y estados; no presentarlo como una medición completa ni repetirlo antes de corregir el cuello localizado.
+- 2026-11-15: 0312 agrupa la autorización de procedencia por batch con la misma prioridad de bindings y verifica igualdad con la función histórica. 0311 mantiene guardas relacionales por fila y valida la exposición agregada en SQL antes del COMMIT. No se permite una caché de aprobación reutilizable entre statements ni confiar sólo en el store.
+- 2026-11-15: el exportador de auditoría obtiene κ del mismo replay nativo versionado que reconstruye el Estudio; no adivina etapas a partir de hashes u offsets ni duplica el protocolo V2.
 
 - Antes de etapas pagadas, añadir a la muestra sólo metadatos verificables de evidencia publicable, sin eliminar raíces, cambiar agrupaciones ni reducir denominadores. La selección de citas debe usar esas filas; una partición sin prueba sigue las reglas de unclear. Conservar el preflight nativo anterior al gasto y la verificación literal/fuente al publicar.
 
