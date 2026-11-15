@@ -85,6 +85,36 @@ test('Listening uses calendar boundaries in the selected timezone and an exclusi
   assert.throws(()=>signalListeningDateBoundaryV1('2026-02-31','UTC'),/invalid/);
 });
 
+test('completed discovery polling adopts a clean configuration and its CAS without a reload',async()=>{
+  const messages=JSON.parse(await readFile(new URL('../../../messages/en-US.json',import.meta.url),'utf8'));
+  const configuration=signalListeningBaseTemplateV1({category:'tea',lexicon_terms:['tea']});
+  const savedFetch=globalThis.fetch,savedInterval=globalThis.setInterval,savedClear=globalThis.clearInterval;
+  let poll:(()=>void)|undefined,reads=0,body:{expected_revision:number;configuration:{category:string}}|undefined;
+  globalThis.setInterval=((callback:()=>void)=>{poll=callback;return 1;})as unknown as typeof setInterval;
+  globalThis.clearInterval=(()=>undefined)as typeof clearInterval;
+  globalThis.fetch=async(_url,options)=>{
+    if(options?.method==='PUT'){body=JSON.parse(String(options.body));return Response.json({error:'synthetic_save_unavailable'},{status:503});}
+    reads++;
+    return Response.json({configuration:{id:reads===1?'old':'new',revision:reads===1?1:2,configuration:reads===1?configuration:{...configuration,category:'updated tea'}},
+      map:{id:'map',root_count:12},run:{id:'run',status:'completed'},
+      discovery:{intent_id:'intent',status:'started',execution_status:reads===1?'active':'completed'},
+      capabilities:{can_edit_topics:true,can_request_processing:true}});
+  };
+  const host=document.createElement('div');document.body.appendChild(host);const root=createRoot(host);
+  try{
+    await act(async()=>{root.render(<NextIntlClientProvider locale="en-US" messages={messages} timeZone="UTC"><SignalListeningConfiguration workspaceId="workspace"/></NextIntlClientProvider>);});
+    assert.ok(poll);assert.equal(host.querySelector('input')!.value,'tea');
+    await act(async()=>{poll!();await new Promise(resolve=>setTimeout(resolve,0));});
+    assert.equal(host.querySelector('input')!.value,'updated tea');assert.equal(host.querySelector('[role="alert"]'),null);
+    const save=[...host.querySelectorAll('button')].find(button=>button.textContent===messages.Listening.save)!;
+    assert.equal(save.disabled,false);
+    await act(async()=>{save.click();await new Promise(resolve=>setTimeout(resolve,0));});
+    assert.equal(body?.expected_revision,2);assert.equal(body?.configuration.category,'updated tea');assert.equal(reads,2,'polling replaces the need to reload');
+  }finally{
+    await act(async()=>root.unmount());host.remove();globalThis.fetch=savedFetch;globalThis.setInterval=savedInterval;globalThis.clearInterval=savedClear;
+  }
+});
+
 test('polling a newer configuration never advances the CAS revision of an unsaved draft',async()=>{
   const messages=JSON.parse(await readFile(new URL('../../../messages/en-US.json',import.meta.url),'utf8'));
   const configuration=signalListeningBaseTemplateV1({category:'tea',lexicon_terms:['tea']});
@@ -107,6 +137,8 @@ test('polling a newer configuration never advances the CAS revision of an unsave
     await act(async()=>{poll!();await new Promise(resolve=>setTimeout(resolve,0));});
     const save=[...host.querySelectorAll('button')].find(button=>button.textContent===messages.Listening.save)!;
     assert.equal(save.disabled,false);
+    assert.equal(host.querySelectorAll('fieldset').length,3,'the local question remains in the draft');
+    assert.ok(host.textContent?.includes(messages.LabelingStudySettings.conflict));
     await act(async()=>{save.click();await new Promise(resolve=>setTimeout(resolve,0));});
     assert.equal(revision,1,'the human draft retains the revision it was loaded from');
   }finally{
