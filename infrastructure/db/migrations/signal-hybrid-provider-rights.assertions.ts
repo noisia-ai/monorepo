@@ -6,6 +6,21 @@ import {signalProvenancePolicyBindingDefinitionHashV1} from '@noisia/query-engin
 import {HYBRID_PROVIDER_RIGHTS_BEFORE_SUBMIT_SQL_V1,assertHybridProviderRightsBeforeSubmitV1} from '../signal-hybrid-runs';
 import type {LabelingRunV1} from '../signal-labeling-runs';
 const sha=(value:string)=>'sha256:'+createHash('sha256').update(value).digest('hex');
+/** Run the frozen scalar oracle over every selected call, in bounded subsets.
+ * ANY selects each ID once even when the caller repeats it; sum only disjoint sets. */
+export async function verifyHybridProviderRightsOracleV1(client:PoolClient,run_id:string,workspace:string,call_ids:string[]){
+ const old=await readFile(new URL('./signal-hybrid-provider-rights-before-batch.fixture.sql',import.meta.url),'utf8');
+ const ids=[...new Set(call_ids)],total={found:0,allowed:0,input_count:0};
+ for(let start=0;start<ids.length;start+=20){
+  const args=[run_id,workspace,ids.slice(start,start+20)];
+  const before=(await client.query(old,args)).rows[0]!,after=(await client.query(HYBRID_PROVIDER_RIGHTS_BEFORE_SUBMIT_SQL_V1,args)).rows[0]!;
+  assert.deepEqual(after,before,'each bounded subset preserves the complete frozen scalar oracle');
+  for(const key of ['found','allowed','input_count'] as const)total[key]+=before[key];
+ }
+ assert.deepEqual((await client.query(HYBRID_PROVIDER_RIGHTS_BEFORE_SUBMIT_SQL_V1,[run_id,workspace,call_ids])).rows[0],total,
+  'the full set matches the summed scalar oracle, including ANY ID deduplication');
+ return total;
+}
 /** Small native controls compare the prior SQL and exercise fresh policy state.
  * The separate 662-call continuation remains the unchanged 20-second gate. */
 export async function verifyHybridProviderRightsSetPlanV1(a:{client:PoolClient;workspace:string;organization:string;actor:string;
@@ -38,6 +53,28 @@ export async function verifyHybridProviderRightsSetPlanV1(a:{client:PoolClient;w
  };
  const purposes=['llm-processing','client-derived-metrics','client-mention-list','client-text-or-excerpt'];
  await check(true);
+ await verifyHybridProviderRightsOracleV1(client,a.run_id,a.workspace,[a.call_id,a.call_id]);
+ // Read-only call-input boundary controls: do not forge or mutate durable provider calls.
+ // Both unchanged queries see the same synthetic call CTE and real provenance tables.
+ const inputControl=async(inputs:unknown[],expected:{found:number;allowed:number;input_count:number},workspace=a.workspace)=>{
+  const wrap=(sql:string)=>`WITH signal_labeling_calls AS (
+   SELECT $4::uuid id,$1::uuid run_id,$2::uuid workspace_id,$5::jsonb inputs
+  ) SELECT * FROM (${sql}) rights`;
+  const args=[a.run_id,workspace,[a.call_id,a.call_id],a.call_id,JSON.stringify(inputs)];
+  const before=(await client.query(wrap(old),args)).rows[0]!,after=(await client.query(wrap(HYBRID_PROVIDER_RIGHTS_BEFORE_SUBMIT_SQL_V1),args)).rows[0]!;
+  assert.deepEqual(after,before,'input boundaries preserve the original scalar count and textual identity semantics');
+  assert.deepEqual(after,expected);
+ };
+ await inputControl([],{found:1,allowed:0,input_count:0});
+ await inputControl([{root_id:a.root},{root_id:a.root}],{found:1,allowed:2,input_count:2});
+ const invalid=[{root_id:'not-a-uuid'},{root_id:`{${a.root}}`},{root_id:a.root.replaceAll('-','')},
+  {root_id:'00000000-0000-0000-0000-000000000000'},{root_id:42},{},null];
+ await inputControl(invalid,{found:1,allowed:0,input_count:invalid.length});
+ await inputControl([{root_id:a.root},...invalid],{found:1,allowed:1,input_count:invalid.length+1});
+ if(a.root.toUpperCase()!==a.root)await inputControl([{root_id:a.root.toUpperCase()}],{found:1,allowed:0,input_count:1});
+ assert.equal((await client.query(`SELECT count(*)::int n FROM mentions WHERE workspace_id=$1 AND canonical_mention_id=$2`,
+  [a.other_workspace,a.root])).rows[0].n,0,'the foreign-workspace control has no matching origin');
+ await inputControl([{root_id:a.root}],{found:1,allowed:0,input_count:1},a.other_workspace);
  // A batch-specific denial takes precedence over the older complete global binding.
  for(const omitted of purposes){await client.query('SAVEPOINT rights_set_missing_usage');try{
   await binding(await license(purposes.filter(p=>p!==omitted)),a.batch,2);await check(false);
@@ -56,7 +93,8 @@ export async function verifyHybridProviderRightsSetPlanV1(a:{client:PoolClient;w
    else await client.query(`UPDATE ${table} SET status='retired',effective_to=now() WHERE id=$1`,[id]);await check(false);
   }finally{await client.query('ROLLBACK TO SAVEPOINT rights_set_revoked');await client.query('RELEASE SAVEPOINT rights_set_revoked');}
  }
- for(const params of [[a.run_id,a.other_workspace,[a.call_id]],[randomUUID(),a.workspace,[a.call_id]],[a.run_id,a.workspace,[randomUUID()]]]){
+ for(const params of [[a.run_id,a.other_workspace,[a.call_id]],[randomUUID(),a.workspace,[a.call_id]],
+  [a.run_id,a.workspace,[randomUUID()]],[a.run_id,a.workspace,[]]]){
   assert.deepEqual((await client.query(HYBRID_PROVIDER_RIGHTS_BEFORE_SUBMIT_SQL_V1,params)).rows,(await client.query(old,params)).rows);
  }
  await assert.rejects(assertHybridProviderRightsBeforeSubmitV1(client,{...run,workspace_id:a.other_workspace},calls),/hybrid_provider_rights_changed/);
