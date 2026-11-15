@@ -90,3 +90,29 @@ export async function getSignalListeningDiscoveryPublicationRecoveryV1(args:{dat
     }
   });
 }
+
+/** Scheduling hint only. Financial custody is selected independently, even when
+ * authorization is revoked. Every mutating owner rechecks inside its own lock. */
+export async function canScheduleSignalListeningDiscoveryAnalysisV1(args:{database:WorkerArgs['database'];round_id:string}){
+  if(!uuid.test(args.round_id))fail('listening_discovery_round_invalid',422);
+  return listeningTransactionV1(args.database,async client=>{
+    const row=(await client.query<{workspace_id:string;actor_user_id:string;map_id:string}>(`SELECT r.workspace_id,p.actor_user_id,p.map_id
+      FROM signal_listening_discovery_rounds r JOIN signal_listening_discovery_executions p ON p.id=r.execution_id AND p.workspace_id=r.workspace_id
+      JOIN signal_processing_policy_versions policy ON policy.id=p.policy_version_id AND policy.organization_id=p.organization_id
+        AND policy.status='active' AND policy.valid_from<=clock_timestamp() AND policy.valid_until>clock_timestamp()
+      JOIN signal_listening_configurations cfg ON cfg.id=COALESCE(r.output_configuration_id,r.configuration_id) AND cfg.workspace_id=r.workspace_id
+        AND cfg.state='published' AND cfg.revision=(SELECT max(revision) FROM signal_listening_configurations WHERE workspace_id=r.workspace_id AND state='published')
+      WHERE r.id=$1::uuid AND r.status IN('queued','reviewing','reviewed','classifying','outcome_unknown') AND p.status='active'
+        AND signal_listening_discovery_exposure_v1(p.id)<=p.cap_micro_usd`,[args.round_id])).rows[0];
+    if(!row)return false;
+    try{
+      const caps=await authorizeSignalListeningV1(client,row);
+      if(!caps.can_edit_topics||!caps.can_request_processing)return false;
+      await mapCurrent(client,row.workspace_id,row.map_id);return true;
+    }catch(error){
+      if(error instanceof SignalLabelingError&&([403,404].includes(error.status)
+        ||['mass_labeling_map_stale','mass_labeling_context_changed'].includes(error.code)))return false;
+      throw error;
+    }
+  });
+}

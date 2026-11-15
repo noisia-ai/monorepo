@@ -179,16 +179,24 @@ test('discovery reviews use native admissions, durable receipts and one shared l
    await db.query("DELETE FROM signal_workspace_features WHERE workspace_id=$1 AND feature='mass_labeling'",[ctx.workspace_id]);
    await persistSignalListeningDiscoveryRawV1({database:db,call_id:review.id,attempt_token:review.attempt_token,raw_text:reviewRaw,raw_store:reviewStorage});
    assert.equal((await persistSignalListeningDiscoveryRawV1({database:db,call_id:review.id,attempt_token:review.attempt_token,raw_text:reviewRaw,raw_store:reviewStorage})).replayed,true,'lost raw ACK reuses exact bytes');
+   if(mode==='happy'){
+    assert.equal(await releaseSignalListeningDiscoveryRoundV1({database:db,lease}),true);
+    assert.ok((await pendingSignalListeningDiscoveryRoundsV1({database:db,enabled:true,limit:1})).some(r=>r.round_id===round.id),
+     'pending raw custody remains schedulable after feature revocation');
+   }
    const paid=await settleSignalListeningDiscoveryCallV1({database:db,call_id:review.id,attempt_token:review.attempt_token});assert.equal(paid.cost_micro_usd,600);
    assert.equal((await settleSignalListeningDiscoveryCallV1({database:db,call_id:review.id,attempt_token:review.attempt_token})).replayed,true,'lost settlement ACK never recharges');
    assert.equal(Number((await db.query('SELECT signal_listening_discovery_exposure_v1($1)::text n',[execution.id])).rows[0].n),618);
    if(mode==='happy'){
-    assert.equal(await releaseSignalListeningDiscoveryRoundV1({database:db,lease}),true);
     assert.ok(!(await pendingSignalListeningDiscoveryRoundsV1({database:db,enabled:false})).some(r=>r.round_id===round.id),
      'disabled analysis does not repeatedly poll an already settled review');
+    assert.ok(!(await pendingSignalListeningDiscoveryRoundsV1({database:db,enabled:true,limit:1})).some(r=>r.round_id===round.id),
+     'a settled review without current authority cannot monopolize the analysis queue');
    }
    await assert.rejects(applySignalListeningDiscoveryReviewV1({...access,round_id:round.id}),/not_enabled/,'revocation after send preserves money but forbids publication');
    await db.query("INSERT INTO signal_workspace_features(workspace_id,feature,enabled_by) VALUES($1,'mass_labeling',$2)",[ctx.workspace_id,ctx.actor_user_id]);
+   if(mode==='happy')assert.ok((await pendingSignalListeningDiscoveryRoundsV1({database:db,enabled:true,limit:1})).some(r=>r.round_id===round.id),
+    'reactivating the feature restores eligibility without altering its settled receipt');
    assert.equal(await getSignalListeningServingSnapshotV1(access),null,'ready centroid generation is not a serving publication');
    await assert.rejects(activateSignalListeningServingSnapshotV1({...access,round_id:round.id}),/snapshot_invalid|violates/);
    if(mode==='human'){

@@ -357,14 +357,17 @@ export async function getSignalListeningServingSnapshotV1(args:SignalListeningAc
 /** Only already admitted owners are drained. This function creates no authority. */
 export async function pendingSignalListeningDiscoveryRoundsV1(args:{database:SignalListeningAccessV1['database'];limit?:number;enabled?:boolean}){
  const limit=args.limit??20;if(!Number.isSafeInteger(limit)||limit<1||limit>100)fail('listening_discovery_limit_invalid',422);
- type Candidate={round_id:string;workspace_id:string;actor_user_id:string;status:string;created_at:string};
- const ready:Array<Omit<Candidate,'created_at'>>=[];let cursor:Candidate|undefined;
- const {getSignalListeningDiscoveryPublicationRecoveryV1}=await import('./signal-listening-discovery-runtime');
+ type Candidate={round_id:string;workspace_id:string;actor_user_id:string;status:string;created_at:string;financial_pending:boolean};
+ const ready:Array<Omit<Candidate,'created_at'|'financial_pending'>>=[];let cursor:Candidate|undefined;
+ const {getSignalListeningDiscoveryPublicationRecoveryV1,canScheduleSignalListeningDiscoveryAnalysisV1}=await import('./signal-listening-discovery-runtime');
  // Page past immutable completed rows that can no longer publish. A rejected
  // historical publication must not occupy LIMIT forever and starve live work.
  while(ready.length<limit){
   const page=(await args.database.query<Candidate>(`SELECT r.id round_id,r.workspace_id,p.actor_user_id,r.status,
-   to_char(r.created_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') created_at
+   to_char(r.created_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') created_at,
+   EXISTS(SELECT 1 FROM engine_cost_events custody WHERE custody.listening_round_id=r.id
+     AND(custody.call_state='response_persisted' OR custody.call_state<>'settled' AND EXISTS(
+       SELECT 1 FROM signal_listening_discovery_raw_receipts raw WHERE raw.call_id=custody.id AND raw.verification_status='planned'))) financial_pending
    FROM signal_listening_discovery_rounds r JOIN signal_listening_discovery_executions p ON p.id=r.execution_id
    WHERE(r.status IN('queued','reviewing','reviewed','classifying') OR r.status='outcome_unknown' AND EXISTS(
      SELECT 1 FROM engine_cost_events c WHERE c.listening_round_id=r.id AND(c.call_state IN('response_persisted','settled') OR EXISTS(
@@ -378,7 +381,8 @@ export async function pendingSignalListeningDiscoveryRoundsV1(args:{database:Sig
    ORDER BY r.created_at,r.id LIMIT $1`,[limit,args.enabled===true,cursor?.created_at??null,cursor?.round_id??null])).rows;
   for(const row of page){
    if(row.status==='completed'&&!await getSignalListeningDiscoveryPublicationRecoveryV1({database:args.database,round_id:row.round_id}))continue;
-   const {created_at:_,...item}=row;ready.push(item);if(ready.length===limit)break;
+   if(row.status!=='completed'&&!row.financial_pending&&!await canScheduleSignalListeningDiscoveryAnalysisV1({database:args.database,round_id:row.round_id}))continue;
+   const {created_at:_,financial_pending:__,...item}=row;ready.push(item);if(ready.length===limit)break;
   }
   if(page.length<limit)break;cursor=page.at(-1)!;
  }
