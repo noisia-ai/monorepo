@@ -85,7 +85,7 @@ test('listening job automatically warms up32 ordinary roots inside the claimed r
     const outcome=await signalListeningJevJobV1(f.run.id,{database,store:f.store,provider:f.provider,execution:{...execution,window_size:200},preflight:async()=>{},
       calibration:{load:async()=>null,derive:async args=>{derivations++;assert.equal(args.run_id,f.run.id);assert.equal(args.actor_user_id,f.run.actor_user_id);
         assert.equal(f.results.length,32);assert.ok(f.events.includes('durable'));return null;}}});
-    assert.equal(outcome.labeled,32);assert.equal(f.requests.length,32);assert.equal(peak,1);assert.equal(derivations,1);
+    assert.equal(outcome.labeled,32);assert.equal(f.requests.length,32);assert.ok(peak>=2);assert.ok(peak<=8);assert.equal(derivations,1);
     assert.equal(closed,0,'an externally injected provider remains caller-owned');
   }finally{
     for(const [key,value]of [['NOISIA_SIGNAL_LISTENING_ENABLED',previous.owner],['NOISIA_JEV_PROVIDER_ENABLED',previous.provider]]as const)
@@ -144,7 +144,7 @@ test('heterogeneous pending batches warm their extremes once then remain paralle
     }}});
    peaks.push(peak);windows.push(f.requests.slice(before));assert.ok(windows.length<10,'bounded progress must finish rather than warming covered prefixes forever');
   }
-  assert.equal(windows[0]!.length,32);assert.equal(peaks[0],1);assert.ok(boundedReads>=2);
+  assert.equal(windows[0]!.length,32);assert.ok(peaks[0]!>=2);assert.ok(peaks[0]!<=8);assert.ok(boundedReads>=2);
   for(const index of [32,70,90])assert.ok(windows[0]!.some(request=>request.state===corpus[index]!.text));
   assert.ok(peaks.slice(1).every(value=>value>1));assert.equal(derivations,1);assert.equal(f.requests.length,corpus.length);
   assert.equal(f.calls.length,corpus.length);assert.equal(new Set(f.calls.map(call=>call.inputs[0]!.root_id)).size,corpus.length);
@@ -229,4 +229,24 @@ test('prepared selection exceeding retained request and response memory reserves
    execution:{...execution,max_buffered_bytes:512*1024},preflight:async()=>{},calibration:{load:async()=>null,derive:async()=>null}}),/listening_selection_memory_bound/);
   assert.equal(reads,1);assert.equal(reserves,0);assert.equal(f.requests.length,0);
  }finally{names.forEach((key,i)=>{if(previous[i]===undefined)delete process.env[key];else process.env[key]=previous[i];});}
+});
+
+for(const failure of['unusable_usage','invalid_answers']as const)test(`parallel warmup closes admission on ${failure}, drains siblings and cannot resend ambiguous attempts`,async()=>{
+ const f=fixture(signalListeningBaseTemplateV1({category:'tea',lexicon_terms:['tea']}),[['voice','promotion']]);
+ const sample=(await f.store.inputs(f.run))[0]!,corpus=Array.from({length:40},()=>({...sample,root_id:randomUUID()}));
+ let reserved=false;f.store.inputs=async()=>reserved?[]:corpus;
+ const reserve=f.store.reserve;f.store.reserve=async(run,proposals)=>{reserved=true;return reserve(run,proposals);};
+ let physical=0;const evaluate=f.provider.evaluate;
+ f.provider.evaluate=async(...args)=>{const i=physical++;if(i===0){await new Promise(resolve=>setTimeout(resolve,2));return{body:JSON.stringify({model:args[0].model,...(failure==='invalid_answers'?{usage:{input_tokens:100,output_tokens:0}}:{}),answers:{}}),http_status:200,latency_ms:2};}
+  await new Promise(resolve=>setTimeout(resolve,20));return evaluate(...args);};
+ const outcome=await processSignalListeningJevV1({run_id:f.run.id,store:f.store,provider:f.provider,
+  execution:{...execution,window_size:32,max_in_flight:4,flush_size:1}});
+ assert.ok(physical>=2);assert.ok(physical<=5,'only the initial four plus one handoff racing asynchronous raw validation may send');
+ assert.ok(f.calls.filter(c=>c.status==='reserved').every(c=>!c.raw_body&&!c.results_applied),'never-sent reservations retain no invented technical response');
+ assert.equal(f.results.filter(r=>r.status==='labeled').length,physical-1,'all handed-off siblings drain');
+ if(failure==='unusable_usage'){
+  assert.equal(outcome.status,'failed');assert.ok(f.calls.some(call=>call.status==='unknown'));const before=physical;
+  await processSignalListeningJevV1({run_id:f.run.id,store:f.store,provider:f.provider,execution,recovery_only:true});
+  assert.equal(physical,before,'ambiguous physical receipt is not resubmitted');
+ }
 });

@@ -28,9 +28,9 @@ test('explicit validated compiler measures persisted whitespace/UTF8 bytes; the 
  let reads=0;await assert.rejects(planSignalListeningCalibrationV1({...f,inputs:[input],execution,loadProfile:async()=>{reads++;return profile;},compile_request:'invalid' as never}),/compiler_invalid/);assert.equal(reads,0);
  await assert.rejects(planSignalListeningCalibrationV1({...f,inputs:[input],execution,loadProfile:async()=>profile,compile_request:()=>({...exact,state:'different source'})}),/compiler_invalid/);
 });
-test('a missing profile bootstraps at most32 roots on one slot with fixed official quota and reusable ordinary requests',async()=>{
+test('a missing profile bootstraps at most32 roots with bounded slots, fixed official quota and reusable ordinary requests',async()=>{
   const f=fixture(),plan=await planSignalListeningCalibrationV1({...f,inputs:[f.input],execution,loadProfile:async()=>null});
-  assert.equal(plan.warmup,true);assert.equal(plan.execution.window_size,32);assert.equal(plan.execution.max_in_flight,1);
+  assert.equal(plan.warmup,true);assert.equal(plan.execution.window_size,32);assert.equal(plan.execution.max_in_flight,32);
   const env={TYPESAFE_API_KEY:'synthetic',NOISIA_TYPESAFE_ACCOUNT_ID:'synthetic-account',NOISIA_TYPESAFE_ACCOUNT_RPS:'80',NOISIA_TYPESAFE_ACCOUNT_INPUT_TPS:'100000',NOISIA_JEV_TOKEN_CALIBRATIONS_JSON:'untouched-old-profile'};
   const calibrations:unknown[]=[],requests:string[]=[];let active=0,peak=0,observations=0;
   const runtime=createSignalListeningCalibratedProviderV1({plan,env,factory:args=>{
@@ -47,7 +47,7 @@ test('a missing profile bootstraps at most32 roots on one slot with fixed offici
   }});
   try{
     const request=buildSignalListeningJevRequestV1(f.input,f.configuration),raw=await Promise.all(Array.from({length:3},()=>runtime.provider.evaluate(request)));
-    assert.equal(peak,1);assert.deepEqual(requests,['I drink tea','I drink tea','I drink tea']);
+    assert.equal(peak,3);assert.deepEqual(requests,['I drink tea','I drink tea','I drink tea']);
     assert.equal(raw[0]!.rate_reservation?.estimated_input_tokens,65536);
     await Promise.all(raw.map(value=>runtime.provider.observeUsage!(value,100)));assert.equal(observations,3);
     const calibration=Object.values(calibrations[0]as Record<string,{kind:string;fixed_input_tokens:number}>)[0]!;
@@ -55,11 +55,11 @@ test('a missing profile bootstraps at most32 roots on one slot with fixed offici
     assert.equal(env.NOISIA_JEV_TOKEN_CALIBRATIONS_JSON,'untouched-old-profile');
   }finally{await runtime.provider.close?.();}
 });
-test('only an exact ledger profile and covered request bytes unlock configured concurrency; new configurations bootstrap',async()=>{
+test('only an exact ledger profile and covered request bytes unlock full configured concurrency; new configurations bootstrap',async()=>{
   const f=fixture(),plan=await planSignalListeningCalibrationV1({...f,inputs:[f.input],execution,loadProfile:async()=>f.profile});
   assert.equal(plan.warmup,false);assert.equal(plan.execution.max_in_flight,1024);assert.equal(plan.execution.window_size,4096);
   const outside=await planSignalListeningCalibrationV1({...f,inputs:[{...f.input,text:'I drink tea '.repeat(200)}],execution,loadProfile:async()=>f.profile});
-  assert.equal(outside.warmup,true);assert.equal(outside.execution.max_in_flight,1);
+  assert.equal(outside.warmup,true);assert.equal(outside.execution.max_in_flight,32);
   const edited={...f.configuration,instructions:f.configuration.instructions+' New rule.'};
   const changed=await planSignalListeningCalibrationV1({...f,configuration:edited,configuration_digest:digest(edited),inputs:[{...f.input,configuration_digest:digest(edited)}],execution,loadProfile:async()=>null});
   assert.equal(changed.warmup,true);
@@ -71,7 +71,7 @@ test('only an exact ledger profile and covered request bytes unlock configured c
 test('a partial finite profile does not unlock concurrency for a newly expanded32-root phase',async()=>{
  const f=fixture();
  const plan=await planSignalListeningCalibrationV1({...f,inputs:Array.from({length:32},()=>({...f.input,root_id:randomUUID()})),execution,loadProfile:async()=>f.profile});
- assert.equal(plan.warmup,true);assert.equal(plan.execution.max_in_flight,1);assert.ok([...plan.profiles.values()].every(p=>p===null));
+ assert.equal(plan.warmup,true);assert.equal(plan.execution.max_in_flight,32);assert.ok([...plan.profiles.values()].every(p=>p===null));
  const partial={...f.profile,sample_count:20,source_call_ids:Array.from({length:20},()=>randomUUID())};
  const remaining=await planSignalListeningCalibrationV1({...f,inputs:Array.from({length:12},()=>({...f.input,root_id:randomUUID()})),execution,loadProfile:async()=>partial});
  assert.equal(remaining.warmup,true,'a partial profile plus remaining roots must finish the32-receipt phase');
@@ -105,4 +105,34 @@ test('continuous preflight reuses only original measured shapes and byte coverag
  assert.equal(createSignalListeningCalibratedProviderV1({plan:finite,factory:()=>{throw Error('finite profile cannot prefetch');}}).prepareMeasuredRequests([request]),false);
  const warmup=await planSignalListeningCalibrationV1({...f,inputs:[f.input],execution,loadProfile:async()=>null});
  assert.equal(createSignalListeningCalibratedProviderV1({plan:warmup,factory:()=>{throw Error('no warmup prefetch');}}).prepareMeasuredRequests([request]),false);
+});
+
+ test('official warmup permits bounded parallel ordinary requests without fabricating a measured profile',async()=>{
+ const f=fixture(),plan=await planSignalListeningCalibrationV1({...f,inputs:Array.from({length:40},()=>({...f.input,root_id:randomUUID()})),execution,loadProfile:async()=>null});
+ assert.equal(plan.execution.max_in_flight,32);assert.equal(plan.selected_inputs.length,32);assert.ok([...plan.profiles.values()].every(value=>value===null));
+ let active=0,peak=0;
+ const runtime=createSignalListeningCalibratedProviderV1({plan,env:{TYPESAFE_API_KEY:'synthetic',NOISIA_TYPESAFE_ACCOUNT_ID:'test',NOISIA_TYPESAFE_ACCOUNT_RPS:'80',NOISIA_TYPESAFE_ACCOUNT_INPUT_TPS:'3000000'},
+ factory:args=>createCalibratedJevRuntimeProviderV2({...args,evaluateRedis:async(_s,_k,v)=>{return[1,0];},
+ fetch:async()=>{active++;peak=Math.max(peak,active);await new Promise(resolve=>setTimeout(resolve,5));active--;return Response.json({model:f.configuration.model,usage:{input_tokens:100,output_tokens:0},answers:{}});}})});
+ try{const raws=await Promise.all(plan.selected_inputs.map(input=>runtime.provider.evaluate(buildSignalListeningJevRequestV1(input,f.configuration))));
+ assert.ok(peak>=2);assert.ok(peak<=32);assert.ok(raws.every(raw=>raw.rate_reservation?.estimated_input_tokens===65536));
+ assert.ok(raws.every(raw=>(raw.rate_calibration as {kind?:string})?.kind==='official_context_bound'));assert.ok([...plan.profiles.values()].every(value=>value===null));
+ }finally{await runtime.provider.close?.();}
+});
+
+test('parallel warmup charges retained requests and the entire raw codec envelope before choosing slots',async()=>{
+ const f=fixture(),inputs=Array.from({length:32},()=>({...f.input,root_id:randomUUID()}));
+ const small=await planSignalListeningCalibrationV1({...f,inputs,execution:{...execution,max_buffered_bytes:2*1024*1024},loadProfile:async()=>null});
+ assert.ok(small.execution.max_in_flight>=1);assert.ok(small.execution.max_in_flight<32);
+ assert.equal(small.selected_inputs.length,32,'memory cannot silently drop the preselected sample');
+ await assert.rejects(planSignalListeningCalibrationV1({...f,inputs,execution:{...execution,max_buffered_bytes:458752},loadProfile:async()=>null}),/selection_memory_bound/);
+});
+
+test('closing a parallel warmup drains handed-off siblings and rejects new physical attempts',async()=>{
+ const f=fixture(),plan=await planSignalListeningCalibrationV1({...f,inputs:[f.input],execution,loadProfile:async()=>null});
+ let release!:()=>void,closed=0,physical=0;const gate=new Promise<void>(resolve=>{release=resolve;});
+ const runtime=createSignalListeningCalibratedProviderV1({plan,factory:()=>({async evaluate(){physical++;await gate;return{body:'{}',http_status:200,latency_ms:1};},async close(){closed++;}})});
+ const request=buildSignalListeningJevRequestV1(f.input,f.configuration),pending=runtime.provider.evaluate(request);
+ const closing=runtime.provider.close!();await assert.rejects(runtime.provider.evaluate(request),/listening_provider_closed/);
+ assert.equal(physical,1);assert.equal(closed,0);release();await pending;await closing;assert.equal(closed,1);
 });

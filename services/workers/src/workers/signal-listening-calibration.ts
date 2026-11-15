@@ -4,7 +4,7 @@ import {
 } from '@noisia/query-engine';
 import {createCalibratedJevRuntimeProviderV2} from '../providers/jev-streaming-runtime';
 import {JevProviderErrorV1,type JevProviderV1,type JevRequestV1} from '../providers/typesafe-jev';
-import type {JevStreamingExecutionV2} from './signal-jev-streaming-window';
+import {assertJevStreamingExecutionV2,jevCallWorkingBytesV2,type JevStreamingExecutionV2} from './signal-jev-streaming-window';
 import {assertSignalListeningRequestTransportV1,assertSignalListeningMeasuredContextV1,
   signalListeningResponseBoundV1,SIGNAL_LISTENING_HTTP_BODY_BYTES_V1} from './signal-listening-request-limits';
 type Access={workspace_id:string;configuration_digest:string};
@@ -27,8 +27,8 @@ function validateProfile(profile:Profile,scope:Access,shape:ReturnType<typeof si
 export type SignalListeningCalibrationPlanV1={scope:Access;configuration:SignalListeningConfigurationV1;
   selected_inputs:SignalListeningInputV1[];calibration_shapes:string[];
   profiles:Map<string,Profile|null>;execution:JevStreamingExecutionV2;warmup:boolean;response_bound_bytes:number};
-/** Only committed, verified receipt profiles can unlock concurrency. Missing or
- * out-of-coverage shapes use normal reusable labels in one bounded warmup window. */
+/** Only committed, verified receipt profiles can unlock full measured coverage. Missing or
+ * out-of-coverage shapes use normal reusable labels in one bounded parallel warmup window. */
 export async function planSignalListeningCalibrationV1(args:Access&{configuration:SignalListeningConfigurationV1;
   inputs:SignalListeningInputV1[];execution:JevStreamingExecutionV2;loadProfile:LoadProfile;compile_request?:(input:SignalListeningInputV1)=>JevRequestV1}):Promise<SignalListeningCalibrationPlanV1>{
   if(args.compile_request!==undefined&&typeof args.compile_request!=='function')fail('listening_calibration_compiler_invalid');
@@ -51,7 +51,7 @@ export async function planSignalListeningCalibrationV1(args:Access&{configuratio
     return{input,index,request,bytes,shape:shape.shape_digest,covered:Boolean(profile&&bytes>=profile.request_min_bytes&&bytes<=profile.request_max_bytes)};
   });
   const firstUncovered=rows.find(row=>!row.covered),warmup=Boolean(firstUncovered);
-  const execution=warmup?{...args.execution,max_in_flight:1,window_size:Math.min(32,args.execution.window_size),
+  const execution=warmup?{...args.execution,max_in_flight:Math.min(32,args.execution.max_in_flight),window_size:Math.min(32,args.execution.window_size),
     flush_size:Math.min(32,args.execution.flush_size),max_flushes:1}:args.execution;
   let selected=rows.slice(0,execution.window_size);
   if(firstUncovered){
@@ -66,6 +66,16 @@ export async function planSignalListeningCalibrationV1(args:Access&{configuratio
   }
   const selected_inputs=selected.map(row=>row.input),calibration_shapes=firstUncovered?[firstUncovered.shape]:[];
   const response_bound_bytes=Math.max(16384,...selected.map(row=>signalListeningResponseBoundV1(row.request)));
+  if(warmup){
+    // Retained requests/inputs remain charged while every outstanding raw body
+    // reserves the full serialization/page-codec bound. TPS is still reserved
+    // separately per request by the shared account limiter (65536, never learned).
+    const rawBytes=assertJevStreamingExecutionV2(execution,{evaluate:async()=>{throw Error('unreachable');},max_response_bytes:response_bound_bytes});
+    const retained=selected.reduce((sum,row)=>sum+jevCallWorkingBytesV2({request:row.request,inputs:[row.input]})+8192,0);
+    const slots=Math.floor((execution.max_buffered_bytes-retained)/rawBytes);
+    if(slots<1)fail('listening_selection_memory_bound');
+    execution.max_in_flight=Math.min(execution.max_in_flight,slots);
+  }
   return{scope:{workspace_id:args.workspace_id,configuration_digest:args.configuration_digest},configuration:args.configuration,
     profiles,execution,warmup,selected_inputs,calibration_shapes,response_bound_bytes};
 }
@@ -74,11 +84,7 @@ export async function planSignalListeningCalibrationV1(args:Access&{configuratio
 export function createSignalListeningCalibratedProviderV1(args:{plan:SignalListeningCalibrationPlanV1;env?:NodeJS.ProcessEnv;
   factory?:typeof createCalibratedJevRuntimeProviderV2}){
   const {plan}=args,baseEnv=args.env??process.env,clients=new Map<string,JevProviderV1>(),clientsByScope=new Map<string,JevProviderV1>(),usedShapes=new Set<string>();
-  let warmupTail=Promise.resolve();
-  async function serialWarmup<T>(fn:()=>Promise<T>){
-    const previous=warmupTail;let unlock!:()=>void;warmupTail=new Promise<void>(resolve=>{unlock=resolve;});
-    await previous;try{return await fn();}finally{unlock();}
-  }
+  const active=new Set<Promise<unknown>>();let closing=false;
   function client(request:JevRequestV1){
     const bytes=assertSignalListeningRequestTransportV1(request),shape=signalListeningCalibrationShapeV1(plan.configuration,{question_keys:Object.keys(request.questions)});
     if(request.model!==shape.model||signalListeningResponseBoundV1(request)>plan.response_bound_bytes)fail('listening_request_plan_changed');
@@ -93,7 +99,7 @@ export function createSignalListeningCalibratedProviderV1(args:{plan:SignalListe
         model:'jev-1.13.0',fixed_input_tokens:65536,input_tokens_per_utf8_byte:0,max_request_bytes:SIGNAL_LISTENING_HTTP_BODY_BYTES_V1};
     const cacheKey=`${id}:${measured?.source_digest??'bootstrap'}`;
     if(!clients.has(cacheKey))clients.set(cacheKey,(args.factory??createCalibratedJevRuntimeProviderV2)({labeler_digest:id,
-      execution:measured?plan.execution:{...plan.execution,max_in_flight:1},env:{...baseEnv,
+      execution:plan.execution,env:{...baseEnv,
         NOISIA_JEV_MAX_RESPONSE_BYTES:String(plan.response_bound_bytes),NOISIA_JEV_TOKEN_CALIBRATIONS_JSON:JSON.stringify({[id]:calibration})}}));
     clientsByScope.set(id,clients.get(cacheKey)!);
     usedShapes.add(shape.shape_digest);
@@ -101,13 +107,15 @@ export function createSignalListeningCalibratedProviderV1(args:{plan:SignalListe
   }
   const provider:JevProviderV1={max_concurrency:plan.execution.max_in_flight,max_response_bytes:plan.response_bound_bytes,
     async evaluate(request,options){
-      const item=client(request);return item.warmup?serialWarmup(()=>item.provider.evaluate(request,options)):item.provider.evaluate(request,options);
+      if(closing)fail('listening_provider_closed');
+      const pending=client(request).provider.evaluate(request,options);active.add(pending);
+      try{return await pending;}finally{active.delete(pending);}
     },
     async observeUsage(raw,tokens){
       const inner=raw.rate_calibration?clientsByScope.get(raw.rate_calibration.labeler_digest):undefined;
       if(inner)await inner.observeUsage?.(raw,tokens);
     },
-    async close(){await warmupTail;await Promise.all([...clients.values()].map(provider=>provider.close?.()));},
+    async close(){closing=true;await Promise.allSettled([...active]);await Promise.all([...clients.values()].map(provider=>provider.close?.()));},
   };
   return{provider,usedShapes:()=>[...usedShapes],prepareRequests:(requests:JevRequestV1[])=>{for(const request of requests)client(request);},
     /** Continuity may reuse only the original measured coverage and response
