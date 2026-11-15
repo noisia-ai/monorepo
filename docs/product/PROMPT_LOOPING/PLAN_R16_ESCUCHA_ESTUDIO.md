@@ -277,3 +277,5 @@ R16 sigue en ejecución con alcance completo H0–H6. ADR033 y el modelo condici
 El primer ensayo completo de transporte terminó 32,768 raíces con sus recibos y resultados íntegros, pero dio 485.19 raíces/s. H1 no está aceptado: falta resolver el cuello de botella y repetir el benchmark de al menos 1,000/s, seguido de la medición real con los límites de la cuenta. El setup sintético y las fases solapadas se informan por separado.
 
 R15 permanece disponible. No hay migraciones ni despliegues R16 en UAT ni nuevas llamadas pagadas R16. Siguen pendientes las ejecuciones reales de Escucha y T&B, las evaluaciones ciegas, la comparación privada, los costos y tiempos actuales, la guía de QA y el paquete final con SHA256SUMS. El costo histórico y su fórmula no se presentan como una medición R16.
+
+El modelo de costo ya tiene una referencia reproducible en R16_COST_MODEL_BASELINE.md. Las ejecuciones reales de R16 y sus costos por etapa todavía deben producirse y verificarse.
