@@ -18,7 +18,8 @@ function syntheticSnapshot(): BlindSnapshotV1 {
     target: "category" | "own_brand" | "competitor_brand" | "alternative" | null; use: "literal" | "figurative_or_ironic" | "other" | null;
     in_cut: boolean; lexical_filter_match: boolean; base_voice_valid: boolean; review_flags: string[]; motive_key?: string; motive_volume_cohort?: string; motive_name?: string; motive_definition?: string; nearest_volume_cohort?: string;
     nearest_assigned_motive_key?: string;
-    layer?: string; nearest_motives?: Array<{ motive_key: string; volume_cohort: string; name: string; definition: string }> }>;
+    layer?: string; nearest_motives?: Array<{ motive_key: string; volume_cohort: string; name: string; definition: string }>;
+    native_nearest_candidate_set?: Array<{ motive_key: string; volume_cohort: string; name: string; definition: string }> }>;
   const add = (id: string, overrides: Partial<(typeof study)[number]> = {}) => study.push({ mention_id: id, redacted_text: `synthetic study mention ${id}`,
     axes_status: "observed", direction: "trigger", target: "category", use: "literal", in_cut: true, lexical_filter_match: true, base_voice_valid: true, review_flags: [], ...overrides });
   for (const dir of ["mixed", "barrier", "trigger"] as const) for (let i = 0; i < 80; i++) add(`axis-${dir}-${i}`, { direction: dir });
@@ -129,6 +130,19 @@ test("sampling deduplicates identities across strata and reports census shortfal
   const allIds = built.key.rows.map(row => row.mention_id);
   assert.equal(new Set(allIds).size, allIds.length);
   assert.equal(built.manifest.strata.length, 52);
+});
+
+test("unordered native nearest candidate sets are not ranked or leaked into auditor packets", () => {
+  const snapshot = syntheticSnapshot();
+  for (const row of snapshot.study) {
+    delete row.nearest_motives; delete row.nearest_assigned_motive_key; delete row.nearest_volume_cohort;
+    row.native_nearest_candidate_set = ["native_a", "native_b", "native_c", "native_d"].map((motive_key, index) => ({
+      motive_key, volume_cohort: LISTENING_COHORTS_V1[index]!, name: `Private ${motive_key}`, definition: `Private definition ${motive_key}` }));
+  }
+  const built = buildBlindPackageV1(snapshot, seed);
+  assert.ok(built.key.custody_manifest.strata.filter(item => item.sample_code.startsWith("N-")).every(item => item.selected === 0 && item.shortfall === item.quota));
+  const visible = JSON.stringify(built.packets);
+  assert.doesNotMatch(visible, /native_[a-d]|Private definition/u);
 });
 
 test("missing native layer truth or nearest assignment reports shortfalls without placeholder answers", () => {

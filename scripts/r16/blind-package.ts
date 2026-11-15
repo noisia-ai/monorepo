@@ -32,10 +32,11 @@ export type BlindSnapshotV1 = {
   listening: Array<{ mention_id: string; redacted_text: string; stage: "before" | "after";
     assignments: Array<{ topic_key: string; topic_name: string; topic_definition: string; volume_cohort: string; assigned: boolean }> }>;
   study: Array<{ mention_id: string; redacted_text: string; axes_status: "observed" | "not_asked_outside_cut";
-    direction: typeof DIRECTIONS[number] | null; target: typeof TARGETS[number] | null; use: typeof USES[number] | null;
+    direction: typeof DIRECTIONS[number] | null; target: typeof TARGETS[number] | null; use: typeof USES[number] | null; alternative_inverted?: boolean;
     in_cut: boolean; lexical_filter_match: boolean; base_voice_valid: boolean; review_flags: string[]; motive_key?: string; motive_volume_cohort?: string;
     motive_name?: string; motive_definition?: string; layer?: string; nearest_volume_cohort?: string;
     nearest_assigned_motive_key?: string;
+    native_nearest_candidate_set?: Array<{ motive_key: string; volume_cohort: string; name: string; definition: string }> ;
     motive_memberships?: Array<{ motive_key: string; volume_cohort: string; name: string; definition: string; layer: string }>;
     nearest_motives?: Array<{ motive_key: string; volume_cohort: string; name: string; definition: string }> }>;
 };
@@ -120,6 +121,12 @@ export function validateSnapshotV1(value: unknown): BlindSnapshotV1 {
         || !LISTENING_COHORTS_V1.includes(m.volume_cohort as typeof LISTENING_COHORTS_V1[number])
         || !["psychological", "personal", "social", "cultural", "unclear"].includes(m.layer)))) fail();
     if (row.nearest_assigned_motive_key !== undefined && typeof row.nearest_assigned_motive_key !== "string") fail();
+    if (row.alternative_inverted !== undefined && typeof row.alternative_inverted !== "boolean") fail();
+    if (row.native_nearest_candidate_set !== undefined && (!Array.isArray(row.native_nearest_candidate_set)
+      || new Set(row.native_nearest_candidate_set.map(m => m?.motive_key)).size !== row.native_nearest_candidate_set.length
+      || row.native_nearest_candidate_set.length !== 4
+      || row.native_nearest_candidate_set.some(m => !m?.motive_key?.trim() || !m.name?.trim() || !m.definition?.trim()
+        || !LISTENING_COHORTS_V1.includes(m.volume_cohort as typeof LISTENING_COHORTS_V1[number])))) fail();
     if (row.nearest_motives !== undefined && !Array.isArray(row.nearest_motives)) fail();
     if (row.motive_volume_cohort !== undefined && !LISTENING_COHORTS_V1.includes(row.motive_volume_cohort as typeof LISTENING_COHORTS_V1[number])) fail();
     if (row.layer !== undefined && !["psychological", "personal", "social", "cultural", "unclear"].includes(row.layer)) fail();

@@ -7,14 +7,14 @@ import {
   listeningTransactionV1,
   loadSignalListeningConfigurationWithClientV1,
 } from "../../infrastructure/db/signal-listening-configuration.js";
-import { signalWorkspaceEmbeddingDigestV1 as digest } from "@noisia/query-engine";
+import { signalWorkspaceEmbeddingDigestV1 as digest } from "../../packages/query-engine/src/signal-workspace-embeddings-v1.js";
 import type { LabelingDatabaseV1 } from "../../infrastructure/db/signal-mention-facets.js";
 
 type ReadClientV1 = { query<T extends Record<string, unknown> = Record<string, unknown>>(text: string, values?: unknown[]): Promise<{ rows: T[] }>; release(): void };
 type ReadPoolV1 = LabelingDatabaseV1 & { connect(): Promise<ReadClientV1>; end(): Promise<void> };
 const requireStudio = createRequire(new URL("../../apps/studio/package.json", import.meta.url));
-import { validateSignalStudyExecutionConfigurationV1 } from "@noisia/query-engine";
-import { redactSignalStudyTextV1 } from "@noisia/query-engine";
+import { validateSignalStudyExecutionConfigurationV1 } from "../../packages/query-engine/src/signal-study-configuration.js";
+import { redactSignalStudyTextV1 } from "../../packages/query-engine/src/signal-study-evidence.js";
 import { LISTENING_COHORTS_V1, validateSnapshotV1, type BlindSnapshotV1 } from "./blind-package.js";
 
 const BATCH_SIZE = 512;
@@ -34,9 +34,86 @@ type StudyExecutionRow = {
   output: Record<string, unknown> | null; output_digest: string | null; actual_output_digest: string | null;
   source_current: boolean; owner_current: boolean; envelope: Record<string, unknown>;
   listening_generation_id: string | null; listening_source_digest: string | null; source_roots: number;
+  frozen_source_kind: string; frozen_source_id: string; frozen_base_snapshot_id: string; frozen_configuration_id: string;
+  frozen_generation_id: string; frozen_source_digest: string; bound_source_kind: string | null; bound_source_id: string | null;
+  bound_base_snapshot_id: string; bound_configuration_id: string; bound_generation_id: string | null; bound_source_digest: string | null;
 };
 type StudyRootRow = { root_id: string; asset_sha256: string; full_text: string; private_person_names: string[];
   occurred_at: Date | string; channel: string; source_url: string; axes: Record<string, unknown>; listening_topic_keys: string[] };
+
+function configListeningConfigurationId(envelope: Record<string, unknown>): string {
+  const source = envelope.source_listening as { configuration_id?: unknown } | undefined;
+  if (typeof source?.configuration_id !== "string") throw new Error("native_audit_study_listening_configuration_mismatch");
+  return source.configuration_id;
+}
+function configListeningConfigurationDigest(envelope: Record<string, unknown>): string {
+  const source = envelope.source_listening as { configuration_digest?: unknown } | undefined;
+  if (typeof source?.configuration_digest !== "string") throw new Error("native_audit_study_listening_configuration_mismatch");
+  return source.configuration_digest;
+}
+
+export type FrozenStudyListeningSourceV1 = {
+  kind: string; id: string; base_snapshot_id: string; configuration_id: string; generation_id: string; source_digest: string;
+};
+export function sourceStudyAxesForAuditV1(axes: Record<string, unknown>): {
+  direction: "trigger" | "barrier" | "mixed" | "none";
+  target: "category" | "own_brand" | "competitor_brand" | "alternative";
+  use: "literal" | "figurative_or_ironic" | "other";
+  alternative_inverted: boolean;
+} {
+  const direction = axes.source_direction;
+  const target = axes.target;
+  const use = axes.use;
+  if (!(["trigger", "barrier", "mixed", "none"] as unknown[]).includes(direction)
+    || !(["category", "own_brand", "competitor_brand", "alternative"] as unknown[]).includes(target)
+    || !(["literal", "figurative_or_ironic", "other"] as unknown[]).includes(use)
+    || typeof axes.alternative_inverted !== "boolean") throw new Error("native_audit_study_axes_invalid");
+  return { direction: direction as "trigger" | "barrier" | "mixed" | "none",
+    target: target as "category" | "own_brand" | "competitor_brand" | "alternative",
+    use: use as "literal" | "figurative_or_ironic" | "other", alternative_inverted: axes.alternative_inverted };
+}
+
+export type NativeAuditMotiveDefinitionV1 = { key: string; name: string; layer: string };
+export type NativeAuditCandidateDefinitionV1 = { motive_key: string; volume_cohort: string; name: string; definition: string };
+
+/** The persisted question key array is an observed candidate set, not a ranked centroid result. */
+export function nativeNearestCandidateSetV1(args: {
+  question_keys: string[]; motives: NativeAuditMotiveDefinitionV1[];
+  cohorts: Map<string, string>; definitions: Map<string, string>;
+}): NativeAuditCandidateDefinitionV1[] | null {
+  if (args.question_keys.length !== 4 || new Set(args.question_keys).size !== 4) return null;
+  const candidates = args.question_keys.map(key => {
+    const motive = args.motives.find(item => item.key === key);
+    const volume_cohort = args.cohorts.get(key), definition = args.definitions.get(key);
+    if (!motive || !volume_cohort || !definition) return null;
+    return { motive_key: key, volume_cohort, name: motive.name, definition };
+  });
+  if (candidates.some(item => item === null)) return null;
+  return candidates.sort((a, b) => a!.motive_key.localeCompare(b!.motive_key)) as NativeAuditCandidateDefinitionV1[];
+}
+
+export type BoundStudyListeningSourceV1 = {
+  kind: string | null; id: string | null; base_snapshot_id: string; configuration_id: string;
+  generation_id: string | null; source_digest: string | null;
+};
+
+export function assertStudyListeningSourceBindingV1(args: {
+  frozen: FrozenStudyListeningSourceV1; bound: BoundStudyListeningSourceV1;
+  expected_generation_id: string; expected_configuration_id: string;
+}): void {
+  const { frozen, bound } = args;
+  const expectedKind = bound.kind ?? "serving";
+  const expectedId = bound.id ?? bound.base_snapshot_id;
+  if (!(frozen.kind === "serving" || frozen.kind === "human_edit")
+    || frozen.kind !== expectedKind || frozen.id !== expectedId || frozen.base_snapshot_id !== bound.base_snapshot_id
+    || frozen.configuration_id !== bound.configuration_id || frozen.configuration_id !== args.expected_configuration_id
+    || frozen.generation_id !== args.expected_generation_id
+    || (bound.generation_id !== null && frozen.generation_id !== bound.generation_id)
+    || !/^sha256:[a-f0-9]{64}$/u.test(frozen.source_digest)
+    || (bound.source_digest !== null && frozen.source_digest !== bound.source_digest)) {
+    throw new Error("native_audit_study_after_source_mismatch");
+  }
+}
 
 export type NativeAuditExportArgsV1 = {
   database: LabelingDatabaseV1;
@@ -72,12 +149,20 @@ export async function exportNativeAuditSnapshotV1(args: NativeAuditExportArgsV1)
     if (study.actor_user_id !== args.actor_user_id) {
       await authorizeSignalListeningV1(client as unknown as Parameters<typeof authorizeSignalListeningV1>[0], { workspace_id: args.workspace_id, actor_user_id: args.actor_user_id }, "view");
     }
-    if (study.listening_generation_id !== after.id || study.listening_source_digest !== after.snapshot_digest) {
-      throw new Error("native_audit_study_after_source_mismatch");
-    }
+    assertStudyListeningSourceBindingV1({
+      frozen: { kind: study.frozen_source_kind, id: study.frozen_source_id, base_snapshot_id: study.frozen_base_snapshot_id,
+        configuration_id: study.frozen_configuration_id, generation_id: study.frozen_generation_id, source_digest: study.frozen_source_digest },
+      bound: { kind: study.bound_source_kind, id: study.bound_source_id, base_snapshot_id: study.bound_base_snapshot_id,
+        configuration_id: study.bound_configuration_id, generation_id: study.bound_generation_id, source_digest: study.bound_source_digest },
+      expected_generation_id: after.id, expected_configuration_id: after.configuration_id,
+    });
     const beforeConfiguration = await loadSignalListeningConfigurationWithClientV1(client as unknown as Parameters<typeof loadSignalListeningConfigurationWithClientV1>[0], args.workspace_id, before.configuration_id);
     const afterConfiguration = await loadSignalListeningConfigurationWithClientV1(client as unknown as Parameters<typeof loadSignalListeningConfigurationWithClientV1>[0], args.workspace_id, after.configuration_id);
     if (!beforeConfiguration || !afterConfiguration) throw new Error("native_audit_listening_configuration_missing");
+    if (afterConfiguration.id !== configListeningConfigurationId(study.envelope)
+      || afterConfiguration.configuration_digest !== configListeningConfigurationDigest(study.envelope)) {
+      throw new Error("native_audit_study_listening_configuration_mismatch");
+    }
     const beforeTopics = await loadTopics(client, before);
     const afterTopics = await loadTopics(client, after);
     const privateNamesByRoot = await loadStudyPrivateNames(client, study);
@@ -96,7 +181,8 @@ export async function exportNativeAuditSnapshotV1(args: NativeAuditExportArgsV1)
   const limitations = [
     "native_candidate_flags_unavailable",
     "native_layer_agreement_receipt_not_persisted",
-    ...(!collected.membershipEvidence.nearest_four_available ? ["native_nearest_four_membership_cache_unavailable"] : []),
+    "native_nearest_four_rank_unavailable",
+    ...(!collected.membershipEvidence.nearest_candidate_sets_available ? ["native_nearest_candidate_sets_unavailable"] : []),
     ...(!collected.membershipEvidence.motive_memberships_available ? ["native_motive_membership_cache_unavailable"] : []),
     "outside_private_person_name_roster_unavailable_for_outside_cut_roots",
     ...collected.receiptRows.limitations,
@@ -139,6 +225,9 @@ export async function exportNativeAuditSnapshotV1(args: NativeAuditExportArgsV1)
     source_digests: { before: before.snapshot_digest, before_verified_digest: before.actual_digest,
       after: after.snapshot_digest, after_verified_digest: after.actual_digest, study_output: study.output_digest,
       study_output_verified_digest: study.actual_output_digest },
+    study_listening_source: { kind: study.frozen_source_kind, id: study.frozen_source_id,
+      base_snapshot_id: study.frozen_base_snapshot_id, configuration_id: study.frozen_configuration_id,
+      generation_id: study.frozen_generation_id, snapshot_digest: study.frozen_source_digest },
     source_row_counts: { before_roots: Number(before.counts?.roots ?? 0), after_roots: Number(after.counts?.roots ?? 0),
       listening_rows: collected.listening.length, study_roots: study.source_roots, study_rows: collected.studyRows.length },
     measurements: collected.receiptRows.manifest,
@@ -169,8 +258,13 @@ async function loadGeneration(client: ReadClientV1, workspaceId: string, actorId
 async function loadStudyExecution(client: ReadClientV1, workspaceId: string, executionId: string): Promise<StudyExecutionRow> {
   const row = (await client.query<StudyExecutionRow>(`SELECT e.id,e.workspace_id,e.actor_user_id,e.study_id,e.configuration_id,e.status,e.output,e.output_digest,
       signal_labeling_digest_v1(e.output) actual_output_digest,signal_study_source_current_v1(e.id) source_current,
-      signal_study_owner_current_v1(e.id) owner_current,cfg.envelope,cfg.listening_generation_id,cfg.listening_source_digest,e.source_roots
+      signal_study_owner_current_v1(e.id) owner_current,cfg.envelope,cfg.listening_generation_id,cfg.listening_source_digest,e.source_roots,
+      source.source_kind frozen_source_kind,source.id frozen_source_id,source.base_snapshot_id frozen_base_snapshot_id,
+      source.configuration_id frozen_configuration_id,source.generation_id frozen_generation_id,source.snapshot_digest frozen_source_digest,
+      cfg.listening_source_kind bound_source_kind,cfg.listening_source_id bound_source_id,cfg.listening_snapshot_id bound_base_snapshot_id,
+      cfg.listening_configuration_id bound_configuration_id,cfg.listening_generation_id bound_generation_id,cfg.listening_source_digest bound_source_digest
     FROM signal_study_executions e JOIN signal_study_configurations cfg ON cfg.id=e.configuration_id AND cfg.workspace_id=e.workspace_id
+    JOIN signal_study_configuration_sources_v1 source ON source.study_configuration_id=cfg.id AND source.workspace_id=e.workspace_id
     JOIN signal_study_outputs output ON output.execution_id=e.id AND output.workspace_id=e.workspace_id AND output.output_digest=e.output_digest
     WHERE e.workspace_id=$1 AND e.id=$2`, [workspaceId, executionId])).rows[0];
   if (!row || row.status !== "completed" || !row.source_current || !row.owner_current || !row.output
@@ -270,16 +364,10 @@ async function loadStudyRows(client: ReadClientV1, execution: StudyExecutionRow,
     if (page.length !== batch.length) throw new Error("native_audit_study_root_source_incomplete");
     for (const row of page) {
       if (row.asset_sha256 !== `sha256:${sha256(row.full_text)}`) throw new Error("native_audit_study_text_digest_mismatch");
-      const direction = row.axes.direction;
-      const target = row.axes.target;
-      const use = row.axes.use;
-      if (!["trigger", "barrier", "mixed", "none"].includes(String(direction))
-        || !["category", "own_brand", "competitor_brand", "alternative"].includes(String(target))
-        || !["literal", "figurative_or_ironic", "other"].includes(String(use))) throw new Error("native_audit_study_axes_invalid");
+      const axes = sourceStudyAxesForAuditV1(row.axes);
       rows.push({ mention_id: row.root_id, redacted_text: safeDisplayText(row.full_text, row.private_person_names ?? []),
-        axes_status: "observed", direction: direction as "trigger" | "barrier" | "mixed" | "none",
-        target: target as "category" | "own_brand" | "competitor_brand" | "alternative",
-        use: use as "literal" | "figurative_or_ironic" | "other", in_cut: true, lexical_filter_match: true, base_voice_valid: true,
+        axes_status: "observed", direction: axes.direction, target: axes.target, use: axes.use, alternative_inverted: axes.alternative_inverted,
+        in_cut: true, lexical_filter_match: true, base_voice_valid: true,
         review_flags: [] });
     }
   }
@@ -288,7 +376,7 @@ async function loadStudyRows(client: ReadClientV1, execution: StudyExecutionRow,
 }
 
 async function loadNativeMembershipEvidence(client: ReadClientV1, execution: StudyExecutionRow, rows: BlindSnapshotV1["study"]): Promise<{
-  motive_memberships_available: boolean; nearest_four_available: boolean;
+  motive_memberships_available: boolean; nearest_candidate_sets_available: boolean;
 }> {
   const summary = execution.output?.summary as { motives?: Array<{ key?: unknown; name?: unknown; layer?: unknown; mentions?: unknown }> } | undefined;
   if (!summary || !Array.isArray(summary.motives)) throw new Error("native_audit_study_summary_missing");
@@ -315,7 +403,7 @@ async function loadNativeMembershipEvidence(client: ReadClientV1, execution: Stu
   }
   const byId = new Map(rows.map(row => [row.mention_id, row]));
   const selectedMemberships = new Map<string, Map<string, { probability: number; name: string; definition: string; batch_id: string }>>();
-  const nearestBatchByRoot = new Map<string, { batch_id: string; stage: string; created_at: Date | string; question_keys: string[] }>();
+  const candidateBatchByRoot = new Map<string, { batch_id: string; stage: string; created_at: Date | string; question_keys: string[] }>();
   const rootIds = rows.filter(row => row.axes_status === "observed").map(row => row.mention_id);
   for (let offset = 0; offset < rootIds.length; offset += BATCH_SIZE) {
     const batch = rootIds.slice(offset, offset + BATCH_SIZE);
@@ -355,9 +443,9 @@ async function loadNativeMembershipEvidence(client: ReadClientV1, execution: Stu
       selectedMemberships.set(answer.root_id, current);
     }
     for (const [rootId, selected] of chosenPerRootBatch) {
-      const previous = nearestBatchByRoot.get(rootId);
+      const previous = candidateBatchByRoot.get(rootId);
       if (!previous || priority(selected.stage) < priority(previous.stage)
-        || priority(selected.stage) === priority(previous.stage) && new Date(selected.created_at) > new Date(previous.created_at)) nearestBatchByRoot.set(rootId, selected);
+        || priority(selected.stage) === priority(previous.stage) && new Date(selected.created_at) > new Date(previous.created_at)) candidateBatchByRoot.set(rootId, selected);
     }
   }
   for (const [rootId, memberships] of selectedMemberships) {
@@ -367,24 +455,15 @@ async function loadNativeMembershipEvidence(client: ReadClientV1, execution: Stu
       const definition = definitions.get(key)?.definition;
       return motive && volume_cohort && definition ? [{ motive_key: key, volume_cohort, name: motive.name, definition, layer: motive.layer }] : [];
     });
-    const nearestBatch = nearestBatchByRoot.get(rootId);
-    if (!nearestBatch || nearestBatch.question_keys.length !== 4) continue;
-    const ranked = nearestBatch.question_keys.map(key => {
-      const assigned = memberships.get(key), motive = motives.find(item => item.key === key), volume_cohort = cohortByKey.get(key);
-      if (!assigned || !motive || !volume_cohort) return null;
-      const definition = definitions.get(key)?.definition;
-      if (!definition) return null;
-      return { motive_key: key, volume_cohort, name: motive.name, definition };
-    });
-    if (ranked.some(item => item === null)) continue;
-    const assigned = ranked.find(item => (memberships.get(item!.motive_key)?.probability ?? 0) >= .7);
-    if (!assigned) continue;
-    row.nearest_motives = ranked as NonNullable<typeof row.nearest_motives>;
-    row.nearest_assigned_motive_key = assigned.motive_key;
-    row.nearest_volume_cohort = assigned.volume_cohort;
+    const candidateBatch = candidateBatchByRoot.get(rootId);
+    if (!candidateBatch || candidateBatch.question_keys.length !== 4 || new Set(candidateBatch.question_keys).size !== 4) continue;
+    const candidateSet = nativeNearestCandidateSetV1({ question_keys: candidateBatch.question_keys, motives,
+      cohorts: cohortByKey, definitions: new Map([...definitions].map(([key, value]) => [key, value.definition])) });
+    if (!candidateSet) continue;
+    row.native_nearest_candidate_set = candidateSet;
   }
   return { motive_memberships_available: selectedMemberships.size > 0,
-    nearest_four_available: [...byId.values()].some(row => row.nearest_motives?.length === 4) };
+    nearest_candidate_sets_available: [...byId.values()].some(row => row.native_nearest_candidate_set?.length === 4) };
 }
 
 async function loadOutsideLexicalRows(client: ReadClientV1, execution: StudyExecutionRow,

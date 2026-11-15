@@ -1,5 +1,5 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": { "noEmit": true, "incremental": false },
-  "include": ["native-audit-export.ts"]
+  "include": ["native-audit-export.ts", "native-audit-export.test.ts"]
 }
