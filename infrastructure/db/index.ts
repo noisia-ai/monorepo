@@ -176,3 +176,4 @@ export type {SignalStudyExecutionStatusV1} from './signal-study-status';
 export {promoteSignalStudyMotivesV1} from './signal-study-promotion';
 export {readSignalStudyReportOverviewV1,readSignalStudyReportPageV1} from './signal-study-serving';
 export type {SignalStudyReportSectionV1,SignalStudyReportRowsV1,SignalStudyReportOverviewV1} from './signal-study-serving';
+export {readLatestSignalStudyExecutionStatusV1} from './signal-study-status';

@@ -17,7 +17,7 @@ import{randomUUID}from'node:crypto';
 import{withSignalStudyFixtureV1}from'./signal-study.synthetic.fixture';
 import{claimSignalStudyExecutionV1,readSignalStudyRuntimeSourceV1,releaseSignalStudyExecutionV1}from'../signal-study-executions';
 import{readSignalStudyConfigurationV1,saveSignalStudyConfigurationV1}from'../signal-study-configuration';
-import{listSignalStudiesV1,readSignalStudyExecutionStatusV1,readLatestSignalStudyConfigurationV1}from'../signal-study-status';
+import{listSignalStudiesV1,readSignalStudyExecutionStatusV1,readLatestSignalStudyConfigurationV1,readLatestSignalStudyExecutionStatusV1}from'../signal-study-status';
 import{readSignalStudyReportOverviewV1,readSignalStudyReportPageV1}from'../signal-study-serving';
 import{promoteSignalStudyMotivesV1}from'../signal-study-promotion';
 test('Study freezes only its native consumer cut and exact external configuration, with no import, Voyage or provider admission',{
@@ -29,7 +29,7 @@ test('Study freezes only its native consumer cut and exact external configuratio
  const conflicting=structuredClone(f.envelope);conflicting.question_configuration.instructions+=' Conflict.';conflicting.question_configuration_digest=f.digest(conflicting.question_configuration);await assert.rejects(saveSignalStudyConfigurationV1({...configArgs,configuration:conflicting}),/study_idempotency_conflict/);
  const listing=await listSignalStudiesV1({...f,limit:1});assert.equal(listing.studies.length,1);assert.ok(listing.next_after_study_id);assert.equal((await listSignalStudiesV1({...f,limit:1,after_study_id:listing.next_after_study_id})).studies.length,1);assert.equal((await readLatestSignalStudyConfigurationV1({...f,study_id:created.study_id}))?.id,created.id);
  const key=randomUUID(),run=await f.request(4000000,key),same=await f.request(4000000,key);assert.equal(same.id,run.id);
- assert.equal((await readSignalStudyExecutionStatusV1({...f,execution_id:run.id}))?.status,'queued');
+ assert.equal((await readSignalStudyExecutionStatusV1({...f,execution_id:run.id}))?.status,'queued');assert.equal((await readLatestSignalStudyExecutionStatusV1({...f,study_id:run.study_id}))?.id,run.id);
  assert.equal(await readSignalStudyExecutionStatusV1({...f,workspace_id:randomUUID(),execution_id:run.id}).catch(()=>null),null);
  assert.notEqual(run.configuration_id,f.listening.id);assert.equal(run.source_roots,3);assert.equal(run.status,'queued');
  const lease=await claimSignalStudyExecutionV1({database:f.database,execution_id:run.id});assert.ok(lease);

@@ -28,3 +28,7 @@ export async function readLatestSignalStudyConfigurationV1(args:StudyAccessV1&{s
  if(!studyUuidV1.test(args.study_id))fail('study_invalid',422);
  return studyTransactionV1(args.database,async c=>{await studyAuthorizeV1(c,args,'view');return(await c.query<SignalStudyConfigurationRecordV1>('SELECT * FROM signal_study_configurations WHERE study_id=$1 AND workspace_id=$2 ORDER BY revision DESC LIMIT 1',[args.study_id,args.workspace_id])).rows[0]??null;});
 }
+export async function readLatestSignalStudyExecutionStatusV1(args:StudyAccessV1&{study_id:string}){
+ if(!studyUuidV1.test(args.study_id))fail('study_invalid',422);
+ return studyTransactionV1(args.database,async c=>{await studyAuthorizeV1(c,args,'view');return(await c.query<SignalStudyExecutionStatusV1>(`SELECT ${executionColumns} FROM signal_study_executions p WHERE p.study_id=$1 AND p.workspace_id=$2 ORDER BY p.created_at DESC,p.id DESC LIMIT 1`,[args.study_id,args.workspace_id])).rows[0]??null;});
+}
