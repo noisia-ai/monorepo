@@ -1,10 +1,12 @@
-import {signalListeningBaseTemplateV1,signalWorkspaceEmbeddingDigestV1 as digest,
+import {validateSignalListeningConfigurationV1,signalListeningBaseTemplateV1,signalWorkspaceEmbeddingDigestV1 as digest,
   type SignalListeningConfigurationV1} from '../../packages/query-engine/src/index';
 
 /** Frozen BEFORE measurements. These are synthetic Brand OS data, not worker methodology. */
 export const R16_LISTENING_PREREGISTRATION_V1=Object.freeze({
   contract_version:'r16-listening-capacity-preregistration-v1',root_count:32768,
   request_version:'listening-jev-v1',model:'jev-1.13.0',
+  simulator_quotas:{requests_per_second:10000,input_tokens_per_second:10000000,shared_organization_account:true,real_provider_quotas_modified:false},
+  expected_primary_http_calls_per_resolved_root:2,
   target_distinct_resolved_roots_per_second:1000,window_ms:1000,
   sustained_start_ms:5000,minimum_sustained_ms:20000,
   minimum_observed_http_ms:100,maximum_observed_http_ms:500,
@@ -27,8 +29,9 @@ export function r16ListeningWorkloadV1(arm:R16ListeningArmV1){
   if(arm==='discovered_four')for(let i=1;i<=4;i++)configuration.questions.push({key:`discovered_${i}_v1`,type:'noul',
     text:`Synthetic discovered fixture topic ${i}`,scope:'consumer_category',origin:'agent',human_locked:false,topic_source:'discovered',
     positive:`Synthetic topic marker ${i} present`,negative:`Synthetic topic marker ${i} absent`});
-  return{arm,configuration,configuration_digest:digest(configuration),preregistration_digest:digest(R16_LISTENING_PREREGISTRATION_V1),
-    question_keys:configuration.questions.map(q=>q.key).sort()};
+  const frozen=validateSignalListeningConfigurationV1(configuration);
+  return{arm,configuration:frozen,configuration_digest:digest(frozen),preregistration_digest:digest(R16_LISTENING_PREREGISTRATION_V1),
+    question_keys:frozen.questions.map(q=>q.key).sort()};
 }
 
 /** Rates concern only resolved DISTINCT roots; calls can exceed roots in two phases. */

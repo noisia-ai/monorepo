@@ -1,1 +1,1 @@
-{"extends":"../../tsconfig.base.json","compilerOptions":{"noEmit":true,"incremental":false},"include":["listening-native-fixture.ts","listening-workload.ts","listening-workload.test.ts","run-listening-benchmark.ts"]}
+{"extends":"../../tsconfig.base.json","compilerOptions":{"noEmit":true,"incremental":false},"include":["listening-fault-plan.ts","listening-fault-plan.test.ts","listening-preflight.ts","listening-preflight.test.ts","listening-native-fixture.ts","listening-workload.ts","listening-workload.test.ts","run-listening-benchmark.ts"]}

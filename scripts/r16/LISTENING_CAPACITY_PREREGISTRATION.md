@@ -23,6 +23,19 @@ All complete 1-second windows after the fixed first 5 seconds must exceed 1,000 
 with at least 20 seconds measured, and wall throughput must also exceed 1,000 roots/s.
 Actual observed HTTP latency, including scheduling, must remain 100–500ms.
 
+The primary synthetic population is fully eligible, so two ordinary HTTP calls
+per resolved root are expected (base then both defined topics together), exactly
+65,536 calls for 32,768 roots absent faults. Report the observed ratio separately.
+The simulator alone uses 10,000 RPS and 10,000,000 input TPS in the shared organization
+Redis account. These are code-capacity test limits, not a claim about purchased
+provider capacity, and no real provider quota is changed. A 2,000 RPS simulator
+would impose a 1,000 roots/s ceiling before warmup/drain and cannot test this wall gate.
+
+Local preflight requires explicit Listening/JEV/streaming flags and the exact frozen
+configuration/model. Storage uses its real assertReady private-bucket HTTP check.
+Only the synthetic JEV fetch exists here; no real provider/models endpoint is contacted.
+Native DB authorization, rights, admissions and cap checks remain inside the job.
+
 Use signalListeningJevJobV1, createSignalListeningRuntimeStoreV1 and the calibrated
 provider factory with the real shared-organization Redis limiter. Use native PG,
 HTTP filesystem Storage fsync/readback and page settlement. Preserve memory, token,

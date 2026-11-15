@@ -5,7 +5,7 @@ import {R16_LISTENING_PREREGISTRATION_V1 as registration,r16ListeningWorkloadV1}
 import {reconcileR16ListeningResolvedRootsV1} from './run-listening-benchmark';
 test('preregistered R16 workloads bind generic Listening identity and consumer second pass, without legacy T&B',()=>{
  const a=r16ListeningWorkloadV1('defined_consumer_second_pass'),b=r16ListeningWorkloadV1('discovered_four');
- for(const w of[a,b]){validateSignalListeningConfigurationV1(w.configuration);assert.equal(w.configuration_digest,digest(w.configuration));
+ for(const w of[a,b]){assert.deepEqual(validateSignalListeningConfigurationV1(w.configuration),w.configuration);assert.equal(w.configuration_digest,digest(w.configuration));
  assert.equal(w.preregistration_digest,digest(registration));assert.equal(w.configuration.model,'jev-1.13.0');
  assert.ok(w.configuration.questions.filter(q=>q.origin==='brand_os').every(q=>q.scope==='consumer_category'&&q.type==='noul'&&q.topic_source==='defined'&&q.human_locked));
  assert.ok(!w.question_keys.includes('trigger_barrier'));}
