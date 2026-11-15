@@ -327,8 +327,15 @@ export async function seedSignalTopicEditorialRenewalSourceV1(args: SignalTopicE
   const lease = await claimSignalTopicConsolidationExecutionV1({ database, ...requested, lease_seconds: 300 });
   assert.ok(lease && !("completed" in lease), "real numeric owner must yield a current execution lease");
   const configuration = (await query("SELECT signal_topic_consolidation_numeric_configuration_v1() value")).rows[0]?.value as SignalTopicConsolidationConfigurationV1;
-  const metadata = await loadSignalTopicConsolidationRootMetadataV1({ queryable: database,
-    workspace_id: created.workspace_id, root_ids: projection.roots.map(root => root.root_id) });
+  const metadata: Awaited<ReturnType<typeof loadSignalTopicConsolidationRootMetadataV1>> = [];
+  const rootIds = projection.roots.map(root => root.root_id);
+  for (let offset = 0; offset < rootIds.length; offset += 2_000) {
+    metadata.push(...await loadSignalTopicConsolidationRootMetadataV1({ queryable: database,
+      workspace_id: created.workspace_id, root_ids: rootIds.slice(offset, offset + 2_000) }));
+  }
+  assert.equal(metadata.length, rootIds.length, "batched official metadata reads cover every governed root");
+  assert.equal(new Set(metadata.map(row => row.root_id)).size, rootIds.length,
+    "batched official metadata reads do not duplicate canonical roots");
   const byRoot = new Map(metadata.map(row => [row.root_id, row]));
   const counts = (values: Array<string | null>) => [...new Set(values.filter((value): value is string => value !== null))]
     .sort().map(key => ({ key, count: values.filter(value => value === key).length }));
