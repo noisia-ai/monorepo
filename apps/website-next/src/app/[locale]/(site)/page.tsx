@@ -34,7 +34,7 @@ export default async function HomePage({ params }: { params: Promise<{ locale: s
   const deliverable = { report: c.moments.report, study: c.moments.study, plan: c.moments.plan };
   const solutionsBase = lang === "en" ? "/en/solutions" : "/soluciones";
 
-  const jsonLd = pageGraph("/", locale, { page: { about: { "@id": ORG_ID }, mainEntity: { "@id": ORG_ID } } });
+  const jsonLd = await pageGraph("/", locale, { page: { about: { "@id": ORG_ID }, mainEntity: { "@id": ORG_ID } } });
 
   return (
     <>

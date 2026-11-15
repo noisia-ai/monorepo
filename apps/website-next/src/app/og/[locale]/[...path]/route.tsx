@@ -37,7 +37,7 @@ export async function GET(_request: Request, { params }: { params: Promise<{ loc
   if ((locale !== "es" && locale !== "en") || !joined.endsWith(".png")) return new Response("Not found", { status: 404 });
   const rest = joined.slice(0, -".png".length);
   const publicPath = locale === "en" ? (rest === "/index" ? "/en" : `/en${rest}`) : rest === "/index" ? "/" : rest;
-  const found = seoPageByPath(publicPath);
+  const found = await seoPageByPath(publicPath);
   if (!found || found.lang !== locale) return new Response("Not found", { status: 404 });
 
   const { page } = found;

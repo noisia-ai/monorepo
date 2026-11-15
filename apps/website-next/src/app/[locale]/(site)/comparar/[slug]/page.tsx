@@ -49,8 +49,8 @@ export default async function CompareDetailPage({ params }: { params: Promise<Pa
   const BothIcon = COMPARE_ICONS.both;
   const others = compareEntries.filter((other) => other !== entry);
   const id = `/comparar/${entry.slug.es}`;
-  const jsonLd = pageGraph(id, locale, {
-    nodes: [articleNode(id, locale, { headline: page.title, description: page.lead, about: [{ "@type": "Thing", name: page.them }, { "@type": "Thing", name: "Noisia" }] })]
+  const jsonLd = await pageGraph(id, locale, {
+    nodes: [await articleNode(id, locale, { headline: page.title, description: page.lead, about: [{ "@type": "Thing", name: page.them }, { "@type": "Thing", name: "Noisia" }] })]
   });
 
   return (

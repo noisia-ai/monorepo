@@ -18,7 +18,7 @@ export default async function WorkshopPage({ params }: { params: Promise<{ local
   const { locale } = await params;
   setRequestLocale(locale);
   const page = pick(workshop, locale);
-  const jsonLd = pageGraph("/taller", locale, { type: "ContactPage", page: { about: { "@id": ORG_ID } } });
+  const jsonLd = await pageGraph("/taller", locale, { type: "ContactPage", page: { about: { "@id": ORG_ID } } });
   return (
     <>
       <ContentPage page={page} split aside={<WorkshopForm copy={page.form} />} />

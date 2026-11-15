@@ -8,9 +8,9 @@ import { seoPages } from "@/lib/seo/pages";
  * registry as the page metadata, so a page that exists has an entry and a noindex page (feed
  * examples, /render) never does. Staging publishes an empty sitemap.
  */
-export default function sitemap(): MetadataRoute.Sitemap {
+export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   if (IS_UAT) return [];
-  return seoPages()
+  return (await seoPages())
     .filter((page) => !page.noindex)
     .flatMap((page) => {
       const languages = languageAlternates(page);

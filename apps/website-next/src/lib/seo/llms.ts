@@ -14,8 +14,9 @@ import { industryEntries } from "@/content/pages/industries";
 import { moments } from "@/content/moments";
 import { insightsReports } from "@/content/reports/reports";
 import { getStories } from "@/content/stories";
+import type { Story } from "@/content/stories/schema";
 import { ORG_EMAIL, ORG_SAME_AS, SITE_UPDATED, absoluteUrl, type Lang } from "./config";
-import { seoPage } from "./pages";
+import { staticSeoPage } from "./pages";
 
 /**
  * Plain-text versions of the site for answer engines (llmstxt.org convention). Everything here
@@ -24,7 +25,7 @@ import { seoPage } from "./pages";
  */
 
 const url = (id: string, lang: Lang) => {
-  const page = seoPage(id);
+  const page = staticSeoPage(id);
   return page ? absoluteUrl(page[lang].path) : absoluteUrl(id);
 };
 
@@ -119,7 +120,7 @@ const labels = {
   }
 };
 
-function fullSection(lang: Lang): string {
+function fullSection(lang: Lang, stories: Story[]): string {
   const l = labels[lang].sections;
   const o = offer[lang];
   const m = methodsPage[lang];
@@ -254,19 +255,21 @@ function fullSection(lang: Lang): string {
 
   const workshopText = join(`## ${l.workshop}`, `Source: ${url("/taller", lang)}`, w.title, w.lead, ...w.blocks.map((b) => blockText(b, "###")));
 
-  return join(aboutText, offerText, situationsText, methodsText, howText, socialText, compareText, industriesText, workshopText, insightsText(lang, true), contactText(lang));
+  return join(aboutText, offerText, situationsText, methodsText, howText, socialText, compareText, industriesText, workshopText, insightsText(lang, true, stories), contactText(lang));
 }
 
-function insightsText(lang: Lang, full: boolean): string {
+const storyUrl = (story: Story, lang: Lang) => absoluteUrl(lang === "en" ? `/en/insights/${story.id}` : `/insights/${story.id}`);
+
+function insightsText(lang: Lang, full: boolean, allStories: Story[]): string {
   const l = labels[lang].sections;
-  const stories = getStories().filter((story) => story.kind === "editorial");
+  const stories = allStories.filter((story) => story.kind === "editorial");
   return join(
     `## ${l.insights}`,
     `Source: ${url("/insights", lang)}`,
     `### ${l.reports}`,
     bullets(insightsReports.map((r) => `[${r.meta.study}](${url(`/insights/reportes/${r.slug}`, lang)}) (${r.meta.analysis_date}): ${r.meta.subtitle}`)),
     `### ${l.stories}`,
-    bullets(stories.map((story) => `[${story[lang].title}](${url(`/insights/${story.id}`, lang)}): ${story[lang].dek}${full && story[lang].takeaway ? ` ${story[lang].takeaway}` : ""}`))
+    bullets(stories.map((story) => `[${story[lang].title}](${storyUrl(story, lang)}): ${story[lang].dek}${full && story[lang].takeaway ? ` ${story[lang].takeaway}` : ""}`))
   );
 }
 
@@ -275,7 +278,8 @@ function contactText(lang: Lang): string {
 }
 
 /** /llms.txt: what Noisia is and a map of the pages, English first, Spanish links alongside. */
-export function llmsTxt(): string {
+export async function llmsTxt(): Promise<string> {
+  const stories = await getStories();
   const link = (id: string, name: string, note?: string) => `[${name}](${url(id, "en")}) (ES: ${url(id, "es")})${note ? `: ${note}` : ""}`;
   const o = offer.en;
   return `${join(
@@ -293,13 +297,14 @@ export function llmsTxt(): string {
     join("## Learn", bullets([link("/como-funciona", "How it works", howItWorks.en.metaDescription), link("/inteligencia-social", "What social intelligence is", socialIntelligence.en.lead), link("/nosotros", "About Noisia")])),
     join("## Comparisons", bullets(compareEntries.map((e) => link(`/comparar/${e.slug.es}`, e.page.en.title, e.summary.en)))),
     join("## Industries", bullets(industryEntries.map((e) => link(`/industrias/${e.slug.es}`, e.en.name, e.en.metaDescription)))),
-    insightsText("en", false),
+    insightsText("en", false, stories),
     contactText("en")
   )}\n`;
 }
 
 /** /llms-full.txt: the full text of the key pages, English then Spanish. */
-export function llmsFullTxt(): string {
+export async function llmsFullTxt(): Promise<string> {
+  const stories = await getStories();
   return `${join(
     "# Noisia",
     `> ${labels.en.intro}`,
@@ -307,11 +312,11 @@ export function llmsFullTxt(): string {
     join("## Key facts", bullets(labels.en.facts)),
     "---",
     "# English",
-    fullSection("en"),
+    fullSection("en", stories),
     "---",
     "# Español (México)",
     `> ${labels.es.intro}`,
     join(`## Datos clave`, bullets(labels.es.facts)),
-    fullSection("es")
+    fullSection("es", stories)
   )}\n`;
 }

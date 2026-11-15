@@ -13,7 +13,7 @@ function localizeReportHref(href: string | undefined, locale: string) {
 
 export async function getFeedStories(locale: string): Promise<FeedStory[]> {
   const t = await getTranslations({ locale, namespace: "industries" });
-  return getStories().map((story) => ({
+  return (await getStories()).map((story) => ({
     id: story.id,
     industry: story.industry,
     kind: story.kind,

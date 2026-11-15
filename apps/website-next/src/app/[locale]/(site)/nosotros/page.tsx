@@ -16,7 +16,7 @@ export async function generateMetadata({ params }: { params: Promise<{ locale: s
 export default async function Page({ params }: { params: Promise<{ locale: string }> }) {
   const { locale } = await params;
   setRequestLocale(locale);
-  const jsonLd = pageGraph("/nosotros", locale, { type: "AboutPage", page: { about: { "@id": ORG_ID }, mainEntity: { "@id": ORG_ID } } });
+  const jsonLd = await pageGraph("/nosotros", locale, { type: "AboutPage", page: { about: { "@id": ORG_ID }, mainEntity: { "@id": ORG_ID } } });
   return (
     <>
       <ContentPage page={pick(about, locale)} />

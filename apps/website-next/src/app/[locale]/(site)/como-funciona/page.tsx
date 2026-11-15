@@ -28,7 +28,7 @@ export default async function Page({ params }: { params: Promise<{ locale: strin
   setRequestLocale(locale);
   const c = howItWorks[locale === "en" ? "en" : "es"];
 
-  const jsonLd = pageGraph("/como-funciona", locale, { page: { about: { "@id": ORG_ID } } });
+  const jsonLd = await pageGraph("/como-funciona", locale, { page: { about: { "@id": ORG_ID } } });
 
   return (
     <article className={styles.page}>

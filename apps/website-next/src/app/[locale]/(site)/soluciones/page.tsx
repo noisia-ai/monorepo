@@ -32,11 +32,11 @@ export default async function Page_({ params }: { params: Promise<{ locale: stri
   const story = (await getFeedStories(locale)).find((s) => s.kind === "editorial");
   const deliverable = { report: c.labels.report, study: c.labels.study, plan: c.labels.plan };
   const url = absoluteUrl(base);
-  const jsonLd = pageGraph("/soluciones", locale, {
+  const jsonLd = await pageGraph("/soluciones", locale, {
     type: "CollectionPage",
     page: { mainEntity: { "@id": `${url}#list` } },
     nodes: [
-      itemListNode("/soluciones", locale, childItems("/soluciones", locale), c.situations.title),
+      await itemListNode("/soluciones", locale, await childItems("/soluciones", locale), c.situations.title),
       {
         "@type": "OfferCatalog",
         "@id": `${url}#catalog`,

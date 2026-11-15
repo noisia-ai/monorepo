@@ -18,7 +18,7 @@ export default async function RenderPage({
   const { locale, slug } = await params;
   const { frame = "0", mode = "video", scale = "1" } = await searchParams;
   setRequestLocale(locale);
-  const story = getStory(slug);
+  const story = await getStory(slug);
   if (!story) notFound();
   const t = await getTranslations({ locale, namespace: "industries" });
   return (

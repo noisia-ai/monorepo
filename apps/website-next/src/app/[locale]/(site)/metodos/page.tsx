@@ -30,7 +30,7 @@ export default async function Page({ params }: { params: Promise<{ locale: strin
   const lang = locale === "en" ? "en" : "es";
   const c = methodsPage[lang];
   const url = absoluteUrl(lang === "en" ? "/en/methods" : "/metodos");
-  const jsonLd = pageGraph("/metodos", locale, {
+  const jsonLd = await pageGraph("/metodos", locale, {
     page: { mainEntity: { "@id": `${url}#methods` } },
     nodes: [
       {
