@@ -130,7 +130,7 @@ export async function runMassLabelingAcceptanceFixtureV1(authorization:MassLabel
     const syntheticSaves=createSignalTopicEditorialRenewalSyntheticSavesV1(undefined,{brand_name:"Synthetic fixture"});
     const seed = await seedSignalTopicEditorialRenewalSourceV1({database, scoped, query, cleanup: async () => {},
       saves:syntheticSaves,
-      root_count:rootCount,import_batch_size:benchmark?.import_batch_size,preparation_page_size:benchmark?.preparation_page_size,embedding_page_limit:benchmark?.embedding_page_limit,numeric_daily_cap_micro_usd: benchmark?100_000_000:10_000_000, projection: {split_guided_groups:true,interpretation_configuration:globalConfiguration,engine_config: {profile_version: "workspace-bertopic-mass-labeling-v1", fixture: true},
+      root_count:rootCount,import_batch_size:benchmark?.import_batch_size,preparation_page_size:benchmark?.preparation_page_size,embedding_page_limit:benchmark?.embedding_page_limit,allow_benchmark_population:Boolean(benchmark),numeric_daily_cap_micro_usd: benchmark?100_000_000:10_000_000, projection: {split_guided_groups:true,interpretation_configuration:globalConfiguration,engine_config: {profile_version: "workspace-bertopic-mass-labeling-v1", fixture: true},
         onCheckpoint: async fixture => {
           if(fixture.proposals.length!==2)return;
           const assignment=[...fixture.bodies.entries()].find(([key])=>key.endsWith("/assignments.guided.jsonl"))![1];

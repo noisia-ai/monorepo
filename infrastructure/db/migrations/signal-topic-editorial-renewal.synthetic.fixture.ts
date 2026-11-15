@@ -44,6 +44,7 @@ export type SignalTopicEditorialRenewalSyntheticSeedArgsV1 = SyntheticTransactio
   import_batch_size?: number;
   preparation_page_size?: number;
   embedding_page_limit?: number;
+  allow_benchmark_population?: boolean;
   long_text?: boolean;
   skip_topic_prototypes?: boolean;
   runtime?: SignalBrandContextPreparationRuntimeV1;
@@ -267,6 +268,7 @@ export async function seedSignalTopicEditorialRenewalSourceV1(args: SignalTopicE
     embedding_page_limit: args.embedding_page_limit,
     skip_topic_prototypes: args.skip_topic_prototypes,
     projection: { ...args.projection, cluster_ids: clusterIds,
+      ...(args.allow_benchmark_population ? { allow_benchmark_population: true } : {}),
       ...(args.root_count && args.root_count > 10 ? { allow_large_population: true } : {}) },
   });
   assert.equal(projection.roots.length, args.root_count ?? 3, "the requested invented canonical root count is used");

@@ -318,12 +318,14 @@ try {
       const finalSummary = summarizeR16BenchmarkV1({ ...evidence, phases: phaseSpans });
       await writeFile(output, `${JSON.stringify({ fixture_setup_ms: fixtureSetupMs, fixture_import_batch_size: 512,
         fixture_preparation_page_size: 100, fixture_embedding_page_limit: Math.ceil(rootCount / 128) + 8,
+        fixture_allow_benchmark_population: true,
         synthetic_provider_limits: { requests_per_second: 2_000, input_tokens_per_second: 10_000_000 },
         evidence: { ...evidence, phases: phaseSpans }, summary: finalSummary,
         measurement: { sql: { ...sqlMetrics }, storage: disk, max_in_flight_observed: maxInFlight } }, null, 2)}\n`, { mode: 0o600, flag: "wx" });
       process.stdout.write(`${JSON.stringify({ evidence_path_private: output, fixture_setup_ms: fixtureSetupMs,
         fixture_import_batch_size: 512, fixture_preparation_page_size: 100,
         fixture_embedding_page_limit: Math.ceil(rootCount / 128) + 8,
+        fixture_allow_benchmark_population: true,
         summary: finalSummary, sql: sqlMetrics, storage: disk,
         max_in_flight_observed: maxInFlight })}\n`);
       if (!finalSummary.accepted) process.exitCode = 1;
