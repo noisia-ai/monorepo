@@ -12,6 +12,8 @@ No hay aprobaciones humanas intermedias en los procesos de análisis: Sonnet 4.6
 
 ## Progreso
 
+- PR196 contiene el candidato H1 revisado con árbol idéntico al local. La verificación remota debe ejecutar CI, PostgreSQL y capacidad sobre la cabeza publicada; todavía no se atribuye aceptación a la publicación de código.
+
 - H1 páginas paralelas revisadas sin P0/P1/P2 y matriz de fallos 8/8. El diagnóstico de 4,096 raíces completó ocho páginas en 6.51 s (629.60 raíces/s E2E); su única ventana sostenida fue 1,292/s, pero es demasiado corto y la tasa total insuficiente. El ensayo de 32,768 se interrumpió durante preparación por fsync EIO del laboratorio, con cero llamadas. Nueve respaldos sellados y sus censos se verificaron intactos; se liberaron cachés regenerables y una prueba nueva de WAL/CHECKPOINT/readback pasó. El transporte local de Docker requiere recuperación. No hay aceptación H1 ni uso real R16.
 
 - H1 páginas paralelas: los adaptadores nativos con crudos durables pueden marcar/aplicar llamadas disjuntas bajo lock compartido; lifecycle y reservas conservan exclusión. La migración aditiva 0308 añade una comprobación privada diferida de lease por transacción. Dieciocho pruebas PostgreSQL pasaron sin omisiones (278 migraciones), incluyendo COMMIT demorado, replay idéntico/parcial/divergente, solapamiento y cero HTTP tras perder lease. Tipado/lint 11/11; DB 660 aprobadas/198 omisiones de entorno y workers 1,027/44. Revisión del diff final y medición de capacidad pendientes; no acredita aún 1,000 raíces/s.
