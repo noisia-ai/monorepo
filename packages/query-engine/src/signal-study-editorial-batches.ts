@@ -158,12 +158,18 @@ export function validateSignalStudyMotiveReconciliationV2(review:SignalStudyReco
  const {request_digest,...body}=review;if(digest(body)!==request_digest)fail('reconciliation_request_invalid');
  const parsed=z.object({contract_version:z.literal('signal-study-reconciliation-output-v2'),input_digest:z.string(),clusters:z.array(z.object({representative_id:z.string(),member_ids:z.array(z.string()).min(1)}).strict())}).strict().safeParse(value);
  if(!parsed.success||parsed.data.input_digest!==review.input_digest)fail('reconciliation_output_invalid');
- const byId=new Map(review.candidates.map(c=>[c.candidate_id,c])),seen=new Set<string>();
+ const input=JSON.parse(JSON.parse(review.request_body).messages[0].content).untrusted_data;
+ if(digest(input)!==review.input_digest||!input.subject)fail('reconciliation_request_invalid');
+ const byId=new Map(review.candidates.map(c=>[c.candidate_id,c])),seen=new Set<string>(),semanticKeys=new Set<string>();
  const motives=parsed.data.clusters.map(cluster=>{
   if(!cluster.member_ids.includes(cluster.representative_id)||!byId.has(cluster.representative_id))fail('reconciliation_representative_invalid');
   const members=cluster.member_ids.map(id=>{if(seen.has(id)||!byId.has(id))fail('reconciliation_coverage_invalid');seen.add(id);return byId.get(id)!;});
   const representative=byId.get(cluster.representative_id)!;
-  return{key:'m_'+digest([...cluster.member_ids].sort()).slice(7,39),name:representative.name,definition:representative.definition,
+  // Operational candidate IDs prove this run's custody. They must not salt a
+  // classifier question identity: identical meaning can reuse native JEV cache.
+  const key='m_'+digest({contract_version:'signal-study-motive-semantic-v2',subject:input.subject,name:representative.name,definition:representative.definition}).slice(7,39);
+  if(semanticKeys.has(key))fail('reconciliation_semantic_identity_collision');semanticKeys.add(key);
+  return{key,name:representative.name,definition:representative.definition,
    group_keys:members.flatMap(m=>m.group_keys).sort(),evidence_root_ids:[...new Set(members.flatMap(m=>m.evidence_root_ids))].sort()};
  });
  if(seen.size!==byId.size)fail('reconciliation_coverage_invalid');

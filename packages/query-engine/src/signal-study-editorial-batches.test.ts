@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {createHash} from 'node:crypto';
 import {signalWorkspaceEmbeddingDigestV1 as digest} from './signal-workspace-embeddings-v1';
+import {signalStudyJevMotiveConfigurationV1} from './signal-study-jev-contracts';
 import {signalListeningBaseTemplateV1} from './signal-listening-contracts';
 import {SIGNAL_STUDY_TB_TEMPLATE_V1,SIGNAL_STUDY_TB_ROLES_V1,createSignalStudyTemplateSnapshotV1} from './signal-study-template-data';
 import {buildSignalStudyExecutionConfigurationV1} from './signal-study-configuration';
@@ -103,4 +104,23 @@ test('all-insufficient discovery skips global HTTP; oversized known global defin
  const long=many.nodes.map((_,i)=>{const value=localValue(many,i);return{...value,motives:value.motives.map(m=>({...m,definition:'漢'.repeat(1200)}))};});
  const result=buildSignalStudyMotiveReconciliationV2({configuration,discovery_plan:many,local_values:long});
  assert.ok('status'in result&&result.status==='format_stop');if('status'in result&&result.status==='format_stop')assert.equal(result.phase,'discovery-global');
+});
+
+test('semantic motive and membership identities survive execution sampling changes, while changed meaning misses cache and collisions fail closed',()=>{
+ function run(seed:string,definition='A precise shared bicycle choice force.',split=false){
+  const samples=['one','two'].map(key=>{const prior=sample(key,60),{sample_digest:_old,...body}=prior;body.sampling_policy={...body.sampling_policy,seed_digest:digest(seed)};return{...body,sample_digest:digest(body)};});
+  const plan=ready(compileSignalStudyDiscoveryBatchesV2({configuration,samples})),values=plan.nodes.map((_,i)=>localValue(plan,i));
+  for(const value of values)for(const m of value.motives){m.definition=definition;}
+  const request=buildSignalStudyMotiveReconciliationV2({configuration,discovery_plan:plan,local_values:values});if(!('request_body'in request))throw Error('expected request');
+  const ids=request.candidates.map(c=>c.candidate_id),clusters=split?ids.map(id=>({representative_id:id,member_ids:[id]})):[{representative_id:ids[0],member_ids:ids}];
+  const output=validateSignalStudyMotiveReconciliationV2(request,{contract_version:'signal-study-reconciliation-output-v2',input_digest:request.input_digest,clusters});
+  const motives=output.motives.map(m=>({...m,centroid:[1,0],layer:'personal' as const,human_locked:false}));
+  const membership=signalStudyJevMotiveConfigurationV1(configuration,motives);
+  return{plan,request,output,membership};
+ }
+ const a=run('execution-a'),b=run('execution-b');assert.notEqual(a.plan.plan_digest,b.plan.plan_digest);assert.notEqual(a.request.stage,b.request.stage);assert.notDeepEqual(a.request.candidates.map(c=>c.candidate_id),b.request.candidates.map(c=>c.candidate_id));
+ assert.deepEqual(a.output.motives.map(m=>m.key),b.output.motives.map(m=>m.key));assert.equal(digest(a.membership.questions),digest(b.membership.questions));
+ assert.deepEqual(signalStudyLayerPartitionKeysV2(a.output.motives[0]!.key),signalStudyLayerPartitionKeysV2(b.output.motives[0]!.key));
+ const changed=run('execution-a','A different counterfactual force with distinct inclusion boundaries.');assert.notEqual(a.output.motives[0]!.key,changed.output.motives[0]!.key);assert.notEqual(digest(a.membership.questions),digest(changed.membership.questions));
+ assert.throws(()=>run('execution-a',undefined,true),/semantic_identity_collision/u);
 });
