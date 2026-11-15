@@ -1,9 +1,9 @@
 import {createHash,randomUUID} from 'node:crypto';
 import type {PoolClient} from 'pg';
-import {LISTENING_DISCOVERY_POLICY_V1,listeningDiscoveryPolicyDigestV1,listeningDiscoveryPopulationDigestV1,
- buildListeningDiscoveryEvidenceV1,buildListeningDiscoveryEditorialRequestV1,applyListeningDiscoveryEditorialOutputV1,
+import {LISTENING_DISCOVERY_POLICY_V1,listeningDiscoveryPolicyDigestV1,
+ createListeningDiscoveryEvidenceStreamV1,buildListeningDiscoveryEditorialRequestV1,applyListeningDiscoveryEditorialOutputV1,
  decideListeningDiscoveryStopV1,signalWorkspaceEmbeddingDigestV1 as digest,
- type ListeningDiscoveryRootV1,type ListeningDiscoveryOrphanGroupV1} from '@noisia/query-engine';
+ type ListeningDiscoveryMetadataV1,type ListeningDiscoveryOrphanGroupV1} from '@noisia/query-engine';
 import {authorizeSignalListeningV1,listeningTransactionV1,loadSignalListeningConfigurationWithClientV1,
  saveSignalListeningConfigurationV1,listeningFailV1,type SignalListeningAccessV1} from './signal-listening-configuration';
 import {getSignalListeningDiscoveryGenerationV1,readSignalListeningDiscoveryRootsV1,refreshSignalListeningDiscoveryV1,
@@ -74,21 +74,64 @@ export async function startSignalListeningDiscoveryExecutionV1(args:SignalListen
 async function nativeRequest(args:SignalListeningAccessV1&{generation_id:string;ordinal:number;orphan_groups:ListeningDiscoveryOrphanManifestV1[]}){
  const g=await getSignalListeningDiscoveryGenerationV1(args);if(!g)fail('listening_discovery_generation_unavailable');
  const cfg=await listeningTransactionV1(args.database,c=>loadSignalListeningConfigurationWithClientV1(c,args.workspace_id,g.configuration_id));if(!cfg)fail('listening_discovery_configuration_unavailable');
- const roots:ListeningDiscoveryRootV1[]=[],texts=new Map<string,{root_id:string;text:string;source_text_sha256:string}>();let cursor:string|undefined;
- for(;;){const page=await readSignalListeningDiscoveryRootsV1({...args,after_root_id:cursor,limit:1024});
-  for(const r of page.roots){const p=r.proof as {source_text_sha256:string;in_category:boolean|null;evaluations:Array<{question_key:string;probability:number|null}>};
-   if(!r.vector||p.in_category===null||p.evaluations.some(e=>e.probability===null))fail('listening_discovery_classification_incomplete');
-   roots.push({root_id:r.root_id,input_sha256:p.source_text_sha256,in_category:p.in_category,vector:r.vector,evaluations:p.evaluations.map(e=>({topic_key:e.question_key,probability:e.probability!}))});
-   texts.set(r.root_id,{root_id:r.root_id,text:r.text,source_text_sha256:p.source_text_sha256});
-  }if(page.roots.length<1024)break;cursor=page.next_root_id!;
+ // Keep the existing authorized reader's source checks, but send no text and
+ // send vectors only on the first pass. All SQL predicates are workspace-bound.
+ const readPage=(after:string|undefined,vectors:boolean)=>listeningTransactionV1(args.database,async c=>{
+  await c.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ');await authorizeSignalListeningV1(c,args,'process');
+  await mapCurrent(c,args.workspace_id,g.map_id);
+  const current=(await c.query('SELECT 1 FROM signal_listening_discovery_generations WHERE id=$1 AND workspace_id=$2 AND status=\'ready\' AND snapshot_digest=$3',[g.id,args.workspace_id,g.snapshot_digest])).rows.length;
+  if(!current)fail('listening_discovery_snapshot_stale');
+  const rows=(await c.query<{root_id:string;proof:{source_text_sha256:string;embedding_sha256:string|null;in_category:boolean|null;evaluations:Array<{question_key:string;probability:number|null}>};
+   vector:string|null;allowed:boolean;source_sha:string;vector_sha:string|null}>(`SELECT r.root_id,r.proof,
+   ${vectors?"CASE WHEN receipt.status='settled' THEN e.embedding::text END":"NULL::text"} vector,
+   signal_listening_root_right_v1($1,r.root_id,'llm-processing') allowed,
+   'sha256:'||encode(sha256(convert_to(i.text,'UTF8')),'hex') source_sha,
+   CASE WHEN receipt.status='settled' THEN 'sha256:'||encode(sha256(convert_to(e.embedding::text,'UTF8')),'hex') END vector_sha
+   FROM signal_listening_discovery_roots r JOIN signal_mass_labeling_items i ON i.workspace_id=r.workspace_id AND i.map_id=$3 AND i.root_id=r.root_id
+   LEFT JOIN signal_workspace_chunk_embeddings e ON e.workspace_id=r.workspace_id AND e.config_digest=$4 AND e.chunk_sha256=r.proof->>'chunk_sha256'
+   LEFT JOIN signal_workspace_embedding_calls receipt ON receipt.workspace_id=r.workspace_id AND receipt.id=e.call_id
+   WHERE r.workspace_id=$1 AND r.generation_id=$2 AND($5::uuid IS NULL OR r.root_id>$5)
+   ORDER BY r.root_id LIMIT 1024`,[args.workspace_id,g.id,g.map_id,g.embedding_config_digest,after??null])).rows;
+  if(rows.some(r=>!r.allowed||r.source_sha!==r.proof.source_text_sha256||r.vector_sha!==r.proof.embedding_sha256))fail('listening_discovery_snapshot_stale');
+  return rows;
+ });
+ const populationDigest=await listeningTransactionV1(args.database,async c=>{
+  await authorizeSignalListeningV1(c,args,'process');await mapCurrent(c,args.workspace_id,g.map_id);
+  const row=(await c.query<{digest:string}>(`SELECT signal_listening_discovery_census_v1(id) digest FROM signal_listening_discovery_generations
+   WHERE id=$1 AND workspace_id=$2 AND status='ready' AND snapshot_digest=$3`,[g.id,args.workspace_id,g.snapshot_digest])).rows[0];
+  if(!row)fail('listening_discovery_snapshot_stale');return row.digest;
+ });
+ const stream=createListeningDiscoveryEvidenceStreamV1({workspace_id:args.workspace_id,vector_space_digest:g.embedding_config_digest,
+  map_digest:cfg.configuration_digest,round:args.ordinal,expected_population_digest:populationDigest,expected_root_count:g.counts.roots!,
+  topic_keys:cfg.configuration.questions.filter(q=>q.topic_source).map(q=>q.key),policy:LISTENING_DISCOVERY_POLICY_V1});
+ for(const vectors of [true,false]){
+  let cursor:string|undefined;
+  for(;;){const page=await readPage(cursor,vectors);
+   const metadata:ListeningDiscoveryMetadataV1[]=page.map(r=>{
+    const p=r.proof;if(p.in_category===null||p.evaluations.some(e=>e.probability===null))fail('listening_discovery_classification_incomplete');
+    return{root_id:r.root_id,input_sha256:p.source_text_sha256,in_category:p.in_category,
+     evaluations:p.evaluations.map(e=>({topic_key:e.question_key,probability:e.probability!}))};
+   });
+   if(vectors)stream.addFirstPage(metadata.map((root,index)=>{
+    if(!page[index]!.vector)fail('listening_discovery_classification_incomplete');
+    return{...root,vector:JSON.parse(page[index]!.vector!) as number[]};
+   }));else stream.addSecondPage(metadata);
+   if(page.length<1024)break;cursor=page.at(-1)!.root_id;
+  }
+  if(vectors)stream.finishFirstPass();
  }
- const evidence=buildListeningDiscoveryEvidenceV1({workspace_id:args.workspace_id,vector_space_digest:g.embedding_config_digest,map_digest:cfg.configuration_digest,round:args.ordinal,
-  expected_population_digest:listeningDiscoveryPopulationDigestV1(roots),expected_root_count:g.counts.roots!,topic_keys:cfg.configuration.questions.filter(q=>q.topic_source).map(q=>q.key),roots,policy:LISTENING_DISCOVERY_POLICY_V1});
- const orphanIds=new Set(evidence.orphan_root_ids),usedIds=new Set<string>();
+ const evidence=stream.finish(),orphanIds=new Set(evidence.orphan_root_ids),usedIds=new Set<string>();
  for(const group of args.orphan_groups){if(group.root_ids.length!==group.root_count||new Set(group.root_ids).size!==group.root_ids.length||group.root_ids.some(id=>!orphanIds.has(id)||usedIds.has(id))||group.representative_root_ids.some(id=>!group.root_ids.includes(id)))fail('listening_discovery_orphan_manifest_invalid');for(const id of group.root_ids)usedIds.add(id);}
- const used=new Set(evidence.topics.flatMap(t=>[...t.accepted_examples,...t.rejected_examples]).concat(args.orphan_groups.flatMap(g=>g.representative_root_ids)));
+ const used=[...new Set(evidence.topics.flatMap(t=>[...t.accepted_examples,...t.rejected_examples]).concat(args.orphan_groups.flatMap(g=>g.representative_root_ids)))];
+ const texts=new Map<string,{root_id:string;text:string;source_text_sha256:string}>();let textBytes=0;
+ for(let offset=0;offset<used.length;offset+=1024){
+  const selected=await readSignalListeningDiscoveryRootsV1({...args,root_ids:used.slice(offset,offset+1024),after_root_id:undefined,limit:1024});
+  if(selected.generation.snapshot_digest!==g.snapshot_digest)fail('listening_discovery_snapshot_stale');
+  for(const root of selected.roots){textBytes+=Buffer.byteLength(root.text);if(textBytes>2*1024*1024)fail('listening_discovery_editorial_request_too_large');
+   texts.set(root.root_id,{root_id:root.root_id,text:root.text,source_text_sha256:root.proof.source_text_sha256 as string});}
+ }
  const groups=args.orphan_groups.map(({root_ids:_,...g})=>g);
- const request=buildListeningDiscoveryEditorialRequestV1({configuration:cfg.configuration,evidence,orphan_groups:groups,excerpts:[...used].map(id=>texts.get(id)!)});
+ const request=buildListeningDiscoveryEditorialRequestV1({configuration:cfg.configuration,evidence,orphan_groups:groups,excerpts:used.map(id=>texts.get(id)!)});
  return{request,g,cfg};
 }
 export async function quoteSignalListeningDiscoveryRoundV1(args:SignalListeningAccessV1&{generation_id:string;ordinal:number;orphan_groups:ListeningDiscoveryOrphanManifestV1[]}){

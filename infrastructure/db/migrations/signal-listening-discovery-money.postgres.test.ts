@@ -7,7 +7,7 @@ import test from 'node:test';
 import {assertDiscoveryRuntimeLeaseV1} from './signal-listening-discovery-runtime.assertions';
 import {getSignalListeningDiscoveryPublicationRecoveryV1,releaseSignalListeningDiscoveryRoundV1} from '../signal-listening-discovery-runtime';
 import {runMassLabelingAcceptanceFixtureV1} from './signal-mass-labeling-acceptance.synthetic.fixture';
-import {signalListeningBaseTemplateV1,buildSignalListeningJevRequestV1,signalListeningRequestDigestV1,mapSignalListeningJevResponseV1} from '@noisia/query-engine';
+import {signalListeningBaseTemplateV1,buildSignalListeningJevRequestV1,signalListeningRequestDigestV1,mapSignalListeningJevResponseV1,buildListeningDiscoveryEvidenceV1,listeningDiscoveryPopulationDigestV1,buildListeningDiscoveryEditorialRequestV1,type ListeningDiscoveryRootV1} from '@noisia/query-engine';
 import {saveSignalListeningConfigurationV1} from '../signal-listening-configuration';
 import {requestSignalListeningV1,createSignalListeningStoreV1} from '../signal-listening-runs';
 import {proposeSignalListeningDiscoveryBootstrapV1,bootstrapSignalListeningDiscoveryV1,refreshSignalListeningDiscoveryV1,
@@ -61,7 +61,22 @@ test('discovery reviews use native admissions, durable receipts and one shared l
    assert.equal(confirmed.kind,'confirmed_members');assert.equal(confirmed.counts.category_roots,3);assert.equal(confirmed.counts.pending_base,0);assert.equal(confirmed.counts.pending_topics,0);
    // Synthetic policy successor is explicit. The migration enables no provider.
    const oldPolicy=(await db.query("SELECT p.* FROM signal_processing_policy_versions p JOIN signal_workspaces w ON w.organization_id=p.organization_id WHERE w.id=$1 AND p.status='active'",[ctx.workspace_id])).rows[0];
+   // The eager oracle is restricted to this three-root synthetic fixture.
+   // Native reads must retain exact evidence and request bytes after streaming.
+   const nativeSource=await readSignalListeningDiscoveryRootsV1({...access,generation_id:confirmed.id,limit:1024});
+   const eagerRoots:ListeningDiscoveryRootV1[]=nativeSource.roots.map(r=>({root_id:r.root_id,input_sha256:r.proof.source_text_sha256 as string,
+    in_category:r.proof.in_category as boolean,vector:r.vector!,evaluations:(r.proof.evaluations as Array<{question_key:string;probability:number}>)
+     .map(e=>({topic_key:e.question_key,probability:e.probability}))}));
+   const eagerEvidence=buildListeningDiscoveryEvidenceV1({workspace_id:ctx.workspace_id,vector_space_digest:confirmed.embedding_config_digest,
+    map_digest:cfg.configuration_digest,round:1,expected_root_count:3,expected_population_digest:listeningDiscoveryPopulationDigestV1(eagerRoots),
+    roots:eagerRoots,topic_keys:cfg.configuration.questions.filter(q=>q.topic_source).map(q=>q.key)});
+   const eagerIds=new Set(eagerEvidence.topics.flatMap(t=>[...t.accepted_examples,...t.rejected_examples]));
+   const eagerRequest=buildListeningDiscoveryEditorialRequestV1({configuration:cfg.configuration,evidence:eagerEvidence,orphan_groups:[],
+    excerpts:nativeSource.roots.filter(r=>eagerIds.has(r.root_id)).map(r=>({root_id:r.root_id,text:r.text,source_text_sha256:r.proof.source_text_sha256 as string}))});
    const reviewQuote=await quoteSignalListeningDiscoveryRoundV1({...access,generation_id:confirmed.id,ordinal:1,orphan_groups:[]});
+   assert.equal(reviewQuote.request_digest,eagerRequest.request_digest,'native streaming quote preserves the eager request identity');
+   await assert.rejects(quoteSignalListeningDiscoveryRoundV1({...access,actor_user_id:randomUUID(),generation_id:confirmed.id,ordinal:1,orphan_groups:[]}),/forbidden|unavailable/);
+   await assert.rejects(quoteSignalListeningDiscoveryRoundV1({...access,workspace_id:randomUUID(),generation_id:confirmed.id,ordinal:1,orphan_groups:[]}),/forbidden|unavailable/);
    const existingExposure=Number((await db.query('SELECT total_micro_usd::text FROM signal_processing_org_exposure_v1($1,current_date,$2)',[oldPolicy.organization_id,oldPolicy.budget_timezone])).rows[0].total_micro_usd);
    const policy=(await db.query(`INSERT INTO signal_processing_policy_versions(organization_id,version,status,valid_from,valid_until,budget_timezone,daily_cap_micro_usd,created_by_user_id)
     SELECT organization_id,version+1,'draft',valid_from,valid_until,budget_timezone,COALESCE($2::bigint,daily_cap_micro_usd),created_by_user_id FROM signal_processing_policy_versions WHERE id=$1 RETURNING *`,[oldPolicy.id,mode==='race'?existingExposure+reviewQuote.reservation_micro_usd:null])).rows[0];
@@ -74,6 +89,7 @@ test('discovery reviews use native admissions, durable receipts and one shared l
    const execution=await startSignalListeningDiscoveryExecutionV1({...access,generation_id:confirmed.id,classification_run_id:started.run_id,cap_micro_usd:4000000,idempotency_key:randomUUID()});
    assert.equal(Number((await db.query('SELECT signal_listening_discovery_exposure_v1($1)::text n',[execution.id])).rows[0].n),18,'parent counts the already-paid JEV run');
    const round=await enqueueSignalListeningDiscoveryRoundV1({...access,execution_id:execution.id,generation_id:confirmed.id,orphan_groups:[],provider_available:true});
+   assert.equal(round.request_body,eagerRequest.request_body,'native streaming enqueue preserves every eager request byte');
    if(mode==='zero'){
     const packet=JSON.parse(JSON.parse(round.request_body).messages[0].content);assert.ok(packet.topics.every((t:{approved:number;centroid_status:string})=>t.approved===0&&t.centroid_status==='no_confirmed_members'),'Sonnet sees the absence of confirmed members before any paid review');
     const changed=await saveSignalListeningConfigurationV1({...access,expected_revision:cfg.revision,provenance:'agent',source_digest:sha('empty-source-redefinition'),configuration:{...cfg.configuration,questions:cfg.configuration.questions.map((q,i)=>q.type==='noul'&&q.topic_source==='discovered'&&i===2?{...q,positive:q.positive+' Refined contrast.'}:q)}});
@@ -214,7 +230,8 @@ test('discovery reviews use native admissions, durable receipts and one shared l
     const run2=await store.claim(child2.listening_run_id!);assert.ok(run2);assert.equal((await store.inputs(run2)).length,0);assert.equal(await store.finish(run2),'completed');await store.release(run2);
     await completeSignalListeningDiscoveryRoundV1({...access,round_id:next.id});const activated=await activateSignalListeningServingSnapshotV1({...access,round_id:next.id});
     const current=await getSignalListeningServingSnapshotV1(access);assert.equal(current?.id,activated.id);assert.notEqual(current?.id,snapshot.id);assert.equal(current?.configuration_id,revised.configuration_id);assert.equal(current?.classification_run_id,child2.listening_run_id);assert.equal(current?.configuration_is_latest,true);
-    await db.query("UPDATE data_sources SET status='archived' WHERE workspace_id=$1",[ctx.workspace_id]);assert.equal(await getSignalListeningServingSnapshotV1(access),null,'source revocation closes serving even for a previously completed version');return;
+    await db.query("UPDATE data_sources SET status='archived' WHERE workspace_id=$1",[ctx.workspace_id]);assert.equal(await getSignalListeningServingSnapshotV1(access),null,'source revocation closes serving even for a previously completed version');
+    await assert.rejects(quoteSignalListeningDiscoveryRoundV1({...access,generation_id:confirmed.id,ordinal:1,orphan_groups:[]}),/mass_labeling_map_stale/,'a revoked source closes the streaming evidence reader on its exact stale-map guard');return;
    }
    const unknownRaw=JSON.stringify({http_status:429,body:JSON.stringify({error:{type:'rate_limit_error'},usage:{input_tokens:0,output_tokens:0}})});
    await persistSignalListeningDiscoveryRawV1({database:db,call_id:second.id,attempt_token:second.attempt_token,raw_text:unknownRaw,raw_store:reviewStorage});

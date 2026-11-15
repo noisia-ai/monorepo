@@ -1299,3 +1299,4 @@ export * from './signal-study-evidence';
 export * from './signal-study-editorial';
 
 export * from './signal-study-output';
+export * from './signal-listening-discovery-streaming-v1';
