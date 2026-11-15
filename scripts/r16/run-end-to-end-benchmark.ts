@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import { performance } from "node:perf_hooks";
 import { continueMassLabelingV1 } from "../../infrastructure/db/signal-mass-labeling";
 import { runMassLabelingAcceptanceFixtureV1 } from "../../infrastructure/db/migrations/signal-mass-labeling-acceptance.synthetic.fixture";
-import { createCalibratedJevRuntimeProviderV2 } from "../../services/workers/src/providers/jev-streaming-runtime";
+import { createCalibratedJevRuntimeProviderV2, jevStreamingExecutionFromEnvV2 } from "../../services/workers/src/providers/jev-streaming-runtime";
 import { createMassLabelingRuntimeStoreV1, processMassLabelingProductPageV2 } from "../../services/workers/src/workers/signal-mass-labeling-jev";
 import { createWorkspaceEngineStorageV1 } from "../../services/workers/src/workers/signal-workspace-engine-storage";
 import { startR16HttpFilesystemStorageV1 } from "./http-filesystem-storage";
@@ -51,8 +51,11 @@ process.env.NOISIA_R16_LOCAL_PG_LAB = "r16-benchmark-pg17";
 
 const rootCount = Number(process.env.R16BENCH_ROOTS ?? 32_768);
 const sourceProvenance = await captureR16SourceProvenanceV1(repo);
-const execution = { max_in_flight: 1024, flush_size: 256, max_flushes: 2,
-  max_buffered_bytes: 512 * 1024 * 1024, flush_interval_ms: 100, window_size: 4096 };
+// Measure the actual runtime batching defaults, with the explicitly accredited
+// 512MiB synthetic memory envelope. Do not maintain a smaller shadow profile.
+const execution = jevStreamingExecutionFromEnvV2({ NOISIA_JEV_STREAMING_V2_ENABLED: 'true',
+  NOISIA_JEV_STREAM_BUFFER_BYTES: String(512 * 1024 * 1024) });
+if (!execution) throw new Error('r16_streaming_runtime_required');
 const responseBound = 16 * 1024;
 let recorder = new R16BenchmarkRecorderV1("r16-synthetic-benchmark");
 const objectRoot = await mkdtemp(join(privateRoot, "objects-"));
