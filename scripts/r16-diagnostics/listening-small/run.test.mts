@@ -299,9 +299,12 @@ test('DML plan notice exposes allowlisted trigger metrics and omits query text, 
  const note=safeDmlAutoExplainNotice({message:'duration: 62 ms plan: '+JSON.stringify({'Query Text':queryText,'Execution Time':62,
   Plan:{'Node Type':'ModifyTable','Relation Name':'signal_listening_answers','Actual Rows':256,'Actual Loops':1},
   Triggers:[{'Trigger Name':'signal_listening_answer_guard',Relation:'signal_listening_answers',Time:48.2,Calls:256},
+   {'Trigger Name':'signal_listening_answer_guard',Relation:'signal_listening_answers',Calls:0},
    {'Trigger Name':'private_dynamic_trigger',Relation:'private_table',Time:9,Calls:1}]})});
- assert.deepEqual(note?.triggers,[{name:'signal_listening_answer_guard',relation:'signal_listening_answers',time_ms:48.2,calls:256}]);
- assert.equal(note?.triggers_seen,2);assert.equal(note?.triggers_omitted,1);assert.match(note?.query_text_sha256??'/',/^sha256:[0-9a-f]{64}$/u);
+ assert.deepEqual(note?.triggers,[{name:'signal_listening_answer_guard',relation:'signal_listening_answers',time_ms:48.2,calls:256},
+  {name:'signal_listening_answer_guard',relation:'signal_listening_answers',time_ms:null,calls:0}]);
+ assert.equal(note?.triggers_seen,3);assert.equal(note?.triggers_omitted,1);assert.equal(note?.triggers_unknown_time,1);
+ assert.match(note?.query_text_sha256??'/',/^sha256:[0-9a-f]{64}$/u);
  const serialized=JSON.stringify(note);
  for(const forbidden of ['private-id','private_dynamic_trigger','private_table','Query Text','INSERT INTO','{}'])assert.ok(!serialized.includes(forbidden));
 });
@@ -317,7 +320,7 @@ test('DML savepoint releases before the original write, captures once and keeps 
  assert.equal(writes,1);assert.equal(captured.result.rowCount,256);assert.ok(captured.observation?.status==='captured');
  assert.equal(captured.observation.plans.length,DML_PLAN_MAX_PLANS);assert.equal(captured.observation.plans_dropped,2);
  assert.equal(captured.observation.triggers_omitted_count,10);assert.equal(captured.observation.plans[0]?.triggers[0]?.calls,256);
- assert.equal(captured.observation.analyze_overhead_measured,false);assert.equal(client.listenerCount('notice'),0);
+ assert.equal(captured.observation.analyze_timing_overhead_measured,false);assert.equal(client.listenerCount('notice'),0);
  assert.ok(events.indexOf('release')<events.indexOf('write'));assert.equal(events.filter(x=>x==='rollback').length,0);
  assert.ok(events.lastIndexOf('restore')>events.indexOf('write'));
  assert.equal(restores.length,15);assert.ok(restores.every(row=>row.local));
@@ -325,16 +328,21 @@ test('DML savepoint releases before the original write, captures once and keeps 
  assert.deepEqual(restores.at(-1),{name:'auto_explain.log_min_duration',value:oldValues['auto_explain.log_min_duration'],local:true});
  for(const {name,value} of restores.slice(1,-1))assert.equal(value,oldValues[name]);
  assert.equal(statements.includes('SET LOCAL auto_explain.log_triggers = on'),true);
+ assert.equal(statements.includes('SET LOCAL auto_explain.log_timing = on'),true);
+ assert.equal(captured.observation.analyze_timing_enabled,true);assert.equal(captured.observation.analyze_timing_overhead_measured,false);
  assert.equal(statements.some(sql=>sql.startsWith('ROLLBACK TO SAVEPOINT')),false);
  const serialized=JSON.stringify(captured);for(const forbidden of ['private_0','unknown_private_trigger','hidden','UPDATE synthetic_table'])assert.ok(!serialized.includes(forbidden));
 }));
 
 test('DML setup fallback rolls back before exactly one write and leaves it in the outer transaction ledger',async()=>withDmlPlanTestEnv(async()=>{
  const {captureDmlPlanQueryV1}=await import('./observer.mjs');const {client,events}=fakeDmlPlanClient({failLoad:true});let writes=0;
+ let clockTick=0;
  const captured=await captureDmlPlanQueryV1({client,query:async()=>{assert.equal(client.listenerCount('notice'),0);writes++;events.push('write');return{rowCount:256};},
-  query_hash:'sha256:7a86df2f02e720b156e7f9d7132eba342080fc9d169d7cf8e1cbdfa74de067a7',batch_size:256,database:'noisia_mfp_ci',role:'postgres',env:process.env});
+  query_hash:'sha256:7a86df2f02e720b156e7f9d7132eba342080fc9d169d7cf8e1cbdfa74de067a7',batch_size:256,database:'noisia_mfp_ci',role:'postgres',env:process.env,clock:()=>++clockTick});
  assert.equal(writes,1);assert.equal(captured.result.rowCount,256);assert.ok(captured.observation?.status==='setup_unavailable');
  assert.equal(captured.observation.reason,'auto_explain_load_unavailable');assert.ok(events.indexOf('rollback')<events.indexOf('write'));
+ assert.equal(captured.observation.cleanup_ms,1);assert.equal(captured.observation.setup_cleanup_wall_ms,captured.observation.setup_ms+captured.observation.cleanup_ms);
+ assert.equal(captured.observation.analyze_timing_enabled,false);
  assert.equal(events.filter(x=>x==='write').length,1);
 }));
 

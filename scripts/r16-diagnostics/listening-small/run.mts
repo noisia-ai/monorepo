@@ -213,7 +213,8 @@ export async function runListeningSmallDiagnosticV1(){
           inner_plan_capture:{diagnostic_only:true,threshold_roots:1024,max_captures_per_query_hash:2,min_duration_ms:INNER_PLAN_MIN_DURATION_MS,
             plans_below_min_duration_captured:false,observations:observer.snapshot().inner_plan_observations},
           dml_plan_capture:{diagnostic_only:true,opt_in_required:true,min_batch_size:DML_PLAN_MIN_BATCH,max_captures_per_query_hash:1,min_duration_ms:DML_PLAN_MIN_DURATION_MS,
-            plans_below_min_duration_captured:false,max_plans_per_capture:DML_PLAN_MAX_PLANS,trigger_names_allowlisted:true,raw_query_or_values_recorded:false,analyze_overhead_measured:false,
+            plans_below_min_duration_captured:false,max_plans_per_capture:DML_PLAN_MAX_PLANS,trigger_names_allowlisted:true,raw_query_or_values_recorded:false,
+            analyze_timing_enabled:true,analyze_timing_overhead_measured:false,capacity_claim:false,
             observations:observer.snapshot().dml_plan_observations},
           root_census_sha256:sha([...rootSet].sort().join('\n')),
           serving_question_count:serving.length,total_wall_ms:performance.now()-started};
@@ -231,7 +232,8 @@ export async function runListeningSmallDiagnosticV1(){
       inner_plan_capture:{diagnostic_only:true,threshold_roots:1024,max_captures_per_query_hash:2,min_duration_ms:INNER_PLAN_MIN_DURATION_MS,
         plans_below_min_duration_captured:false,observations:observerSnapshot.inner_plan_observations},
       dml_plan_capture:{diagnostic_only:true,opt_in_required:true,min_batch_size:DML_PLAN_MIN_BATCH,max_captures_per_query_hash:1,min_duration_ms:DML_PLAN_MIN_DURATION_MS,
-        plans_below_min_duration_captured:false,max_plans_per_capture:DML_PLAN_MAX_PLANS,trigger_names_allowlisted:true,raw_query_or_values_recorded:false,analyze_overhead_measured:false,
+        plans_below_min_duration_captured:false,max_plans_per_capture:DML_PLAN_MAX_PLANS,trigger_names_allowlisted:true,raw_query_or_values_recorded:false,
+        analyze_timing_enabled:true,analyze_timing_overhead_measured:false,capacity_claim:false,
         observations:observerSnapshot.dml_plan_observations}};
     await atomicJson(artifact,failure).catch(()=>undefined);
     await storageServer?.close().catch(()=>undefined);
