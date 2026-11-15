@@ -57,12 +57,14 @@ type NativeHumanEditV1 = { id: string; workspace_id: string; base_snapshot_id: s
   configuration_id: string; source_generation_id: string; generation_id: string; map_id: string; source_digest: string;
   source_generation_digest: string; snapshot_digest: string; actual_snapshot_digest: string; generation_human_edit_id: string;
   generation_status: string; generation_snapshot_digest: string; generation_actual_digest: string; generation_source_current: boolean;
-  configuration_digest: string; configuration: Record<string, unknown>; configuration_state: string };
+  generation_configuration_id: string;
+  configuration_digest: string; configuration: Record<string, unknown>; configuration_state: string;
+  revision: number; expected_revision: number; previous_edit_id: string | null; depth: number; cycle: boolean };
 
 export function nativeListeningFinancialAnchorV1(args: { source: Study; base: NativeFinancialBaseSnapshotV1 | null;
-  after: Generation & { snapshot_digest: string | null }; human_edit: NativeHumanEditV1 | null }):
+  after: Generation & { snapshot_digest: string | null }; human_edits: readonly NativeHumanEditV1[] }):
   { generation_id: string; round_id: string; base_snapshot_id: string; source_kind: "serving" | "human_edit" } | null {
-  const { source, base, after, human_edit: edit } = args;
+  const { source, base, after, human_edits: edits } = args;
   if (!base || base.id !== source.listening_base_snapshot_id || base.workspace_id !== source.workspace_id
     || base.map_id !== after.map_id || base.generation_configuration_id !== base.configuration_id
     || base.generation_status !== "ready" || base.generation_kind !== "confirmed_members" || !base.generation_source_current
@@ -71,23 +73,33 @@ export function nativeListeningFinancialAnchorV1(args: { source: Study; base: Na
     || !/^sha256:[a-f0-9]{64}$/u.test(base.snapshot_digest) || base.snapshot_digest !== base.actual_snapshot_digest
     || base.round_id !== source.listening_source_round_id
     || source.listening_configuration_id !== base.configuration_id && source.listening_source_kind === "serving"
-    || source.listening_source_generation_id !== (source.listening_source_kind === "serving" ? base.generation_id : edit?.generation_id)
+    || source.listening_source_generation_id !== (source.listening_source_kind === "serving" ? base.generation_id : edits[0]?.generation_id)
     || after.id !== source.listening_source_generation_id || after.workspace_id !== source.workspace_id || after.map_id !== base.map_id) return null;
   if (source.listening_source_kind === "serving") {
     if (source.listening_source_id !== base.id || source.listening_source_digest !== base.snapshot_digest
       || after.configuration_id !== base.configuration_id || after.snapshot_digest !== base.generation_snapshot_digest) return null;
     return { generation_id: base.generation_id, round_id: base.round_id, base_snapshot_id: base.id, source_kind: "serving" };
   }
-  if (source.listening_source_kind !== "human_edit" || !edit || source.listening_source_id !== edit.id
-    || edit.workspace_id !== source.workspace_id || edit.base_snapshot_id !== base.id || edit.map_id !== base.map_id
-    || edit.source_configuration_id !== base.configuration_id || edit.source_generation_id !== base.generation_id
-    || edit.source_generation_digest !== base.generation_snapshot_digest || edit.source_digest !== base.snapshot_digest
-    || edit.configuration_id !== source.listening_configuration_id || edit.generation_id !== source.listening_source_generation_id
-    || edit.snapshot_digest !== source.listening_source_digest || edit.actual_snapshot_digest !== edit.snapshot_digest
-    || edit.generation_human_edit_id !== edit.id || edit.generation_status !== "ready"
-    || edit.generation_snapshot_digest !== edit.generation_actual_digest || !edit.generation_source_current
-    || edit.configuration_state !== "published" || digest(edit.configuration) !== edit.configuration_digest
-    || after.configuration_id !== edit.configuration_id || after.snapshot_digest !== edit.generation_snapshot_digest) return null;
+  if (source.listening_source_kind !== "human_edit" || !edits.length || edits.length > 128
+    || source.listening_source_id !== edits[0]!.id || after.configuration_id !== edits[0]!.configuration_id
+    || after.snapshot_digest !== edits[0]!.generation_snapshot_digest) return null;
+  for (let index = 0; index < edits.length; index++) {
+    const edit = edits[index]!;
+    if (edit.depth !== index || edit.cycle || edit.workspace_id !== source.workspace_id || edit.base_snapshot_id !== base.id
+      || edit.map_id !== base.map_id || edit.source_digest !== base.snapshot_digest || edit.actual_snapshot_digest !== edit.snapshot_digest
+      || edit.revision !== edit.expected_revision + 1 || edit.generation_human_edit_id !== edit.id || edit.generation_status !== "ready"
+      || edit.generation_snapshot_digest !== edit.generation_actual_digest || edit.generation_configuration_id !== edit.configuration_id
+      || !edit.generation_source_current
+      || edit.configuration_state !== "published" || digest(edit.configuration) !== edit.configuration_digest) return null;
+    const previous = edits[index + 1];
+    if (previous) {
+      if (edit.previous_edit_id !== previous.id || edit.revision !== previous.revision + 1
+        || edit.source_configuration_id !== previous.configuration_id || edit.source_generation_id !== previous.generation_id
+        || edit.source_generation_digest !== previous.generation_snapshot_digest) return null;
+    } else if (edit.previous_edit_id !== null || edit.revision !== 1 || edit.source_configuration_id !== base.configuration_id
+      || edit.source_generation_id !== base.generation_id || edit.source_generation_digest !== base.generation_snapshot_digest) return null;
+  }
+  if (edits[0]!.snapshot_digest !== source.listening_source_digest) return null;
   return { generation_id: base.generation_id, round_id: base.round_id, base_snapshot_id: base.id, source_kind: "human_edit" };
 }
 
@@ -107,21 +119,30 @@ export async function loadNativeReceiptEvidenceV1(client: Client, before: Genera
       ON g.workspace_id=s.workspace_id AND g.id=s.generation_id JOIN signal_listening_configurations cfg
       ON cfg.workspace_id=g.workspace_id AND cfg.id=g.configuration_id
     WHERE s.workspace_id=$1 AND s.id=$2`, [study.workspace_id, study.listening_base_snapshot_id])).rows[0] ?? null;
-  const humanEdit = study.listening_source_kind === "human_edit"
-    ? (await client.query<NativeHumanEditV1>(`SELECT h.id,h.workspace_id,h.base_snapshot_id,h.source_configuration_id,h.configuration_id,
+  const humanEdits = study.listening_source_kind === "human_edit"
+    ? (await client.query<NativeHumanEditV1>(`WITH RECURSIVE chain AS (
+        SELECT h.*,0 depth,ARRAY[h.id] path,false cycle
+        FROM signal_listening_human_edits h WHERE h.workspace_id=$1 AND h.id=$2
+        UNION ALL
+        SELECT prev.*,child.depth+1,child.path||prev.id,prev.id=ANY(child.path)
+        FROM chain child JOIN signal_listening_human_edits prev ON prev.workspace_id=$1 AND prev.id=child.previous_edit_id
+        WHERE NOT child.cycle AND child.depth<127
+      )
+      SELECT h.id,h.workspace_id,h.base_snapshot_id,h.source_configuration_id,h.configuration_id,
         h.source_generation_id,h.generation_id,h.map_id,h.source_digest,h.source_generation_digest,h.snapshot_digest,
+        h.revision::int,h.expected_revision::int,h.previous_edit_id,h.depth,h.cycle,
         signal_labeling_digest_v1(jsonb_build_object('contract_version','signal-listening-human-snapshot-v1','workspace_id',h.workspace_id,
           'base_snapshot_id',h.base_snapshot_id,'configuration_id',h.configuration_id,'configuration_digest',cfg.configuration_digest,
-          'generation_id',h.generation_id,'revision',h.revision,'operation',h.operation,'payload',h.payload)) actual_snapshot_digest,
+          'generation_id',h.generation_id,'revision',h.revision,'operation',h.operation,'payload',h.payload,'source_digest',h.source_digest)) actual_snapshot_digest,
         g.human_edit_id generation_human_edit_id,g.status generation_status,g.snapshot_digest generation_snapshot_digest,
         signal_listening_discovery_digest_v1(g.id) generation_actual_digest,signal_listening_discovery_source_current_v1(g.id) generation_source_current,
-        cfg.configuration_digest,cfg.configuration,cfg.state configuration_state
-      FROM signal_listening_human_edits h JOIN signal_listening_configurations cfg
+        g.configuration_id generation_configuration_id,cfg.configuration_digest,cfg.configuration,cfg.state configuration_state
+      FROM chain h JOIN signal_listening_configurations cfg
         ON cfg.workspace_id=h.workspace_id AND cfg.id=h.configuration_id
       JOIN signal_listening_discovery_generations g ON g.workspace_id=h.workspace_id AND g.id=h.generation_id
-      WHERE h.workspace_id=$1 AND h.id=$2`, [study.workspace_id, study.listening_source_id])).rows[0] ?? null
-    : null;
-  const financialAnchor = nativeListeningFinancialAnchorV1({ source: study, base, after, human_edit: humanEdit });
+      ORDER BY h.depth`, [study.workspace_id, study.listening_source_id])).rows
+    : [];
+  const financialAnchor = nativeListeningFinancialAnchorV1({ source: study, base, after, human_edits: humanEdits });
   if (!financialAnchor) limitations.add("listening_financial_anchor_invalid");
   manifest.listening_financial_anchor = financialAnchor ? { source_kind: financialAnchor.source_kind,
     base_snapshot_id: financialAnchor.base_snapshot_id, generation_id: financialAnchor.generation_id, round_id: financialAnchor.round_id,
