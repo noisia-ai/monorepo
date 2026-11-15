@@ -139,6 +139,7 @@ jobs:
           NOISIA_R16_LISTENING_DISCOVERY_MONEY_PG: 'true'
           NOISIA_R16_DISCOVERY_HARDENING_PG: 'true'
           NOISIA_R16_DISCOVERY_ADVANCE_PG: 'true'
+          NOISIA_R16_DISCOVERY_AUTOMATION_PG: 'true'
         run: |
           set -o pipefail
           pnpm exec node --test --test-concurrency=1 --import tsx \
@@ -153,6 +154,7 @@ jobs:
             infrastructure/db/migrations/signal-listening-discovery-money.postgres.test.ts \
             infrastructure/db/migrations/signal-listening-discovery-hardening.postgres.test.ts \
             infrastructure/db/migrations/signal-listening-discovery-advance.postgres.test.ts \
+            services/workers/src/workers/signal-listening-discovery-automation.postgres.test.ts \
             services/workers/src/workers/signal-listening-runtime.postgres.test.ts \
             services/workers/src/workers/signal-listening-recovery.postgres.test.ts | tee r16-listening-pg-tests.tap
           if ! grep -qx '# skipped 0' r16-listening-pg-tests.tap; then

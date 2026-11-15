@@ -12,6 +12,8 @@ No hay aprobaciones humanas intermedias en los procesos de análisis: Sonnet 4.6
 
 ## Progreso
 
+- H3 integración 58c4f522: las dieciséis pruebas nativas de avances y la nueva prueba del drainer completo pasaron 17/17, sin omisiones, con 285 migraciones por clon y 94.77 s. El caso nuevo usa el lector y el ajuste numérico de producción sobre un subset vacío legítimo, Storage privado de fixture con fsync/readback y admisión PostgreSQL real; no envía Sonnet ni reclasifica raíces. La reagrupación BERTopic no vacía se probó por separado con Python real, 14/14 sin omisiones. CI incorpora ambos recorridos explícitos; falta ejecutar el workflow remoto y el ciclo completo en UAT.
+
 - H3 0304: el seguimiento f0a9a7e5 corrige los dos P2 con tres regresiones que fallaban antes del cambio. PostgreSQL dedicado 16/16, sin omisiones, y tipado/lint 11/11; la revisión confirma el cierre de ambos. La integración contiene el drainer nativo y la activación previa al aviso de avance, revisados sin P0/P1/P2. Falta la validación PostgreSQL conjunta de esta rama y el inicio inicial ligado a intención/cap original (0305 en implementación).
 - H4 configuración: integrados la plantilla JSON y el envelope explícito a3ca3f18/512712ef. Los pasos de ajuste, interpretación, contraste, salida y promoción reciben el snapshot externo sin alterar la identidad del Study; query-engine 713/713. El primer checkpoint del worker fue rechazado por imponer JEV por raíz en serie; se cambia al contrato masivo H1 antes de integrar. Persistencia y ejecución nativa siguen pendientes.
 
@@ -189,6 +191,8 @@ Recibo: separar Voyage/JEV por raíz de Claude por número de grupos y vueltas; 
 - El promedio del piloto completo incluye una etapa editorial que no escala por raíz. Multiplicarlo linealmente daba USD 205.81/millón; mantener explícitamente los grupos y una vuelta de referencia produce USD 114.035250. Ambos cálculos parten del mismo recibo, cuyo uso histórico permanece USD 17.280463.
 
 ## Registro de decisiones
+
+- 2026-11-15: añadir gates explícitos de PostgreSQL para límites de entrada, dinero, endurecimiento, avances y drainer, todos con cero omisiones. Ejecutar también Node→spool→BERTopic real en CI con dependencias CPU fijadas, sin descarga de modelos. Distinguir la prueba nativa de subset vacío de la prueba numérica no vacía; ninguna sustituye la aceptación completa de UAT.
 
 - 2026-11-15: tratar por separado slots HTTP ocupados y memoria insuficiente. Con memoria disponible, esperar otra respuesta sin forzar un lote pequeño; mantener flush por tamaño, temporizador, presión real y drenaje al finalizar. Verificar la hipótesis con mediciones de lotes reales antes de atribuirle capacidad sostenida.
 
