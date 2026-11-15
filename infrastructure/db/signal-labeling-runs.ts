@@ -540,6 +540,9 @@ export function createSignalLabelingStoreV1<
     policy_action?: "concept_membership_jev" | "concept_membership_claude" | "mass_labeling_jev";
     /** H1 verifies each decision against this call's results in the same transaction. */
     persist_results_before_write?: boolean;
+    /** Native page adapters only: mutations touch disjoint calls/results and
+     * never update the run lifecycle. Requires durable page custody. */
+    parallel_native_pages?: boolean;
     bounded_inputs?:(client:PoolClient,run:LabelingRunV1,bounds:LabelingInputBoundsV1)=>Promise<Input[]>;
     has_inputs?:(client:PoolClient,run:LabelingRunV1)=>Promise<boolean>;
     inputs: (
@@ -605,6 +608,37 @@ export function createSignalLabelingStoreV1<
   }
   const rawPages=options.rawPages?createLabelingRawPageStoreV1({database:db,storage:options.rawPages,
     withRunReadFence:(run,fn)=>tx(db,async c=>{await rawRunReadFence(c,run);return fn(c);})}):null;
+  async function pageMutationFence(c:PoolClient,run:LabelingRunV1){
+    if(options.adapter?.parallel_native_pages===true&&rawPages)await rawRunReadFence(c,run);
+    else await lock(c,run);
+  }
+  async function lockMutationCalls(c:PoolClient,run:LabelingRunV1,calls:LabelingCallV1<Input>[],pages?:Array<{call:LabelingCallV1<Input>;results:Result[]}>){
+    const ids=calls.map(call=>call.id);
+    if(new Set(ids).size!==ids.length)fail('labeling_result_call_conflict');
+    // Match raw planning/attachment's global call order. PostgreSQL compares
+    // JSONB results without reserializing canonical numeric spellings in JS.
+    const found=await c.query<{id:string}>(`SELECT id FROM signal_labeling_calls
+      WHERE workspace_id=$1 AND run_id=$2 AND id=ANY($3::uuid[]) ORDER BY id FOR UPDATE`,[run.workspace_id,run.id,ids]);
+    if(found.rows.length!==calls.length)fail('labeling_result_call_conflict');
+    if(!pages)return new Set<string>();
+    // A separate statement sees the committed row after any lock wait. Never
+    // approve a divergent replay from a pre-wait snapshot of results_applied.
+    const checked=await c.query<{id:string;results_applied:boolean;replay_ok:boolean}>(`SELECT call.id,call.results_applied,
+      (NOT call.results_applied OR call.results IS NOT DISTINCT FROM planned.results) replay_ok
+      FROM signal_labeling_calls call JOIN jsonb_to_recordset($4::jsonb) planned(id uuid,results jsonb) ON planned.id=call.id
+      WHERE call.workspace_id=$1 AND call.run_id=$2 AND call.id=ANY($3::uuid[])`,
+      [run.workspace_id,run.id,ids,JSON.stringify(pages.map(page=>({id:page.call.id,results:page.results})))]);
+    if(checked.rows.length!==calls.length)fail('labeling_result_call_conflict');
+    if(checked.rows.some(row=>!row.replay_ok))fail('labeling_result_replay_conflict');
+    return new Set(checked.rows.filter(row=>row.results_applied).map(row=>row.id));
+  }
+
+  async function registerMutationFence(c:PoolClient,run:LabelingRunV1,operation:'mark'|'apply'){
+    // One deferred check per transaction covers waits after the initial fence,
+    // including a delayed COMMIT; it never upgrades SHARE to UPDATE.
+    await c.query(`INSERT INTO signal_labeling_page_mutation_fences(workspace_id,run_id,lease_token,operation)
+      VALUES($1,$2,$3,$4)`,[run.workspace_id,run.id,run.lease_token,operation]);
+  }
   async function authority(c: PoolClient, run: LabelingRunV1, amount: number) {
     // Policy lifecycle triggers take this lock. Read only after acquiring it so a
     // revocation committed while this call waited cannot leave stale authority.
@@ -944,9 +978,13 @@ export function createSignalLabelingStoreV1<
     async markSubmitting(run: LabelingRunV1, calls: LabelingCallV1<Input>[]) {
       await options.assertRawReady?.();
       await tx(db, async (c) => {
-        await lock(c, run);
+        await pageMutationFence(c,run);
         await authority(c, run, 0);
+        if(options.adapter?.parallel_native_pages===true&&rawPages)await lockMutationCalls(c,run,calls);
         await options.adapter?.beforeSubmit?.(c, run, calls);
+        if(options.adapter?.parallel_native_pages===true&&rawPages){
+          await rawRunReadFence(c,run);await registerMutationFence(c,run,'mark');
+        }
         const changed = await c.query(
           `UPDATE signal_labeling_calls SET status='submitting',updated_at=now() WHERE run_id=$1 AND id=ANY($2::uuid[]) AND status='reserved' RETURNING id`,
           [run.id, calls.map((x) => x.id)],
@@ -1131,7 +1169,12 @@ export function createSignalLabelingStoreV1<
       pages: Array<{ call: LabelingCallV1<Input>; results: Result[] }>,
     ) {
       await tx(db, async (c) => {
-        await lock(c, run);
+        await pageMutationFence(c,run);
+        if(options.adapter?.parallel_native_pages===true&&rawPages){
+          const applied=await lockMutationCalls(c,run,pages.map(page=>page.call),pages);
+          pages=pages.filter(page=>!applied.has(page.call.id));if(!pages.length)return;
+          await rawRunReadFence(c,run);await registerMutationFence(c,run,'apply');
+        }
         const persistResults = async () => {
           const changed = await c.query(
           `UPDATE signal_labeling_calls call SET results_applied=true,results=page.results,updated_at=now()

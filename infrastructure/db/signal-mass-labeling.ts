@@ -375,7 +375,7 @@ export function createMassLabelingStoreV1(options: Omit<Parameters<typeof create
   return createSignalLabelingStoreV1<MassLabelingInputV1, MassLabelingResultV1>({...options, adapter: {
     kind: "mass_labeling", policy_action: "mass_labeling_jev", feature: "mass_labeling",
     policy: massLabelingRunPolicyWithClientV1,
-    pending_calls_only: true, persist_results_before_write: true,
+    pending_calls_only: true, persist_results_before_write: true, parallel_native_pages: Boolean(options.rawPages),
     bounded_inputs:readInputs,inputs:(client,run)=>readInputs(client,run),
     has_inputs:async(client,run)=>(await client.query(`SELECT 1 ${itemPageScopeSql} LIMIT 1`,[run.id,run.workspace_id])).rows.length>0,
     authority: async (client, run) => {

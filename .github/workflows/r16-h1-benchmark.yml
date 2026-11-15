@@ -6,6 +6,7 @@ on:
       - '.github/workflows/r16-h1-benchmark.yml'
       - 'docs/product/PROMPT_LOOPING/R16_BENCHMARK_HARNESS.md'
       - 'infrastructure/db/migrations/0295_signal_labeling_raw_pages.sql'
+      - 'infrastructure/db/migrations/0308_signal_labeling_page_mutation_fences.sql'
       - 'infrastructure/db/migrations/signal-labeling-raw-pages*'
       - 'infrastructure/db/migrations/signal-labeling-raw-page-locks.postgres.test.ts'
       - 'infrastructure/db/migrations/signal-client-workspace-entry.synthetic.fixture.ts'
@@ -37,6 +38,7 @@ on:
     paths:
       - '.github/workflows/r16-h1-benchmark.yml'
       - 'infrastructure/db/migrations/0295_signal_labeling_raw_pages.sql'
+      - 'infrastructure/db/migrations/0308_signal_labeling_page_mutation_fences.sql'
       - 'infrastructure/db/migrations/signal-labeling-raw-pages*'
       - 'infrastructure/db/migrations/signal-labeling-raw-page-locks.postgres.test.ts'
       - 'infrastructure/db/migrations/signal-client-workspace-entry.synthetic.fixture.ts'
