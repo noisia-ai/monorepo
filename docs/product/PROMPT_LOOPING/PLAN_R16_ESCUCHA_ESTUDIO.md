@@ -12,6 +12,8 @@ No hay aprobaciones humanas intermedias en los procesos de análisis: Sonnet 4.6
 
 ## Progreso
 
+- H3 revisión del arranque encontró que el builder de evidencia aún rechazaba cero tópicos después de crear el parent base-only. Se elimina esa exigencia, manteniendo censo, unicidad y máximo 256; evidencia paginada/pura y solicitud editorial vacías pasan 28 focales, y query-engine 714/714. La prueba nueva conjunta PostgreSQL/Python debe verificar el avance desde base-only hasta encolar la revisión con vectores cacheados e insuficiencia explícita para tres raíces; sigue pendiente por transporte local. Tipado/lint 11/11. No se presenta ese caso pequeño como ajuste BERTopic con grupos.
+
 - H3 arranque inicial integrado localmente: 0305 conserva la intención, configuración, seed y cap originales; el worker selecciona sólo esas intenciones explícitas, inicia su parent nativo y continúa el avance automático. La API acepta auto_discovery con actor de sesión y rechaza origen/admisión/automatic del navegador; la UI mantiene cerrado el botón mientras el ciclo sigue o queda exposición incierta. Una configuración base/definidos sin descubiertos crea una semilla nativa vacía en la misma transacción, sin aprobación intermedia. Diecinueve casos iniciales nativos pasan y dos casos de automatización pasan por separado, sin omisiones en esas ejecuciones seleccionadas. Tipado/lint 11/11; Studio 1,344/7 omisiones y DB 664/243 de entorno. Workers: 1,111 aprobadas y 51 omisiones de entorno al ejecutar el mismo conjunto con concurrencia acotada; la primera ejecución conjunta terminó sin resumen y no se usa como evidencia. Revisión del candidato final pendiente.
 
 - H1 diagnóstico b48c665e sobre 4,096 raíces: 7.48 s y 547.37 raíces/s, diez páginas frente a dieciocho en c6bd1c50. La mediana de página pasó de 147 a 426. Sigue rechazado y demasiado corto para capacidad sostenida. El cambio redujo reserva y lotes pequeños, pero quedan esperas importantes de locks del run: 1.90 s acumulados en markSubmitting y 1.55 s en apply durante esta corrida, con tiempos solapados. Se conserva la base y el recibo; no se inicia otro ensayo completo hasta resolver o acotar esa hipótesis.
@@ -147,6 +149,8 @@ Recibo: separar Voyage/JEV por raíz de Claude por número de grupos y vueltas; 
 
 ## Sorpresas y descubrimientos
 
+- Crear la intención y el parent no acreditaba el inicio automático completo: una validación posterior exigía al menos un tópico. La revisión independiente lo detectó antes de publicar este arranque. Se extiende la aceptación hasta la revisión encolada y se incorpora al job que combina PostgreSQL con el runtime Python, sin fabricar un tema para pasar la validación.
+
 - El primer inicio automático exigía una generación lista de tópicos descubiertos para la misma configuración, que una configuración nueva de base/definidos aún no puede tener. La semilla de cero tópicos conserva el censo/procedencia reales y permite que, después de la base, la evidencia de huérfanas inicie el descubrimiento; no inventa temas ni vectores. Una prueba de integración también necesitó exponer el directorio privado del fixture para verificar fsync/readback: el fallo de ese test no era permiso de gasto ni una llamada duplicada.
 
 - El perfil SQL del diagnóstico b48c665e se vinculó a los templates de las consultas, sin guardar bind values. Las mayores esperas corresponden al FOR UPDATE del run en markSubmitting y apply, además del attach de páginas. Compartir la lease durante mutaciones de páginas disjuntas podría permitir progreso simultáneo, pero requiere demostrar idempotencia, orden de locks, bloqueo de cambios de lease y preservación de autorización/dinero antes de implementarlo o atribuirle mejora.
@@ -207,6 +211,8 @@ Recibo: separar Voyage/JEV por raíz de Claude por número de grupos y vueltas; 
 - El promedio del piloto completo incluye una etapa editorial que no escala por raíz. Multiplicarlo linealmente daba USD 205.81/millón; mantener explícitamente los grupos y una vuelta de referencia produce USD 114.035250. Ambos cálculos parten del mismo recibo, cuyo uso histórico permanece USD 17.280463.
 
 ## Registro de decisiones
+
+- Admitir cero tópicos en la primera evidencia, con raíces y huérfanas reales, es parte del descubrimiento inicial. Mantener una prueba pequeña de insuficiencia separada de las pruebas de ajuste con grupos y de la aceptación UAT sobre el corpus real.
 
 - H3: vincular el inicio del ciclo cerrado al opt-in de la petición inicial, su identidad y presupuesto total; nunca derivarlo de una corrida pagada arbitraria. Arrancar y avanzar se recuperan mediante sondeo nativo, sin enviar Sonnet en esos pasos. La clave dedicada de descubrimiento reside en workers: Studio comprueba habilitación, sesión y contrato, sin exigir copiar esa credencial al frontend ni al servicio web.
 

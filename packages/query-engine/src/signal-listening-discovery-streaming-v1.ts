@@ -40,7 +40,7 @@ export function createListeningDiscoveryEvidenceStreamV1(args:Header){
   const pageSize=args.page_size??1024;
   if(!validKey.test(args.workspace_id)||!validDigest.test(args.vector_space_digest)||!validDigest.test(args.map_digest)
     ||!validDigest.test(args.expected_population_digest)||!Number.isSafeInteger(args.round)||args.round<1||args.round>policy.max_rounds
-    ||!Number.isSafeInteger(args.expected_root_count)||args.expected_root_count<1||!args.topic_keys.length||args.topic_keys.length>256
+    ||!Number.isSafeInteger(args.expected_root_count)||args.expected_root_count<1||args.topic_keys.length>256
     ||new Set(args.topic_keys).size!==args.topic_keys.length||args.topic_keys.some(key=>!validKey.test(key))
     ||!Number.isSafeInteger(pageSize)||pageSize<1||pageSize>1024)fail('input_invalid');
   const keys=[...args.topic_keys].sort(cmp),known=new Set(keys);

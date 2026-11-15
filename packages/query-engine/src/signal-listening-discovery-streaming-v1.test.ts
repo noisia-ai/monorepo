@@ -30,6 +30,16 @@ test('streaming is bit-for-bit identical for asked denominators, exact threshold
   const roots=[root(1,.7,null),root(2,.69,.1),root(3,null,.9,false),root(4,.1,.2,false)];
   for(const page of [1,2,3,1024]){const result=run(roots,page);assert.deepEqual(result.actual,result.eager);}
 });
+test('initial base-only evidence preserves a genuine zero-topic census and category orphans',()=>{
+ const roots=[root(1,null,null),root(2,null,null,false),root(3,null,null)];
+ const result=run(roots,1,LISTENING_DISCOVERY_POLICY_V1,[]);
+ assert.deepEqual(result.actual,result.eager);assert.deepEqual(result.actual.topics,[]);assert.deepEqual(result.actual.twins,[]);
+ assert.equal(result.actual.root_count,3);assert.equal(result.actual.category_root_count,2);assert.equal(result.actual.orphan_rate,1);
+ assert.deepEqual(result.actual.orphan_root_ids,[roots[0]!.root_id,roots[2]!.root_id]);
+ const configuration=signalListeningBaseTemplateV1({category:'bicycles',lexicon_terms:['bicycle']});
+ assert.doesNotThrow(()=>buildListeningDiscoveryEditorialRequestV1({configuration,
+  evidence:{...result.actual,map_digest:signalTopicEditorialDigestV1(configuration)},excerpts:[],orphan_groups:[]}));
+});
 test('streaming preserves normalized centroids, cancellation and missing-confirmation statuses exactly',()=>{
   const roots=[root(1,1,0),root(2,1,0),root(3,0,1)];
   roots[0]!.vector=vector(100,0);roots[1]!.vector=vector(0,1);roots[2]!.vector=vector(-1,0);

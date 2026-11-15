@@ -16,6 +16,26 @@ concurrency:
 jobs:
   numeric-python:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_DB: noisia_mfp_ci
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d noisia_mfp_ci"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/noisia_mfp_ci
+      DATABASE_SSL: 'false'
+      NOISIA_DB_SMOKE_RESET_SCHEMA: 'true'
+      NOISIA_DB_SMOKE_EMULATE_SUPABASE_ROLES: 'true'
+      NOISIA_MFP_PG_CI: 'true'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -68,6 +88,26 @@ jobs:
             services/workers/src/workers/signal-listening-orphan-regroup.test.ts | tee r16-orphan-regroup.tap
           if ! grep -qx '# skipped 0' r16-orphan-regroup.tap; then
             echo '::error::R16 orphan regroup integration skipped Python-backed tests'
+            exit 1
+          fi
+      - name: Run initial listening through native PostgreSQL and the cached-vector numerical runtime
+        env:
+          NOISIA_R16_DISCOVERY_INITIAL_NUMERIC_PG: 'true'
+          NOISIA_WORKSPACE_ENGINE_MODULE_ROOT: ${{ github.workspace }}/tools/signal-semantic-lab/src
+          HF_HUB_OFFLINE: '1'
+          TRANSFORMERS_OFFLINE: '1'
+          NUMBA_NUM_THREADS: '1'
+          OMP_NUM_THREADS: '1'
+          OPENBLAS_NUM_THREADS: '1'
+          MKL_NUM_THREADS: '1'
+        run: |
+          export NOISIA_WORKSPACE_ENGINE_PYTHON="$(command -v python)"
+          pnpm --filter @noisia/db db:smoke:migrations
+          set -o pipefail
+          pnpm exec node --test --test-concurrency=1 --import tsx \
+            services/workers/src/workers/signal-listening-discovery-initial-numeric.postgres.test.ts | tee r16-initial-numeric-pg.tap
+          if ! grep -qx '# skipped 0' r16-initial-numeric-pg.tap; then
+            echo '::error::R16 native initial numerical flow was skipped'
             exit 1
           fi
 

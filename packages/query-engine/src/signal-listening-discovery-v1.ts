@@ -102,7 +102,7 @@ export function buildListeningDiscoveryEvidenceV1(args: {
     || !digestPattern.test(args.map_digest) || !digestPattern.test(args.expected_population_digest)
     || !Number.isSafeInteger(args.round) || args.round < 1 || args.round > policy.max_rounds
     || !Number.isSafeInteger(args.expected_root_count) || args.expected_root_count < 1
-    || args.roots.length !== args.expected_root_count || !args.topic_keys.length
+    || args.roots.length !== args.expected_root_count || args.topic_keys.length > 256
     || new Set(args.topic_keys).size !== args.topic_keys.length
     || args.topic_keys.some(key => !keyPattern.test(key))) fail('listening_discovery_input_invalid');
   const keys = [...args.topic_keys].sort(cmp);
