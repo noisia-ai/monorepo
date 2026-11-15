@@ -9,11 +9,12 @@ on:
   workflow_dispatch:
     inputs:
       scope:
-        description: Run the full suite or the focused R16 policy smoke
+        description: Run the full suite or a focused R16 policy or listening smoke
         type: choice
         options:
           - full
           - policy-smoke
+          - listening-smoke
         default: full
         required: true
 
@@ -21,12 +22,13 @@ permissions:
   contents: read
 
 concurrency:
-  group: mfp-postgres-${{ github.ref }}${{ github.event_name == 'workflow_dispatch' && inputs.scope == 'policy-smoke' && '-policy-smoke' || '' }}
+  group: mfp-postgres-${{ github.ref }}${{ github.event_name == 'workflow_dispatch' && inputs.scope == 'policy-smoke' && '-policy-smoke' || github.event_name == 'workflow_dispatch' && inputs.scope == 'listening-smoke' && '-listening-smoke' || '' }}
   cancel-in-progress: true
 
 jobs:
   numeric-python:
-    name: ${{ github.event_name == 'workflow_dispatch' && inputs.scope == 'policy-smoke' && 'policy-smoke-numeric-python' || 'numeric-python' }}
+    name: ${{ github.event_name == 'workflow_dispatch' && inputs.scope == 'policy-smoke' && 'policy-smoke-numeric-python' || github.event_name == 'workflow_dispatch' && inputs.scope == 'listening-smoke' && 'listening-smoke-numeric-python' || 'numeric-python' }}
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.scope != 'listening-smoke' }}
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -203,7 +205,7 @@ jobs:
           fi
 
   migrated-schema:
-    name: ${{ github.event_name == 'workflow_dispatch' && inputs.scope == 'policy-smoke' && 'policy-smoke-migrated-schema-not-run' || 'migrated-schema' }}
+    name: ${{ github.event_name == 'workflow_dispatch' && inputs.scope == 'policy-smoke' && 'policy-smoke-migrated-schema-not-run' || github.event_name == 'workflow_dispatch' && inputs.scope == 'listening-smoke' && 'listening-smoke-migrated-schema' || 'migrated-schema' }}
     if: ${{ github.event_name != 'workflow_dispatch' || inputs.scope != 'policy-smoke' }}
     runs-on: ubuntu-latest
     services:
@@ -243,6 +245,7 @@ jobs:
       - name: Apply every numbered migration to disposable PostgreSQL 17
         run: pnpm --filter @noisia/db db:smoke:migrations
       - name: Run MFP integration tests on migrated schema
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.scope != 'listening-smoke' }}
         run: |
           set -o pipefail
           shopt -s nullglob
@@ -258,6 +261,7 @@ jobs:
             fi
           fi
       - name: Run R16 listening contracts and runtime on real PostgreSQL
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.scope != 'listening-smoke' }}
         env:
           NOISIA_R16_LISTENING_PG: 'true'
           NOISIA_R16_LISTENING_BOUNDED_PG: 'true'
@@ -276,6 +280,7 @@ jobs:
           NOISIA_R16_LISTENING_LEXICON_PG: 'true'
           NOISIA_R16_LISTENING_DISCOVERY_PG: 'true'
           NOISIA_R16_INPUT_BOUNDS_PG: 'true'
+          NOISIA_R16_LISTENING_SECOND_SHAPE_PG: 'true'
           NOISIA_R16_LISTENING_DISCOVERY_MONEY_PG: 'true'
           NOISIA_R16_DISCOVERY_HARDENING_PG: 'true'
           NOISIA_R16_DISCOVERY_ADVANCE_PG: 'true'
@@ -305,12 +310,15 @@ jobs:
             infrastructure/db/migrations/signal-listening-discovery-initial.postgres.test.ts \
             services/workers/src/workers/signal-listening-discovery-automation.postgres.test.ts \
             services/workers/src/workers/signal-listening-runtime.postgres.test.ts \
-            services/workers/src/workers/signal-listening-recovery.postgres.test.ts | tee r16-listening-pg-tests.tap
+            services/workers/src/workers/signal-listening-recovery.postgres.test.ts \
+            infrastructure/db/migrations/signal-listening-input-lazy-equivalence.postgres.test.ts \
+            services/workers/src/workers/signal-listening-calibration-second-shape.postgres.test.ts | tee r16-listening-pg-tests.tap
           if ! grep -qx '# skipped 0' r16-listening-pg-tests.tap; then
             echo '::error::R16 listening PostgreSQL tests were skipped'
             exit 1
           fi
       - name: Run MFP PostgreSQL checks on migrated schema
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.scope != 'listening-smoke' }}
         run: |
           shopt -s nullglob
           checks=(scripts/dev-corpus/*-postgres-check.ts)
@@ -321,3 +329,18 @@ jobs:
           for check in "${checks[@]}"; do
             pnpm exec node --import tsx "$check"
           done
+      - name: Verify focused Listening input bounds and second-shape calibration on native PostgreSQL
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.scope == 'listening-smoke' }}
+        env:
+          NOISIA_R16_INPUT_BOUNDS_PG: 'true'
+          NOISIA_R16_LISTENING_SECOND_SHAPE_PG: 'true'
+        run: |
+          set -o pipefail
+          pnpm exec node --test --test-concurrency=1 --import tsx \
+            infrastructure/db/migrations/signal-listening-input-bounds.postgres.test.ts \
+            infrastructure/db/migrations/signal-listening-input-lazy-equivalence.postgres.test.ts \
+            services/workers/src/workers/signal-listening-calibration-second-shape.postgres.test.ts | tee r16-listening-smoke.tap
+          if ! grep -qx '# skipped 0' r16-listening-smoke.tap; then
+            echo '::error::R16 Listening smoke tests were skipped'
+            exit 1
+          fi
