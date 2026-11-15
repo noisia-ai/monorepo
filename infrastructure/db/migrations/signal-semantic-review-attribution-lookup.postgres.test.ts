@@ -2,13 +2,13 @@ import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import {randomUUID} from 'node:crypto';
 import test from 'node:test';
-import {openR16LocalPostgresV1} from './signal-r16-local-pg.fixture';
+import {openR16LocalPostgresV1,openR16CiPostgresV1} from './signal-r16-local-pg.fixture';
 import {createMassLabelingConcurrencyDatabaseV1} from './signal-mass-labeling-concurrent.synthetic.fixture';
 import {syntheticImportedWorkspaceFixtureV1} from './signal-client-workspace-entry.synthetic.fixture';
 
 test('attribution invalidation preserves canonical roots and outbox with bounded identity lookups',{
  skip:process.env.NOISIA_R16_IMPORT_INVALIDATION_PG!=='true',timeout:600000},async()=>{
- const admin=await openR16LocalPostgresV1(),clone=await createMassLabelingConcurrencyDatabaseV1(admin),c=await clone.pool.connect();
+ const admin=await(process.env.GITHUB_ACTIONS==='true'?openR16CiPostgresV1():openR16LocalPostgresV1()),clone=await createMassLabelingConcurrencyDatabaseV1(admin),c=await clone.pool.connect();
  try{
   await c.query('BEGIN');const tx={database:clone.pool,scoped:c,query:c.query.bind(c),cleanup:async()=>{}};
   const started=performance.now(),first=await syntheticImportedWorkspaceFixtureV1(tx,undefined,{root_count:1537,batch_size:512});

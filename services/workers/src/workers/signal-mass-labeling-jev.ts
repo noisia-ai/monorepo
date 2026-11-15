@@ -34,6 +34,7 @@ import {
 import {
   processJevLabelingPageV1,
   jevUsageV1,
+  type JevNextInputBoundsV2,
 } from "./signal-jev-labeling-page";
 import { createWorkspaceEngineStorageV1, type WorkspaceEngineStorageV1 } from "./signal-workspace-engine-storage";
 import { readSignalLabelingReceiptV1, createLabelingRawPagesStorageV1 } from "./signal-labeling-receipt-storage";
@@ -67,11 +68,13 @@ export function processMassLabelingJevV1(args: {
   recovery_only?: boolean;
   execution?: JevStreamingExecutionV2;
   observe_stream?(metrics:JevStreamingMetricsV2):void;
+  read_next_inputs?(run:LabelingRunV1,bounds:JevNextInputBoundsV2):Promise<MassLabelingInputV1[]>;
 }) {
   return processJevLabelingPageV1<MassLabelingInputV1, MassLabelingResultV1>({
     ...args,
     hooks: {
       price: priceOf,
+      continuous_windows:run=>run.identity.params.request_version==="mass-labeling-jev-v2",
       max_in_flight: run => run.identity.params.request_version === "mass-labeling-jev-v2"
         ? Math.min(8, args.provider.max_concurrency ?? 8) : undefined,
       propose: (run, inputs) =>

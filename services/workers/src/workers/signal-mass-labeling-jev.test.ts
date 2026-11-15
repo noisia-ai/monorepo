@@ -492,8 +492,8 @@ test('streaming rate observation failure cannot turn applied paid calls unknown'
 });
 
 test('streaming keeps one lease across successive input windows without the polling cooldown',async()=>{
-  const f=fixture(512,true), inputs=await f.store.inputs(f.run);let cursor=0,claims=0,releases=0;
-  f.store.inputs=async()=>inputs.slice(cursor,cursor+=128);
+  const f=fixture(512,true), inputs=await f.store.inputs(f.run);let claims=0,releases=0;
+  f.store.inputs=async()=>inputs.filter(input=>!f.calls.some(call=>call.inputs.some(sent=>sent.root_id===input.root_id))).slice(0,128);
   const reserve=f.store.reserve;
   f.store.reserve=async(run,proposals)=>{const base=f.calls.length;const rows=await reserve(run,proposals);for(const [index,row]of rows.entries())row.id=`call-${base+index}`;return rows;};
   const claim=f.store.claim;f.store.claim=async(id)=>{claims++;return claim(id);};
@@ -571,7 +571,7 @@ test('streaming reserves codec working memory until durable flush finishes', {ti
     execution: { ...streaming, max_in_flight: 16, max_flushes: 1, max_buffered_bytes: 1024 * 1024 },
     observe_stream: metrics => { snapshots.push(metrics); } });
   assert.equal(outcome.status, 'completed'); assert.equal(outcome.labeled, 16);
-  assert.equal(beforeDurability, 2, 'body receipt cannot release the capacity reserved for JSONL copies');
+  assert.equal(beforeDurability, 1, 'request/input metadata and body receipt cannot release the capacity reserved for JSONL copies');
   assert.ok(snapshots.every(s => s.reserved_working_bytes >= 0 && s.reserved_working_bytes <= 1024 * 1024));
   assert.ok(snapshots.some(s => s.in_flight === 0 && s.active_flushes > 0 && s.reserved_working_bytes > 0),
     'the measured reservation includes flushes after all HTTP requests returned');
@@ -586,6 +586,49 @@ test('streaming observer failure cannot interrupt settlement or change the outco
     observe_stream:() => { throw Error('observer_down'); } });
   assert.equal(outcome.status,'completed');assert.equal(f.results.length,8);
   assert.ok(f.calls.every(call => call.status==='settled' && call.results_applied));
+});
+
+test('a timer-flushed partial page does not force later partial pages while other responses are pending',{timeout:10000},async()=>{
+  const f=fixture(3,true),batches:string[][]=[];
+  const deferred=()=>{let resolve!:()=>void;const promise=new Promise<void>(done=>{resolve=done;});return{promise,resolve};};
+  const firstResponse=deferred(),secondResponse=deferred(),secondAllowed=deferred(),thirdAllowed=deferred();
+  const firstPersisted=deferred(),allowFirstPersist=deferred(),firstApplied=deferred();
+  const originalInterval=globalThis.setInterval,originalClear=globalThis.clearInterval;
+  let flushTick:(()=>void)|undefined;
+  const timer={unref(){return timer;}};
+  globalThis.setInterval=((callback:()=>void,ms?:number,...args:unknown[])=>{
+    if(ms===12345){flushTick=callback;return timer;}
+    return originalInterval(callback,ms,...args);
+  })as typeof setInterval;
+  globalThis.clearInterval=((handle:unknown)=>{if(handle!==timer)originalClear(handle as ReturnType<typeof setInterval>);})as typeof clearInterval;
+  f.store.persistRawPage=async(_run,rows)=>{
+    batches.push(rows.map(row=>row.call.id));
+    if(batches.length===1){firstPersisted.resolve();await allowFirstPersist.promise;}
+    for(const row of rows)row.call.raw_body=row.raw;
+  };
+  const apply=f.store.apply;
+  f.store.apply=async(run,rows)=>{await apply(run,rows);if(rows.some(row=>row.call.id==='call-0'))firstApplied.resolve();};
+  const provider:JevProviderV1={max_concurrency:3,max_response_bytes:16384,async evaluate(request){
+    const call=f.calls.find(row=>row.request===request)!;
+    if(call.id==='call-0')firstResponse.resolve();
+    if(call.id==='call-1'){await secondAllowed.promise;secondResponse.resolve();}
+    if(call.id==='call-2')await thirdAllowed.promise;
+    return f.response(request);
+  }};
+  const task=processMassLabelingJevV1({run_id:f.run.id,store:f.store,provider,
+    execution:{...streaming,max_in_flight:3,flush_size:2,max_flushes:1,flush_interval_ms:12345,window_size:3}});
+  try{
+    await firstResponse.promise;await delay(0);assert.ok(flushTick);flushTick();await firstPersisted.promise;
+    secondAllowed.resolve();await secondResponse.promise;await delay(0);
+    allowFirstPersist.resolve();await firstApplied.promise;await delay(0);
+    assert.deepEqual(batches,[['call-0']],'the first timer tick must not become a permanent force-flush flag');
+    thirdAllowed.resolve();assert.equal((await task).labeled,3);
+    assert.deepEqual(batches,[['call-0'],['call-1','call-2']]);
+    assert.ok(f.calls.every(call=>call.status==='settled'&&call.results_applied));
+  }finally{
+    allowFirstPersist.resolve();secondAllowed.resolve();thirdAllowed.resolve();await task;
+    globalThis.setInterval=originalInterval;globalThis.clearInterval=originalClear;
+  }
 });
 
 for (const fault of ['apply', 'settlement_ack', 'application_ack'] as const) test(`streaming preserves valid paid responses after a ${fault} failure`, async () => {
@@ -732,7 +775,7 @@ test('a recovery flush failure requeues every live unsent reservation before any
   f.store.apply=async(run,batch)=>{if(!failed){failed=true;throw Error('synthetic_recovery_apply');}return originalApply(run,batch);};
   const provider:JevProviderV1={max_concurrency:1,max_response_bytes:16384,async evaluate(request){sends++;return f.response(request);}};
   // First persist one receipt, interrupt its materialization, and retain its sibling reservations.
-  const args={run_id:f.run.id,store:f.store,provider,execution:{...streaming,max_in_flight:1,flush_size:1,window_size:4,max_buffered_bytes:16384*24+65536}};
+  const args={run_id:f.run.id,store:f.store,provider,execution:{...streaming,max_in_flight:1,flush_size:1,window_size:4,max_buffered_bytes:16384*24+65536+128*1024}};
   const durable=new Map<string,string>();
   f.store.persistRawPage=async(_run,batch)=>{for(const row of batch){durable.set(row.call.id,row.raw);row.call.raw_body=row.raw;}};
   const get=f.store.calls;f.store.calls=async run=>{const calls=await get(run);for(const call of calls)call.raw_body=durable.get(call.id)??null;return calls;};
@@ -790,7 +833,7 @@ test('bulk cohorts respect response memory slots while retaining overlapping HTT
  const mark=f.store.markSubmitting;f.store.markSubmitting=async(run,calls)=>{batches.push(calls.length);assert.ok(calls.length<=2);await mark(run,calls);};
  f.store.persistRawPage=async(_run,rows)=>{await delay(2);for(const row of rows)row.call.raw_body=row.raw;};
  const provider:JevProviderV1={max_concurrency:8,max_response_bytes:16384,async evaluate(request){active++;peak=Math.max(peak,active);await delay(3);active--;return f.response(request);}};
- const outcome=await processMassLabelingJevV1({run_id:f.run.id,store:f.store,provider,execution:{...streaming,max_in_flight:8,flush_size:1,window_size:8,max_buffered_bytes:2*(16384*24+65536)}});
+ const outcome=await processMassLabelingJevV1({run_id:f.run.id,store:f.store,provider,execution:{...streaming,max_in_flight:8,flush_size:1,window_size:8,max_buffered_bytes:2*(16384*24+65536)+256*1024}});
  assert.equal(outcome.labeled,8);assert.equal(peak,2);assert.equal(batches.reduce((n,b)=>n+b,0),8);assert.ok(batches.some(n=>n===2));
 });
 test('a real-client prefetch cancellation preserves the cohort reservation and resumes three roots with three physical requests',async()=>{
@@ -812,4 +855,84 @@ test('a real-client prefetch cancellation preserves the cohort reservation and r
  assert.equal(fetches,2);assert.equal(proofs,1);assert.equal(f.calls[2]!.status,'reserved');assert.equal(f.calls[2]!.results_applied,false);
  assert.equal((await processMassLabelingJevV1(args)).status,'completed');assert.equal(fetches,3);
  assert.equal(f.results.length,3);assert.ok(f.results.every(result=>result.status==='labeled'));
+});
+
+test('a stop during next-window reservation drains paid siblings and leaves the new unsent reservations intact',async()=>{
+ const f=fixture(4,true),inputs=await f.store.inputs(f.run);let notify!:()=>void,physical=0;
+ const nextReserved=new Promise<void>(resolve=>{notify=resolve;});
+ f.store.inputs=async()=>inputs.filter(input=>!f.calls.some(call=>call.inputs.some(sent=>sent.root_id===input.root_id))).slice(0,2);
+ const reserve=f.store.reserve;let reservations=0;
+ f.store.reserve=async(run,proposals)=>{const base=f.calls.length,rows=await reserve(run,proposals);
+  for(const[index,row]of rows.entries())row.id=`call-${base+index}`;
+  if(++reservations===2)notify();return rows;};
+ f.store.persistRawPage=async(_run,rows)=>{for(const row of rows)row.call.raw_body=row.raw;};
+ const provider:JevProviderV1={max_concurrency:2,max_response_bytes:16384,async evaluate(request){
+  const index=physical++;await nextReserved;
+  return index===0?{http_status:429,latency_ms:1,body:'{"usage":{"input_tokens":0,"output_tokens":0}}'}:f.response(request);
+ }};
+ await processMassLabelingJevV1({run_id:f.run.id,store:f.store,provider,execution:{...streaming,max_in_flight:2,window_size:2,flush_size:16}});
+ assert.equal(physical,2);assert.equal(f.calls.length,4);
+ assert.ok(f.calls.slice(2).every(call=>call.status==='reserved'&&!call.results_applied&&!call.raw_body));
+ assert.ok(f.calls.slice(2).every(call=>!f.results.some(result=>result.root_id===call.inputs[0]!.root_id)),
+  'a newly reserved but never sent mention cannot acquire a synthetic technical result');
+});
+
+test('continuous feed rejects a reader that repeats already reserved identities without sending the duplicate reservation',async()=>{
+ const f=fixture(2,true),inputs=await f.store.inputs(f.run);f.store.inputs=async()=>inputs;
+ const reserve=f.store.reserve;f.store.reserve=async(run,proposals)=>{const base=f.calls.length,rows=await reserve(run,proposals);
+  rows.forEach((row,i)=>{row.id=`call-${base+i}`;});return rows;};
+ f.store.persistRawPage=async(_run,rows)=>{for(const row of rows)row.call.raw_body=row.raw;};
+ let sends=0;const provider:JevProviderV1={max_concurrency:2,max_response_bytes:16384,async evaluate(request){sends++;return f.response(request);}};
+ await assert.rejects(processMassLabelingJevV1({run_id:f.run.id,store:f.store,provider,execution:{...streaming,max_in_flight:2,window_size:2}}),/jev_stream_feed_identity_invalid/);
+ assert.equal(sends,2);assert.equal(f.calls.length,4);assert.ok(f.calls.slice(2).every(call=>call.status==='reserved'&&!call.results_applied));
+});
+
+for(const badIndex of [0,4])for(const invalid of ['known_usage','missing_usage','broken_json']as const)test(`semantic ${invalid} at ${badIndex} closes continuous admission while draining already handed-off siblings`,async()=>{
+ const f=fixture(20,true),inputs=await f.store.inputs(f.run);let detected=false,sends=0,reserveAfterStop=0,markAfterStop=0;
+ const snapshots:Array<{admission_closed?:boolean;reserved_working_bytes:number}>=[];
+ f.store.inputs=async()=>inputs.filter(input=>!f.calls.some(call=>call.inputs.some(sent=>sent.root_id===input.root_id))).slice(0,2);
+ const reserve=f.store.reserve;f.store.reserve=async(run,proposals)=>{if(detected)reserveAfterStop++;
+  const base=f.calls.length,rows=await reserve(run,proposals);rows.forEach((row,i)=>{row.id=`call-${base+i}`;});return rows;};
+ const mark=f.store.markSubmitting;f.store.markSubmitting=async(run,calls)=>{if(detected)markAfterStop++;return mark(run,calls);};
+ f.store.persistRawPage=async(_run,rows)=>{for(const row of rows)row.call.raw_body=row.raw;};
+ const provider:JevProviderV1={max_concurrency:2,max_response_bytes:16384,async evaluate(request){const n=sends++;await Promise.resolve();
+  if(n!==badIndex)return f.response(request);
+  const body=invalid==='known_usage'?JSON.stringify({model:request.model,usage:{input_tokens:123,output_tokens:0},answers:{}})
+   :invalid==='missing_usage'?JSON.stringify({model:request.model,answers:{}}):'{broken';
+  return{http_status:200,latency_ms:1,body};
+ }};
+ const {jevCallWorkingBytesV2}=await import('./signal-jev-streaming-window');
+ const finish=f.store.finish;f.store.finish=async(run)=>{
+  const retained=f.calls.filter((call,i)=>i<2||i===badIndex||!call.results_applied||call.status!=='settled')
+   .reduce((bytes,call)=>bytes+jevCallWorkingBytesV2(call),0);
+  assert.equal(snapshots.at(-1)!.reserved_working_bytes,retained,'errors still retaining call bodies remain in the memory counter');
+  return finish(run);
+ };
+ const result=await processMassLabelingJevV1({run_id:f.run.id,store:f.store,provider,
+  execution:{...streaming,max_in_flight:2,window_size:2,flush_size:1,max_flushes:1},observe_stream:metrics=>{
+   snapshots.push(metrics);if((metrics as {admission_closed?:boolean}).admission_closed)detected=true;
+  }});
+ assert.equal(detected,true,'raw semantic validation must close the producer immediately');
+ assert.equal(reserveAfterStop,0);assert.equal(markAfterStop,0);assert.ok(sends<20,'no full-corpus drain through a terminal bad response');
+ assert.equal(result.unresolved_billing_requests,invalid==='known_usage'?0:1);
+ assert.ok(f.calls.filter(call=>call.status==='reserved').every(call=>!call.results_applied&&!call.raw_body));
+ assert.ok(snapshots.every(m=>m.reserved_working_bytes>=0&&m.reserved_working_bytes<=streaming.max_buffered_bytes));
+ assert.ok(f.calls.filter(call=>call.status==='submitting').length===0,'every handed-off sibling reaches a durable outcome');
+});
+
+test('semantic closure during an admitted next reserve drains its ACK and preserves that unsent frontier',async()=>{
+ const f=fixture(4,true),inputs=await f.store.inputs(f.run);let close!:()=>void,sends=0;
+ const semanticDetected=new Promise<void>(resolve=>{close=resolve;});
+ f.store.inputs=async()=>inputs.filter(input=>!f.calls.some(call=>call.inputs.some(sent=>sent.root_id===input.root_id))).slice(0,2);
+ const reserve=f.store.reserve;let reservations=0;
+ f.store.reserve=async(run,proposals)=>{const base=f.calls.length,rows=await reserve(run,proposals);rows.forEach((row,i)=>{row.id=`call-${base+i}`;});
+  if(++reservations===2)await semanticDetected;return rows;};
+ f.store.persistRawPage=async(_run,rows)=>{for(const row of rows)row.call.raw_body=row.raw;};
+ const provider:JevProviderV1={max_concurrency:2,max_response_bytes:16384,async evaluate(request){const n=sends++;
+  return n===0?{http_status:200,latency_ms:1,body:JSON.stringify({model:request.model,usage:{input_tokens:123,output_tokens:0},answers:{}})}:f.response(request);}};
+ await processMassLabelingJevV1({run_id:f.run.id,store:f.store,provider,execution:{...streaming,max_in_flight:2,window_size:2,flush_size:1},
+  observe_stream:m=>{if(m.admission_closed)close();}});
+ assert.equal(reservations,2);assert.equal(sends,2);assert.equal(f.calls.length,4);
+ assert.ok(f.calls.slice(2).every(call=>call.status==='reserved'&&!call.results_applied&&!call.raw_body));
+ assert.ok(f.calls.slice(0,2).every(call=>call.status==='settled'&&call.results_applied),'already sent siblings retain their valid observed usage');
 });

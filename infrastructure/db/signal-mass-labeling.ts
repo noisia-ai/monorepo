@@ -1,17 +1,18 @@
 import { prepareMassLabelingMapScoresV1, insertMassLabelingMapItemsV1 } from "./signal-mass-labeling-map-sql";
 import {loadMassLabelingStudyPolicyWithClientV1,massLabelingStudyInterestDigestV1} from "./signal-mass-labeling-study-policy";
-import {massLabelingConfigurationV2} from "@noisia/query-engine";
+import {massLabelingConfigurationV2,buildMassLabelingJevRequestV1,buildMassLabelingJevRequestV2} from "@noisia/query-engine";
+import {selectLabelingInputPrefixV1,type LabelingInputBoundsV1} from './signal-labeling-input-bounds';
 import {MASS_LABELING_FUNDING_RECEIPT_SELECT_V1,type MassLabelingFundingReceiptV1} from "./signal-mass-labeling-funding";
 import {massLabelingRequestPolicyWithClientV1,admitMassLabelingScopedWithClientV1,massLabelingRunPolicyWithClientV1} from "./signal-mass-labeling-scoped-policy";
 import {createHash, randomUUID} from "node:crypto";
 import type {PoolClient} from "pg";
-import {labelerDigestV1, signalWorkspaceEmbeddingDigestV1 as digest,
+import {labelerDigestV1,entityContextDigestV1, signalWorkspaceEmbeddingDigestV1 as digest,
   buildMassLabelingConsolidationRequestV1,parseMassLabelingConsolidationResponseV1,type MassLabelingSourceGroupV1,
   type SignalWorkspaceInterpretationConfigurationV1,type SignalTopicLocalizationV1,type LabelerIdentity} from "@noisia/query-engine";
 import {massLabelingJevIdentityV1, type MassLabelingInputV1, type MassLabelingResultV1} from "@noisia/query-engine/src/signal-mass-labeling-jev-v1";
 import {loadSignalWorkspaceCapabilitiesStoreV1} from "./signal-workspace-capabilities";
 import {signalWorkspaceFeatureEnabledV1} from "./signal-workspace-features";
-import {inspectFacetContextChangeV1, type LabelingDatabaseV1} from "./signal-mention-facets";
+import {inspectFacetContextChangeV1,loadFacetEntityContextV1, type LabelingDatabaseV1} from "./signal-mention-facets";
 import {createSignalLabelingStoreV1, requestMentionFacetsV1, SignalLabelingError,
   type LabelingRunV1, type LabelingCallV1} from "./signal-labeling-runs";
 import {verifyMassLabelingSourceCheckpointsWithClientV1,type MassLabelingSourceCheckpointV1} from "./signal-mass-labeling-source";
@@ -62,9 +63,23 @@ export async function mapCurrent(client: Pick<PoolClient, "query">, workspace: s
       AND engine.status='ready' AND engine.preparation_run_id=map.preparation_run_id
     WHERE map.workspace_id=$1 AND map.id=$2`, [workspace, mapId])).rows[0];
   if (!row) fail("mass_labeling_map_stale");
-  const change = await inspectFacetContextChangeV1(client, workspace);
-  if (change.digest !== row.entity_context_digest) fail("mass_labeling_context_changed");
+  // This consumer needs only the exact governed identity digest, never the
+  // full-corpus affected-root analysis used by a context transition.
+  const currentDigest=entityContextDigestV1(await loadFacetEntityContextV1(client,workspace));
+  if (currentDigest !== row.entity_context_digest) fail("mass_labeling_context_changed");
   return row;
+}
+/** Same frozen-source/context predicates without hydrating the full catalog. */
+export async function assertMassLabelingMapCurrentV1(client:Pick<PoolClient,'query'>,workspace:string,mapId:string):Promise<void>{
+ const row=(await client.query<{entity_context_digest:string}>(`SELECT map.entity_context_digest FROM signal_mass_labeling_maps map
+  JOIN signal_corpus_preparation_input_state state ON state.workspace_id=map.workspace_id AND state.input_revision=map.input_revision
+  JOIN signal_corpus_preparation_runs prep ON prep.workspace_id=map.workspace_id AND prep.id=map.preparation_run_id
+   AND prep.status='completed' AND(prep.policy_valid_until IS NULL OR prep.policy_valid_until>now())
+  JOIN signal_topic_catalog_executions engine ON engine.workspace_id=map.workspace_id AND engine.id=map.source_engine_execution_id
+   AND engine.status='ready' AND engine.preparation_run_id=map.preparation_run_id
+  WHERE map.workspace_id=$1 AND map.id=$2`,[workspace,mapId])).rows[0];
+ if(!row)fail('mass_labeling_map_stale');
+ if(entityContextDigestV1(await loadFacetEntityContextV1(client,workspace))!==row.entity_context_digest)fail('mass_labeling_context_changed');
 }
 
 /** Internal editorial action. Group identities and assignments are bound to the stored numerical artifact. */
@@ -285,33 +300,84 @@ export async function continueMassLabelingV1(args: {
   });
 }
 
-const itemPageSql = `SELECT item.root_id,item.input_digest,item.text,NULL::text title,mention.platform,
-  mention.content_type,NULL::text author,mention.published_at::text,mention.language,item.chunk_index,
-  item.map_id,map.map_digest,item.candidates
-  FROM signal_mass_labeling_runs mass JOIN signal_mass_labeling_maps map ON map.id=mass.map_id
+const itemPageScopeSql = `FROM signal_mass_labeling_runs mass JOIN signal_mass_labeling_maps map ON map.id=mass.map_id AND map.workspace_id=mass.workspace_id
   JOIN signal_mass_labeling_items item ON item.map_id=mass.map_id AND item.workspace_id=mass.workspace_id
   JOIN mentions mention ON mention.workspace_id=item.workspace_id AND mention.id=item.root_id
   WHERE mass.run_id=$1 AND mass.workspace_id=$2
     AND (mass.smoke_root_limit IS NULL OR item.ordinal<=mass.smoke_root_limit)
     AND NOT EXISTS(SELECT 1 FROM signal_mass_labeling_call_roots call WHERE call.run_id=mass.run_id AND call.root_id=item.root_id)
-  ORDER BY item.root_id LIMIT $3`;
+  `;
+const itemPageSql = `SELECT item.root_id,item.input_digest,item.text,NULL::text title,mention.platform,
+  mention.content_type,NULL::text author,mention.published_at::text,mention.language,item.chunk_index,
+  item.map_id,map.map_digest,item.candidates ${itemPageScopeSql}
+  AND ($4::uuid[] IS NULL OR item.root_id=ANY($4::uuid[])) ORDER BY item.root_id LIMIT $3`;
+// Metadata crosses PG as UUIDs and integers only. Text may require six JSON
+// bytes per UTF8 byte and appears in both input and request. Structured values
+// include every candidate/localization, catalog, identity/config and fixed
+// question wording. Four retained/serialization copies plus 8KiB match H1's
+// working-memory policy; the extra 2KiB covers field names and root metadata.
+// Seal the bounded UUID page before joining mention text or calculating JSON
+// sizes. Constants in the anti-join preserve the (run_id,root_id) index path;
+// transition aliases must not turn it into a corpus x prior-call-root join.
+const itemBoundedOwnerSql=`WITH owner AS MATERIALIZED(
+ SELECT workspace_id,map_id,smoke_root_limit FROM signal_mass_labeling_runs WHERE run_id=$1 AND workspace_id=$2)`;
+const itemBoundedRowsSql=`FROM chosen wanted CROSS JOIN owner mass
+ CROSS JOIN LATERAL(SELECT i.* FROM signal_mass_labeling_items i
+  WHERE i.workspace_id=$2 AND i.map_id=mass.map_id AND i.root_id=wanted.root_id
+   AND(mass.smoke_root_limit IS NULL OR i.ordinal<=mass.smoke_root_limit)
+   AND NOT EXISTS(SELECT 1 FROM signal_mass_labeling_call_roots sent WHERE sent.run_id=$1 AND sent.root_id=i.root_id)
+  OFFSET 0) item
+ CROSS JOIN LATERAL(SELECT m.platform,m.content_type,m.published_at,m.language FROM mentions m
+  WHERE m.workspace_id=$2 AND m.id=item.root_id OFFSET 0) mention
+ CROSS JOIN LATERAL(SELECT m.map_digest,m.catalog FROM signal_mass_labeling_maps m
+  WHERE m.workspace_id=$2 AND m.id=mass.map_id OFFSET 0) map`;
+const itemMetadataSql=`/* labeling_mass_input_metadata_v2 */ ${itemBoundedOwnerSql},chosen AS MATERIALIZED(
+ SELECT item.root_id FROM signal_mass_labeling_items item
+ WHERE item.workspace_id=$2 AND item.map_id=(SELECT map_id FROM owner)
+  AND((SELECT smoke_root_limit FROM owner) IS NULL OR item.ordinal<=(SELECT smoke_root_limit FROM owner))
+  AND NOT EXISTS(SELECT 1 FROM signal_mass_labeling_call_roots sent WHERE sent.run_id=$1 AND sent.root_id=item.root_id)
+ ORDER BY item.root_id LIMIT $3)
+ SELECT item.root_id,
+(4::bigint*(12*octet_length(item.text)::bigint+2*octet_length(item.candidates::text)::bigint
+  +2*octet_length(map.catalog::text)::bigint
+  +2*COALESCE((SELECT sum(octet_length(COALESCE(NULLIF((SELECT t->'localization' FROM jsonb_array_elements(map.catalog)t WHERE t->>'topic_key'=c->>'topic_key'),'null'::jsonb),
+   (SELECT l.localization FROM signal_mass_labeling_localizations l WHERE l.workspace_id=mass.workspace_id AND l.map_id=mass.map_id AND l.topic_key=c->>'topic_key'),'{}'::jsonb)::text))
+   FROM jsonb_array_elements(item.candidates)c),0)
+  +6*(octet_length(COALESCE(mention.platform,''))+octet_length(COALESCE(mention.content_type,''))+octet_length(COALESCE(mention.language,'')))::bigint
+  +$4::bigint+2048)+8192)::text working_bytes ${itemBoundedRowsSql} ORDER BY item.root_id`;
+const itemBoundedPageSql=`/* labeling_mass_input_hydrate_v1 */ ${itemBoundedOwnerSql},chosen AS MATERIALIZED(SELECT unnest($4::uuid[]) root_id)
+ SELECT item.root_id,item.input_digest,item.text,NULL::text title,mention.platform,
+ mention.content_type,NULL::text author,mention.published_at::text,mention.language,item.chunk_index,
+ item.map_id,map.map_digest,item.candidates ${itemBoundedRowsSql} ORDER BY item.root_id LIMIT $3`;
+function fixedMassInputBytes(run:LabelingRunV1){
+ const localization={original_language:'en',original:{name:'x',definition:'x'},en:{name:'x',definition:'x'},es:{name:'x',definition:'x'}};
+ const sample={root_id:'x',input_digest:'x',text:'x',title:null,platform:null,content_type:null,author:null,published_at:'2026-01-01T00:00:00.000Z',language:null,
+  chunk_index:0,map_id:'x',map_digest:'x',candidates:Array.from({length:run.identity.params.request_version==='mass-labeling-jev-v2'?4:8},(_,i)=>({topic_key:'t'+i,name:'x',definition:'x',similarity:1,localization}))};
+ const request=run.identity.params.request_version==='mass-labeling-jev-v2'?buildMassLabelingJevRequestV2(sample,run.context,massLabelingConfigurationV2(run.identity.params),run.identity.model):buildMassLabelingJevRequestV1(sample,run.context,run.identity.model);
+ return Buffer.byteLength(JSON.stringify(request))+Buffer.byteLength(JSON.stringify(run.identity))+Buffer.byteLength(JSON.stringify(run.context));
+}
 
 export function createMassLabelingStoreV1(options: Omit<Parameters<typeof createSignalLabelingStoreV1>[0], "adapter">) {
-  return createSignalLabelingStoreV1<MassLabelingInputV1, MassLabelingResultV1>({...options, adapter: {
-    kind: "mass_labeling", policy_action: "mass_labeling_jev", feature: "mass_labeling",
-    policy: massLabelingRunPolicyWithClientV1,
-    pending_calls_only: true, persist_results_before_write: true,
-    inputs: async (client, run) => {
-      const rows=(await client.query<MassLabelingInputV1>(itemPageSql,[run.id,run.workspace_id,options.page_size??200])).rows;
+  const readInputs=async(client:LabelingDatabaseV1|PoolClient,run:LabelingRunV1,bounds?:LabelingInputBoundsV1)=>{
+      let ids:string[]|null=null;
+      if(bounds){const metadata=(await client.query<{root_id:string;working_bytes:string}>(itemMetadataSql,[run.id,run.workspace_id,bounds.max_rows,fixedMassInputBytes(run)])).rows;
+        ids=selectLabelingInputPrefixV1(metadata,bounds);if(!ids.length)return [];}
+      const rows=(await client.query<MassLabelingInputV1>(bounds?itemBoundedPageSql:itemPageSql,[run.id,run.workspace_id,bounds?.max_rows??options.page_size??200,ids])).rows;
       if(run.identity.params.request_version!=="mass-labeling-jev-v2"||!rows.length)return rows;
       const map=await mapCurrent(client,run.workspace_id,rows[0]!.map_id);
       const imported=(await client.query<{topic_key:string;localization:SignalTopicLocalizationV1}>(
-        "SELECT topic_key,localization FROM signal_mass_labeling_localizations WHERE workspace_id=$1 AND map_id=$2",[run.workspace_id,map.id])).rows;
+        "SELECT topic_key,localization FROM signal_mass_labeling_localizations WHERE workspace_id=$1 AND map_id=$2 AND ($3::text[] IS NULL OR topic_key=ANY($3::text[]))",[run.workspace_id,map.id,bounds?[...new Set(rows.flatMap(row=>row.candidates.map(c=>c.topic_key)))]:null])).rows;
       const localized=new Map(map.catalog.flatMap(t=>t.localization?[[t.topic_key,t.localization] as const]:[]));
       for(const t of imported)if(!localized.has(t.topic_key))localized.set(t.topic_key,t.localization);
       return rows.map(row=>({...row,candidates:[...row.candidates].sort((a,b)=>b.similarity-a.similarity||a.topic_key.localeCompare(b.topic_key))
         .slice(0,4).map(c=>({...c,...(localized.has(c.topic_key)?{localization:localized.get(c.topic_key)}:{})}))}));
-    },
+    };
+  return createSignalLabelingStoreV1<MassLabelingInputV1, MassLabelingResultV1>({...options, adapter: {
+    kind: "mass_labeling", policy_action: "mass_labeling_jev", feature: "mass_labeling",
+    policy: massLabelingRunPolicyWithClientV1,
+    pending_calls_only: true, persist_results_before_write: true,
+    bounded_inputs:readInputs,inputs:(client,run)=>readInputs(client,run),
+    has_inputs:async(client,run)=>(await client.query(`SELECT 1 ${itemPageScopeSql} LIMIT 1`,[run.id,run.workspace_id])).rows.length>0,
     authority: async (client, run) => {
       const row = (await client.query<{map_id: string}>("SELECT map_id FROM signal_mass_labeling_runs WHERE run_id=$1 AND workspace_id=$2", [run.id, run.workspace_id])).rows[0];
       if (!row) fail("mass_labeling_run_unavailable");
