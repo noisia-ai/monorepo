@@ -5,7 +5,7 @@ import{enqueueSignalListeningDiscoveryRoundV1,activateSignalListeningServingSnap
 import{ensureSignalStudyCorpusV1,saveSignalStudyConfigurationV1}from'../signal-study-configuration';
 import{requestSignalStudyExecutionV1}from'../signal-study-executions';
 import{SIGNAL_STUDY_TB_TEMPLATE_V1,SIGNAL_STUDY_TB_ROLES_V1,createSignalStudyTemplateSnapshotV1,buildSignalStudyExecutionConfigurationV1,signalWorkspaceEmbeddingDigestV1 as digest,type SignalListeningConfigurationV1,type SignalStudyV1}from'@noisia/query-engine';
-export async function withSignalStudyFixtureV1(fn:(f:Awaited<ReturnType<typeof seed>>)=>Promise<void>,options:{population_count?:number;additional_defined_topic?:boolean;complete_listening?:boolean}={}){
+export async function withSignalStudyFixtureV1(fn:(f:Awaited<ReturnType<typeof seed>>)=>Promise<void>,options:{population_count?:number;study_text_length?:number;additional_defined_topic?:boolean;complete_listening?:boolean}={}){
  await withDiscoveryAdvanceFixtureV1(async f=>fn(await seed(f,options)),options);
 }
 async function seed(f:Parameters<Parameters<typeof withDiscoveryAdvanceFixtureV1>[0]>[0],options:{complete_listening?:boolean}={}){

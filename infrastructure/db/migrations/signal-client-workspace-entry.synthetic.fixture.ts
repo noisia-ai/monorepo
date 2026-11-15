@@ -22,12 +22,13 @@ export type SyntheticTransactionV1={database:Pool;scoped:PoolClient;query:Worksp
 /** Accepted import only: no preparation, embeddings, execution or provider receipt.
  * The caller must own an approved synthetic-only transaction and its rollback. */
 export async function syntheticImportedWorkspaceFixtureV1(tx:SyntheticTransactionV1,
- identity?:{organization_id:string;brand_id:string;actor_user_id:string;workspace_id:string},options:{root_count?:number;long_text?:boolean;batch_size?:number;study_vector_groups?:boolean}={}){
+ identity?:{organization_id:string;brand_id:string;actor_user_id:string;workspace_id:string},options:{root_count?:number;long_text?:boolean;batch_size?:number;study_vector_groups?:boolean;study_text_length?:number}={}){
  const {database,query}=tx;
  const roots:string[]=[];
  const texts: string[]=options.root_count===undefined?[...NOI19_SYNTHETIC_TEXTS]:
   Array.from({length:options.root_count},(_,index)=>`Synthetic fixture root ${index.toString().padStart(4,'0')}.`);
  if(options.study_vector_groups){assert.ok(options.root_count&&options.root_count>=60&&options.root_count<=240);const forces=['A bicycle purchase feels reassuring with a smooth quiet ride.','A bicycle repair budget creates hesitation around costly spare parts.','Friends encourage a bicycle commute with shared weekend trips.'];for(let i=0;i<texts.length;i++)texts[i]+=' '+forces[i%3];}
+ if(options.study_text_length!==undefined){assert.equal(options.study_vector_groups,true);assert.ok(Number.isInteger(options.study_text_length)&&options.study_text_length>=1000&&options.study_text_length<=13000);for(let i=0;i<texts.length;i++)texts[i]=texts[i]!.padEnd(options.study_text_length,` Synthetic fixture root ${i.toString().padStart(4,'0')}. Preparation material.`);}
  if(options.long_text&&texts.length)texts[0]=`${texts[0]} ${'Synthetic excerpt continuation. '.repeat(100)}`;
  const org=identity?.organization_id??randomUUID(),brand=identity?.brand_id??randomUUID(),actor_user_id=identity?.actor_user_id??randomUUID(),source=randomUUID(),batch=randomUUID();
  if(!identity){
@@ -104,6 +105,7 @@ export async function syntheticClientWorkspaceFixtureV1(tx:SyntheticTransactionV
  identity?:{organization_id:string;brand_id:string;actor_user_id:string;workspace_id:string};
  root_count?:number;
  study_vector_groups?:boolean;
+ study_text_length?:number;
  long_text?:boolean;
  import_batch_size?:number;
  preparation_page_size?:number;
@@ -112,7 +114,7 @@ export async function syntheticClientWorkspaceFixtureV1(tx:SyntheticTransactionV
  projection?:Parameters<typeof workspaceProjectionFixtureBodyV1>[1];
 }={}){
  const {database,query,scoped}=tx;
- const {workspace_id,actor_user_id}=await syntheticImportedWorkspaceFixtureV1(tx,options.identity,{root_count:options.root_count,long_text:options.long_text,batch_size:options.import_batch_size,study_vector_groups:options.study_vector_groups});
+ const {workspace_id,actor_user_id}=await syntheticImportedWorkspaceFixtureV1(tx,options.identity,{root_count:options.root_count,long_text:options.long_text,batch_size:options.import_batch_size,study_vector_groups:options.study_vector_groups,study_text_length:options.study_text_length});
  const access={database,workspace_id,actor_user_id};
  const prep=await requestSignalWorkspaceCorpusPreparationStoreV1({...access,idempotency_key:randomUUID()});
  const prepJob=(await query('SELECT worker_job_id FROM signal_corpus_preparation_runs WHERE id=$1',[prep.run_id])).rows[0]!.worker_job_id;
@@ -124,7 +126,7 @@ export async function syntheticClientWorkspaceFixtureV1(tx:SyntheticTransactionV
  assert.equal(prepared.is_current,true);assert.equal(prepared.latest_completed?.counts.eligible_roots,options.root_count??3);
  const quoted=await quoteSignalWorkspaceEmbeddingsStoreV1({...access,profile});
  const embedded=await requestSignalWorkspaceEmbeddingsStoreV1({...access,profile,preparation_run_id:quoted.preparation_run_id,
-  quote_digest:quoted.quote_digest,idempotency_key:randomUUID(),hard_cap_micro_usd:1_000_000,provider_available:true});
+  quote_digest:quoted.quote_digest,idempotency_key:randomUUID(),hard_cap_micro_usd:options.study_text_length?Math.max(1_000_000,quoted.estimated_upper_micro_usd):1_000_000,provider_available:true});
  await embedSyntheticRunV1(tx,embedded.run_id,options.embedding_page_limit,options.study_vector_groups);
  const context=await loadSignalTopicInheritedContextStoreV1({queryable:database,workspace_id,complete_context:true});
  await insertSignalTaxonomyDraftCoreV1({client:scoped,workspace_id,kind:'topic',context_hash:fixtureSha('synthetic-empty-catalog'),terms:[],rules:{topics:[]},
