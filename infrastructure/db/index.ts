@@ -156,3 +156,4 @@ export * from './signal-listening-calibration';
 export * from './signal-listening-lexicon';
 export * from './signal-listening-discovery';
 export * from './signal-listening-discovery-money';
+export * from './signal-listening-discovery-runtime';

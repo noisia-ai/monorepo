@@ -4,6 +4,8 @@ import {mkdtemp,writeFile,readFile,open,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import test from 'node:test';
+import {assertDiscoveryRuntimeLeaseV1} from './signal-listening-discovery-runtime.assertions';
+import {getSignalListeningDiscoveryPublicationRecoveryV1} from '../signal-listening-discovery-runtime';
 import {runMassLabelingAcceptanceFixtureV1} from './signal-mass-labeling-acceptance.synthetic.fixture';
 import {signalListeningBaseTemplateV1,buildSignalListeningJevRequestV1,signalListeningRequestDigestV1,mapSignalListeningJevResponseV1} from '@noisia/query-engine';
 import {saveSignalListeningConfigurationV1} from '../signal-listening-configuration';
@@ -84,8 +86,10 @@ test('discovery reviews use native admissions, durable receipts and one shared l
     await assert.rejects(seedSignalListeningDiscoveryV1({...access,configuration_id:changed.id,map_id:ctx.map_id,round:2,source_generation_id:randomUUID(),seeds:[]}),/source_invalid/);
     assert.equal((await db.query('SELECT count(*)::int n FROM engine_cost_events WHERE listening_round_id=$1',[round.id])).rows[0].n,0);return;
    }
-   assert.ok((await pendingSignalListeningDiscoveryRoundsV1({database:db})).some(r=>r.round_id===round.id));
+   assert.ok(!(await pendingSignalListeningDiscoveryRoundsV1({database:db})).some(r=>r.round_id===round.id),'disabled by default does not drain new work');
+   assert.ok((await pendingSignalListeningDiscoveryRoundsV1({database:db,enabled:true})).some(r=>r.round_id===round.id));
    let lease=await claimSignalListeningDiscoveryRoundV1({database:db,round_id:round.id});assert.ok(lease);assert.equal(lease.recovery_only,false);
+   if(mode==='happy')lease=await assertDiscoveryRuntimeLeaseV1(access,lease);
    if(mode==='race'){
     // A genuine pending corpus-embedding owner in another workspace, same org.
     const brand=randomUUID(),prep=randomUUID();await db.query("INSERT INTO brands(id,organization_id,slug,name,status) VALUES($1,$2,$3,'Synthetic money sibling','active')",[brand,policy.organization_id,'money-'+brand]);
@@ -161,7 +165,13 @@ test('discovery reviews use native admissions, durable receipts and one shared l
    const childRun=await store.claim(child.listening_run_id!);assert.ok(childRun);assert.equal((await store.inputs(childRun)).length,0,'presentation edits preserve semantic JEV cache');
    assert.equal(await store.finish(childRun),'completed');await store.release(childRun);
    const complete=await completeSignalListeningDiscoveryRoundV1({...access,round_id:round.id});assert.equal(complete.status,'completed');
+   assert.deepEqual(await getSignalListeningDiscoveryPublicationRecoveryV1({database:db,round_id:round.id}),
+    {round_id:round.id,workspace_id:access.workspace_id,actor_user_id:access.actor_user_id});
+   assert.ok((await pendingSignalListeningDiscoveryRoundsV1({database:db,enabled:false})).some(r=>r.round_id===round.id),
+    'lost completion ACK still schedules publication with provider disabled');
+   assert.equal(await claimSignalListeningDiscoveryRoundV1({database:db,round_id:round.id}),null,'publication recovery never reacquires a terminal processing lease');
    const snapshot=await activateSignalListeningServingSnapshotV1({...access,round_id:round.id});assert.ok(snapshot.id);
+   assert.equal(await getSignalListeningDiscoveryPublicationRecoveryV1({database:db,round_id:round.id}),null);
    const served=await getSignalListeningServingSnapshotV1(access);assert.equal(served?.classification_run_id,child.listening_run_id);assert.equal(served?.configuration_id,applied.configuration_id);
    assert.equal((await db.query("SELECT count(*)::int n FROM engine_cost_events WHERE listening_round_id=$1",[round.id])).rows[0].n,1);
    const next=await enqueueSignalListeningDiscoveryRoundV1({...access,execution_id:execution.id,generation_id:complete.output_generation_id!,orphan_groups:[],provider_available:true});

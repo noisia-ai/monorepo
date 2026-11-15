@@ -312,12 +312,17 @@ export async function getSignalListeningServingSnapshotV1(args:SignalListeningAc
  });
 }
 /** Only already admitted owners are drained. This function creates no authority. */
-export async function pendingSignalListeningDiscoveryRoundsV1(args:{database:SignalListeningAccessV1['database'];limit?:number}){
+export async function pendingSignalListeningDiscoveryRoundsV1(args:{database:SignalListeningAccessV1['database'];limit?:number;enabled?:boolean}){
  const limit=args.limit??20;if(!Number.isSafeInteger(limit)||limit<1||limit>100)fail('listening_discovery_limit_invalid',422);
  return(await args.database.query<{round_id:string;workspace_id:string;actor_user_id:string;status:string}>(`SELECT r.id round_id,r.workspace_id,p.actor_user_id,r.status
  FROM signal_listening_discovery_rounds r JOIN signal_listening_discovery_executions p ON p.id=r.execution_id
- WHERE(r.status IN('queued','reviewing','reviewed','classifying') OR r.status='outcome_unknown' AND EXISTS(SELECT 1 FROM engine_cost_events c WHERE c.listening_round_id=r.id AND (c.call_state IN('response_persisted','settled') OR EXISTS(SELECT 1 FROM signal_listening_discovery_raw_receipts raw WHERE raw.call_id=c.id AND raw.verification_status='planned'))))
- AND(r.execution_token IS NULL OR r.execution_expires_at<=clock_timestamp()) ORDER BY r.created_at,r.id LIMIT $1`,[limit])).rows;
+ WHERE(r.status IN('queued','reviewing','reviewed','classifying') OR r.status='outcome_unknown' AND EXISTS(SELECT 1 FROM engine_cost_events c WHERE c.listening_round_id=r.id AND (c.call_state IN('response_persisted','settled') OR EXISTS(SELECT 1 FROM signal_listening_discovery_raw_receipts raw WHERE raw.call_id=c.id AND raw.verification_status='planned')))
+   OR r.status='completed' AND NOT EXISTS(SELECT 1 FROM signal_listening_serving_snapshots s WHERE s.round_id=r.id AND s.workspace_id=r.workspace_id))
+ AND ($2::boolean OR r.status IN('reviewed','classifying','outcome_unknown','completed')
+   OR EXISTS(SELECT 1 FROM engine_cost_events c WHERE c.listening_round_id=r.id
+     AND (c.call_state IN('response_persisted','settled') OR EXISTS(
+       SELECT 1 FROM signal_listening_discovery_raw_receipts raw WHERE raw.call_id=c.id AND raw.verification_status='planned'))))
+ AND(r.execution_token IS NULL OR r.execution_expires_at<=clock_timestamp()) ORDER BY r.created_at,r.id LIMIT $1`,[limit,args.enabled===true])).rows;
 }
 
 /** A durable planned wrapper recovers storage/attach ACK loss without a provider. */

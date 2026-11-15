@@ -12,6 +12,8 @@ No hay aprobaciones humanas intermedias en los procesos de análisis: Sonnet 4.6
 
 ## Progreso
 
+- H3 integración monetaria: fdd5e06a importado como 222f8582, PostgreSQL dedicado 1/1 sin omisiones sobre cinco clones y tipado/lint 11/11. Se añaden helpers privados de contexto, renovación y liberación de lease, junto con recuperación de publicación completada sin nueva lease ni proveedor. La regresión detectó y corrigió una comprobación de expiración evaluada antes de esperar el lock; el reloj ahora usa la fila materializada después de adquirirlo. La prueba nativa final conserva las carreras de presupuesto y pasa. El transporte y su contabilidad de respuestas incompletas siguen en integración.
+
 - H1 CI en 841042c5: verify y PostgreSQL verdes; benchmark falló antes de JEV por statement_timeout en la invalidación semántica heredada durante INSERT de menciones. Se conserva la traza del trigger y se investigará una corrección productiva aditiva, sin ampliar timeouts ni saltar guards. El perfil por operación 1a9b4a28 y su matriz 8/8 están en diagnóstico de 1,002 raíces.
 - H4: recibido el contrato puro aa9f12f5; revisión detectó tres P2: contraste sin definiciones vecinas, κ parcial ante particiones y dirección que mezclaba ironía. Se corrigen antes de integrar. El objeto persistente, sus owners y la ejecución siguen pendientes.
 
@@ -142,6 +144,8 @@ Recibo: separar Voyage/JEV por raíz de Claude por número de grupos y vueltas; 
 - El promedio del piloto completo incluye una etapa editorial que no escala por raíz. Multiplicarlo linealmente daba USD 205.81/millón; mantener explícitamente los grupos y una vuelta de referencia produce USD 114.035250. Ambos cálculos parten del mismo recibo, cuyo uso histórico permanece USD 17.280463.
 
 ## Registro de decisiones
+
+- 2026-11-14: completar una vuelta no autoriza a reabrir su lease inmutable si se pierde el acuse de publicación. Recuperar únicamente la activación faltante mediante su owner autorizado e idempotente. El drainer apagado por omisión sólo lista conciliación/publicación ya pagadas; los nuevos envíos requieren enabled explícito.
 
 - 2026-11-14: conservar la base sintética completada como archivo y respaldarla con SHA antes de crear un laboratorio lógico vacío para el perfil siguiente. No reutilizar el map_id único mediante UPDATE de estados o recibos. Corregir el cuello de botella de importación por una migración posterior revisada; no elevar statement_timeout para ocultarlo.
 
