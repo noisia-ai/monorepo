@@ -3,10 +3,12 @@ import {signalWorkspaceEmbeddingDigestV1 as digest} from './signal-workspace-emb
 import {labelerDigestV1,type LabelerIdentity} from './signal-mention-labeler-v1';
 import {validateSignalListeningConfigurationV1,signalListeningJevIdentityV1,type SignalListeningConfigurationV1} from './signal-listening-contracts';
 import {validateSignalStudyExecutionConfigurationV1,type SignalStudyExecutionConfigurationV1} from './signal-study-configuration';
+import {buildSignalStudyMotiveConfigurationV1}from'./signal-study-output';
+import type{SignalStudyMotiveV1}from'./signal-study-evidence';
 import type {JevRequestV1} from './signal-mention-facets-jev-v1';
 export type SignalStudyJevPlanV1={contract_version:'signal-study-jev-batch-v1';execution_id:string;workspace_id:string;source_digest:string;
- stage:string;model:'jev-1.13.0';requests:Array<{root_id:string;request_body:string;request_sha256:string}>;plan_digest:string};
-export type SignalStudyJevPlanHeaderV1=Omit<SignalStudyJevPlanV1,'contract_version'|'requests'>&{contract_version:'signal-study-jev-plan-header-v1';request_count:number};
+ stage:string;model:'jev-1.13.0';stage_configuration:SignalListeningConfigurationV1;stage_configuration_digest:string;stage_dependencies:Array<{kind:'sonnet_step'|'numeric_checkpoint'|'jev_batch';key:string;digest:string}>;requests:Array<{root_id:string;request_body:string;request_sha256:string}>;plan_digest:string};
+export type SignalStudyJevPlanHeaderV1=Omit<SignalStudyJevPlanV1,'contract_version'|'requests'|'stage_configuration'>&{contract_version:'signal-study-jev-plan-header-v1';request_count:number};
 export type SignalStudyJevBindingV1={contract_version:'signal-study-jev-native-binding-v1';scope:'study';batch_id:string;run_id:string;actor_user_id:string;
  configuration:SignalStudyExecutionConfigurationV1;stage_configuration:SignalListeningConfigurationV1;plan:SignalStudyJevPlanHeaderV1;
  human_revision_digest:string;policy_version_id:string;entity_context_digest:string;
@@ -43,6 +45,7 @@ export function validateSignalStudyJevBindingV1(binding:SignalStudyJevBindingV1)
   ||!uuid.test(p.execution_id)||p.workspace_id!==c.study.workspace_id||!uuid.test(binding.policy_version_id)||!uuid.test(binding.stage_checkpoint.id)
   ||!hash.test(binding.stage_checkpoint.digest)||!hash.test(binding.human_revision_digest)||!hash.test(binding.entity_context_digest)
   ||p.contract_version!=='signal-study-jev-plan-header-v1'||p.model!=='jev-1.13.0'||!hash.test(p.source_digest)
+  ||p.stage_configuration_digest!==digest(s)||!Array.isArray(p.stage_dependencies)||p.stage_dependencies.some(d=>!['sonnet_step','numeric_checkpoint','jev_batch'].includes(d.kind)||!d.key||!hash.test(d.digest))
   ||!['axes','membership','dominance_membership'].includes(p.stage)||!Number.isSafeInteger(p.request_count)||p.request_count<1||!hash.test(p.plan_digest))fail();
  if(binding.labeler_digest!==labelerDigestV1(signalStudyJevIdentityV1(binding)))fail();
  if(p.stage==='axes'&&digest(s)!==digest(signalStudyJevAxesConfigurationV1(c)))fail();
@@ -74,4 +77,12 @@ export function validateSignalStudyJevRequestV1(binding:SignalStudyJevBindingV1,
   }
 
  return JSON.parse(row.request_body) as JevRequestV1;
+}
+
+/** Study motives have their own namespace; the original Listening source stays
+ * independently frozen and is never republished by this internal compilation. */
+export function signalStudyJevMotiveConfigurationV1(value:SignalStudyExecutionConfigurationV1,motives:SignalStudyMotiveV1[]){
+ const c=validateSignalStudyExecutionConfigurationV1(value),axes=signalStudyJevAxesConfigurationV1(c);
+ return buildSignalStudyMotiveConfigurationV1({...axes,instructions:c.source_listening.configuration.instructions,
+  questions:axes.questions.filter(q=>['voice','promotion'].includes(q.key))},motives);
 }

@@ -5,7 +5,7 @@ import {SIGNAL_STUDY_TB_TEMPLATE_V1,SIGNAL_STUDY_TB_ROLES_V1,createSignalStudyTe
  buildSignalStudyExecutionConfigurationV1,buildSignalStudyConfiguredAxesRequestV1,signalListeningBaseTemplateV1,signalWorkspaceEmbeddingDigestV1 as digest,
  type SignalStudyV1} from '@noisia/query-engine';
 import {signalStudyRuntimeJobV1,studyRuntimeJevQuestionIdentityV1,type StudyRuntimeJevBatchPlanV1,type StudyRuntimeJevBatchCheckpointV1,type StudyRuntimeStoreV1,type StudyRuntimeLeaseV1,type StudyRuntimeSourceV1,
- type StudyRuntimeStepV1,type StudyRuntimeStepPlanV1,type StudyRuntimeReceiptV1,type StudyRuntimeOutputV1} from './signal-study-runtime';
+ type StudyRuntimeStepV1,type StudyRuntimeStepPlanV1,type StudyRuntimeReceiptV1,type StudyRuntimeOutputV1,type StudyRuntimeNumericComputedV1,type StudyRuntimeNumericPlanV1,type StudyRuntimeStoredNumericV1} from './signal-study-runtime';
 const sha=(s:string|Buffer)=>'sha256:'+createHash('sha256').update(s).digest('hex');
 const receipt=(value:unknown):StudyRuntimeReceiptV1=>{const b=Buffer.from(JSON.stringify(value));return{body_base64:b.toString('base64'),body_bytes:b.length,sha256:sha(b),complete:true,http_status:200,provider_request_id:'synthetic-request'};};
 const choice=(keys:string[],selected:string)=>({type:'choice' as const,choice:selected,confidence:1,probabilities:Object.fromEntries(keys.map(k=>[k,k===selected?1:0]))});
@@ -23,19 +23,24 @@ function fixture(count=160){
  const body={configuration:structuredClone(configuration),roots:Array.from({length:count},(_,i)=>{const text=`id=${i} I enjoy a bicycle and feel calm with enough time.`;return{root_id:'root_'+i,text,text_sha256:sha(text),vector,
   occurred_at:'2026-02-01T00:00:00Z',channel:'synthetic',source_url:'https://example.com/'+i,listening_topic_keys:['topic'],private_person_names:[],
   base_answers:{voice:choice(['individual','brand'],'individual'),promotion:{type:'noul' as const,noul:.1}},
-  embedding_proof:{embedding_call_id:randomUUID(),embedding_run_id:randomUUID(),vector_digest:digest(vector),text_sha256:sha(text)}};}),
+  embedding_proof:{embedding_call_id:randomUUID(),embedding_run_id:randomUUID(),preparation_run_id:null,input_contract:'synthetic-source',proof_json:'{}',proof_digest:sha('{}'),vector_json:JSON.stringify(vector),vector_digest:digest(vector),text_sha256:sha(text)}};}),
   selection:{scope:'listening_consumer_cut' as const,source_listening_digest:configuration.source_listening.configuration_digest,cut_digest:digest(study.cut),eligible_root_ids_digest:digest(Array.from({length:count},(_,i)=>'root_'+i).sort()),eligible_roots:count,pending_base_roots:0,corpus_roots:83_000},
-  embedding_space_digest:digest('synthetic-vectors'),sampling_seed:'sealed-synthetic-seed',query_terms:['bicycle'],problem_terms:['problem'],brand_baseline_roots:count,human_revision_digest:digest('human-2'),max_roots:1000,max_bytes:8*1024*1024};
+  source_preparation_run_ids:[],embedding_space_digest:digest('synthetic-vectors'),sampling_seed:'sealed-synthetic-seed',query_terms:['bicycle'],problem_terms:['problem'],brand_baseline_roots:count,human_revision_digest:digest('human-2'),max_roots:1000,max_bytes:8*1024*1024};
  const source:StudyRuntimeSourceV1={...body,source_digest:digest(body)};
  const lease:StudyRuntimeLeaseV1={execution_id,workspace_id,execution_token:randomUUID(),source_digest:source.source_digest,configuration_digest:digest(configuration),human_revision_digest:body.human_revision_digest};
  type LoggedPlan=Omit<StudyRuntimeStepPlanV1,'kind'>&{kind:'jev'|'sonnet'|'numeric'};
+ const numericCheckpoints=new Map<string,StudyRuntimeStoredNumericV1>();
  const journal=new Map<string,StudyRuntimeStepV1>(),sends:LoggedPlan[]=[],events:string[]=[];
  const batches=new Map<string,{plan:StudyRuntimeJevBatchPlanV1;status:StudyRuntimeJevBatchCheckpointV1['status'];results:StudyRuntimeJevBatchCheckpointV1['results'];
   raw:Array<{requests:StudyRuntimeJevBatchPlanV1['requests'];receipts:StudyRuntimeReceiptV1[];page_id:string;sha256:string}>}>();
  let inFlight=0,maxInFlight=0,maxBuffered=0,pageWrites=0,batchStop=false,batchRawAck=false,batchIncomplete=false,override=false;
  let output:StudyRuntimeOutputV1|undefined,mark:'sent'|'stale'|'budget_exhausted'='sent',renew=true,preflightError=false,sendError=false,persistAck=false,commitAck=false,finish=true,repair=false,dominant=false,fitCalls=0;
  const store:StudyRuntimeStoreV1={claim:async()=>lease,renew:async()=>renew,release:async()=>{events.push('release');},source:async()=>source,
+  numericCheckpoint:async(_l,p)=>numericCheckpoints.get(p.key)??null,
+  persistNumeric:async(_l,p,value)=>{const stored={value:value.value,value_digest:digest(value.value),manifest_json:value.manifest_json,manifest_sha256:value.manifest_sha256,verified:true as const};numericCheckpoints.set(p.key,stored);return stored;},
   prepareJevBatch:async(_l,plan)=>{
+   assert.equal(plan.stage_configuration_digest,digest(plan.stage_configuration));
+   if(plan.stage!=='axes'){assert.ok(plan.stage_dependencies.some(d=>d.kind==='numeric_checkpoint'));assert.ok(plan.stage_dependencies.some(d=>d.kind==='sonnet_step'));}
    let entry=[...batches.entries()].find(([,b])=>b.plan.plan_digest===plan.plan_digest);
    if(!entry){const id=randomUUID(),value={plan,status:'planned' as const,results:[],raw:[]};batches.set(id,value);entry=[id,value];}
    return{batch_id:entry[0],plan_digest:plan.plan_digest};
@@ -72,10 +77,13 @@ function fixture(count=160){
   };
  const drivers={preflight:async()=>{if(preflightError)throw Error('not ready');},
   send:(plan:StudyRuntimeStepPlanV1)=>physicalSend(plan),
-  fit:async(plan:{plan_digest:string;rows:Array<{root_id:string}>})=>{fitCalls++;return{plan_digest:plan.plan_digest,
-   groups:plan.rows.length?[{key:'group_a',root_ids:plan.rows.filter(r=>Number(r.root_id.slice(5))%2===0).map(r=>r.root_id)},
-    {key:'group_b',root_ids:plan.rows.filter(r=>Number(r.root_id.slice(5))%2===1).map(r=>r.root_id)}].filter(g=>g.root_ids.length):[],unassigned_root_ids:[]};},
-
+  fit:async(args:{numeric_plan:StudyRuntimeNumericPlanV1;fit_plan:{plan_digest:string;configuration:unknown;rows:Array<{root_id:string}>}}):Promise<StudyRuntimeNumericComputedV1>=>{
+   fitCalls++;const plan=args.fit_plan,value={plan_digest:plan.plan_digest,groups:plan.rows.length?[{key:'group_a',root_ids:plan.rows.filter(r=>Number(r.root_id.slice(5))%2===0).map(r=>r.root_id)},
+    {key:'group_b',root_ids:plan.rows.filter(r=>Number(r.root_id.slice(5))%2===1).map(r=>r.root_id)}].filter(g=>g.root_ids.length):[],unassigned_root_ids:[]};
+   const manifest_json=JSON.stringify({contract_version:'signal-study-numeric-v1',workspace_id,execution_id,source_digest:source.source_digest,study_digest:source.configuration.study_digest,cut_digest:digest(source.configuration.study.cut),
+    request_sha256:args.numeric_plan.request_sha256,fit_plan_digest:plan.plan_digest,numeric_config_digest:digest(plan.configuration),seed_digest:digest(source.sampling_seed)});
+   return{value,manifest_json,manifest_sha256:sha(manifest_json),artifacts:[],dispose:async()=>{}};
+  },
   runJevBatch:async(args:{batch_id:string;signal:AbortSignal;should_stop:()=>boolean})=>{
    const b=batches.get(args.batch_id)!;if(preflightError)throw Error('not ready');
    if(mark!=='sent'){b.status=mark;return;}
@@ -188,7 +196,7 @@ test('lease expiration drains its HTTP cohort to page custody and admits no next
  if(f.sends.length)assert.ok(f.pageWrites>=1);
 });
 test('numerical output cannot invent roots or omit members from the sealed pooled census',async()=>{
- const f=fixture(2);f.drivers.fit=async plan=>({plan_digest:plan.plan_digest,groups:[{key:'invented',root_ids:['unseen-root']}],unassigned_root_ids:[]});
+ const f=fixture(2);const fit=f.drivers.fit;f.drivers.fit=async args=>{const result=await fit(args);return{...result,value:{plan_digest:args.fit_plan.plan_digest,groups:[{key:'invented',root_ids:['unseen-root']}],unassigned_root_ids:[]}};};
  await assert.rejects(signalStudyRuntimeJobV1(f.execution_id,f),/numeric_population_invalid/);
  assert.equal(f.sends.filter(p=>p.kind==='sonnet').length,0);assert.equal(f.output,undefined);
 });
@@ -225,4 +233,20 @@ test('stable explicit permission override keeps the exact recorded reason in fin
 test('shutdown closes batch admission between cohorts and drains the admitted cohort as a page',async()=>{
  const f=fixture();assert.equal((await signalStudyRuntimeJobV1(f.execution_id,{...f,should_stop:()=>f.sends.length>=4})).status,'stopped');
  assert.equal(f.sends.length,4);assert.equal(f.pageWrites,1);assert.equal(f.output,undefined);assert.equal(f.sends.some(p=>p.kind==='sonnet'),false);
+});
+test('numeric CPU has no paid journal; a crash before intent can refit, but a pending immutable intent cannot',async()=>{
+ const f=fixture(0),fit=f.drivers.fit;let attempts=0;
+ f.drivers.fit=async args=>{attempts++;if(attempts===1)throw Error('free CPU crash before intent');return fit(args);};
+ await assert.rejects(signalStudyRuntimeJobV1(f.execution_id,f),/free CPU crash/);
+ assert.equal((await signalStudyRuntimeJobV1(f.execution_id,f)).status,'completed');assert.equal(attempts,2);
+ assert.equal(f.events.includes('mark'),false);assert.equal(f.journal.size,0);assert.equal(f.sends.length,0);
+ const g=fixture(0);g.store.numericCheckpoint=async()=>({status:'pending',manifest_sha256:digest('planned-custody')});
+ assert.equal((await signalStudyRuntimeJobV1(g.execution_id,g)).status,'waiting_numeric');assert.equal(g.fitCalls,0);assert.equal(g.events.includes('mark'),false);
+});
+test('numeric verified checkpoint survives lost persistence ACK with no refit and closes local artifact handles',async()=>{
+ const f=fixture(0),persist=f.store.persistNumeric,fit=f.drivers.fit;let disposed=0,first=true;
+ f.drivers.fit=async args=>{const result=await fit(args);return{...result,dispose:async()=>{disposed++;}};};
+ f.store.persistNumeric=async(...args)=>{const result=await persist(...args);if(first){first=false;throw Error('lost numeric checkpoint ACK');}return result;};
+ await assert.rejects(signalStudyRuntimeJobV1(f.execution_id,f),/lost numeric checkpoint ACK/);assert.equal(disposed,1);
+ assert.equal((await signalStudyRuntimeJobV1(f.execution_id,f)).status,'completed');assert.equal(f.fitCalls,1);assert.equal(f.events.includes('mark'),false);
 });

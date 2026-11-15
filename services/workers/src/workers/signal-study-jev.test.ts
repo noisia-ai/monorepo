@@ -27,9 +27,9 @@ function fixture(count=12,measured=true){
  const stage_configuration=signalStudyJevAxesConfigurationV1(configuration),requests=Array.from({length:count},(_,i)=>{
   const root_id=randomUUID(),text=`row_${String(i).padStart(3,'0')} I enjoy a bicycle ☕`,request_body=JSON.stringify(buildSignalStudyConfiguredAxesRequestV1({text},configuration));return{root_id,request_body,request_sha256:sha(request_body)};
  });
- const full={contract_version:'signal-study-jev-batch-v1',execution_id,workspace_id,source_digest:digest('sealed-source'),stage:'axes',model:'jev-1.13.0',requests};
+ const full={contract_version:'signal-study-jev-batch-v1',execution_id,workspace_id,source_digest:digest('sealed-source'),stage:'axes',model:'jev-1.13.0',stage_configuration,stage_configuration_digest:digest(stage_configuration),stage_dependencies:[],requests};
  const binding:SignalStudyJevBindingV1={contract_version:'signal-study-jev-native-binding-v1',scope:'study',batch_id,run_id,actor_user_id,configuration,stage_configuration,
-  plan:{contract_version:'signal-study-jev-plan-header-v1',execution_id,workspace_id,source_digest:full.source_digest,stage:'axes',model:'jev-1.13.0',request_count:count,plan_digest:digest(full)},
+  plan:{contract_version:'signal-study-jev-plan-header-v1',execution_id,workspace_id,source_digest:full.source_digest,stage:'axes',model:'jev-1.13.0',stage_configuration_digest:digest(stage_configuration),stage_dependencies:[],request_count:count,plan_digest:digest(full)},
   human_revision_digest:digest('human-revision'),policy_version_id:randomUUID(),entity_context_digest:digest('context'),stage_checkpoint:{id:randomUUID(),digest:digest('persisted-stage')},labeler_digest:''};
  binding.labeler_digest=labelerDigestV1(signalStudyJevIdentityV1(binding));
  const inputs:StudyJevInputV1[]=requests.map(row=>{const request=JSON.parse(row.request_body);return{scope:'study',root_id:row.root_id,input_digest:sha(request.state),text:request.state,

@@ -4,7 +4,7 @@ import {createHash,randomUUID} from 'node:crypto';
 import {SIGNAL_STUDY_TB_TEMPLATE_V1,SIGNAL_STUDY_TB_ROLES_V1,createSignalStudyTemplateSnapshotV1} from './signal-study-template-data';
 import {buildSignalStudyExecutionConfigurationV1,buildSignalStudyConfiguredAxesRequestV1} from './signal-study-configuration';
 import {signalListeningBaseTemplateV1} from './signal-listening-contracts';
-import {signalStudyJevAxesConfigurationV1,signalStudyJevIdentityV1,signalStudyJevQuestionDigestV1,validateSignalStudyJevBindingV1,validateSignalStudyJevRequestV1,type SignalStudyJevBindingV1} from './signal-study-jev-contracts';
+import {signalStudyJevAxesConfigurationV1,signalStudyJevMotiveConfigurationV1,signalStudyJevIdentityV1,signalStudyJevQuestionDigestV1,validateSignalStudyJevBindingV1,validateSignalStudyJevRequestV1,type SignalStudyJevBindingV1} from './signal-study-jev-contracts';
 import {labelerDigestV1} from './signal-mention-labeler-v1';
 import {signalWorkspaceEmbeddingDigestV1 as digest} from './signal-workspace-embeddings-v1';
 import type {SignalStudyV1} from './signal-study-contracts';
@@ -19,7 +19,7 @@ function fixture(){
  const configuration=buildSignalStudyExecutionConfigurationV1({study,template_snapshot:snapshot,source_listening:{configuration_id:study.listening_configuration_id,configuration_digest:study.listening_configuration_digest,configuration:listening}});
  const stage_configuration=signalStudyJevAxesConfigurationV1(configuration),request=buildSignalStudyConfiguredAxesRequestV1({text:'I enjoy tea ☕'},configuration),request_body=JSON.stringify(request);
  const binding:SignalStudyJevBindingV1={contract_version:'signal-study-jev-native-binding-v1',scope:'study',batch_id:randomUUID(),run_id:randomUUID(),actor_user_id:randomUUID(),configuration,stage_configuration,
-  plan:{contract_version:'signal-study-jev-plan-header-v1',execution_id:randomUUID(),workspace_id,source_digest:digest('source'),stage:'axes',model:'jev-1.13.0',request_count:1,plan_digest:digest('sealed-native-plan')},
+  plan:{contract_version:'signal-study-jev-plan-header-v1',execution_id:randomUUID(),workspace_id,source_digest:digest('source'),stage:'axes',model:'jev-1.13.0',stage_configuration_digest:digest(stage_configuration),stage_dependencies:[],request_count:1,plan_digest:digest('sealed-native-plan')},
   human_revision_digest:digest('human'),policy_version_id:randomUUID(),entity_context_digest:digest('context'),stage_checkpoint:{id:randomUUID(),digest:digest('native-stage')},labeler_digest:''};
  binding.labeler_digest=labelerDigestV1(signalStudyJevIdentityV1(binding));return{binding,listening,row:{root_id:randomUUID(),request_body,request_sha256:sha(request_body)}};
 }
@@ -45,4 +45,12 @@ test('question cache digest uses exact model/question/target semantics, not unre
  assert.equal(signalStudyJevQuestionDigestV1(changed,key),before);
  const question=changed.stage_configuration.questions.find(q=>q.key===key)!;if(question.type==='choice')question.options.reverse();assert.equal(signalStudyJevQuestionDigestV1(changed,key),before);
  changed.stage_configuration.instructions+=' Changed rule';assert.notEqual(signalStudyJevQuestionDigestV1(changed,key),before);
+});
+test('internal motive namespace avoids Listening retirement and axes keys without changing the frozen source',()=>{
+ const {binding}=fixture(),source=digest(binding.configuration.source_listening);
+ const config=signalStudyJevMotiveConfigurationV1(binding.configuration,[{key:'study_direction',name:'Saved motive',definition:'Saved motive definition',
+  centroid:Array.from({length:1024},(_,i)=>i?0:1),layer:'unclear',human_locked:true}]);
+ assert.deepEqual(config.questions.map(q=>q.key).sort(),['promotion','study_direction','voice']);
+ assert.equal(config.questions.find(q=>q.key==='study_direction')!.type,'noul');assert.equal(digest(binding.configuration.source_listening),source);
+ assert.equal(config.instructions,binding.configuration.source_listening.configuration.instructions);
 });

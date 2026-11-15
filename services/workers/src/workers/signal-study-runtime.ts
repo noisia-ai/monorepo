@@ -3,11 +3,11 @@ import {
  validateSignalStudyExecutionConfigurationV1,buildSignalStudyConfiguredAxesRequestV1,resolveSignalStudyConfiguredAxesV1,signalStudyConfiguredCutV1,
  buildSignalStudyMotiveFitPlanV1,buildSignalStudyMotivePopulationV1,sampleSignalStudyGroupV1,signalStudyConfirmedCentroidV1,
  buildSignalStudyMotiveReviewV1,validateSignalStudyMotiveReviewV1,buildSignalStudyConfiguredLayerReviewV1,validateSignalStudyLayerReviewV1,
- signalStudyLayerStabilityV1,applySignalStudyBoundaryRecodeV1,buildSignalStudyMotiveConfigurationV1,buildSignalStudyMotiveRequestV1,
+ signalStudyLayerStabilityV1,applySignalStudyBoundaryRecodeV1,signalStudyJevMotiveConfigurationV1,buildSignalStudyMotiveRequestV1,
  signalStudyDominancePlanV1,buildSignalStudyContrastReviewV1,validateSignalStudyContrastReviewV1,buildSignalStudySummaryV1,
  signalStudyQueryBiasV1,verifySignalStudyVerbatimV1,assertSignalStudyRootsV1,signalWorkspaceEmbeddingDigestV1 as digest,
  type SignalStudyExecutionConfigurationV1,type SignalStudyRootV1,type SignalStudyMotiveV1,type SignalStudyMembershipV1,
- type SignalStudyEditorialRequestV1,type SignalStudyLayerDecisionV1,
+ type SignalStudyEditorialRequestV1,type SignalStudyLayerDecisionV1,type SignalListeningConfigurationV1,signalStudyJevAxesConfigurationV1,
 } from '@noisia/query-engine';
 type JevRequestV1=ReturnType<typeof buildSignalStudyConfiguredAxesRequestV1>;
 type JevAnswerV1=Parameters<typeof resolveSignalStudyConfiguredAxesV1>[1][string];
@@ -19,7 +19,7 @@ type JevAnswerV1=Parameters<typeof resolveSignalStudyConfiguredAxesV1>[1][string
 export type StudyRuntimeLeaseV1={execution_id:string;workspace_id:string;execution_token:string;
  source_digest:string;configuration_digest:string;human_revision_digest:string};
 export type StudyRuntimeRootV1=Omit<SignalStudyRootV1,'axes'>&{base_answers:Record<string,JevAnswerV1>;
- attributes?:Record<string,string[]>;question_cache?:StudyRuntimeJevCacheV1[];embedding_proof:{embedding_call_id:string;embedding_run_id:string;vector_digest:string;text_sha256:string}};
+ attributes?:Record<string,string[]>;question_cache?:StudyRuntimeJevCacheV1[];embedding_proof:{embedding_call_id:string;embedding_run_id:string;preparation_run_id:string|null;input_contract:string;proof_json:string;proof_digest:string;vector_json:string;vector_digest:string;text_sha256:string}};
 /** roots is ONLY the native selected consumer cut, never the whole corpus.
  * The DB loader must select/count IDs and octet sizes before hydration; external
  * corpus/query baselines remain aggregate counts. A cut beyond the native bound
@@ -27,16 +27,22 @@ export type StudyRuntimeRootV1=Omit<SignalStudyRootV1,'axes'>&{base_answers:Reco
 export type StudyRuntimeSourceV1={configuration:SignalStudyExecutionConfigurationV1;roots:StudyRuntimeRootV1[];
  selection:{scope:'listening_consumer_cut';source_listening_digest:string;cut_digest:string;eligible_root_ids_digest:string;
   eligible_roots:number;pending_base_roots:number;corpus_roots:number};
- embedding_space_digest:string;sampling_seed:string;query_terms:string[];problem_terms:string[];brand_baseline_roots:number;
+ embedding_space_digest:string;source_preparation_run_ids:string[];sampling_seed:string;query_terms:string[];problem_terms:string[];brand_baseline_roots:number;
  source_digest:string;human_revision_digest:string;max_roots:number;max_bytes:number};
 export type StudyRuntimeReceiptV1={body_base64:string;body_bytes:number;sha256:string;complete:boolean;http_status:number|null;provider_request_id:string|null};
-export type StudyRuntimeStepPlanV1={key:string;kind:'sonnet'|'numeric';request_body:string;request_sha256:string;source_digest:string};
+export type StudyRuntimeStepPlanV1={key:string;kind:'sonnet';request_body:string;request_sha256:string;source_digest:string};
 export type StudyRuntimeStepV1=StudyRuntimeStepPlanV1&{status:'planned'|'sent'|'raw'|'committed'|'unknown';
  receipt?:StudyRuntimeReceiptV1;value?:unknown;value_digest?:string};
+export type StudyRuntimeNumericPlanV1=Omit<StudyRuntimeStepPlanV1,'kind'>&{kind:'numeric';fit_plan_digest:string};
+export type StudyRuntimeNumericComputedV1={value:StudyRuntimeNumericV1;manifest_json:string;manifest_sha256:string;
+ artifacts:Array<{name:string;file:string;sha256:string;size_bytes:number}>;dispose():Promise<void>};
+export type StudyRuntimeStoredNumericV1={value:StudyRuntimeNumericV1;value_digest:string;manifest_json:string;manifest_sha256:string;verified:true}
+ |{status:'pending';manifest_sha256:string};
+export type StudyRuntimeStageDependencyV1={kind:'sonnet_step'|'numeric_checkpoint'|'jev_batch';key:string;digest:string};
 export type StudyRuntimeJevCacheV1={question_key:string;identity_digest:string;state_sha256:string;jev_call_id:string;answer:JevAnswerV1;
  receipt_page:{page_id:string;sha256:string;verified:true}};
 export type StudyRuntimeJevBatchPlanV1={contract_version:'signal-study-jev-batch-v1';execution_id:string;workspace_id:string;
- source_digest:string;stage:string;model:'jev-1.13.0';requests:Array<{root_id:string;request_body:string;request_sha256:string}>;plan_digest:string};
+ source_digest:string;stage:string;model:'jev-1.13.0';stage_configuration:SignalListeningConfigurationV1;stage_configuration_digest:string;stage_dependencies:StudyRuntimeStageDependencyV1[];requests:Array<{root_id:string;request_body:string;request_sha256:string}>;plan_digest:string};
 export type StudyRuntimeJevBatchCheckpointV1={batch_id:string;plan_digest:string;
  status:'planned'|'running'|'completed'|'outcome_unknown'|'stale'|'budget_exhausted';checkpoint_digest:string;
  results:Array<{root_id:string;request_sha256:string;call_id:string;complete:boolean;http_status:number;
@@ -51,6 +57,11 @@ export type StudyRuntimeStoreV1={
  claim(execution_id:string):Promise<StudyRuntimeLeaseV1|null>;
  renew(lease:StudyRuntimeLeaseV1):Promise<boolean>;release(lease:StudyRuntimeLeaseV1):Promise<void>;
  source(lease:StudyRuntimeLeaseV1):Promise<StudyRuntimeSourceV1|null>;
+ /** CPU is separate from the paid send journal. Null means NO immutable intent.
+  * Pending/verified intents recover remote custody only; never trigger a refit.
+  * persistNumeric stages/readbacks ALL artifacts before inserting that intent. */
+ numericCheckpoint(lease:StudyRuntimeLeaseV1,plan:StudyRuntimeNumericPlanV1):Promise<StudyRuntimeStoredNumericV1|null>;
+ persistNumeric(lease:StudyRuntimeLeaseV1,plan:StudyRuntimeNumericPlanV1,value:StudyRuntimeNumericComputedV1):Promise<StudyRuntimeStoredNumericV1>;
  /** Native H1 consumer owner: immutable plan, per-identity financial admission,
   * partial cached answers, page-custody/batch-settlement and memory/rate gates.
   * Preparing/reloading MUST NOT reset sent/unknown calls or reserve them again. */
@@ -83,7 +94,7 @@ export type StudyRuntimeDriversV1={
  send(plan:StudyRuntimeStepPlanV1,signal:AbortSignal):Promise<StudyRuntimeReceiptV1>;
  /** Only the existing numerical BERTopic path, sealed cached vectors, no LLM,
   * no Voyage/import and no invented groups. Persist artifacts before returning. */
- fit(plan:ReturnType<typeof buildSignalStudyMotiveFitPlanV1>,signal:AbortSignal):Promise<StudyRuntimeNumericV1>;
+ fit(args:{lease:StudyRuntimeLeaseV1;numeric_plan:StudyRuntimeNumericPlanV1;fit_plan:ReturnType<typeof buildSignalStudyMotiveFitPlanV1>;signal:AbortSignal}):Promise<StudyRuntimeNumericComputedV1>;
 };
 export type StudyRuntimeOutputV1={contract_version:'signal-study-runtime-output-v1';status:'directional';source_digest:string;
  configuration_digest:string;summary:ReturnType<typeof buildSignalStudySummaryV1>;query_bias:ReturnType<typeof signalStudyQueryBiasV1>;
@@ -157,15 +168,17 @@ export async function signalStudyRuntimeJobV1(execution_id:string,options:{store
      ||!/^sha256:[a-f0-9]{64}$/u.test(c.receipt_page.sha256)||![r.text_sha256,r.selected_fragment?.text_sha256].includes(c.state_sha256))))fail('question_cache_binding_invalid');
   }
 
+  const dependencies=new Map<string,StudyRuntimeStageDependencyV1>();
+  const dependency=(d:StudyRuntimeStageDependencyV1)=>dependencies.set(d.kind+':'+d.key,d);
   async function step<T>(stage:string,kind:StudyRuntimeStepPlanV1['kind'],request_body:string,interpret:(value:unknown)=>T,
-   compute?:()=>Promise<unknown>):Promise<T>{
+   ):Promise<T>{
    const request_sha256=sha(request_body),plan={key:digest({execution_id,source_digest,stage,request_sha256}),kind,request_body,request_sha256,source_digest};
    let journal=await store.step(lease,plan);
    if(!journal){await active();journal=await store.plan(lease,plan);}
    if(!journal)throw new Paused('stale');
    if(journal.key!==plan.key||journal.request_sha256!==plan.request_sha256||journal.request_body!==request_body||journal.kind!==kind||journal.source_digest!==source_digest)fail('journal_binding_invalid');
    if(journal.status==='committed'){
-    if(journal.value_digest!==digest(journal.value))fail('checkpoint_invalid');return interpret(journal.value);
+    if(journal.value_digest!==digest(journal.value))fail('checkpoint_invalid');dependency({kind:'sonnet_step',key:plan.key,digest:journal.value_digest});return interpret(journal.value);
    }
    if(journal.status==='unknown'||journal.status==='sent')throw new Paused('outcome_unknown');
    if(journal.status==='planned'){
@@ -175,8 +188,7 @@ export async function signalStudyRuntimeJobV1(execution_id:string,options:{store
     // lost from markSent leaves sent in the native journal and blocks a resend.
     let receipt:StudyRuntimeReceiptV1;
     try{
-     if(compute){const body=Buffer.from(JSON.stringify(await compute()));receipt={body_base64:body.toString('base64'),body_bytes:body.length,sha256:sha(body),complete:true,http_status:200,provider_request_id:null};}
-     else receipt=await drivers.send(plan,abort.signal);
+     receipt=await drivers.send(plan,abort.signal);
     }catch(error){await store.unknown(lease,plan,'study_physical_outcome_unknown').catch(()=>undefined);throw error;}
     await store.persistReceipt(lease,plan,receipt);journal=await store.step(lease,plan);
     if(!journal?.receipt||journal.status!=='raw'||digest(journal.receipt)!==digest(receipt))throw new Paused('receipt_pending');
@@ -187,10 +199,10 @@ export async function signalStudyRuntimeJobV1(execution_id:string,options:{store
    if(await store.settle(lease,plan)!=='settled')throw new Paused('outcome_unknown');
    await active();let result:T;
    try{result=interpret(value);}catch(error){await store.unknown(lease,plan,'study_response_invalid').catch(()=>undefined);throw error;}
-   if(!await store.commit(lease,plan,value,digest(value)))throw new Paused('stale');return result;
+   if(!await store.commit(lease,plan,value,digest(value)))throw new Paused('stale');dependency({kind:'sonnet_step',key:plan.key,digest:digest(value)});return result;
   }
   const sourceById=new Map(raw.roots.map(root=>[root.root_id,root]));
-  async function jevBatch(stage:string,inputs:Array<{root_id:string;request:JevRequestV1}>){
+  async function jevBatch(stage:string,inputs:Array<{root_id:string;request:JevRequestV1}>,stage_configuration:SignalListeningConfigurationV1){
    const answers=new Map<string,Record<string,JevAnswerV1>>(),requests:StudyRuntimeJevBatchPlanV1['requests']=[];
    for(const {root_id,request}of inputs){
     const cache=sourceById.get(root_id)?.question_cache??[],known:Record<string,JevAnswerV1>={},missing:JevRequestV1['questions']={};
@@ -202,7 +214,7 @@ export async function signalStudyRuntimeJobV1(execution_id:string,options:{store
     if(Object.keys(missing).length){const request_body=JSON.stringify({...request,questions:missing});requests.push({root_id,request_body,request_sha256:sha(request_body)});}
    }
    if(!requests.length)return answers;
-   const body={contract_version:'signal-study-jev-batch-v1' as const,execution_id,workspace_id:lease.workspace_id,source_digest,stage,model:'jev-1.13.0' as const,requests};
+   const body={contract_version:'signal-study-jev-batch-v1' as const,execution_id,workspace_id:lease.workspace_id,source_digest,stage,model:'jev-1.13.0' as const,stage_configuration,stage_configuration_digest:digest(stage_configuration),stage_dependencies:stage==='axes'?[]:[...dependencies.values()].sort((a,b)=>(a.kind+a.key).localeCompare(b.kind+b.key)),requests};
    const plan={...body,plan_digest:digest(body)};await active();const owner=await store.prepareJevBatch(lease,plan);
    if(!owner)throw new Paused('stale');if(!uuid.test(owner.batch_id)||owner.plan_digest!==plan.plan_digest)fail('batch_owner_invalid');
    let checkpoint=await store.jevBatchCheckpoint(lease,owner.batch_id);
@@ -227,7 +239,7 @@ export async function signalStudyRuntimeJobV1(execution_id:string,options:{store
     if(!row.complete||row.http_status!==200)throw new Paused('outcome_unknown');
     Object.assign(answers.get(row.root_id)!,jevResponse(JSON.parse(request.request_body),row.response));
    }
-   return answers;
+   dependency({kind:'jev_batch',key:owner.batch_id,digest:checkpoint.checkpoint_digest});return answers;
   }
   const editorial=<T>(stage:string,request:SignalStudyEditorialRequestV1,validate:(request:SignalStudyEditorialRequestV1,value:unknown)=>T)=>
    step(stage,'sonnet',request.request_body,value=>{
@@ -241,17 +253,29 @@ export async function signalStudyRuntimeJobV1(execution_id:string,options:{store
    const status=signalStudyConfiguredCutV1({configuration,text:root.text,occurred_at:root.occurred_at,answers:root.base_answers,attributes:root.attributes});
    if(status==='awaiting_base')throw new Paused('awaiting_base');if(status!=='included')fail('native_cut_mismatch');return true;
   });
-  const axesAnswers=await jevBatch('axes',cut.map(root=>({root_id:root.root_id,request:buildSignalStudyConfiguredAxesRequestV1({text:root.text},configuration)})));
+  const axesAnswers=await jevBatch('axes',cut.map(root=>({root_id:root.root_id,request:buildSignalStudyConfiguredAxesRequestV1({text:root.text},configuration)})),signalStudyJevAxesConfigurationV1(configuration));
   const roots:SignalStudyRootV1[]=cut.map(root=>({...root,axes:resolveSignalStudyConfiguredAxesV1(configuration,axesAnswers.get(root.root_id)!)}));
   assertSignalStudyRootsV1(roots);
   const query_bias=signalStudyQueryBiasV1({query_terms:raw.query_terms,problem_terms:raw.problem_terms,subject_roots:roots.filter(r=>r.axes.aggregate==='subject').length,brand_baseline_roots:raw.brand_baseline_roots});
   const population=buildSignalStudyMotivePopulationV1(roots),fit=buildSignalStudyMotiveFitPlanV1({study,template_snapshot:snapshot,roots,embedding_space_digest:raw.embedding_space_digest});
-  const numeric:StudyRuntimeNumericV1=fit.fit_required?await step('numeric','numeric',JSON.stringify(fit),value=>{
-   const n=value as StudyRuntimeNumericV1;if(n?.plan_digest!==fit.plan_digest||!Array.isArray(n.groups)||!Array.isArray(n.unassigned_root_ids))fail('numeric_invalid');
-   const ids=[...n.groups.flatMap(g=>g.root_ids),...n.unassigned_root_ids],expected=population.roots.map(r=>r.root_id).sort();
-   if(new Set(n.groups.map(g=>g.key)).size!==n.groups.length||n.groups.some(g=>!g.root_ids.length||!/^[a-z][a-z0-9_]{0,63}$/u.test(g.key))
-    ||new Set(ids).size!==ids.length||ids.sort().join(',')!==expected.join(','))fail('numeric_population_invalid');return n;
-  },()=>drivers.fit(fit,abort.signal)):{plan_digest:fit.plan_digest,groups:[],unassigned_root_ids:[]};
+  const request_body=JSON.stringify(fit),numericPlan:StudyRuntimeNumericPlanV1={kind:'numeric',fit_plan_digest:fit.plan_digest,source_digest,request_body,request_sha256:sha(request_body),
+   key:digest({execution_id,source_digest,stage:'numeric-cpu-v1',request_sha256:sha(request_body)})};
+  let checkpoint=await store.numericCheckpoint(lease,numericPlan);
+  if(!checkpoint){await active();const computed=await drivers.fit({lease,numeric_plan:numericPlan,fit_plan:fit,signal:abort.signal});
+   try{await active();checkpoint=await store.persistNumeric(lease,numericPlan,computed);}finally{await computed.dispose();}
+  }
+  if('status'in checkpoint)throw new Paused('waiting_numeric');
+  if(checkpoint.verified!==true||sha(checkpoint.manifest_json)!==checkpoint.manifest_sha256||digest(checkpoint.value)!==checkpoint.value_digest)fail('numeric_checkpoint_invalid');
+  const manifest=JSON.parse(checkpoint.manifest_json);
+  if(manifest.contract_version!=='signal-study-numeric-v1'||manifest.source_digest!==source_digest||manifest.request_sha256!==numericPlan.request_sha256
+   ||manifest.fit_plan_digest!==fit.plan_digest||manifest.execution_id!==execution_id||manifest.workspace_id!==lease.workspace_id||manifest.study_digest!==configuration.study_digest
+   ||manifest.cut_digest!==digest(study.cut)||manifest.numeric_config_digest!==digest(fit.configuration)||manifest.seed_digest!==digest(raw.sampling_seed))fail('numeric_checkpoint_invalid');
+  const numeric=checkpoint.value;
+  if(numeric.plan_digest!==fit.plan_digest||!Array.isArray(numeric.groups)||!Array.isArray(numeric.unassigned_root_ids))fail('numeric_invalid');
+  const ids=[...numeric.groups.flatMap(g=>g.root_ids),...numeric.unassigned_root_ids],expected=population.roots.map(r=>r.root_id).sort();
+  if(new Set(numeric.groups.map(g=>g.key)).size!==numeric.groups.length||numeric.groups.some(g=>!g.root_ids.length||!/^[a-z][a-z0-9_]{0,63}$/u.test(g.key))
+   ||new Set(ids).size!==ids.length||ids.sort().join(',')!==expected.join(','))fail('numeric_population_invalid');
+  dependency({kind:'numeric_checkpoint',key:numericPlan.key,digest:checkpoint.manifest_sha256});
   const byRoot=new Map(roots.map(r=>[r.root_id,r]));
   const samples=(key:string,ids:string[])=>{const selected=ids.map(id=>byRoot.get(id)??fail('sample_root_missing'));
    return sampleSignalStudyGroupV1({study_digest:configuration.study_digest,group_key:key,roots:selected,centroid:signalStudyConfirmedCentroidV1(selected),seed:raw.sampling_seed,random_count:35,far_count:5});};
@@ -283,9 +307,9 @@ export async function signalStudyRuntimeJobV1(execution_id:string,options:{store
   }
   let memberships:SignalStudyMembershipV1[]=[];
   const classify=async(selected:SignalStudyRootV1[],candidates:SignalStudyMotiveV1[],stage:string)=>{
-   const config=buildSignalStudyMotiveConfigurationV1(configuration.source_listening.configuration,candidates),rows:SignalStudyMembershipV1[]=[];
+   const config=signalStudyJevMotiveConfigurationV1(configuration,candidates),rows:SignalStudyMembershipV1[]=[];
    const inputs=selected.flatMap(root=>{const request=buildSignalStudyMotiveRequestV1(root,candidates,config);return request?[{root_id:root.root_id,request}]:[];});
-   const result=await jevBatch(stage,inputs);
+   const result=await jevBatch(stage,inputs,config);
    for(const root of inputs)for(const [key,answer]of Object.entries(result.get(root.root_id)!)){
     if(answer.type!=='noul')fail('motive_response_invalid');rows.push({root_id:root.root_id,motive_key:key,probability:answer.noul,source:'jev',human_locked:false});
    }return rows;
