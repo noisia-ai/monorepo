@@ -93,8 +93,8 @@ BEGIN
   +(SELECT total_micro_usd::numeric FROM signal_processing_org_exposure_v1(NEW.organization_id,(clock_timestamp() AT TIME ZONE prior.budget_timezone)::date,prior.budget_timezone))>prior.daily_cap_micro_usd THEN RAISE EXCEPTION 'r16_policy_daily_limit';END IF;
  -- Exact immutable legacy copy. No action, configuration, cap or automatic flag
  -- can be replaced in the same operation that adds the missing R16 actions.
- IF EXISTS(SELECT 1 FROM signal_processing_policy_actions old LEFT JOIN signal_processing_policy_actions fresh ON fresh.policy_version_id=successor.id AND fresh.action=old.action
-  WHERE old.policy_version_id=prior.id AND(to_jsonb(old)-'policy_version_id') IS DISTINCT FROM(to_jsonb(fresh)-'policy_version_id')) THEN RAISE EXCEPTION 'r16_policy_legacy_changed';END IF;
+ IF EXISTS(SELECT 1 FROM signal_processing_policy_actions prior_action LEFT JOIN signal_processing_policy_actions fresh ON fresh.policy_version_id=successor.id AND fresh.action=prior_action.action
+  WHERE prior_action.policy_version_id=prior.id AND(to_jsonb(prior_action)-'policy_version_id') IS DISTINCT FROM(to_jsonb(fresh)-'policy_version_id')) THEN RAISE EXCEPTION 'r16_policy_legacy_changed';END IF;
  required:=ARRAY['listening_discovery_review','study_analysis'];IF NEW.prototype_cap_micro_usd IS NOT NULL THEN required:=required||'topic_prototype_embeddings'::text;END IF;
  FOREACH action_key IN ARRAY required LOOP
   cfg:=CASE action_key WHEN 'listening_discovery_review' THEN signal_listening_discovery_review_configuration_v1() WHEN 'study_analysis' THEN signal_study_analysis_configuration_v1()
@@ -106,17 +106,17 @@ BEGIN
    OR a.model IS DISTINCT FROM (CASE WHEN action_key='topic_prototype_embeddings' THEN 'voyage-4-large' ELSE 'claude-sonnet-4-6' END)
    OR a.max_execution_micro_usd IS NOT NULL AND cap>a.max_execution_micro_usd
    OR action_key='topic_prototype_embeddings' AND NOT signal_brand_context_prototype_configuration_v1(a.configuration)
-   OR NOT EXISTS(SELECT 1 FROM signal_processing_policy_actions old WHERE old.policy_version_id=prior.id AND old.action=action_key)
+   OR NOT EXISTS(SELECT 1 FROM signal_processing_policy_actions prior_action WHERE prior_action.policy_version_id=prior.id AND prior_action.action=action_key)
     AND(a.max_execution_micro_usd IS DISTINCT FROM cap OR a.automatic_allowed)
   THEN RAISE EXCEPTION 'r16_policy_canonical_action_required';END IF;
  END LOOP;
  SELECT COALESCE(array_agg(DISTINCT additions.action ORDER BY additions.action),'{}'::text[]) INTO actual FROM(
   SELECT unnest(COALESCE(inherited.restricted_actions,'{}'::text[])||ARRAY['listening_discovery_review','study_analysis']) action
   UNION SELECT action FROM signal_processing_policy_actions fresh WHERE fresh.policy_version_id=successor.id
-   AND NOT EXISTS(SELECT 1 FROM signal_processing_policy_actions old WHERE old.policy_version_id=prior.id AND old.action=fresh.action)
+   AND NOT EXISTS(SELECT 1 FROM signal_processing_policy_actions prior_action WHERE prior_action.policy_version_id=prior.id AND prior_action.action=fresh.action)
  ) additions;
  IF actual IS DISTINCT FROM NEW.restricted_actions OR NOT actual<@required OR EXISTS(SELECT 1 FROM signal_processing_policy_actions fresh WHERE fresh.policy_version_id=successor.id
-  AND NOT(fresh.action=ANY(required)) AND NOT EXISTS(SELECT 1 FROM signal_processing_policy_actions old WHERE old.policy_version_id=prior.id AND old.action=fresh.action))
+  AND NOT(fresh.action=ANY(required)) AND NOT EXISTS(SELECT 1 FROM signal_processing_policy_actions prior_action WHERE prior_action.policy_version_id=prior.id AND prior_action.action=fresh.action))
  THEN RAISE EXCEPTION 'r16_policy_scope_actions_invalid';END IF;
  IF NEW.request->>'workspace_id' IS DISTINCT FROM NEW.workspace_id::text OR NEW.request->>'actor_user_id' IS DISTINCT FROM NEW.actor_user_id::text
  OR NEW.request->>'expected_policy_id' IS DISTINCT FROM prior.id::text OR NEW.request->>'expected_policy_digest' IS DISTINCT FROM prior.policy_digest
@@ -150,12 +150,12 @@ BEGIN
  ELSE
   SELECT * INTO prior FROM signal_processing_policy_versions WHERE id=NEW.inherited_from_policy_id;
   IF NOT EXISTS(SELECT 1 FROM signal_listening_study_policy_bindings WHERE policy_id=prior.id AND scope_id=scope.id) THEN RAISE EXCEPTION 'r16_policy_scope_history_required';END IF;
-  IF EXISTS(SELECT 1 FROM signal_processing_policy_actions old LEFT JOIN signal_processing_policy_actions fresh ON fresh.policy_version_id=successor.id AND fresh.action=old.action
-   WHERE old.policy_version_id=prior.id AND old.action=ANY(scope.restricted_actions)
-    AND fresh.action IS NOT NULL AND(to_jsonb(old)-'policy_version_id') IS DISTINCT FROM(to_jsonb(fresh)-'policy_version_id')) THEN RAISE EXCEPTION 'r16_policy_scope_widened';END IF;
+  IF EXISTS(SELECT 1 FROM signal_processing_policy_actions prior_action LEFT JOIN signal_processing_policy_actions fresh ON fresh.policy_version_id=successor.id AND fresh.action=prior_action.action
+   WHERE prior_action.policy_version_id=prior.id AND prior_action.action=ANY(scope.restricted_actions)
+    AND fresh.action IS NOT NULL AND(to_jsonb(prior_action)-'policy_version_id') IS DISTINCT FROM(to_jsonb(fresh)-'policy_version_id')) THEN RAISE EXCEPTION 'r16_policy_scope_widened';END IF;
  END IF;
  IF EXISTS(SELECT 1 FROM signal_processing_policy_actions a WHERE a.policy_version_id=successor.id AND a.action=ANY(scope.restricted_actions)
-  AND NOT EXISTS(SELECT 1 FROM signal_processing_policy_actions old WHERE old.policy_version_id=prior.id AND old.action=a.action)
+  AND NOT EXISTS(SELECT 1 FROM signal_processing_policy_actions prior_action WHERE prior_action.policy_version_id=prior.id AND prior_action.action=a.action)
   AND(a.max_execution_micro_usd IS NULL OR a.max_execution_micro_usd>CASE a.action WHEN 'listening_discovery_review' THEN scope.discovery_cap_micro_usd WHEN 'study_analysis' THEN scope.study_cap_micro_usd ELSE scope.prototype_cap_micro_usd END)) THEN RAISE EXCEPTION 'r16_policy_scope_widened';END IF;
  IF prior.id IS NULL OR prior.status<>'active' OR successor.status<>'draft' OR prior.organization_id<>scope.organization_id OR successor.organization_id<>scope.organization_id
  OR prior.valid_from>clock_timestamp() OR prior.valid_until<=clock_timestamp() OR successor.valid_from<prior.valid_from OR successor.valid_until>prior.valid_until OR successor.valid_until<=clock_timestamp()

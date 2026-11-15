@@ -49,6 +49,10 @@ test('explicit scoped policy preserves legacy, bounds providers, scopes siblings
  assert.equal((await f.raw.query('SELECT count(*)::int n FROM signal_listening_study_policy_scopes')).rows[0].n,0);
  const request={...args,plan_digest:quote.plan_digest,idempotency_key:randomUUID()};
  const result=await provisionSignalListeningStudyPolicyV1(request);assert.equal(result.replayed,false);
+ const inserted=(await f.raw.query(`SELECT receipt.id,receipt.policy_id,binding.scope_id,binding.provision_receipt_id
+  FROM signal_listening_study_policy_scopes receipt JOIN signal_listening_study_policy_bindings binding ON binding.policy_id=receipt.policy_id
+  WHERE receipt.id=$1`,[result.receipt_id])).rows[0];
+ assert.deepEqual(inserted,{id:result.receipt_id,policy_id:result.policy_id,scope_id:result.scope_id,provision_receipt_id:result.receipt_id},'both INSERT guards use action-row aliases distinct from their own implicit OLD receipt/binding records');
  assert.equal((await f.raw.query('SELECT status FROM signal_processing_policy_versions WHERE id=$1',[f.prior.id])).rows[0].status,'revoked');
  const next=(await f.raw.query('SELECT status,valid_until::text,daily_cap_micro_usd::text,budget_timezone FROM signal_processing_policy_versions WHERE id=$1',[result.policy_id])).rows[0];assert.equal(next.status,'active');assert.equal(next.daily_cap_micro_usd,'20000000');assert.equal(next.budget_timezone,'UTC');
  const after=(await f.raw.query('SELECT to_jsonb(a)-\'policy_version_id\' value FROM signal_processing_policy_actions a WHERE policy_version_id=$1 AND action IN(\'mass_labeling_jev\',\'corpus_preparation\') ORDER BY action',[result.policy_id])).rows;assert.deepEqual(after,before);
