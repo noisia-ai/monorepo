@@ -21,7 +21,7 @@ export const jevUsageV1 = (usage:JevResponseV1["usage"]):LlmUsageV1 => ({...usag
 /** Shared page transport: one lease, durable raw before settlement, multi-row application.
  * JEV requests remain individual. A consumer may bound work through durable persistence. */
 export async function processJevLabelingPageV1<Input extends FacetInput,Result>(args:{
-  run_id:string;store:ReturnType<typeof createSignalLabelingStoreV1<Input,Result>>;provider:JevProviderV1;
+  run_id:string;signal?:AbortSignal;store:ReturnType<typeof createSignalLabelingStoreV1<Input,Result>>;provider:JevProviderV1;
   prepare?(run:Readonly<LabelingRunV1>):Promise<JevPreparedExecutionV1>;
   /** DB-owned metadata/ID selection can enforce a byte bound before hydration. */
   read_next_inputs?(run:LabelingRunV1,bounds:JevNextInputBoundsV2):Promise<Input[]>;
@@ -45,6 +45,8 @@ export async function processJevLabelingPageV1<Input extends FacetInput,Result>(
   settled_micro_usd?:number; p50_ms?:number|null; p95_ms?:number|null}> {
   if(args.max_windows!==undefined&&(!args.execution||!Number.isSafeInteger(args.max_windows)||args.max_windows<1||args.max_windows>4096))
     throw new Error("jev_window_limit_invalid");
+  if(args.signal?.aborted)return{status:'stopped'};
+  if(args.signal&&!args.execution&&!args.prepare)throw Error('jev_external_signal_requires_streaming');
   const {store,hooks}=args;let provider=args.provider,execution=args.execution,maxWindows=args.max_windows,recoveryOnly=hooks.recovery_only===true,continuous=false;
   const run=await store.claim(args.run_id);
   if(!run)return {status:"not_claimed"};
@@ -52,6 +54,8 @@ export async function processJevLabelingPageV1<Input extends FacetInput,Result>(
   let leaseError:unknown,renewal:Promise<void>|undefined;
   const interval=args.lease_renewal_ms??60_000;
   if(!Number.isSafeInteger(interval)||interval<1||interval>60_000){await store.release(run);throw new Error("jev_renewal_interval_invalid");}
+  const externalAbort=()=>cancellation.abort(args.signal?.reason);
+  args.signal?.addEventListener('abort',externalAbort,{once:true});if(args.signal?.aborted)externalAbort();
   const heartbeat=setInterval(()=>{
     if(renewal||cancellation.signal.aborted)return;
     renewal=store.renew(run).catch(error=>{leaseError=error;cancellation.abort();}).finally(()=>{renewal=undefined;});
@@ -62,7 +66,7 @@ export async function processJevLabelingPageV1<Input extends FacetInput,Result>(
       // money or send requests. Selection is local and leaves caller arguments intact.
       const prepared=await args.prepare(Object.freeze({...run}));validatePreparedExecution(prepared);
       if(renewal)await renewal;if(leaseError)throw leaseError;
-      if(cancellation.signal.aborted)throw Error('labeling_lease_lost');
+      if(cancellation.signal.aborted){if(args.signal?.aborted)return{status:'stopped'};throw Error('labeling_lease_lost');}
       provider=prepared.provider;execution=Object.freeze({...prepared.execution});maxWindows=prepared.max_windows;recoveryOnly||=prepared.recovery_only===true;continuous=prepared.continuous_windows===true;
       setMaxListeners(Math.max(201,execution.max_in_flight*2+64),cancellation.signal);
     }
@@ -86,7 +90,7 @@ export async function processJevLabelingPageV1<Input extends FacetInput,Result>(
       }
       let calls=(recoveryOnly?pending.filter(call=>Boolean(call.raw_body)):pending).slice(0,execution?.window_size??200);
       if(recoveryOnly&&!calls.length)return {status:"recovery_unavailable"};
-      if(!calls.length&&!run.error_code&&!recoveryOnly){
+      if(!calls.length&&!run.error_code&&!recoveryOnly&&!cancellation.signal.aborted){
         // Native continuous consumers reserve room for at least one response
         // before hydrating input text or compiling copied request bodies.
         const inputBudget=execution&&continuous?execution.max_buffered_bytes-assertJevStreamingExecutionV2(execution,provider):undefined;
@@ -130,6 +134,7 @@ export async function processJevLabelingPageV1<Input extends FacetInput,Result>(
         windows+=fedWindows;
         if(run.error_code){const refreshed=await store.refresh(run);run.error_code=refreshed.error_code;}
         if(leaseError)throw leaseError;
+        if(args.signal?.aborted&&!outcome.unresolved_billing_requests)return{...aggregate,status:'stopped'};
         if(feed||cancellation.signal.aborted||outcome.status!=="running"||!calls.length||outcome.unresolved_billing_requests||recoveryOnly||windows>=(maxWindows??Infinity))return aggregate;
         continue;
       }
@@ -197,5 +202,5 @@ export async function processJevLabelingPageV1<Input extends FacetInput,Result>(
     if(["labeling_forbidden","labeling_policy_changed","labeling_preparation_changed","labeling_context_changed",
       "labeling_cap_exhausted","labeling_daily_cap_exhausted","labeling_raw_receipt_invalid"].includes(code))await store.fail(run,code,execution?{preserve_reserved:true}:undefined);
     throw error;
-  }finally{clearInterval(heartbeat);if(renewal)await renewal;await store.release(run,execution?{immediate:true}:undefined);}
+  }finally{args.signal?.removeEventListener('abort',externalAbort);clearInterval(heartbeat);if(renewal)await renewal;await store.release(run,execution?{immediate:true}:undefined);}
 }

@@ -3,7 +3,49 @@ import test from 'node:test';
 import {llmPriceV1,type FacetInput} from '@noisia/query-engine';
 import type {LabelingRunV1,LabelingCallV1} from '@noisia/db';
 import {processJevLabelingPageV1} from './signal-jev-labeling-page';
+import {createTypesafeJevClientV1} from '../providers/typesafe-jev';
 const execution={max_in_flight:1,flush_size:32,max_flushes:1,max_buffered_bytes:16*1024*1024,flush_interval_ms:5,window_size:32};
+test('external cancellation preserves first-party unsent identity and drains paid siblings; restart sends only reserved calls',async()=>{
+ for(const phase of ['before','during_mark','paid_sibling']as const){
+  type Args=Parameters<typeof processJevLabelingPageV1<FacetInput,string>>[0];
+  const control=new AbortController(),run={id:'external',lease_token:'lease',error_code:null,status:'running'}as LabelingRunV1;
+  const rows=Array.from({length:2},(_,i)=>({id:'external-'+i,status:'reserved',raw_body:null,results_applied:false,request_digest:'digest-'+i,
+   request:{model:'jev-1.13.0',state:'root-'+i,questions:{q:{type:'noul',instructions:'Configured data'}}},inputs:[{root_id:'root-'+i,text:'root-'+i}]}))as unknown as LabelingCallV1<FacetInput>[];
+  let claims=0,releases=0,failures=0,requeued=0;const sent:string[]=[],applied:string[]=[];
+  const store={claim:async()=>{claims++;return run;},renew:async()=>{},release:async()=>{releases++;},calls:async()=>rows.filter(r=>!r.results_applied),inputs:async()=>[],reserve:async()=>{throw Error('unexpected reserve');},
+   markSubmitting:async(_run:unknown,calls:typeof rows)=>{for(const c of calls)c.status='submitting';if(phase==='during_mark')control.abort();},
+   requeueUnsent:async(_run:unknown,calls:typeof rows)=>{for(const c of calls){c.status='reserved';requeued++;}},
+   persistRawPage:async(_run:unknown,page:Array<{call:typeof rows[number];raw:string}>)=>{for(const r of page)r.call.raw_body=r.raw;},
+   settlePage:async(_run:unknown,page:Array<{call:typeof rows[number]}>)=>{for(const r of page)r.call.status='settled';},
+   apply:async(_run:unknown,page:Array<{call:typeof rows[number];results:string[]}>)=>{for(const r of page){r.call.results_applied=true;applied.push(...r.results);}},
+   finish:async()=>rows.every(r=>r.results_applied)?'completed':'running',refresh:async()=>run,
+   fail:async()=>{failures++;},markFailed:async()=>{failures++;},
+  }as unknown as Args['store'];
+  const provider=createTypesafeJevClientV1({api_key:'synthetic',enabled:true,concurrency:2,max_response_bytes:4096,fetch:async(_url,init)=>{
+   const request=JSON.parse(String(init?.body));sent.push(request.state);if(phase==='paid_sibling'&&sent.length===1)control.abort();
+   await new Promise(resolve=>setTimeout(resolve,1));return Response.json({model:request.model,usage:{input_tokens:10,output_tokens:0},answers:{q:{type:'noul',noul:.8}}});
+  }});
+  const hooks:Args['hooks']={price:()=>llmPriceV1('typesafe','jev-1.13.0','sync',.042),propose:()=>[],map:(_run,call)=>[call.inputs[0]!.root_id],error:()=>{throw Error('no technical results for never sent');},labeled:()=>true,fail_on_error:true};
+  if(phase==='before')control.abort();
+  assert.equal((await processJevLabelingPageV1({run_id:run.id,store,provider,hooks,execution:{...execution,max_in_flight:2},signal:control.signal})).status,'stopped');
+  assert.equal(sent.length,phase==='paid_sibling'?1:0);assert.equal(failures,0);assert.equal(claims,phase==='before'?0:1);assert.equal(releases,phase==='before'?0:1);
+  if(phase!=='before')assert.equal(requeued,phase==='paid_sibling'?1:2);
+  assert.equal((await processJevLabelingPageV1({run_id:run.id,store,provider,hooks,execution:{...execution,max_in_flight:2}})).status,'completed');
+  assert.deepEqual([...sent].sort(),['root-0','root-1']);assert.deepEqual([...applied].sort(),['root-0','root-1']);
+ }
+});
+test('external abort during preparation returns stopped and always removes the signal listener',async()=>{
+ const control=new AbortController();let added=0,removed=0,released=0;
+ const add=control.signal.addEventListener.bind(control.signal),remove=control.signal.removeEventListener.bind(control.signal);
+ control.signal.addEventListener=((...args:Parameters<typeof add>)=>{added++;return add(...args);})as typeof add;
+ control.signal.removeEventListener=((...args:Parameters<typeof remove>)=>{removed++;return remove(...args);})as typeof remove;
+ const run={id:'prepared-stop',lease_token:'lease'}as LabelingRunV1;
+ const store={claim:async()=>run,release:async()=>{released++;},renew:async()=>{},inputs:async()=>{throw Error('must not hydrate');}}as unknown as Parameters<typeof processJevLabelingPageV1>[0]['store'];
+ const provider={evaluate:async()=>{throw Error('must not send');}};
+ const result=await processJevLabelingPageV1({run_id:run.id,store,provider,hooks:{}as never,signal:control.signal,
+  prepare:async()=>{control.abort();return{provider,execution};}});
+ assert.equal(result.status,'stopped');assert.equal(released,1);assert.equal(added,1);assert.equal(removed,1);
+});
 test('bounded streaming yields one window on the same run and resumes only unsent roots with immediate release',async()=>{
   const run={id:'run',lease_token:'lease',error_code:null,status:'running'}as LabelingRunV1;
   const windows=[[{root_id:'root1',text:'first'}],[{root_id:'root2',text:'second'}]]as FacetInput[][];
@@ -147,4 +189,9 @@ test('native continuous inputs are byte-bounded before initial hydration and ove
  await assert.rejects(processJevLabelingPageV1({run_id:run.id,store,provider:{max_response_bytes:4096,evaluate:async()=>{throw Error('unexpected HTTP');}},execution,
   hooks:{continuous_windows:()=>true,price:()=>llmPriceV1('typesafe','jev-1.13.0','sync',.042),propose:()=>[],map:()=>[],error:()=>[],labeled:()=>true}}),/labeling_input_memory_bound/);
  assert.equal(reads,1);assert.equal(reserves,0);assert.equal(failures,0);assert.equal(releases,1);
+});
+
+test('external signal cannot silently opt a legacy non-streaming consumer into cancellation semantics',async()=>{
+ let claims=0;const store={claim:async()=>{claims++;return null;}}as unknown as Parameters<typeof processJevLabelingPageV1>[0]['store'];
+ await assert.rejects(processJevLabelingPageV1({run_id:'legacy',store,provider:{}as never,hooks:{}as never,signal:new AbortController().signal}),/external_signal_requires_streaming/);assert.equal(claims,0);
 });
