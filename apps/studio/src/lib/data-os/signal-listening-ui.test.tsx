@@ -363,6 +363,7 @@ test('an uncertain human correction retries the identical frozen body and key be
   try{
     await act(async()=>humanButton(app.host,app.messages.ListeningHuman.remove)!.click());
     assert.equal(posts.length,1);assert.ok(app.host.textContent?.includes(app.messages.ListeningHuman.uncertain));
+    assert.equal(app.host.querySelector('section')!.getAttribute('aria-busy'),'false','uncertain recovery remains announced and actionable');
     assert.equal(humanButton(app.host,app.messages.ListeningHuman.remove)!.disabled,true);assert.equal(app.host.querySelector('select')!.disabled,true);
     await act(async()=>humanButton(app.host,app.messages.ListeningHuman.retrySame)!.click());
     assert.equal(posts.length,2);assert.deepEqual(posts[1],posts[0]);assert.equal(reads,2);assert.equal(saves,1);

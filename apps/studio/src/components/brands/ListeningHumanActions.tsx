@@ -19,6 +19,7 @@ function topicName(question:SignalListeningQuestionV1,locale:string){
 function useHumanContext(workspaceId:string){
  const [context,setContext]=useState<Context|null>(null),[loading,setLoading]=useState(false),[error,setError]=useState(false);
  const request=useRef<AbortController|null>(null),sequence=useRef(0),contextWorkspace=useRef<string|null>(null);
+ const invalidate=useCallback(()=>{sequence.current++;request.current?.abort();},[]);
  const refresh=useCallback(async()=>{
   request.current?.abort();const controller=new AbortController(),version=++sequence.current;request.current=controller;
   setLoading(true);setError(false);
@@ -35,13 +36,14 @@ function useHumanContext(workspaceId:string){
   }catch{if(!controller.signal.aborted&&version===sequence.current){setContext(null);setError(true);}return null;}
   finally{if(version===sequence.current)setLoading(false);}
  },[workspaceId]);
- useEffect(()=>{contextWorkspace.current=null;setContext(null);void refresh();return()=>{sequence.current++;request.current?.abort();};},[refresh]);
+ useEffect(()=>{contextWorkspace.current=null;setContext(null);void refresh();return invalidate;},[refresh,invalidate]);
  return{context:contextWorkspace.current===workspaceId?context:null,loading,error,refresh};
 }
 function useHumanMutation(workspaceId:string,refresh:Refresh,onSaved?:OnSaved){
  const [phase,setPhase]=useState<Phase>('idle');
  const pending=useRef<{body:string;key:string;workspaceId:string}|null>(null),sending=useRef(false),generation=useRef(0),confirmed=useRef(false);
- useEffect(()=>{generation.current++;pending.current=null;sending.current=false;confirmed.current=false;setPhase('idle');return()=>{generation.current++;};},[workspaceId]);
+ const invalidate=useCallback(()=>{generation.current++;},[]);
+ useEffect(()=>{generation.current++;pending.current=null;sending.current=false;confirmed.current=false;setPhase('idle');return invalidate;},[workspaceId,invalidate]);
  const refreshSaved=async()=>{
   const current=generation.current;setPhase('refreshing');
   try{if(!await refresh()||await onSaved?.()===false)throw Error('refresh');if(current===generation.current)setPhase(confirmed.current?'saved':'idle');}
@@ -109,7 +111,7 @@ export function ListeningMentionActions({workspaceId,rootId,labels,onSaved}:{wor
  const matches=context&&bindingMatches(labels,context),canEdit=Boolean(context?.can_edit&&matches);
  const topics=context?.configuration.questions.filter(question=>question.type==='noul'&&question.topic_source&&question.domain!=='outside')??[];
  const positive=labels.labels.filter(label=>label.domain!=='outside'&&label.effective_belongs===true);
- return <section className="signal-v2-mention-drawer__section" aria-label={t('correctionsTitle')} aria-busy={loading||mutation.locked}>
+ return <section className="signal-v2-mention-drawer__section" aria-label={t('correctionsTitle')} aria-busy={loading||mutation.phase==='sending'||mutation.phase==='refreshing'}>
   <MutationStatus mutation={mutation}/>
   {error?<p role="alert">{t('unavailable')}</p>:null}
   {context&&!matches?<p role="status">{t('staleLabels')} <button className="admin-button" type="button" disabled={mutation.locked} onClick={()=>void mutation.refreshSaved()}>{t('refresh')}</button></p>:null}
@@ -142,7 +144,7 @@ export function PublishedListeningTopics({workspaceId,allowMerge=false,disabled=
   {error&&mutation.phase==='idle'?<><p role="status">{t('unavailable')}</p><button className="admin-button" type="button" onClick={()=>void refresh()}>{t('refresh')}</button></>:null}
  </section>:null;
  const groups=[...context.configuration.themes.map(theme=>({key:theme.key,name:theme.localization?.[language(locale)].name??theme.name})),{key:'',name:t('withoutTheme')}];
- return <section className="signal-v2-card admin-section" aria-label={t('publishedTitle')} aria-busy={loading||mutation.locked}>
+ return <section className="signal-v2-card admin-section" aria-label={t('publishedTitle')} aria-busy={loading||mutation.phase==='sending'||mutation.phase==='refreshing'}>
   <header className="signal-v2-card__heading"><div><h2>{t('publishedTitle')}</h2><p>{t('publishedHelp')}</p></div></header>
   <MutationStatus mutation={mutation}/>
   <label><input type="checkbox" checked={outside} disabled={locked} onChange={event=>{setOutside(event.target.checked);setSelected([]);setTarget('');}}/>{t('showOutside')}</label>
