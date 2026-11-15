@@ -8,6 +8,7 @@ import {captureR16SourceProvenanceV1} from './source-provenance';
 import {createR16ListeningNativeFixtureV1} from './listening-native-fixture';
 import {loadR16ListeningNativeCensusV1} from './listening-native-census';
 import {runR16ListeningBenchmarkV1} from './run-listening-benchmark';
+import {R16QueryProfilerV1} from './query-profiler';
 
 /** This command cannot provision, reset, migrate or select a remote target.
  * The orchestrator prepares the owned empty benchmark lab separately. */
@@ -57,10 +58,12 @@ export async function runR16ListeningCapacityLocalCommandV1(output_directory:str
  const directory=join(parent,'listening-'+new Date().toISOString().replace(/[:.]/gu,'-')+'-'+randomUUID());
  await mkdir(directory,{mode:0o700});
  try{
+  const query_profiler=new R16QueryProfilerV1();
   const measured=await runR16ListeningBenchmarkV1({arm:'defined_consumer_second_pass',object_directory:join(directory,'objects'),
-   redis_url:process.env.R16BENCH_REDIS_URL!,
+   redis_url:process.env.R16BENCH_REDIS_URL!,query_profiler,
    writePreregistration:value=>writePrivate(join(directory,'preregistration.json'),value),
-   withNativeFixture:createR16ListeningNativeFixtureV1({loadNativeCensus:access=>loadR16ListeningNativeCensusV1(access)}),
+   withNativeFixture:createR16ListeningNativeFixtureV1({decorateDatabase:database=>query_profiler.wrapDatabase(database),
+    loadNativeCensus:access=>loadR16ListeningNativeCensusV1(access)}),
   });
   await writePrivate(join(directory,'measurement.json'),measured);
   const capacity_observed=Object.values(measured.capacity_gates).every(value=>value===true);

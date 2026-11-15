@@ -13,6 +13,7 @@ type Access=R16ListeningFixtureV1['access'];
  * or answer projection is invented here. Discovered topics need their own native
  * preparation owner; do not publish fake prototypes to enable that optional arm. */
 export function createR16ListeningNativeFixtureV1(options:{
+ decorateDatabase?:(database:Access['database'])=>Access['database'];
  loadNativeCensus(access:Access&{run_id:string}):Promise<Pick<R16ListeningFixtureV1,'organization_id'|'root_ids'|'readResolvedRootIds'>>;
 }){
  return async function withNativeFixture<T>(context:{workload:ReturnType<typeof r16ListeningWorkloadV1>;storage:WorkspaceEngineStorageV1},run:(fixture:R16ListeningFixtureV1)=>Promise<T>):Promise<T>{
@@ -21,12 +22,13 @@ export function createR16ListeningNativeFixtureV1(options:{
   await runMassLabelingAcceptanceFixtureV1('product-recovery',{benchmark:{root_count:32768,execution_cap_micro_usd:20000000,
    import_batch_size:512,preparation_page_size:100,embedding_page_limit:264,
    beforeProcessing:async ctx=>{
+    const database=options.decorateDatabase?.(ctx.database)??ctx.database;
     // Fixture-only cancellation authorized by the orchestrator. This exact
     // queued legacy run must have zero calls; never cancel another execution.
-    const canceled=await ctx.database.query(`UPDATE signal_labeling_runs r SET status='canceled' WHERE r.id=$1
+    const canceled=await database.query(`UPDATE signal_labeling_runs r SET status='canceled' WHERE r.id=$1
       AND r.workspace_id=$2 AND r.status='queued' AND NOT EXISTS(SELECT 1 FROM signal_labeling_calls c WHERE c.run_id=r.id) RETURNING r.id`,[ctx.run_id,ctx.workspace_id]);
     assert.equal(canceled.rows.length,1,'only the fixture queued Mass run with zero calls may be canceled');
-    const access={database:ctx.database,workspace_id:ctx.workspace_id,actor_user_id:ctx.actor_user_id};
+    const access={database,workspace_id:ctx.workspace_id,actor_user_id:ctx.actor_user_id};
     const cfg=await saveSignalListeningConfigurationV1({...access,expected_revision:0,provenance:'human',configuration:context.workload.configuration});
     const admission_started_at_ms=performance.now();
     const prepared=await prepareSignalListeningV1({...access,configuration_id:cfg.id,map_id:ctx.map_id,

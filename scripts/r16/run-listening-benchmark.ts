@@ -12,6 +12,7 @@ import {createWorkspaceEngineStorageV1,type WorkspaceEngineStorageV1} from '../.
 import {createSyntheticJevFetchV1,deterministicR16LatencyV1} from './synthetic-jev';
 import {startR16HttpFilesystemStorageV1} from './http-filesystem-storage';
 import {r16ListeningWorkloadV1,summarizeR16ListeningCapacityV1,R16_LISTENING_PREREGISTRATION_V1 as registration,type R16ListeningArmV1} from './listening-workload';
+import type {R16QueryProfilerV1} from './query-profiler';
 
 /** Native fixture ownership is deliberately external: seeding may not invent a
  * configuration, profile, scope, admission, money event or serving projection. */
@@ -37,6 +38,7 @@ export function reconcileR16ListeningResolvedRootsV1(expected:ReadonlySet<string
  * reviewed native R16 fixture and freeze its source before a full lab run. This
  * returns measurements, not acceptance; same-source native fault pack is required. */
 export async function runR16ListeningBenchmarkV1(args:{arm:R16ListeningArmV1;object_directory:string;redis_url:string;
+ query_profiler?:R16QueryProfilerV1;
  writePreregistration(value:ReturnType<typeof r16ListeningWorkloadV1>&{registration:typeof registration;source_provenance:Awaited<ReturnType<typeof captureR16SourceProvenanceV1>>}):Promise<void>;
  withNativeFixture<T>(context:{workload:ReturnType<typeof r16ListeningWorkloadV1>;storage:WorkspaceEngineStorageV1},run:(fixture:R16ListeningFixtureV1)=>Promise<T>):Promise<T>;
  max_jobs?:number;
@@ -49,7 +51,16 @@ export async function runR16ListeningBenchmarkV1(args:{arm:R16ListeningArmV1;obj
  await args.writePreregistration({...workload,registration,source_provenance});
  const storageServer=await startR16HttpFilesystemStorageV1(args.object_directory);
  try{
-  const storage=createWorkspaceEngineStorageV1({url:storageServer.base_url,service_role_key:'synthetic-local-only',bucket:'corpus-files'});
+  const baseStorage=createWorkspaceEngineStorageV1({url:storageServer.base_url,service_role_key:'synthetic-local-only',bucket:'corpus-files'});
+  const storage_spans:Array<{operation:'preflight'|'put'|'get';elapsed_ms:number}>=[];
+  const timed=async<T>(operation:'preflight'|'put'|'get',run:()=>Promise<T>)=>{
+   const started=performance.now();try{return await run();}finally{storage_spans.push({operation,elapsed_ms:performance.now()-started});}
+  };
+  // Observe the actual production adapter, including its network/readback work.
+  // No response, content byte, retry or persistence decision is replaced.
+  const storage:WorkspaceEngineStorageV1={...baseStorage,
+   assertReady:()=>timed('preflight',()=>baseStorage.assertReady!()),
+   put:value=>timed('put',()=>baseStorage.put(value)),get:value=>timed('get',()=>baseStorage.get(value))};
   return await args.withNativeFixture({workload,storage},async f=>{
   const start=assertR16ListeningAdmissionClockV1(coldStart,f.admission_started_at_ms,performance.now());
   const status=await getSignalListeningStatusV1(f.access);
@@ -73,7 +84,8 @@ export async function runR16ListeningBenchmarkV1(args:{arm:R16ListeningArmV1;obj
    const rows=await f.readResolvedRootIds(root_ids),newIds=reconcileR16ListeningResolvedRootsV1(population,previous,rows);
    if(newIds.length){newIds.forEach(id=>resolved.add(id));commits.push({at_ms:performance.now()-start,roots:newIds.length});}
   };
-  const nativeStore=createSignalListeningRuntimeStoreV1(f.access.database,{execution,storage});
+  const unobservedStore=createSignalListeningRuntimeStoreV1(f.access.database,{execution,storage});
+  const nativeStore=args.query_profiler?.wrapStore(unobservedStore)??unobservedStore;
   const store={...nativeStore,async apply(...params:Parameters<typeof nativeStore.apply>){
    await nativeStore.apply(...params);
    const roots=[...new Set(params[1].flatMap(row=>row.results.map(result=>result.root_id)))];
@@ -101,7 +113,7 @@ export async function runR16ListeningBenchmarkV1(args:{arm:R16ListeningArmV1;obj
   return{contract_version:'r16-listening-capacity-measurement-v1',acceptance:'pending_native_fault_and_census_validation',
    capacity_gates,capacity,source_provenance,job_spans,warmup_wall_ms:job_spans.filter(span=>span.warmup).reduce((sum,span)=>sum+span.end_ms-span.start_ms,0),workload,root_census_digest:digest([...expected].sort()),cold_elapsed_ms:performance.now()-coldStart,wall_elapsed_ms,classification_wall_elapsed_ms,
    fully_resolved_distinct_roots:resolved.size,requests,requests_per_resolved_root:resolved.size?requests/resolved.size:null,latency_ms,calibration,commits,jobs,metrics,storage:storageServer.metrics(),
-   unresolved_roots:expected.size-resolved.size};
+   unresolved_roots:expected.size-resolved.size,storage_spans,sql_profile:args.query_profiler?.snapshot()??null};
   });
  }finally{await storageServer.close();}
 }
