@@ -56,7 +56,7 @@ export function createListeningDiscoveryEvidenceStreamV1(args:Header){
 
   function validateMetadata(root:ListeningDiscoveryMetadataV1,last:string){
     if(!validKey.test(root.root_id)||!validDigest.test(root.input_sha256)||typeof root.in_category!=='boolean'
-      ||!root.evaluations.length||new Set(root.evaluations.map(e=>e.topic_key)).size!==root.evaluations.length)fail('root_invalid');
+      ||!Array.isArray(root.evaluations)||new Set(root.evaluations.map(e=>e.topic_key)).size!==root.evaluations.length)fail('root_invalid');
     if(last&&cmp(last,root.root_id)>=0)fail(last===root.root_id?'root_invalid':'stream_order_invalid');
     const evaluations=[...root.evaluations].sort((a,b)=>cmp(a.topic_key,b.topic_key));
     if(evaluations.some(e=>!known.has(e.topic_key)||!Number.isFinite(e.probability)||e.probability<0||e.probability>1))fail('evaluation_invalid');

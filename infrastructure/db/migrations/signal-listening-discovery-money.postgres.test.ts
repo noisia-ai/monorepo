@@ -97,6 +97,22 @@ test('discovery reviews use native admissions, durable receipts and one shared l
     const topics=await readSignalListeningDiscoveryTopicsV1({...access,generation_id:seeded.id});assert.ok(topics.length>0);assert.ok(topics.every(t=>t.member_count===0&&t.centroid===null&&t.centroid_status==='no_confirmed_members'&&t.lineage.no_confirmed_members===true));
     const candidates=(await db.query("SELECT question_key FROM signal_listening_population_roots_v1($1,$2,$3,$4,ARRAY[$5::uuid],'llm-processing') WHERE candidate AND definition->>'topic_source'='discovered'",[ctx.workspace_id,changed.id,ctx.map_id,seeded.entity_context_digest,inputs[0]!.root_id])).rows;assert.equal(candidates.length,0,'no source vector means no candidate, not a negative answer');
     const current=await refreshSignalListeningDiscoveryV1({...access,configuration_id:changed.id,map_id:ctx.map_id,round:1,source_generation_id:seeded.id});assert.equal(current.counts.pending_topics,0,'unasked inactive topics are not processing failures');
+    const noCandidateSource=await readSignalListeningDiscoveryRootsV1({...access,generation_id:current.id,limit:1024});
+    assert.ok(noCandidateSource.roots.every(r=>(r.proof.evaluations as unknown[]).length===0),'the confirmed zero-source generation has no invented candidate votes');
+    const noCandidateQuote=await quoteSignalListeningDiscoveryRoundV1({...access,generation_id:current.id,ordinal:1,orphan_groups:[]});
+    assert.ok(noCandidateQuote.request_digest,'an empty candidate set still permits the next governed review quote');
+    const noCandidateRoots:ListeningDiscoveryRootV1[]=noCandidateSource.roots.map(r=>({root_id:r.root_id,input_sha256:r.proof.source_text_sha256 as string,
+     in_category:r.proof.in_category as boolean,vector:r.vector!,evaluations:[]}));
+    const noCandidateEvidence=buildListeningDiscoveryEvidenceV1({workspace_id:ctx.workspace_id,vector_space_digest:current.embedding_config_digest,
+     map_digest:changed.configuration_digest,round:1,expected_root_count:3,expected_population_digest:listeningDiscoveryPopulationDigestV1(noCandidateRoots),
+     roots:noCandidateRoots,topic_keys:changed.configuration.questions.filter(q=>q.topic_source).map(q=>q.key)});
+    const noCandidateRequest=buildListeningDiscoveryEditorialRequestV1({configuration:changed.configuration,evidence:noCandidateEvidence,orphan_groups:[],excerpts:[]});
+    assert.equal(noCandidateQuote.request_digest,noCandidateRequest.request_digest);
+    const noCandidatePacket=JSON.parse(JSON.parse(noCandidateRequest.request_body).messages[0].content);
+    assert.equal(noCandidatePacket.population.orphan_roots,3);
+    assert.ok(noCandidatePacket.topics.every((t:{asked:number;approved:number;acceptance_rate:number|null;accepted:unknown[];rejected:unknown[]})=>
+     t.asked===0&&t.approved===0&&t.acceptance_rate===null&&t.accepted.length===0&&t.rejected.length===0));
+    assert.equal((await db.query('SELECT count(*)::int n FROM engine_cost_events WHERE listening_round_id=$1',[round.id])).rows[0].n,0,'quoting a no-candidate generation does not reserve or send a provider call');
     const subset=await snapshotSignalListeningDiscoveryOrphansV1({...access,generation_id:current.id});assert.equal(subset.root_count,3,'all eligible roots remain in the orphan denominator');
     await assert.rejects(seedSignalListeningDiscoveryV1({...access,configuration_id:changed.id,map_id:ctx.map_id,round:2,source_generation_id:confirmed.id,seeds:changed.configuration.questions.filter(q=>q.topic_source==='discovered').map(q=>({question_key:q.key,source_topic_keys:['missing_source']}))}),/members_incomplete/);
     await assert.rejects(seedSignalListeningDiscoveryV1({...access,configuration_id:changed.id,map_id:ctx.map_id,round:2,source_generation_id:randomUUID(),seeds:[]}),/source_invalid/);

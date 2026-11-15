@@ -78,12 +78,25 @@ test('population lineage rejects a missing root, altered input or category membe
   }
 });
 
+test('zero candidates preserve the census and category orphan denominator without inventing negative votes',()=>{
+  const empty={...root(1,null,null),evaluations:[]};
+  const evidence=build([empty]);assert.equal(evidence.root_count,1);assert.equal(evidence.category_root_count,1);
+  assert.deepEqual(evidence.orphan_root_ids,[empty.root_id]);assert.equal(evidence.orphan_rate,1);assert.equal(evidence.root_input_sha256[empty.root_id],empty.input_sha256);
+  assert.ok(evidence.topics.every(t=>t.asked===0&&t.approved===0&&t.acceptance_rate===null&&t.centroid===null&&t.centroid_status==='no_confirmed_members'
+    &&t.accepted_examples.length===0&&t.rejected_examples.length===0));
+  const mixed=build([empty,root(2,.9,.1),{...root(3,null,null,false),evaluations:[]}]);
+  assert.equal(mixed.root_count,3);assert.equal(mixed.category_root_count,2);assert.deepEqual(mixed.orphan_root_ids,[empty.root_id]);
+  assert.equal(mixed.topics[0]!.asked,1);assert.equal(mixed.topics[0]!.approved,1);assert.equal(mixed.topics[0]!.acceptance_rate,1);
+  assert.equal(mixed.topics[1]!.asked,1);assert.equal(mixed.topics[1]!.approved,0);assert.equal(mixed.topics[1]!.acceptance_rate,0);
+});
+
 test('rejects duplicate, missing, unknown and invalid evaluations and incompatible vectors', () => {
   const valid = root(1, 1, 0);
   const invalid = [
-    { ...valid, evaluations: [] }, { ...valid, evaluations: [...valid.evaluations, valid.evaluations[0]!] },
+    { ...valid, evaluations:null as never }, { ...valid, evaluations: [...valid.evaluations, valid.evaluations[0]!] },
     { ...valid, evaluations: [{ topic_key: 'unknown', probability: 1 }] },
     { ...valid, evaluations: [{ topic_key: 'a', probability: NaN }] },
+    { ...valid, evaluations: [{ topic_key: 'a', probability: null as never }] },
     { ...valid, evaluations: [{ topic_key: 'a', probability: 1.01 }] },
     { ...valid, vector: [1, 2] }, { ...valid, vector: new Array<number>(1024).fill(0) },
     { ...valid, vector: [Infinity, ...new Array<number>(1023).fill(0)] },

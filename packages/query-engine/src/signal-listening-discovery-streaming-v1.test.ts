@@ -72,10 +72,18 @@ test('example order and complete editorial request bytes remain identical across
 test('streaming preserves null rates when the category is empty',()=>{
   const {actual,eager}=run([root(1,1,0,false)],1);assert.deepEqual(actual,eager);assert.equal(actual.orphan_rate,null);assert.equal(actual.twin_root_rate,null);
 });
+test('empty evaluation lists are valid missing candidates, not negative answers, in all-empty and mixed populations',()=>{
+  const empty={...root(1,null,null),evaluations:[]};
+  for(const roots of [[empty],[empty,root(2,.9,.1),{...root(3,null,null,false),evaluations:[]}]]){
+    const {actual,eager}=run(roots,1);assert.deepEqual(actual,eager);
+    assert.equal(actual.root_count,roots.length);assert.equal(actual.root_input_sha256[empty.root_id],empty.input_sha256);
+    assert.deepEqual(actual.orphan_root_ids,[empty.root_id]);assert.ok(actual.topics.every(t=>!t.rejected_examples.includes(empty.root_id)));
+  }
+});
 test('streaming rejects incomplete census, duplicate or unordered pages, invalid evaluations and vectors',()=>{
   const good=root(1,1,0),args=setup([good]);
-  for(const bad of [{...good,evaluations:[]},{...good,evaluations:[...good.evaluations,good.evaluations[0]!]},{...good,evaluations:[{topic_key:'unknown',probability:1}]},
-    {...good,evaluations:[{topic_key:'a',probability:NaN}]},{...good,vector:[1,2]},{...good,vector:new Array(1024).fill(0)},
+  for(const bad of [{...good,evaluations:null as never},{...good,evaluations:[...good.evaluations,good.evaluations[0]!]},{...good,evaluations:[{topic_key:'unknown',probability:1}]},
+    {...good,evaluations:[{topic_key:'a',probability:NaN}]},{...good,evaluations:[{topic_key:'a',probability:null as never}]},{...good,vector:[1,2]},{...good,vector:new Array(1024).fill(0)},
     {...good,vector:[Infinity,...new Array(1023).fill(0)]},{...good,input_sha256:'invalid'}]){
     assert.throws(()=>createListeningDiscoveryEvidenceStreamV1(args).addFirstPage([bad]),/listening_discovery_/);
   }

@@ -119,7 +119,7 @@ export function buildListeningDiscoveryEvidenceV1(args: {
   for (const root of rows) {
     if (!keyPattern.test(root.root_id) || seen.has(root.root_id) || !digestPattern.test(root.input_sha256)
       || typeof root.in_category !== 'boolean' || root.vector.length !== 1024
-      || root.vector.some(value => !Number.isFinite(value)) || !root.evaluations.length
+      || root.vector.some(value => !Number.isFinite(value)) || !Array.isArray(root.evaluations)
       || new Set(root.evaluations.map(row => row.topic_key)).size !== root.evaluations.length)
       fail('listening_discovery_root_invalid');
     seen.add(root.root_id);
