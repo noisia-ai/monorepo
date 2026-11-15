@@ -56,6 +56,17 @@ test("all sink writes stay within 64 KiB even when every source character expand
   assert.deepEqual(JSON.parse(output), value);
 });
 
+test("trailing newline obeys the 64 KiB UTF-8 sink boundary", async () => {
+  const value = "x".repeat(65_534);
+  let maximumBytes = 0, output = "";
+  await streamJsonV1(value, chunk => {
+    maximumBytes = Math.max(maximumBytes, Buffer.byteLength(chunk, "utf8"));
+    output += chunk;
+  }, { pretty: false, trailing_newline: true });
+  assert.equal(output, `${JSON.stringify(value)}\n`);
+  assert.ok(maximumBytes <= 64 * 1024);
+});
+
 test("unsupported methods, accessors and boxed primitives fail without invocation or publication", async () => {
   const root = await privateTestRoot();
   try {

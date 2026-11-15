@@ -166,7 +166,10 @@ async function emitJsonV1(value: unknown, sink: (chunk: string) => Promise<void>
     }
   }
   if (!tokenCount) throw new TypeError("Value is not JSON serializable");
-  if (options.trailing_newline) { pending.push("\n"); pendingBytes++; }
+  if (options.trailing_newline) {
+    if (pendingBytes && pendingBytes + 1 > SINK_CHUNK_BYTES) await flush();
+    pending.push("\n"); pendingBytes++;
+  }
   await flush();
 }
 
