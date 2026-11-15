@@ -120,6 +120,27 @@ jobs:
             exit 1
           fi
 
+      - name: Verify scoped R16 policy and aggregate budget on native PostgreSQL
+        env:
+          NOISIA_R16_LISTENING_STUDY_POLICY_PG: 'true'
+          R16BENCH_REDIS_URL: redis://127.0.0.1:6379/0
+          NOISIA_WORKSPACE_ENGINE_MODULE_ROOT: ${{ github.workspace }}/tools/signal-semantic-lab/src
+          HF_HUB_OFFLINE: '1'
+          TRANSFORMERS_OFFLINE: '1'
+          NUMBA_NUM_THREADS: '1'
+          OMP_NUM_THREADS: '1'
+          OPENBLAS_NUM_THREADS: '1'
+          MKL_NUM_THREADS: '1'
+        run: |
+          export NOISIA_WORKSPACE_ENGINE_PYTHON="$(command -v python)"
+          set -o pipefail
+          pnpm exec node --test --test-concurrency=1 --import tsx \
+            infrastructure/db/migrations/signal-listening-study-policy.postgres.test.ts | tee r16-scoped-policy-pg.tap
+          if ! grep -qx '# skipped 0' r16-scoped-policy-pg.tap; then
+            echo '::error::R16 scoped policy PostgreSQL tests were skipped'
+            exit 1
+          fi
+
       - name: Verify bounded Study source custody at the real-cut scale
         env:
           NOISIA_R16_STUDY_SOURCE_SCALE: 'true'
@@ -228,8 +249,6 @@ jobs:
           NOISIA_R16_LISTENING_LEXICAL_PLAN_PG: 'true'
           NOISIA_R16_LISTENING_BOUNDED_PROVENANCE_PG: 'true'
           NOISIA_R16_MAP_INPUT_STATISTICS_PG: 'true'
-          NOISIA_R16_LISTENING_STUDY_POLICY_PG: 'true'
-          NOISIA_SIGNAL_STUDY_ENABLED: 'true'
           NOISIA_R16_LISTENING_REVISION_PLAN_PG: 'true'
           NOISIA_R16_LISTENING_METRICS_BATCH_PG: 'true'
           NOISIA_R16_LISTENING_MONEY_BATCHES_PG: 'true'
@@ -255,7 +274,6 @@ jobs:
             infrastructure/db/migrations/signal-listening-population-lexical-plan.postgres.test.ts \
             infrastructure/db/migrations/signal-listening-bounded-provenance.postgres.test.ts \
             infrastructure/db/migrations/signal-mass-labeling-map-statistics.postgres.test.ts \
-            infrastructure/db/migrations/signal-listening-study-policy.postgres.test.ts \
             infrastructure/db/migrations/signal-listening-human-revision-plan.postgres.test.ts \
             infrastructure/db/migrations/signal-listening-question-metrics-batch.postgres.test.ts \
             infrastructure/db/migrations/signal-listening-money-batches.postgres.test.ts \
