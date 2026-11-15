@@ -58,7 +58,13 @@ export function encodeListeningDiscoveryTransportV1(receipt:ListeningDiscoveryPr
     ||receipt.provider_request_id!==null&&(typeof receipt.provider_request_id!=='string'||receipt.provider_request_id.length>200))
     throw Error('listening_discovery_provider_receipt_invalid');
   let body='',utf8_valid=false;
-  try{body=new TextDecoder('utf-8',{fatal:true,ignoreBOM:true}).decode(receipt.bytes);utf8_valid=true;}catch{/* Exact bytes remain in base64. */}
+  try{
+    body=new TextDecoder('utf-8',{fatal:true,ignoreBOM:true}).decode(receipt.bytes);
+    // The body must prove every byte, including a leading BOM. A decoder must
+    // never silently strip it or introduce replacement characters.
+    utf8_valid=Buffer.from(body,'utf8').equals(receipt.bytes);
+    if(!utf8_valid)body='';
+  }catch{/* Exact bytes remain in base64. */}
   const wrapper:ListeningDiscoveryTransportWrapperV1={contract_version:'listening-discovery-transport-v1',body,
     body_base64:receipt.bytes.toString('base64'),body_bytes:receipt.bytes.length,utf8_valid,
     complete:receipt.complete&&utf8_valid,http_status:receipt.http_status,provider_request_id:receipt.provider_request_id};

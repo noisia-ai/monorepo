@@ -40,6 +40,15 @@ test('transport codec preserves invalid UTF-8 and complete=false even when the b
   const raw=encodeListeningDiscoveryTransportV1({bytes:Buffer.from([0xff]),http_status:200,provider_request_id:null,complete:true});
   const decoded=decodeListeningDiscoveryTransportV1(raw);assert.equal(decoded.utf8_valid,false);assert.equal(decoded.body,'');assert.equal(decoded.complete,false);
 });
+test('a complete valid UTF-8 BOM remains in the body and its exact byte proof',()=>{
+  const bytes=Buffer.concat([Buffer.from([0xef,0xbb,0xbf]),Buffer.from('{"text":"cerveja 🍺"}')]);
+  const raw=encodeListeningDiscoveryTransportV1({bytes,http_status:200,provider_request_id:'synthetic-bom',complete:true});
+  const value=decodeListeningDiscoveryTransportV1(raw);
+  assert.equal(value.utf8_valid,true);assert.equal(value.complete,true);assert.equal(value.body.charCodeAt(0),0xfeff);
+  assert.equal(value.body_bytes,bytes.length);assert.deepEqual(Buffer.from(value.body,'utf8'),bytes);
+  assert.deepEqual(Buffer.from(value.body_base64,'base64'),bytes);
+  assert.throws(()=>decodeListeningDiscoveryTransportV1(JSON.stringify({...value,body:value.body.slice(1)})),/raw_invalid/);
+});
 test('worst JSON escaping remains inside the eight MiB wrapper bound and altered byte claims are rejected',()=>{
   const raw=encodeListeningDiscoveryTransportV1({bytes:Buffer.alloc(LISTENING_DISCOVERY_RESPONSE_BYTES_V1),http_status:200,provider_request_id:null,complete:true});
   assert.ok(Buffer.byteLength(raw)<8*1024*1024-8192);decodeListeningDiscoveryTransportV1(raw);
