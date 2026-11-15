@@ -47,11 +47,15 @@ export async function runR16ListeningFaultMatrixV1(args:{object_directory:string
     AND r.status='queued' AND NOT EXISTS(SELECT 1 FROM signal_labeling_calls c WHERE c.run_id=r.id) RETURNING r.id`,[ctx.run_id,ctx.workspace_id]);
    assert.equal(canceled.rows.length,1);
    const access={database:original,workspace_id:ctx.workspace_id,actor_user_id:ctx.actor_user_id};
+   // Ordinary three-root product fixtures authorize this cap. The full 32,768
+   // benchmark has its own explicitly provisioned 20M-microUSD fixture policy.
+   // Never widen a native policy just to admit the fault harness.
+   const cap_micro_usd=1_000_000;
    const cfg=await saveSignalListeningConfigurationV1({...access,expected_revision:0,provenance:'human',configuration:workload.configuration});
    assert.equal(cfg.configuration_digest,workload.configuration_digest);assert.deepEqual(cfg.configuration,workload.configuration);
    const admission_started_at_ms=performance.now();
    const prepared=await prepareSignalListeningV1({...access,configuration_id:cfg.id,map_id:ctx.map_id,idempotency_key:randomUUID(),
-    cap_micro_usd:20000000,provider_available:true,prototype_provider_available:false});
+    cap_micro_usd,provider_available:true,prototype_provider_available:false});
    assert.ok(prepared.status==='labeling'&&prepared.run_id);
    const run_id=prepared.run_id,binding={...access,configuration_id:cfg.id,map_id:ctx.map_id,run_id};
    const census=await loadR16ListeningNativeCensusV1(binding,3);assert.deepEqual(await census.readResolvedRootIds(),[]);
@@ -110,10 +114,12 @@ export async function runR16ListeningFaultMatrixV1(args:{object_directory:string
    };
    // Foreign actor and over-cap admission must fail before physical I/O, through
    // the normal native request API. No synthetic policy row is inserted here.
-   await assert.rejects(prepareSignalListeningV1({...binding,actor_user_id:randomUUID(),idempotency_key:randomUUID(),cap_micro_usd:20000000,provider_available:true}));
+   await assert.rejects(prepareSignalListeningV1({...binding,actor_user_id:randomUUID(),idempotency_key:randomUUID(),cap_micro_usd,provider_available:true}),
+    (error:unknown)=>Boolean(error&&typeof error==='object'&&'code'in error&&error.code==='listening_forbidden'));
    const actionCap=Number(identity.action_cap);assert.ok(Number.isSafeInteger(actionCap)&&actionCap>0);
    const over=actionCap+1;assert.ok(Number.isSafeInteger(over));
-   await assert.rejects(prepareSignalListeningV1({...binding,idempotency_key:randomUUID(),cap_micro_usd:over,provider_available:true}));assert.equal(physical.length,0);
+   await assert.rejects(prepareSignalListeningV1({...binding,idempotency_key:randomUUID(),cap_micro_usd:over,provider_available:true}),
+    (error:unknown)=>Boolean(error&&typeof error==='object'&&'code'in error&&error.code==='listening_policy_cap_exceeded'));assert.equal(physical.length,0);
    const invoke=()=>signalListeningJevJobV1(run_id,{database,store,execution,calibrated_provider_factory:factory,
     preflight:()=>assertR16ListeningSyntheticPreflightV1({storage,storage_url:storageServer.base_url,...workload,env:process.env})});
    const calls=async()=>(await original.query<CallRow>('SELECT id,request_digest,status,results_applied,settled_micro_usd::text,reserved_micro_usd::text,raw_storage_key,results FROM signal_labeling_calls WHERE run_id=$1 ORDER BY id',[run_id])).rows;
