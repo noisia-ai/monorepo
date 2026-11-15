@@ -12,6 +12,8 @@ No hay aprobaciones humanas intermedias en los procesos de análisis: Sonnet 4.6
 
 ## Progreso
 
+- H1 diagnóstico b48c665e sobre 4,096 raíces: 7.48 s y 547.37 raíces/s, diez páginas frente a dieciocho en c6bd1c50. La mediana de página pasó de 147 a 426. Sigue rechazado y demasiado corto para capacidad sostenida. El cambio redujo reserva y lotes pequeños, pero quedan esperas importantes de locks del run: 1.90 s acumulados en markSubmitting y 1.55 s en apply durante esta corrida, con tiempos solapados. Se conserva la base y el recibo; no se inicia otro ensayo completo hasta resolver o acotar esa hipótesis.
+
 - H4 orquestador corregido e integrado: 766d4d93/a9557c44, con 14 pruebas locales y tipado/lint verdes. Los ejes y las pertenencias se entregan a owners de lotes H1 y devuelven espera ante checkpoints parciales, conservando las razones de permiso. La revisión cerró el P1 de serialización y el P2 de trazabilidad. Su driver, persistencia financiera, Storage y registro nativos siguen pendientes; las pruebas con callback no acreditan ejecución de un Estudio real.
 
 - H1 custodia observada: tras la lectura completa, el scheduler sustituye la reserva del máximo posible por una reserva conservadora de los bytes reales (mínimo entre el máximo anterior y raw×24+64 KiB), sin liberar la custodia hasta aplicación y feedback. La reserva completa antes de HTTP sigue intacta; la transferencia explícita evita doble liberación. Dos regresiones fallaban antes; 63 focales pasan, incluidos gates de las cuatro etapas, UTF-8 cercano al límite con codec JSONL/base64 y lectura de archivo, y fallo de Storage tras transferir. Workers 1,027/44 omisiones de entorno, tipado/lint 11/11 y revisión independiente sin P0/P1/P2. Nueva medición y matriz de fallos pendientes.
@@ -143,6 +145,8 @@ Recibo: separar Voyage/JEV por raíz de Claude por número de grupos y vueltas; 
 
 ## Sorpresas y descubrimientos
 
+- El perfil SQL del diagnóstico b48c665e se vinculó a los templates de las consultas, sin guardar bind values. Las mayores esperas corresponden al FOR UPDATE del run en markSubmitting y apply, además del attach de páginas. Compartir la lease durante mutaciones de páginas disjuntas podría permitir progreso simultáneo, pero requiere demostrar idempotencia, orden de locks, bloqueo de cambios de lease y preservación de autorización/dinero antes de implementarlo o atribuirle mejora.
+
 - Una respuesta pequeña conservaba hasta el final la reserva para una respuesta máxima de 16 KiB. El perfil anterior mostró 39 de 59 muestras con al menos 90% de memoria reservada y 21 sin HTTP en vuelo. El nuevo cálculo sólo libera el exceso conocido y mantiene el margen del codec. La prueba de custodia aislada usa una ventana sin prefetch para no confundir la reserva de una lectura siguiente con los bytes de la respuesta; la continuidad se verifica en otras pruebas.
 
 - La condición de espera por slots HTTP llamaba al mismo flush forzado que la falta de memoria. Una respuesta temprana seguida de otra cohorte llena podía partir el lote antes del temporizador. El caso mínimo deja todas las respuestas y presupuesto intactos y muestra una página prematura de una fila; el cambio la conserva hasta el límite normal o el drenaje final.
@@ -199,6 +203,8 @@ Recibo: separar Voyage/JEV por raíz de Claude por número de grupos y vueltas; 
 - El promedio del piloto completo incluye una etapa editorial que no escala por raíz. Multiplicarlo linealmente daba USD 205.81/millón; mantener explícitamente los grupos y una vuelta de referencia produce USD 114.035250. Ambos cálculos parten del mismo recibo, cuyo uso histórico permanece USD 17.280463.
 
 ## Registro de decisiones
+
+- 2026-11-15: conservar el diagnóstico de memoria como mejora parcial (diez páginas) y rechazo de capacidad. Investigar la contención de locks con pruebas PostgreSQL de páginas disjuntas y del mismo call; mantener locks exclusivos para ciclo de vida y ningún cambio de permisos, cuotas o presupuesto. No sustituir el objetivo de 1,000/s por el rendimiento corto ni por las pruebas locales.
 
 - 2026-11-15: reducir la reserva de una respuesta sólo después de completarse la lectura acotada y conocerse el wrapper exacto. Conservar el mismo factor conservador y límite máximo; transferir la propiedad a la fila de custodia y hacer que el catch libere sólo lo que aún posee. No interpretar esa reserva como RSS medido ni como persistencia, liquidación o devolución de cuota.
 
