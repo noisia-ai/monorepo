@@ -1289,3 +1289,4 @@ export * from "./signal-listening-contracts";
 export * from "./signal-listening-prototypes";
 
 export * from './signal-listening-calibration';
+export * from './signal-lexicon-evidence-v1';

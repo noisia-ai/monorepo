@@ -153,3 +153,4 @@ export * from "./signal-listening-serving";
 export * from "./signal-listening-preparation";
 
 export * from './signal-listening-calibration';
+export * from './signal-listening-lexicon';

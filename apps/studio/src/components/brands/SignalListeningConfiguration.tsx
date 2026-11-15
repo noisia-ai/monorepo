@@ -2,6 +2,7 @@
 import {useEffect,useRef,useState} from 'react';
 import {useTranslations} from 'next-intl';
 import type {SignalListeningConfigurationV1,SignalListeningQuestionV1} from '@noisia/query-engine';
+import {ListeningLexiconSuggestions} from './ListeningLexiconSuggestions';
 
 type Status={configuration:{id:string;revision:number;configuration:SignalListeningConfigurationV1}|null;
   map:{id:string;root_count:number}|null;run:{id:string;status:string;unknown_micro_usd?:string}|null;preparation?:{id:string;status:string}|null;map_stale?:boolean;capabilities:{can_edit_topics:boolean;can_request_processing:boolean}};
@@ -77,6 +78,12 @@ export function SignalListeningConfiguration({workspaceId,editable=true}:{worksp
       <label className="admin-form-field"><span>{t('category')}</span><input value={draft.category} disabled={!canEdit||busy} onChange={event=>{setDraft({...draft,category:event.target.value});setSaved(false);}}/></label>
       <label className="admin-form-field"><span>{t('lexicon')}</span><textarea value={draft.lexicon_terms.join('\n')} disabled={!canEdit||busy}
         onChange={event=>{setDraft({...draft,lexicon_terms:event.target.value.split('\n')});setSaved(false);}}/></label>
+      {status?.configuration&&canEdit?<ListeningLexiconSuggestions workspaceId={workspaceId} configurationId={status.configuration.id}
+        disabled={busy||dirty||running||draft.lexicon_terms.length>=500} onAccept={term=>{
+          if(!draft.lexicon_terms.some(value=>value.trim().toLocaleLowerCase()===term.toLocaleLowerCase())){
+            setDraft({...draft,lexicon_terms:[...draft.lexicon_terms,term]});setSaved(false);key.current=null;
+          }
+        }}/>:null}
       <label className="admin-form-field"><span>{t('instructions')}</span><textarea value={draft.instructions} disabled={!canEdit||busy} onChange={event=>{setDraft({...draft,instructions:event.target.value});setSaved(false);}}/></label>
       {draft.questions.map((question,index)=><fieldset key={`${index}:${question.type}`} disabled={!canEdit||busy} className="admin-section">
         <legend>{question.topic_source?t('topic'):t('question')}</legend>

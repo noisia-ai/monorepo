@@ -4926,6 +4926,13 @@
     "receiptRecovery": "Es necesario recuperar la respuesta del proveedor antes de continuar. Pide a un administrador que revise los recibos guardados."
   },
   "Listening": {
+    "lexiconEvidenceHelp": "Sugerencias gratuitas por afinidad con la categoría. Se excluyen palabras vacías y se ordenan por lift; añadir un término sólo modifica el borrador.",
+    "lexiconEvidenceLoad": "Buscar términos de categoría",
+    "lexiconEvidenceUnavailable": "Las sugerencias necesitan tópicos de categoría confirmados.",
+    "lexiconEvidencePopulation": "{foreground} menciones de categoría fuera del léxico; {background} menciones de consumidor como referencia.",
+    "lexiconEvidenceEmpty": "No hay términos nuevos con al menos tres menciones.",
+    "lexiconEvidenceCounts": "{roots} menciones · lift {lift}",
+    "lexiconEvidenceAdd": "Añadir al borrador",
     "title": "Escucha",
     "description": "Configura temas y preguntas para observar las menciones de la marca.",
     "error": "No se pudo completar la acción. Revisa los campos o actualiza antes de reintentar.",

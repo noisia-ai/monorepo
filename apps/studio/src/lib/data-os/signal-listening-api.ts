@@ -6,6 +6,7 @@ const save=z.union([
   z.object({expected_revision:z.number().int().nonnegative(),configuration:z.unknown()}).strict(),
 ]);
 const start=z.object({configuration_id:z.string().uuid(),cap_micro_usd:z.number().int().positive().safe()}).strict();
+const lexicon=z.object({configuration_id:z.string().uuid(),limit:z.coerce.number().int().min(1).max(200).optional()}).strict();
 const metrics=z.object({question_key:z.string().regex(/^[a-z][a-z0-9_]{0,63}$/u),from:z.string().datetime().optional(),
   to:z.string().datetime().optional(),timezone:z.string().max(100).optional(),granularity:z.enum(['day','week','month']).optional(),include_outside:z.enum(['true','false']).transform(value=>value==='true').optional(),topic_key:z.string().max(64).optional()}).strict();
 type Scope={workspace_id:string;actor_user_id:string};
@@ -15,6 +16,7 @@ export type ListeningApiDependenciesV1={
   save(scope:Scope,args:{expected_revision:number;configuration:SignalListeningConfigurationV1;provenance:'human'}):Promise<unknown>;
   start(scope:Scope,args:{configuration_id:string;cap_micro_usd:number;idempotency_key:string}):Promise<unknown>;
   metrics(scope:Scope,args:z.infer<typeof metrics>):Promise<unknown>;
+  lexicon(scope:Scope,args:z.infer<typeof lexicon>):Promise<unknown>;
 };
 export const signalListeningHeadersV1={'Cache-Control':'private, no-store'};
 function response(body:unknown,status=200){return Response.json(body,{status,headers:signalListeningHeadersV1});}
@@ -51,6 +53,11 @@ export function createSignalListeningApiV1(deps:ListeningApiDependenciesV1){
       const search=new URL(request.url).searchParams;
       if([...new Set(search.keys())].some(key=>search.getAll(key).length!==1))return response({error:'listening_request_invalid'},422);
       return response(await deps.metrics(scope,metrics.parse(Object.fromEntries(search))));
+    }),
+    lexicon:(workspace_id:string,request:Request)=>scoped(workspace_id,async scope=>{
+      const search=new URL(request.url).searchParams;
+      if([...new Set(search.keys())].some(key=>search.getAll(key).length!==1))return response({error:'listening_request_invalid'},422);
+      return response(await deps.lexicon(scope,lexicon.parse(Object.fromEntries(search))));
     }),
   };
 }

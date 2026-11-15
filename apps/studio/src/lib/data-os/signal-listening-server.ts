@@ -1,4 +1,4 @@
-import {getSignalListeningStatusV1,saveSignalListeningConfigurationV1,prepareSignalListeningV1,readSignalListeningQuestionMetricsV1} from '@noisia/db';
+import {getSignalListeningStatusV1,saveSignalListeningConfigurationV1,prepareSignalListeningV1,readSignalListeningQuestionMetricsV1,loadSignalListeningLexiconSuggestionsV1} from '@noisia/db';
 import {loadSignalWorkspaceContextForTopics} from '@/app/api/data-os/signal/[workspaceId]/topics/_lib';
 import {pool} from '@/lib/db';
 import {createSignalListeningApiV1,type ListeningApiDependenciesV1} from './signal-listening-api';
@@ -19,6 +19,12 @@ const operations:Omit<ListeningApiDependenciesV1,'load'>={
     if(!status.map||!status.configuration)throw Object.assign(Error('listening_configuration_unavailable'),{code:'listening_configuration_unavailable',status:409});
     return readSignalListeningQuestionMetricsV1({database:pool,...scope,...args,
       configuration_id:status.configuration.id,map_id:status.map.id});
+  },
+  lexicon:async(scope,args)=>{
+    const status=await getSignalListeningStatusV1({database:pool,...scope});
+    if(!status.map||!status.configuration||status.configuration.id!==args.configuration_id)
+      throw Object.assign(Error('listening_configuration_changed'),{code:'listening_configuration_changed',status:409});
+    return loadSignalListeningLexiconSuggestionsV1({database:pool,...scope,...args,map_id:status.map.id});
   },
 };
 

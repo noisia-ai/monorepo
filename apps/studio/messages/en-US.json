@@ -4926,6 +4926,13 @@
     "receiptRecovery": "The provider response needs to be recovered before continuing. Ask an administrator to check the saved receipts."
   },
   "Listening": {
+    "lexiconEvidenceHelp": "Free suggestions based on category affinity. Stopwords are excluded and terms ranked by lift; adding a term only changes the draft.",
+    "lexiconEvidenceLoad": "Find category terms",
+    "lexiconEvidenceUnavailable": "Suggestions need confirmed category topics.",
+    "lexiconEvidencePopulation": "{foreground} category mentions outside the lexicon; {background} consumer mentions in the background.",
+    "lexiconEvidenceEmpty": "No new terms with at least three mentions.",
+    "lexiconEvidenceCounts": "{roots} mentions · lift {lift}",
+    "lexiconEvidenceAdd": "Add to draft",
     "title": "Listening",
     "description": "Configure the topics and questions to track in brand mentions.",
     "error": "The action could not be completed. Check the fields or refresh before trying again.",

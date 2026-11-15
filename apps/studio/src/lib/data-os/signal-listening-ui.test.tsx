@@ -7,11 +7,54 @@ import {Window} from 'happy-dom';
 import {NextIntlClientProvider} from 'next-intl';
 import {signalListeningBaseTemplateV1} from '@noisia/query-engine';
 import {SignalListeningConfiguration} from '../../components/brands/SignalListeningConfiguration';
+import {ListeningLexiconSuggestions} from '../../components/brands/ListeningLexiconSuggestions';
 import {SignalListeningMetricTables,SignalListeningMetrics} from '../../components/signal-v2/SignalListeningMetrics';
 import {signalListeningDateBoundaryV1} from './signal-listening-date';
 import {renderToStaticMarkup} from 'react-dom/server';
 const browser=new Window({url:'https://studio.invalid'});
 Object.assign(globalThis,{window:browser,self:browser,document:browser.document,navigator:browser.navigator,HTMLElement:browser.HTMLElement,React,IS_REACT_ACT_ENVIRONMENT:true});
+test('late lexical evidence never appears after changing workspace or configuration',async()=>{
+  const messages=JSON.parse(await readFile(new URL('../../../messages/en-US.json',import.meta.url),'utf8'));
+  const original=globalThis.fetch;let resolve!:(response:Response)=>void,signal:AbortSignal|undefined;
+  globalThis.fetch=async(_input,options)=>{signal=options?.signal??undefined;return new Promise<Response>(done=>{resolve=done;});};
+  const host=document.createElement('div');document.body.appendChild(host);const root=createRoot(host);
+  const render=(workspace:string,configuration:string)=><NextIntlClientProvider locale="en-US" messages={messages} timeZone="UTC">
+    <ListeningLexiconSuggestions workspaceId={workspace} configurationId={configuration} disabled={false} onAccept={()=>{}}/>
+  </NextIntlClientProvider>;
+  try{
+    await act(async()=>{root.render(render('old','old-config'));});
+    await act(async()=>{host.querySelector('button')!.click();});assert.equal(signal?.aborted,false);
+    await act(async()=>{root.render(render('new','new-config'));});assert.equal(signal?.aborted,true);
+    await act(async()=>{resolve(Response.json({contract_version:'signal-listening-lexicon-suggestions-v1',workspace_id:'old',configuration_id:'old-config',
+      available:true,foreground_size:3,background_size:3,items:[{term:'stale-private-evidence',language:'en',foreground_roots:3,background_roots:3,lift:1}]}));});
+    assert.ok(!host.textContent?.includes('stale-private-evidence'));assert.equal(host.querySelector('button')!.disabled,false);
+  }finally{await act(async()=>root.unmount());host.remove();globalThis.fetch=original;}
+});
+test('lexicon evidence is requested explicitly and accepting a term only changes the human draft',async()=>{
+  const messages=JSON.parse(await readFile(new URL('../../../messages/en-US.json',import.meta.url),'utf8'));
+  const configuration=signalListeningBaseTemplateV1({category:'tea',lexicon_terms:['tea']}),original=globalThis.fetch;
+  const calls:Array<{url:string;method:string}>=[];
+  globalThis.fetch=async(input,options)=>{
+    const url=String(input);calls.push({url,method:options?.method??'GET'});
+    if(url.includes('/lexicon?'))return Response.json({contract_version:'signal-listening-lexicon-suggestions-v1',workspace_id:'workspace',configuration_id:'config',
+      available:true,foreground_size:4,background_size:20,items:[{term:'chai',language:'en',foreground_roots:4,background_roots:5,lift:3.1}]});
+    return Response.json({configuration:{id:'config',revision:1,configuration},map:{id:'map',root_count:20},run:null,
+      capabilities:{can_edit_topics:true,can_request_processing:true}});
+  };
+  const host=document.createElement('div');document.body.appendChild(host);const root=createRoot(host);
+  try{
+    await act(async()=>{root.render(<NextIntlClientProvider locale="en-US" messages={messages} timeZone="UTC"><SignalListeningConfiguration workspaceId="workspace"/></NextIntlClientProvider>);});
+    assert.equal(calls.length,1,'render does not scan the corpus or invoke any model');
+    const load=[...host.querySelectorAll('button')].find(button=>button.textContent===messages.Listening.lexiconEvidenceLoad)!;
+    await act(async()=>{load.click();});
+    assert.ok(calls[1]!.url.endsWith('/lexicon?configuration_id=config'));
+    const add=[...host.querySelectorAll('button')].find(button=>button.textContent===messages.Listening.lexiconEvidenceAdd)!;
+    await act(async()=>{add.click();});
+    assert.ok([...host.querySelectorAll('textarea')].some(field=>field.value==='tea\nchai'));
+    assert.equal(calls.length,2);assert.ok(calls.every(call=>call.method==='GET'));
+    assert.equal(load.disabled,true,'the edited draft must be saved before requesting evidence for another configuration');
+  }finally{await act(async()=>root.unmount());host.remove();globalThis.fetch=original;}
+});
 test('Listening mounts in both locales without paid calls and adding a question requires saving first',async()=>{
   const oldFetch=globalThis.fetch;
   try{for(const locale of ['es-MX','en-US']as const){

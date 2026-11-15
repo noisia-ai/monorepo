@@ -12,6 +12,9 @@ No hay aprobaciones humanas intermedias en los procesos de análisis: Sonnet 4.6
 
 ## Progreso
 
+- H1: el ensayo completo sobre 36668da1 terminó 32,768/32,768 raíces con crudos y aplicación íntegros, pero sólo 485.19 raíces/s y una ventana completa de cero. Proveedor simulado p50 301 ms/p95 459 ms; 147 páginas. El resultado rechaza H1 y exige localizar las pausas de SQL/materialización antes de otra corrida o proveedor real.
+- H5: sugerencia genérica de léxico implementada en rama: categoría confirmada fuera del léxico frente a toda conversación de consumidor, conteos por raíz y lift suavizado, stopwords PT/ES/EN y soporte mínimo tres. Revisión sin P0/P1/P2; tipado/lint 11/11, query-engine 661 pruebas, API/algoritmo 6/6, UI montada 10/10, PostgreSQL nativo 1/1 sin omisiones con revocación de fuente y build completo de Studio verdes. Suites Studio 1,341/7 omisiones y DB 658/183; las pruebas nativas dedicadas no tienen omisiones. Falta CI, despliegue y comprobar cerva/litrão en el estudio real.
+
 - H2: integración 92888e83 conserva H1 completo y las correcciones revisadas de calibración heterogénea, selección visible y recuperación anterior a nuevos envíos. Tipado/lint 11/11, workers 1,026 aprobadas/46 omisiones de entorno, Studio 1,339/7 y DB 658/182; build completo de Studio aprobado. Las dos pruebas dedicadas PostgreSQL pasaron 2/2 sin omisiones, con 280 migraciones por clon. Se añade un paso CI explícito para los cinco contratos DB y ambos runtimes, que falla ante cualquier omisión. Publicación/revisión final/CI y UAT siguen pendientes.
 
 - H1: CI y PostgreSQL verdes en 5b2729a6. Su benchmark falló antes de JEV al alcanzar el límite del fixture de proyección. Los ajustes revisados 2c0f5e6d y 36668da1 mantienen límites ordinarios y productivos, habilitan explícitamente la población sintética y paginan metadatos en lotes de 2,000. La matriz posterior pasó 8/8 sobre 36668da1; el ensayo de 32,768 sigue activo y no acredita todavía throughput.
@@ -100,6 +103,8 @@ Recibo: separar Voyage/JEV por raíz de Claude por número de grupos y vueltas; 
 
 ## Sorpresas y descubrimientos
 
+- El primer benchmark integral que completó toda la población conservó integridad y recuperabilidad, pero no velocidad: wall 67.54 s, 485.19 raíces/s. El setup de importación/preparación sintética tardó 827.58 s y se informa separado. Las duraciones de SQL y Signal se solapan; no se suman para inventar un tiempo de extremo a extremo.
+
 - El fixture ampliado también heredaba un máximo de ocho páginas de embeddings y 1,200 raíces de proyección; después alcanzó el lector productivo limitado a 2,000 IDs. Se conservan esos límites por omisión y se pagina el lector oficial. Todos esos fallos fueron anteriores a la medición JEV: no son pruebas de velocidad ni justifican reiniciar un proceso vivo por tiempo de espera.
 
 - El setup de 32,768 raíces heredaba páginas de tres, más de diez mil páginas de preparación antes de medir JEV. Se terminó expresamente esa corrida al identificar el parámetro y cambiar la fuente, conservando diagnóstico y comprobando rollback, cierre de sockets y cero envíos al proveedor. No fue un reinicio por falta de salida o duración. El ajuste se limita al ensayo sintético y no presenta como nueva una medición de importación del estudio real.
@@ -129,6 +134,8 @@ Recibo: separar Voyage/JEV por raíz de Claude por número de grupos y vueltas; 
 - El promedio del piloto completo incluye una etapa editorial que no escala por raíz. Multiplicarlo linealmente daba USD 205.81/millón; mantener explícitamente los grupos y una vuelta de referencia produce USD 114.035250. Ambos cálculos parten del mismo recibo, cuyo uso histórico permanece USD 17.280463.
 
 ## Registro de decisiones
+
+- 2026-11-14: rechazar la aceptación H1 de 36668da1 a pesar de 32,768 resultados íntegros. Investigar pausas y costo por fase sin relajar la meta de 1,000/s ni mover el inicio de la medición para ocultarlas. El léxico nuevo usa evidencia de tópicos de categoría y no vuelve a introducir T&B en la base; ningún término del estudio recibe un impulso manual en el ranking.
 
 - 2026-11-14: integrar la preparación y recuperación H2 sobre las cohortes H1 sin marcar toda la ventana como enviada. Incluir pruebas PostgreSQL de Escucha expresamente en CI; los skips esperados de suites sin entorno no sustituyen esas pruebas dedicadas.
 
