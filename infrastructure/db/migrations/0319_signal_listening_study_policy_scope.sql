@@ -146,7 +146,7 @@ BEGIN
  END IF;
  IF scope.workspace_id<>w THEN RETURN;END IF;
  allowed:=CASE action_key WHEN 'listening_discovery_review' THEN scope.discovery_cap_micro_usd WHEN 'study_analysis' THEN scope.study_cap_micro_usd WHEN 'topic_prototype_embeddings' THEN scope.prototype_cap_micro_usd END;
- IF action_key IN('listening_discovery_review','study_analysis') OR action_action_key='topic_prototype_embeddings' AND scope.prototype_cap_micro_usd IS NOT NULL THEN
+ IF action_key IN('listening_discovery_review','study_analysis') OR action_key='topic_prototype_embeddings' AND scope.prototype_cap_micro_usd IS NOT NULL THEN
   IF cap IS NULL OR cap<=0 OR cap>allowed THEN RAISE EXCEPTION 'r16_policy_scope_cap';END IF;
  END IF;
 END $$;
