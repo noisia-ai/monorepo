@@ -138,13 +138,13 @@ test('listening reuses question receipts across configuration versions with live
     request:lowRequest as unknown as Record<string,unknown>,inputs:[lowInput],reserved_micro_usd:1000}]),/cap_exhausted/);
    assert.equal((await database.query('SELECT count(*)::int n FROM signal_labeling_calls WHERE run_id=$1',[lowRun.id])).rows[0].n,0);
    await database.query('ROLLBACK TO SAVEPOINT cap_denied');await database.query('RELEASE SAVEPOINT cap_denied');
-   await database.query('SAVEPOINT config_stale');const stale=await start();
-   await saveSignalListeningConfigurationV1({...access,expected_revision:configuration.revision,provenance:'human',configuration:{...configuration.configuration,
+   const stale=await start();
+   // Exercise a real publication COMMIT. A savepoint-only fake COMMIT would
+   // give the configuration a subtransaction xmin, contrary to native 0307.
+   configuration=await saveSignalListeningConfigurationV1({...access,expected_revision:configuration.revision,provenance:'human',configuration:{...configuration.configuration,
     questions:configuration.configuration.questions.map(q=>q.key==='opinion'?{...q,text:'Changed after this run was admitted'}:q)}});
-   await database.query('SET CONSTRAINTS ALL IMMEDIATE');await database.query('SET CONSTRAINTS ALL DEFERRED');
    assert.equal(await store.claim(stale.run_id),null);
    assert.equal((await database.query('SELECT status FROM signal_labeling_runs WHERE id=$1',[stale.run_id])).rows[0].status,'failed');
-   await database.query('ROLLBACK TO SAVEPOINT config_stale');await database.query('RELEASE SAVEPOINT config_stale');
    await database.query('SAVEPOINT rights_revoked');
    await database.query("UPDATE data_sources SET status='archived' WHERE workspace_id=$1",[ctx.workspace_id]);
    try{const restricted=await readSignalListeningQuestionMetricsV1({...access,configuration_id:configuration.id,map_id:ctx.map_id,question_key:'opinion'});

@@ -108,7 +108,8 @@ async function seed(ctx:FixtureContext,files:string,options:FixtureOptions){
   return{manifest_json,manifest_sha256:sha(manifest_json),artifacts:[...artifacts].map(([name,bytes])=>({name,sha256:sha(bytes),size_bytes:bytes.length}))};
  }
  async function emptyNumeric(subset:ListeningDiscoveryAdvanceSubsetV1){assert.equal(subset.root_count,0);return numericReceipt(subset);}
- async function finishRound(round:money.ListeningDiscoveryRoundV1,approved=3){
+ async function finishRound(round:money.ListeningDiscoveryRoundV1,approved=3,
+  beforeChild?:(run_id:string,configuration:SignalListeningConfigurationV1)=>Promise<void>){
   const lease=await money.claimSignalListeningDiscoveryRoundV1({database:db,round_id:round.id});assert.ok(lease);
   const call=await money.reserveSignalListeningDiscoveryCallV1({database:db,lease,provider_available:true});assert.equal(await money.markSignalListeningDiscoveryCallSentV1({database:db,lease,call_id:call.id,attempt_token:call.attempt_token,provider_available:true}),true);
   const current=(await db.query<{configuration:SignalListeningConfigurationV1}>('SELECT configuration FROM signal_listening_configurations WHERE workspace_id=$1 AND id=$2',[ctx.workspace_id,round.configuration_id])).rows[0]!.configuration;
@@ -122,6 +123,7 @@ async function seed(ctx:FixtureContext,files:string,options:FixtureOptions){
   const applied=await money.applySignalListeningDiscoveryReviewV1({...access,round_id:round.id});assert.equal(applied.status,'classifying');
   const child=await money.prepareSignalListeningDiscoveryChildV1({...access,round_id:round.id,provider_available:true});assert.ok(child.listening_run_id);
   const next=(await db.query<{configuration:SignalListeningConfigurationV1}>('SELECT configuration FROM signal_listening_configurations WHERE id=$1',[applied.configuration_id])).rows[0]!.configuration;
+  await beforeChild?.(child.listening_run_id,next);
   await classify(child.listening_run_id,next,approved);return money.completeSignalListeningDiscoveryRoundV1({...access,round_id:round.id});
  }
  return{...access,map_id:ctx.map_id,cfg,confirmed,execution,policy,files,roots,storage,artifacts,remote,emptyNumeric,numericReceipt,finishRound,
