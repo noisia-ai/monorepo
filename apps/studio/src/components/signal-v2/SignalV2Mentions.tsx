@@ -57,6 +57,7 @@ import { SignalMetricHelp } from "./SignalMetricHelp";
 import { SignalSourceIcon } from "./SignalSourceIcon";
 import { SignalV2ModuleHeader } from "./SignalV2ModuleHeader";
 import { WorkspaceDrawer } from "@/components/workspace/WorkspaceShell";
+import {ListeningMentionActions,ListeningMentionLabels} from "@/components/brands/ListeningHumanActions";
 
 export type SignalNativeMentionsMetadata = {
   source?: "workspace_imported";
@@ -272,13 +273,15 @@ export function SignalV2Mentions({
     offset,
     sort = sortKey,
     query,
-    fresh = false
+    fresh = false,
+    focus
   }: {
     limit?: number;
     offset: number;
     sort?: MentionSortKey;
     query?: Partial<SignalNativeMentionsMetadata["filters"]>;
     fresh?: boolean;
+    focus?: string;
   }) => {
     pageRequestRef.current?.abort();
     const controller = new AbortController();
@@ -288,6 +291,7 @@ export function SignalV2Mentions({
     setPageError(null);
     try {
       const params = native ? nativeMentionQueryParams(data, query) : mentionQueryParams(data);
+      if(native&&focus)params.set("mention",focus);
       const parsedSort = mentionSortParams(sort);
       if (native) {
         if (!fresh && !query && sort === sortKey && limit === data.page.limit) {
@@ -326,13 +330,14 @@ export function SignalV2Mentions({
         const url = new URL(window.location.href);
         const canonical = nativeMentionQueryParams(payload);
         canonical.set("sort", "published"); canonical.set("direction", payload.native!.sort_direction);
+        if(focus)canonical.set("mention",focus);
         canonical.set("limit", String(payload.page.limit)); url.search = canonical.toString();
         window.history.replaceState(null, "", url);
       }
       onDataChange(payload);
       setEvidenceInvalidated(false);
       setSelectedIds([]);
-      setActiveRecord(null);
+      setActiveRecord(focus?payload.record??payload.records.find(record=>record.subject_id===focus)??null:null);
       return true;
     } catch (error) {
       if (controller.signal.aborted || epoch !== requestEpoch.current) return false;
@@ -617,6 +622,7 @@ export function SignalV2Mentions({
             />
           ) : (
             <MentionCards
+              showListening={Boolean(native)}
               timeZone={native ? data.filter.timezone : undefined}
               activeRecord={activeRecord}
               columns={visibleColumns}
@@ -674,6 +680,8 @@ export function SignalV2Mentions({
           record={activeRecord}
           timeZone={native ? data.filter.timezone : undefined}
           variant={native ? "workspace" : "signal"}
+          workspaceId={native?workspaceId:undefined}
+          onListeningSaved={native?()=>loadPage({offset:0,fresh:true,focus:activeRecord.subject_id}):undefined}
         />
       ) : null}
     </section>
@@ -687,6 +695,7 @@ function MentionCards({
   onSelect,
   records,
   selectedIds,
+  showListening,
   timeZone
 }: {
   activeRecord: SignalMentionRecordV1 | null;
@@ -695,6 +704,7 @@ function MentionCards({
   onSelect: (record: SignalMentionRecordV1) => void;
   records: SignalMentionRecordV1[];
   selectedIds: string[];
+  showListening: boolean;
   timeZone?: string;
 }) {
   const t = useTranslations("SignalV2");
@@ -740,6 +750,7 @@ function MentionCards({
               {columns.includes("published") ? <time>{formatDate(record.occurred_at, timeZone, timeZone ? locale : undefined)}</time> : null}
             </div>
             {columns.includes("context") ? <MentionContext record={record} /> : null}
+            {showListening&&record.listening_labels?<ListeningMentionLabels labels={record.listening_labels} compact/>:null}
             {columns.includes("engagement") ? (
               <footer>
                 <span>{t("mentions.table.engagement")}</span>
@@ -761,6 +772,8 @@ export function SignalMentionDetailDrawer({
   record,
   technicalContent,
   timeZone,
+  workspaceId,
+  onListeningSaved,
   variant = "signal"
 }: {
   footer?: ReactNode;
@@ -773,6 +786,8 @@ export function SignalMentionDetailDrawer({
   record: SignalMentionRecordV1;
   technicalContent?: ReactNode;
   timeZone?: string;
+  workspaceId?: string;
+  onListeningSaved?: ()=>Promise<boolean|void>;
   variant?: "operator" | "signal" | "workspace";
 }) {
   const t = useTranslations("SignalV2");
@@ -966,6 +981,11 @@ export function SignalMentionDetailDrawer({
           </section>
 
           {operatorContent}
+          {variant==="workspace"&&record.listening_labels?<>
+            <ListeningMentionLabels labels={record.listening_labels}/>
+            {workspaceId&&onListeningSaved?<ListeningMentionActions key={record.subject_id} workspaceId={workspaceId} rootId={record.subject_id}
+              labels={record.listening_labels} onSaved={onListeningSaved}/>:null}
+          </>:null}
           {variant === "workspace" ? null : (variant === "operator" ? operatorSections : signalSections).filter(Boolean)}
           {technicalContent}
     </WorkspaceDrawer>

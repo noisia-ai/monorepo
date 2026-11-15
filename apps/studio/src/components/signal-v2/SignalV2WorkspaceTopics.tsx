@@ -17,6 +17,7 @@ import { SignalEvidenceDrawer } from "./SignalEvidenceDrawer";
 import { SignalConsumerEvidence } from "./SignalConsumerEvidence";
 import { SignalTopicsKpi, SignalTopicsRankingCard, SignalTopicsRankingList } from "./SignalTopicsPrimitives";
 import { buildSignalTopicTrendOption } from "./SignalTopicChartOptions";
+import {PublishedListeningTopics} from "@/components/brands/ListeningHumanActions";
 
 const baseSections = ["topics", "narratives", "noise", "unresolved"] as const;
 type NativeTopicSection = typeof baseSections[number] | "interests";
@@ -75,7 +76,7 @@ export function SignalV2WorkspaceTopics(props: Omit<WorkspaceTopicsProps, "data"
 }
 
 function SignalImportedTopics({ data, loading, manageTopicsHref, onOpenMentions, onRefresh, refreshFailed }: Omit<WorkspaceTopicsProps, "data"> & { data: SignalWorkspaceImportedOverviewV1 }) {
-  const t = useTranslations("SignalV2");
+  const t = useTranslations("SignalV2"), tHuman = useTranslations("ListeningHuman");
   return <div className="signal-v2-tn signal-v2-tn--workspace">
     <SignalV2ModuleHeader icon={<Quotes size={20} weight="fill" />} title={t("workspaceTopics.title")}
       subtitle={t("imported.classificationPending")} status={t("imported.status")}
@@ -83,6 +84,8 @@ function SignalImportedTopics({ data, loading, manageTopicsHref, onOpenMentions,
       controls={<button className="signal-v2-filter" type="button" disabled={loading} onClick={() => void onRefresh?.()}>
         <ArrowClockwise size={16} />{t("workspaceTopics.refresh")}</button>} />
     {refreshFailed ? <div className="signal-v2-error" role="alert">{t("workspaceTopics.refreshError")}</div> : null}
+    <PublishedListeningTopics workspaceId={data.workspace_id} allowMerge disabled={loading} onSaved={onRefresh}/>
+    <h2 className="signal-v2-card__heading">{tHuman("legacyTitle")}</h2>
     <section className="signal-v2-tn__empty" aria-busy={loading} role="status">
       <Quotes size={24} aria-hidden /><strong>{t("imported.topicsTitle")}</strong>
       <p>{t("imported.topicsBody", { count: data.denominator })}</p>
@@ -92,7 +95,7 @@ function SignalImportedTopics({ data, loading, manageTopicsHref, onOpenMentions,
 }
 
 function SignalComputedWorkspaceTopics({ initialBundle, brandName, data, loading, manageTopicsHref, onApplyFilter, onRefresh, onConversationSegment, surface = "topics", onOpenTopics, onOpenMention, onOpenMentions, refreshFailed = false, workspaceTimezone }: WorkspaceTopicsProps) {
-  const t = useTranslations("SignalV2.workspaceTopics"), locale = useLocale();
+  const t = useTranslations("SignalV2.workspaceTopics"), locale = useLocale(), tHuman = useTranslations("ListeningHuman");
   const [selectedKey, setSelectedKey] = useState<string | null>(data.terms[0]?.term_key ?? null);
   const [termLimit, setTermLimit] = useState(50);
   const [section, setSection] = useState<NativeTopicSection>("topics");
@@ -245,6 +248,8 @@ function SignalComputedWorkspaceTopics({ initialBundle, brandName, data, loading
         <button className="signal-v2-filter" type="button" disabled={loading} onClick={() => void refresh()}><ArrowClockwise size={16} />{t("refresh")}</button>
         <span>{t("workspaceTimezone", { timezone: workspaceTimezone })}</span></>} />
     {refreshFailed ? <div className="signal-v2-error" role="alert">{t("refreshError")}</div> : null}
+    {surface === "topics" ? <><PublishedListeningTopics workspaceId={data.workspace_id} allowMerge disabled={loading} onSaved={refresh}/>
+      <h2 className="signal-v2-card__heading">{tHuman("legacyTitle")}</h2></> : null}
     {data.consumer_indicators ? <SignalWorkspaceConsumerIndicators data={data} loading={loading}
       workspaceTimezone={workspaceTimezone} onOpenMention={onOpenMention} /> : null}
     <div aria-busy={loading} className={`signal-v2-tn__data-stage${loading ? " signal-v2-dashboard-stage--loading" : ""}`}>
