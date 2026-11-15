@@ -9,6 +9,7 @@ import {createRoot} from 'react-dom/client';
 import {Simulate} from 'react-dom/test-utils';
 import {Window} from 'happy-dom';
 import * as intl from 'next-intl';
+import type {StudyOverviewV1} from './signal-study-api';
 import {signalListeningDateBoundaryV1} from './signal-listening-date';
 const browser=new Window({url:'https://studio.invalid'});
 Object.assign(globalThis,{window:browser,self:browser,document:browser.document,navigator:browser.navigator,HTMLElement:browser.HTMLElement,React,IS_REACT_ACT_ENVIRONMENT:true});
@@ -16,12 +17,13 @@ const en=JSON.parse(readFileSync(new URL('../../../messages/en-US.json',import.m
 const es=JSON.parse(readFileSync(new URL('../../../messages/es-MX.json',import.meta.url),'utf8'));
 const out:Record<string,unknown>={},pushes:string[]=[];
 const source=readFileSync(new URL('../../components/brands/StudioStudy.tsx',import.meta.url),'utf8');
-new Function('require','exports',ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText)((name:string)=>{
+new Function('require','exports',ts.transpileModule(source+'\nexport {StudyReport};',{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText)((name:string)=>{
  if(name==='@/lib/data-os/signal-listening-date')return{signalListeningDateBoundaryV1};
  if(name==='react')return react;if(name==='react/jsx-runtime')return jsx;if(name==='next-intl')return intl;
  if(name==='next/navigation')return{useRouter:()=>({push:(path:string)=>pushes.push(path)})};if(name==='next/link')return{default:({children,href}:{children:React.ReactNode;href:string})=><a href={href}>{children}</a>};throw Error(name);
 },out);
 const Detail=out.StudioStudyDetail as React.ComponentType<{workspaceId:string;studyId:string}>;
+const Report=out.StudyReport as React.ComponentType<{workspaceUrl:string;value:StudyOverviewV1;currentRevision:number|null;onPromote:(keys:string[])=>void;locked:boolean}>;
 const List=out.StudioStudyList as React.ComponentType<{workspaceId:string;brandId:string;brandName:string;timezone:string}>;
 const zero={trigger:0,barrier:0,mixed:0,none:0};
 function detail(status:string|null='completed'){
@@ -30,10 +32,10 @@ function detail(status:string|null='completed'){
   overview:status==='completed'?{execution_id:'execution',section_counts:{motives:1,topics:1,channels:1,series:1,evidence:1},overview:{summary:{denominator:240,figurative_or_ironic:3,other_use:1,subject_direction:{...zero,trigger:2},competitor_direction:zero,alternative_direction:zero,resolved_axes:240,unresolved_axes:0,layers:[{key:'social',mentions:2,share_of_cut:2/240,direction:{...zero,trigger:2}}],limitations:['Directional only']},query_bias:{status:'unknown_query_metadata'},stability:{estimation_status:'not_estimable',kappa:null}}}:null,
   processing_ready:true,can_edit:true,current_listening_revision:7};
 }
-function page(section:string){const rows=section==='motives'?[{key:'social_time',name:'Time together',layer:'social',permission:'partial',mentions:2,share_of_cut:2/240,subject:{...zero,trigger:2},competitor:zero,alternative:zero,mixed:0}]:section==='evidence'?[{display_text:'Beer with [person]',channel:'instagram',occurred_at:'2026-10-12',redacted:true,source_url:'https://example.test/post',root_id:'private-root',literal_sha256:'sha256:sealed'}]:[];return{section,offset:0,rows,total:rows.length,next_offset:null};}
+function page(section:string){const rows=section==='motives'?[{key:'social_time',name:'Time together',layer:'social',permission:'partial',mentions:2,share_of_cut:2/240,subject:{...zero,trigger:2},competitor:zero,alternative:zero,mixed:0}]:section==='topics'?[{motive_key:'social_time',aggregate:'subject',topic_key:'topic-marker',mentions:2}]:section==='channels'?[{motive_key:'social_time',aggregate:'subject',channel:'channel-marker',mentions:2}]:section==='series'?[{motive_key:'social_time',aggregate:'subject',date:'2026-10-15',direction:{...zero,trigger:2}}]:section==='evidence'?[{display_text:'Beer with [person]',channel:'instagram',occurred_at:'2026-10-12',redacted:true,source_url:'https://example.test/post',root_id:'private-root',literal_sha256:'sha256:sealed'}]:[];return{section,offset:0,rows,total:rows.length,next_offset:null};}
 function mount(element:React.ReactElement,messages=en,locale='en-US'){
  const host=document.createElement('div');document.body.appendChild(host);const root=createRoot(host);
- return{host,render:()=>act(async()=>{root.render(<intl.NextIntlClientProvider locale={locale} messages={messages} timeZone="UTC">{element}</intl.NextIntlClientProvider>);}),close:async()=>{await act(async()=>root.unmount());host.remove();}};
+ return{host,render:(next=element)=>act(async()=>{root.render(<intl.NextIntlClientProvider locale={locale} messages={messages} timeZone="UTC">{next}</intl.NextIntlClientProvider>);}),close:async()=>{await act(async()=>root.unmount());host.remove();}};
 }
 function button(host:HTMLElement,text:string){const result=[...host.querySelectorAll('button')].find(b=>b.textContent===text);assert.ok(result,text);return result;}
 test('native report mounts in both languages, loads bounded sections and shows only verified display evidence',async()=>{
@@ -101,5 +103,57 @@ test('creating a Study uses calendar dates in workspace timezone and the exact h
   await act(async()=>{m.host.querySelector('form')!.dispatchEvent(new browser.Event('submit',{bubbles:true,cancelable:true})as unknown as Event);});
   assert.ok(posted);assert.deepEqual(posted.cut,{start_at:'2026-10-01T03:00:00.000Z',end_at:'2026-11-01T03:00:00.000Z',timezone:'America/Sao_Paulo'});
   assert.deepEqual(posted.source,{binding_kind:'human_edit',snapshot_id:'effective-human-snapshot',configuration_id:'exact-config',configuration_digest:'digest'});assert.equal((posted.subject as {category:string}).category,'beer');assert.equal(pushes[before],'/studio/brands/brand/studies/created-study');
+ }finally{await m.close();globalThis.fetch=original;}
+});
+const sections=['motives','topics','channels','series','evidence']as const;
+const sectionMarker={motives:'Time together',topics:'topic-marker',channels:'channel-marker',series:'2026-10-15',evidence:'Beer with [person]'};
+function reportValue(execution='execution',configuration='config',study='study'){
+ return{...detail().overview!,study_id:study,configuration_id:configuration,execution_id:execution,source_digest:`source-${execution}`,output_digest:`output-${execution}`}as unknown as StudyOverviewV1;
+}
+function reportElement(value=reportValue(),workspaceUrl='/native/studies/study'){
+ return <Report workspaceUrl={workspaceUrl} value={value} currentRevision={7} onPromote={()=>{}} locked={false}/>;
+}
+function sectionButton(host:HTMLElement,section:typeof sections[number]){
+ const target=[...host.querySelectorAll('button')].find(b=>b.textContent?.startsWith(en.StudioStudy.section[section]));assert.ok(target);return target;
+}
+test('all heterogeneous Study report section transitions hide old rows before effects and defer the new format safely',async()=>{
+ const original=fetch;
+ try{for(const from of sections){for(const to of sections){if(from===to)continue;
+  let deferredSection:string|null=null,resolve!:(r:Response)=>void;
+  globalThis.fetch=async(input)=>{const section=new URL(String(input),'https://studio.invalid').searchParams.get('section')!;
+   return section===deferredSection?new Promise<Response>(r=>{resolve=r;}):Response.json(page(section));};
+  const m=mount(reportElement());try{await m.render();if(from!=='motives')await act(async()=>{sectionButton(m.host,from).click();});assert.ok(m.host.textContent?.includes(sectionMarker[from]),from);
+   deferredSection=to;await act(async()=>{sectionButton(m.host,to).click();});assert.ok(!m.host.textContent?.includes(sectionMarker[from]),`${from} rows must not render as ${to}`);assert.ok(m.host.textContent?.includes(en.StudioStudy.loading));
+   await act(async()=>resolve(Response.json(page(to))));assert.ok(m.host.textContent?.includes(sectionMarker[to]),`${from} → ${to}`);
+  }finally{await m.close();}
+ }}}finally{globalThis.fetch=original;}
+});
+test('late section responses, including an ABA return to the same section, cannot replace newer rows',async()=>{
+ const original=fetch;const pending:Array<{section:string;signal:AbortSignal|null|undefined;resolve:(r:Response)=>void}>=[];
+ globalThis.fetch=async(input,options)=>{const section=new URL(String(input),'https://studio.invalid').searchParams.get('section')!;
+  return new Promise<Response>(resolve=>pending.push({section,signal:options?.signal,resolve}));};
+ const m=mount(reportElement());try{await m.render();assert.equal(pending.length,1);
+  await act(async()=>{sectionButton(m.host,'series').click();});await act(async()=>{sectionButton(m.host,'motives').click();});assert.equal(pending.length,3);assert.equal(pending[0]!.signal?.aborted,true);assert.equal(pending[1]!.signal?.aborted,true);
+  const current={...page('motives'),rows:[{...page('motives').rows[0],name:'Newest motive'}]};await act(async()=>pending[2]!.resolve(Response.json(current)));assert.ok(m.host.textContent?.includes('Newest motive'));
+  await act(async()=>{pending[1]!.resolve(Response.json(page('series')));pending[0]!.resolve(Response.json(page('motives')));});assert.ok(m.host.textContent?.includes('Newest motive'));assert.ok(!m.host.textContent?.includes('Time together'));assert.ok(!m.host.textContent?.includes('2026-10-15'));
+ }finally{await m.close();globalThis.fetch=original;}
+});
+test('execution, Study, configuration and pagination identities reject stale pages without changing historical metadata',async()=>{
+ const original=fetch;const pending:Array<{url:URL;resolve:(r:Response)=>void;signal:AbortSignal|null|undefined}>=[];
+ globalThis.fetch=async(input,options)=>new Promise<Response>(resolve=>pending.push({url:new URL(String(input),'https://studio.invalid'),resolve,signal:options?.signal}));
+ const m=mount(reportElement());try{await m.render();const initial={...page('motives'),total:61,next_offset:30};await act(async()=>pending[0]!.resolve(Response.json(initial)));
+  await act(async()=>{button(m.host,en.StudioStudy.next).click();});assert.equal(pending[1]!.url.searchParams.get('offset'),'30');assert.ok(!m.host.textContent?.includes('Time together'));
+  const newer=reportValue('new-execution','historical-config','other-study');await m.render(reportElement(newer,'/native/studies/other-study'));assert.equal(pending[1]!.signal?.aborted,true);assert.equal(pending[2]!.url.searchParams.get('execution_id'),'new-execution');assert.ok(!m.host.textContent?.includes('Time together'));
+  const newPage={...page('motives'),offset:30,total:61,next_offset:60,rows:[{...page('motives').rows[0],name:'New execution page'}]};await act(async()=>pending[2]!.resolve(Response.json(newPage)));assert.ok(m.host.textContent?.includes('New execution page'));
+  const stale={...page('motives'),offset:30,total:61,next_offset:60,rows:[{...page('motives').rows[0],name:'Stale old execution'}]};await act(async()=>pending[1]!.resolve(Response.json(stale)));assert.ok(!m.host.textContent?.includes('Stale old execution'));
+  await act(async()=>{button(m.host,en.StudioStudy.previous).click();});assert.equal(pending[3]!.url.searchParams.get('offset'),'0');assert.ok(!m.host.textContent?.includes('New execution page'));
+  const mismatch={...page('motives'),offset:30};await act(async()=>pending[3]!.resolve(Response.json(mismatch)));assert.ok(m.host.querySelector('[role="alert"]'));assert.ok(!m.host.textContent?.includes('Time together'),'mismatched native page offset is rejected');
+ }finally{await m.close();globalThis.fetch=original;}
+});
+test('report tab changes preserve the historical Study subject, template version and cut labels',async()=>{
+ const original=fetch;const saved=detail();saved.configuration_is_latest=false;saved.configuration.study.subject.name='Historical category';saved.configuration.study.business_question='Historical business question';saved.configuration.study.methodology.version='human-revised-v3';
+ globalThis.fetch=async(input)=>{const section=new URL(String(input),'https://studio.invalid').searchParams.get('section');return Response.json(section?page(section):saved);};
+ const m=mount(<Detail workspaceId="workspace" studyId="study"/>);try{await m.render();const metadata=m.host.querySelector('dl')!.textContent;
+  for(const section of ['series','evidence','motives','channels','topics']as const){await act(async()=>sectionButton(m.host,section).click());assert.ok(m.host.textContent?.includes('Historical category'));assert.ok(m.host.textContent?.includes('Historical business question'));assert.ok(m.host.textContent?.includes('human-revised-v3'));assert.ok(m.host.textContent?.includes(en.StudioStudy.historicalSource));assert.equal(m.host.querySelector('dl')!.textContent,metadata);}
  }finally{await m.close();globalThis.fetch=original;}
 });

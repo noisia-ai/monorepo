@@ -103,19 +103,31 @@ export function StudioStudyDetail({workspaceId,studyId}:{workspaceId:string;stud
     <label className="admin-form-field">{t('cap')}<input type="number" min="0.000001" step="0.000001" required value={cap} onChange={e=>setCap(e.target.value)} disabled={mutation.locked}/></label><p>{t('capExplanation')}</p>
     <button disabled={!detail.processing_ready||!detail.can_edit||mutation.locked} type="submit">{t('run')}</button>
    </form>:null}
-   {detail.overview?<StudyReport workspaceUrl={url} value={detail.overview} currentRevision={detail.current_listening_revision} onPromote={keys=>void mutation.submit({operation:'promote',execution_id:detail.overview!.execution_id,motive_keys:keys,expected_listening_revision:detail.current_listening_revision})} locked={mutation.locked||!detail.can_edit}/>:detail.execution?.status==='completed'?<p role="alert">{t('outputUnavailable')}</p>:null}
+   {detail.overview?<StudyReport key={JSON.stringify([url,detail.overview.study_id,detail.overview.configuration_id,detail.overview.execution_id,detail.overview.output_digest,detail.overview.source_digest])} workspaceUrl={url} value={detail.overview} currentRevision={detail.current_listening_revision} onPromote={keys=>void mutation.submit({operation:'promote',execution_id:detail.overview!.execution_id,motive_keys:keys,expected_listening_revision:detail.current_listening_revision})} locked={mutation.locked||!detail.can_edit}/>:detail.execution?.status==='completed'?<p role="alert">{t('outputUnavailable')}</p>:null}
   </>}
   {mutation.phase==='uncertain'?<p role="alert">{t('uncertain')} <button onClick={()=>void mutation.submit(null)}>{t('retrySame')}</button></p>:mutation.phase==='failed'?<p role="alert">{t('mutationFailed')} <button onClick={()=>void load()}>{t('refresh')}</button></p>:mutation.phase==='saved'?<p role="status">{t('saved')}</p>:null}
  </section>;
 }
-type Page={section:SignalStudyReportSectionV1;rows:SignalStudyReportRowsV1[SignalStudyReportSectionV1];offset:number;next_offset:number|null;total:number};
+type Page={[S in SignalStudyReportSectionV1]:{section:S;rows:SignalStudyReportRowsV1[S];offset:number;next_offset:number|null;total:number}}[SignalStudyReportSectionV1];
 function StudyReport({workspaceUrl,value,currentRevision,onPromote,locked}:{workspaceUrl:string;value:StudyOverviewV1;currentRevision:number|null;onPromote:(keys:string[])=>void;locked:boolean}){
- const t=useTranslations('StudioStudy'),[section,setSection]=useState<SignalStudyReportSectionV1>('motives'),[offset,setOffset]=useState(0),[page,setPage]=useState<Page|null>(null),[error,setError]=useState(false),[retry,setRetry]=useState(0),[selected,setSelected]=useState<string[]>([]);
- const summary=value.overview.summary;
- useEffect(()=>{const c=new AbortController();setPage(null);setError(false);
-  void(async()=>{try{const r=await fetch(`${workspaceUrl}?execution_id=${encodeURIComponent(value.execution_id)}&section=${section}&offset=${offset}&limit=30`,{cache:'no-store',signal:c.signal});if(!r.ok)throw Error();const body=await r.json();if(!c.signal.aborted)setPage(body);}catch{if(!c.signal.aborted)setError(true);}})();
+ const t=useTranslations('StudioStudy'),[section,setSection]=useState<SignalStudyReportSectionV1>('motives'),[offset,setOffset]=useState(0),[loaded,setLoaded]=useState<{identity:string;page:Page}|null>(null),[errorIdentity,setErrorIdentity]=useState<string|null>(null),[retry,setRetry]=useState(0),[selected,setSelected]=useState<string[]>([]);
+ const sequence=useRef(0);
+ const identity=JSON.stringify([workspaceUrl,value.study_id,value.configuration_id,value.execution_id,value.output_digest,value.source_digest,section,offset,retry]);
+ // Effects run after render: old rows must already be hidden in the render that
+ // changes section, execution or pagination, before any request cleanup runs.
+ const page=loaded?.identity===identity&&loaded.page.section===section&&loaded.page.offset===offset?loaded.page:null;
+ const error=errorIdentity===identity,summary=value.overview.summary;
+ useEffect(()=>{const c=new AbortController(),request=++sequence.current;setErrorIdentity(null);
+  void(async()=>{try{
+   const response=await fetch(`${workspaceUrl}?execution_id=${encodeURIComponent(value.execution_id)}&section=${section}&offset=${offset}&limit=30`,{cache:'no-store',signal:c.signal});
+   if(!response.ok)throw Error();const body=await response.json() as Page;
+   if(c.signal.aborted||request!==sequence.current)return;
+   if(body.section!==section||body.offset!==offset||!Array.isArray(body.rows))throw Error('study_page_binding_invalid');
+   setLoaded({identity,page:body});
+  }catch{if(!c.signal.aborted&&request===sequence.current)setErrorIdentity(identity);}})();
   return()=>c.abort();
- },[workspaceUrl,value.execution_id,section,offset,retry]);
+ },[workspaceUrl,value.execution_id,section,offset,retry,identity]);
+ const move=(nextSection:SignalStudyReportSectionV1,nextOffset:number)=>{setLoaded(null);setErrorIdentity(null);setSection(nextSection);setOffset(nextOffset);};
  useEffect(()=>setSelected([]),[value.execution_id,currentRevision]);
  const directions=(counts:{trigger:number;barrier:number;mixed:number;none:number})=>(['trigger','barrier','mixed','none']as const).map(key=>`${t(`direction.${key}`)}: ${counts[key]}`).join(' · ');
  return <section><h3>{t('directional')}</h3><p>{t('denominator',{count:summary.denominator})}</p><p>{t('multilabel')}</p>
@@ -124,18 +136,18 @@ function StudyReport({workspaceUrl,value,currentRevision,onPromote,locked}:{work
   <h4>{t('layers')}</h4><ul>{summary.layers.map(layer=><li key={layer.key}>{t(`layer.${layer.key}`)}: {layer.mentions} · {(layer.share_of_cut*100).toFixed(1)}% · {directions(layer.direction)}</li>)}</ul>
   <p>{t('bias')}: {t(`biasValue.${value.overview.query_bias.status}`)}</p><p>{t(`biasReason.${value.overview.query_bias.status}`)}</p>{value.overview.query_bias.base_ratio!==null&&Number.isFinite(value.overview.query_bias.base_ratio)?<p>{t('baselineRatio',{subject:value.overview.query_bias.subject_roots,baseline:value.overview.query_bias.brand_baseline_roots,ratio:value.overview.query_bias.base_ratio})}</p>:null}<p>{t('stability')}: {value.overview.stability?.estimation_status==='complete'?String(value.overview.stability.kappa):t('notEstimable')}</p>
   <ul>{summary.limitations.map((text,index)=><li key={index}>{text}</li>)}</ul>
-  <div role="group" aria-label={t('sections')}>{(['motives','topics','channels','series','evidence']as const).map(key=><button key={key} aria-pressed={section===key} onClick={()=>{setSection(key);setOffset(0);}}>{t(`section.${key}`)} ({value.section_counts[key]})</button>)}</div>
+  <div role="group" aria-label={t('sections')}>{(['motives','topics','channels','series','evidence']as const).map(key=><button key={key} aria-pressed={section===key} onClick={()=>move(key,0)}>{t(`section.${key}`)} ({value.section_counts[key]})</button>)}</div>
   {error?<p role="alert">{t('loadFailed')} <button onClick={()=>setRetry(prior=>prior+1)}>{t('refresh')}</button></p>:null}
   {!page&&!error?<p role="status">{t('loading')}</p>:null}
   {page?.rows.length===0?<p>{t('emptySection')}</p>:null}
-  {page&&section==='motives'?<><ul>{(page.rows as SignalStudyReportRowsV1['motives']).map(row=><li key={row.key}>
+  {page?.section==='motives'?<><ul>{page.rows.map(row=><li key={row.key}>
    <label className="admin-form-field"><input type="checkbox" checked={selected.includes(row.key)} disabled={locked||currentRevision===null} onChange={e=>setSelected(prior=>e.target.checked?[...prior,row.key]:prior.filter(k=>k!==row.key))}/>{row.name}</label> · {t(`layer.${row.layer}`)} · {t(`permission.${row.permission}`)} · {row.mentions} · {(row.share_of_cut*100).toFixed(1)}%
    <p>{t('subjectDirection')}: {directions(row.subject)}</p><p>{t('competitorDirection')}: {directions(row.competitor)}</p><p>{t('alternativeDirection')}: {directions(row.alternative)}</p><p>{t('tensions',{count:row.mixed})}</p>{row.permission_override_reason?<p>{t('permissionOverride')}: {row.permission_override_reason}</p>:null}
   </li>)}</ul><p>{t('promoteExplanation')}</p><button disabled={!selected.length||locked||currentRevision===null} onClick={()=>onPromote(selected)}>{t('promote')}</button></>:null}
-  {page&&section==='topics'?<ul>{(page.rows as SignalStudyReportRowsV1['topics']).map((row,index)=><li key={index}>{row.motive_key} · {row.topic_key} · {t(`aggregate.${row.aggregate}`)}: {row.mentions}</li>)}</ul>:null}
-  {page&&section==='channels'?<ul>{(page.rows as SignalStudyReportRowsV1['channels']).map((row,index)=><li key={index}>{row.motive_key} · {row.channel} · {t(`aggregate.${row.aggregate}`)}: {row.mentions}</li>)}</ul>:null}
-  {page&&section==='series'?<ul>{(page.rows as SignalStudyReportRowsV1['series']).map((row,index)=><li key={index}>{row.date} · {row.motive_key} · {t(`aggregate.${row.aggregate}`)}: {directions(row.direction)}</li>)}</ul>:null}
-  {page&&section==='evidence'?<ul>{(page.rows as SignalStudyReportRowsV1['evidence']).map((row,index)=><li key={index}><blockquote>{row.display_text}</blockquote><p>{row.channel} · {row.occurred_at} {row.redacted?t('redacted'):null}</p>{/^https?:\/\//u.test(row.source_url)?<a href={row.source_url} target="_blank" rel="noreferrer noopener">{t('source')}</a>:null}</li>)}</ul>:null}
-  {page?<div><button disabled={offset===0} onClick={()=>setOffset(Math.max(0,offset-30))}>{t('previous')}</button> <span>{Math.min(offset+1,page.total)}–{Math.min(offset+30,page.total)} / {page.total}</span> <button disabled={page.next_offset===null} onClick={()=>setOffset(page.next_offset!)}>{t('next')}</button></div>:null}
+  {page?.section==='topics'?<ul>{page.rows.map((row,index)=><li key={index}>{row.motive_key} · {row.topic_key} · {t(`aggregate.${row.aggregate}`)}: {row.mentions}</li>)}</ul>:null}
+  {page?.section==='channels'?<ul>{page.rows.map((row,index)=><li key={index}>{row.motive_key} · {row.channel} · {t(`aggregate.${row.aggregate}`)}: {row.mentions}</li>)}</ul>:null}
+  {page?.section==='series'?<ul>{page.rows.map((row,index)=><li key={index}>{row.date} · {row.motive_key} · {t(`aggregate.${row.aggregate}`)}: {directions(row.direction)}</li>)}</ul>:null}
+  {page?.section==='evidence'?<ul>{page.rows.map((row,index)=><li key={index}><blockquote>{row.display_text}</blockquote><p>{row.channel} · {row.occurred_at} {row.redacted?t('redacted'):null}</p>{/^https?:\/\//u.test(row.source_url)?<a href={row.source_url} target="_blank" rel="noreferrer noopener">{t('source')}</a>:null}</li>)}</ul>:null}
+  {page?<div><button disabled={offset===0} onClick={()=>move(section,Math.max(0,offset-30))}>{t('previous')}</button> <span>{Math.min(offset+1,page.total)}–{Math.min(offset+30,page.total)} / {page.total}</span> <button disabled={page.next_offset===null} onClick={()=>move(page.section,page.next_offset!)}>{t('next')}</button></div>:null}
  </section>;
 }
