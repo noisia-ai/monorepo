@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { mkdtemp, mkdir, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
-import { buildBlindPackageV1, LISTENING_COHORTS_V1, validatePacketV1, verifyBlindPackageV1, writeBlindPackageV1, type BlindSnapshotV1 } from "./blind-package.js";
+import { buildBlindPackageV1, LISTENING_COHORTS_V1, validatePacketV1, validateSnapshotV1, verifyBlindPackageV1, writeBlindPackageV1, type BlindSnapshotV1 } from "./blind-package.js";
 
 const seed = "synthetic-seed-for-r16-blind-package-tests-2026";
 const digest = "a".repeat(64);
@@ -65,6 +65,18 @@ test("same synthetic snapshot and custody seed produce identical blind packets a
   const publicMetadata = JSON.stringify({ manifest: a.manifest, packets: a.packets.map(p => ({ packet_ref: p.packet_ref, cases: p.cases.map(c => c.blind_id) })) });
   assert.doesNotMatch(publicMetadata, /TAX|T01|M\d{2}|N-C\d{2}|LB-C\d{2}|LA-C\d{2}/u);
   assert.notDeepEqual(a.manifest.strata.map(x => x.packet_ref), a.manifest.strata.map(x => x.packet_ref).slice().sort());
+});
+
+test("snapshot preserves an externally configured methodology version while validating its digest", () => {
+  const snapshot = syntheticSnapshot();
+  snapshot.study_provenance.methodology_template_version = "synthetic-external-r16";
+  assert.equal(validateSnapshotV1(snapshot).study_provenance.methodology_template_version, "synthetic-external-r16");
+  assert.throws(() => validateSnapshotV1({ ...snapshot, study_provenance: { ...snapshot.study_provenance,
+    methodology_template_version: " " } }), /blind_snapshot_invalid/u);
+  assert.throws(() => validateSnapshotV1({ ...snapshot, study_provenance: { ...snapshot.study_provenance,
+    methodology_template_version: "v".repeat(81) } }), /blind_snapshot_invalid/u);
+  assert.throws(() => validateSnapshotV1({ ...snapshot, study_provenance: { ...snapshot.study_provenance,
+    methodology_template_digest: "not-a-digest" } }), /blind_snapshot_invalid/u);
 });
 
 test("private answer key carries identity and labels while blind payloads omit them", () => {

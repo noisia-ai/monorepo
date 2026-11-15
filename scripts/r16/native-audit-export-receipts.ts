@@ -1,7 +1,9 @@
 import { signalWorkspaceEmbeddingDigestV1 as digest } from "../../packages/query-engine/src/signal-workspace-embeddings-v1.js";
 type Client = { query<T extends Record<string, unknown> = Record<string, unknown>>(sql: string, values?: unknown[]): Promise<{ rows: T[] }> };
 type Generation = { id: string; workspace_id: string; map_id: string; configuration_id: string; preparation_run_id: string };
-type Study = { id: string; workspace_id: string; listening_source_round_id: string };
+type Study = { id: string; workspace_id: string; listening_source_kind: string; listening_source_id: string;
+  listening_base_snapshot_id: string; listening_configuration_id: string; listening_source_generation_id: string;
+  listening_source_round_id: string; listening_source_digest: string };
 type Event = { ledger: string; call_id: string; stage: string; status: string; settled_micro_usd: string | null;
   reserved_micro_usd: string | null; started_at: Date | string | null; ended_at: Date | string | null; timing_granularity: "call" | "run" };
 
@@ -46,18 +48,94 @@ export function nativeWallSpanV1(intervals: Iterable<{ started_at: Date | string
   return count ? maxEnd - minStart : null;
 }
 
-export async function loadNativeReceiptEvidenceV1(client: Client, before: Generation, after: Generation, study: Study) {
+type NativeFinancialBaseSnapshotV1 = { id: string; workspace_id: string; map_id: string; configuration_id: string;
+  generation_id: string; round_id: string; snapshot_digest: string; actual_snapshot_digest: string; generation_configuration_id: string;
+  generation_snapshot_digest: string; generation_actual_digest: string; generation_source_current: boolean;
+  generation_configuration_digest: string; generation_configuration: Record<string, unknown>; generation_configuration_state: string;
+  generation_status: string; generation_kind: string };
+type NativeHumanEditV1 = { id: string; workspace_id: string; base_snapshot_id: string; source_configuration_id: string;
+  configuration_id: string; source_generation_id: string; generation_id: string; map_id: string; source_digest: string;
+  source_generation_digest: string; snapshot_digest: string; actual_snapshot_digest: string; generation_human_edit_id: string;
+  generation_status: string; generation_snapshot_digest: string; generation_actual_digest: string; generation_source_current: boolean;
+  configuration_digest: string; configuration: Record<string, unknown>; configuration_state: string };
+
+export function nativeListeningFinancialAnchorV1(args: { source: Study; base: NativeFinancialBaseSnapshotV1 | null;
+  after: Generation & { snapshot_digest: string | null }; human_edit: NativeHumanEditV1 | null }):
+  { generation_id: string; round_id: string; base_snapshot_id: string; source_kind: "serving" | "human_edit" } | null {
+  const { source, base, after, human_edit: edit } = args;
+  if (!base || base.id !== source.listening_base_snapshot_id || base.workspace_id !== source.workspace_id
+    || base.map_id !== after.map_id || base.generation_configuration_id !== base.configuration_id
+    || base.generation_status !== "ready" || base.generation_kind !== "confirmed_members" || !base.generation_source_current
+    || base.generation_snapshot_digest !== base.generation_actual_digest || base.generation_configuration_state !== "published"
+    || digest(base.generation_configuration) !== base.generation_configuration_digest
+    || !/^sha256:[a-f0-9]{64}$/u.test(base.snapshot_digest) || base.snapshot_digest !== base.actual_snapshot_digest
+    || base.round_id !== source.listening_source_round_id
+    || source.listening_configuration_id !== base.configuration_id && source.listening_source_kind === "serving"
+    || source.listening_source_generation_id !== (source.listening_source_kind === "serving" ? base.generation_id : edit?.generation_id)
+    || after.id !== source.listening_source_generation_id || after.workspace_id !== source.workspace_id || after.map_id !== base.map_id) return null;
+  if (source.listening_source_kind === "serving") {
+    if (source.listening_source_id !== base.id || source.listening_source_digest !== base.snapshot_digest
+      || after.configuration_id !== base.configuration_id || after.snapshot_digest !== base.generation_snapshot_digest) return null;
+    return { generation_id: base.generation_id, round_id: base.round_id, base_snapshot_id: base.id, source_kind: "serving" };
+  }
+  if (source.listening_source_kind !== "human_edit" || !edit || source.listening_source_id !== edit.id
+    || edit.workspace_id !== source.workspace_id || edit.base_snapshot_id !== base.id || edit.map_id !== base.map_id
+    || edit.source_configuration_id !== base.configuration_id || edit.source_generation_id !== base.generation_id
+    || edit.source_generation_digest !== base.generation_snapshot_digest || edit.source_digest !== base.snapshot_digest
+    || edit.configuration_id !== source.listening_configuration_id || edit.generation_id !== source.listening_source_generation_id
+    || edit.snapshot_digest !== source.listening_source_digest || edit.actual_snapshot_digest !== edit.snapshot_digest
+    || edit.generation_human_edit_id !== edit.id || edit.generation_status !== "ready"
+    || edit.generation_snapshot_digest !== edit.generation_actual_digest || !edit.generation_source_current
+    || edit.configuration_state !== "published" || digest(edit.configuration) !== edit.configuration_digest
+    || after.configuration_id !== edit.configuration_id || after.snapshot_digest !== edit.generation_snapshot_digest) return null;
+  return { generation_id: base.generation_id, round_id: base.round_id, base_snapshot_id: base.id, source_kind: "human_edit" };
+}
+
+export async function loadNativeReceiptEvidenceV1(client: Client, before: Generation, after: Generation & { snapshot_digest: string | null }, study: Study) {
   const events: Event[] = [], limitations = new Set<string>();
   const manifest: Record<string, unknown> = { contract_version: "r16-native-ledger-receipts-v1", deduplication: "ledger+call_id",
     generation_preparation_run_ids: [before.preparation_run_id, after.preparation_run_id] };
-  const parents = (await client.query<{ id: string; workspace_id: string; map_id: string; initial_configuration_id: string;
+  const base = (await client.query<NativeFinancialBaseSnapshotV1>(`SELECT s.id,s.workspace_id,s.map_id,s.configuration_id,s.generation_id,s.round_id,s.snapshot_digest,
+      signal_labeling_digest_v1(jsonb_build_object('workspace_id',s.workspace_id,'execution_id',s.execution_id,'round_id',s.round_id,
+        'map_id',s.map_id,'configuration_id',s.configuration_id,'generation_id',s.generation_id,'classification_run_id',s.classification_run_id)) actual_snapshot_digest,
+      g.configuration_id generation_configuration_id,g.snapshot_digest generation_snapshot_digest,
+      signal_listening_discovery_digest_v1(g.id) generation_actual_digest,
+      signal_listening_discovery_source_current_v1(g.id) generation_source_current,
+      cfg.configuration_digest generation_configuration_digest,cfg.configuration generation_configuration,cfg.state generation_configuration_state,
+      g.status generation_status,g.kind generation_kind
+    FROM signal_listening_serving_snapshots s JOIN signal_listening_discovery_generations g
+      ON g.workspace_id=s.workspace_id AND g.id=s.generation_id JOIN signal_listening_configurations cfg
+      ON cfg.workspace_id=g.workspace_id AND cfg.id=g.configuration_id
+    WHERE s.workspace_id=$1 AND s.id=$2`, [study.workspace_id, study.listening_base_snapshot_id])).rows[0] ?? null;
+  const humanEdit = study.listening_source_kind === "human_edit"
+    ? (await client.query<NativeHumanEditV1>(`SELECT h.id,h.workspace_id,h.base_snapshot_id,h.source_configuration_id,h.configuration_id,
+        h.source_generation_id,h.generation_id,h.map_id,h.source_digest,h.source_generation_digest,h.snapshot_digest,
+        signal_labeling_digest_v1(jsonb_build_object('contract_version','signal-listening-human-snapshot-v1','workspace_id',h.workspace_id,
+          'base_snapshot_id',h.base_snapshot_id,'configuration_id',h.configuration_id,'configuration_digest',cfg.configuration_digest,
+          'generation_id',h.generation_id,'revision',h.revision,'operation',h.operation,'payload',h.payload)) actual_snapshot_digest,
+        g.human_edit_id generation_human_edit_id,g.status generation_status,g.snapshot_digest generation_snapshot_digest,
+        signal_listening_discovery_digest_v1(g.id) generation_actual_digest,signal_listening_discovery_source_current_v1(g.id) generation_source_current,
+        cfg.configuration_digest,cfg.configuration,cfg.state configuration_state
+      FROM signal_listening_human_edits h JOIN signal_listening_configurations cfg
+        ON cfg.workspace_id=h.workspace_id AND cfg.id=h.configuration_id
+      JOIN signal_listening_discovery_generations g ON g.workspace_id=h.workspace_id AND g.id=h.generation_id
+      WHERE h.workspace_id=$1 AND h.id=$2`, [study.workspace_id, study.listening_source_id])).rows[0] ?? null
+    : null;
+  const financialAnchor = nativeListeningFinancialAnchorV1({ source: study, base, after, human_edit: humanEdit });
+  if (!financialAnchor) limitations.add("listening_financial_anchor_invalid");
+  manifest.listening_financial_anchor = financialAnchor ? { source_kind: financialAnchor.source_kind,
+    base_snapshot_id: financialAnchor.base_snapshot_id, generation_id: financialAnchor.generation_id, round_id: financialAnchor.round_id,
+    effective_source_id: study.listening_source_id, effective_source_digest: study.listening_source_digest }
+    : { source_kind: study.listening_source_kind, base_snapshot_id: study.listening_base_snapshot_id,
+      generation_id: study.listening_source_generation_id, round_id: study.listening_source_round_id, verified: false };
+  const parents = financialAnchor ? (await client.query<{ id: string; workspace_id: string; map_id: string; initial_configuration_id: string;
     initial_generation_id: string; initial_classification_run_id: string; initial_preparation_id: string | null;
     configuration_digest: string; root_census_digest: string; root_count: number; status: string }>(`SELECT e.id,e.workspace_id,e.map_id,e.initial_configuration_id,
       e.initial_generation_id,e.initial_classification_run_id,e.initial_preparation_id,e.configuration_digest,e.root_census_digest,e.root_count,e.status
     FROM signal_listening_discovery_executions e WHERE e.workspace_id=$1 AND e.map_id=$2
       AND (e.initial_generation_id=$3 OR EXISTS(SELECT 1 FROM signal_listening_discovery_rounds r WHERE r.execution_id=e.id AND (r.input_generation_id=$3 OR r.output_generation_id=$3)))
       AND (e.initial_generation_id=$4 OR EXISTS(SELECT 1 FROM signal_listening_discovery_rounds r WHERE r.execution_id=e.id AND (r.input_generation_id=$4 OR r.output_generation_id=$4)))
-    ORDER BY e.id LIMIT 2`, [before.workspace_id, before.map_id, before.id, after.id])).rows;
+    ORDER BY e.id LIMIT 2`, [before.workspace_id, before.map_id, before.id, financialAnchor.generation_id])).rows : [];
   let runIds: string[] = [], prepIds: string[] = [];
   if (parents.length !== 1) {
     limitations.add("listening_parent_missing_or_ambiguous"); manifest.listening_parent_match_count = parents.length;
@@ -69,10 +147,10 @@ export async function loadNativeReceiptEvidenceV1(client: Client, before: Genera
         configuration_id,configuration_digest,source_digest,output_configuration_id,output_digest,
         classification_run_id,classification_preparation_id,status FROM signal_listening_discovery_rounds
       WHERE workspace_id=$1 AND execution_id=$2 ORDER BY ordinal,id`, [before.workspace_id, parent.id])).rows;
-    const verifiedPath = parent.workspace_id === before.workspace_id && parent.workspace_id === after.workspace_id
+    const verifiedPath = !!financialAnchor && parent.workspace_id === before.workspace_id && parent.workspace_id === after.workspace_id
       && parent.map_id === before.map_id && parent.map_id === after.map_id
       ? nativeListeningRoundPathV1({ initial_generation_id: parent.initial_generation_id, before_generation_id: before.id,
-        after_generation_id: after.id, after_round_id: study.listening_source_round_id, rounds }) : null;
+        after_generation_id: financialAnchor.generation_id, after_round_id: financialAnchor.round_id, rounds }) : null;
     const path = verifiedPath?.rounds ?? [];
     let ancestryProofValid = false;
     if (verifiedPath) {
@@ -125,7 +203,8 @@ export async function loadNativeReceiptEvidenceV1(client: Client, before: Genera
         classification_preparation_id: r.classification_preparation_id })), generation_path_complete: !!verifiedPath && ancestryProofValid,
       before_generation_index: verifiedPath?.before_generation_index ?? null,
       after_generation_index: verifiedPath?.after_generation_index ?? null,
-      generation_ids: verifiedPath?.generation_ids ?? null, listening_source_round_id: study.listening_source_round_id,
+      generation_ids: verifiedPath?.generation_ids ?? null, listening_source_round_id: financialAnchor?.round_id ?? study.listening_source_round_id,
+      listening_source_kind: study.listening_source_kind, listening_base_snapshot_id: study.listening_base_snapshot_id,
       root_census_digest: parent.root_census_digest,
       child_run_count: children.length };
     if (parent.status !== "completed") limitations.add("listening_parent_not_completed");
@@ -256,7 +335,7 @@ export async function loadNativeReceiptEvidenceV1(client: Client, before: Genera
   const allCostKnown = calls.length > 0 && calls.every(terminal), allTimeKnown = calls.length > 0 && calls.every(e => e.started_at !== null && e.ended_at !== null);
   const allCost = allCostKnown ? calls.reduce((n, e) => n + BigInt(e.settled_micro_usd ?? "0"), 0n) : null;
   const reserve = calls.reduce((n, e) => n + BigInt(terminal(e) ? "0" : e.reserved_micro_usd ?? "0"), 0n);
-  const reserveUnknownCodes = new Set(["listening_parent_missing_or_ambiguous", "listening_generation_path_incomplete", "listening_generation_path_ambiguous",
+  const reserveUnknownCodes = new Set(["listening_financial_anchor_invalid", "listening_parent_missing_or_ambiguous", "listening_generation_path_incomplete", "listening_generation_path_ambiguous",
     "listening_generation_ancestry_proof_invalid",
     "listening_sonnet_round_receipt_missing", "listening_labeling_run_source_missing", "listening_labeling_run_not_completed",
     "listening_preparation_source_missing", "listening_voyage_run_source_missing", "listening_voyage_run_not_completed",

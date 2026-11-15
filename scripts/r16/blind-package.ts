@@ -60,7 +60,9 @@ export function validateSnapshotV1(value: unknown): BlindSnapshotV1 {
   if (s.contract_version !== "r16-blind-snapshot-v1" || !Number.isFinite(Date.parse(s.exported_at))
     || !s.source || typeof s.source.export_contract !== "string" || !s.source.export_contract.trim() || !HASH_RE.test(s.source.export_digest)
     || !s.study_provenance || !HASH_RE.test(s.study_provenance.listening_before_digest) || !HASH_RE.test(s.study_provenance.listening_after_digest)
-    || s.study_provenance.study_contract_version !== "signal-study-v1" || s.study_provenance.methodology_template_version !== "r16-v1"
+    || s.study_provenance.study_contract_version !== "signal-study-v1"
+    || typeof s.study_provenance.methodology_template_version !== "string"
+    || !s.study_provenance.methodology_template_version.trim() || s.study_provenance.methodology_template_version.length > 80
     || !/^sha256:[a-f0-9]{64}$/u.test(s.study_provenance.methodology_template_digest)
     || !s.study_guidance || typeof s.study_guidance.subject_context !== "string" || !s.study_guidance.subject_context.trim()
     || !validOptions(s.study_guidance.direction_options, DIRECTIONS) || !validOptions(s.study_guidance.target_options, TARGETS)

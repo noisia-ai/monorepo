@@ -230,7 +230,10 @@ export async function exportNativeAuditSnapshotV1(args: NativeAuditExportArgsV1)
     const studyRows = await loadStudyRows(client, study, config, after, privacyEvidence);
     const membershipEvidence = await loadNativeMembershipEvidence(client, study, studyRows);
     const receiptRows = await loadNativeReceiptEvidenceV1(client, before, after,
-      { id: study.id, workspace_id: study.workspace_id, listening_source_round_id: study.frozen_source_round_id });
+      { id: study.id, workspace_id: study.workspace_id, listening_source_kind: study.frozen_source_kind,
+        listening_source_id: study.frozen_source_id, listening_base_snapshot_id: study.frozen_base_snapshot_id,
+        listening_configuration_id: study.frozen_configuration_id, listening_source_generation_id: study.frozen_generation_id,
+        listening_source_round_id: study.frozen_source_round_id, listening_source_digest: study.frozen_source_digest });
     return { before, after, study, config, listening, studyRows, membershipEvidence, receiptRows, privacyEvidence };
   });
 
