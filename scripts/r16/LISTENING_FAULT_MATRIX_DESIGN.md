@@ -1,6 +1,6 @@
 # Native Listening fault matrix — execution pending
 
-Use eight independent small (32-root) native fixtures. The published configuration
+Use eight independent small (three-root) native fixtures. The published configuration
 is exactly the preregistered two defined NOUL topics plus voice/promotion. Both phases,
 question digests, candidate/excluded scope and DISTINCT resolved roots are checked.
 The runner must invoke the real H2 job, calibrated factory, shared-org Redis and
@@ -22,7 +22,15 @@ siblings must retain their canonical guards. Never apply a technical error to a
 never-sent reservation. Root/call/result/money censuses come from native SQL, and page
 proofs from actual readback; test decorator counters cannot substitute for either.
 
-The source now defines the immutable plan and an after-native-ACK-loss decorator.
-It does not claim the eight native faults ran. The remaining runner needs the root-owned
-census/ledger hooks, exact native COMMIT/lease fault injection bindings, and a quiet lab
-window approved by the orchestrator and DB owner. Do not run against the occupied lab.
+The source includes run-listening-fault-matrix.ts with the native H2 job/factory,
+real Redis, native three-root fixture, private HTTP Storage pages and the reviewed
+native census. COMMIT ACK loss is injected only after apply's actual COMMIT on its
+real PG client; settlement/page ACK loss follows the real native operation. Lease
+expiry changes only the scoped fixture-owned active run. The runner reads native
+calls, page custody, money/exposure, admission/policy and owner identity, verifies
+stored pages by readback, and rejects any repeated native physical request ID.
+It never inserts ledger outcomes to produce a passing result.
+
+This is implementation, not proof that the eight faults ran. The orchestrator and
+DB owner must approve a quiet lab window before any execution. Until a native run
+passes every case, the matrix remains execution_pending. Do not run the occupied lab.

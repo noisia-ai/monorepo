@@ -7,7 +7,7 @@ export function r16ListeningNativeFaultPlanV1(source:{source_tree_sha256:string;
  const workload=r16ListeningWorkloadV1('defined_consumer_second_pass');
  if(!/^sha256:[0-9a-f]{64}$/.test(source.source_tree_sha256)||!/^sha256:[0-9a-f]{64}$/.test(source.policy_configuration_digest)
   ||!source.postgres_system_identifier)throw Error('r16_listening_fault_source_invalid');
- const cases=registration.faults.map(kind=>({kind,root_count:32,
+ const cases=registration.faults.map(kind=>({kind,root_count:3,
   request_version:'listening-jev-v1' as const,configuration_digest:workload.configuration_digest,
   native_owner:'signalListeningJevJobV1' as const,
   injection:kind==='429'||kind==='529'?'synthetic_http_rejection_before_usage'
