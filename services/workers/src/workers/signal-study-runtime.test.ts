@@ -293,3 +293,21 @@ test('flag flip during markSent preserves the sent reservation and prevents phys
  assert.equal((await signalStudyRuntimeJobV1(f.execution_id,{...f,should_stop:()=>stopped})).status,'outcome_unknown');
  assert.equal(f.sends.length,physicalBeforeMark);assert.equal([...f.journal.values()][0]!.status,'sent');
 });
+
+test('native receipt persistence reports unknown or sent as outcome_unknown before pending custody and never retries',async()=>{
+ for(const state of['unknown','sent']as const){
+  const f=fixture(),persist=f.store.persistReceipt,send=f.drivers.send;let settlements=0;
+  f.drivers.send=async(...args)=>({...await send(...args),http_status:529,complete:false});
+  f.store.persistReceipt=async(...args)=>{await persist(...args);f.journal.get(args[1].key)!.status=state;};
+  f.store.settle=async()=>{settlements++;return'settled';};
+  assert.equal((await signalStudyRuntimeJobV1(f.execution_id,f)).status,'outcome_unknown',state);
+  const count=f.sends.length;assert.equal(f.sends.filter(p=>p.kind==='sonnet').length,1);
+  assert.equal((await signalStudyRuntimeJobV1(f.execution_id,f)).status,'outcome_unknown',state);
+  assert.equal(f.sends.length,count);assert.equal(settlements,0);assert.equal(f.output,undefined);
+ }
+ const mismatch=fixture(),persist=mismatch.store.persistReceipt;let settlements=0;
+ mismatch.store.persistReceipt=async(...args)=>{await persist(...args);const journal=mismatch.journal.get(args[1].key)!;
+  journal.receipt={...journal.receipt!,sha256:'sha256:'+'0'.repeat(64)};};
+ mismatch.store.settle=async()=>{settlements++;return'settled';};
+ assert.equal((await signalStudyRuntimeJobV1(mismatch.execution_id,mismatch)).status,'receipt_pending');assert.equal(settlements,0);
+});

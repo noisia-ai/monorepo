@@ -195,6 +195,7 @@ export async function signalStudyRuntimeJobV1(execution_id:string,options:{store
      receipt=await drivers.send(plan,abort.signal);
     }catch(error){await store.unknown(lease,plan,'study_physical_outcome_unknown').catch(()=>undefined);throw error;}
     await store.persistReceipt(lease,plan,receipt);journal=await store.step(lease,plan);
+    if(journal?.status==='unknown'||journal?.status==='sent')throw new Paused('outcome_unknown');
     if(!journal?.receipt||journal.status!=='raw'||digest(journal.receipt)!==digest(receipt))throw new Paused('receipt_pending');
    }
    if(journal.status!=='raw'||!journal.receipt)throw new Paused('receipt_pending');
