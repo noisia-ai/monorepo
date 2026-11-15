@@ -144,3 +144,40 @@ test('a native agent publication racing a human edit shares configuration CAS an
  }else assert.equal((await api.getSignalListeningHumanEditContextV1(access)).can_edit,false,'agent result needs a legitimate new native execution before editing');
  assert.deepEqual(await history(f),before);
 }));
+
+test('prepare estimates exclude only human decisions for the exact input, context, question and revision',{
+ skip:!enabled,timeout:600000,
+},async()=>completed(async f=>{
+ const api=await import('../signal-listening-human-edits'),runs=await import('../signal-listening-runs');
+ const access={database:f.database,workspace_id:f.workspace_id,actor_user_id:f.actor_user_id},ctx=await api.getSignalListeningHumanEditContextV1(access),key=ctx.configuration.questions.find(q=>q.topic_source==='discovered')!.key;
+ const removed=await api.correctSignalListeningTopicMembershipV1({...access,expected:ctx.expected,root_id:f.roots[0]!,from_question_key:key,idempotency_key:randomUUID()});
+ const before=await history(f);const stop='synthetic_estimate_only_rollback';
+ async function estimate(configuration_id:string,changedInput=false,legacyRevision=false){
+  let observed:{roots:number;chars:string}|undefined;
+  const database={...f.database,query:f.database.query.bind(f.database),connect:async()=>{
+   const client=await f.database.connect();return new Proxy(client,{get(target,property){
+    if(property!=='query'){const value=Reflect.get(target,property);return typeof value==='function'?value.bind(target):value;}
+    return async(sql:string,params?:unknown[])=>{
+     if(sql.includes('COALESCE(sum(length(body)+length(wire::text)+512),0)::text chars')){
+      // An estimate-only synthetic pending stream, evaluated by real Postgres.
+      // The source inputs/rights/decision are native; original answers and calls
+      // stay untouched, and the public request rolls back before any admission.
+      const projected=sql.replace(/FROM (signal_listening_population_v1\([^\n]+?\)) p/u,
+       `FROM (SELECT root_id,body,wire,candidate,scope_state,question_digest,${changedInput?"'sha256:'||repeat('0',64)":"input_digest"} input_digest,NULL::jsonb answer FROM $1 source WHERE source.question_key=$6 AND source.root_id=ANY($5::uuid[])) p`);
+      const nativeParams=[...params!];if(legacyRevision)nativeParams[1]=ctx.expected.configuration_id;
+      observed=(await target.query(projected,[...nativeParams,f.roots.slice(0,2),key])).rows[0];throw Error(stop);
+     }
+     return target.query(sql,params);
+    };
+   }}) as typeof client;
+  }};
+  await assert.rejects(runs.requestSignalListeningV1({...access,database,configuration_id,map_id:f.map_id,cap_micro_usd:1000000,idempotency_key:randomUUID(),provider_available:true}),new RegExp(stop));
+  assert.ok(observed,'public prepare must evaluate its native cost estimate');return observed;
+ }
+ assert.equal((await estimate(removed.configuration_id)).roots,1,'the matching manual root needs no new provider estimate');
+ assert.equal((await estimate(removed.configuration_id,true)).roots,2,'a changed input remains eligible');
+ // Replay the captured estimate SELECT for the old revision; no request or
+ // admission is created for that historical configuration.
+ assert.equal((await estimate(removed.configuration_id,false,true)).roots,2,'the old revision must retain its original pending estimate');
+ assert.deepEqual(await history(f),before,'estimate rehearsals must not create admissions, calls or costs');
+}));

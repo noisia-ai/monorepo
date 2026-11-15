@@ -82,7 +82,8 @@ export async function requestSignalListeningV1(args:SignalListeningAccessV1&{con
    if((await c.query<{blocked:boolean}>('SELECT signal_listening_prior_outcome_unresolved_v1($1,$2,$3,$4) blocked',[workspace,stored.id,map.id,map.entity_context_digest])).rows[0]?.blocked)fail('listening_prior_outcome_unresolved');
    const stats=(await c.query<{roots:number;chars:string}>(`SELECT count(DISTINCT root_id)::int roots,
     COALESCE(sum(length(body)+length(wire::text)+512),0)::text chars FROM ${population} p
-    WHERE candidate AND scope_state<>'excluded' AND answer IS NULL`,[workspace,stored.id,map.id,map.entity_context_digest])).rows[0]!;
+    WHERE candidate AND scope_state<>'excluded' AND answer IS NULL
+     AND NOT signal_listening_human_decision_exists_v1($1::uuid,$2::uuid,$3::uuid,p.root_id,p.input_digest,$4::text,p.question_digest)`,[workspace,stored.id,map.id,map.entity_context_digest])).rows[0]!;
    return {roots:stats.roots,estimated_micro_usd:Math.ceil(Number(stats.chars)*4*.042),concept_set_digest:stored.configuration_digest,
     snapshot:{contract_version:'signal-listening-run-v1',configuration_id:stored.id,configuration_digest:stored.configuration_digest,
      map_id:map.id,map_digest:map.map_digest,full_corpus:true}};
