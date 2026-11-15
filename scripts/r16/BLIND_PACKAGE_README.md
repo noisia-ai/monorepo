@@ -40,6 +40,8 @@ The native exporter uses exact source IDs, current native ownership/rights helpe
 
 Private JSON persistence and canonical hashing use bounded chunks, avoiding one monolithic JSON string. Each sink write is at most 64 KiB of UTF-8, including the trailing newline. Collectors and the sampler still retain their source arrays in memory. The writer validates the admitted JSON types before creating output files, rejects executable/custom objects without invoking them, and publishes new private files atomically without overwriting an existing artifact.
 
+For a native export that may exceed Node's single-string limit, pass the returned `snapshot` directly to `writeBlindPackageFromExportedSnapshotV1`, together with its `snapshotPath`, the private `seedPath`, `packageDir` and separate `custodyKeyPath`. This programmatic path captures and freezes the plain JSON snapshot before any asynchronous work, verifies its exact serialized bytes against the persisted private file as a stream, then uses that same snapshot for sampling. A mismatch publishes neither package nor key. It rejects mutable builtins such as Date; native exports already contain ISO timestamps. The CLI build path above retains its ordinary JSON file parser and is suitable for snapshots that fit that parser.
+
 ## Sampling and audit boundaries
 
 - Listening uses 500 distinct mentions in each stage, 50 per volume cohort. The whole package deduplicates source identities across both stages; when the two stage exports share the same mention IDs, the second stage can therefore report a shortfall. Shortfalls are explicit; records are never duplicated to reach quota.

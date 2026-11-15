@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { readFile, rm, stat } from "node:fs/promises";
+import { readFile, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 import { withSignalStudyFixtureV1 } from "../../infrastructure/db/migrations/signal-study.synthetic.fixture.js";
 import { withStudyNativeRuntimeV1 } from "../../infrastructure/db/migrations/signal-study-runtime.synthetic.fixture.js";
-import { buildBlindPackageV1 } from "./blind-package.js";
+import { buildBlindPackageV1, writeBlindPackageFromExportedSnapshotV1, verifyBlindPackageV1 } from "./blind-package.js";
 import { exportNativeAuditSnapshotV1 } from "./native-audit-export.js";
 
 const enabled = process.env.NOISIA_R16_NATIVE_AUDIT_EXPORT_PG === "true";
@@ -59,13 +59,24 @@ test("native audit export binds the exact synthetic Listening pair and completed
     assert.ok(source.author_privacy_rosters.length > 0);
     assert.equal((await stat(exported.snapshot_path)).mode & 0o077, 0);
     assert.equal((await stat(exported.source_manifest_path)).mode & 0o077, 0);
-    const blind = buildBlindPackageV1(exported.snapshot, `synthetic-native-audit-seed-${randomUUID()}-not-client-data`);
+    const seed = `synthetic-native-audit-seed-${randomUUID()}-not-client-data`;
+    const blind = buildBlindPackageV1(exported.snapshot, seed);
     const packetText = JSON.stringify(blind.packets);
     assert.doesNotMatch(packetText, new RegExp(f.workspace_id, "u"));
     assert.doesNotMatch(packetText, new RegExp(f.actor_user_id, "u"));
     assert.doesNotMatch(packetText, new RegExp(execution.id, "u"));
     assert.ok(blind.manifest.strata.every(row => Number.isInteger(row.shortfall) && row.shortfall >= 0),
       "fixture shortfalls remain explicit; this acceptance test does not claim sample-quality completion");
+    const seedPath = join(privateDir, "seed.txt"), packageDir = join(privateDir, "auditor");
+    const keyPath = join(privateDir, "custody", "answer-key.json");
+    await writeFile(seedPath, seed, { mode: 0o600, flag: "wx" });
+    const published = await writeBlindPackageFromExportedSnapshotV1({ snapshot: exported.snapshot,
+      snapshotPath: exported.snapshot_path, seedPath, packageDir, custodyKeyPath: keyPath });
+    assert.equal(published.complete, blind.manifest.completeness === "complete");
+    assert.equal(published.shortfallCount, blind.manifest.shortfall_count);
+    assert.equal((await verifyBlindPackageV1(packageDir)).valid, true);
+    assert.equal((await stat(keyPath)).mode & 0o077, 0);
+    assert.equal((await stat(packageDir)).mode & 0o077, 0);
 
     await assert.rejects(exportNativeAuditSnapshotV1({ database: f.database, workspace_id: f.workspace_id, actor_user_id: f.actor_user_id,
       listening_before_generation_id: f.confirmed.id, listening_after_generation_id: afterRow.generation_id,
