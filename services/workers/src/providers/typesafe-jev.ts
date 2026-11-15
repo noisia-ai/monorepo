@@ -12,6 +12,16 @@ export class JevProviderErrorV1 extends Error {
     super(code); this.name = 'JevProviderErrorV1';
   }
 }
+// Only this transport can attest that cancellation happened before fetch.
+// The witness is process-local identity, never a field accepted from JSON,
+// an HTTP response, an adapter or an error with the same public code.
+const preFetchCanceled=new WeakSet<JevProviderErrorV1>();
+function canceledBeforeFetch(){
+  const error=new JevProviderErrorV1('jev_send_canceled','definitely_not_sent');preFetchCanceled.add(error);return error;
+}
+export function isJevPreFetchCancellationV1(error:unknown):boolean{
+  return error instanceof JevProviderErrorV1&&error.code==='jev_send_canceled'&&error.outcome==='definitely_not_sent'&&preFetchCanceled.has(error);
+}
 export function jevProviderErrorV1(error: unknown): JevProviderErrorV1 {
   return error instanceof JevProviderErrorV1 ? error : new JevProviderErrorV1('jev_transport_unknown', 'outcome_unknown');
 }
@@ -71,12 +81,12 @@ export function createTypesafeJevClientV1(options: {
       body = JSON.stringify(request);
     } catch { throw new JevProviderErrorV1('jev_request_invalid', 'definitely_not_sent'); }
     const signal = cancellation.signal;
-    if (signal?.aborted) throw new JevProviderErrorV1('jev_send_canceled', 'definitely_not_sent');
+    if (signal?.aborted) throw canceledBeforeFetch();
     if (active >= concurrency) await new Promise<void>((resolve, reject) => {
       const ready = () => { signal?.removeEventListener('abort', cancel); resolve(); };
       const cancel = () => {
         const index = waiting.indexOf(ready);
-        if (index >= 0) { waiting.splice(index, 1); reject(new JevProviderErrorV1('jev_send_canceled', 'definitely_not_sent')); }
+        if (index >= 0) { waiting.splice(index, 1); reject(canceledBeforeFetch()); }
       };
       waiting.push(ready); signal?.addEventListener('abort', cancel, { once: true });
     }); else active++;
@@ -89,12 +99,12 @@ export function createTypesafeJevClientV1(options: {
       if (options.rate_limiter && options.estimate_input_tokens) {
         if (rateUnavailable) throw new JevProviderErrorV1('jev_rate_limiter_unavailable', 'definitely_not_sent');
         try { reservation = await options.rate_limiter.acquire(options.estimate_input_tokens(request), signal); }
-        catch { throw new JevProviderErrorV1(signal?.aborted ? 'jev_send_canceled' : 'jev_rate_limiter_unavailable', 'definitely_not_sent'); }
+        catch { throw signal?.aborted?canceledBeforeFetch():new JevProviderErrorV1('jev_rate_limiter_unavailable','definitely_not_sent'); }
       } else if (localCooldownUntil > Date.now()) {
         try { await sleep(localCooldownUntil - Date.now(), undefined, { signal }); }
-        catch { throw new JevProviderErrorV1('jev_send_canceled', 'definitely_not_sent'); }
+        catch { throw canceledBeforeFetch(); }
       }
-      if (signal?.aborted) throw new JevProviderErrorV1('jev_send_canceled', 'definitely_not_sent');
+      if (signal?.aborted) throw canceledBeforeFetch();
       start = performance.now(); timer = setTimeout(() => controller.abort(), timeout); timer.unref?.();
       const response = await (options.fetch ?? fetch)('https://api.typesafe.ai/v1/systemone', {
         method: 'POST', redirect: 'error', signal: controller.signal,

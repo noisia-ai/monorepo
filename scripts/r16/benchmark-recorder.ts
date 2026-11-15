@@ -3,7 +3,7 @@ import type { R16BenchmarkEvidenceV1, R16PhaseSpanV1, R16PhaseV1, R16RawPageRece
 
 type FinalEvidenceInputs = Pick<R16BenchmarkEvidenceV1, "postgres" | "signal" | "guards" | "invariants"
   | "max_buffered_bytes_allowed" | "max_in_flight_allowed" | "max_flushes_allowed" | "source_provenance"
-  | "policy_configuration_digest">;
+  | "policy_configuration_digest" | "policy_limits">;
 
 /** Monotonic, content-free recorder to wrap the product worker/store APIs. */
 export class R16BenchmarkRecorderV1 {

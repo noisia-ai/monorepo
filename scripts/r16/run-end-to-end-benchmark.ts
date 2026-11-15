@@ -21,6 +21,8 @@ const connectionPath = resolve(privateRoot, "labs/benchmark-pg17/connection.env"
 const redisPath = resolve(privateRoot, "labs/r16-lab-nov14/connection.env");
 type FaultMatrixV1 = { completed_at: string; case_count: number; postgres: { system_identifier: string };
   source_provenance: R16BenchmarkEvidenceV1["source_provenance"]; policy_configuration_digest: string;
+  policy_cases: Array<{case:string;admission_id:string;policy_version_id:string;policy_digest:string;
+    execution_cap_micro_usd:string;daily_cap_micro_usd:string;action_max_execution_micro_usd:string}>;
   failures: R16BenchmarkEvidenceV1["failures"]; guards: { policy_denials: number; budget_denials: number; denied_requests_not_sent: number };
   invariants: { duplicate_settlements: number; denied_provider_requests: number } };
 async function loadPrivateEnv(path: string): Promise<Record<string, string>> {
@@ -98,6 +100,7 @@ let sampleDb: DbLike | undefined;
 let sampleRunId = "";
 let sampleRootCount = 0;
 let streamMetrics = { in_flight: 0, reserved_working_bytes: 0, buffered_responses: 0, active_flushes: 0 };
+let policyLimits: R16BenchmarkEvidenceV1["policy_limits"] | undefined;
 const observeStream = (metrics: typeof streamMetrics) => {
   streamMetrics = metrics;
   recorder.observeStream(metrics);
@@ -144,11 +147,14 @@ try {
       const labelerDigest = String(labeler.rows[0]?.labeler_digest ?? "");
       if (!/^sha256:[0-9a-f]{64}$/u.test(labelerDigest)) throw new Error("r16_labeler_digest_missing");
       const policyRow = await db.query(`SELECT admission.action,admission.configuration,admission.configuration_digest,
+          admission.execution_cap_micro_usd::text execution_cap,
           admission.provider,admission.model,policy.id::text policy_version_id,policy.policy_digest,
-          policy.daily_cap_micro_usd::text policy_daily_cap,action.max_execution_micro_usd::text policy_max_execution
+          policy.daily_cap_micro_usd::text policy_daily_cap,action.max_execution_micro_usd::text policy_max_execution,
+          workspace.organization_id::text organization_id,admission.budget_date::text budget_date,policy.budget_timezone
         FROM signal_labeling_runs run JOIN signal_processing_admissions admission ON admission.id=run.processing_admission_id
         JOIN signal_processing_policy_versions policy ON policy.id=admission.policy_version_id
         JOIN signal_processing_policy_actions action ON action.policy_version_id=policy.id AND action.action=admission.action
+        JOIN signal_workspaces workspace ON workspace.id=run.workspace_id
         WHERE run.id=$1::uuid`, [context.run_id]);
       const policy = policyRow.rows[0];
       if (!policy) throw new Error("r16_policy_provenance_missing");
@@ -157,13 +163,29 @@ try {
         model:String(policy.model), policy_daily_cap_micro_usd:String(policy.policy_daily_cap),
         policy_digest:String(policy.policy_digest), policy_max_execution_micro_usd:String(policy.policy_max_execution),
         policy_version_id:String(policy.policy_version_id), provider:String(policy.provider) });
+      assert.equal(policy.action, "mass_labeling_jev");
+      assert.ok(BigInt(String(policy.execution_cap)) > 0n
+        && BigInt(String(policy.execution_cap)) <= BigInt(String(policy.policy_max_execution))
+        && BigInt(String(policy.execution_cap)) <= BigInt(String(policy.policy_daily_cap)));
       const candidates = (await readdir(privateRoot)).filter(name => /^fault-matrix-\d+-[a-f0-9]{8}\.json$/u.test(name)).sort();
       const newest = candidates.at(-1);
       if (!newest) throw new Error("r16_fault_matrix_missing");
       const faultMatrix = JSON.parse(await readFile(resolve(privateRoot, newest), "utf8")) as FaultMatrixV1;
       const ageMs = Date.now() - Date.parse(faultMatrix.completed_at);
+      const expectedFaultCases = new Set(["429","529","raw_page_write","postgres_commit","settlement_ack_lost",
+        "worker_restart_after_page","lease_expiry","lease_expiry_after_durable"]);
       if (!Number.isFinite(ageMs) || ageMs < 0 || ageMs > 2 * 60 * 60 * 1_000
         || faultMatrix.case_count !== 8
+        || faultMatrix.policy_cases.length !== 8
+        || new Set(faultMatrix.policy_cases.map(item => item.case)).size !== 8
+        || faultMatrix.policy_cases.some(item => !expectedFaultCases.has(item.case) || !item.admission_id || !item.policy_version_id
+          || !/^sha256:[0-9a-f]{64}$/u.test(item.policy_digest)
+          || !/^(0|[1-9][0-9]*)$/u.test(item.execution_cap_micro_usd)
+          || !/^(0|[1-9][0-9]*)$/u.test(item.action_max_execution_micro_usd)
+          || !/^(0|[1-9][0-9]*)$/u.test(item.daily_cap_micro_usd)
+          || BigInt(item.execution_cap_micro_usd) <= 0n
+          || BigInt(item.action_max_execution_micro_usd) < BigInt(item.execution_cap_micro_usd)
+          || BigInt(item.daily_cap_micro_usd) < BigInt(item.execution_cap_micro_usd))
         || faultMatrix.postgres.system_identifier !== String(identity.rows[0]?.system_identifier)
         || JSON.stringify(faultMatrix.source_provenance) !== JSON.stringify(sourceProvenance)
         || faultMatrix.policy_configuration_digest !== policyConfigurationDigest) {
@@ -253,6 +275,15 @@ try {
         || Number(summary.active) !== 0 || Number(summary.missing_receipts) !== 0 || Number(summary.completed) !== 1) {
         throw new Error("r16_product_pipeline_invariants_failed");
       }
+      const costEvidence = await db.query(`SELECT COALESCE(sum(settled_micro_usd),0)::text settled
+        FROM signal_labeling_calls WHERE run_id=$1::uuid`, [context.run_id]);
+      const dailyExposure = await db.query(`SELECT total_micro_usd::text exposure
+        FROM signal_processing_org_exposure_v1($1::uuid,$2::date,$3::text)`,
+      [policy.organization_id,policy.budget_date,policy.budget_timezone]);
+      policyLimits = { execution_cap_micro_usd:String(policy.execution_cap),
+        action_max_execution_micro_usd:String(policy.policy_max_execution),daily_cap_micro_usd:String(policy.policy_daily_cap),
+        settled_micro_usd:String(costEvidence.rows[0]?.settled ?? "0"),
+        daily_exposure_micro_usd:String(dailyExposure.rows[0]?.exposure ?? "0") };
       const disk = storageServer.metrics();
       if (disk.object_puts < pages.length || disk.object_gets < pages.length || disk.bytes_written !== disk.bytes_read) {
         throw new Error("r16_storage_readback_metrics_incomplete");
@@ -263,6 +294,7 @@ try {
       const phaseSpans = spans;
       const measured = recorder.finish({
         source_provenance: sourceProvenance, policy_configuration_digest: policyConfigurationDigest,
+        policy_limits: policyLimits!,
         postgres: { verified_version: String(identity.rows[0]?.verified_version), database_name: String(identity.rows[0]?.database_name),
           container_name: "r16-benchmark-pg17", system_identifier: String(identity.rows[0]?.system_identifier),
           loopback_binding: true, pgvector: true,

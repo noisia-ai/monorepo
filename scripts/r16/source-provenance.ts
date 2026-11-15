@@ -35,9 +35,8 @@ export async function captureR16SourceProvenanceV1(repo: string) {
 export function r16PolicyConfigurationDigestV1(args: { action: string; configuration: unknown;
   configuration_digest: string; model: string; policy_daily_cap_micro_usd: number | string;
   policy_digest: string; policy_max_execution_micro_usd: number | string; policy_version_id: string; provider: string }): string {
+  // Fingerprint the stable action/provider configuration. The native policy digest
+  // is recorded separately because it includes per-clone policy-version metadata.
   return sha256(JSON.stringify({ action: args.action, configuration: args.configuration,
-    configuration_digest: args.configuration_digest, model: args.model,
-    policy_daily_cap_micro_usd: String(args.policy_daily_cap_micro_usd), policy_digest: args.policy_digest,
-    policy_max_execution_micro_usd: String(args.policy_max_execution_micro_usd), policy_version_id: args.policy_version_id,
-    provider: args.provider }));
+    configuration_digest: args.configuration_digest, model: args.model, provider: args.provider }));
 }

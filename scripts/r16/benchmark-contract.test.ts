@@ -9,6 +9,8 @@ function completeEvidence(): R16BenchmarkEvidenceV1 {
     source_provenance: { head_sha: "a".repeat(40), source_tree_sha256: `sha256:${sha256HexV1(JSON.stringify(fileManifest.map(file => [file.path, file.sha256])))}`,
       tree_status_sha256: `sha256:${"c".repeat(64)}`, file_count: fileManifest.length, file_manifest: fileManifest },
     policy_configuration_digest: `sha256:${"d".repeat(64)}`,
+    policy_limits: { execution_cap_micro_usd:"20000000", action_max_execution_micro_usd:"20000000",
+      daily_cap_micro_usd:"100000000", settled_micro_usd:"100", daily_exposure_micro_usd:"100" },
     started_at: "2026-11-14T10:00:00.000Z", ended_at: "2026-11-14T10:00:20.000Z",
     wall_elapsed_ms: 20_000, sustained_start_ms: 0,
     provider: { kind: "synthetic", requests: 20_000, latency_ms: Array.from({ length: 20_000 }, (_, index) => [100, 250, 500][index % 3]!),
@@ -108,6 +110,14 @@ test("R16 harness rejects missing raw receipts and financial/data integrity regr
   const result = summarizeR16BenchmarkV1(evidence);
   assert.ok(result.rejected_reasons.includes("durable_raw_receipt_count_incomplete"));
   assert.ok(result.rejected_reasons.includes("pipeline_integrity_invariant_failed"));
+});
+
+test("R16 acceptance verifies observed spend against native execution and daily caps", () => {
+  const evidence = completeEvidence();
+  evidence.policy_limits.settled_micro_usd = "20000001";
+  evidence.policy_limits.daily_exposure_micro_usd = "100000001";
+  const result = summarizeR16BenchmarkV1(evidence);
+  assert.ok(result.rejected_reasons.includes("native_budget_cap_exceeded"));
 });
 
 test("R16 harness rejects duplicate or missing physical provider requests", () => {
