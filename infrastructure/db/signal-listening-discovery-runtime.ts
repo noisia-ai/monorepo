@@ -102,7 +102,8 @@ export async function canScheduleSignalListeningDiscoveryAnalysisV1(args:{databa
         AND policy.status='active' AND policy.valid_from<=clock_timestamp() AND policy.valid_until>clock_timestamp()
       JOIN signal_listening_configurations cfg ON cfg.id=COALESCE(r.output_configuration_id,r.configuration_id) AND cfg.workspace_id=r.workspace_id
         AND cfg.state='published' AND cfg.revision=(SELECT max(revision) FROM signal_listening_configurations WHERE workspace_id=r.workspace_id AND state='published')
-      WHERE r.id=$1::uuid AND r.status IN('queued','reviewing','reviewed','classifying','outcome_unknown') AND p.status='active'
+      WHERE r.id=$1::uuid AND r.status IN('queued','reviewing','reviewed','classifying','outcome_unknown')
+        AND(p.status='active' OR p.status='outcome_unknown' AND signal_listening_discovery_child_recovery_eligible_v1(r.id))
         AND signal_listening_discovery_exposure_v1(p.id)<=p.cap_micro_usd`,[args.round_id])).rows[0];
     if(!row)return false;
     try{

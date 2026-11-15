@@ -191,3 +191,19 @@ test('raw adapter uses production immutable multipart upload and authenticated c
   const key=[...objects.keys()].find(key=>key.includes('.part-'))!;objects.set(key,Buffer.from('corrupt'));
   await assert.rejects(store.load(stored),/workspace_engine_storage_/);
 });
+
+test('native child recovery state is retained without completing or repeating the paid review',async()=>{
+ for(const recovery_pending of [true,false]){
+  const h=harness();
+  h.stores.prepareChild=async()=>({id:ids.preparation,status:'failed',listening_run_id:ids.run,
+   discovery_round_status:'outcome_unknown',recovery_pending} as never);
+  const result=await h.run();assert.equal(result.status,'waiting_child_recovery');
+  assert.equal('recovery_pending' in result&&result.recovery_pending,recovery_pending);
+  assert.equal(h.state.sends,1);assert.equal(h.state.liquidations,1);assert.equal(h.state.completes,0);assert.equal(h.state.activates,0);
+ }
+ for(const status of ['failed','stale'] as const){
+  const h=harness();h.stores.prepareChild=async()=>({id:ids.preparation,status:'completed',listening_run_id:ids.run,
+   discovery_round_status:status,recovery_pending:false} as never);
+  assert.equal((await h.run()).status,status==='stale'?'stale':'child_failed');assert.equal(h.state.completes,0);assert.equal(h.state.activates,0);
+ }
+});

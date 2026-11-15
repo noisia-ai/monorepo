@@ -162,6 +162,9 @@ for(const mode of ['incomplete','utf8','nul','overcap','revoked','concurrent_rev
    const observed=await prepareSignalListeningDiscoveryChildV1({...access,round_id:round.id,provider_available:true});assert.equal(observed.status,'failed');
    const state=(await db.query('SELECT r.status round_status,p.status parent_status FROM signal_listening_discovery_rounds r JOIN signal_listening_discovery_executions p ON p.id=r.execution_id WHERE r.id=$1',[round.id])).rows[0];
    assert.equal(state.round_status,mode==='child_failed'?'failed':'outcome_unknown');assert.equal(state.parent_status,state.round_status);assert.equal((await db.query('SELECT signal_listening_discovery_child_recovery_eligible_v1($1) eligible',[round.id])).rows[0].eligible,mode==='child_recovery');
+   const {pendingSignalListeningDiscoveryRoundsV1}=await import('../signal-listening-discovery-money');
+   assert.equal((await pendingSignalListeningDiscoveryRoundsV1({database:db,enabled:true,limit:1})).some(row=>row.round_id===round.id),
+    mode==='child_recovery','the dispatcher schedules only actual recoverable child outcomes, not settled-review evidence alone');
    if(mode==='child_recovery'){
     const resumed=await store.claim(child.id);assert.ok(resumed);await store.calls(resumed);
     await store.settlePage(resumed,childOutcomes.map(o=>({call:o.call,usage:jevUsageV1({input_tokens:120,output_tokens:20}),settled_micro_usd:6})));

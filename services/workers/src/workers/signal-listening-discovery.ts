@@ -160,7 +160,9 @@ export async function signalListeningDiscoveryJobV1(round_id:string,options:List
       provider_available:env.NOISIA_SIGNAL_LISTENING_ENABLED==='true'&&env.NOISIA_JEV_STREAMING_V2_ENABLED==='true'
         &&env.NOISIA_JEV_PROVIDER_ENABLED!=='false'&&Boolean(env.TYPESAFE_API_KEY?.trim()),
       prototype_provider_available:env.NOISIA_WORKSPACE_EMBEDDINGS_PROVIDER_ENABLED==='true'&&Boolean(env.VOYAGE_API_KEY?.trim())});
-    if(child.status==='failed')return{round_id,status:'child_failed' as const};
+    if(child.discovery_round_status==='outcome_unknown')return{round_id,status:'waiting_child_recovery' as const,recovery_pending:child.recovery_pending};
+    if(child.discovery_round_status==='stale')return{round_id,status:'stale' as const};
+    if(child.discovery_round_status==='failed'||child.status==='failed')return{round_id,status:'child_failed' as const};
     if(child.status!=='completed')return{round_id,status:'waiting_child' as const,preparation_id:child.id,run_id:child.listening_run_id};
     const completed=await stores.complete({...access,round_id});
     await stores.activate({...access,round_id});return{round_id,status:'completed' as const,stop_decision:completed.stop_decision};

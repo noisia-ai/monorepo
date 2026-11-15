@@ -416,9 +416,10 @@ export async function pendingSignalListeningDiscoveryRoundsV1(args:{database:Sig
      AND(custody.call_state='response_persisted' OR custody.call_state<>'settled' AND EXISTS(
        SELECT 1 FROM signal_listening_discovery_raw_receipts raw WHERE raw.call_id=custody.id AND raw.verification_status='planned'))) financial_pending
    FROM signal_listening_discovery_rounds r JOIN signal_listening_discovery_executions p ON p.id=r.execution_id
-   WHERE(r.status IN('queued','reviewing','reviewed','classifying') OR r.status='outcome_unknown' AND EXISTS(
-     SELECT 1 FROM engine_cost_events c WHERE c.listening_round_id=r.id AND(c.call_state IN('response_persisted','settled') OR EXISTS(
+   WHERE(r.status IN('queued','reviewing','reviewed','classifying') OR r.status='outcome_unknown' AND (
+     EXISTS(SELECT 1 FROM engine_cost_events c WHERE c.listening_round_id=r.id AND(c.call_state='response_persisted' OR c.call_state<>'settled' AND EXISTS(
        SELECT 1 FROM signal_listening_discovery_raw_receipts raw WHERE raw.call_id=c.id AND raw.verification_status='planned')))
+     OR signal_listening_discovery_child_recovery_eligible_v1(r.id))
     OR r.status='completed' AND NOT EXISTS(SELECT 1 FROM signal_listening_serving_snapshots s WHERE s.round_id=r.id AND s.workspace_id=r.workspace_id))
    AND ($2::boolean OR r.status='completed' OR EXISTS(SELECT 1 FROM engine_cost_events c WHERE c.listening_round_id=r.id
      AND(c.call_state='response_persisted' OR c.call_state<>'settled' AND EXISTS(
