@@ -37,7 +37,7 @@ export type BlindSnapshotV1 = {
     motive_name?: string; motive_definition?: string; layer?: string; nearest_volume_cohort?: string;
     nearest_assigned_motive_key?: string;
     native_nearest_candidate_set?: Array<{ motive_key: string; volume_cohort: string; name: string; definition: string }> ;
-    motive_memberships?: Array<{ motive_key: string; volume_cohort: string; name: string; definition: string; layer: string }>;
+    motive_memberships?: Array<{ motive_key: string; volume_cohort: string; name: string; definition: string; layer: string; probability?: number; assigned?: boolean }>;
     nearest_motives?: Array<{ motive_key: string; volume_cohort: string; name: string; definition: string }> }>;
 };
 
@@ -119,14 +119,20 @@ export function validateSnapshotV1(value: unknown): BlindSnapshotV1 {
     if (row.motive_memberships !== undefined && (!Array.isArray(row.motive_memberships) || new Set(row.motive_memberships.map(m => m?.motive_key)).size !== row.motive_memberships.length
       || row.motive_memberships.some(m => !m || !m.motive_key?.trim() || !m.name?.trim() || !m.definition?.trim()
         || !LISTENING_COHORTS_V1.includes(m.volume_cohort as typeof LISTENING_COHORTS_V1[number])
-        || !["psychological", "personal", "social", "cultural", "unclear"].includes(m.layer)))) fail();
+        || !["psychological", "personal", "social", "cultural", "unclear"].includes(m.layer)
+        || m.probability !== undefined && (!finiteNonNegative(m.probability) || m.probability > 1)
+        || m.assigned !== undefined && typeof m.assigned !== "boolean"
+        || m.assigned !== undefined && m.probability === undefined
+        || m.assigned !== undefined && m.assigned !== (m.probability! >= .7)))) fail();
     if (row.nearest_assigned_motive_key !== undefined && typeof row.nearest_assigned_motive_key !== "string") fail();
     if (row.alternative_inverted !== undefined && typeof row.alternative_inverted !== "boolean") fail();
     if (row.native_nearest_candidate_set !== undefined && (!Array.isArray(row.native_nearest_candidate_set)
       || new Set(row.native_nearest_candidate_set.map(m => m?.motive_key)).size !== row.native_nearest_candidate_set.length
       || row.native_nearest_candidate_set.length !== 4
       || row.native_nearest_candidate_set.some(m => !m?.motive_key?.trim() || !m.name?.trim() || !m.definition?.trim()
-        || !LISTENING_COHORTS_V1.includes(m.volume_cohort as typeof LISTENING_COHORTS_V1[number])))) fail();
+        || !LISTENING_COHORTS_V1.includes(m.volume_cohort as typeof LISTENING_COHORTS_V1[number])
+        || !(row.motive_memberships ?? []).some(assignment => assignment.motive_key === m.motive_key
+          && assignment.probability !== undefined && assignment.assigned !== undefined)))) fail();
     if (row.nearest_motives !== undefined && !Array.isArray(row.nearest_motives)) fail();
     if (row.motive_volume_cohort !== undefined && !LISTENING_COHORTS_V1.includes(row.motive_volume_cohort as typeof LISTENING_COHORTS_V1[number])) fail();
     if (row.layer !== undefined && !["psychological", "personal", "social", "cultural", "unclear"].includes(row.layer)) fail();
@@ -292,14 +298,14 @@ export function buildBlindPackageV1(snapshotValue: unknown, seed: string) {
 
   const motiveCounts = new Map<string, number>();
   for (const row of t) {
-    const keys = new Set([...(row.motive_memberships ?? []).map(m => m.motive_key), ...(row.motive_key ? [row.motive_key] : [])]);
+    const keys = new Set([...(row.motive_memberships ?? []).filter(m => m.assigned ?? true).map(m => m.motive_key), ...(row.motive_key ? [row.motive_key] : [])]);
     for (const key of keys) motiveCounts.set(key, (motiveCounts.get(key) ?? 0) + 1);
   }
   const topMotives = [...motiveCounts.keys()].sort((a, b) => motiveCounts.get(b)! - motiveCounts.get(a)!
     || hash(`${seed}:motive-order:${a}`).localeCompare(hash(`${seed}:motive-order:${b}`))).slice(0, 20);
   for (let i = 0; i < 20; i++) {
     const motive = topMotives[i]; const code = `M${String(i + 1).padStart(2, "0")}`;
-    const rows = motive ? t.filter(r => r.direction !== "none" && (r.motive_memberships?.some(m => m.motive_key === motive && m.layer)
+    const rows = motive ? t.filter(r => r.direction !== "none" && (r.motive_memberships?.some(m => m.motive_key === motive && m.layer && (m.assigned ?? true))
       || r.motive_key === motive && r.layer && r.motive_name && r.motive_definition)) : [];
     const detail = (r: typeof t[number]) => r.motive_memberships?.find(m => m.motive_key === motive) ?? (r.motive_key === motive && r.motive_name
       && r.motive_definition && r.motive_volume_cohort && r.layer ? { motive_key: motive!, name: r.motive_name, definition: r.motive_definition,
@@ -314,12 +320,36 @@ export function buildBlindPackageV1(snapshotValue: unknown, seed: string) {
   }
   for (const cohort of LISTENING_COHORTS_V1) {
     const code = `N-${cohort}`;
-    const candidates = t.filter(r => r.direction !== "none" && r.nearest_volume_cohort === cohort && r.nearest_assigned_motive_key
+    const nativeRows = t.filter(r => r.direction !== "none" && r.use === "literal"
+      && r.native_nearest_candidate_set?.some(candidate => candidate.volume_cohort === cohort)
+      && r.native_nearest_candidate_set.every(candidate => (r.motive_memberships ?? []).some(m => m.motive_key === candidate.motive_key
+        && m.probability !== undefined && m.assigned !== undefined)));
+    if (nativeRows.length) {
+      const candidates = nativeRows.map(row => {
+        const set = row.native_nearest_candidate_set!;
+        const target = choose(set.filter(candidate => candidate.volume_cohort === cohort), 1, seed,
+          `${code}:candidate-target`, candidate => candidate.motive_key)[0]!;
+        const shuffled = [...set].sort((a, b) => rank(seed, `${code}:options`, `${row.mention_id}:${a.motive_key}`)
+          .localeCompare(rank(seed, `${code}:options`, `${row.mention_id}:${b.motive_key}`)));
+        const options = shuffled.map((m, i) => ({ key: String.fromCharCode(65 + i), text: `${m.name}: ${m.definition}` }));
+        const option_map = Object.fromEntries(shuffled.map((m, i) => [String.fromCharCode(65 + i), m.motive_key]));
+        const assignments = Object.fromEntries(set.map(m => [m.motive_key, (row.motive_memberships ?? []).find(a => a.motive_key === m.motive_key)!.assigned!]));
+        const probabilities = Object.fromEntries(set.map(m => [m.motive_key, (row.motive_memberships ?? []).find(a => a.motive_key === m.motive_key)!.probability!]));
+        return { id: row.mention_id, text: row.redacted_text,
+          prompt: "For each motive option, independently mark YES if this mention belongs to that motive and NO otherwise. Motives may overlap.",
+          context: "Candidate definitions are shown in shuffled order. Assess each definition independently.", options,
+          answer: { source_candidate_set: set.map(m => m.motive_key), stratum_candidate_key: target.motive_key,
+            candidate_memberships: assignments, candidate_probabilities: probabilities, option_map, cohort } };
+      });
+      add(code, candidates, 20);
+      continue;
+    }
+    // Compatibility for older snapshots that contain a real native rank and one assigned key.
+    const legacyCandidates = t.filter(r => r.direction !== "none" && r.nearest_volume_cohort === cohort && r.nearest_assigned_motive_key
       && r.nearest_motives?.length === 4 && new Set(r.nearest_motives.map(m => m.motive_key)).size === 4
       && r.nearest_motives.every(m => m.motive_key && m.name?.trim() && m.definition?.trim()
         && LISTENING_COHORTS_V1.includes(m.volume_cohort as typeof LISTENING_COHORTS_V1[number]))
-      && r.nearest_motives.some(m => m.motive_key === r.nearest_assigned_motive_key))
-      .map(r => {
+      && r.nearest_motives.some(m => m.motive_key === r.nearest_assigned_motive_key)).map(r => {
         const ranked = r.nearest_motives!;
         const shuffled = [...ranked].sort((a, b) => rank(seed, `${code}:options`, `${r.mention_id}:${a.motive_key}`)
           .localeCompare(rank(seed, `${code}:options`, `${r.mention_id}:${b.motive_key}`)));
@@ -328,8 +358,9 @@ export function buildBlindPackageV1(snapshotValue: unknown, seed: string) {
         return { id: r.mention_id, text: r.redacted_text, prompt: "Which option best matches the force expressed in this mention? Choose A, B, C, or D.",
           options, answer: { system_assigned_motive_key: r.nearest_assigned_motive_key, ranked_candidate_keys: ranked.map(m => m.motive_key), option_map, cohort } };
       });
-    add(code, candidates, 20);
+    add(code, legacyCandidates, 20);
   }
+
 
   // Every selected source identity appears in one packet only, including across listening stages.
   const privateStrata = Object.entries(census).map(([sample_code, counts]) => ({ sample_code, packet_ref: publicRefs.get(sample_code)!, ...counts }));

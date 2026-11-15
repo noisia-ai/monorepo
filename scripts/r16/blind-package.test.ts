@@ -132,17 +132,38 @@ test("sampling deduplicates identities across strata and reports census shortfal
   assert.equal(built.manifest.strata.length, 52);
 });
 
-test("unordered native nearest candidate sets are not ranked or leaked into auditor packets", () => {
+test("unordered four-candidate sets are audited as multilabel membership without a winner or leakage", () => {
   const snapshot = syntheticSnapshot();
-  for (const row of snapshot.study) {
+  for (const [index, row] of snapshot.study.entries()) {
     delete row.nearest_motives; delete row.nearest_assigned_motive_key; delete row.nearest_volume_cohort;
-    row.native_nearest_candidate_set = ["native_a", "native_b", "native_c", "native_d"].map((motive_key, index) => ({
-      motive_key, volume_cohort: LISTENING_COHORTS_V1[index]!, name: `Private ${motive_key}`, definition: `Private definition ${motive_key}` }));
+    const keys = ["native_a", "native_b", "native_c", "native_d"];
+    row.native_nearest_candidate_set = keys.map((motive_key, candidateIndex) => ({ motive_key,
+      volume_cohort: LISTENING_COHORTS_V1[(index + candidateIndex * 3) % LISTENING_COHORTS_V1.length]!,
+      name: `Synthetic candidate ${candidateIndex + 1}`, definition: `Synthetic candidate definition ${candidateIndex + 1}` }));
+    row.motive_memberships = keys.map((motive_key, candidateIndex) => {
+      const probability = index % 3 === 0 ? .2 : index % 3 === 1 ? (candidateIndex < 2 ? .9 : .1) : (candidateIndex === 2 ? .95 : .1);
+      return { motive_key, volume_cohort: row.native_nearest_candidate_set!.find(m => m.motive_key === motive_key)!.volume_cohort,
+        name: `Synthetic candidate ${candidateIndex + 1}`, definition: `Synthetic candidate definition ${candidateIndex + 1}`, layer: "personal", probability, assigned: probability >= .7 };
+    });
   }
   const built = buildBlindPackageV1(snapshot, seed);
-  assert.ok(built.key.custody_manifest.strata.filter(item => item.sample_code.startsWith("N-")).every(item => item.selected === 0 && item.shortfall === item.quota));
-  const visible = JSON.stringify(built.packets);
-  assert.doesNotMatch(visible, /native_[a-d]|Private definition/u);
+  const nativeNearest = built.key.rows.filter(row => row.sample_code.startsWith("N-"));
+  assert.equal(nativeNearest.length, 200);
+  const positives = nativeNearest.map(row => Object.values((row.answer as { candidate_memberships: Record<string, boolean> }).candidate_memberships).filter(Boolean).length);
+  assert.ok(positives.includes(0), "the source set may have no positive motive");
+  assert.ok(positives.some(count => count >= 2), "native multiple assignments remain multiple");
+  assert.ok(nativeNearest.every(row => {
+    const answer = row.answer as { source_candidate_set: string[]; candidate_memberships: Record<string, boolean>;
+      candidate_probabilities: Record<string, number>; option_map: Record<string, string>; stratum_candidate_key: string };
+    return answer.source_candidate_set.length === 4 && answer.source_candidate_set.includes(answer.stratum_candidate_key)
+      && Object.keys(answer.candidate_memberships).length === 4 && Object.keys(answer.candidate_probabilities).length === 4
+      && Object.values(answer.option_map).length === 4;
+  }));
+  assert.ok(built.key.custody_manifest.strata.filter(item => item.sample_code.startsWith("N-")).every(item => item.selected === 20));
+  const nearestIds = new Set(nativeNearest.map(row => row.blind_id));
+  const visible = built.packets.flatMap(packet => packet.cases).filter(row => nearestIds.has(row.blind_id));
+  assert.doesNotMatch(JSON.stringify(visible), /native_[a-d]|candidate_memberships|option_map/u);
+  assert.ok(visible.every(row => row.options?.length === 4 && /independently mark YES/u.test(row.prompt)));
 });
 
 test("missing native layer truth or nearest assignment reports shortfalls without placeholder answers", () => {

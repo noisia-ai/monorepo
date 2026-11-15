@@ -14,6 +14,9 @@ type ReadClientV1 = { query<T extends Record<string, unknown> = Record<string, u
 type ReadPoolV1 = LabelingDatabaseV1 & { connect(): Promise<ReadClientV1>; end(): Promise<void> };
 const requireStudio = createRequire(new URL("../../apps/studio/package.json", import.meta.url));
 import { validateSignalStudyExecutionConfigurationV1 } from "../../packages/query-engine/src/signal-study-configuration.js";
+import { applySignalStudyBoundaryRecodeV1, signalStudyLayerStabilityV1, validateSignalStudyLayerReviewV1,
+  type SignalStudyEditorialRequestV1, type SignalStudyLayerDecisionV1 } from "../../packages/query-engine/src/signal-study-editorial.js";
+import type { SignalStudySampleV1 } from "../../packages/query-engine/src/signal-study-evidence.js";
 import { redactSignalStudyTextV1 } from "../../packages/query-engine/src/signal-study-evidence.js";
 import { LISTENING_COHORTS_V1, validateSnapshotV1, type BlindSnapshotV1 } from "./blind-package.js";
 
@@ -33,7 +36,7 @@ type StudyExecutionRow = {
   id: string; workspace_id: string; actor_user_id: string; study_id: string; configuration_id: string; status: string;
   output: Record<string, unknown> | null; output_digest: string | null; actual_output_digest: string | null;
   source_current: boolean; owner_current: boolean; envelope: Record<string, unknown>;
-  listening_generation_id: string | null; listening_source_digest: string | null; source_roots: number;
+  listening_generation_id: string | null; listening_source_digest: string | null; source_roots: number; source_digest: string;
   frozen_source_kind: string; frozen_source_id: string; frozen_base_snapshot_id: string; frozen_configuration_id: string;
   frozen_generation_id: string; frozen_source_digest: string; bound_source_kind: string | null; bound_source_id: string | null;
   bound_base_snapshot_id: string; bound_configuration_id: string; bound_generation_id: string | null; bound_source_digest: string | null;
@@ -102,10 +105,9 @@ export function assertStudyListeningSourceBindingV1(args: {
   expected_generation_id: string; expected_configuration_id: string;
 }): void {
   const { frozen, bound } = args;
-  const expectedKind = bound.kind ?? "serving";
-  const expectedId = bound.id ?? bound.base_snapshot_id;
   if (!(frozen.kind === "serving" || frozen.kind === "human_edit")
-    || frozen.kind !== expectedKind || frozen.id !== expectedId || frozen.base_snapshot_id !== bound.base_snapshot_id
+    || (bound.kind !== null && frozen.kind !== bound.kind) || (bound.id !== null && frozen.id !== bound.id)
+    || frozen.base_snapshot_id !== bound.base_snapshot_id
     || frozen.configuration_id !== bound.configuration_id || frozen.configuration_id !== args.expected_configuration_id
     || frozen.generation_id !== args.expected_generation_id
     || (bound.generation_id !== null && frozen.generation_id !== bound.generation_id)
@@ -174,14 +176,14 @@ export async function exportNativeAuditSnapshotV1(args: NativeAuditExportArgsV1)
     const studyRows = await loadStudyRows(client, study, config, after);
     const membershipEvidence = await loadNativeMembershipEvidence(client, study, studyRows);
     const receiptRows = await loadStudyReceipts(client, study.id);
-    return { before, after, study, config, listening, studyRows, membershipEvidence, receiptRows };
+    const layerAgreement = await loadNativeLayerAgreement(client, study);
+    return { before, after, study, config, listening, studyRows, membershipEvidence, receiptRows, layerAgreement };
   });
 
   const { before, after, study, config } = collected;
   const limitations = [
     "native_candidate_flags_unavailable",
-    "native_layer_agreement_receipt_not_persisted",
-    "native_nearest_four_rank_unavailable",
+    ...(!collected.layerAgreement ? ["native_layer_agreement_pair_unavailable"] : []),
     ...(!collected.membershipEvidence.nearest_candidate_sets_available ? ["native_nearest_candidate_sets_unavailable"] : []),
     ...(!collected.membershipEvidence.motive_memberships_available ? ["native_motive_membership_cache_unavailable"] : []),
     "outside_private_person_name_roster_unavailable_for_outside_cut_roots",
@@ -207,7 +209,7 @@ export async function exportNativeAuditSnapshotV1(args: NativeAuditExportArgsV1)
       layer_diagnostics: template.template.diagnostics.map(item => ({ key: item.key, layer: item.layer,
         question: item.question, definition: item.question })),
     },
-    layer_agreement: null,
+    layer_agreement: collected.layerAgreement,
     receipts: { status: collected.receiptRows.complete ? "complete" as const : "incomplete" as const,
       total_cost_usd: totalCost, total_elapsed_ms: totalElapsed,
       stages: collected.receiptRows.stages.length ? collected.receiptRows.stages
@@ -256,7 +258,7 @@ async function loadGeneration(client: ReadClientV1, workspaceId: string, actorId
 }
 
 async function loadStudyExecution(client: ReadClientV1, workspaceId: string, executionId: string): Promise<StudyExecutionRow> {
-  const row = (await client.query<StudyExecutionRow>(`SELECT e.id,e.workspace_id,e.actor_user_id,e.study_id,e.configuration_id,e.status,e.output,e.output_digest,
+  const row = (await client.query<StudyExecutionRow>(`SELECT e.id,e.workspace_id,e.actor_user_id,e.study_id,e.configuration_id,e.status,e.output,e.output_digest,e.source_digest,
       signal_labeling_digest_v1(e.output) actual_output_digest,signal_study_source_current_v1(e.id) source_current,
       signal_study_owner_current_v1(e.id) owner_current,cfg.envelope,cfg.listening_generation_id,cfg.listening_source_digest,e.source_roots,
       source.source_kind frozen_source_kind,source.id frozen_source_id,source.base_snapshot_id frozen_base_snapshot_id,
@@ -268,7 +270,7 @@ async function loadStudyExecution(client: ReadClientV1, workspaceId: string, exe
     JOIN signal_study_outputs output ON output.execution_id=e.id AND output.workspace_id=e.workspace_id AND output.output_digest=e.output_digest
     WHERE e.workspace_id=$1 AND e.id=$2`, [workspaceId, executionId])).rows[0];
   if (!row || row.status !== "completed" || !row.source_current || !row.owner_current || !row.output
-    || row.output_digest !== row.actual_output_digest || !row.listening_generation_id || !row.listening_source_digest) {
+    || row.output_digest !== row.actual_output_digest) {
     throw new Error("native_audit_study_execution_invalid");
   }
   return row;
@@ -450,10 +452,11 @@ async function loadNativeMembershipEvidence(client: ReadClientV1, execution: Stu
   }
   for (const [rootId, memberships] of selectedMemberships) {
     const row = byId.get(rootId); if (!row || row.axes_status !== "observed" || row.direction === "none" || row.use !== "literal") continue;
-    row.motive_memberships = [...memberships].filter(([, value]) => value.probability >= .7).flatMap(([key, value]) => {
+    row.motive_memberships = [...memberships].flatMap(([key, value]) => {
       const motive = motives.find(item => item.key === key), volume_cohort = cohortByKey.get(key);
       const definition = definitions.get(key)?.definition;
-      return motive && volume_cohort && definition ? [{ motive_key: key, volume_cohort, name: motive.name, definition, layer: motive.layer }] : [];
+      return motive && volume_cohort && definition ? [{ motive_key: key, volume_cohort, name: motive.name, definition, layer: motive.layer,
+        probability: value.probability, assigned: value.probability >= .7 }] : [];
     });
     const candidateBatch = candidateBatchByRoot.get(rootId);
     if (!candidateBatch || candidateBatch.question_keys.length !== 4 || new Set(candidateBatch.question_keys).size !== 4) continue;
@@ -537,6 +540,132 @@ async function loadStudyReceipts(client: ReadClientV1, executionId: string): Pro
     stages: stages.length ? stages : [{ stage: "native_measurements", cost_usd: null, elapsed_ms: null }],
     manifest: { study_stage_receipts: rows, study_stage_totals_complete: allMeasured, listening_stage_receipts: "not_joined_to_exact_shared-ledger_run_lineage" },
     limitations: ["native_total_cost_and_timing_incomplete_across_listening_and_study_stages"] };
+}
+
+type NativeLayerStepV1 = { step_key: string; request_body: string; request_sha256: string; source_digest: string;
+  mode: string; status: string; value: Record<string, unknown> | null; value_digest: string | null };
+type RecoveredLayerStageV1 = { pass: "a" | "b"; repair: boolean; offset: number; decision: SignalStudyLayerDecisionV1 };
+
+/** Rebuilds only what the native committed layer steps prove. The sample envelope is
+ * reconstructed from the exact request payload solely to re-run the product parser;
+ * its synthetic bookkeeping is never exported as a measurement. */
+export function reconstructNativeLayerStageV1(args: { step: NativeLayerStepV1; execution_id: string; execution_source_digest: string }): RecoveredLayerStageV1 | null {
+  const { step } = args;
+  if (step.mode !== "layers" || step.status !== "committed" || !step.value || !step.value_digest
+    || step.source_digest !== args.execution_source_digest || step.value_digest !== digest(step.value)
+    || step.request_sha256 !== `sha256:${sha256(step.request_body)}`) return null;
+  let recovered: { pass: "a" | "b"; repair: boolean; offset: number } | undefined;
+  for (const pass of ["a", "b"] as const) for (const repair of [false, true]) for (let offset = 0; offset <= 160; offset += 40) {
+    const stage = `layers:${pass}:${repair ? "repair" : "initial"}:${offset}`;
+    if (step.step_key === digest({ execution_id: args.execution_id, source_digest: step.source_digest, stage,
+      request_sha256: step.request_sha256 })) recovered = { pass, repair, offset };
+  }
+  if (!recovered) return null;
+  const { pass, repair, offset } = recovered;
+  try {
+    const body = JSON.parse(step.request_body) as { messages?: Array<{ content?: unknown }> };
+    const message = JSON.parse(String(body.messages?.[0]?.content)) as { input_digest?: string; untrusted_data?: Record<string, unknown> };
+    const payload = message.untrusted_data;
+    if (!payload || typeof message.input_digest !== "string" || digest(payload) !== message.input_digest
+      || typeof payload.study_digest !== "string" || !Array.isArray(payload.motives)) return null;
+    const samples: SignalStudySampleV1[] = [];
+    const motiveKeys: string[] = [];
+    for (const raw of payload.motives) {
+      if (!raw || typeof raw !== "object") return null;
+      const motive = raw as { key?: unknown; sampling?: Record<string, unknown>; sample?: unknown };
+      const rows = motive.sample;
+      if (typeof motive.key !== "string" || !motive.sampling || !Array.isArray(rows)) return null;
+      const random = motive.sampling.random, far = motive.sampling.far;
+      if (!Number.isSafeInteger(random) || !Number.isSafeInteger(far) || typeof motive.sampling.insufficient !== "boolean"
+        || !["disjoint", "overlapping", "small_group"].includes(String(motive.sampling.independence))) return null;
+      const sampleBody = { contract_version: "signal-study-sample-v1" as const, study_digest: payload.study_digest,
+        group_key: motive.key, pass, random_count: random as number, far_count: far as number, population_count: rows.length,
+        independence: motive.sampling.independence as SignalStudySampleV1["independence"],
+        sampling_policy: { seed_digest: digest({ step_key: step.step_key, key: motive.key }),
+          population_digest: digest(rows), centroid_digest: digest({ step_key: step.step_key, centroid: motive.key }),
+          requested_random: random as number, requested_far: far as number }, insufficient_sample: motive.sampling.insufficient,
+        rows: rows as SignalStudySampleV1["rows"] };
+      samples.push({ ...sampleBody, sample_digest: digest(sampleBody) });
+      motiveKeys.push(motive.key);
+    }
+    if (!samples.length || new Set(motiveKeys).size !== motiveKeys.length || motiveKeys.length > 40) return null;
+    const reviewBody = { contract_version: "signal-study-editorial-request-v1" as const, mode: "layers" as const,
+      model: "claude-sonnet-4-6" as const, study_digest: payload.study_digest, input_digest: message.input_digest,
+      request_body: step.request_body, source_samples: samples, motive_keys: [...motiveKeys].sort(), pass,
+      recode_attempt: repair ? 1 as const : 0 as const, boundary_keys: repair ? [...motiveKeys].sort() : [] };
+    const review: SignalStudyEditorialRequestV1 = { ...reviewBody, request_digest: digest(reviewBody) };
+    const content = step.value.content;
+    if (!Array.isArray(content) || content.length !== 1 || !content[0] || typeof content[0] !== "object"
+      || typeof (content[0] as { text?: unknown }).text !== "string") return null;
+    const parsed = JSON.parse((content[0] as { text: string }).text) as unknown;
+    const decision = validateSignalStudyLayerReviewV1(review, parsed);
+    return { pass, repair, offset, decision };
+  } catch { return null; }
+}
+
+export function nativeLayerAgreementReceiptV1(args: { initial: [SignalStudyLayerDecisionV1, SignalStudyLayerDecisionV1];
+  repairs?: [SignalStudyLayerDecisionV1, SignalStudyLayerDecisionV1]; expectedOutput?: unknown; passDigests?: [string, string] }): BlindSnapshotV1["layer_agreement"] {
+  try {
+    let decisions = args.initial;
+    let stability = signalStudyLayerStabilityV1(...decisions);
+    if (stability.action === "recode_boundary_once") {
+      if (!args.repairs) return null;
+      const repaired = applySignalStudyBoundaryRecodeV1({ initial: decisions, recoded: args.repairs });
+      decisions = repaired.decisions; stability = repaired.stability;
+    } else if (args.repairs) return null;
+    if (args.expectedOutput !== undefined && digest(args.expectedOutput) !== digest(stability)) return null;
+    const eligible = stability.total_motives;
+    const passA = args.initial[0].motives.length, passB = args.initial[1].motives.length;
+    const denominator = stability.compared_motives, complete = denominator === eligible && passA === eligible && passB === eligible;
+    const noPasses = passA === 0 && passB === 0;
+    const expectedOne = complete && stability.expected_agreement === 1;
+    const status = noPasses ? "not_measured" : !complete ? "insufficient_data"
+      : expectedOne ? "not_estimable" : stability.kappa !== null && stability.kappa >= .8 ? "acceptable" : "below_threshold";
+    const estimationStatus = stability.kappa === null ? "not_estimable" : "complete";
+    return { eligible_count: eligible, pass_a_count: passA, pass_a_digest: passA ? stripSha(args.passDigests?.[0] ?? digest(args.initial[0])) : null,
+      pass_b_count: passB, pass_b_digest: passB ? stripSha(args.passDigests?.[1] ?? digest(args.initial[1])) : null,
+      denominator, coverage: eligible ? denominator / eligible : 0,
+      observed_agreement: complete ? stability.observed_agreement : null,
+      expected_agreement: complete ? stability.expected_agreement : null,
+      kappa: complete ? stability.kappa : null, estimation_status: estimationStatus,
+      not_estimable_reason: noPasses ? "no_passes" : !complete ? "incomplete_coverage" : expectedOne ? "expected_agreement_one" : null,
+      action: stability.action, status, boundary_recoded_count: args.repairs ? args.repairs[0].motives.length : 0 };
+  } catch { return null; }
+}
+
+async function loadNativeLayerAgreement(client: ReadClientV1, execution: StudyExecutionRow): Promise<BlindSnapshotV1["layer_agreement"]> {
+  const expectedOutput = execution.output?.stability;
+  if (expectedOutput === null || expectedOutput === undefined) return null;
+  const rows = (await client.query<NativeLayerStepV1>(`SELECT step_key,request_body,request_sha256,source_digest,mode,status,value,value_digest
+    FROM signal_study_steps WHERE workspace_id=$1 AND execution_id=$2 AND mode='layers' ORDER BY step_key`,
+  [execution.workspace_id, execution.id])).rows;
+  if (!rows.length || rows.length > 100 || rows.some(row => row.status !== "committed")) return null;
+  const stages = rows.map(step => reconstructNativeLayerStageV1({ step, execution_id: execution.id, execution_source_digest: execution.source_digest }));
+  if (stages.some(stage => stage === null)) return null;
+  const recovered = stages as RecoveredLayerStageV1[];
+  const selectPair = (repair: boolean): [SignalStudyLayerDecisionV1, SignalStudyLayerDecisionV1] | null => {
+    const pass = (which: "a" | "b") => {
+      const items = recovered.filter(item => item.repair === repair && item.pass === which).sort((a, b) => a.offset - b.offset);
+      if (!items.length || items.some((item, index) => item.offset !== index * 40)
+        || new Set(items.flatMap(item => item.decision.motives.map(m => m.motive_key))).size
+          !== items.reduce((n, item) => n + item.decision.motives.length, 0)) return null;
+      const first = items[0]!.decision;
+      return { ...first, request_digest: digest(items.map(item => item.decision.request_digest)),
+        motives: items.flatMap(item => item.decision.motives) };
+    };
+    const a = pass("a"), b = pass("b");
+    return a && b ? [a, b] : null;
+  };
+  const initial = selectPair(false); if (!initial) return null;
+  const repairs = selectPair(true);
+  if (recovered.some(item => item.repair) && !repairs) return null;
+  const passDigest = (pass: "a" | "b") => digest(rows.filter(row => {
+    const recovered = recoveredByStep.get(row.step_key);
+    return recovered?.pass === pass;
+  }).map(row => ({ step_key: row.step_key, request_sha256: row.request_sha256, value_digest: row.value_digest })));
+  const recoveredByStep = new Map(recovered.map((stage, index) => [rows[index]!.step_key, stage]));
+  return nativeLayerAgreementReceiptV1({ initial, ...(repairs ? { repairs } : {}), expectedOutput,
+    passDigests: [passDigest("a"), passDigest("b")] });
 }
 
 function configuredOptions(config: ReturnType<typeof validateSignalStudyExecutionConfigurationV1>["question_configuration"], role: string) {
