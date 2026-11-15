@@ -1,5 +1,6 @@
 import "./env/load";
 import {startSignalListeningDrainerV1} from "./workers/signal-listening-jev";
+import {startSignalListeningDiscoveryDrainerV1} from "./workers/signal-listening-discovery";
 
 import { isDataOsWorkerEnabled, isEngineRuntimeEnabled } from "@noisia/query-engine";
 import { closeWorkerDatabasePoolsV1, pool } from "./db/client";
@@ -40,6 +41,8 @@ import { startSignalTopicEditorialBatchDrainerV2 } from "./workers/signal-topic-
 import { startSignalTopicEditorialGlobalStageDrainerV2 } from "./workers/signal-topic-editorial-global-stage-queue-v2";
 import { startSignalWorkspaceMonitoringInsightsDrainerV1 } from "./workers/signal-workspace-monitoring-insights-outbox";
 
+let shuttingDown = false;
+
 const startupEvidence = await assertUatWorkerStartup({
   database: pool,
   redis: redisConnection
@@ -61,6 +64,7 @@ const topicClassificationOutboxDrainer = dataOsWorker
   : null;
 const corpusPreparationDrainer = dataOsWorker ? startSignalWorkspaceCorpusPreparationDrainerV1() : null;
 const listeningDrainer = dataOsWorker ? startSignalListeningDrainerV1() : null;
+const listeningDiscoveryDrainer = dataOsWorker ? startSignalListeningDiscoveryDrainerV1({should_stop:()=>shuttingDown}) : null;
 const workspaceEmbeddingsDrainer = dataOsWorker ? startSignalWorkspaceEmbeddingsDrainerV1() : null;
 const workspaceMonitoringInsightsDrainer = dataOsWorker ? startSignalWorkspaceMonitoringInsightsDrainerV1() : null;
 const topicConsolidationDrainer = dataOsWorker ? startSignalTopicConsolidationOutboxDrainerV1() : null;
@@ -127,8 +131,6 @@ if (dataOsWorker) {
   console.log("Data OS worker disabled. Set NOISIA_DATA_OS_WORKER_ENABLED=true only for approved shadow runs.");
 }
 
-let shuttingDown = false;
-
 async function shutdown() {
   if (shuttingDown) return;
   shuttingDown = true;
@@ -142,6 +144,7 @@ async function shutdown() {
   await topicEvaluationOutboxDrainer.close();
   await topicClassificationOutboxDrainer?.close();
   await corpusPreparationDrainer?.close();
+  await listeningDiscoveryDrainer?.close();
   await workspaceEmbeddingsDrainer?.close();
   await listeningDrainer?.close();
   await workspaceMonitoringInsightsDrainer?.close();
