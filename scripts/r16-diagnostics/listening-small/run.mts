@@ -38,6 +38,7 @@ function moduleAt<T>(root:string,relative:string):Promise<T>{return import(pathT
 function safeError(error:unknown){return error instanceof Error&&/^(?:r16|listening|mass_labeling|labeling|workspace_engine|jev)_[a-z0-9_]{1,100}$/u.test(error.message)?error.message:'listening_small_diagnostic_failed';}
 
 export async function runListeningSmallDiagnosticV1(){
+  if(!process.argv.slice(2).includes('--run'))return NOOP;
   assertListeningSmallGuardV1(process.env,process.argv.slice(2));
   const target=resolve(process.env.R16_DIAGNOSTIC_TARGET_ROOT!);
   const artifact=resolve(process.env.R16_DIAGNOSTIC_ARTIFACT!);
@@ -151,6 +152,7 @@ export async function runListeningSmallDiagnosticV1(){
         assert.equal(runInstrument,instrument,'diagnostic_instrument_changed_during_run');
         result={contract_version:'r16-listening-small-diagnostic-v1',diagnostic_only:true,h1_accepted:false,
           target_label:process.env.R16_DIAGNOSTIC_TARGET_LABEL??'unspecified',
+          target_ref:process.env.R16_DIAGNOSTIC_TARGET_REF??'unspecified',
           acceptance_thresholds_applied:false,root_count:ROOT_COUNT,expected_http_requests:ROOT_COUNT*2,observed_http_requests:requests,
           source_tree_sha256_before:source.source_tree_sha256,source_tree_sha256_after:provenanceAfter.source_tree_sha256,
           source_status_sha256:source.tree_status_sha256,instrument_sha256_before:instrument,instrument_sha256_after:runInstrument,

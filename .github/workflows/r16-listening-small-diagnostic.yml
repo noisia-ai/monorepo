@@ -27,7 +27,7 @@ jobs:
           - label: baseline-32f
             target_ref: 32f40ec89a21da90235c3589a4820ae05dedf6fc
           - label: candidate
-            target_ref: ${{ github.event.pull_request.head.sha || github.sha }}
+            target_ref: ${{ github.sha }}
     steps:
       - name: Checkout benchmark target
         uses: actions/checkout@v4
@@ -98,6 +98,7 @@ jobs:
           R16_DIAGNOSTIC_TARGET_ROOT: ${{ github.workspace }}/target
           R16_DIAGNOSTIC_ARTIFACT: ${{ github.workspace }}/artifacts/r16-listening-small/result.json
           R16_DIAGNOSTIC_TARGET_LABEL: ${{ matrix.label }}
+          R16_DIAGNOSTIC_TARGET_REF: ${{ matrix.target_ref }}
         run: |
           set -euo pipefail
           lab_dir="$GITHUB_WORKSPACE/target/.data/piloto-masivo/r16/labs/benchmark-pg17"
