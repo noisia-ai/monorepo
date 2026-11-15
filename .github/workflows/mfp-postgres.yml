@@ -1,20 +1,32 @@
 name: MFP PostgreSQL
+run-name: MFP PostgreSQL (${{ inputs.scope || 'full' }})
 
 on:
   pull_request:
     branches: [develop, feat/mfp-ws1-pg-ci]
   push:
     branches: [develop]
+  workflow_dispatch:
+    inputs:
+      scope:
+        description: Run the full suite or the focused R16 policy smoke
+        type: choice
+        options:
+          - full
+          - policy-smoke
+        default: full
+        required: true
 
 permissions:
   contents: read
 
 concurrency:
-  group: mfp-postgres-${{ github.ref }}
+  group: mfp-postgres-${{ github.ref }}${{ github.event_name == 'workflow_dispatch' && inputs.scope == 'policy-smoke' && '-policy-smoke' || '' }}
   cancel-in-progress: true
 
 jobs:
   numeric-python:
+    name: ${{ github.event_name == 'workflow_dispatch' && inputs.scope == 'policy-smoke' && 'policy-smoke-numeric-python' || 'numeric-python' }}
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -67,6 +79,7 @@ jobs:
           python -m pip install --no-deps -r services/workers/requirements-workspace-engine.txt
           python -m pip install pytest==8.3.5
       - name: Run real BERTopic numerical regression loops without model downloads or providers
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.scope != 'policy-smoke' }}
         env:
           PYTHONPATH: tools/signal-semantic-lab/src
           HF_HUB_OFFLINE: '1'
@@ -83,6 +96,7 @@ jobs:
             exit 1
           fi
       - name: Run Node-to-Python cached-source spool integration
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.scope != 'policy-smoke' }}
         env:
           HF_HUB_OFFLINE: '1'
           TRANSFORMERS_OFFLINE: '1'
@@ -142,6 +156,7 @@ jobs:
           fi
 
       - name: Verify bounded Study source custody at the real-cut scale
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.scope != 'policy-smoke' }}
         env:
           NOISIA_R16_STUDY_SOURCE_SCALE: 'true'
         run: |
@@ -153,6 +168,7 @@ jobs:
             exit 1
           fi
       - name: Run native Study pipeline, frozen human bindings and registered worker
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.scope != 'policy-smoke' }}
         env:
           NOISIA_R16_STUDY_PG: 'true'
           NOISIA_R16_STUDY_SOURCE_PAGED_PG: 'true'
@@ -187,6 +203,8 @@ jobs:
           fi
 
   migrated-schema:
+    name: ${{ github.event_name == 'workflow_dispatch' && inputs.scope == 'policy-smoke' && 'policy-smoke-migrated-schema-not-run' || 'migrated-schema' }}
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.scope != 'policy-smoke' }}
     runs-on: ubuntu-latest
     services:
       postgres:
