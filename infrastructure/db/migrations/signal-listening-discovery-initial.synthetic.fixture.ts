@@ -84,5 +84,5 @@ async function setup(ctx:{database:Parameters<typeof prepareSignalListeningV1>[0
   const result=await signalWorkspaceEmbeddingsJobV1({id:job.worker_job_id,data:{run_id:flow.prototype_run_id},updateProgress:async()=>{}},{database:db,provider:voyage.provider});assert.equal('status'in result&&result.status,'completed');
   return{calls:voyage.calls,result:await continueSignalListeningPreparationV1({...access,preparation_id,provider_available:true})};
  }
- return{...access,map_id:ctx.map_id,cfg,seed,bindings:proposal.bindings,policy,request,classify,unknown,prototypes};
+ return{...access,files,map_id:ctx.map_id,cfg,seed,bindings:proposal.bindings,policy,request,classify,unknown,prototypes};
 }

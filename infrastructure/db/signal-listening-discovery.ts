@@ -60,6 +60,16 @@ async function seal(c:PoolClient,g:ListeningDiscoveryGenerationV1){
  return(await c.query<ListeningDiscoveryGenerationV1>(`UPDATE signal_listening_discovery_generations SET status='ready',counts=signal_listening_discovery_counts_v1(id),
   snapshot_digest=signal_listening_discovery_digest_v1(id) WHERE id=$1 RETURNING *`,[g.id])).rows[0]!;
 }
+/** Initial base/defined-only listening has no discovered topic to bind. Freeze
+ * the genuine native source census in the caller's request transaction instead
+ * of requiring an operator to manufacture a discovered configuration first. */
+export async function bootstrapEmptySignalListeningDiscoveryWithClientV1(c:PoolClient,args:SignalListeningAccessV1&{configuration_id:string;map_id:string}){
+ await authorizeSignalListeningV1(c,args,'process');
+ const {cfg}=await context(c,args);
+ if(cfg.configuration.questions.some(q=>q.topic_source==='discovered'))fail('listening_discovery_initial_seed_required');
+ const {row:g}=await start(c,{...args,round:0},'legacy_seed',null);
+ await roots(c,g);return seal(c,g);
+}
 export async function bootstrapSignalListeningDiscoveryV1(args:SignalListeningAccessV1&{configuration_id:string;map_id:string;bindings:ListeningDiscoveryBindingV1[]}){
  return tx(args,async c=>{const {row:g,cfg,map}=await start(c,{...args,round:0},'legacy_seed',null);
   const qs=cfg.configuration.questions.filter(q=>q.topic_source==='discovered');

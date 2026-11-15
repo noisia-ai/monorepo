@@ -5,6 +5,7 @@ import type {SignalListeningConfigurationV1,SignalListeningQuestionV1} from '@no
 import {ListeningLexiconSuggestions} from './ListeningLexiconSuggestions';
 
 type Status={configuration:{id:string;revision:number;configuration:SignalListeningConfigurationV1}|null;
+  discovery?:{intent_id:string;status:string;execution_status:string|null}|null;
   map:{id:string;root_count:number}|null;run:{id:string;status:string;unknown_micro_usd?:string}|null;preparation?:{id:string;status:string}|null;map_stale?:boolean;capabilities:{can_edit_topics:boolean;can_request_processing:boolean}};
 export function SignalListeningConfiguration({workspaceId,editable=true}:{workspaceId:string;editable?:boolean}){
   const t=useTranslations('Listening'),[status,setStatus]=useState<Status|null>(null),[draft,setDraft]=useState<SignalListeningConfigurationV1|null>(null);
@@ -24,14 +25,16 @@ export function SignalListeningConfiguration({workspaceId,editable=true}:{worksp
   },[url,retry]);
   const runId=status?.run?.id,runState=status?.run?.status,preparationId=status?.preparation?.id,preparationState=status?.preparation?.status;
   const preparing=Boolean(preparationState&&['preparing','waiting_prototypes','ready_for_labeling','labeling'].includes(preparationState));
+  const discoveryState=status?.discovery?.status,executionState=status?.discovery?.execution_status;
+  const discovering=Boolean(discoveryState&&['preparing','admitted','waiting_recovery'].includes(discoveryState)||executionState==='active');
   useEffect(()=>{
-    if((!runId||!['queued','running'].includes(runState??''))&&(!preparationId||!preparing))return;
+    if((!runId||!['queued','running'].includes(runState??''))&&(!preparationId||!preparing)&&!discovering)return;
     const controller=new AbortController();
     const timer=setInterval(()=>{fetch(url,{signal:controller.signal,cache:'no-store'}).then(async response=>{
       if(response.ok){const result=await response.json()as Status;if(!controller.signal.aborted)setStatus(result);}
     }).catch(()=>undefined);},3000);
     return()=>{clearInterval(timer);controller.abort();};
-  },[url,runId,runState,preparationId,preparing]);
+  },[url,runId,runState,preparationId,preparing,discovering]);
   const canEdit=editable&&Boolean(status?.capabilities.can_edit_topics);
   const canProcess=canEdit&&Boolean(status?.capabilities.can_request_processing);
   function change(question:SignalListeningQuestionV1,index:number){
@@ -56,15 +59,15 @@ export function SignalListeningConfiguration({workspaceId,editable=true}:{worksp
     key.current??=crypto.randomUUID();setBusy(true);setError(false);
     try{
       const response=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json','Idempotency-Key':key.current},
-        body:JSON.stringify({configuration_id:status.configuration.id,cap_micro_usd:amount})});
+        body:JSON.stringify({configuration_id:status.configuration.id,cap_micro_usd:amount,auto_discovery:true})});
       if(!response.ok)throw Error();
       const latest=await fetch(url,{cache:'no-store'});if(!latest.ok)throw Error();const result=await latest.json()as Status;
       if(generation.current===current){setStatus(result);key.current=null;}
     }catch{if(generation.current===current)setError(true);}finally{if(generation.current===current)setBusy(false);}
   }
   const dirty=Boolean(draft&&status?.configuration&&JSON.stringify(draft)!==JSON.stringify(status.configuration.configuration));
-  const unresolved=Number(status?.run?.unknown_micro_usd??0)>0;
-  const running=preparing||Boolean(status?.run&&['queued','running'].includes(status.run.status));
+  const unresolved=Number(status?.run?.unknown_micro_usd??0)>0||executionState==='outcome_unknown'||discoveryState==='waiting_recovery';
+  const running=preparing||discovering||Boolean(status?.run&&['queued','running'].includes(status.run.status));
   if(unavailable)return null;
   return <section className="admin-section workspace-resource-section" aria-busy={busy}>
     <header className="admin-section__head"><div><h2>{t('title')}</h2><p>{t('description')}</p></div></header>

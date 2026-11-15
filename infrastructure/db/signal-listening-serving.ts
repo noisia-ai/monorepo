@@ -21,8 +21,13 @@ export async function getSignalListeningStatusV1(args:SignalListeningAccessV1){
   const preparation=(await c.query<{id:string;status:string;configuration_id:string;prototype_run_id:string|null;listening_run_id:string|null;cap_micro_usd:string;error_code:string|null}>(
    `SELECT id,status,configuration_id,prototype_run_id,listening_run_id,cap_micro_usd::text,error_code FROM signal_listening_preparations
     WHERE workspace_id=$1 ORDER BY created_at DESC,id DESC LIMIT 1`,[args.workspace_id])).rows[0]??null;
+  const initialReady=(await c.query("SELECT to_regclass('signal_listening_discovery_initial_intents') IS NOT NULL ready")).rows[0]?.ready;
+  const discovery=initialReady?(await c.query<{intent_id:string;status:string;execution_id:string|null;execution_status:string|null;error_code:string|null}>(
+   `SELECT i.id intent_id,i.status,i.execution_id,e.status execution_status,COALESCE(e.error_code,i.error_code) error_code
+    FROM signal_listening_discovery_initial_intents i LEFT JOIN signal_listening_discovery_executions e ON e.id=i.execution_id AND e.workspace_id=i.workspace_id
+    WHERE i.workspace_id=$1 ORDER BY i.created_at DESC,i.id DESC LIMIT 1`,[args.workspace_id])).rows[0]??null:null;
   const change=await inspectFacetContextChangeV1(c,args.workspace_id);
-  return {contract_version:'signal-listening-status-v1' as const,configuration,map,run,preparation,capabilities,
+  return {contract_version:'signal-listening-status-v1' as const,configuration,map,run,preparation,discovery,capabilities,
    map_stale:map?map.entity_context_digest!==change.digest:true};
  });
 }

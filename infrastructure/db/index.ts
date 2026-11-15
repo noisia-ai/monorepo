@@ -159,3 +159,5 @@ export * from './signal-listening-discovery-money';
 export * from './signal-listening-discovery-runtime';
 export * from './signal-listening-discovery-transport';
 export * from './signal-listening-discovery-advance';
+export {startSignalListeningDiscoveryInitialV1,pendingSignalListeningDiscoveryInitialV1,
+ type ListeningDiscoveryInitialIntentV1,type ListeningDiscoveryInitialResultV1} from './signal-listening-discovery-initial';

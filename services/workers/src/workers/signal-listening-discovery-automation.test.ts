@@ -38,3 +38,19 @@ test('duplicate wakeups share the active scan and shutdown waits for it without 
  const closed=timer.close();done();await closed;await timer.drainNow();assert.equal(scans,1);
  assert.throws(()=>startSignalListeningDiscoveryAutomationV1({interval_ms:0}),/interval_invalid/);
 });
+test('an explicit initial intent starts its native parent before the automatic advance scan with no new authority',async()=>{
+ const intent=randomUUID(),execution=randomUUID(),order:string[]=[],database={}as NonNullable<ListeningDiscoveryAutomationOptionsV1['database']>;
+ const initial={pending:async(args:{database:unknown;limit:number})=>{assert.equal(args.database,database);assert.equal(args.limit,20);order.push('initial');return[{intent_id:intent}];},
+  start:async(args:{database:unknown;intent_id:string})=>{assert.deepEqual(args,{database,intent_id:intent});order.push('start');return{execution:{id:execution}};}};
+ const stores={pending:async()=>{order.push('advance');return[{execution_id:execution}];}}as unknown as Stores;
+ const result=await drainSignalListeningDiscoveryAutomationOnceV1({database,initial,stores,env:enabled,
+  run:async id=>{assert.equal(id,execution);order.push('enqueue');return{status:'enqueued',round_id:randomUUID(),ordinal:1};}});
+ assert.deepEqual(order,['initial','start','advance','enqueue']);assert.deepEqual(result,{candidates:2,advanced:2,failed:0});
+});
+test('parked initial receipts, one failed intent and shutdown cannot prevent or confer unrelated parent authority',async()=>{
+ const database={}as NonNullable<ListeningDiscoveryAutomationOptionsV1['database']>,ids=[randomUUID(),randomUUID()];let started=0,scans=0;
+ const stores={pending:async()=>{scans++;return[];}}as unknown as Stores;
+ const result=await drainSignalListeningDiscoveryAutomationOnceV1({database,stores,env:enabled,
+  initial:{pending:async()=>ids.map(intent_id=>({intent_id})),start:async()=>{if(++started===1)throw Error('native stale');return{execution:null};}}});
+ assert.equal(started,2);assert.equal(scans,1);assert.deepEqual(result,{candidates:2,advanced:0,failed:1});
+});

@@ -17,6 +17,27 @@ import {saveSignalListeningConfigurationV1} from '../signal-listening-configurat
 import {bootstrapSignalListeningDiscoveryV1} from '../signal-listening-discovery';
 import {startSignalListeningDiscoveryExecutionV1} from '../signal-listening-discovery-money';
 import {prepareSignalListeningV1} from '../signal-listening-preparation';
+import {signalListeningBaseTemplateV1} from '@noisia/query-engine';
+
+for(const defined of [false,true])test('base'+(defined?' plus defined':' only')+' starts automatic discovery without a manually seeded configuration',{
+ skip:!enabled,timeout:600000,
+},async()=>withInitialDiscoveryFixtureV1(async f=>{
+ const template=signalListeningBaseTemplateV1({category:'bicycles',lexicon_terms:['synthetic']});
+ const cfg=await saveSignalListeningConfigurationV1({...f,expected_revision:f.cfg.revision,provenance:'human',configuration:{...template,
+  retired_question_keys:f.cfg.configuration.questions.filter(q=>q.topic_source==='discovered').map(q=>q.key),
+  questions:[...template.questions,...(defined?[{key:'defined_interest',type:'noul' as const,text:'Is this about bicycle maintenance?',positive:'Bicycle maintenance',negative:'Other topics',scope:'all' as const,origin:'brand_os' as const,human_locked:false,topic_source:'defined' as const}]:[])]}});
+ assert.equal((await f.database.query('SELECT count(*)::int n FROM signal_listening_discovery_generations WHERE configuration_id=$1',[cfg.id])).rows[0].n,0);
+ const key=randomUUID(),{result,intent}=await f.request({configuration_id:cfg.id,idempotency_key:key});assert.ok(intent);assert.ok(result.run_id);
+ const seed=(await f.database.query('SELECT * FROM signal_listening_discovery_generations WHERE id=$1',[intent.seed_generation_id])).rows[0];
+ assert.equal(seed.configuration_id,cfg.id);assert.equal(seed.status,'ready');assert.equal(seed.counts.topics,0);assert.equal(Number(seed.counts.roots),3);
+ assert.equal((await f.database.query('SELECT count(*)::int n FROM signal_listening_discovery_topics WHERE generation_id=$1',[seed.id])).rows[0].n,0);
+ assert.equal((await f.request({configuration_id:cfg.id,idempotency_key:key})).intent?.seed_generation_id,seed.id);
+ await f.classify(result.run_id,cfg.configuration);
+ const started=await startSignalListeningDiscoveryInitialV1({database:f.database,intent_id:intent.id});assert.ok(started?.execution);
+ assert.equal(started.intent.configuration_id,cfg.id);assert.equal(started.intent.seed_generation_id,seed.id);
+ assert.equal((await f.database.query('SELECT count(*)::int n FROM signal_listening_discovery_generations WHERE configuration_id=$1 AND kind=\'legacy_seed\'',[cfg.id])).rows[0].n,1);
+ assert.equal((await f.database.query('SELECT count(*)::int n FROM signal_processing_admissions WHERE target_id=$1',[result.run_id])).rows[0].n,1);
+}));
 
 test('one explicit initial request starts one frozen parent after native labeling without a second admission',{
  skip:!enabled,timeout:600000,

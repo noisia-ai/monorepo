@@ -12,6 +12,8 @@ No hay aprobaciones humanas intermedias en los procesos de análisis: Sonnet 4.6
 
 ## Progreso
 
+- H3 arranque inicial integrado localmente: 0305 conserva la intención, configuración, seed y cap originales; el worker selecciona sólo esas intenciones explícitas, inicia su parent nativo y continúa el avance automático. La API acepta auto_discovery con actor de sesión y rechaza origen/admisión/automatic del navegador; la UI mantiene cerrado el botón mientras el ciclo sigue o queda exposición incierta. Una configuración base/definidos sin descubiertos crea una semilla nativa vacía en la misma transacción, sin aprobación intermedia. Diecinueve casos iniciales nativos pasan y dos casos de automatización pasan por separado, sin omisiones en esas ejecuciones seleccionadas. Tipado/lint 11/11; Studio 1,344/7 omisiones y DB 664/243 de entorno. Workers: 1,111 aprobadas y 51 omisiones de entorno al ejecutar el mismo conjunto con concurrencia acotada; la primera ejecución conjunta terminó sin resumen y no se usa como evidencia. Revisión del candidato final pendiente.
+
 - H1 diagnóstico b48c665e sobre 4,096 raíces: 7.48 s y 547.37 raíces/s, diez páginas frente a dieciocho en c6bd1c50. La mediana de página pasó de 147 a 426. Sigue rechazado y demasiado corto para capacidad sostenida. El cambio redujo reserva y lotes pequeños, pero quedan esperas importantes de locks del run: 1.90 s acumulados en markSubmitting y 1.55 s en apply durante esta corrida, con tiempos solapados. Se conserva la base y el recibo; no se inicia otro ensayo completo hasta resolver o acotar esa hipótesis.
 
 - H4 orquestador corregido e integrado: 766d4d93/a9557c44, con 14 pruebas locales y tipado/lint verdes. Los ejes y las pertenencias se entregan a owners de lotes H1 y devuelven espera ante checkpoints parciales, conservando las razones de permiso. La revisión cerró el P1 de serialización y el P2 de trazabilidad. Su driver, persistencia financiera, Storage y registro nativos siguen pendientes; las pruebas con callback no acreditan ejecución de un Estudio real.
@@ -145,6 +147,8 @@ Recibo: separar Voyage/JEV por raíz de Claude por número de grupos y vueltas; 
 
 ## Sorpresas y descubrimientos
 
+- El primer inicio automático exigía una generación lista de tópicos descubiertos para la misma configuración, que una configuración nueva de base/definidos aún no puede tener. La semilla de cero tópicos conserva el censo/procedencia reales y permite que, después de la base, la evidencia de huérfanas inicie el descubrimiento; no inventa temas ni vectores. Una prueba de integración también necesitó exponer el directorio privado del fixture para verificar fsync/readback: el fallo de ese test no era permiso de gasto ni una llamada duplicada.
+
 - El perfil SQL del diagnóstico b48c665e se vinculó a los templates de las consultas, sin guardar bind values. Las mayores esperas corresponden al FOR UPDATE del run en markSubmitting y apply, además del attach de páginas. Compartir la lease durante mutaciones de páginas disjuntas podría permitir progreso simultáneo, pero requiere demostrar idempotencia, orden de locks, bloqueo de cambios de lease y preservación de autorización/dinero antes de implementarlo o atribuirle mejora.
 
 - Una respuesta pequeña conservaba hasta el final la reserva para una respuesta máxima de 16 KiB. El perfil anterior mostró 39 de 59 muestras con al menos 90% de memoria reservada y 21 sin HTTP en vuelo. El nuevo cálculo sólo libera el exceso conocido y mantiene el margen del codec. La prueba de custodia aislada usa una ventana sin prefetch para no confundir la reserva de una lectura siguiente con los bytes de la respuesta; la continuidad se verifica en otras pruebas.
@@ -204,6 +208,8 @@ Recibo: separar Voyage/JEV por raíz de Claude por número de grupos y vueltas; 
 
 ## Registro de decisiones
 
+- H3: vincular el inicio del ciclo cerrado al opt-in de la petición inicial, su identidad y presupuesto total; nunca derivarlo de una corrida pagada arbitraria. Arrancar y avanzar se recuperan mediante sondeo nativo, sin enviar Sonnet en esos pasos. La clave dedicada de descubrimiento reside en workers: Studio comprueba habilitación, sesión y contrato, sin exigir copiar esa credencial al frontend ni al servicio web.
+
 - 2026-11-15: conservar el diagnóstico de memoria como mejora parcial (diez páginas) y rechazo de capacidad. Investigar la contención de locks con pruebas PostgreSQL de páginas disjuntas y del mismo call; mantener locks exclusivos para ciclo de vida y ningún cambio de permisos, cuotas o presupuesto. No sustituir el objetivo de 1,000/s por el rendimiento corto ni por las pruebas locales.
 
 - 2026-11-15: reducir la reserva de una respuesta sólo después de completarse la lectura acotada y conocerse el wrapper exacto. Conservar el mismo factor conservador y límite máximo; transferir la propiedad a la fila de custodia y hacer que el catch libere sólo lo que aún posee. No interpretar esa reserva como RSS medido ni como persistencia, liquidación o devolución de cuota.
@@ -261,6 +267,8 @@ Recibo: separar Voyage/JEV por raíz de Claude por número de grupos y vueltas; 
 - 2026-11-14: publicar una fórmula condicional con coeficientes medidos en R15 y costo editorial por grupos/vueltas; actualizar la proyección histórica sin cambiar sus recibos ni presentarla como costo medido de R16. Reconstrucción verificada con aritmética decimal exacta.
 
 ## Resultado y retrospectiva
+
+El arranque inicial ya tiene recorrido nativo hasta encolar la primera revisión, con crudos verificados y una sola admisión inicial. La revisión independiente final, el ciclo pagado y la aceptación UAT siguen pendientes.
 
 La integración local vigente pasa 17 pruebas dedicadas PostgreSQL sin omisiones (285 migraciones), incluidas la continuación automática y la recuperación de custodia/admisión. Catorce pruebas con Python real verifican por separado la reagrupación no vacía. Los checkpoints de H4 todavía necesitan owner y driver nativos; el primer worker fue devuelto a corrección por serializar JEV. El ensayo completo más reciente de capacidad terminó 32,768 raíces a 564.30/s y sigue rechazado. Ninguna de estas pruebas acredita la ejecución real de R16, sus muestras o su calidad. UAT conserva R15; R16 no ha consumido nuevas llamadas pagadas ni desplegado migraciones allí.
 

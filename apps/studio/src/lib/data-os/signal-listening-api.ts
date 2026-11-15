@@ -5,7 +5,7 @@ const save=z.union([
   z.object({expected_revision:z.literal(0),category:z.string().trim().min(1).max(160),lexicon_terms:z.array(z.string().trim().min(1).max(160)).min(1).max(500)}).strict(),
   z.object({expected_revision:z.number().int().nonnegative(),configuration:z.unknown()}).strict(),
 ]);
-const start=z.object({configuration_id:z.string().uuid(),cap_micro_usd:z.number().int().positive().safe()}).strict();
+const start=z.object({configuration_id:z.string().uuid(),cap_micro_usd:z.number().int().positive().safe(),auto_discovery:z.boolean().optional()}).strict();
 const lexicon=z.object({configuration_id:z.string().uuid(),limit:z.coerce.number().int().min(1).max(200).optional()}).strict();
 const metrics=z.object({question_key:z.string().regex(/^[a-z][a-z0-9_]{0,63}$/u),from:z.string().datetime().optional(),
   to:z.string().datetime().optional(),timezone:z.string().max(100).optional(),granularity:z.enum(['day','week','month']).optional(),include_outside:z.enum(['true','false']).transform(value=>value==='true').optional(),topic_key:z.string().max(64).optional()}).strict();
@@ -14,7 +14,7 @@ export type ListeningApiDependenciesV1={
   load(workspace_id:string):Promise<Scope|{response:Response}>;
   status(scope:Scope):Promise<unknown>;
   save(scope:Scope,args:{expected_revision:number;configuration:SignalListeningConfigurationV1;provenance:'human'}):Promise<unknown>;
-  start(scope:Scope,args:{configuration_id:string;cap_micro_usd:number;idempotency_key:string}):Promise<unknown>;
+  start(scope:Scope,args:{configuration_id:string;cap_micro_usd:number;idempotency_key:string;auto_discovery?:boolean}):Promise<unknown>;
   metrics(scope:Scope,args:z.infer<typeof metrics>):Promise<unknown>;
   lexicon(scope:Scope,args:z.infer<typeof lexicon>):Promise<unknown>;
 };

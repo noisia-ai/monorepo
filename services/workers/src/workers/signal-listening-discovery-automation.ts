@@ -7,6 +7,8 @@ import type {ListeningOrphanNumericResultV1} from './signal-listening-orphan-reg
 
 type Database=SignalListeningAccessV1['database'];
 export type ListeningDiscoveryAutomationOptionsV1={database?:Database;stores?:ListeningDiscoveryAdvanceStoresV1;
+ initial?:{pending:(args:{database:Database;limit:number})=>Promise<Array<{intent_id:string}>>;
+  start:(args:{database:Database;intent_id:string})=>Promise<{execution:{id:string}|null}|null>};
  storage?:WorkspaceEngineStorageV1;env?:Record<string,string|undefined>;should_stop?:()=>boolean;
  run?:typeof signalListeningDiscoveryAdvanceJobV1;interval_ms?:number;run_immediately?:boolean};
 /** Automatic continuation ONLY of an already admitted parent. Native pending
@@ -15,24 +17,33 @@ export async function drainSignalListeningDiscoveryAutomationOnceV1(options:List
  const env=options.env??process.env;
  if(env.NOISIA_LISTENING_DISCOVERY_ENABLED!=='true'||options.should_stop?.())return{candidates:0,advanced:0,failed:0};
  const database=options.database??(await import('../db/client')).pool;
- let stores=options.stores;
+ let stores=options.stores,initial=options.initial;
  if(!stores){
-  const ready=(await database.query(`SELECT to_regclass('signal_listening_discovery_advances') IS NOT NULL ready`)).rows[0]?.ready;
-  if(!ready)return{candidates:0,advanced:0,failed:0};
+  const schema=(await database.query(`SELECT to_regclass('signal_listening_discovery_advances') IS NOT NULL ready,
+   to_regclass('signal_listening_discovery_initial_intents') IS NOT NULL initial_ready`)).rows[0];
+  if(!schema?.ready)return{candidates:0,advanced:0,failed:0};
   const db=await import('@noisia/db');
+  if(schema.initial_ready&&!initial)initial={pending:db.pendingSignalListeningDiscoveryInitialV1,start:db.startSignalListeningDiscoveryInitialV1};
   const storage=options.storage??createWorkspaceEngineStorageV1();
   stores=db.createSignalListeningDiscoveryAdvanceStoreV1<ListeningOrphanNumericResultV1>({database,
    ...createListeningDiscoveryNumericStorageBindingsV1(storage)});
  }
+ let initialCandidates=0,started=0,initialFailed=0;
+ if(initial){
+  const rows=await initial.pending({database,limit:20});initialCandidates=rows.length;
+  for(const row of rows){if(options.should_stop?.())break;
+   try{if((await initial.start({database,intent_id:row.intent_id}))?.execution)started++;}catch{initialFailed++;}}
+ }
  const args={database,stores,enabled:true,provider_available:Boolean(env.NOISIA_LISTENING_DISCOVERY_ANTHROPIC_API_KEY?.trim()),should_stop:options.should_stop};
- if(!options.run)return drainSignalListeningDiscoveryAdvancesOnceV1(args);
+ if(!options.run){const result=await drainSignalListeningDiscoveryAdvancesOnceV1(args);
+  return{candidates:initialCandidates+result.candidates,advanced:started+result.advanced,failed:initialFailed+result.failed};}
  // Injecting a worker changes no admission contract: the same native candidate
  // scan and scoped stores still decide whether any identity is eligible.
  if(!stores.pending)throw Error('listening_discovery_advance_pending_adapter_missing');
  const rows=await stores.pending({database,limit:20});let advanced=0,failed=0;
  for(const row of rows){if(options.should_stop?.())break;
   try{if((await options.run(row.execution_id,args)).status==='enqueued')advanced++;}catch{failed++;}}
- return{candidates:rows.length,advanced,failed};
+ return{candidates:initialCandidates+rows.length,advanced:started+advanced,failed:initialFailed+failed};
 }
 export function startSignalListeningDiscoveryAutomationV1(options:ListeningDiscoveryAutomationOptionsV1={}){
  const interval=options.interval_ms??2500;

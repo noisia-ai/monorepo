@@ -117,16 +117,18 @@ test('polling a newer configuration never advances the CAS revision of an unsave
 test('automatic prototype preparation and unresolved prior exposure keep the run action closed',async()=>{
   const messages=JSON.parse(await readFile(new URL('../../../messages/en-US.json',import.meta.url),'utf8'));
   const configuration=signalListeningBaseTemplateV1({category:'tea',lexicon_terms:['tea']}),oldFetch=globalThis.fetch;
-  try{for(const mode of ['preparation','unknown']as const){
+  try{for(const mode of ['preparation','unknown','discovery','discovery_unknown']as const){
     globalThis.fetch=async()=>Response.json({configuration:{id:'config',revision:1,configuration},map:{id:'map',root_count:12},
       run:mode==='unknown'?{id:'run',status:'failed',unknown_micro_usd:'10'}:null,
-      preparation:mode==='preparation'?{id:'prep',status:'waiting_prototypes'}:null,capabilities:{can_edit_topics:true,can_request_processing:true}});
+      preparation:mode==='preparation'?{id:'prep',status:'waiting_prototypes'}:null,
+      discovery:mode.startsWith('discovery')?{intent_id:'initial',status:'started',execution_status:mode==='discovery'?'active':'outcome_unknown'}:null,
+      capabilities:{can_edit_topics:true,can_request_processing:true}});
     const host=document.createElement('div');document.body.appendChild(host);const root=createRoot(host);
     await act(async()=>{root.render(<NextIntlClientProvider locale="en-US" messages={messages} timeZone="UTC"><SignalListeningConfiguration workspaceId="workspace"/></NextIntlClientProvider>);});
-    const label=mode==='preparation'?messages.Listening.running:messages.Listening.run;
+    const label=mode==='preparation'||mode==='discovery'?messages.Listening.running:messages.Listening.run;
     const run=[...host.querySelectorAll('button')].find(button=>button.textContent===label)!;
     assert.equal(run.disabled,true);
-    if(mode==='unknown')assert.ok(host.textContent?.includes(messages.Listening.unresolved));
+    if(mode==='unknown'||mode==='discovery_unknown')assert.ok(host.textContent?.includes(messages.Listening.unresolved));
     await act(async()=>root.unmount());host.remove();
   }}finally{globalThis.fetch=oldFetch;}
 });

@@ -7,9 +7,11 @@ const operations:Omit<ListeningApiDependenciesV1,'load'>={
   status:scope=>getSignalListeningStatusV1({database:pool,...scope}),
   save:(scope,args)=>saveSignalListeningConfigurationV1({database:pool,...scope,...args}),
   start:async(scope,args)=>{
+    if(args.auto_discovery&&process.env.NOISIA_LISTENING_DISCOVERY_ENABLED!=='true')
+      throw Object.assign(Error('listening_discovery_unavailable'),{code:'listening_discovery_unavailable',status:503});
     const status=await getSignalListeningStatusV1({database:pool,...scope});
     if(!status.map)throw Object.assign(Error('listening_map_unavailable'),{code:'listening_map_unavailable',status:409});
-    return prepareSignalListeningV1({database:pool,...scope,...args,map_id:status.map.id,
+    return prepareSignalListeningV1({database:pool,...scope,...args,...(args.auto_discovery!==undefined?{origin:'initial' as const}:{}),map_id:status.map.id,
       prototype_provider_available:process.env.NOISIA_WORKSPACE_EMBEDDINGS_PROVIDER_ENABLED==='true'&&Boolean(process.env.VOYAGE_API_KEY?.trim()),
       provider_available:process.env.NOISIA_SIGNAL_LISTENING_ENABLED==='true'&&process.env.NOISIA_JEV_STREAMING_V2_ENABLED==='true'
         &&process.env.NOISIA_JEV_PROVIDER_ENABLED!=='false'&&Boolean(process.env.TYPESAFE_API_KEY?.trim())});

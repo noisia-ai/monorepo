@@ -2,7 +2,7 @@ import type {PoolClient} from 'pg';
 import {authorizeSignalListeningV1,listeningTransactionV1,listeningFailV1 as fail,type SignalListeningAccessV1} from './signal-listening-configuration';
 import {mapCurrent} from './signal-mass-labeling';
 import {lockSignalListeningDiscoveryPolicyWithClientV1,startSignalListeningDiscoveryExecutionWithClientV1,type ListeningDiscoveryExecutionV1} from './signal-listening-discovery-money';
-import {refreshSignalListeningDiscoveryWithClientV1} from './signal-listening-discovery';
+import {refreshSignalListeningDiscoveryWithClientV1,bootstrapEmptySignalListeningDiscoveryWithClientV1} from './signal-listening-discovery';
 import type {SignalListeningPreparationV1} from './signal-listening-preparation';
 type Database=SignalListeningAccessV1['database'];
 export type ListeningDiscoveryInitialIntentV1={id:string;workspace_id:string;organization_id:string;actor_user_id:string;preparation_id:string;
@@ -23,8 +23,8 @@ export async function createSignalListeningDiscoveryInitialIntentWithClientV1(c:
  if(f.policy_version_id!==policy.id)fail('listening_discovery_initial_policy_changed');
  const map=await mapCurrent(c,args.workspace_id,f.map_id);
  const g=(await c.query<{id:string;snapshot_digest:string}>(`SELECT id,snapshot_digest FROM signal_listening_discovery_generations
-  WHERE workspace_id=$1 AND configuration_id=$2 AND map_id=$3 AND status='ready' ORDER BY created_at DESC,id DESC LIMIT 1`,[f.workspace_id,f.configuration_id,f.map_id])).rows[0];
- if(!g)return fail('listening_discovery_initial_seed_required');
+  WHERE workspace_id=$1 AND configuration_id=$2 AND map_id=$3 AND status='ready' ORDER BY created_at DESC,id DESC LIMIT 1`,[f.workspace_id,f.configuration_id,f.map_id])).rows[0]
+  ??await bootstrapEmptySignalListeningDiscoveryWithClientV1(c,{...args,configuration_id:f.configuration_id,map_id:f.map_id});
  if((await c.query<{blocked:boolean}>('SELECT signal_listening_prior_outcome_unresolved_v1($1,$2,$3,$4) blocked',[f.workspace_id,f.configuration_id,f.map_id,map.entity_context_digest])).rows[0]?.blocked)fail('listening_discovery_initial_prior_outcome_unresolved');
  return(await c.query<ListeningDiscoveryInitialIntentV1>(`INSERT INTO signal_listening_discovery_initial_intents(workspace_id,organization_id,actor_user_id,preparation_id,
   configuration_id,map_id,policy_version_id,configuration_digest,human_revision_digest,map_digest,preparation_run_id,input_revision,entity_context_digest,embedding_config_digest,

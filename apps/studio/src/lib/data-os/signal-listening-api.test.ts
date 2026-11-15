@@ -40,6 +40,14 @@ test('free lexicon evidence accepts only current configuration and bounded filte
   const denied=harness(true);assert.equal((await denied.api.lexicon(workspace,new Request(url))).status,403);
   assert.equal(denied.calls.length,0);assert.equal(f.calls.length,1);
 });
+test('initial discovery opt-in retains the same session, cap and idempotency with no browser-supplied origin or authority',async()=>{
+  const f=harness();
+  assert.equal((await f.invoke('POST',{configuration_id:configuration,cap_micro_usd:1000000,auto_discovery:true})).status,202);
+  assert.deepEqual(f.calls[0],{workspace_id:workspace,actor_user_id:'session-actor',configuration_id:configuration,cap_micro_usd:1000000,auto_discovery:true,idempotency_key:'stable-listening-key'});
+  for(const extra of [{origin:'discovery_child'},{automatic:true},{initial_intent_id:configuration},{auto_discovery:'true'}])
+    assert.equal((await f.invoke('POST',{configuration_id:configuration,cap_micro_usd:1000000,auto_discovery:true,...extra})).status,422);
+  assert.equal(f.calls.length,1);
+});
 test('revoked access and malformed filters cannot reach listening stores',async()=>{
   const f=harness(true);assert.equal((await f.invoke('POST',{configuration_id:configuration,cap_micro_usd:1000000})).status,403);assert.equal(f.calls.length,0);
   const allowed=harness();assert.equal((await allowed.invoke('POST',{configuration_id:configuration,cap_micro_usd:1},'short')).status,422);
