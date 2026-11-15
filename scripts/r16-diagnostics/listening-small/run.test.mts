@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import {createHash} from 'node:crypto';
 import {readFile} from 'node:fs/promises';
 import {join} from 'node:path';
 import {pathToFileURL} from 'node:url';
@@ -51,8 +52,8 @@ test('calibration observations preserve native phase shapes from the query-engin
   configuration.questions.push({key:'consumer_test_v1',type:'noul',text:'Synthetic consumer classification',
     scope:'consumer_category',origin:'brand_os',human_locked:true,topic_source:'defined',
     positive:'Synthetic consumer topic applies',negative:'Synthetic consumer topic does not apply'});
-  const baseKeys=configuration.questions.filter(question=>question.origin==='base').map(question=>question.key);
-  const consumerKeys=configuration.questions.filter(question=>question.scope==='consumer_category').map(question=>question.key);
+  const baseKeys=configuration.questions.filter((question:any)=>question.origin==='base').map((question:any)=>question.key);
+  const consumerKeys=configuration.questions.filter((question:any)=>question.scope==='consumer_category').map((question:any)=>question.key);
   const base=calibration.signalListeningCalibrationShapeV1(configuration,{question_keys:baseKeys});
   const consumer=calibration.signalListeningCalibrationShapeV1(configuration,{question_keys:consumerKeys});
   assert.equal(base.phase,'base');
@@ -124,32 +125,35 @@ test('capture scope matches the real bounded-labeling transaction path and not t
  const target=process.env.R16_DIAGNOSTIC_TARGET_ROOT;assert.ok(target,'scope contract test needs checked out public target root');
  const labeling=await readFile(join(target,'infrastructure/db/signal-labeling-runs.ts'),'utf8');
  const listening=await readFile(join(target,'infrastructure/db/signal-listening-runs.ts'),'utf8');
- const begin=labeling.match(/await c\.query\(["']BEGIN["']\)/u)?.[0];
- const setReadOnly=labeling.match(/await c\.query\(["']SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY["']\)/u)?.[0];
- assert.ok(begin,'transaction helper must begin with its native BEGIN statement');
- assert.ok(setReadOnly,'bounded path must set its native RR/RO transaction before adapter work');
+ const beginMatch=labeling.match(/await c\.query\(["']BEGIN["']\)/u);
+ const readOnlyMatch=labeling.match(/await c\.query\(["']SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY["']\)/u);
+ assert.ok(beginMatch,'transaction helper must begin with its native BEGIN statement');
+ assert.ok(readOnlyMatch,'bounded path must set its native RR/RO transaction before adapter work');
  const boundedPath=/if\(bounds\)[\s\S]{0,450}return tx\(db,async c=>\{await c\.query\(["']SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY["']\);\s*return options\.adapter!\.bounded_inputs!\(c,run,read\);\}\)/u;
  assert.match(labeling,boundedPath);
  assert.match(listening,/bounded_inputs:\(c,run,bounds\)=>inputs\(c,run,limit,bounds\)/u);
  assert.match(listening,/const metadata=bounds\?await inputMetadata\(c,run,bounds\.max_rows\):null/u);
  assert.match(listening,/const rows=\(await c\.query[\s\S]{0,700}FROM \$\{hydratePopulation\}/u);
- const statements:string[]=[];let isolation='read committed',readOnly='off';
- const client={async query(sql:string){statements.push(sql);if(sql===begin[0]){isolation='read committed';readOnly='off';}
-  if(sql===setReadOnly[0]){isolation='repeatable read';readOnly='on';}return{rows:[]};}};
- await client.query(begin[0]);await client.query(setReadOnly[0]);
+ const begin='BEGIN',setReadOnly='SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY';
+ const statements:string[]=[];let isolation='read committed',readOnly='off',inTransaction=false;
+ const client={async query(sql:string){statements.push(sql);if(sql===begin){inTransaction=true;isolation='read committed';readOnly='off';}
+  else if(sql===setReadOnly&&inTransaction){isolation='repeatable read';readOnly='on';}
+  else throw Error('unexpected_transaction_command');return{rows:[]};}};
+ await client.query(begin);await client.query(setReadOnly);
  const {verifiedInnerPlanScopeV1}=await import('./observer.mjs');
  assert.equal(verifiedInnerPlanScopeV1({database:'noisia_mfp_ci',role:'postgres',isolation,read_only:readOnly,superuser:true},'noisia_mfp_ci','postgres'),true);
- assert.deepEqual(statements,[begin[0],setReadOnly[0]]);
+ assert.deepEqual(statements,[begin,setReadOnly]);
  isolation='read committed';readOnly='off';
  assert.equal(verifiedInnerPlanScopeV1({database:'noisia_mfp_ci',role:'postgres',isolation,read_only:readOnly,superuser:true},'noisia_mfp_ci','postgres'),false);
 });
 
 test('auto_explain notice parser keeps only safe plan node fields',async()=>{
  const {safeAutoExplainNotice}=await import('./observer.mjs');
- const plan=safeAutoExplainNotice({message:'duration: 1.2 ms  plan:\n'+JSON.stringify({'Planning Time':.1,'Execution Time':1.2,Plan:{'Node Type':'Index Scan','Relation Name':'mentions','Alias':'m','Index Name':'mentions_root_idx','Plan Rows':12,'Actual Rows':7,'Actual Loops':2,'Index Cond':"(root_id = 'private-uuid')",Output:['private_value'],Plans:[{'Node Type':'Seq Scan','Relation Name':'mentions','CTE Name':'allowed_roots','Subplan Name':'private_cte','Filter':"credential = 'private'",'Actual Rows':1}]}})});
+ const plan=safeAutoExplainNotice({message:'duration: 1.2 ms  plan:\n'+JSON.stringify({'Query Text':"SELECT COALESCE(jsonb_agg(x), '{}'::jsonb) FROM (SELECT '{}'::jsonb AS shape) x",'Planning Time':.1,'Execution Time':1.2,Plan:{'Node Type':'Index Scan','Relation Name':'mentions','Alias':'m','Index Name':'mentions_root_idx','Plan Rows':12,'Actual Rows':7,'Actual Loops':2,'Index Cond':"(root_id = 'private-uuid')",Output:['private_value'],Plans:[{'Node Type':'Seq Scan','Relation Name':'mentions','CTE Name':'allowed_roots','Subplan Name':'private_cte','Filter':"credential = 'private'",'Actual Rows':1}]}})});
  const serialized=JSON.stringify(plan);
- assert.deepEqual(plan,{planning_time_ms:.1,execution_time_ms:1.2,plan:{'Node Type':'Index Scan','Relation Name':'mentions',Alias:'m','Index Name':'mentions_root_idx','Plan Rows':12,'Actual Rows':7,'Actual Loops':2,Plans:[{'Node Type':'Seq Scan','Relation Name':'mentions','CTE Name':'allowed_roots','Actual Rows':1}]}});
- for(const forbidden of ['private-uuid','private_value','credential','Filter','Output','Index Cond'])assert.ok(!serialized.includes(forbidden));
+ assert.deepEqual(plan,{query_text_sha256:`sha256:${createHash('sha256').update("SELECT COALESCE(jsonb_agg(x), '{}'::jsonb) FROM (SELECT '{}'::jsonb AS shape) x").digest('hex')}`,
+  planning_time_ms:.1,execution_time_ms:1.2,plan:{'Node Type':'Index Scan','Relation Name':'mentions',Alias:'m','Index Name':'mentions_root_idx','Plan Rows':12,'Actual Rows':7,'Actual Loops':2,Plans:[{'Node Type':'Seq Scan','Relation Name':'mentions','CTE Name':'allowed_roots','Actual Rows':1}]}});
+ for(const forbidden of ['private-uuid','private_value','credential','Filter','Output','Index Cond','Query Text','jsonb_agg'])assert.ok(!serialized.includes(forbidden));
  assert.equal(safeAutoExplainNotice({message:'ERROR: private SQL and params'}),null);
  assert.equal(safeAutoExplainNotice({message:'x'.repeat(1_000_001)}),null);
 });
@@ -166,7 +170,7 @@ test('inner-plan setup failure rolls back its savepoint then runs the original q
   const captured=await captureInnerPlanQueryV1({client,query:async()=>{originalCalls++;return{rows:[{ok:true}]}},
    query_hash:'sha256:d0ecbbfdca3d93e069a3ca03367439fa25ce54164efaf3135c80b27c91ed2680',root_count:4096,database:'noisia_mfp_ci',role:'postgres'});
   assert.deepEqual(captured.result,{rows:[{ok:true}]});assert.equal(originalCalls,1);assert.equal(client.listenerCount('notice'),0);
-  assert.equal(captured.observation.status,'inner_plan_unavailable');assert.equal(captured.observation.reason,'auto_explain_load_unavailable');
+  assert.ok(captured.observation?.status==='inner_plan_unavailable');assert.equal(captured.observation.reason,'auto_explain_load_unavailable');
   for(const statement of ['SAVEPOINT r16_inner_plan_capture_v1','ROLLBACK TO SAVEPOINT r16_inner_plan_capture_v1','RELEASE SAVEPOINT r16_inner_plan_capture_v1'])assert.ok(statements.includes(statement));
   assert.ok(statements.includes("SET LOCAL log_min_messages = 'WARNING'"));assert.ok(statements.includes("SET LOCAL client_min_messages = 'NOTICE'"));
   assert.ok(statements.includes('LOAD \'auto_explain\''));
@@ -176,17 +180,22 @@ test('inner-plan setup failure rolls back its savepoint then runs the original q
  }
 });
 
-test('inner-plan capture measures instrumentation separately and removes its temporary handler',async()=>{
+test('inner-plan capture retains bounded ordered plans with query-text hashes and removes its handler',async()=>{
  const {EventEmitter}=await import('node:events');const {captureInnerPlanQueryV1}=await import('./observer.mjs');
  const prior={GITHUB_ACTIONS:process.env.GITHUB_ACTIONS,NOISIA_R16_SMALL_DIAGNOSTIC:process.env.NOISIA_R16_SMALL_DIAGNOSTIC,DATABASE_URL:process.env.DATABASE_URL};
  Object.assign(process.env,{GITHUB_ACTIONS:'true',NOISIA_R16_SMALL_DIAGNOSTIC:'true',DATABASE_URL:'postgresql://postgres:synthetic@127.0.0.1:54321/noisia_mfp_ci'});
  try{
   const client=new EventEmitter() as any,statements:string[]=[];let originalCalls=0;
   client.query=async(sql:string)=>{statements.push(sql);if(sql.startsWith('SELECT current_database'))return{rows:[{database:'noisia_mfp_ci',role:'postgres',isolation:'repeatable read',read_only:'on',superuser:true}]};return{rows:[]};};
-  const captured=await captureInnerPlanQueryV1({client,query:async()=>{originalCalls++;client.emit('notice',{message:'duration: 4 ms plan: '+JSON.stringify({Plan:{'Node Type':'Index Scan','Relation Name':'mentions','Actual Rows':64,'Actual Loops':3}})});return{rows:[{ok:true}]}},
+  const captured=await captureInnerPlanQueryV1({client,query:async()=>{originalCalls++;for(let i=0;i<35;i++)client.emit('notice',{message:'duration: 4 ms plan: '+JSON.stringify({'Query Text':`SELECT synthetic_nested_${i}('{}'::jsonb)`,Plan:{'Node Type':'Index Scan','Relation Name':'mentions','Actual Rows':64+i,'Actual Loops':3}})});return{rows:[{ok:true}]}},
    query_hash:'sha256:d0ecbbfdca3d93e069a3ca03367439fa25ce54164efaf3135c80b27c91ed2680',root_count:4096,database:'noisia_mfp_ci',role:'postgres'});
-  assert.equal(originalCalls,1);assert.equal(captured.observation.status,'captured');
-  assert.equal(captured.observation.plan.plan['Actual Rows'],64);assert.ok(captured.observation.instrumentation_overhead_ms>=0);
+  assert.equal(originalCalls,1);assert.ok(captured.observation?.status==='captured');
+  assert.equal(captured.observation.plans.length,32);assert.equal(captured.observation.plans_dropped,3);assert.equal(captured.observation.plan_notices_seen,35);
+  assert.deepEqual(captured.observation.plans.map(plan=>plan.sequence),Array.from({length:32},(_,i)=>i+1));
+  assert.equal(captured.observation.plans[0]?.plan['Actual Rows'],64);assert.match(captured.observation.plans[0]?.query_text_sha256??'/',/^sha256:[0-9a-f]{64}$/u);
+  assert.ok(captured.observation.setup_ms>=0&&captured.observation.cleanup_ms>=0&&captured.observation.setup_cleanup_wall_ms>=0);
+  assert.equal(captured.observation.analyze_overhead_measured,false);
+  const serialized=JSON.stringify(captured);assert.ok(!serialized.includes('SELECT synthetic_nested_'));assert.ok(!serialized.includes("'{}'::jsonb"));
   assert.ok(statements.some(sql=>sql.startsWith("SET LOCAL auto_explain.log_level")));
   assert.ok(statements.includes('ROLLBACK TO SAVEPOINT r16_inner_plan_capture_v1'));assert.equal(client.listenerCount('notice'),0);
  }finally{
@@ -204,6 +213,22 @@ test('inner-plan query failure clears the listener and rolls back without swallo
   await assert.rejects(captureInnerPlanQueryV1({client,query:async()=>{throw Error('original query failure')},
    query_hash:'sha256:82fa4fc106842d6422046aefb067a0a7dbaf5bb28de04c0b9147854091410c04',root_count:4096,database:'noisia_mfp_ci',role:'postgres'}),/original query failure/u);
   assert.equal(client.listenerCount('notice'),0);assert.ok(statements.includes('ROLLBACK TO SAVEPOINT r16_inner_plan_capture_v1'));
+ }finally{
+  for(const key of ['GITHUB_ACTIONS','NOISIA_R16_SMALL_DIAGNOSTIC','DATABASE_URL'] as const){const value=prior[key];if(value===undefined)delete process.env[key];else process.env[key]=value;}
+ }
+});
+
+test('inner-plan rollback failure propagates, never replays the query, and still removes the notice handler',async()=>{
+ const {EventEmitter}=await import('node:events');const {captureInnerPlanQueryV1}=await import('./observer.mjs');
+ const prior={GITHUB_ACTIONS:process.env.GITHUB_ACTIONS,NOISIA_R16_SMALL_DIAGNOSTIC:process.env.NOISIA_R16_SMALL_DIAGNOSTIC,DATABASE_URL:process.env.DATABASE_URL};
+ Object.assign(process.env,{GITHUB_ACTIONS:'true',NOISIA_R16_SMALL_DIAGNOSTIC:'true',DATABASE_URL:'postgresql://postgres:synthetic@127.0.0.1:54321/noisia_mfp_ci'});
+ try{
+  const client=new EventEmitter() as any;let originalCalls=0,rollbackCalls=0;
+  client.query=async(sql:string)=>{if(sql.startsWith('SELECT current_database'))return{rows:[{database:'noisia_mfp_ci',role:'postgres',isolation:'repeatable read',read_only:'on',superuser:true}]};
+   if(sql.startsWith('ROLLBACK TO')){rollbackCalls++;throw Error('rollback cleanup failed');}return{rows:[]};};
+  await assert.rejects(captureInnerPlanQueryV1({client,query:async()=>{originalCalls++;return{rows:[]}},
+   query_hash:'sha256:82fa4fc106842d6422046aefb067a0a7dbaf5bb28de04c0b9147854091410c04',root_count:4096,database:'noisia_mfp_ci',role:'postgres'}),/rollback cleanup failed/u);
+  assert.equal(originalCalls,1);assert.ok(rollbackCalls>=1);assert.equal(client.listenerCount('notice'),0);
  }finally{
   for(const key of ['GITHUB_ACTIONS','NOISIA_R16_SMALL_DIAGNOSTIC','DATABASE_URL'] as const){const value=prior[key];if(value===undefined)delete process.env[key];else process.env[key]=value;}
  }

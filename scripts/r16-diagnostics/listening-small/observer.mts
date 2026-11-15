@@ -14,6 +14,7 @@ const PLAN_NUMBERS=['Plan Rows','Plan Width','Actual Rows','Actual Loops','Start
  'Shared Hit Blocks','Shared Read Blocks','Shared Dirtied Blocks','Shared Written Blocks','Temp Read Blocks','Temp Written Blocks'];
 const PLAN_NAMES=['Node Type','Relation Name','Alias','Index Name','Join Type'];
 const SAFE_CTE_NAMES=new Set(['allowed_roots','selected_items','items','prepared','qs']);
+const MAX_INNER_PLANS_PER_QUERY=32;
 const SAFE_NODE_TYPES=new Set(['Aggregate','Append','Bitmap Heap Scan','Bitmap Index Scan','CTE Scan','Custom Scan','Foreign Scan','Function Scan',
  'Gather','Gather Merge','GroupAggregate','Hash','HashAggregate','Hash Join','Incremental Sort','Index Only Scan','Index Scan','Limit','LockRows',
  'Materialize','Memoize','Merge Append','Merge Join','ModifyTable','Nested Loop','ProjectSet','Recursive Union','Result','Sample Scan','Seq Scan',
@@ -35,12 +36,13 @@ function safePlanNode(value:any):any{
 export function safeAutoExplainNotice(notice:unknown){
  const message=(notice as {message?:unknown}|null)?.message;
  if(typeof message!=='string'||message.length>1_000_000)return null;
- const planKey=message.search(/"Plan"\s*:/u);if(planKey<0)return null;
- const start=message.lastIndexOf('{',planKey);if(start<0)return null;
+ const start=message.indexOf('{');if(start<0)return null;
  try{
   const parsed=JSON.parse(message.slice(start));
   const plan=safePlanNode(parsed?.Plan);if(!plan)return null;
-  return{planning_time_ms:typeof parsed['Planning Time']==='number'&&Number.isFinite(parsed['Planning Time'])?parsed['Planning Time']:null,
+  const queryText=typeof parsed['Query Text']==='string'?parsed['Query Text']:null;
+  return{query_text_sha256:queryText?`sha256:${createHash('sha256').update(queryText,'utf8').digest('hex')}`:null,
+    planning_time_ms:typeof parsed['Planning Time']==='number'&&Number.isFinite(parsed['Planning Time'])?parsed['Planning Time']:null,
     execution_time_ms:typeof parsed['Execution Time']==='number'&&Number.isFinite(parsed['Execution Time'])?parsed['Execution Time']:null,plan};
  }catch{return null;}
 }
@@ -55,17 +57,26 @@ export function assertInnerPlanCaptureGuard(env:NodeJS.ProcessEnv,database:strin
 export function verifiedInnerPlanScopeV1(identity:any,database:string,role:string){
  return identity?.database===database&&identity?.role===role&&identity?.isolation==='repeatable read'&&identity?.read_only==='on'&&identity?.superuser===true;
 }
+type InnerPlanTimingV1={capture_wall_ms:number;setup_ms:number;query_wall_ms:number;cleanup_ms:number;setup_cleanup_wall_ms:number;analyze_overhead_measured:false};
+export type InnerPlanObservationV1=
+ |({query_hash:string;label:string;status:'inner_plan_unavailable';reason:'transaction_scope_unverified'|'auto_explain_load_unavailable'|'capture_setup_unavailable'}&InnerPlanTimingV1)
+ |({query_hash:string;label:string;status:'captured'|'plan_notice_unavailable';plans:Array<{sequence:number;query_text_sha256:string|null;planning_time_ms:number|null;execution_time_ms:number|null;plan:Record<string,unknown>}>;plan_notices_seen:number;plans_dropped:number}&InnerPlanTimingV1);
 /** Capture a single original SELECT inside a verified RR/RO transaction. Setup failures roll back to the owned savepoint and do not retry setup. */
-export async function captureInnerPlanQueryV1(args:{client:any;query:()=>Promise<any>;query_hash:string;root_count:number;database:string;role:string}){
+export async function captureInnerPlanQueryV1(args:{client:any;query:()=>Promise<any>;query_hash:string;root_count:number;database:string;role:string}):Promise<{result:any;observation:InnerPlanObservationV1|null}>{
  const {client,query,query_hash,root_count,database,role}=args;
  const label=innerPlanQueryLabel(query_hash);
  if(!label||root_count<1024)return{result:await query(),observation:null};
  assertInnerPlanCaptureGuard(process.env,database,role);
- const started=performance.now(),notices:any[]=[];let savepoint=false,setupStage='savepoint',result:any,queryError:unknown,queryElapsed=0;
- const onNotice=(notice:unknown)=>{const plan=safeAutoExplainNotice(notice);if(plan&&notices.length<1)notices.push(plan);};
+ const started=performance.now(),plans:Array<{sequence:number;query_text_sha256:string|null;planning_time_ms:number|null;execution_time_ms:number|null;plan:Record<string,unknown>}>=[];
+ let planNoticesSeen=0,plansDropped=0,savepoint=false,setupStage='savepoint',result:any,queryError:unknown,setupMs=0,queryWallMs=0,cleanupMs=0;
+ const onNotice=(notice:unknown)=>{const plan=safeAutoExplainNotice(notice);if(!plan)return;planNoticesSeen++;
+  if(plans.length<MAX_INNER_PLANS_PER_QUERY)plans.push({sequence:planNoticesSeen,...plan});else plansDropped++;};
  client.on('notice',onNotice);
- const rollback=async()=>{if(savepoint){await client.query('ROLLBACK TO SAVEPOINT r16_inner_plan_capture_v1');await client.query('RELEASE SAVEPOINT r16_inner_plan_capture_v1');savepoint=false;}};
+ const rollback=async()=>{if(savepoint){const cleanupStarted=performance.now();try{
+   await client.query('ROLLBACK TO SAVEPOINT r16_inner_plan_capture_v1');await client.query('RELEASE SAVEPOINT r16_inner_plan_capture_v1');savepoint=false;
+  }finally{cleanupMs+=performance.now()-cleanupStarted;}}};
  try{
+  const setupStarted=performance.now();
   try{
    await client.query('SAVEPOINT r16_inner_plan_capture_v1');savepoint=true;
    setupStage='verify_transaction_scope';
@@ -91,22 +102,24 @@ export async function captureInnerPlanQueryV1(args:{client:any;query:()=>Promise
    await client.query("SET LOCAL auto_explain.log_format = 'json'");
    await client.query('SET LOCAL auto_explain.log_verbose = off');
   }catch{
+   setupMs=performance.now()-setupStarted;
    await rollback();
-   const queryStarted=performance.now();const original=await query();queryElapsed=performance.now()-queryStarted;
+   const queryStarted=performance.now();const original=await query();queryWallMs=performance.now()-queryStarted;
    const captureWall=performance.now()-started;
    const reason=setupStage==='verify_transaction_scope'?'transaction_scope_unverified':setupStage==='load_auto_explain'
     ?'auto_explain_load_unavailable':'capture_setup_unavailable';
-   return{result:original,observation:{query_hash,label,status:'inner_plan_unavailable',reason,capture_wall_ms:captureWall,instrumentation_overhead_ms:Math.max(0,captureWall-queryElapsed),overhead_included:true}};
+   return{result:original,observation:{query_hash,label,status:'inner_plan_unavailable',reason,capture_wall_ms:captureWall,setup_ms:setupMs,query_wall_ms:queryWallMs,
+    cleanup_ms:cleanupMs,setup_cleanup_wall_ms:setupMs+cleanupMs,analyze_overhead_measured:false}};
   }
-  const queryStarted=performance.now();try{result=await query();}catch(error){queryError=error;}finally{queryElapsed=performance.now()-queryStarted;}
+  setupMs=performance.now()-setupStarted;
+  const queryStarted=performance.now();try{result=await query();}catch(error){queryError=error;}finally{queryWallMs=performance.now()-queryStarted;}
   await rollback();
   if(queryError)throw queryError;
   const captureWall=performance.now()-started;
-  return{result,observation:{query_hash,label,status:notices.length?'captured':'plan_notice_unavailable',capture_wall_ms:captureWall,
-    instrumentation_overhead_ms:Math.max(0,captureWall-queryElapsed),overhead_included:true,...(notices[0]?{plan:notices[0]}:{})}};
+  return{result,observation:{query_hash,label,status:plans.length?'captured':'plan_notice_unavailable',plans,plan_notices_seen:planNoticesSeen,plans_dropped:plansDropped,
+    capture_wall_ms:captureWall,setup_ms:setupMs,query_wall_ms:queryWallMs,cleanup_ms:cleanupMs,setup_cleanup_wall_ms:setupMs+cleanupMs,analyze_overhead_measured:false}};
  }finally{
-  if(savepoint){await rollback();}
-  client.off('notice',onNotice);
+  try{if(savepoint)await rollback();}finally{client.off('notice',onNotice);}
  }
 }
 export function safeWaitRow(row:any){
