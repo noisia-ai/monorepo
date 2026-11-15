@@ -102,6 +102,7 @@ export async function syntheticImportedWorkspaceFixtureV1(tx:SyntheticTransactio
 export async function syntheticClientWorkspaceFixtureV1(tx:SyntheticTransactionV1,options:{
  identity?:{organization_id:string;brand_id:string;actor_user_id:string;workspace_id:string};
  root_count?:number;
+ study_vector_groups?:boolean;
  long_text?:boolean;
  import_batch_size?:number;
  preparation_page_size?:number;
@@ -123,7 +124,7 @@ export async function syntheticClientWorkspaceFixtureV1(tx:SyntheticTransactionV
  const quoted=await quoteSignalWorkspaceEmbeddingsStoreV1({...access,profile});
  const embedded=await requestSignalWorkspaceEmbeddingsStoreV1({...access,profile,preparation_run_id:quoted.preparation_run_id,
   quote_digest:quoted.quote_digest,idempotency_key:randomUUID(),hard_cap_micro_usd:1_000_000,provider_available:true});
- await embedSyntheticRunV1(tx,embedded.run_id,options.embedding_page_limit);
+ await embedSyntheticRunV1(tx,embedded.run_id,options.embedding_page_limit,options.study_vector_groups);
  const context=await loadSignalTopicInheritedContextStoreV1({queryable:database,workspace_id,complete_context:true});
  await insertSignalTaxonomyDraftCoreV1({client:scoped,workspace_id,kind:'topic',context_hash:fixtureSha('synthetic-empty-catalog'),terms:[],rules:{topics:[]},
   rule_set_metadata:{},provider:'operator',model_version:'synthetic-test',prompt_hash:fixtureSha('synthetic'),model_metadata:{},
@@ -138,8 +139,9 @@ export async function syntheticClientWorkspaceFixtureV1(tx:SyntheticTransactionV
  // existing projection body uses real guards/receipts with explicit numerical data.
  return workspaceProjectionFixtureBodyV1({...tx,workspace_id,actor_user_id,embedding_run_id:embedded.run_id},options.projection);
 }
-async function embedSyntheticRunV1(tx:SyntheticTransactionV1,run_id:string,maxPages=8){
+async function embedSyntheticRunV1(tx:SyntheticTransactionV1,run_id:string,maxPages=8,studyGroups=false){
  const {database,query}=tx;
+ if(studyGroups){const n=Number((await query("SELECT count(*)::int n FROM mentions m JOIN data_sources d ON d.id=m.data_source_id AND d.workspace_id=m.workspace_id WHERE m.workspace_id=(SELECT workspace_id FROM signal_workspace_embedding_runs WHERE id=$1) AND d.provider='synthetic'",[run_id])).rows[0]?.n);assert.ok(n>=60&&n<=240,'grouped Study vectors are synthetic fixture data only');}
  if(!Number.isSafeInteger(maxPages)||maxPages<1||maxPages>1000)throw new Error('synthetic embedding page limit is invalid');
  const worker_job_id=(await query('SELECT worker_job_id FROM signal_workspace_embedding_runs WHERE id=$1',[run_id])).rows[0]!.worker_job_id;
  let lease=await embeddings.claimSignalWorkspaceEmbeddingRunV1({database,run_id,worker_job_id});assert.ok(lease);
@@ -148,7 +150,7 @@ async function embedSyntheticRunV1(tx:SyntheticTransactionV1,run_id:string,maxPa
   const batch=await embeddings.readSignalWorkspaceEmbeddingBatchV1({database,lease});if(!batch.items.length)break;
   const call=await embeddings.reserveSignalWorkspaceEmbeddingCallV1({database,lease,batch});
   if(call){
-   const vectors=batch.inputs.map(input=>({chunk_sha256:input.chunk_sha256,embedding:Array.from({length:1024},(_,index)=>index===0?1:0)}));
+   const vectors=batch.inputs.map(input=>({chunk_sha256:input.chunk_sha256,embedding:studyGroups?syntheticStudyEmbeddingVectorV1(input.text):Array.from({length:1024},(_,index)=>index===0?1:0)}));
    await embeddings.markSignalWorkspaceEmbeddingCallSentV1({database,lease,call_id:call.call_id,attempt_token:call.attempt_token});
    await embeddings.persistSignalWorkspaceEmbeddingResponseV1({database,call_id:call.call_id,attempt_token:call.attempt_token,
     response:{http_status:200,provider_request_id:'synthetic-no-transport',body:JSON.stringify({model:profile.model,usage:{total_tokens:vectors.length},
@@ -159,4 +161,14 @@ async function embedSyntheticRunV1(tx:SyntheticTransactionV1,run_id:string,maxPa
   if(batch.done)break;
  }
  await embeddings.finishSignalWorkspaceEmbeddingsV1({database,lease});
+}
+
+/** TEST ONLY: three deterministic separated clouds, normalized before their
+ * exact values are written into the synthetic provider receipt and native cache.
+ * The canonical Study fit still decides whether any real group exists. */
+export function syntheticStudyEmbeddingVectorV1(text:string):number[]{
+ const match=/Synthetic fixture root ([0-9]+)\./u.exec(text);if(!match)throw Error('synthetic_study_vector_input_invalid');
+ const index=Number(match[1]);if(!Number.isInteger(index)||index<0||index>=240)throw Error('synthetic_study_vector_input_invalid');
+ const values=Array.from({length:1024},(_,d)=>d===index%3?1:d<40?Math.sin((index+1)*(d+7)*.731)*.006:0);
+ const norm=Math.hypot(...values);return values.map(v=>v/norm);
 }

@@ -33,8 +33,9 @@ export type R16BenchmarkFixtureV1={root_count:number;execution_cap_micro_usd:num
 /** Test-only fixture: native admissions, rights, preparation and provider caps
  * are populated through the same contracts as the acceptance suite. */
 export async function runMassLabelingAcceptanceFixtureV1(authorization:MassLabelingAcceptanceModeV1,
-  options:{benchmark?:R16BenchmarkFixtureV1;beforeProcessing?:R16BenchmarkFixtureV1['beforeProcessing']}={}){
+  options:{benchmark?:R16BenchmarkFixtureV1;beforeProcessing?:R16BenchmarkFixtureV1['beforeProcessing'];population_count?:number}={}){
   const benchmark=options.benchmark;
+  if(options.population_count!==undefined){assert.equal(authorization,'product');assert.equal(benchmark,undefined);assert.ok(options.beforeProcessing);assert.ok(Number.isInteger(options.population_count)&&options.population_count>=60&&options.population_count<=240);}
   if(options.beforeProcessing){assert.ok(authorization==='product'||authorization==='product-recovery');assert.equal(benchmark,undefined);}
   if(benchmark){
     assert.equal(authorization,'product-recovery');
@@ -50,7 +51,7 @@ export async function runMassLabelingAcceptanceFixtureV1(authorization:MassLabel
     en:{name:"Bicycle repairs",definition:"Experiences repairing bicycles."},
     es:{name:"Reparaciones de bicicletas",definition:"Experiencias reparando bicicletas."}}:undefined;
   const scaledRecovery=authorization==="product-recovery";
-  const scopedMode=authorization!=="rotation"&&authorization!=="product"&&!scaledRecovery,rootCount=benchmark?.root_count??(authorization==="scoped-funding"||scaledRecovery?1002:authorization==="scoped-scale"?200:3);
+  const scopedMode=authorization!=="rotation"&&authorization!=="product"&&!scaledRecovery,rootCount=options.population_count??benchmark?.root_count??(authorization==="scoped-funding"||scaledRecovery?1002:authorization==="scoped-scale"?200:3);
   const {openDatabase} = await import(new URL("../../../scripts/dev-corpus/guard.mjs", import.meta.url).href);
   const admin: Pool = process.env.NOISIA_R16_LOCAL_PG_LAB
     ? await (await import("./signal-r16-local-pg.fixture"))[process.env.GITHUB_ACTIONS==="true"?"openR16CiPostgresV1":"openR16LocalPostgresV1"]()
@@ -130,7 +131,7 @@ export async function runMassLabelingAcceptanceFixtureV1(authorization:MassLabel
     const syntheticSaves=createSignalTopicEditorialRenewalSyntheticSavesV1(undefined,{brand_name:"Synthetic fixture"});
     const seed = await seedSignalTopicEditorialRenewalSourceV1({database, scoped, query, cleanup: async () => {},
       saves:syntheticSaves,
-      root_count:rootCount,import_batch_size:benchmark?.import_batch_size,preparation_page_size:benchmark?.preparation_page_size,embedding_page_limit:benchmark?.embedding_page_limit,allow_benchmark_population:Boolean(benchmark),numeric_daily_cap_micro_usd: benchmark?100_000_000:10_000_000, projection: {split_guided_groups:true,interpretation_configuration:globalConfiguration,engine_config: {profile_version: "workspace-bertopic-mass-labeling-v1", fixture: true},
+      root_count:rootCount,study_vector_groups:options.population_count!==undefined,import_batch_size:benchmark?.import_batch_size,preparation_page_size:benchmark?.preparation_page_size,embedding_page_limit:benchmark?.embedding_page_limit,allow_benchmark_population:Boolean(benchmark),numeric_daily_cap_micro_usd: benchmark?100_000_000:10_000_000, projection: {split_guided_groups:true,interpretation_configuration:globalConfiguration,engine_config: {profile_version: "workspace-bertopic-mass-labeling-v1", fixture: true},
         onCheckpoint: async fixture => {
           if(fixture.proposals.length!==2)return;
           const assignment=[...fixture.bodies.entries()].find(([key])=>key.endsWith("/assignments.guided.jsonl"))![1];

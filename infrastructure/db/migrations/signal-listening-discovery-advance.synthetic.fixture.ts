@@ -13,9 +13,9 @@ import * as money from '../signal-listening-discovery-money';
 import type {ListeningDiscoveryAdvanceSubsetV1,ListeningDiscoveryNumericInputV1,ListeningDiscoveryNumericStorageV1,ListeningDiscoveryNumericArtifactDescriptorV1} from '../signal-listening-discovery-advance';
 import {jevUsageV1} from '../../../services/workers/src/workers/signal-jev-labeling-page';
 const sha=(raw:string|Buffer)=>'sha256:'+createHash('sha256').update(raw).digest('hex');
-type FixtureOptions={initial_approved?:number;no_category?:boolean;cap_micro_usd?:number;org_race?:boolean;additional_defined_topic?:boolean};
+type FixtureOptions={population_count?:number;initial_approved?:number;no_category?:boolean;cap_micro_usd?:number;org_race?:boolean;additional_defined_topic?:boolean};
 export async function withDiscoveryAdvanceFixtureV1(fn:(f:Awaited<ReturnType<typeof seed>>)=>Promise<void>,options:FixtureOptions={}){
- await runMassLabelingAcceptanceFixtureV1('product',{beforeProcessing:async ctx=>{
+ await runMassLabelingAcceptanceFixtureV1('product',{population_count:options.population_count,beforeProcessing:async ctx=>{
   const files=await mkdtemp(join(tmpdir(),'r16-discovery-advance-'));
   try{await fn(await seed(ctx,files,options));}finally{await rm(files,{recursive:true,force:true});}
  }});

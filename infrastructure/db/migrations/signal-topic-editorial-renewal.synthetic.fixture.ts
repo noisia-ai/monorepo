@@ -41,6 +41,7 @@ export type SignalTopicEditorialRenewalSyntheticSeedArgsV1 = SyntheticTransactio
   before_numeric_policy_activation?: (args: { transaction: SyntheticTransactionV1;
     identity: { organization_id: string; actor_user_id: string; brand_id: string; workspace_id: string } }) => Promise<void>;
   root_count?: number;
+  study_vector_groups?:boolean;
   import_batch_size?: number;
   preparation_page_size?: number;
   embedding_page_limit?: number;
@@ -263,7 +264,7 @@ export async function seedSignalTopicEditorialRenewalSourceV1(args: SignalTopicE
   // rollback, including failures. Its numerical records and receipts are real.
   const clusterIds = args.projection?.cluster_ids ?? [randomUUID(), randomUUID()] as const;
   const projection = await syntheticClientWorkspaceFixtureV1({ database, scoped, query, cleanup: async () => {} }, {
-    identity, root_count: args.root_count, long_text: args.long_text, import_batch_size: args.import_batch_size,
+    identity, root_count: args.root_count, study_vector_groups:args.study_vector_groups,long_text: args.long_text, import_batch_size: args.import_batch_size,
     preparation_page_size: args.preparation_page_size,
     embedding_page_limit: args.embedding_page_limit,
     skip_topic_prototypes: args.skip_topic_prototypes,
