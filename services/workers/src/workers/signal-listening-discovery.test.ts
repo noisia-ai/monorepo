@@ -207,3 +207,10 @@ test('native child recovery state is retained without completing or repeating th
   assert.equal((await h.run()).status,status==='stale'?'stale':'child_failed');assert.equal(h.state.completes,0);assert.equal(h.state.activates,0);
  }
 });
+
+test('automatic advance wakes only after activation and a lost wakeup cannot undo a completed round',async()=>{
+ const h=harness();let wakes=0;
+ const result=await h.run({wake_advance:()=>{assert.equal(h.state.activated,true);wakes++;throw Error('lost wakeup');}});
+ assert.equal(result.status,'completed');assert.equal(wakes,1);assert.equal(h.state.sends,1);assert.equal(h.state.completed,true);
+ assert.equal((await h.run()).status,'not_claimed');assert.equal(h.state.sends,1);
+});

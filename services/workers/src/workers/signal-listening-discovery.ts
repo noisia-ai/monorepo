@@ -23,7 +23,10 @@ export type ListeningDiscoveryWorkerStoresV1={
 };
 export type ListeningDiscoveryWorkerOptionsV1={database?:Database;stores?:ListeningDiscoveryWorkerStoresV1;
   provider?:ListeningDiscoveryProviderV1;storage?:WorkspaceEngineStorageV1;raw_store?:ListeningDiscoveryRawStoreV1;
-  assert_storage_ready?:()=>Promise<void>;env?:Record<string,string|undefined>;should_stop?:()=>boolean;renewal_ms?:number};
+  assert_storage_ready?:()=>Promise<void>;wake_advance?:()=>void;env?:Record<string,string|undefined>;should_stop?:()=>boolean;renewal_ms?:number};
+function wakeAdvance(options:ListeningDiscoveryWorkerOptionsV1){
+  try{options.wake_advance?.();}catch{console.warn('[listening-discovery] advance wakeup unavailable');}
+}
 const uuid=/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/iu;
 const sha=(text:string)=>'sha256:'+createHash('sha256').update(text).digest('hex');
 const error=(code:string)=>Object.assign(Error(code),{code});
@@ -85,7 +88,7 @@ export async function signalListeningDiscoveryJobV1(round_id:string,options:List
   const publication=await stores.publicationRecovery({database,round_id});
   if(publication){
     if(publication.round_id!==round_id||!uuid.test(publication.workspace_id)||!uuid.test(publication.actor_user_id))throw error('listening_discovery_scope_invalid');
-    await stores.activate({database,...publication});return{round_id,status:'completed' as const,recovered_publication:true};
+    await stores.activate({database,...publication});wakeAdvance(options);return{round_id,status:'completed' as const,recovered_publication:true};
   }
   const lease=await stores.claim({database,round_id});if(!lease)return{round_id,status:'not_claimed' as const};
   if(lease.round_id!==round_id||!uuid.test(lease.workspace_id)||!uuid.test(lease.execution_token)||typeof lease.request_body!=='string')
@@ -165,7 +168,7 @@ export async function signalListeningDiscoveryJobV1(round_id:string,options:List
     if(child.discovery_round_status==='failed'||child.status==='failed')return{round_id,status:'child_failed' as const};
     if(child.status!=='completed')return{round_id,status:'waiting_child' as const,preparation_id:child.id,run_id:child.listening_run_id};
     const completed=await stores.complete({...access,round_id});
-    await stores.activate({...access,round_id});return{round_id,status:'completed' as const,stop_decision:completed.stop_decision};
+    await stores.activate({...access,round_id});wakeAdvance(options);return{round_id,status:'completed' as const,stop_decision:completed.stop_decision};
   }catch(reason){
     if(call&&!rawPersisted&&(markAttempted||reason instanceof ListeningDiscoveryProviderErrorV1)){
       const outcome=!markAttempted&&reason instanceof ListeningDiscoveryProviderErrorV1&&reason.outcome==='definitely_not_sent'

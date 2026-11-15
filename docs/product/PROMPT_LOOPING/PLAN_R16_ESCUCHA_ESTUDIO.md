@@ -12,6 +12,10 @@ No hay aprobaciones humanas intermedias en los procesos de análisis: Sonnet 4.6
 
 ## Progreso
 
+- H1 a1ec18b5 terminó 32,768 raíces y 177 páginas en 58.07 s: 564.30 raíces/s, mínimo de una ventana completa igual a cero. Rechazado por velocidad sostenida y latencia observada fuera de 100–500 ms; usar los defaults de la factory no bastó. La preparación sintética separada tardó 641.21 s. Recibo completo conservado en privado; sigue pendiente localizar el cuello y alcanzar la meta antes de usar JEV real.
+- H3 integración local: reagrupación con vectores existentes, controlador de avances y almacenamiento privado revisados se integraron con el adaptador PostgreSQL 0304. La revisión de 0304 encontró dos P2: agotamiento exactamente igual al límite y autoridad entre intent y verificación; se corrigen antes de publicar. Se añade el arranque del drainer nativo y el aviso posterior a activar una ronda, con sondeo persistente para recuperar avisos perdidos. Veintiocho focales pasan; revisión y PostgreSQL conjunto del runtime siguen pendientes. No constituye aceptación del ciclo H3.
+- H6 herramientas de muestras integradas localmente: ocho pruebas y TypeScript estricto pasan; revisión cerrada sin P0/P1/P2. La cobertura parcial no produce κ numérico y la degeneración completa se declara no estimable, conservando la evidencia. Faltan el exportador nativo y los paquetes de ejecuciones reales; no se ha evaluado calidad R16.
+
 - Integración H1/H2 en rama separada: la matriz de fallos de a1ec18b5 terminó correctamente y el nuevo ensayo de 32,768 raíces sigue en curso, sin aceptación de velocidad. El arranque de Escucha ahora lee una página acotada antes de calibrar y reutiliza la selección exacta de extremos bajo la lease; las siguientes ventanas leen pendientes nuevos y sólo usan perfiles medidos con cobertura suficiente. Catorce focales y 1,064 pruebas workers pasan (46 omisiones de entorno); tipado/lint 11/11 y lector nativo PostgreSQL 1/1, 284 migraciones sin omisiones. Revisión independiente y aceptación integrada pendientes; sin despliegue ni gasto R16 en UAT.
 
 - H1 nuevo ensayo completo 35934893: 32,768 raíces y sus recibos íntegros, 188 páginas, 58.29 s y 562.15 raíces/s; rechazado. El mínimo por ventana siguió en cero y 158 latencias observadas del simulador superaron 500 ms. La preparación sintética separada tardó 660.92 s. El perfil registra páginas de mediana 179/max256, apply 33.69 s y markSubmitting 22.59 s, con duraciones solapadas. 4fa57f4d elimina un perfil menor del harness y usa la factory del runtime con sus defaults de página 1,024/250 ms y el mismo sobre de memoria de 512 MiB. Los trece tests del harness, tipado aislado de scripts y tipado/lint del monorepo pasan; falta revisión y otra medición completa sin relajar criterios.
@@ -126,6 +130,8 @@ Recibo: separar Voyage/JEV por raíz de Claude por número de grupos y vueltas; 
 
 ## Sorpresas y descubrimientos
 
+- El segundo ensayo completo con la factory compartida quedó prácticamente igual al anterior (564 frente a 562 raíces/s): las páginas tuvieron mediana de 164 filas aunque el máximo configurado era 1,024. El tamaño configurado no equivale al lote efectivamente persistido; el perfil y el calendario de admisiones deben explicar las pausas antes de otra medición.
+
 - Al unir el transporte continuo con la calibración, una segunda lectura limitada al tamaño de warmup podía perder los extremos seleccionados fuera de sus primeras 32 raíces. Los stores simulados que ignoraban los límites no lo revelaban. La regresión ahora respeta el contrato de filas/bytes, incluye extremos posteriores al índice 32 y comprueba que cada raíz se envía una sola vez; un caso que supera la memoria disponible falla antes de reservar o enviar. La prueba nativa del lector verifica por separado la selección previa a hidratar y el rechazo de autoridad obsoleta; no se presenta como prueba end-to-end de calibración.
 
 - Corregir el plan del lector no bastó para alcanzar capacidad: el siguiente ensayo íntegro quedó en 562/s. El harness conservaba páginas de 256 y 100 ms, distintas de los defaults reales 1,024/250 ms. Las 188 páginas pequeñas aumentaron los pasos de persistencia y aplicación. Se alinea la configuración con la factory compartida; la hipótesis se comprobará con otro ensayo, sin darla por probada.
@@ -176,6 +182,8 @@ Recibo: separar Voyage/JEV por raíz de Claude por número de grupos y vueltas; 
 - El promedio del piloto completo incluye una etapa editorial que no escala por raíz. Multiplicarlo linealmente daba USD 205.81/millón; mantener explícitamente los grupos y una vuelta de referencia produce USD 114.035250. Ambos cálculos parten del mismo recibo, cuyo uso histórico permanece USD 17.280463.
 
 ## Registro de decisiones
+
+- 2026-11-15: rechazar a1ec18b5 con los mismos criterios de latencia y capacidad. Conservar evidencia y toda la base sintética; no repetir la corrida ni aumentar concurrencia a ciegas. Perfilar lotes reales y pausas antes del siguiente cambio. El drainer automático sólo continúa padres admitidos; el inicio inicial sigue pendiente de una intención explícita ligada al límite original, nunca de inferir autorización por encontrar filas del ledger.
 
 - 2026-11-15: conservar congelada la fuente del benchmark en un checkout y realizar la integración completa en otro. Reutilizar en el primer envío la selección nativa ya calibrada bajo lease, sin volver a recortarla al prefijo de warmup; comprobar memoria de solicitudes y respuesta antes de reservar. Las ventanas posteriores siempre consultan pendientes nuevos y ceden si aparece una forma no cubierta, sin nuevo cobro de calibración sobre raíces ya clasificadas.
 
