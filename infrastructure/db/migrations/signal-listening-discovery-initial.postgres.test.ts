@@ -59,7 +59,20 @@ test('one explicit initial request starts one frozen parent after native labelin
  assert.equal((await db.query('SELECT count(*)::int n FROM signal_processing_admissions WHERE workspace_id=$1',[f.workspace_id])).rows[0].n,before,'starting the parent creates no paid admission');
  assert.equal((await db.query("SELECT count(*)::int n FROM engine_cost_events WHERE workspace_id=$1 AND workspace_contract='listening-discovery-round-v1'",[f.workspace_id])).rows[0].n,0);
  assert.equal((await pendingSignalListeningDiscoveryInitialV1({database:db})).length,0);
- await assert.rejects(startSignalListeningDiscoveryExecutionV1({...f,generation_id:started.execution.initial_generation_id,classification_run_id:result.run_id,cap_micro_usd:5000000,idempotency_key:randomUUID()}),/initial_intent_required/);
+ const executionId=started.execution.id,custody=async()=> (await db.query(`SELECT
+  (SELECT jsonb_agg(to_jsonb(p) ORDER BY p.id) FROM signal_listening_discovery_executions p WHERE workspace_id=$1) parents,
+  (SELECT jsonb_agg(to_jsonb(a) ORDER BY a.id) FROM signal_processing_admissions a WHERE workspace_id=$1) admissions,
+  (SELECT jsonb_agg(to_jsonb(o) ORDER BY o.kind,o.owner_id) FROM signal_listening_study_policy_owners o WHERE workspace_id=$1) owners,
+  (SELECT jsonb_agg(to_jsonb(c) ORDER BY c.id) FROM signal_labeling_calls c WHERE workspace_id=$1) labeling_calls,
+  (SELECT jsonb_agg(to_jsonb(c) ORDER BY c.id) FROM signal_workspace_embedding_calls c WHERE workspace_id=$1) embedding_calls,
+  (SELECT jsonb_agg(to_jsonb(e) ORDER BY e.id) FROM engine_cost_events e WHERE workspace_id=$1) costs,
+  (SELECT signal_listening_study_policy_exposure_v1(scope_id)::text FROM signal_listening_study_policy_bindings WHERE policy_id=$2) scope_exposure,
+  signal_listening_discovery_exposure_v1($3)::text parent_exposure`,[f.workspace_id,intent.policy_version_id,executionId])).rows[0];
+ const beforeUnboundParent=await custody(),originalCap=Number(intent.cap_micro_usd);
+ assert.equal(originalCap,Number(started.execution.cap_micro_usd));
+ // Stay within the existing cap so the missing-intent guard is actually exercised.
+ await assert.rejects(startSignalListeningDiscoveryExecutionV1({...f,generation_id:started.execution.initial_generation_id,classification_run_id:result.run_id,cap_micro_usd:originalCap,idempotency_key:randomUUID()}),/initial_intent_required/);
+ assert.deepEqual(await custody(),beforeUnboundParent,'a missing intent creates no second parent, admission, owner, provider call, cost or exposure');
  await assert.rejects(db.query('UPDATE signal_listening_discovery_initial_intents SET cap_micro_usd=cap_micro_usd+1 WHERE id=$1',[intent.id]),/initial_immutable/);
  await assert.rejects(db.query('DELETE FROM signal_listening_discovery_initial_intents WHERE id=$1',[intent.id]),/initial_immutable/);
  await assert.rejects(db.query(`INSERT INTO signal_listening_discovery_initial_intents SELECT(jsonb_populate_record(NULL::signal_listening_discovery_initial_intents,to_jsonb(i)||jsonb_build_object('id',$2::uuid,'initial_run_id',NULL,'processing_admission_id',NULL,'execution_id',NULL,'confirmed_generation_id',NULL,'status','preparing','request_digest',NULL))).* FROM signal_listening_discovery_initial_intents i WHERE id=$1`,[intent.id,randomUUID()]),/initial_request_invalid/,'an old preparation cannot be retrofitted even by a new intent UUID');
