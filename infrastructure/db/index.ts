@@ -163,3 +163,16 @@ export {startSignalListeningDiscoveryInitialV1,pendingSignalListeningDiscoveryIn
  type ListeningDiscoveryInitialIntentV1,type ListeningDiscoveryInitialResultV1} from './signal-listening-discovery-initial';
 
 export * from './signal-listening-human-edits';
+export {ensureSignalStudyCorpusV1,saveSignalStudyConfigurationV1,readSignalStudyConfigurationV1} from './signal-study-configuration';
+export {requestSignalStudyExecutionV1,pendingSignalStudyExecutionsV1} from './signal-study-executions';
+export {createSignalStudyRuntimeStoreV1} from './signal-study-runtime-store';
+export {createSignalStudyJevNativeAdapterV1} from './signal-study-jev-store';
+export {createSignalStudyNumericNativeAdapterV1} from './signal-study-numeric-source';
+export {readSignalStudyOutputV1} from './signal-study-serving';
+export type {SignalStudyRawStorageV1,SignalStudyRawDescriptorV1} from './signal-study-steps';
+export type {SignalStudyConfigurationRecordV1,SignalStudyExecutionRecordV1} from './signal-study-core';
+export {readSignalStudyExecutionStatusV1,listSignalStudiesV1,readLatestSignalStudyConfigurationV1} from './signal-study-status';
+export type {SignalStudyExecutionStatusV1} from './signal-study-status';
+export {promoteSignalStudyMotivesV1} from './signal-study-promotion';
+export {readSignalStudyReportOverviewV1,readSignalStudyReportPageV1} from './signal-study-serving';
+export type {SignalStudyReportSectionV1,SignalStudyReportRowsV1,SignalStudyReportOverviewV1} from './signal-study-serving';
