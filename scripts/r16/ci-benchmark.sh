@@ -27,6 +27,7 @@ export NOISIA_R16_UNSENT_PG="true"
 
 corepack pnpm --filter @noisia/db db:smoke:migrations
 corepack pnpm exec tsx --test infrastructure/db/migrations/signal-client-workspace-entry.batch-equivalence.postgres.test.ts
+corepack pnpm exec tsx --test infrastructure/db/migrations/signal-client-workspace-entry.preparation-page-equivalence.postgres.test.ts
 corepack pnpm exec tsx --test infrastructure/db/migrations/signal-r16-native-fixture.postgres.test.ts
 corepack pnpm exec tsx --test infrastructure/db/migrations/signal-labeling-unsent.postgres.test.ts
 corepack pnpm exec tsx --test services/workers/src/providers/jev-account-rate-limit.redis.test.ts

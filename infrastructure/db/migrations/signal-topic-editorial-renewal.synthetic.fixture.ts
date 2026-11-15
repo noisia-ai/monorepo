@@ -42,6 +42,7 @@ export type SignalTopicEditorialRenewalSyntheticSeedArgsV1 = SyntheticTransactio
     identity: { organization_id: string; actor_user_id: string; brand_id: string; workspace_id: string } }) => Promise<void>;
   root_count?: number;
   import_batch_size?: number;
+  preparation_page_size?: number;
   long_text?: boolean;
   skip_topic_prototypes?: boolean;
   runtime?: SignalBrandContextPreparationRuntimeV1;
@@ -261,6 +262,7 @@ export async function seedSignalTopicEditorialRenewalSourceV1(args: SignalTopicE
   const clusterIds = args.projection?.cluster_ids ?? [randomUUID(), randomUUID()] as const;
   const projection = await syntheticClientWorkspaceFixtureV1({ database, scoped, query, cleanup: async () => {} }, {
     identity, root_count: args.root_count, long_text: args.long_text, import_batch_size: args.import_batch_size,
+    preparation_page_size: args.preparation_page_size,
     skip_topic_prototypes: args.skip_topic_prototypes,
     projection: { ...args.projection, cluster_ids: clusterIds,
       ...(args.root_count && args.root_count > 10 ? { allow_large_population: true } : {}) },

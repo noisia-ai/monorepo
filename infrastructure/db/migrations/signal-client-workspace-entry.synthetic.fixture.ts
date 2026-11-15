@@ -104,6 +104,7 @@ export async function syntheticClientWorkspaceFixtureV1(tx:SyntheticTransactionV
  root_count?:number;
  long_text?:boolean;
  import_batch_size?:number;
+ preparation_page_size?:number;
  skip_topic_prototypes?:boolean;
  projection?:Parameters<typeof workspaceProjectionFixtureBodyV1>[1];
 }={}){
@@ -112,7 +113,10 @@ export async function syntheticClientWorkspaceFixtureV1(tx:SyntheticTransactionV
  const access={database,workspace_id,actor_user_id};
  const prep=await requestSignalWorkspaceCorpusPreparationStoreV1({...access,idempotency_key:randomUUID()});
  const prepJob=(await query('SELECT worker_job_id FROM signal_corpus_preparation_runs WHERE id=$1',[prep.run_id])).rows[0]!.worker_job_id;
- await signalWorkspaceCorpusPreparationJobV1({id:prepJob,data:{run_id:prep.run_id},updateProgress:async()=>{}},{database,page_size:3});
+ const preparationPageSize=options.preparation_page_size??3;
+ if(!Number.isSafeInteger(preparationPageSize)||preparationPageSize<1||preparationPageSize>100)
+  throw new Error('synthetic corpus preparation page size must be between 1 and the production limit of 100');
+ await signalWorkspaceCorpusPreparationJobV1({id:prepJob,data:{run_id:prep.run_id},updateProgress:async()=>{}},{database,page_size:preparationPageSize});
  const prepared=await loadSignalWorkspaceCorpusPreparationStoreV1({queryable:database,workspace_id});
  assert.equal(prepared.is_current,true);assert.equal(prepared.latest_completed?.counts.eligible_roots,options.root_count??3);
  const quoted=await quoteSignalWorkspaceEmbeddingsStoreV1({...access,profile});
