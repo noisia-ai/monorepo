@@ -127,7 +127,10 @@ export async function processJevStreamingWindowV2<I extends FacetInput, R>(args:
       }
       if(!count) { fail(Error('jev_stream_page_memory_bound')); return; }
       const rows = buffered.splice(0, count); bufferedBytes -= rows.reduce((n, row) => n + row.bytes, 0);
-      const task = consume(rows).finally(() => { active.delete(task); observe(); wake(); flush(force); });
+      // A timer/pressure flush is a one-shot request, not a mode inherited by
+      // subsequent pages. Keep batching later responses while HTTP is active;
+      // the timer or final drain will flush the bounded tail when needed.
+      const task = consume(rows).finally(() => { active.delete(task); observe(); wake(); flush(); });
       active.add(task); observe();
     }
   }

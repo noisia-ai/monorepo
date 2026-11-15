@@ -588,6 +588,49 @@ test('streaming observer failure cannot interrupt settlement or change the outco
   assert.ok(f.calls.every(call => call.status==='settled' && call.results_applied));
 });
 
+test('a timer-flushed partial page does not force later partial pages while other responses are pending',{timeout:10000},async()=>{
+  const f=fixture(3,true),batches:string[][]=[];
+  const deferred=()=>{let resolve!:()=>void;const promise=new Promise<void>(done=>{resolve=done;});return{promise,resolve};};
+  const firstResponse=deferred(),secondResponse=deferred(),secondAllowed=deferred(),thirdAllowed=deferred();
+  const firstPersisted=deferred(),allowFirstPersist=deferred(),firstApplied=deferred();
+  const originalInterval=globalThis.setInterval,originalClear=globalThis.clearInterval;
+  let flushTick:(()=>void)|undefined;
+  const timer={unref(){return timer;}};
+  globalThis.setInterval=((callback:()=>void,ms?:number,...args:unknown[])=>{
+    if(ms===12345){flushTick=callback;return timer;}
+    return originalInterval(callback,ms,...args);
+  })as typeof setInterval;
+  globalThis.clearInterval=((handle:unknown)=>{if(handle!==timer)originalClear(handle as ReturnType<typeof setInterval>);})as typeof clearInterval;
+  f.store.persistRawPage=async(_run,rows)=>{
+    batches.push(rows.map(row=>row.call.id));
+    if(batches.length===1){firstPersisted.resolve();await allowFirstPersist.promise;}
+    for(const row of rows)row.call.raw_body=row.raw;
+  };
+  const apply=f.store.apply;
+  f.store.apply=async(run,rows)=>{await apply(run,rows);if(rows.some(row=>row.call.id==='call-0'))firstApplied.resolve();};
+  const provider:JevProviderV1={max_concurrency:3,max_response_bytes:16384,async evaluate(request){
+    const call=f.calls.find(row=>row.request===request)!;
+    if(call.id==='call-0')firstResponse.resolve();
+    if(call.id==='call-1'){await secondAllowed.promise;secondResponse.resolve();}
+    if(call.id==='call-2')await thirdAllowed.promise;
+    return f.response(request);
+  }};
+  const task=processMassLabelingJevV1({run_id:f.run.id,store:f.store,provider,
+    execution:{...streaming,max_in_flight:3,flush_size:2,max_flushes:1,flush_interval_ms:12345,window_size:3}});
+  try{
+    await firstResponse.promise;await delay(0);assert.ok(flushTick);flushTick();await firstPersisted.promise;
+    secondAllowed.resolve();await secondResponse.promise;await delay(0);
+    allowFirstPersist.resolve();await firstApplied.promise;await delay(0);
+    assert.deepEqual(batches,[['call-0']],'the first timer tick must not become a permanent force-flush flag');
+    thirdAllowed.resolve();assert.equal((await task).labeled,3);
+    assert.deepEqual(batches,[['call-0'],['call-1','call-2']]);
+    assert.ok(f.calls.every(call=>call.status==='settled'&&call.results_applied));
+  }finally{
+    allowFirstPersist.resolve();secondAllowed.resolve();thirdAllowed.resolve();await task;
+    globalThis.setInterval=originalInterval;globalThis.clearInterval=originalClear;
+  }
+});
+
 for (const fault of ['apply', 'settlement_ack', 'application_ack'] as const) test(`streaming preserves valid paid responses after a ${fault} failure`, async () => {
   const f = fixture(8, true), durable = new Map<string, string>();
   f.store.persistRawPage = async (_run, rows) => { for (const row of rows) {
