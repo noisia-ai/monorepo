@@ -5,7 +5,7 @@ import {
 import {
   buildSignalListeningJevRequestV1,mapSignalListeningJevResponseV1,signalListeningJevIdentityV1,signalListeningRequestDigestV1,
   validateSignalListeningConfigurationV1,labelerDigestV1,llmPriceV1,llmCostMicroUsdV1,
-  signalWorkspaceEmbeddingDigestV1 as digest,type SignalListeningInputV1,type SignalListeningResultV1,
+  signalListeningCalibrationShapeV1,signalWorkspaceEmbeddingDigestV1 as digest,type SignalListeningInputV1,type SignalListeningResultV1,
 } from '@noisia/query-engine';
 import {assertMassJevConsumerV1} from '../providers/mass-labeling-consumer';
 import {jevStreamingExecutionFromEnvV2} from '../providers/jev-streaming-runtime';
@@ -15,6 +15,7 @@ import {createLabelingRawPagesStorageV1} from './signal-labeling-receipt-storage
 import {createWorkspaceEngineStorageV1,type WorkspaceEngineStorageV1} from './signal-workspace-engine-storage';
 import type {JevStreamingExecutionV2} from './signal-jev-streaming-window';
 
+import {listeningHasRawV1,selectSignalListeningRecoveryV1,createSignalListeningRecoveryProviderV1} from './signal-listening-recovery';
 import {planSignalListeningCalibrationV1,createSignalListeningCalibratedProviderV1} from './signal-listening-calibration';
 
 type Store=ReturnType<typeof createSignalListeningStoreV1>;
@@ -45,8 +46,8 @@ export function processSignalListeningJevV1(args:{run_id:string;store:Store;prov
     const rows=await args.store.calls(run),selection=args.selection?.();if(!selection)return rows;
     const order=new Map(selection.map((input,index)=>[key(input),index]));
     // Unknown physical attempts always remain visible to the shared money guard.
-    return rows.filter(call=>call.status==='unknown'&&!call.raw_body||call.inputs.some(input=>order.has(key(input))))
-      .sort((a,b)=>(order.get(key(a.inputs[0]!))??-1)-(order.get(key(b.inputs[0]!))??-1));
+    return rows.filter(call=>listeningHasRawV1(call)||call.status==='unknown'||call.inputs.some(input=>order.has(key(input))))
+      .sort((a,b)=>Number(Boolean(b.raw_body))-Number(Boolean(a.raw_body))||(a.inputs[0]?order.get(key(a.inputs[0]))??-1:-1)-(b.inputs[0]?order.get(key(b.inputs[0]))??-1:-1));
   }};
   return processJevLabelingPageV1<SignalListeningInputV1,SignalListeningResultV1>({...args,store:schedulerStore,
     prepare:args.prepare?async run=>{const prepared=await args.prepare!(run);windowSize=prepared.execution.window_size;return prepared;}:undefined,hooks:{
@@ -95,17 +96,56 @@ export async function signalListeningJevJobV1(run_id:string,options:{
   if(!run||!await signalWorkspaceFeatureEnabledV1({queryable:database,workspace_id:run.workspace_id,feature:'mass_labeling'}))
     throw Error('listening_not_enabled');
   const store=options.store??createSignalListeningRuntimeStoreV1(database,{execution});
-  let calibrated:ReturnType<typeof createSignalListeningCalibratedProviderV1>|undefined;
+  let calibrated:ReturnType<typeof createSignalListeningCalibratedProviderV1>|undefined,recoveryProvider:JevProviderV1|undefined;
+  let metadata:Awaited<ReturnType<Store['calls']>>|undefined,recovery:ReturnType<typeof selectSignalListeningRecoveryV1>,hydrated:Awaited<ReturnType<Store['calls']>>|undefined;
   let calibrationRun:Readonly<LabelingRunV1>|undefined,shapes:string[]=[],selection:SignalListeningInputV1[]|undefined;
   // This placeholder cannot send; the lease-held planner always selects runtime.
   const unavailable:JevProviderV1={async evaluate(){throw new JevProviderErrorV1('listening_preparation_required','definitely_not_sent');}};
+  // Prepare inspects metadata only. The shared worker then loads exactly one
+  // bounded raw selection once; no second full-page read and no hidden unknown.
+  const boundedStore={...store,async calls(leased:LabelingRunV1){
+    if(recovery){
+      const loaded=await store.calls(leased,{call_ids:recovery.calls.map(call=>call.id)});
+      // Routine measured recovery must not replace a wide ledger profile with
+      // its latest32 narrow receipts. Only interrupted official warmup windows
+      // need derivation; the DB still validates settled/applied evidence later.
+      shapes=[...new Set(loaded.filter(call=>{
+        if(!call.raw_body)return false;
+        try{return JSON.parse(call.raw_body).rate_calibration?.kind==='official_context_bound';}catch{return false;}
+      }).flatMap(call=>call.inputs).map(input=>signalListeningCalibrationShapeV1(configurationOf(leased),input).shape_digest))];
+      return [...loaded,...(metadata??[]).filter(call=>call.status==='unknown'&&!listeningHasRawV1(call)&&!loaded.some(row=>row.id===call.id))];
+    }
+    return hydrated??metadata??await store.calls(leased,{metadata_only:true});
+  }};
   try{
-    return await processSignalListeningJevV1({run_id,execution,store,provider:unavailable,recovery_only:run.recovery_only,selection:()=>selection,
+    return await processSignalListeningJevV1({run_id,execution,store:boundedStore,provider:unavailable,recovery_only:run.recovery_only,selection:()=>selection,
       prepare:async leased=>{
         calibrationRun=leased;
         try{
-          const configuration=configurationOf(leased),pending=await store.calls(leased);
-          const inputs=pending.length?pending.filter(call=>!call.results_applied&&(!run.recovery_only||Boolean(call.raw_body))).flatMap(call=>call.inputs):await store.inputs(leased);
+          const configuration=configurationOf(leased),pending=metadata=await store.calls(leased,{metadata_only:true});
+          recovery=selectSignalListeningRecoveryV1(pending,execution);
+          if(recovery){
+            selection=[];shapes=[];
+            recoveryProvider=createSignalListeningRecoveryProviderV1({execution:recovery.execution,external:options.provider});
+            return{provider:recoveryProvider,execution:recovery.execution,max_windows:1,recovery_only:true};
+          }
+          if(leased.error_code==='labeling_outcome_unknown'||pending.some(call=>call.status==='unknown')){
+            selection=[];shapes=[];recoveryProvider=createSignalListeningRecoveryProviderV1({execution,external:options.provider});
+            return{provider:recoveryProvider,execution,max_windows:1,recovery_only:true};
+          }
+          if(pending.length){
+            // Metadata contains no request/input bodies. Hydrate only a bounded
+            // unsent cohort, including byte extrema rather than a blind prefix.
+            const size=(call:typeof pending[number])=>Number(call.request_size_bytes??Buffer.byteLength(JSON.stringify(call.request)))+Number(call.input_size_bytes??Buffer.byteLength(JSON.stringify(call.inputs)));
+            const sorted=[...pending].sort((a,b)=>size(a)-size(b));
+            const priority=[sorted[0]!,sorted[sorted.length-1]!,...pending],seen=new Set<string>(),ids:string[]=[];let bytes=0;
+            for(const call of priority){if(seen.has(call.id))continue;seen.add(call.id);const bound=size(call)*4+4096;
+              if(!Number.isSafeInteger(bound)||bound<4096)throw Error('labeling_raw_receipt_invalid');
+              if(bytes+bound>execution.max_buffered_bytes)continue;ids.push(call.id);bytes+=bound;if(ids.length>=execution.window_size)break;}
+            if(!ids.length)throw Error('listening_recovery_memory_budget_exceeded');
+            hydrated=await store.calls(leased,{call_ids:ids});
+          }
+          const inputs=pending.length?(hydrated??pending).filter(call=>!call.results_applied&&(!run.recovery_only||Boolean(call.raw_body))).flatMap(call=>call.inputs):await store.inputs(leased);
           const plan=await planSignalListeningCalibrationV1({workspace_id:leased.workspace_id,configuration_digest:digest(configuration),
             configuration,inputs,execution,loadProfile:shape_digest=>(options.calibration?.load??loadSignalListeningCalibrationV1)({database,
               workspace_id:leased.workspace_id,actor_user_id:leased.actor_user_id,configuration_digest:digest(configuration),model:configuration.model,shape_digest})});
@@ -129,7 +169,7 @@ export async function signalListeningJevJobV1(run_id:string,options:{
     // A recovery-only pass also contributes its original shape, without a new fetch.
     try{if(calibrationRun)for(const shape_digest of shapes)await (options.calibration?.derive??deriveSignalListeningCalibrationV1)({database,
       workspace_id:calibrationRun.workspace_id,actor_user_id:calibrationRun.actor_user_id,run_id,shape_digest});}
-    finally{await calibrated?.provider.close?.();}
+    finally{await calibrated?.provider.close?.();await recoveryProvider?.close?.();}
   }
 }
 export async function drainSignalListeningOnceV1(options:{database?:Parameters<typeof createSignalListeningStoreV1>[0]['database'];

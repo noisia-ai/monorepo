@@ -65,6 +65,14 @@ export type LabelingCallV1<Input extends FacetInput = FacetInput> =
       | "failed"
       | "unknown";
     raw_body: string | null;
+    /** Metadata does not load bytes: NULL raw_body is not proof of no receipt. */
+    has_raw?:boolean;
+    request_size_bytes?:number|string;
+    input_size_bytes?:number|string;
+    raw_storage_key?:string|null;
+    raw_size_bytes?:number|string|null;
+    raw_page_id?:string|null;
+    raw_page_size_bytes?:number|string|null;
     results_applied: boolean;
     provider_batch_id: string | null;
     retry_depth: number;
@@ -830,15 +838,35 @@ export function createSignalLabelingStoreV1<
         ).rows;
       });
     },
-    async calls(run: LabelingRunV1): Promise<LabelingCallV1<Input>[]> {
-      const calls = (
-        await db.query<LabelingCallV1<Input>>(
+    async calls(run: LabelingRunV1,read?:{metadata_only?:boolean;call_ids?:string[]}): Promise<LabelingCallV1<Input>[]> {
+      if(read&&(!read.metadata_only&&read.call_ids===undefined||read.metadata_only!==undefined&&typeof read.metadata_only!=='boolean'
+        ||read.call_ids!==undefined&&(!Array.isArray(read.call_ids)||read.call_ids.length>pageSize
+          ||read.call_ids.some(id=>typeof id!=='string'||!/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/iu.test(id))
+          ||new Set(read.call_ids.map(id=>id.toLowerCase())).size!==read.call_ids.length)))fail('labeling_call_selection_invalid',400);
+      const selected=read?await tx(db,async c=>{
+        await lock(c,run);await authority(c,run,0);
+        return (await c.query<LabelingCallV1<Input>>(`SELECT ${read.metadata_only?`call.id,call.custom_id,call.request_digest,call.status,call.results_applied,call.provider_batch_id,
+            call.retry_depth,call.reserved_micro_usd,call.created_at,call.updated_at,call.raw_storage_key,
+            '{}'::jsonb request,'[]'::jsonb inputs`:'call.*'},
+          octet_length(call.request::text) request_size_bytes,octet_length(call.inputs::text) input_size_bytes,
+          (call.raw_storage_key IS NOT NULL OR member.call_id IS NOT NULL) has_raw,
+          member.page_id raw_page_id,page.size_bytes raw_page_size_bytes,
+          COALESCE(member.raw_size_bytes,call.raw_size_bytes) raw_size_bytes
+          FROM signal_labeling_calls call
+          LEFT JOIN signal_labeling_raw_page_members member ON member.workspace_id=call.workspace_id AND member.run_id=call.run_id AND member.call_id=call.id
+          LEFT JOIN signal_labeling_raw_pages page ON page.id=member.page_id AND page.workspace_id=call.workspace_id AND page.run_id=call.run_id
+          WHERE call.run_id=$1 AND call.workspace_id=$2 AND NOT call.results_applied AND ($3::uuid[] IS NULL OR call.id=ANY($3::uuid[]))
+          ORDER BY (call.raw_storage_key IS NOT NULL OR member.call_id IS NOT NULL) DESC,(call.status='unknown') DESC,
+            member.page_id NULLS LAST,member.byte_offset NULLS LAST,call.created_at,call.id LIMIT $4`,
+          [run.id,run.workspace_id,read.call_ids??null,pageSize])).rows;
+      }):(await db.query<LabelingCallV1<Input>>(
           `SELECT * FROM signal_labeling_calls WHERE run_id=$1
            ${options.adapter?.pending_calls_only ? "AND NOT results_applied" : ""}
            ORDER BY created_at,id ${options.adapter?.pending_calls_only ? "LIMIT $2" : ""}`,
           options.adapter?.pending_calls_only?[run.id,pageSize]:[run.id],
-        )
-      ).rows.map((call) => ({ ...call, raw_body: call.raw_body ?? null }));
+        )).rows;
+      const calls=selected.map(call=>({...call,raw_body:read?.metadata_only?null:call.raw_body??null}));
+      if(read?.metadata_only)return calls;
       let pageCalls=new Set<string>();
       if(rawPages){
         try{pageCalls=await rawPages.loadCalls(run,calls.filter(c=>!c.results_applied));}

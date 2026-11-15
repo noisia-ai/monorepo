@@ -35,7 +35,7 @@ export type R16BenchmarkFixtureV1={root_count:number;execution_cap_micro_usd:num
 export async function runMassLabelingAcceptanceFixtureV1(authorization:MassLabelingAcceptanceModeV1,
   options:{benchmark?:R16BenchmarkFixtureV1;beforeProcessing?:R16BenchmarkFixtureV1['beforeProcessing']}={}){
   const benchmark=options.benchmark;
-  if(options.beforeProcessing){assert.equal(authorization,'product');assert.equal(benchmark,undefined);}
+  if(options.beforeProcessing){assert.ok(authorization==='product'||authorization==='product-recovery');assert.equal(benchmark,undefined);}
   if(benchmark){
     assert.equal(authorization,'product-recovery');
     assert.ok(Number.isInteger(benchmark.root_count)&&benchmark.root_count>=1002&&benchmark.root_count<=100000);
@@ -268,8 +268,8 @@ export async function runMassLabelingAcceptanceFixtureV1(authorization:MassLabel
       if(scaledRecovery){
         assert.equal(stack.length,0);
         await raw.query("COMMIT");
-        await assertMassLabelingProductNativeV2({...access,database:pool,query:pool.query.bind(pool),map_id:map.map_id,concurrent_recovery:true,foreign_actor_id:foreignActor,...(benchmark?{execution_cap_micro_usd:benchmark.execution_cap_micro_usd,beforeProcessing:benchmark.beforeProcessing}:{})});
-        if(benchmark)return;
+        await assertMassLabelingProductNativeV2({...access,database:pool,query:pool.query.bind(pool),map_id:map.map_id,concurrent_recovery:true,foreign_actor_id:foreignActor,...(benchmark?{execution_cap_micro_usd:benchmark.execution_cap_micro_usd,beforeProcessing:benchmark.beforeProcessing}:options.beforeProcessing?{beforeProcessing:options.beforeProcessing}:{})});
+        if(benchmark||options.beforeProcessing)return;
       }else if(options.beforeProcessing){
         assert.equal(stack.length,0,"the callback begins after all setup savepoints have been released");
         // Fault tests cross real PostgreSQL commits inside a disposable clone.

@@ -60,3 +60,16 @@ test('invalid preparation and transient preparation failures release the lease b
   await assert.rejects(processJevLabelingPageV1({...base,prepare:async()=>({provider:base.provider,execution:{...execution,window_size:0}})}),/jev_stream_configuration_invalid/);
   assert.equal(releases,2);assert.equal(failures,0);
 });
+test('prepared recovery is additive and cannot disable recovery forced by the owner',async()=>{
+ type Args=Parameters<typeof processJevLabelingPageV1<FacetInput,string>>[0];
+ for(const forced of [false,true]){
+  const run={id:'recovery',lease_token:'lease',error_code:null}as LabelingRunV1;let sends=0,reserves=0;
+  const store={claim:async()=>run,calls:async()=>[],renew:async()=>{},release:async()=>{},inputs:async()=>{throw Error('must not select new roots');},
+   reserve:async()=>{reserves++;return[];}}as unknown as Args['store'];
+  const provider={max_response_bytes:4096,evaluate:async()=>{sends++;throw Error('must not send');}};
+  const hooks={recovery_only:forced,price:()=>llmPriceV1('typesafe','jev-1.13.0','sync',.042),propose:()=>[],map:()=>[],error:()=>[],labeled:()=>true};
+  const result=await processJevLabelingPageV1({run_id:run.id,store,provider,hooks,execution,
+   prepare:async()=>({provider,execution,max_windows:1,recovery_only:!forced})});
+  assert.equal(result.status,'recovery_unavailable');assert.equal(sends,0);assert.equal(reserves,0);
+ }
+});

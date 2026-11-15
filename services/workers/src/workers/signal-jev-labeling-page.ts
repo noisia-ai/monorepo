@@ -5,9 +5,9 @@ import type { createSignalLabelingStoreV1, LabelingRunV1, LabelingCallV1, Labeli
 import { validateJevResponseV1, jevProviderErrorV1, type JevProviderV1, type JevRawResponseV1,
   type JevRequestV1, type JevResponseV1, type JevProviderErrorV1 } from "../providers/typesafe-jev";
 
-export type JevPreparedExecutionV1 = {provider:JevProviderV1;execution:JevStreamingExecutionV2;max_windows?:number};
+export type JevPreparedExecutionV1 = {provider:JevProviderV1;execution:JevStreamingExecutionV2;max_windows?:number;recovery_only?:boolean};
 function validatePreparedExecution(value:JevPreparedExecutionV1){
-  if(!value||typeof value.provider?.evaluate!=='function'||!value.execution)throw Error('jev_preparation_invalid');
+  if(!value||typeof value.provider?.evaluate!=='function'||!value.execution||value.recovery_only!==undefined&&typeof value.recovery_only!=='boolean')throw Error('jev_preparation_invalid');
   const e=value.execution;
   if(Object.keys(e).length!==6||Object.values(e).some(v=>!Number.isSafeInteger(v)||v<1)
     ||e.max_in_flight>4096||e.max_flushes>64||e.flush_size>4096||e.window_size>4096||e.flush_interval_ms>60000)
@@ -39,7 +39,7 @@ export async function processJevLabelingPageV1<Input extends FacetInput,Result>(
   settled_micro_usd?:number; p50_ms?:number|null; p95_ms?:number|null}> {
   if(args.max_windows!==undefined&&(!args.execution||!Number.isSafeInteger(args.max_windows)||args.max_windows<1||args.max_windows>4096))
     throw new Error("jev_window_limit_invalid");
-  const {store,hooks}=args;let provider=args.provider,execution=args.execution,maxWindows=args.max_windows;
+  const {store,hooks}=args;let provider=args.provider,execution=args.execution,maxWindows=args.max_windows,recoveryOnly=hooks.recovery_only===true;
   const run=await store.claim(args.run_id);
   if(!run)return {status:"not_claimed"};
   const cancellation=new AbortController();setMaxListeners(Math.max(201,(args.execution?.max_in_flight??0)*2+64),cancellation.signal);
@@ -57,7 +57,7 @@ export async function processJevLabelingPageV1<Input extends FacetInput,Result>(
       const prepared=await args.prepare(Object.freeze({...run}));validatePreparedExecution(prepared);
       if(renewal)await renewal;if(leaseError)throw leaseError;
       if(cancellation.signal.aborted)throw Error('labeling_lease_lost');
-      provider=prepared.provider;execution=Object.freeze({...prepared.execution});maxWindows=prepared.max_windows;
+      provider=prepared.provider;execution=Object.freeze({...prepared.execution});maxWindows=prepared.max_windows;recoveryOnly||=prepared.recovery_only===true;
       setMaxListeners(Math.max(201,execution.max_in_flight*2+64),cancellation.signal);
     }
     const price=hooks.price(run);
@@ -68,7 +68,7 @@ export async function processJevLabelingPageV1<Input extends FacetInput,Result>(
     for (;;) {
       const pending=(await store.calls(run)).filter(call=>!call.results_applied);
       if(hooks.fail_on_error&&pending.some(call=>call.status==="unknown"&&!call.raw_body)
-        &&!(hooks.recovery_only&&pending.some(call=>Boolean(call.raw_body)))){
+        &&!(recoveryOnly&&pending.some(call=>Boolean(call.raw_body)))){
         await store.fail(run,"labeling_outcome_unknown",execution?{preserve_reserved:true}:undefined);return {status:"outcome_unknown"};
       }
       if(execution&&run.error_code==="labeling_outcome_unknown"&&!pending.some(call=>Boolean(call.raw_body))){
@@ -77,9 +77,9 @@ export async function processJevLabelingPageV1<Input extends FacetInput,Result>(
           await store.fail(run,"labeling_outcome_unknown",{preserve_reserved:true});return {status:"outcome_unknown"};
         }
       }
-      let calls=(hooks.recovery_only?pending.filter(call=>Boolean(call.raw_body)):pending).slice(0,execution?.window_size??200);
-      if(hooks.recovery_only&&!calls.length)return {status:"recovery_unavailable"};
-      if(!calls.length&&!run.error_code&&!hooks.recovery_only){
+      let calls=(recoveryOnly?pending.filter(call=>Boolean(call.raw_body)):pending).slice(0,execution?.window_size??200);
+      if(recoveryOnly&&!calls.length)return {status:"recovery_unavailable"};
+      if(!calls.length&&!run.error_code&&!recoveryOnly){
         const proposals=hooks.propose(run,await store.inputs(run));
         if(proposals.length)calls=(await store.reserve(run,proposals)).slice(0,execution?.window_size??200);
       }
@@ -95,7 +95,7 @@ export async function processJevLabelingPageV1<Input extends FacetInput,Result>(
         windows++;
         if(run.error_code){const refreshed=await store.refresh(run);run.error_code=refreshed.error_code;}
         if(leaseError)throw leaseError;
-        if(cancellation.signal.aborted||outcome.status!=="running"||!calls.length||outcome.unresolved_billing_requests||hooks.recovery_only||windows>=(maxWindows??Infinity))return aggregate;
+        if(cancellation.signal.aborted||outcome.status!=="running"||!calls.length||outcome.unresolved_billing_requests||recoveryOnly||windows>=(maxWindows??Infinity))return aggregate;
         continue;
       }
     const rawPage:Array<{call:LabelingCallV1<Input>;raw:string}>=[];

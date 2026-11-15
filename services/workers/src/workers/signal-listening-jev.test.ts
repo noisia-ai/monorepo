@@ -149,3 +149,39 @@ test('heterogeneous pending batches warm their extremes once then remain paralle
  }finally{for(const[key,value]of [['NOISIA_SIGNAL_LISTENING_ENABLED',previous.owner],['NOISIA_JEV_PROVIDER_ENABLED',previous.provider]]as const)
   if(value===undefined)delete process.env[key];else process.env[key]=value;}
 });
+for(const withUnknownWithoutRaw of [false,true])test(`recovery precedes an outlier of another shape and finds paid raw beyond32 (unresolved sibling ${withUnknownWithoutRaw})`,async()=>{
+ const configuration=signalListeningBaseTemplateV1({category:'tea',lexicon_terms:['tea']});
+ configuration.questions.push({key:'occasion',type:'noul',text:'Occasion?',positive:'Present',negative:'Absent',scope:'all',origin:'brand_os',human_locked:true});
+ const f=fixture(configuration,[['voice','promotion']]),sample=(await f.store.inputs(f.run))[0]!;
+ const inputRows=Array.from({length:40},(_,i)=>({...sample,root_id:randomUUID(),text:i===0?'x'.repeat(5000):sample.text}));
+ inputRows[0]={...inputRows[0]!,question_keys:['occasion'],question_digests:{occasion:signalListeningQuestionDigestV1(configuration,configuration.questions.at(-1)!)}};
+ const proposals=inputRows.map(input=>{const request=buildSignalListeningJevRequestV1(input,configuration),request_digest=signalListeningRequestDigestV1(f.run,input,request);
+  return{request,request_digest,custom_id:'listening_'+request_digest.slice(7,67),inputs:[input],reserved_micro_usd:100};});
+ await f.store.reserve(f.run,proposals);const page=randomUUID(),raws=new Map<string,string>();
+ for(const index of [33,34]){const call=f.calls[index]!;call.status='unknown';const value=await f.provider.evaluate(call.request as JevRequestV1);
+  const raw=JSON.stringify({...value,rate_calibration:{labeler_digest:'sha256:'+'a'.repeat(64),input_bytes:100,
+    kind:withUnknownWithoutRaw?'measured':'official_context_bound'}});
+  raws.set(call.id,raw);call.has_raw=true;call.raw_page_id=page;call.raw_page_size_bytes=4096;call.raw_size_bytes=Buffer.byteLength(raw);}
+ if(withUnknownWithoutRaw)f.calls[39]!.status='unknown';f.requests.splice(0);f.run.error_code='labeling_outcome_unknown';
+ let loads=0,metadataReads=0,calibrationLoads=0,derivations=0;
+ f.store.calls=async(_run,read)=>{
+  let calls=f.calls.filter(call=>!call.results_applied);if(read?.metadata_only){metadataReads++;return calls.map(call=>({...call,raw_body:null}));}
+  assert.ok(read?.call_ids);loads++;calls=calls.filter(call=>read!.call_ids!.includes(call.id));
+  for(const call of calls)call.raw_body=raws.get(call.id)??null;return calls;
+ };
+ f.store.finish=async()=>{const unknown=f.calls.some(call=>call.status==='unknown'),pending=f.calls.some(call=>!call.results_applied);f.run.error_code=unknown?'labeling_outcome_unknown':null;
+  const status=unknown?'failed' as const:pending?'running' as const:'completed' as const;f.run.status=status;return status;};
+ f.store.fail=async(_run,code)=>{f.run.error_code=code;f.run.status='failed';};
+ f.store.refresh=async()=>({status:f.run.status,error_code:f.run.error_code??null});
+ const database={query:async(sql:string)=>({rows:sql.includes('signal_workspace_features')?[{enabled:true}]:[{workspace_id:f.run.workspace_id,labeler_digest:f.run.labeler_digest,recovery_only:false}]})}as NonNullable<Parameters<typeof signalListeningJevJobV1>[1]>['database'];
+ const previous=process.env.NOISIA_SIGNAL_LISTENING_ENABLED;process.env.NOISIA_SIGNAL_LISTENING_ENABLED='true';
+ try{
+  const outcome=await signalListeningJevJobV1(f.run.id,{database,store:f.store,provider:f.provider,execution,preflight:async()=>{},
+   calibration:{load:async()=>{calibrationLoads++;throw Error('must recover before calibrating');},derive:async()=>{derivations++;assert.ok(f.calls.slice(33,35).every(call=>call.status==='settled'&&call.results_applied));return null;}}});
+  assert.equal(outcome.labeled,2);assert.equal(f.requests.length,0);assert.equal(metadataReads,1);assert.equal(loads,1);assert.equal(calibrationLoads,0);assert.equal(derivations,withUnknownWithoutRaw?0:1,'only interrupted warmup derives a profile; measured recovery retains its wider profile');
+  assert.ok(f.calls.slice(33,35).every(call=>call.status==='settled'&&call.results_applied));assert.equal(f.results.length,2);
+  assert.ok(f.calls.slice(0,33).every(call=>call.status==='reserved'&&!call.results_applied));
+  if(withUnknownWithoutRaw){assert.equal(f.calls[39]!.status,'unknown');assert.equal(f.calls[39]!.results_applied,false);assert.equal(f.run.error_code,'labeling_outcome_unknown');}
+  else assert.equal(f.run.error_code,null);
+ }finally{if(previous===undefined)delete process.env.NOISIA_SIGNAL_LISTENING_ENABLED;else process.env.NOISIA_SIGNAL_LISTENING_ENABLED=previous;}
+});
