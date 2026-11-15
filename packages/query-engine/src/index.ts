@@ -1293,6 +1293,7 @@ export * from './signal-listening-discovery-v1';
 export * from './signal-listening-discovery-editorial-v1';
 
 export * from './signal-study-contracts';
+export * from './signal-study-configuration';
 
 export * from './signal-study-evidence';
 

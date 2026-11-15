@@ -3,6 +3,8 @@ import {createHash} from 'node:crypto';
 import {signalWorkspaceEmbeddingDigestV1 as digest} from './signal-workspace-embeddings-v1';
 import {SIGNAL_STUDY_LAYERS_V1,SIGNAL_STUDY_TB_TEMPLATE_V1,signalStudyPermissionForLayerV1,validateSignalStudyV1,
   type SignalStudyV1,type SignalStudyLayerV1,type SignalStudyPermissionV1} from './signal-study-contracts';
+import {validateSignalStudyExecutionConfigurationV1,type SignalStudyExecutionConfigurationV1}from'./signal-study-configuration';
+import {SIGNAL_STUDY_TB_TEMPLATE_DIGEST_V1}from'./signal-study-template-data';
 import type {SignalStudySampleV1} from './signal-study-evidence';
 
 function fail(code:string):never{throw Error('study_editorial_'+code);}
@@ -53,11 +55,11 @@ function assertSample(sample:SignalStudySampleV1){
       ||row.text_sha256!=='sha256:'+createHash('sha256').update(row.text).digest('hex')))fail('sample_invalid');
 }
 function request(args:{mode:'motives'|'layers'|'contrast';study_digest:string;payload:unknown;samples:SignalStudySampleV1[];
-  motive_keys:string[];pass:'a'|'b'|null;recode_attempt:0|1;boundary_keys:string[]}):SignalStudyEditorialRequestV1{
+  motive_keys:string[];pass:'a'|'b'|null;recode_attempt:0|1;boundary_keys:string[];configured_layer?:boolean}):SignalStudyEditorialRequestV1{
   for(const sample of args.samples){assertSample(sample);if(sample.study_digest!==args.study_digest)fail('scope_invalid');}
   const input_digest=digest(args.payload);
   const request_body=JSON.stringify({model:'claude-sonnet-4-6',max_tokens:32768,thinking:{type:'disabled'},
-    system:BASE_PROMPT+'\n'+(args.mode==='layers'?LAYER_PROMPT:args.mode==='motives'?DISCOVERY_PROMPT:
+    system:BASE_PROMPT+'\n'+(args.mode==='layers'?(args.configured_layer?'Apply exactly the frozen diagnostic questions and protocol_rules supplied by the server, in their supplied order. Do not replace their wording with a seed or remembered version. Partition every supplied sample root exactly once, derive each partition layer and permission from that protocol, and use literal source substrings for evidence. Keep all private-person names as exact substrings in private_person_names so the display layer can redact them. Never paraphrase or anonymize the source quote. No other coder result is provided.':LAYER_PROMPT):args.mode==='motives'?DISCOVERY_PROMPT:
       'A server-calculated motive or layer exceeded half of the cut. Rewrite ONLY the supplied motive keys in contrast to their neighbors, with explicit inclusion and exclusion boundaries grounded in the sample. neighbor_context is read-only reference material: never modify or return its keys. Keep exact affected keys, one result per key; never alter a human-locked definition. Do not infer new counts. Return name<=160, definition<=1200, contrast_reason<=1600 characters and exact sample evidence IDs.'),
     output_config:{format:{type:'json_schema',schema:args.mode==='layers'?LAYER_WIRE:args.mode==='motives'?DISCOVERY_WIRE:CONTRAST_WIRE}},
     messages:[{role:'user',content:JSON.stringify({input_digest,untrusted_data:args.payload})}]});
@@ -116,26 +118,44 @@ export function validateSignalStudyMotiveReviewV1(review:SignalStudyEditorialReq
   for(const group of output.insufficient_group_keys){if(seen.has(group)||!groups.has(group))fail('group_coverage_invalid');seen.add(group);}
   if(seen.size!==groups.size)fail('group_coverage_invalid');return output;
 }
-export function buildSignalStudyLayerReviewV1(args:{study:SignalStudyV1;pass:'a'|'b';
+function buildLayerReview(args:{study:SignalStudyV1;pass:'a'|'b';
   motives:Array<{key:string;name:string;definition:string;sample:SignalStudySampleV1}>;
-  recode?:{attempt:1;boundary_keys:string[];contrast_rule:string}}):SignalStudyEditorialRequestV1{
-  const study=validateSignalStudyV1(args.study),study_digest=digest(study);
+  recode?:{attempt:1;boundary_keys:string[];contrast_rule:string}},configuration?:SignalStudyExecutionConfigurationV1):SignalStudyEditorialRequestV1{
+  const configured=configuration?validateSignalStudyExecutionConfigurationV1(configuration):undefined;
+  const study=validateSignalStudyV1(args.study,configured?.template_snapshot),study_digest=digest(study);
+  if(!configured&&study.methodology.template_digest!==SIGNAL_STUDY_TB_TEMPLATE_DIGEST_V1)fail('explicit_configuration_required');
   if(!args.motives.length||args.motives.length>40||new Set(args.motives.map(m=>m.key)).size!==args.motives.length
     ||args.motives.some(m=>m.key!==m.sample.group_key||m.sample.pass!==args.pass||!m.sample.rows.length))fail('motives_invalid');
   const keys=args.motives.map(m=>m.key).sort(),boundaries=args.recode?.boundary_keys??[];
   if(args.recode&&(!args.recode.contrast_rule.trim()||args.recode.attempt!==1||[...new Set(boundaries)].sort().join(',')!==keys.join(',')))fail('recode_scope_invalid');
-  return request({mode:'layers',study_digest,payload:{study_digest,subject:study.subject,business_question:study.business_question,
-    diagnostics:SIGNAL_STUDY_TB_TEMPLATE_V1.diagnostics,permission_rules:{psychological:'movable',personal:'movable',social:'partial',cultural:'structural_align_or_exit',unclear:'no_permission'},
+  return request({mode:'layers',study_digest,configured_layer:Boolean(configured),payload:{study_digest,subject:study.subject,business_question:study.business_question,
+    diagnostics:configured?configured.template_snapshot.template.diagnostics:SIGNAL_STUDY_TB_TEMPLATE_V1.diagnostics,
+    ...(configured?{template_digest:configured.template_snapshot.template_digest,roles_digest:configured.template_snapshot.roles_digest,
+      question_configuration_digest:configured.question_configuration_digest,protocol_rules:configured.template_snapshot.template.rules}:{}),permission_rules:{psychological:'movable',personal:'movable',social:'partial',cultural:'structural_align_or_exit',unclear:'no_permission'},
     contrast_rule:args.recode?.contrast_rule??null,motives:args.motives.map(m=>({key:m.key,name:m.name,definition:m.definition,
       sampling:{random:m.sample.random_count,far:m.sample.far_count,insufficient:m.sample.insufficient_sample,independence:m.sample.independence},sample:m.sample.rows}))},
     samples:args.motives.map(m=>m.sample),motive_keys:keys,pass:args.pass,recode_attempt:args.recode?1:0,boundary_keys:[...boundaries].sort()});
+}
+/** Compatibility wrapper for the historical seed only. */
+export function buildSignalStudyLayerReviewV1(args:Parameters<typeof buildLayerReview>[0]){return buildLayerReview(args);}
+/** New runtime entrypoint: the complete persisted envelope is mandatory. */
+export function buildSignalStudyConfiguredLayerReviewV1(args:Omit<Parameters<typeof buildLayerReview>[0],'study'>&{configuration:SignalStudyExecutionConfigurationV1}){
+ const configured=validateSignalStudyExecutionConfigurationV1(args.configuration);
+ return buildLayerReview({...args,study:configured.study},configured);
+}
+function recordedDiagnostics(review:SignalStudyEditorialRequestV1){
+ try{
+  const body=JSON.parse(review.request_body),message=JSON.parse(body.messages[0].content),payload=message.untrusted_data;
+  if(message.input_digest!==review.input_digest||digest(payload)!==review.input_digest)fail('request_invalid');
+  return z.array(z.object({key:z.enum(['island','money_time','nobody_knows','without_network']),layer:z.enum(SIGNAL_STUDY_LAYERS_V1),question:text.max(1600)}).strict()).length(4).parse(payload.diagnostics);
+ }catch{return fail('request_invalid');}
 }
 export type SignalStudyLayerPartitionV1=z.infer<typeof partitionSchema>&{permission:SignalStudyPermissionV1;permission_overridden:boolean;normalization_reason:string|null};
 export type SignalStudyLayerDecisionV1={contract_version:'signal-study-layer-decision-v1';request_digest:string;study_digest:string;pass:'a'|'b';
   recode_attempt:0|1;motives:Array<{motive_key:string;partitions:SignalStudyLayerPartitionV1[]}>};
 export function validateSignalStudyLayerReviewV1(review:SignalStudyEditorialRequestV1,value:unknown):SignalStudyLayerDecisionV1{
   assertRequest(review,'layers');const parsed=layerOutputSchema.safeParse(value);if(!parsed.success)fail('layer_output_invalid');
-  const output=parsed.data;
+  const output=parsed.data,diagnostics=recordedDiagnostics(review);
   if(!review.pass||output.input_digest!==review.input_digest||output.motives.map(m=>m.motive_key).sort().join(',')!==review.motive_keys.join(','))fail('output_scope_invalid');
   const partitionKeys=new Set<string>();
   const motives=output.motives.map(m=>{
@@ -143,7 +163,7 @@ export function validateSignalStudyLayerReviewV1(review:SignalStudyEditorialRequ
     const byRoot=new Map(sample.rows.map(row=>[row.root_id,row])),seen=new Set<string>();
     const partitions=m.partitions.map(p=>{
       if(partitionKeys.has(p.key))fail('partition_duplicate');partitionKeys.add(p.key);
-      if(p.diagnostics.map(d=>d.key).join(',')!==SIGNAL_STUDY_TB_TEMPLATE_V1.diagnostics.map(d=>d.key).join(','))fail('diagnostic_order_invalid');
+      if(p.diagnostics.map(d=>d.key).join(',')!==diagnostics.map(d=>d.key).join(','))fail('diagnostic_order_invalid');
       for(const id of p.sample_root_ids){if(seen.has(id)||!byRoot.has(id))fail('partition_coverage_invalid');seen.add(id);}
       const own=new Set(p.sample_root_ids);
       const validQuote=(e:{root_id:string;quote:string;private_person_names:string[]}|null)=>e!==null&&own.has(e.root_id)&&byRoot.get(e.root_id)!.text.includes(e.quote)
@@ -155,7 +175,7 @@ export function validateSignalStudyLayerReviewV1(review:SignalStudyEditorialRequ
       const dominant=p.diagnostics.filter(d=>d.force_disappears_without&&d.result==='yes');
       if(layer!=='unclear'){
         if(dominant.length>1)fail('layer_split_required');
-        if(dominant.length!==1||SIGNAL_STUDY_TB_TEMPLATE_V1.diagnostics.find(d=>d.key===dominant[0]!.key)?.layer!==layer)fail('dominant_diagnostic_invalid');
+        if(dominant.length!==1||diagnostics.find(d=>d.key===dominant[0]!.key)?.layer!==layer)fail('dominant_diagnostic_invalid');
       }
       const base=signalStudyPermissionForLayerV1(layer);
       if(layer==='unclear'&&p.permission_override&&p.permission_override.permission!=='no_permission')fail('unclear_permission_invalid');
