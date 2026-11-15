@@ -36,6 +36,10 @@ test('calibration uses the latest32 verified normal receipts and preserves earli
    source=boundedBody[1]!;
   }else assert.equal(reader.lanname,'sql','unsupported native population planner');
   for(const [name,value] of Object.entries({w:'$1::uuid',cid:'$2::uuid',mid:'$3::uuid',ctx:'$4::text',roots:'$5::uuid[]',purpose:'$6::text'}))source=source.replace(new RegExp('\\b'+name+'\\b','g'),value);
+  // EXPLAIN is a utility statement: unlike the native function invocation,
+  // it does not inherit the six declared argument types for a leading IS NULL.
+  const argumentTypes=['uuid','uuid','uuid','text','uuid[]','text'];
+  source=source.replace(/\$([1-6])\b(?!\s*::)/gu,(_match,index:string)=>`$${index}::${argumentTypes[Number(index)-1]}`);
   const explained=(await database.query('EXPLAIN (ANALYZE,FORMAT JSON) '+source,[ctx.workspace_id,configuration.id,ctx.map_id,map.entity_context_digest,[roots[0]],'llm-processing'])).rows[0]['QUERY PLAN'][0].Plan;
   type Node={['Node Type']:string;['Relation Name']?:string;['Index Cond']?:string;['Actual Rows']:number;['Actual Loops']:number;Plans?:Node[]};
   const flatten=(node:Node):Node[]=>[node,...(node.Plans??[]).flatMap(flatten)];
