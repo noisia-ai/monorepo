@@ -201,3 +201,9 @@ for (const locale of ["es-MX", "en-US"]) {
       assert.ok(!running.includes(`>${messages.ClientProcessing.stages.prepare.actions[action]}</button>`));
   });
 }
+
+test('processing policy parser accepts the governed listening discovery action', () => {
+  const review:ClientProcessingPolicyActionV1={...action('listening_discovery_review','provider','1000000'),provider:'anthropic',model:'claude-sonnet-4-6'};
+  assert.equal(validClientProcessingPolicyViewV1({...ready,actions:[...ready.actions,review]}),true);
+  assert.equal(validClientProcessingPolicyViewV1({...ready,actions:[...ready.actions,review,review]}),false);
+});

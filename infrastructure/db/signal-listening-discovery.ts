@@ -83,9 +83,12 @@ async function emptyTopics(c:PoolClient,g:ListeningDiscoveryGenerationV1,configu
  for(const q of configuration.questions.filter(q=>q.topic_source==='discovered')){
   const seed=seeds.find(s=>s.question_key===q.key);
   if(kind==='source_seed'&&!seed)fail('listening_discovery_seed_missing');
+  const emptySource=kind==='source_seed'&&!seed?.orphan_root_ids?.length&&!!seed?.source_topic_keys?.length&&(await c.query<{valid:boolean}>(`SELECT count(*)=cardinality($2::text[]) AND bool_and(t.member_count=0 AND t.centroid IS NULL) valid
+   FROM signal_listening_discovery_topics t JOIN signal_listening_discovery_generations source ON source.id=t.generation_id AND source.kind='confirmed_members' AND source.status='ready'
+   WHERE t.generation_id=$1 AND t.workspace_id=$3 AND t.question_key=ANY($2::text[])`,[g.source_generation_id,seed.source_topic_keys,g.workspace_id])).rows[0]?.valid===true;
   await c.query(`INSERT INTO signal_listening_discovery_topics(generation_id,workspace_id,configuration_id,question_key,question_digest,kind,lineage)
    VALUES($1,$2,$3,$4,$5,$6,$7::jsonb)`,[g.id,g.workspace_id,g.configuration_id,q.key,signalListeningQuestionDigestV1(configuration,q),kind,
-   JSON.stringify(kind==='confirmed_members'?{source_generation_id:g.source_generation_id,approval:0.7}:{source_generation_id:g.source_generation_id,source_topic_keys:seed?.source_topic_keys??[],
+   JSON.stringify(kind==='confirmed_members'?{source_generation_id:g.source_generation_id,approval:0.7}:{source_generation_id:g.source_generation_id,source_topic_keys:seed?.source_topic_keys??[],...(emptySource?{no_confirmed_members:true}:{}),
     ...(seed?.orphan_subset_id?{subset_id:seed.orphan_subset_id,orphan_root_ids:[...new Set(seed.orphan_root_ids??[])].sort(),group_digest:signalListeningDiscoveryOrphanGroupDigestV1(seed.orphan_subset_id,seed.orphan_root_ids??[])}: {})})]);
  }
 }
@@ -138,7 +141,7 @@ export async function snapshotSignalListeningDiscoveryOrphansV1(args:SignalListe
   await c.query(`INSERT INTO signal_listening_discovery_subsets(id,workspace_id,generation_id,created_by_user_id) VALUES($1,$2,$3,$4)`,[id,args.workspace_id,args.generation_id,args.actor_user_id]);
   await c.query(`INSERT INTO signal_listening_discovery_subset_roots(subset_id,generation_id,root_id,proof_digest)
    SELECT $1,generation_id,root_id,proof_digest FROM signal_listening_discovery_roots r WHERE generation_id=$2 AND workspace_id=$3
-    AND proof->'in_category'='true'::jsonb AND jsonb_array_length(proof->'evaluations')>0
+    AND proof->'in_category'='true'::jsonb
     AND NOT EXISTS(SELECT 1 FROM jsonb_array_elements(proof->'evaluations') e WHERE e->>'probability' IS NULL OR(e->>'probability')::double precision>=0.7)`,[id,args.generation_id,args.workspace_id]);
   return(await c.query<{id:string;workspace_id:string;generation_id:string;root_count:number;cached_count:number;subset_digest:string}>(`UPDATE signal_listening_discovery_subsets s SET status='ready',root_count=totals.n,cached_count=totals.cached,
    subset_digest=signal_labeling_digest_v1(jsonb_build_object('workspace_id',s.workspace_id,'generation_id',s.generation_id,'roots',totals.roots))
