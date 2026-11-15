@@ -77,6 +77,7 @@ jobs:
           NOISIA_R16_LISTENING_RUNTIME_PG: 'true'
           NOISIA_R16_LISTENING_RECOVERY_PG: 'true'
           NOISIA_R16_LISTENING_LEXICON_PG: 'true'
+          NOISIA_R16_LISTENING_DISCOVERY_PG: 'true'
         run: |
           set -o pipefail
           pnpm exec node --test --test-concurrency=1 --import tsx \
@@ -86,6 +87,7 @@ jobs:
             infrastructure/db/migrations/signal-listening-cross-run-index.postgres.test.ts \
             infrastructure/db/migrations/signal-listening-prototypes.postgres.test.ts \
             infrastructure/db/migrations/signal-listening-lexicon.postgres.test.ts \
+            infrastructure/db/migrations/signal-listening-discovery.postgres.test.ts \
             services/workers/src/workers/signal-listening-runtime.postgres.test.ts \
             services/workers/src/workers/signal-listening-recovery.postgres.test.ts | tee r16-listening-pg-tests.tap
           if ! grep -qx '# skipped 0' r16-listening-pg-tests.tap; then

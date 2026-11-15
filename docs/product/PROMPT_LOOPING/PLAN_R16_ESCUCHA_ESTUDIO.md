@@ -12,6 +12,8 @@ No hay aprobaciones humanas intermedias en los procesos de análisis: Sonnet 4.6
 
 ## Progreso
 
+- H3 parcial: integrados 280e7e21 y los contratos puros canónicos de e961a366 como abde5169/f9dedc78, conservando H2 y H5. Tipado/lint 11/11, query-engine 678/678, DB 658/184 omisiones por entorno. La prueba dedicada conjunta de descubrimiento, léxico, runtime y recuperación pasó 4/4 sin omisiones, con 281 migraciones por clon. El owner monetario, la orquestación de vueltas y la aceptación real siguen pendientes.
+
 - H1: el ensayo completo sobre 36668da1 terminó 32,768/32,768 raíces con crudos y aplicación íntegros, pero sólo 485.19 raíces/s y una ventana completa de cero. Proveedor simulado p50 301 ms/p95 459 ms; 147 páginas. El resultado rechaza H1 y exige localizar las pausas de SQL/materialización antes de otra corrida o proveedor real.
 - H5: sugerencia genérica de léxico implementada en rama: categoría confirmada fuera del léxico frente a toda conversación de consumidor, conteos por raíz y lift suavizado, stopwords PT/ES/EN y soporte mínimo tres. Revisión sin P0/P1/P2; tipado/lint 11/11, query-engine 661 pruebas, API/algoritmo 6/6, UI montada 10/10, PostgreSQL nativo 1/1 sin omisiones con revocación de fuente y build completo de Studio verdes. Suites Studio 1,341/7 omisiones y DB 658/183; las pruebas nativas dedicadas no tienen omisiones. Falta CI, despliegue y comprobar cerva/litrão en el estudio real.
 
@@ -135,6 +137,8 @@ Recibo: separar Voyage/JEV por raíz de Claude por número de grupos y vueltas; 
 
 ## Registro de decisiones
 
+- 2026-11-14: un tópico conservado sin miembros confirmados debe expresar esa ausencia. Se permite una extensión aditiva posterior con source_seed de cero miembros, centroide NULL y lineage no_confirmed_members verificado; permanece inactivo para candidatura hasta tener evidencia. No se inventan vectores, etiquetas ni cargos, y las preguntas no formuladas no cuentan como negativas.
+
 - 2026-11-14: rechazar la aceptación H1 de 36668da1 a pesar de 32,768 resultados íntegros. Investigar pausas y costo por fase sin relajar la meta de 1,000/s ni mover el inicio de la medición para ocultarlas. El léxico nuevo usa evidencia de tópicos de categoría y no vuelve a introducir T&B en la base; ningún término del estudio recibe un impulso manual en el ranking.
 
 - 2026-11-14: integrar la preparación y recuperación H2 sobre las cohortes H1 sin marcar toda la ventana como enviada. Incluir pruebas PostgreSQL de Escucha expresamente en CI; los skips esperados de suites sin entorno no sustituyen esas pruebas dedicadas.
@@ -161,10 +165,8 @@ Recibo: separar Voyage/JEV por raíz de Claude por número de grupos y vueltas; 
 
 ## Resultado y retrospectiva
 
-Los contratos de R16 están integrados. Las páginas durables tienen evidencia PostgreSQL aislada y el transporte está en validación tras corregir la revisión. No hay migraciones R16 aplicadas en UAT ni llamadas pagadas nuevas. El benchmark integral, la configuración genérica de Escucha y las ejecuciones de aceptación siguen pendientes.
+R16 sigue en ejecución con alcance completo H0–H6. ADR033 y el modelo condicional de costo están integrados en develop. H1, H2 y la persistencia inicial H3 están implementados en ramas revisadas; H5 tiene léxico genérico con pruebas locales y nativas. H3 monetario y H4 siguen en desarrollo. Las pruebas por contrato y PostgreSQL sostienen estos avances, pero no sustituyen la aceptación integral.
 
-Las observaciones H0 y su procedencia se guardan en custodia privada; la implementación, el benchmark integral y las ejecuciones reales de R16 siguen pendientes. Ninguna prueba de adaptador aislado o store en memoria se usa como aceptación global.
+El primer ensayo completo de transporte terminó 32,768 raíces con sus recibos y resultados íntegros, pero dio 485.19 raíces/s. H1 no está aceptado: falta resolver el cuello de botella y repetir el benchmark de al menos 1,000/s, seguido de la medición real con los límites de la cuenta. El setup sintético y las fases solapadas se informan por separado.
 
-En ejecución. Lectura y verificación inicial completas; implementación, mediciones detalladas y aceptación UAT pendientes. Este documento conserva el alcance completo y no sustituye el objetivo por un piloto reducido.
-
-El modelo de costo ya tiene una referencia reproducible en R16_COST_MODEL_BASELINE.md. Las ejecuciones reales de R16 y sus costos por etapa todavía deben producirse y verificarse.
+R15 permanece disponible. No hay migraciones ni despliegues R16 en UAT ni nuevas llamadas pagadas R16. Siguen pendientes las ejecuciones reales de Escucha y T&B, las evaluaciones ciegas, la comparación privada, los costos y tiempos actuales, la guía de QA y el paquete final con SHA256SUMS. El costo histórico y su fórmula no se presentan como una medición R16.
