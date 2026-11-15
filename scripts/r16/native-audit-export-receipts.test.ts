@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { loadNativeReceiptEvidenceV1, nativeListeningFinancialAnchorV1, nativeListeningRoundPathV1, nativeWallSpanV1 } from "./native-audit-export-receipts.js";
+import { loadNativeReceiptEvidenceV1, nativeListeningFinancialAnchorV1, nativeListeningRoundPathV1, nativeReceiptManifestCallsV1, nativeWallSpanV1 } from "./native-audit-export-receipts.js";
 import { signalWorkspaceEmbeddingDigestV1 as digest } from "../../packages/query-engine/src/signal-workspace-embeddings-v1.js";
+import { canonicalJsonDigestV1 } from "./private-json-stream.js";
 
 const round = (ordinal: number, input: string, output: string | null, status = "completed") => ({
   id: `round-${ordinal}`, ordinal, input_generation_id: input, output_generation_id: output, status,
@@ -148,4 +149,15 @@ test("wall span scans 200,000 intervals without spread limits or duration summat
   }
   assert.equal(nativeWallSpanV1(intervals()), 200_001);
   assert.equal(nativeWallSpanV1([{ started_at: 1, ended_at: 2 }, { started_at: null, ended_at: 3 }]), null);
+});
+
+test("receipt manifest timestamps normalize Dates before canonical digest and JSON persistence", () => {
+  const calls = nativeReceiptManifestCallsV1([{ ledger: "synthetic", call_id: "call", stage: "stage", status: "settled",
+    settled_micro_usd: "1", reserved_micro_usd: "0", started_at: new Date("2026-11-15T12:34:56.789Z"),
+    ended_at: new Date("2026-11-15T12:35:56.789Z"), timing_granularity: "call" }]);
+  const manifest = { call_receipts: calls };
+  const parsed = JSON.parse(JSON.stringify(manifest)) as typeof manifest;
+  assert.equal(typeof manifest.call_receipts[0]!.started_at, "string");
+  assert.equal(digest(manifest), digest(parsed));
+  assert.equal(canonicalJsonDigestV1(manifest), canonicalJsonDigestV1(parsed));
 });

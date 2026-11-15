@@ -7,6 +7,11 @@ type Study = { id: string; workspace_id: string; listening_source_kind: string; 
 type Event = { ledger: string; call_id: string; stage: string; status: string; settled_micro_usd: string | null;
   reserved_micro_usd: string | null; started_at: Date | string | null; ended_at: Date | string | null; timing_granularity: "call" | "run" };
 
+export function nativeReceiptManifestCallsV1(events: readonly Event[]) {
+  const iso = (value: Date | string | null) => value instanceof Date ? value.toISOString() : value;
+  return events.map(event => ({ ...event, started_at: iso(event.started_at), ended_at: iso(event.ended_at) }));
+}
+
 export type NativeListeningRoundPathRowV1 = { id: string; ordinal: number; input_generation_id: string;
   output_generation_id: string | null; status: string };
 
@@ -383,7 +388,7 @@ export async function loadNativeReceiptEvidenceV1(client: Client, before: Genera
   if (!calls.length) limitations.add("native_paid_call_receipts_missing");
   const complete = limitations.size === 0 && totalUsd !== null && wall !== null;
   manifest.unique_call_count = calls.length;
-  manifest.call_receipts = calls;
+  manifest.call_receipts = nativeReceiptManifestCallsV1(calls);
   manifest.cost_micro_usd = allCost?.toString() ?? null;
   manifest.reserved_micro_usd = exposureKnown ? reserve.toString() : null;
   manifest.timing_scope = "max(actual_end)-min(actual_start); stage windows may overlap and are not summed";

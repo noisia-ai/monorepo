@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
-import { chmod, mkdir, open, link, lstat, unlink, readFile } from "node:fs/promises";
-import { dirname, resolve, sep } from "node:path";
+import { readFile, lstat } from "node:fs/promises";
+import { resolve, sep } from "node:path";
 import {
   authorizeSignalListeningV1,
   listeningTransactionV1,
@@ -19,6 +19,7 @@ import { signalStudyKnownAuthorPrivacyV1 } from "../../infrastructure/db/signal-
 import { readSignalStudyStabilityProofV1, type SignalStudyLayerAgreementProofV1 } from "../../infrastructure/db/signal-study-replay.js";
 import { LISTENING_COHORTS_V1, validateSnapshotV1, type BlindSnapshotV1 } from "./blind-package.js";
 import { loadNativeReceiptEvidenceV1 } from "./native-audit-export-receipts.js";
+import { canonicalJsonDigestV1, rejectSymlinkComponentsV1, writePrivateJsonFileV1 } from "./private-json-stream.js";
 
 const BATCH_SIZE = 512;
 const PRIVATE_ROOT = resolve(".data/piloto-masivo/r16");
@@ -260,7 +261,7 @@ export async function exportNativeAuditSnapshotV1(args: NativeAuditExportArgsV1)
   const snapshotWithoutDigest = {
     contract_version: "r16-blind-snapshot-v1" as const,
     exported_at: new Date().toISOString(),
-    source: { export_contract: "r16-native-audit-export-v1", export_digest: "0".repeat(64) },
+    source: { export_contract: "r16-native-audit-export-v2", export_digest: "0".repeat(64) },
     study_provenance: {
       listening_before_digest: stripSha(before.snapshot_digest!), listening_after_digest: stripSha(after.snapshot_digest!),
       study_contract_version: "signal-study-v1", methodology_template_version: template.template.version,
@@ -284,7 +285,7 @@ export async function exportNativeAuditSnapshotV1(args: NativeAuditExportArgsV1)
     study: collected.studyRows,
   };
   const sourceManifest = {
-    contract_version: "r16-native-audit-source-manifest-v1",
+    contract_version: "r16-native-audit-source-manifest-v2",
     workspace_id: args.workspace_id,
     actor_user_id: args.actor_user_id,
     listening_before_generation_id: before.id,
@@ -309,11 +310,11 @@ export async function exportNativeAuditSnapshotV1(args: NativeAuditExportArgsV1)
       proof_digest: layerProof.proof_digest } : null,
     limitations,
   };
-  const sourceDigest = stripSha(digest(sourceManifest));
+  const sourceDigest = stripSha(canonicalJsonDigestV1(sourceManifest));
   const snapshot = validateSnapshotV1({ ...snapshotWithoutDigest,
-    source: { export_contract: "r16-native-audit-export-v1", export_digest: sourceDigest } });
-  await writePrivateJson(manifestPath, sourceManifest);
-  await writePrivateJson(snapshotPath, snapshot);
+    source: { export_contract: "r16-native-audit-export-v2", export_digest: sourceDigest } });
+  await writePrivateJsonFileV1(manifestPath, sourceManifest, PRIVATE_ROOT);
+  await writePrivateJsonFileV1(snapshotPath, snapshot, PRIVATE_ROOT);
   return { snapshot, snapshot_path: snapshotPath, source_manifest_path: manifestPath, limitations };
 }
 
@@ -330,7 +331,7 @@ export async function validateSupplementalReceiptFilesV1(receipts: NonNullable<N
     }
     const path = privatePath(receipt.path);
     if (seen.has(path)) throw new Error("native_audit_supplemental_receipts_duplicate");
-    seen.add(path); await rejectSymlinkComponents(path);
+    seen.add(path); await rejectSymlinkComponentsV1(path);
     const stat = await lstat(path);
     if (!stat.isFile() || stat.size > 1_048_576 || (stat.mode & 0o077) !== 0) throw new Error("native_audit_supplemental_receipt_file_invalid");
     const bytes = await readFile(path);
@@ -696,39 +697,6 @@ function privatePath(path: string): string {
   const absolute = resolve(path);
   if (absolute !== PRIVATE_ROOT && !absolute.startsWith(`${PRIVATE_ROOT}${sep}`)) throw new Error("native_audit_paths_must_be_private_r16_data");
   return absolute;
-}
-
-async function writePrivateJson(path: string, value: unknown): Promise<void> {
-  await rejectSymlinkComponents(dirname(path));
-  await mkdir(dirname(path), { recursive: true, mode: 0o700 });
-  await chmod(dirname(path), 0o700);
-  let privateDirectory = dirname(path);
-  while (privateDirectory.startsWith(`${PRIVATE_ROOT}${sep}`)) {
-    await chmod(privateDirectory, 0o700);
-    privateDirectory = dirname(privateDirectory);
-  }
-  await mkdir(PRIVATE_ROOT, { recursive: true, mode: 0o700 });
-  await chmod(PRIVATE_ROOT, 0o700);
-  await rejectSymlinkComponents(path);
-  try { await lstat(path); throw new Error("native_audit_output_exists"); }
-  catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
-  const tempPath = `${path}.${process.pid}.${createHash("sha256").update(String(Date.now())).digest("hex").slice(0, 10)}.tmp`;
-  const file = await open(tempPath, "wx", 0o600);
-  try { await file.writeFile(`${JSON.stringify(value, null, 2)}\n`, "utf8"); await file.sync(); }
-  finally { await file.close(); }
-  try { await link(tempPath, path); }
-  finally { await unlink(tempPath).catch(() => undefined); }
-  const directory = await open(dirname(path), "r");
-  try { await directory.sync(); } finally { await directory.close(); }
-}
-
-async function rejectSymlinkComponents(path: string): Promise<void> {
-  const components = resolve(path).split(sep).filter(Boolean); let at: string = sep;
-  for (const component of components) {
-    at = resolve(at, component);
-    try { if ((await lstat(at)).isSymbolicLink()) throw new Error("native_audit_symlink_path_rejected"); }
-    catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") break; throw error; }
-  }
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === resolve(new URL(import.meta.url).pathname)) {
