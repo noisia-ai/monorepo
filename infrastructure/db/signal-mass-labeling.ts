@@ -237,6 +237,12 @@ export async function createMassLabelingMapV1(args: {
     await prepareMassLabelingMapScoresV1(client, mapId);
     await insertMassLabelingMapItemsV1(client, { workspace_id: args.workspace_id, map_id: mapId,
       catalog, map_digest: mapDigest, expected_roots: c.roots });
+    // The first governed reader may run immediately after this transaction.
+    // Fresh bulk data otherwise retain empty-table estimates until autoanalyze,
+    // which can join the two full materialized root sets quadratically.
+    // Refresh the canonical persistent inputs after all guarded inserts, once
+    // per completed map, with the same authorized caller and transaction.
+    await client.query("ANALYZE public.mentions; ANALYZE public.signal_mention_import_memberships; ANALYZE public.signal_mass_labeling_items");
     return {map_id: mapId, map_digest: mapDigest, replayed: false, root_count: c.roots, topic_count: catalog.length};
   });
 }
