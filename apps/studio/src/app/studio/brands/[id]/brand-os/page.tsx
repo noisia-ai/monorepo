@@ -35,6 +35,7 @@ export default async function BrandOsWorkspacePage({ params }: { params: Promise
     listOrganizationsForPicker()
   ]);
   if (!brand || !workspace) notFound();
+  const studyT = await getTranslations("StudioStudy");
   const mfpEnabled = workspace.summary.workspaceId ? await signalWorkspaceFeatureEnabledV1({
     queryable: pool, workspace_id: workspace.summary.workspaceId, feature: "mfp_discovery",
   }) : false;
@@ -67,6 +68,8 @@ export default async function BrandOsWorkspacePage({ params }: { params: Promise
       {workspace.summary.workspaceId ? (
         <>
           {process.env.NOISIA_SIGNAL_LISTENING_ENABLED === "true" ? <SignalListeningConfiguration workspaceId={workspace.summary.workspaceId} /> : null}
+          {process.env.NOISIA_SIGNAL_STUDY_ENABLED === "true" ? <AdminResourceSection title={studyT("title")} subtitle={studyT("separation")}
+            actions={<Link className="admin-button" href={`/studio/brands/${brand.id}/studies`} prefetch={false}>{studyT("title")}</Link>}><p>{studyT("template")}</p></AdminResourceSection> : null}
           <BrandOsContextPreparation brandId={brand.id} workspaceId={workspace.summary.workspaceId} mfpEnabled={mfpEnabled}
             allowProcessingAuthorization={["noisia_admin", "founder", "admin"].includes(session.appUser.primaryRole)} />
           <AdminResourceSection

@@ -1,0 +1,141 @@
+'use client';
+import Link from 'next/link';
+import {useCallback,useEffect,useRef,useState} from 'react';
+import {useRouter} from 'next/navigation';
+import {useTranslations} from 'next-intl';
+import type {SignalStudyExecutionStatusV1,SignalStudyReportRowsV1,SignalStudyReportSectionV1} from '@noisia/db';
+import {signalListeningDateBoundaryV1} from '@/lib/data-os/signal-listening-date';
+import type {StudyMetadataV1,StudyOverviewV1,StudySourceV1} from '@/lib/data-os/signal-study-api';
+type ListRow={study_id:string;subject_name:string;methodology:string;execution:SignalStudyExecutionStatusV1|null};
+type Detail={configuration:StudyMetadataV1;configuration_is_latest:boolean;execution:SignalStudyExecutionStatusV1|null;overview:StudyOverviewV1|null;processing_ready:boolean;can_edit:boolean;current_listening_revision:number|null};
+type Pending={body:string;key:string};
+const endpoint=(workspaceId:string)=>`/api/data-os/signal/${encodeURIComponent(workspaceId)}/studies`;
+const active=(status:string)=>['building','queued','running','outcome_unknown'].includes(status);
+/** Preserve the entire request across an uncertain acknowledgement, including
+ * its idempotency key. GET refreshes never submit or resume paid work. */
+export function useStudyMutationV1(url:string,onSaved:(value:Record<string,unknown>)=>Promise<void>|void){
+ const [pending,setPending]=useState<Pending|null>(null),[phase,setPhase]=useState<'idle'|'sending'|'uncertain'|'failed'|'saved'>('idle');
+ const lock=useRef(false),epoch=useRef(0);
+ const invalidate=useCallback(()=>{epoch.current++;},[]);
+ useEffect(()=>{invalidate();setPending(null);setPhase('idle');return invalidate;},[url,invalidate]);
+ const submit=async(body:unknown)=>{
+  if(lock.current)return;lock.current=true;const generation=epoch.current;
+  const frozen=pending??{body:JSON.stringify(body),key:crypto.randomUUID()};setPending(frozen);setPhase('sending');
+  try{
+   const response=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json','Idempotency-Key':frozen.key},body:frozen.body});
+   if(generation!==epoch.current)return;
+   // A server/network failure may have happened after commit. Keep the request.
+   if(response.status>=500){setPhase('uncertain');return;}
+   if(!response.ok){setPending(null);setPhase('failed');return;}
+   const result=await response.json() as Record<string,unknown>;
+   if(generation!==epoch.current)return;setPending(null);setPhase('saved');await onSaved(result);
+  }catch{if(generation===epoch.current)setPhase('uncertain');}finally{lock.current=false;}
+ };
+ return{submit,phase,pending,locked:phase==='sending'||phase==='uncertain'};
+}
+export function StudioStudyList({workspaceId,brandId,brandName,timezone}:{workspaceId:string;brandId:string;brandName:string;timezone:string}){
+ const t=useTranslations('StudioStudy'),router=useRouter(),url=endpoint(workspaceId);
+ const [list,setList]=useState<ListRow[]>([]),[next,setNext]=useState<string|null>(null),[source,setSource]=useState<StudySourceV1|null>(null),[error,setError]=useState(false),[loading,setLoading]=useState(true);
+ const [canEdit,setCanEdit]=useState(false);
+ const [kind,setKind]=useState<'category'|'own_brand'|'alternative'>('own_brand');
+ const [name,setName]=useState(brandName),[category,setCategory]=useState(''),[ownBrand,setOwnBrand]=useState(brandName),[competitors,setCompetitors]=useState(''),[alternatives,setAlternatives]=useState(''),[conventional,setConventional]=useState('');
+ const [formError,setFormError]=useState(false);
+ const [question,setQuestion]=useState(''),[start,setStart]=useState(''),[end,setEnd]=useState(''),[zone,setZone]=useState(timezone);
+ const controller=useRef<AbortController|null>(null),sequence=useRef(0);
+ const load=useCallback(async(cursor?:string)=>{
+  controller.current?.abort();const c=new AbortController(),seq=++sequence.current;controller.current=c;setLoading(true);setError(false);
+  try{const [a,b]=await Promise.all([fetch(url+(cursor?`?after_study_id=${encodeURIComponent(cursor)}`:''),{cache:'no-store',signal:c.signal}),fetch(url+'?context=true',{cache:'no-store',signal:c.signal})]);
+   if(!a.ok||!b.ok)throw Error();const [items,context]=await Promise.all([a.json(),b.json()]);
+   if(c.signal.aborted||seq!==sequence.current)return;setList(items.studies);setNext(items.next_after_study_id);setSource(context.source);setCategory(context.source?.category??'');setCanEdit(context.can_edit===true);
+  }catch{if(!c.signal.aborted&&seq===sequence.current)setError(true);}finally{if(!c.signal.aborted&&seq===sequence.current)setLoading(false);}
+ },[url]);
+ const invalidate=useCallback(()=>{sequence.current++;controller.current?.abort();},[]);
+ useEffect(()=>{setList([]);setSource(null);void load();return invalidate;},[load,invalidate]);
+ const mutation=useStudyMutationV1(url,async result=>{router.push(`/studio/brands/${brandId}/studies/${String(result.study_id)}`);});
+ const values=(value:string)=>value.split(',').map(v=>v.trim()).filter(Boolean);
+ return <section className="admin-section"><h2>{t('title')}</h2><p>{t('separation')}</p>
+  {error?<p role="alert">{t('loadFailed')} <button type="button" onClick={()=>void load()}>{t('refresh')}</button></p>:null}
+  {loading?<p role="status">{t('loading')}</p>:null}
+  <ul>{list.map(item=><li key={item.study_id}><Link href={`/studio/brands/${brandId}/studies/${item.study_id}`} prefetch={false}>{item.subject_name}</Link> — {item.methodology} · {t(`status.${item.execution?.status??'configured'}`)}</li>)}</ul>
+  {next?<button type="button" onClick={()=>void load(next)} disabled={loading}>{t('next')}</button>:null}
+  <h3>{t('create')}</h3>{!canEdit?<p>{t('readOnly')}</p>:null}<p>{t('template')}</p>
+  {!source?<p>{t('sourceUnavailable')}</p>:<><p>{t('sourceRevision',{revision:source.revision})}</p>{source.binding_kind==='human_edit'?<p>{t('sourceHuman')}</p>:null}{!source.configuration_is_latest?<p>{t('historicalSource')}</p>:null}
+  <form onSubmit={event=>{event.preventDefault();setFormError(false);try{const startAt=signalListeningDateBoundaryV1(start,zone),endAt=signalListeningDateBoundaryV1(end,zone,true);if(startAt>=endAt)throw Error();void mutation.submit({source:{binding_kind:source.binding_kind,snapshot_id:source.snapshot_id,configuration_id:source.configuration_id,configuration_digest:source.configuration_digest},subject:{kind,name,category,own_brand:ownBrand,competitors:values(competitors),alternatives:values(alternatives),...(kind==='alternative'?{conventional_category:conventional}:{})},business_question:question,cut:{start_at:startAt,end_at:endAt,timezone:zone}});}catch{setFormError(true);}}}>
+   <fieldset className="admin-form" disabled={mutation.locked||!canEdit}><label className="admin-form-field">{t('kind')}<select value={kind} onChange={e=>setKind(e.target.value as typeof kind)}>{(['category','own_brand','alternative']as const).map(v=><option value={v} key={v}>{t(`kindValue.${v}`)}</option>)}</select></label>
+   {[[t('subject'),name,setName],[t('category'),category,setCategory],[t('ownBrand'),ownBrand,setOwnBrand],[t('competitors'),competitors,setCompetitors],[t('alternatives'),alternatives,setAlternatives],[t('start'),start,setStart],[t('end'),end,setEnd],[t('timezone'),zone,setZone]].map(([label,value,setter],index)=><label className="admin-form-field" key={String(label)}>{String(label)}<input value={String(value)} onChange={e=>(setter as typeof setName)(e.target.value)} type={index===5||index===6?'date':'text'} readOnly={index===1} required={![3,4].includes(index)} maxLength={index===3||index===4?2400:240}/></label>)}
+   {kind==='alternative'?<label className="admin-form-field">{t('conventional')}<input required value={conventional} onChange={e=>setConventional(e.target.value)} maxLength={240}/></label>:null}
+   <label className="admin-form-field">{t('question')}<textarea required maxLength={2000} value={question} onChange={e=>setQuestion(e.target.value)}/></label>
+   <button type="submit" className="admin-button">{t('save')}</button></fieldset>
+  </form>{formError?<p role="alert">{t('invalidCut')}</p>:null}</>}
+  {mutation.phase==='uncertain'?<p role="alert">{t('uncertain')} <button onClick={()=>void mutation.submit(null)}>{t('retrySame')}</button></p>:mutation.phase==='failed'?<p role="alert">{t('mutationFailed')} <button onClick={()=>void load()}>{t('refresh')}</button></p>:mutation.phase==='saved'?<p role="status">{t('saved')}</p>:null}
+ </section>;
+}
+export function StudioStudyDetail({workspaceId,studyId}:{workspaceId:string;studyId:string}){
+ const t=useTranslations('StudioStudy'),url=`${endpoint(workspaceId)}/${encodeURIComponent(studyId)}`;
+ const [detail,setDetail]=useState<Detail|null>(null),[error,setError]=useState(false),[cap,setCap]=useState('');
+ const request=useRef<AbortController|null>(null),sequence=useRef(0);
+ const load=useCallback(async()=>{
+  request.current?.abort();const c=new AbortController(),seq=++sequence.current;request.current=c;
+  try{const r=await fetch(url,{cache:'no-store',signal:c.signal});if(!r.ok)throw Error();const value=await r.json() as Detail;
+   if(c.signal.aborted||seq!==sequence.current)return null;setDetail(value);setError(false);return value;
+  }catch{if(!c.signal.aborted&&seq===sequence.current){setError(true);setDetail(null);}return null;}
+ },[url]);
+ const invalidate=useCallback(()=>{sequence.current++;request.current?.abort();},[]);
+ useEffect(()=>{setDetail(null);void load();return invalidate;},[load,invalidate]);
+ const mutation=useStudyMutationV1(url,async()=>{await load();});
+ // An acknowledged queue request starts a fresh cancellable polling cycle.
+ const executionId=detail?.execution?.id,status=detail?.execution?.status;
+ useEffect(()=>{if(!executionId||!status||!active(status))return;let closed=false;let timer:ReturnType<typeof setTimeout>;
+  const poll=async()=>{const value=await load();if(!closed&&value?.execution&&active(value.execution.status))timer=setTimeout(()=>void poll(),3000);};
+  timer=setTimeout(()=>void poll(),3000);return()=>{closed=true;clearTimeout(timer);};
+ },[executionId,status,load]);
+ return <section className="admin-section">
+  {error?<p role="alert">{t('loadFailed')} <button onClick={()=>void load()}>{t('refresh')}</button></p>:null}
+  {!detail?(!error?<p role="status">{t('loading')}</p>:null):<>
+   <h2>{detail.configuration.study.subject.name}</h2>{detail.configuration.listening_source?.kind==='human_edit'?<p>{t('sourceHuman')}</p>:null}{!detail.configuration_is_latest?<p>{t('historicalSource')}</p>:null}<p>{detail.configuration.study.business_question}</p>
+   <dl><dt>{t('methodology')}</dt><dd>{detail.configuration.study.methodology.key} · {detail.configuration.study.methodology.version}</dd>
+    <dt>{t('cut')}</dt><dd>{detail.configuration.study.cut.start_at} — {detail.configuration.study.cut.end_at} ({detail.configuration.study.cut.timezone})</dd>
+    <dt>{t('corpus')}</dt><dd>{detail.configuration.study.corpus_id}</dd><dt>{t('revision')}</dt><dd>{detail.configuration.revision}</dd></dl>
+   <p>{t('automatic')}</p>{!detail.can_edit?<p>{t('readOnly')}</p>:null}
+   {detail.execution?<p role="status">{t(`status.${detail.execution.status}`)} · {t('roots',{count:detail.execution.source_roots})} · {t('steps',{done:detail.execution.steps_committed,total:detail.execution.steps_total})} · {t('exposure',{amount:(Number(detail.execution.exposure_micro_usd)/1e6).toFixed(4)})}</p>:null}
+   {!detail.processing_ready?<p>{t('notReady')}</p>:null}
+   {!detail.execution?<form onSubmit={event=>{event.preventDefault();const amount=Number(cap);if(Number.isFinite(amount)&&amount>0&&Number.isSafeInteger(Math.round(amount*1e6)))void mutation.submit({operation:'execute',configuration_id:detail.configuration.configuration_id,cap_micro_usd:Math.round(amount*1e6)});}}>
+    <label className="admin-form-field">{t('cap')}<input type="number" min="0.000001" step="0.000001" required value={cap} onChange={e=>setCap(e.target.value)} disabled={mutation.locked}/></label><p>{t('capExplanation')}</p>
+    <button disabled={!detail.processing_ready||!detail.can_edit||mutation.locked} type="submit">{t('run')}</button>
+   </form>:null}
+   {detail.overview?<StudyReport workspaceUrl={url} value={detail.overview} currentRevision={detail.current_listening_revision} onPromote={keys=>void mutation.submit({operation:'promote',execution_id:detail.overview!.execution_id,motive_keys:keys,expected_listening_revision:detail.current_listening_revision})} locked={mutation.locked||!detail.can_edit}/>:detail.execution?.status==='completed'?<p role="alert">{t('outputUnavailable')}</p>:null}
+  </>}
+  {mutation.phase==='uncertain'?<p role="alert">{t('uncertain')} <button onClick={()=>void mutation.submit(null)}>{t('retrySame')}</button></p>:mutation.phase==='failed'?<p role="alert">{t('mutationFailed')} <button onClick={()=>void load()}>{t('refresh')}</button></p>:mutation.phase==='saved'?<p role="status">{t('saved')}</p>:null}
+ </section>;
+}
+type Page={section:SignalStudyReportSectionV1;rows:SignalStudyReportRowsV1[SignalStudyReportSectionV1];offset:number;next_offset:number|null;total:number};
+function StudyReport({workspaceUrl,value,currentRevision,onPromote,locked}:{workspaceUrl:string;value:StudyOverviewV1;currentRevision:number|null;onPromote:(keys:string[])=>void;locked:boolean}){
+ const t=useTranslations('StudioStudy'),[section,setSection]=useState<SignalStudyReportSectionV1>('motives'),[offset,setOffset]=useState(0),[page,setPage]=useState<Page|null>(null),[error,setError]=useState(false),[retry,setRetry]=useState(0),[selected,setSelected]=useState<string[]>([]);
+ const summary=value.overview.summary;
+ useEffect(()=>{const c=new AbortController();setPage(null);setError(false);
+  void(async()=>{try{const r=await fetch(`${workspaceUrl}?execution_id=${encodeURIComponent(value.execution_id)}&section=${section}&offset=${offset}&limit=30`,{cache:'no-store',signal:c.signal});if(!r.ok)throw Error();const body=await r.json();if(!c.signal.aborted)setPage(body);}catch{if(!c.signal.aborted)setError(true);}})();
+  return()=>c.abort();
+ },[workspaceUrl,value.execution_id,section,offset,retry]);
+ useEffect(()=>setSelected([]),[value.execution_id,currentRevision]);
+ const directions=(counts:{trigger:number;barrier:number;mixed:number;none:number})=>(['trigger','barrier','mixed','none']as const).map(key=>`${t(`direction.${key}`)}: ${counts[key]}`).join(' · ');
+ return <section><h3>{t('directional')}</h3><p>{t('denominator',{count:summary.denominator})}</p><p>{t('multilabel')}</p>
+  <p>{t('subjectDirection')}: {directions(summary.subject_direction)}</p><p>{t('competitorDirection')}: {directions(summary.competitor_direction)}</p><p>{t('alternativeDirection')}: {directions(summary.alternative_direction)}</p>
+  <p>{t('resolved',{resolved:summary.resolved_axes,unresolved:summary.unresolved_axes})}</p><p>{t('separateUses',{ironic:summary.figurative_or_ironic,other:summary.other_use})}</p>
+  <h4>{t('layers')}</h4><ul>{summary.layers.map(layer=><li key={layer.key}>{t(`layer.${layer.key}`)}: {layer.mentions} · {(layer.share_of_cut*100).toFixed(1)}% · {directions(layer.direction)}</li>)}</ul>
+  <p>{t('bias')}: {t(`biasValue.${value.overview.query_bias.status}`)}</p><p>{t(`biasReason.${value.overview.query_bias.status}`)}</p>{value.overview.query_bias.base_ratio!==null&&Number.isFinite(value.overview.query_bias.base_ratio)?<p>{t('baselineRatio',{subject:value.overview.query_bias.subject_roots,baseline:value.overview.query_bias.brand_baseline_roots,ratio:value.overview.query_bias.base_ratio})}</p>:null}<p>{t('stability')}: {value.overview.stability?.estimation_status==='complete'?String(value.overview.stability.kappa):t('notEstimable')}</p>
+  <ul>{summary.limitations.map((text,index)=><li key={index}>{text}</li>)}</ul>
+  <div role="group" aria-label={t('sections')}>{(['motives','topics','channels','series','evidence']as const).map(key=><button key={key} aria-pressed={section===key} onClick={()=>{setSection(key);setOffset(0);}}>{t(`section.${key}`)} ({value.section_counts[key]})</button>)}</div>
+  {error?<p role="alert">{t('loadFailed')} <button onClick={()=>setRetry(prior=>prior+1)}>{t('refresh')}</button></p>:null}
+  {!page&&!error?<p role="status">{t('loading')}</p>:null}
+  {page?.rows.length===0?<p>{t('emptySection')}</p>:null}
+  {page&&section==='motives'?<><ul>{(page.rows as SignalStudyReportRowsV1['motives']).map(row=><li key={row.key}>
+   <label className="admin-form-field"><input type="checkbox" checked={selected.includes(row.key)} disabled={locked||currentRevision===null} onChange={e=>setSelected(prior=>e.target.checked?[...prior,row.key]:prior.filter(k=>k!==row.key))}/>{row.name}</label> · {t(`layer.${row.layer}`)} · {t(`permission.${row.permission}`)} · {row.mentions} · {(row.share_of_cut*100).toFixed(1)}%
+   <p>{t('subjectDirection')}: {directions(row.subject)}</p><p>{t('competitorDirection')}: {directions(row.competitor)}</p><p>{t('alternativeDirection')}: {directions(row.alternative)}</p><p>{t('tensions',{count:row.mixed})}</p>{row.permission_override_reason?<p>{t('permissionOverride')}: {row.permission_override_reason}</p>:null}
+  </li>)}</ul><p>{t('promoteExplanation')}</p><button disabled={!selected.length||locked||currentRevision===null} onClick={()=>onPromote(selected)}>{t('promote')}</button></>:null}
+  {page&&section==='topics'?<ul>{(page.rows as SignalStudyReportRowsV1['topics']).map((row,index)=><li key={index}>{row.motive_key} · {row.topic_key} · {t(`aggregate.${row.aggregate}`)}: {row.mentions}</li>)}</ul>:null}
+  {page&&section==='channels'?<ul>{(page.rows as SignalStudyReportRowsV1['channels']).map((row,index)=><li key={index}>{row.motive_key} · {row.channel} · {t(`aggregate.${row.aggregate}`)}: {row.mentions}</li>)}</ul>:null}
+  {page&&section==='series'?<ul>{(page.rows as SignalStudyReportRowsV1['series']).map((row,index)=><li key={index}>{row.date} · {row.motive_key} · {t(`aggregate.${row.aggregate}`)}: {directions(row.direction)}</li>)}</ul>:null}
+  {page&&section==='evidence'?<ul>{(page.rows as SignalStudyReportRowsV1['evidence']).map((row,index)=><li key={index}><blockquote>{row.display_text}</blockquote><p>{row.channel} · {row.occurred_at} {row.redacted?t('redacted'):null}</p>{/^https?:\/\//u.test(row.source_url)?<a href={row.source_url} target="_blank" rel="noreferrer noopener">{t('source')}</a>:null}</li>)}</ul>:null}
+  {page?<div><button disabled={offset===0} onClick={()=>setOffset(Math.max(0,offset-30))}>{t('previous')}</button> <span>{Math.min(offset+1,page.total)}–{Math.min(offset+30,page.total)} / {page.total}</span> <button disabled={page.next_offset===null} onClick={()=>setOffset(page.next_offset!)}>{t('next')}</button></div>:null}
+ </section>;
+}
