@@ -25,6 +25,7 @@ function validateProfile(profile:Profile,scope:Access,shape:ReturnType<typeof si
     fail('listening_calibration_profile_invalid');
 }
 export type SignalListeningCalibrationPlanV1={scope:Access;configuration:SignalListeningConfigurationV1;
+  selected_inputs:SignalListeningInputV1[];calibration_shapes:string[];
   profiles:Map<string,Profile|null>;execution:JevStreamingExecutionV2;warmup:boolean;response_bound_bytes:number};
 /** Only committed, verified receipt profiles can unlock concurrency. Missing or
  * out-of-coverage shapes use normal reusable labels in one bounded warmup window. */
@@ -40,19 +41,30 @@ export async function planSignalListeningCalibrationV1(args:Access&{configuratio
   for(const input of args.inputs){const key=signalListeningCalibrationShapeV1(args.configuration,input).shape_digest;
     pendingByShape.set(key,(pendingByShape.get(key)??0)+1);}
   for(const [key,profile]of profiles)if(profile&&profile.sample_count<32&&profile.sample_count+(pendingByShape.get(key)??0)>=32)profiles.set(key,null);
-  let warmup=false;
-  for(const input of args.inputs){
+  const rows=args.inputs.map((input,index)=>{
     const request=buildSignalListeningJevRequestV1(input,args.configuration),bytes=assertSignalListeningRequestTransportV1(request);
     const shape=signalListeningCalibrationShapeV1(args.configuration,input),profile=profiles.get(shape.shape_digest);
     if(profile)assertSignalListeningMeasuredContextV1(request,profile.max_input_tokens_per_byte);
-    if(!profile||bytes<profile.request_min_bytes||bytes>profile.request_max_bytes)warmup=true;
-  }
+    return{input,index,request,bytes,shape:shape.shape_digest,covered:Boolean(profile&&bytes>=profile.request_min_bytes&&bytes<=profile.request_max_bytes)};
+  });
+  const firstUncovered=rows.find(row=>!row.covered),warmup=Boolean(firstUncovered);
   const execution=warmup?{...args.execution,max_in_flight:1,window_size:Math.min(32,args.execution.window_size),
     flush_size:Math.min(32,args.execution.flush_size),max_flushes:1}:args.execution;
-  const response_bound_bytes=Math.max(16384,...args.inputs.slice(0,execution.window_size)
-    .map(input=>signalListeningResponseBoundV1(buildSignalListeningJevRequestV1(input,args.configuration))));
+  let selected=rows.slice(0,execution.window_size);
+  if(firstUncovered){
+    // Warm one shape at a time. Include pending byte extrema explicitly rather
+    // than repeatedly warming a covered prefix while an outlier waits at33.
+    // Every anchor is an ordinary pending label, never a probe of cached roots.
+    const candidates=rows.filter(row=>row.shape===firstUncovered.shape);
+    const sorted=[...candidates].sort((a,b)=>a.bytes-b.bytes||a.index-b.index);
+    const priority=[sorted[0]!,sorted[sorted.length-1]!,...candidates.filter(row=>!row.covered),...candidates];
+    const seen=new Set<number>();selected=[];
+    for(const row of priority){if(seen.has(row.index))continue;seen.add(row.index);selected.push(row);if(selected.length>=execution.window_size)break;}
+  }
+  const selected_inputs=selected.map(row=>row.input),calibration_shapes=firstUncovered?[firstUncovered.shape]:[];
+  const response_bound_bytes=Math.max(16384,...selected.map(row=>signalListeningResponseBoundV1(row.request)));
   return{scope:{workspace_id:args.workspace_id,configuration_digest:args.configuration_digest},configuration:args.configuration,
-    profiles,execution,warmup,response_bound_bytes};
+    profiles,execution,warmup,selected_inputs,calibration_shapes,response_bound_bytes};
 }
 /** Each factory receives an immutable env copy. Account quotas remain shared;
  * a profile's scope digest, not a new app tenant or key, identifies its TPS model. */

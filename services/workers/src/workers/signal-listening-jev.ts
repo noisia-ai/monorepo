@@ -32,12 +32,26 @@ function priceOf(run:LabelingRunV1){
  * never invents questions, negative labels, eligibility or a second provider attempt. */
 export function processSignalListeningJevV1(args:{run_id:string;store:Store;provider:JevProviderV1;
   execution:JevStreamingExecutionV2;lease_renewal_ms?:number;recovery_only?:boolean;
-  prepare?(run:Readonly<LabelingRunV1>):Promise<JevPreparedExecutionV1>}){
+  prepare?(run:Readonly<LabelingRunV1>):Promise<JevPreparedExecutionV1>;
+  selection?:()=>SignalListeningInputV1[]|undefined}){
   let windowSize=args.execution.window_size;
-  return processJevLabelingPageV1<SignalListeningInputV1,SignalListeningResultV1>({...args,
+  const key=(input:SignalListeningInputV1)=>digest({root_id:input.root_id,input_digest:input.input_digest,question_digests:input.question_digests});
+  const select=(inputs:SignalListeningInputV1[])=>{
+    const selection=args.selection?.();if(!selection)return inputs.slice(0,windowSize);
+    const available=new Map(inputs.map(input=>[key(input),input]));
+    return selection.flatMap(input=>{const found=available.get(key(input));return found?[found]:[];}).slice(0,windowSize);
+  };
+  const schedulerStore={...args.store,async calls(run:LabelingRunV1){
+    const rows=await args.store.calls(run),selection=args.selection?.();if(!selection)return rows;
+    const order=new Map(selection.map((input,index)=>[key(input),index]));
+    // Unknown physical attempts always remain visible to the shared money guard.
+    return rows.filter(call=>call.status==='unknown'&&!call.raw_body||call.inputs.some(input=>order.has(key(input))))
+      .sort((a,b)=>(order.get(key(a.inputs[0]!))??-1)-(order.get(key(b.inputs[0]!))??-1));
+  }};
+  return processJevLabelingPageV1<SignalListeningInputV1,SignalListeningResultV1>({...args,store:schedulerStore,
     prepare:args.prepare?async run=>{const prepared=await args.prepare!(run);windowSize=prepared.execution.window_size;return prepared;}:undefined,hooks:{
     price:priceOf,
-    propose:(run,inputs)=>inputs.slice(0,windowSize).map(input=>{
+    propose:(run,inputs)=>select(inputs).map(input=>{
       const request=buildSignalListeningJevRequestV1(input,configurationOf(run));
       const request_digest=signalListeningRequestDigestV1(run,input,request);
       return {custom_id:`listening_${request_digest.slice(7,67)}`,request_digest,request,inputs:[input],
@@ -82,22 +96,22 @@ export async function signalListeningJevJobV1(run_id:string,options:{
     throw Error('listening_not_enabled');
   const store=options.store??createSignalListeningRuntimeStoreV1(database,{execution});
   let calibrated:ReturnType<typeof createSignalListeningCalibratedProviderV1>|undefined;
-  let calibrationRun:Readonly<LabelingRunV1>|undefined,shapes:string[]=[];
+  let calibrationRun:Readonly<LabelingRunV1>|undefined,shapes:string[]=[],selection:SignalListeningInputV1[]|undefined;
   // This placeholder cannot send; the lease-held planner always selects runtime.
   const unavailable:JevProviderV1={async evaluate(){throw new JevProviderErrorV1('listening_preparation_required','definitely_not_sent');}};
   try{
-    return await processSignalListeningJevV1({run_id,execution,store,provider:unavailable,recovery_only:run.recovery_only,
+    return await processSignalListeningJevV1({run_id,execution,store,provider:unavailable,recovery_only:run.recovery_only,selection:()=>selection,
       prepare:async leased=>{
         calibrationRun=leased;
         try{
           const configuration=configurationOf(leased),pending=await store.calls(leased);
-          const inputs=pending.length?pending.filter(call=>!call.results_applied).flatMap(call=>call.inputs):await store.inputs(leased);
+          const inputs=pending.length?pending.filter(call=>!call.results_applied&&(!run.recovery_only||Boolean(call.raw_body))).flatMap(call=>call.inputs):await store.inputs(leased);
           const plan=await planSignalListeningCalibrationV1({workspace_id:leased.workspace_id,configuration_digest:digest(configuration),
             configuration,inputs,execution,loadProfile:shape_digest=>(options.calibration?.load??loadSignalListeningCalibrationV1)({database,
               workspace_id:leased.workspace_id,actor_user_id:leased.actor_user_id,configuration_digest:digest(configuration),model:configuration.model,shape_digest})});
-          shapes=[...plan.profiles.keys()];
+          selection=plan.selected_inputs;shapes=plan.calibration_shapes;
           calibrated=createSignalListeningCalibratedProviderV1({plan,...(options.provider?{factory:()=>({...options.provider!,close:undefined})}:{})});
-          calibrated.prepareRequests(inputs.slice(0,plan.execution.window_size).map(input=>buildSignalListeningJevRequestV1(input,configuration)));
+          calibrated.prepareRequests(selection.map(input=>buildSignalListeningJevRequestV1(input,configuration)));
           return{provider:calibrated.provider,execution:plan.execution,max_windows:1};
         }catch(error){
           const knownConfiguration=error instanceof Error&&[

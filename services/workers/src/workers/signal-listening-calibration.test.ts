@@ -67,3 +67,14 @@ test('a partial finite profile does not unlock concurrency for a newly expanded3
  const measured=await planSignalListeningCalibrationV1({...f,inputs:Array.from({length:32},()=>({...f.input,root_id:randomUUID()})),execution,loadProfile:async()=>full});
  assert.equal(measured.warmup,false);assert.equal(measured.execution.max_in_flight,1024);
 });
+test('warmup selects an outlier at33 and pending byte extrema instead of a covered prefix',async()=>{
+ const f=fixture(),inputs=Array.from({length:80},(_,i)=>({...f.input,root_id:`root-${i}`}));
+ inputs[32]!.text='x'.repeat(600);inputs[60]!.text='x'.repeat(1000);inputs[70]!.text='a';
+ const plan=await planSignalListeningCalibrationV1({...f,inputs,execution,loadProfile:async()=>({...f.profile,sample_count:32,source_call_ids:Array.from({length:32},()=>randomUUID())})});
+ assert.equal(plan.warmup,true);assert.equal(plan.selected_inputs.length,32);
+ for(const index of [32,60,70])assert.ok(plan.selected_inputs.some(input=>input.root_id===inputs[index]!.root_id));
+ assert.equal(plan.calibration_shapes.length,1);
+ const cachedRemoved=await planSignalListeningCalibrationV1({...f,inputs:inputs.filter((_,i)=>![32,60,70].includes(i)),execution,
+  loadProfile:async()=>({...f.profile,sample_count:32,source_call_ids:Array.from({length:32},()=>randomUUID())})});
+ assert.equal(cachedRemoved.warmup,false);assert.equal(cachedRemoved.calibration_shapes.length,0,'covered batches retain their measured coverage instead of replacing it with latest32');
+});
