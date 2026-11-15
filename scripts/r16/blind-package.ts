@@ -21,7 +21,8 @@ export type BlindSnapshotV1 = {
   study_guidance: { subject_context: string; direction_options: Array<{ key: string; definition: string }>;
     target_options: Array<{ key: string; definition: string }>; use_options: Array<{ key: string; definition: string }>;
     layer_diagnostics: Array<{ key: string; layer: string; question: string; definition: string }> };
-  layer_agreement: { eligible_count: number; denominator: number; coverage: number; kappa: number | null;
+  layer_agreement: { eligible_count: number; pass_a_count: number; pass_a_digest: string | null; pass_b_count: number; pass_b_digest: string | null;
+    denominator: number; coverage: number; kappa: number | null;
     status: "not_measured" | "insufficient_data" | "below_threshold" | "acceptable"; boundary_recoded_count: number } | null;
   receipts: { total_cost_usd: number; total_elapsed_ms: number; stages: Array<{ stage: string; cost_usd: number; elapsed_ms: number }> };
   listening: Array<{ mention_id: string; redacted_text: string; stage: "before" | "after";
@@ -126,16 +127,26 @@ function validOptions(options: Array<{ key: string; definition: string }>, keys:
     && keys.every(key => options.some(x => x?.key === key && typeof x.definition === "string" && x.definition.trim()));
 }
 function validLayerAgreement(value: NonNullable<BlindSnapshotV1["layer_agreement"]>): boolean {
-  if (!value || !Number.isSafeInteger(value.eligible_count) || value.eligible_count < 0 || !Number.isSafeInteger(value.denominator)
+  if (!value || !Number.isSafeInteger(value.eligible_count) || value.eligible_count < 0
+    || !Number.isSafeInteger(value.pass_a_count) || value.pass_a_count < 0 || value.pass_a_count > value.eligible_count
+    || !Number.isSafeInteger(value.pass_b_count) || value.pass_b_count < 0 || value.pass_b_count > value.eligible_count
+    || (value.pass_a_count === 0 ? value.pass_a_digest !== null : !HASH_RE.test(value.pass_a_digest ?? ""))
+    || (value.pass_b_count === 0 ? value.pass_b_digest !== null : !HASH_RE.test(value.pass_b_digest ?? ""))
+    || !Number.isSafeInteger(value.denominator)
     || value.denominator < 0 || value.denominator > value.eligible_count || !Number.isFinite(value.coverage) || value.coverage < 0 || value.coverage > 1
+    || value.denominator > Math.min(value.pass_a_count, value.pass_b_count)
     || !Number.isSafeInteger(value.boundary_recoded_count) || value.boundary_recoded_count < 0 || value.boundary_recoded_count > value.denominator
     || !["not_measured", "insufficient_data", "below_threshold", "acceptable"].includes(value.status)) return false;
   if (Math.abs(value.coverage - (value.eligible_count ? value.denominator / value.eligible_count : 0)) > .000001) return false;
   if (value.kappa !== null && (!Number.isFinite(value.kappa) || value.kappa < -1 || value.kappa > 1)) return false;
-  if (value.status === "not_measured") return value.kappa === null && value.denominator === 0;
-  if (value.status === "insufficient_data") return value.kappa === null && value.denominator > 0;
-  if (value.status === "acceptable") return value.denominator > 0 && value.kappa !== null && value.kappa >= .8;
-  if (value.status === "below_threshold") return value.denominator > 0 && value.kappa !== null && value.kappa < .8;
+  if (value.status === "not_measured") return value.kappa === null && value.denominator === 0
+    && value.pass_a_count === 0 && value.pass_b_count === 0;
+  if (value.status === "insufficient_data") return value.kappa === null && value.denominator < value.eligible_count
+    && (value.pass_a_count > 0 || value.pass_b_count > 0);
+  const fullCoverage = value.eligible_count > 0 && value.pass_a_count === value.eligible_count && value.pass_b_count === value.eligible_count
+    && value.denominator === value.eligible_count && value.coverage === 1;
+  if (value.status === "acceptable") return fullCoverage && value.kappa !== null && value.kappa >= .8;
+  if (value.status === "below_threshold") return fullCoverage && value.kappa !== null && value.kappa < .8;
   return false;
 }
 
