@@ -14,9 +14,10 @@ test('native Listening reader bounds questions and text before hydrating an inpu
  const cfg=await saveSignalListeningConfigurationV1({...access,expected_revision:0,provenance:'human',configuration:{...template,instructions:('Treat text as evidence. "Rules"\n').repeat(40),questions:[...template.questions,
   ...Array.from({length:16},(_,i)=>({key:'detail_'+i,type:'noul' as const,text:'Does this description contain the configured detail?',positive:('Detailed "positive" café.\n').repeat(40),negative:('Other text, "negative".\n').repeat(40),origin:'brand_os' as const,human_locked:false,scope:'all' as const}))]}});
  const admitted=await requestSignalListeningV1({...access,configuration_id:cfg.id,map_id:ctx.map_id,cap_micro_usd:1000000,idempotency_key:'bounded-listening-native',provider_available:true});
- const reads:{ids:string[];costs:number[]}[]=[];let hydrated=0,race=false,changed=false;
+ const reads:{ids:string[];costs:number[]}[]=[];let hydrated=0,race=false,changed=false,finishSources=0;
  const database={query:ctx.database.query.bind(ctx.database),connect:async()=>{const c=await ctx.database.connect();return new Proxy(c,{get(target,key){if(key==='query')return async(sql:string,...values:unknown[])=>{
   const result=await(target.query as(...args:unknown[])=>Promise<{rows:Record<string,unknown>[]}>) (sql,...values);
+  if(sql.includes('labeling_listening_pending_available_v1'))finishSources++;
   if(sql.includes('labeling_listening_input_metadata_v1')){
    assert.ok(result.rows.every(row=>Object.keys(row).sort().join(',')==='root_id,working_bytes'),'metadata returns no body, question definitions or query wire');assert.ok(Buffer.byteLength(JSON.stringify(result.rows))<4096);
    reads.push({ids:result.rows.map(row=>String(row.root_id)),costs:result.rows.map(row=>Number(row.working_bytes))});
@@ -42,7 +43,7 @@ test('native Listening reader bounds questions and text before hydrating an inpu
  assert.ok(!(await store.inputs(run,{max_rows:3,max_working_bytes:512*1024*1024})).some(row=>row.root_id===all[0]!.root_id));
  await store.markSubmitting(run,calls);await store.markFailed(run,calls,true);
  assert.ok(!(await store.inputs(run,{max_rows:3,max_working_bytes:512*1024*1024})).some(row=>row.root_id===all[0]!.root_id));
- const beforeFinish=hydrated;await store.finish(run);assert.equal(hydrated,beforeFinish);
+ const beforeFinish=hydrated,beforeFinishSources=finishSources;await store.finish(run);assert.equal(hydrated,beforeFinish);assert.equal(finishSources-beforeFinishSources,1,'finish shares one exact population between pending and available');
  race=true;const snapshot=await store.inputs(run,{max_rows:1,max_working_bytes:512*1024*1024});assert.equal(changed,true);assert.equal(snapshot[0]!.configuration_digest,cfg.configuration_digest);
  const oldRequest=buildSignalListeningJevRequestV1(snapshot[0]!,run.identity.params.configuration as SignalListeningConfigurationV1),oldDigest=signalListeningRequestDigestV1(run,snapshot[0]!,oldRequest);
  await assert.rejects(store.reserve(run,[{custom_id:'listening_'+oldDigest.slice(7,67),request_digest:oldDigest,request:oldRequest as unknown as Record<string,unknown>,inputs:[snapshot[0]!],reserved_micro_usd:1000}]),/lease_lost|configuration_changed|run_not_running|listening_call_invalid/,'reserve rechecks current authority after snapshot closes');

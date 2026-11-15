@@ -146,7 +146,9 @@ export async function signalListeningJevJobV1(run_id:string,options:{
       prepare_next:async(_leased,inputs)=>{
         const next=inputs.slice(0,execution.window_size);
         function* requests(){for(const input of next)yield buildSignalListeningJevRequestV1(input,configurationOf(_leased));}
-        if(!calibrated?.prepareMeasuredRequests(requests()))return false;
+        const configuration=configurationOf(_leased);
+        if(!calibrated||!await calibrated.prepareMeasuredRequestsWithProfiles(requests(),shape_digest=>(options.calibration?.load??loadSignalListeningCalibrationV1)({database,
+          workspace_id:_leased.workspace_id,actor_user_id:_leased.actor_user_id,configuration_digest:digest(configuration),model:configuration.model,shape_digest})))return false;
         selection=next;return true;
       },
       prepare:async leased=>{

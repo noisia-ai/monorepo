@@ -555,6 +555,9 @@ export function createSignalLabelingStoreV1<
       pages: Array<{ call: LabelingCallV1<Input>; results: Result[] }>,
     ) => Promise<void>;
     pending: (client: PoolClient, run: LabelingRunV1) => Promise<number>;
+    /** Listening counts unanswered roots and selectable questions from one
+     * population snapshot; other adapters retain their existing callbacks. */
+    pending_and_available?: (client:PoolClient,run:LabelingRunV1)=>Promise<{pending:number;available:boolean}>;
     authority?: (client: PoolClient, run: LabelingRunV1) => Promise<void>;
     beforeSubmit?: (client: PoolClient, run: LabelingRunV1, calls: LabelingCallV1<Input>[]) => Promise<void>;
   };
@@ -1228,7 +1231,9 @@ export function createSignalLabelingStoreV1<
             [run.id],
           )
         ).rows[0]!;
-        const pending = options.adapter
+        const combined = options.adapter?.pending_and_available
+          ? await options.adapter.pending_and_available(c,run) : null;
+        const pending = combined ? combined.pending : options.adapter
           ? await options.adapter.pending(c, run)
           : Number(
               (
@@ -1238,7 +1243,7 @@ export function createSignalLabelingStoreV1<
                 )
               ).rows[0]!.count,
             );
-        const available = options.adapter?.has_inputs ? Number(await options.adapter.has_inputs(c,run)) : (
+        const available = combined ? Number(combined.available) : options.adapter?.has_inputs ? Number(await options.adapter.has_inputs(c,run)) : (
           options.adapter
             ? await options.adapter.inputs(c, run)
             : await selectFacetInputsV1(

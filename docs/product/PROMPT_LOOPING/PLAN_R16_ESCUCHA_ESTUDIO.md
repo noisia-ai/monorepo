@@ -12,6 +12,11 @@ No hay aprobaciones humanas intermedias en los procesos de análisis: Sonnet 4.6
 
 ## Progreso
 
+- Listening-smoke f49d60c7 ejecutó cuatro casos nativos sin omisiones: bounds, H5/privacidad y perfiles pasaron. La prueba de perfiles observó realmente el Map ausente, sus 32 recibos nativos verificados y aceptación del loader sin nuevas llamadas. El otro caso intentaba admitir dos runs simultáneos y el guard lo denegó correctamente; d0ec36d8 sustituye ese escenario por historial fallido sin envío/exposición mediante APIs nativas y conserva las comprobaciones del selector. Se repite el diagnóstico; no hay aceptación de capacidad. El recibo sintético de perfiles se conservará explícitamente como artefacto de CI, separado de cualquier dato privado del estudio.
+
+- Política nativa sobre fcd3d0ed: el diagnóstico manual 43757674660 termina verde; tres casos de preparación inicial y diez de política, sin omisiones. Los dos fallos anteriores eran escenarios de prueba: namespace de error y preparaciones con run completado pero bookkeeping pendiente. El positivo de Monitoreo ahora conserva primero su rechazo, reconcilia mediante la continuación nativa sin llamadas/admisiones nuevas y sólo entonces comprueba la herencia. CI completo y capacidad siguen pendientes.
+- Correcciones A/B revisadas e integradas: A selecciona metadatos por slices UUID acotadas en una misma RR y combina pendientes/disponibilidad del cierre en una sola población; B carga perfiles medidos ausentes mediante el loader autorizado, sin probes ni ampliar límites. Cuatro focales de bounds y 25 del worker pasan en sus ramas; DB/typecheck y lint verdes. Los nuevos casos nativos de equivalencia y segunda fase quedan explícitos en full y en listening-smoke con checks propios. La composición ROOT pasa tipado 11/11 y 27 focales sin omisiones; lint se conserva verde. Todavía no prueban continuidad real ni 1,000 raíces/s; se prepara un control remoto de 4,096 antes/después.
+
 - Repetición nativa 172f2e2b: la fecha ya pasó su normalizador; la inserción del recibo de política encontró 42703 porque el alias SQL old colisionaba con OLD implícito del trigger. 2c4a3ffa/2db5831b cambia únicamente esos aliases a prior_action y verifica scope/binding mediante la API; revisión sin P0/P1/P2. Se añade un diagnóstico manual policy-smoke de PostgreSQL con contexto/concurrencia propios para feedback rápido; PR/push/full conservan todas sus pruebas y checks. Smoke no sustituye CI completo.
 
 - Ensayo H1 de 32f40ec8 finalizado y rechazado: 32,768 raíces resueltas, cero pendientes, 65,536 solicitudes; 71.55 raíces/s sobre 457.94 s. La matriz pasó diez casos, pero siguen fallando ventanas sostenidas, throughput y latencia HTTP. Es una mejora frente a 19.00/s, todavía lejos de 1,000/s. El perfil muestra selección/cierre repetidos y esperas SQL; se prepara un diagnóstico acotado antes de repetir la carga completa. CI general/runtime/calibración verdes no compensan este rechazo.
@@ -226,6 +231,8 @@ Recibo: separar Voyage/JEV por raíz de Claude por número de grupos y vueltas; 
 - Recibo de costo/tiempos por etapa, guía corta QA en UAT y diez líneas en español. No declarar completo por tests locales o por leer este plan.
 
 ## Sorpresas y descubrimientos
+
+- El perfil de 32f localiza 70 proyecciones completas del corpus en selección/cierre. La tabla en memoria de perfiles también puede carecer de una fase ya medida en DB; esa hipótesis requiere observar Map ausente y recibo nativo válido en el nuevo caso remoto, no deducir éxito de un mock.
 
 - El parseo de PL/pgSQL no valida el SQL parametrizado del provisionador TypeScript: usar el mismo parámetro como timestamptz y texto en CASE requiere cast explícito de la rama textual. CI nativo lo detectó antes de crear una política real.
 
