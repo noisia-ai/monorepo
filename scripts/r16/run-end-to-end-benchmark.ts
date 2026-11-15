@@ -127,7 +127,8 @@ let evidence: ReturnType<R16BenchmarkRecorderV1["finish"]> | undefined;
 const fixtureSetupStarted = performance.now();
 try {
   await runMassLabelingAcceptanceFixtureV1("product-recovery", { benchmark: {
-    root_count: rootCount, import_batch_size: 512, preparation_page_size: 100, execution_cap_micro_usd: 20_000_000,
+    root_count: rootCount, import_batch_size: 512, preparation_page_size: 100,
+    embedding_page_limit: Math.ceil(rootCount / 128) + 8, execution_cap_micro_usd: 20_000_000,
     beforeProcessing: async context => {
       const fixtureSetupMs = performance.now() - fixtureSetupStarted;
       recorder = new R16BenchmarkRecorderV1("r16-synthetic-benchmark");
@@ -316,12 +317,13 @@ try {
       const output = resolve(privateRoot, `benchmark-${new Date().toISOString().replace(/[:.]/gu, "-")}.json`);
       const finalSummary = summarizeR16BenchmarkV1({ ...evidence, phases: phaseSpans });
       await writeFile(output, `${JSON.stringify({ fixture_setup_ms: fixtureSetupMs, fixture_import_batch_size: 512,
-        fixture_preparation_page_size: 100,
+        fixture_preparation_page_size: 100, fixture_embedding_page_limit: Math.ceil(rootCount / 128) + 8,
         synthetic_provider_limits: { requests_per_second: 2_000, input_tokens_per_second: 10_000_000 },
         evidence: { ...evidence, phases: phaseSpans }, summary: finalSummary,
         measurement: { sql: { ...sqlMetrics }, storage: disk, max_in_flight_observed: maxInFlight } }, null, 2)}\n`, { mode: 0o600, flag: "wx" });
       process.stdout.write(`${JSON.stringify({ evidence_path_private: output, fixture_setup_ms: fixtureSetupMs,
         fixture_import_batch_size: 512, fixture_preparation_page_size: 100,
+        fixture_embedding_page_limit: Math.ceil(rootCount / 128) + 8,
         summary: finalSummary, sql: sqlMetrics, storage: disk,
         max_in_flight_observed: maxInFlight })}\n`);
       if (!finalSummary.accepted) process.exitCode = 1;
