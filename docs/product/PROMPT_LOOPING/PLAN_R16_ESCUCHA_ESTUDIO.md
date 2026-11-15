@@ -12,6 +12,8 @@ No hay aprobaciones humanas intermedias en los procesos de análisis: Sonnet 4.6
 
 ## Progreso
 
+- H1: CI y PostgreSQL verdes en 5b2729a6. Su benchmark falló antes de JEV al alcanzar el límite del fixture de proyección. Los ajustes revisados 2c0f5e6d y 36668da1 mantienen límites ordinarios y productivos, habilitan explícitamente la población sintética y paginan metadatos en lotes de 2,000. La matriz posterior pasó 8/8 sobre 36668da1; el ensayo de 32,768 sigue activo y no acredita todavía throughput.
+
 - H1: repetida la matriz 8/8 sobre 2f477597 después de ajustar únicamente el setup sintético; recibo SHA-256 022542af9f46c0723400897b69cb20e602e3f1420eee5935ed80f6b4c89cf6bc. Las páginas de preparación 3 y 100 produjeron idénticos textos, hashes, chunks, disposiciones y censo en PostgreSQL. El benchmark ahora usa 100, máximo admitido por el contrato productivo; los demás casos conservan 3. La cohorte de 32,768 está en ejecución y su throughput sigue sin acreditarse.
 - H1: matriz integral completa 8/8 sobre 20004a41, con huella de código idéntica a 499c3116 en DB, workers, query-engine, scripts y workflow. Se verificaron 429/529 con exposición incierta, fallos de Storage/commit/ACK/reinicio y ambas fronteras de lease; cero reenvíos o liquidaciones duplicadas y cero HTTP tras denegaciones. El recibo sintético privado tiene SHA-256 2a0067a50a61898f475c97571ffb4b825d5f3df002b67138ca57eb79a24f9cd5. La corrida de 32,768 raíces sigue en preparación; todavía no acredita 1,000/s ni H1 completo.
 - H1: la matriz distingue la entrega al adaptador del HTTP físico. Cohortes listas y una prueba privada del cliente para cancelaciones anteriores a fetch conservan las reservas no enviadas. Revisión independiente sin P0/P1/P2 para esos cambios; tipado/lint 11/11 y workers 1,007 aprobadas con 44 omisiones por entorno. CI y PostgreSQL de la nueva cabeza siguen pendientes.
@@ -96,6 +98,8 @@ Recibo: separar Voyage/JEV por raíz de Claude por número de grupos y vueltas; 
 
 ## Sorpresas y descubrimientos
 
+- El fixture ampliado también heredaba un máximo de ocho páginas de embeddings y 1,200 raíces de proyección; después alcanzó el lector productivo limitado a 2,000 IDs. Se conservan esos límites por omisión y se pagina el lector oficial. Todos esos fallos fueron anteriores a la medición JEV: no son pruebas de velocidad ni justifican reiniciar un proceso vivo por tiempo de espera.
+
 - El setup de 32,768 raíces heredaba páginas de tres, más de diez mil páginas de preparación antes de medir JEV. Se terminó expresamente esa corrida al identificar el parámetro y cambiar la fuente, conservando diagnóstico y comprobando rollback, cierre de sockets y cero envíos al proveedor. No fue un reinicio por falta de salida o duración. El ajuste se limita al ensayo sintético y no presenta como nueva una medición de importación del estudio real.
 - Marcar sólo cohortes listas no bastó: mientras se confirmaba una cohorte, podía fallar un flush anterior y cancelar el cliente antes del HTTP. El adaptador sí recibió la llamada, pero no hubo solicitud física. Se distingue esa prueba local de una respuesta incierta o un aborto posterior a fetch; una excepción con el mismo código sin procedencia del cliente no acredita ausencia de envío.
 - El recuento de resultados no bastaba para probar recuperación: dos respuestas físicas se recuperaban correctamente, pero una tercera raíz nunca enviada se convertía en error técnico final. Se exige recuperar resultados válidos sin reenviar las respuestas pagadas. Si se pierde la lease antes de persistir bytes, el resultado correcto conserva exposición incierta, sin fingir crudo durable.
@@ -123,6 +127,8 @@ Recibo: separar Voyage/JEV por raíz de Claude por número de grupos y vueltas; 
 - El promedio del piloto completo incluye una etapa editorial que no escala por raíz. Multiplicarlo linealmente daba USD 205.81/millón; mantener explícitamente los grupos y una vuelta de referencia produce USD 114.035250. Ambos cálculos parten del mismo recibo, cuyo uso histórico permanece USD 17.280463.
 
 ## Registro de decisiones
+
+- 2026-11-14: ampliar sólo las opciones explícitas del benchmark y paginar los metadatos sintéticos; no elevar el límite productivo de 2,000 raíces por lectura. Conservar el recibo fallido de CI y exigir una nueva matriz con la misma huella de fuente que la corrida sostenida.
 
 - 2026-11-14: añadir un parámetro opcional de tamaño de página a la fixture, con los límites productivos 1–100. Mantener el valor histórico de tres por omisión y usar cien en el benchmark, con prueba de equivalencia y matriz completa regenerada bajo la misma huella que la nueva prueba de capacidad.
 - 2026-11-14: permitir reencolado bajo la lease vigente de cancelaciones anteriores a fetch sólo con procedencia creada por el cliente nativo en el mismo proceso (marca privada), código y resultado explícitos y señal abortada. No inferirlo de JSON, ausencia de crudo, HTTP 429/529 o aborto posterior al envío. Conservar reserva, identidad y controles SQL; no inventar recibo ni liquidación cero.
