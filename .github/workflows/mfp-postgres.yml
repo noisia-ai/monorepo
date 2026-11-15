@@ -344,3 +344,11 @@ jobs:
             echo '::error::R16 Listening smoke tests were skipped'
             exit 1
           fi
+      - name: Persist synthetic second-shape component proof
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: r16-synthetic-second-shape-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .data/piloto-masivo/r16/listening-second-shape-native/*.json
+          if-no-files-found: ignore
+          retention-days: 14
