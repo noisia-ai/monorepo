@@ -83,7 +83,15 @@ export function nativeListeningFinancialAnchorV1(args: { source: Study; base: Na
   if (source.listening_source_kind !== "human_edit" || !edits.length || edits.length > 128
     || source.listening_source_id !== edits[0]!.id || after.configuration_id !== edits[0]!.configuration_id
     || after.snapshot_digest !== edits[0]!.generation_snapshot_digest) return null;
-  for (let index = 0; index < edits.length; index++) {
+  // Revisions and previous_edit_id are workspace-global. The source tuple is
+  // base-scoped: the first edit on a newer serving snapshot points at that
+  // snapshot even when its previous_edit_id names the prior snapshot's edit.
+  // Find that exact serving boundary first; older rows are only needed to
+  // prove the boundary's global predecessor link, never as financial inputs.
+  const baseBoundary = edits.findIndex(edit => edit.source_configuration_id === base.configuration_id
+    && edit.source_generation_id === base.generation_id && edit.source_generation_digest === base.generation_snapshot_digest);
+  if (baseBoundary < 0) return null;
+  for (let index = 0; index <= baseBoundary; index++) {
     const edit = edits[index]!;
     if (edit.depth !== index || edit.cycle || edit.workspace_id !== source.workspace_id || edit.base_snapshot_id !== base.id
       || edit.map_id !== base.map_id || edit.source_digest !== base.snapshot_digest || edit.actual_snapshot_digest !== edit.snapshot_digest
@@ -92,12 +100,17 @@ export function nativeListeningFinancialAnchorV1(args: { source: Study; base: Na
       || !edit.generation_source_current
       || edit.configuration_state !== "published" || digest(edit.configuration) !== edit.configuration_digest) return null;
     const previous = edits[index + 1];
-    if (previous) {
-      if (edit.previous_edit_id !== previous.id || edit.revision !== previous.revision + 1
-        || edit.source_configuration_id !== previous.configuration_id || edit.source_generation_id !== previous.generation_id
-        || edit.source_generation_digest !== previous.generation_snapshot_digest) return null;
-    } else if (edit.previous_edit_id !== null || edit.revision !== 1 || edit.source_configuration_id !== base.configuration_id
-      || edit.source_generation_id !== base.generation_id || edit.source_generation_digest !== base.generation_snapshot_digest) return null;
+    if (index < baseBoundary) {
+      if (!previous || edit.base_snapshot_id !== base.id || edit.previous_edit_id !== previous.id || edit.revision !== previous.revision + 1
+        || previous.base_snapshot_id !== base.id || edit.source_configuration_id !== previous.configuration_id
+        || edit.source_generation_id !== previous.generation_id || edit.source_generation_digest !== previous.generation_snapshot_digest) return null;
+    } else {
+      if (edit.source_configuration_id !== base.configuration_id || edit.source_generation_id !== base.generation_id
+        || edit.source_generation_digest !== base.generation_snapshot_digest) return null;
+      if (edit.previous_edit_id === null) {
+        if (edit.revision !== 1 || previous) return null;
+      } else if (!previous || edit.previous_edit_id !== previous.id || edit.revision !== previous.revision + 1) return null;
+    }
   }
   if (edits[0]!.snapshot_digest !== source.listening_source_digest) return null;
   return { generation_id: base.generation_id, round_id: base.round_id, base_snapshot_id: base.id, source_kind: "human_edit" };

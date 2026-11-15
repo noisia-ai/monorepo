@@ -76,6 +76,29 @@ test("human edit receipts verify a two-edit source-digest chain and anchor money
   assert.deepEqual(nativeListeningFinancialAnchorV1({ source, base, after, human_edits: chain }), {
     generation_id: "base-generation", round_id: "base-round", base_snapshot_id: "snapshot", source_kind: "human_edit",
   });
+  const priorBaseEdit = { ...firstInChain, id: "edit-prior-base", base_snapshot_id: "older-snapshot", revision: 4,
+    expected_revision: 3, previous_edit_id: null, source_configuration_id: "older-config", source_generation_id: "older-generation",
+    source_generation_digest: sha("x"), source_digest: sha("y"), depth: 2 };
+  const withProducerSnapshot = (row: typeof firstInChain) => {
+    const actual = digest({ contract_version: "signal-listening-human-snapshot-v1", workspace_id: row.workspace_id,
+      base_snapshot_id: row.base_snapshot_id, configuration_id: row.configuration_id,
+      configuration_digest: row.configuration_digest, generation_id: row.generation_id, revision: row.revision,
+      operation: row.operation, payload: row.payload, source_digest: row.source_digest });
+    return { ...row, snapshot_digest: actual, actual_snapshot_digest: actual };
+  };
+  const firstOnCurrentBase = withProducerSnapshot({ ...firstInChain, revision: 5, expected_revision: 4,
+    previous_edit_id: priorBaseEdit.id, depth: 1 });
+  const secondOnCurrentBase = withProducerSnapshot({ ...second, revision: 6, expected_revision: 5,
+    previous_edit_id: firstOnCurrentBase.id });
+  const currentBaseSource = { ...source, listening_source_digest: secondOnCurrentBase.snapshot_digest };
+  const currentBaseAfter = { ...after, id: "human-generation-2", configuration_id: "human-config-2" };
+  assert.deepEqual(nativeListeningFinancialAnchorV1({ source: currentBaseSource, base, after: currentBaseAfter,
+    human_edits: [secondOnCurrentBase, firstOnCurrentBase, priorBaseEdit] }), {
+    generation_id: "base-generation", round_id: "base-round", base_snapshot_id: "snapshot", source_kind: "human_edit",
+  }, "the first edit on a new base anchors to that serving snapshot while retaining its workspace-global predecessor");
+  assert.equal(nativeListeningFinancialAnchorV1({ source: currentBaseSource, base, after: currentBaseAfter,
+    human_edits: [secondOnCurrentBase, { ...firstOnCurrentBase, previous_edit_id: "forged" }, priorBaseEdit] }), null,
+  "the global predecessor ID and revision must still be present and consecutive at the base boundary");
   assert.equal(nativeListeningFinancialAnchorV1({ source, base, after,
     human_edits: [{ ...second, previous_edit_id: "foreign" }, firstInChain] }), null, "a forged hop cannot be skipped");
   assert.equal(nativeListeningFinancialAnchorV1({ source, base, after,
