@@ -51,6 +51,11 @@ test('a valid paid prefix survives a future indivisible format stop, native CAS 
  const parent=(await f.database.query('SELECT status,error_code FROM signal_study_executions WHERE id=$1',[execution.id])).rows[0];assert.equal(parent.status,'failed');assert.equal(parent.error_code,'study_editorial_format_stop');
  const rows=(await f.database.query('SELECT * FROM signal_study_format_stops WHERE execution_id=$1',[execution.id])).rows;assert.equal(rows.length,1);assert.deepEqual(rows[0].stop_json,captured.stop);assert.equal(rows[0].stop_digest,digest(captured.stop));assert.ok(Buffer.byteLength(JSON.stringify(rows[0].stop_json))<=8192);
  assert.deepEqual((await f.database.query(`SELECT s.*,c.call_state,c.settled_micro_usd FROM signal_study_steps s JOIN engine_cost_events c ON c.study_step_id=s.id WHERE s.execution_id=$1 ORDER BY s.created_at,s.id`,[execution.id])).rows,prefix,'no valid paid interpretation or cost is rolled back by a future format error');
+ const allocation=(await f.database.query(`SELECT signal_study_exposure_v1($1)::text spent,
+  signal_listening_study_policy_exposure_v1(binding.scope_id)::text held
+  FROM signal_listening_study_policy_bindings binding WHERE binding.policy_id=$2`,[execution.id,f.policy.id])).rows[0]!;
+ assert.ok(BigInt(allocation.spent)>0n&&BigInt(allocation.spent)<BigInt(execution.cap_micro_usd));
+ assert.equal(BigInt(allocation.held),BigInt(f.execution.cap_micro_usd)+BigInt(allocation.spent),'a definitively closed paid prefix keeps its actual cost and releases only unused Study capacity; Listening stays fully reserved');
  const before=runtime.metrics();assert.equal((await runtime.run(execution.id)).status,'not_claimed');assert.deepEqual(runtime.metrics(),before);assert.equal(await readSignalStudyOutputV1({...f,execution_id:execution.id}),null);assert.equal((await pendingSignalStudyExecutionsV1({database:f.database})).some(row=>row.execution_id===execution.id),false);
  await assert.rejects(f.database.query('DELETE FROM signal_study_format_stops WHERE execution_id=$1',[execution.id]),/study_format_stop_immutable/);await assert.rejects(f.database.query('TRUNCATE signal_study_format_stops'),/study_history_retained/);
  assert.equal(new Set(runtime.sentStepKeys()).size,runtime.sentStepKeys().length);
