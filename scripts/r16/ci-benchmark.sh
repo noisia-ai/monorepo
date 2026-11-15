@@ -43,5 +43,10 @@ if ! grep -qx '# skipped 0' r16-h1-native-guards.tap; then
 fi
 corepack pnpm exec tsx --test services/workers/src/providers/jev-account-rate-limit.redis.test.ts
 corepack pnpm exec tsx --test scripts/r16/*.test.ts
-corepack pnpm exec tsx scripts/r16/run-fault-matrix.ts
-corepack pnpm exec tsx scripts/r16/run-end-to-end-benchmark.ts
+# The R16 product contract is Listening (base plus consumer-scoped topics),
+# not the superseded Mass V2 projection benchmark. Native legacy guards above
+# remain covered; this final stage uses the unchanged full acceptance workload.
+export NOISIA_SIGNAL_LISTENING_ENABLED="true"
+export NOISIA_JEV_PROVIDER_ENABLED="true"
+export NOISIA_JEV_STREAMING_V2_ENABLED="true"
+corepack pnpm exec tsx scripts/r16/run-listening-ci.ts

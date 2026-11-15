@@ -32,6 +32,11 @@ on:
       - 'services/workers/src/workers/signal-mass-labeling-jev.ts'
       - 'services/workers/src/workers/signal-jev-streaming-window.ts'
       - 'services/workers/src/workers/signal-workspace-engine-storage.ts'
+      - 'infrastructure/db/signal-listening*.ts'
+      - 'infrastructure/db/migrations/0311_signal_listening_statement_money.sql'
+      - 'infrastructure/db/migrations/0312_signal_listening_population_batches.sql'
+      - 'services/workers/src/workers/signal-listening*.ts'
+      - 'packages/query-engine/src/signal-listening*.ts'
       - 'scripts/r16/**'
   push:
     branches: [develop]
@@ -63,6 +68,11 @@ on:
       - 'services/workers/src/workers/signal-mass-labeling-jev.ts'
       - 'services/workers/src/workers/signal-jev-streaming-window.ts'
       - 'services/workers/src/workers/signal-workspace-engine-storage.ts'
+      - 'infrastructure/db/signal-listening*.ts'
+      - 'infrastructure/db/migrations/0311_signal_listening_statement_money.sql'
+      - 'infrastructure/db/migrations/0312_signal_listening_population_batches.sql'
+      - 'services/workers/src/workers/signal-listening*.ts'
+      - 'packages/query-engine/src/signal-listening*.ts'
       - 'scripts/r16/**'
   workflow_dispatch:
 
@@ -73,6 +83,8 @@ jobs:
   benchmark:
     runs-on: ubuntu-latest
     timeout-minutes: 90
+    env:
+      NODE_OPTIONS: --max-old-space-size=4096
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -93,5 +105,6 @@ jobs:
             .data/piloto-masivo/r16/benchmark-*.json
             .data/piloto-masivo/r16/fault-matrix-*.json
             .data/piloto-masivo/r16/fault-trace-*.json
+            .data/piloto-masivo/r16/listening-ci-*.json
           if-no-files-found: ignore
           retention-days: 14

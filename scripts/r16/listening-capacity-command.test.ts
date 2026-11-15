@@ -13,3 +13,15 @@ test('capacity command only admits an explicit owned quiet loopback lab, never C
   {R16BENCH_REDIS_URL:'redis://cache.example.test:6379'}])
   assert.throws(()=>assertR16ListeningCapacityLocalEnvironmentV1({...env,...change}));
 });
+
+import {assertR16ListeningCiEnvironmentV1} from './run-listening-ci';
+test('CI capacity retains a separate owned-loopback boundary and cannot become a local or remote override',()=>{
+ const ci={...env,GITHUB_ACTIONS:'true',NOISIA_R16_NATIVE_FIXTURE_PG:'true'};
+ assert.doesNotThrow(()=>assertR16ListeningCiEnvironmentV1(ci));
+ for(const change of [{GITHUB_ACTIONS:undefined},{NOISIA_R16_LOCAL_PG_LAB:'r16-durable-pages-pg17'},
+  {NOISIA_R16_NATIVE_FIXTURE_PG:'false'},{NOISIA_SIGNAL_LISTENING_ENABLED:undefined},
+  {DATABASE_URL:'postgresql://postgres:synthetic@db.example.test/noisia_mfp_ci'},
+  {R16BENCH_REDIS_URL:'redis://cache.example.test:6379'}])
+  assert.throws(()=>assertR16ListeningCiEnvironmentV1({...ci,...change}));
+ assert.throws(()=>assertR16ListeningCapacityLocalEnvironmentV1(ci),'CI cannot use the local command');
+});

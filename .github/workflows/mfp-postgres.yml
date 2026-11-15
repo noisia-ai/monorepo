@@ -30,6 +30,15 @@ jobs:
           --health-interval 10s
           --health-timeout 5s
           --health-retries 10
+      redis:
+        image: redis:7.4-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
     env:
       DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/noisia_mfp_ci
       DATABASE_SSL: 'false'
@@ -111,6 +120,36 @@ jobs:
             exit 1
           fi
 
+      - name: Run native Study pipeline, frozen human bindings and registered worker
+        env:
+          NOISIA_R16_STUDY_PG: 'true'
+          NOISIA_R16_STUDY_WORKER_PG: 'true'
+          NOISIA_R16_HUMAN_EDITS_PG: 'true'
+          NOISIA_R16_LISTENING_CENSUS_PG: 'true'
+          R16BENCH_REDIS_URL: redis://127.0.0.1:6379/0
+          NOISIA_WORKSPACE_ENGINE_MODULE_ROOT: ${{ github.workspace }}/tools/signal-semantic-lab/src
+          HF_HUB_OFFLINE: '1'
+          TRANSFORMERS_OFFLINE: '1'
+          NUMBA_NUM_THREADS: '1'
+          OMP_NUM_THREADS: '1'
+          OPENBLAS_NUM_THREADS: '1'
+          MKL_NUM_THREADS: '1'
+        run: |
+          export NOISIA_WORKSPACE_ENGINE_PYTHON="$(command -v python)"
+          set -o pipefail
+          pnpm exec node --test --test-concurrency=1 --import tsx \
+            infrastructure/db/migrations/signal-listening-human-edits.postgres.test.ts \
+            infrastructure/db/migrations/signal-study.postgres.test.ts \
+            infrastructure/db/migrations/signal-study-editorial-replay.postgres.test.ts \
+            infrastructure/db/migrations/signal-study-author-privacy.postgres.test.ts \
+            infrastructure/db/migrations/signal-study-effective-listening.postgres.test.ts \
+            services/workers/src/workers/signal-study-worker.postgres.test.ts \
+            scripts/r16/listening-native-census.postgres.test.ts | tee r16-study-native-pg.tap
+          if ! grep -qx '# skipped 0' r16-study-native-pg.tap; then
+            echo '::error::R16 native Study or human binding tests were skipped'
+            exit 1
+          fi
+
   migrated-schema:
     runs-on: ubuntu-latest
     services:
@@ -170,6 +209,8 @@ jobs:
           NOISIA_R16_LISTENING_BOUNDED_PG: 'true'
           NOISIA_R16_LISTENING_CALIBRATION_SCALE_PG: 'true'
           NOISIA_R16_LISTENING_CROSS_RUN_INDEX_PG: 'true'
+          NOISIA_R16_LISTENING_POPULATION_PG: 'true'
+          NOISIA_R16_LISTENING_MONEY_BATCHES_PG: 'true'
           NOISIA_R16_LISTENING_PROTOTYPES_PG: 'true'
           NOISIA_R16_LISTENING_RUNTIME_PG: 'true'
           NOISIA_R16_LISTENING_RECOVERY_PG: 'true'
@@ -188,6 +229,8 @@ jobs:
             infrastructure/db/migrations/signal-listening-bounded.postgres.test.ts \
             infrastructure/db/migrations/signal-listening-calibration.postgres.test.ts \
             infrastructure/db/migrations/signal-listening-cross-run-index.postgres.test.ts \
+            infrastructure/db/migrations/signal-listening-population-batches.postgres.test.ts \
+            infrastructure/db/migrations/signal-listening-money-batches.postgres.test.ts \
             infrastructure/db/migrations/signal-listening-prototypes.postgres.test.ts \
             infrastructure/db/migrations/signal-listening-lexicon.postgres.test.ts \
             infrastructure/db/migrations/signal-listening-input-bounds.postgres.test.ts \
