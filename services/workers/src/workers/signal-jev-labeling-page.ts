@@ -1,16 +1,30 @@
-import { assertJevStreamingExecutionV2, processJevStreamingWindowV2, type JevStreamingExecutionV2, type JevStreamingMetricsV2 } from './signal-jev-streaming-window';
+import { assertJevStreamingExecutionV2, jevCallWorkingBytesV2, processJevStreamingWindowV2, type JevStreamingExecutionV2, type JevStreamingMetricsV2 } from './signal-jev-streaming-window';
 import { setMaxListeners } from "node:events";
 import { llmCostMicroUsdV1, type FacetInput, type LlmPriceV1, type LlmUsageV1 } from "@noisia/query-engine";
 import type { createSignalLabelingStoreV1, LabelingRunV1, LabelingCallV1, LabelingCallProposalV1 } from "@noisia/db";
 import { validateJevResponseV1, jevProviderErrorV1, type JevProviderV1, type JevRawResponseV1,
   type JevRequestV1, type JevResponseV1, type JevProviderErrorV1 } from "../providers/typesafe-jev";
 
+export type JevPreparedExecutionV1 = {provider:JevProviderV1;execution:JevStreamingExecutionV2;max_windows?:number;recovery_only?:boolean;continuous_windows?:boolean};
+function validatePreparedExecution(value:JevPreparedExecutionV1){
+  if(!value||typeof value.provider?.evaluate!=='function'||!value.execution||value.recovery_only!==undefined&&typeof value.recovery_only!=='boolean'||value.continuous_windows!==undefined&&typeof value.continuous_windows!=='boolean')throw Error('jev_preparation_invalid');
+  const e=value.execution;
+  if(Object.keys(e).length!==6||Object.values(e).some(v=>!Number.isSafeInteger(v)||v<1)
+    ||e.max_in_flight>4096||e.max_flushes>64||e.flush_size>4096||e.window_size>4096||e.flush_interval_ms>60000)
+    throw Error('jev_stream_configuration_invalid');
+  if(value.max_windows!==undefined&&(!Number.isSafeInteger(value.max_windows)||value.max_windows<1||value.max_windows>4096))
+    throw Error('jev_window_limit_invalid');
+}
+export type JevNextInputBoundsV2={max_rows:number;max_working_bytes:number};
 export const jevUsageV1 = (usage:JevResponseV1["usage"]):LlmUsageV1 => ({...usage,cache_read_input_tokens:0,
   cache_creation_input_tokens:0,cache_creation:{ephemeral_5m_input_tokens:0,ephemeral_1h_input_tokens:0}});
 /** Shared page transport: one lease, durable raw before settlement, multi-row application.
  * JEV requests remain individual. A consumer may bound work through durable persistence. */
 export async function processJevLabelingPageV1<Input extends FacetInput,Result>(args:{
   run_id:string;store:ReturnType<typeof createSignalLabelingStoreV1<Input,Result>>;provider:JevProviderV1;
+  prepare?(run:Readonly<LabelingRunV1>):Promise<JevPreparedExecutionV1>;
+  /** DB-owned metadata/ID selection can enforce a byte bound before hydration. */
+  read_next_inputs?(run:LabelingRunV1,bounds:JevNextInputBoundsV2):Promise<Input[]>;
   lease_renewal_ms?:number; execution?:JevStreamingExecutionV2;max_windows?:number;hooks:{
     price(run:LabelingRunV1):LlmPriceV1;
     propose(run:LabelingRunV1,inputs:Input[]):LabelingCallProposalV1<Input>[];
@@ -21,6 +35,9 @@ export async function processJevLabelingPageV1<Input extends FacetInput,Result>(
     fail_on_error?:boolean;
     durable_raw_per_response?:boolean;
     recovery_only?:boolean;
+    /** Only native adapters whose inputs exclude reserved identities opt in. */
+    continuous_windows?(run:LabelingRunV1):boolean;
+    prepare_next?(run:LabelingRunV1,inputs:Input[]):Promise<boolean>;
     max_in_flight?(run:LabelingRunV1):number|undefined;
   };
   observe_stream?(metrics:JevStreamingMetricsV2):void;
@@ -28,7 +45,8 @@ export async function processJevLabelingPageV1<Input extends FacetInput,Result>(
   settled_micro_usd?:number; p50_ms?:number|null; p95_ms?:number|null}> {
   if(args.max_windows!==undefined&&(!args.execution||!Number.isSafeInteger(args.max_windows)||args.max_windows<1||args.max_windows>4096))
     throw new Error("jev_window_limit_invalid");
-  const {store,provider,hooks}=args,run=await store.claim(args.run_id);
+  const {store,hooks}=args;let provider=args.provider,execution=args.execution,maxWindows=args.max_windows,recoveryOnly=hooks.recovery_only===true,continuous=false;
+  const run=await store.claim(args.run_id);
   if(!run)return {status:"not_claimed"};
   const cancellation=new AbortController();setMaxListeners(Math.max(201,(args.execution?.max_in_flight??0)*2+64),cancellation.signal);
   let leaseError:unknown,renewal:Promise<void>|undefined;
@@ -39,41 +57,75 @@ export async function processJevLabelingPageV1<Input extends FacetInput,Result>(
     renewal=store.renew(run).catch(error=>{leaseError=error;cancellation.abort();}).finally(()=>{renewal=undefined;});
   },interval);heartbeat.unref?.();
   try{
+    if(args.prepare){
+      // Preparation may inspect server-owned inputs under this lease, never reserve
+      // money or send requests. Selection is local and leaves caller arguments intact.
+      const prepared=await args.prepare(Object.freeze({...run}));validatePreparedExecution(prepared);
+      if(renewal)await renewal;if(leaseError)throw leaseError;
+      if(cancellation.signal.aborted)throw Error('labeling_lease_lost');
+      provider=prepared.provider;execution=Object.freeze({...prepared.execution});maxWindows=prepared.max_windows;recoveryOnly||=prepared.recovery_only===true;continuous=prepared.continuous_windows===true;
+      setMaxListeners(Math.max(201,execution.max_in_flight*2+64),cancellation.signal);
+    }
+    continuous ||= hooks.continuous_windows?.(run)===true;
     const price=hooks.price(run);
-    const maxInFlight=args.execution?.max_in_flight??hooks.max_in_flight?.(run);
-    if(maxInFlight!==undefined&&(!Number.isSafeInteger(maxInFlight)||maxInFlight<1||maxInFlight>(args.execution?4096:200)))throw new Error("jev_page_concurrency_invalid");
+    const maxInFlight=execution?.max_in_flight??hooks.max_in_flight?.(run);
+    if(maxInFlight!==undefined&&(!Number.isSafeInteger(maxInFlight)||maxInFlight<1||maxInFlight>(execution?4096:200)))throw new Error("jev_page_concurrency_invalid");
     let windows=0;
     let aggregate: Awaited<ReturnType<typeof processJevStreamingWindowV2<Input,Result>>> | undefined;
     for (;;) {
       const pending=(await store.calls(run)).filter(call=>!call.results_applied);
-      if(hooks.fail_on_error&&pending.some(call=>call.status==="unknown"&&!call.raw_body)){
-        await store.fail(run,"labeling_outcome_unknown",args.execution?{preserve_reserved:true}:undefined);return {status:"outcome_unknown"};
+      if(hooks.fail_on_error&&pending.some(call=>call.status==="unknown"&&!call.raw_body)
+        &&!(recoveryOnly&&pending.some(call=>Boolean(call.raw_body)))){
+        await store.fail(run,"labeling_outcome_unknown",execution?{preserve_reserved:true}:undefined);return {status:"outcome_unknown"};
       }
-      if(args.execution&&run.error_code==="labeling_outcome_unknown"&&!pending.some(call=>Boolean(call.raw_body))){
+      if(execution&&run.error_code==="labeling_outcome_unknown"&&!pending.some(call=>Boolean(call.raw_body))){
         await store.finish(run);const refreshed=await store.refresh(run);run.error_code=refreshed.error_code;
         if(run.error_code==="labeling_outcome_unknown"){
           await store.fail(run,"labeling_outcome_unknown",{preserve_reserved:true});return {status:"outcome_unknown"};
         }
       }
-      let calls=(hooks.recovery_only?pending.filter(call=>Boolean(call.raw_body)):pending).slice(0,args.execution?.window_size??200);
-      if(hooks.recovery_only&&!calls.length)return {status:"recovery_unavailable"};
-      if(!calls.length&&!run.error_code&&!hooks.recovery_only){
-        const proposals=hooks.propose(run,await store.inputs(run));
-        if(proposals.length)calls=(await store.reserve(run,proposals)).slice(0,args.execution?.window_size??200);
+      let calls=(recoveryOnly?pending.filter(call=>Boolean(call.raw_body)):pending).slice(0,execution?.window_size??200);
+      if(recoveryOnly&&!calls.length)return {status:"recovery_unavailable"};
+      if(!calls.length&&!run.error_code&&!recoveryOnly){
+        const proposals=hooks.propose(run,await store.inputs(run)).slice(0,execution?.window_size??200);
+        if(proposals.length)calls=(await store.reserve(run,proposals)).slice(0,execution?.window_size??200);
       }
       const reserved=run.error_code?[]:calls.filter(call=>call.status==="reserved"&&!call.raw_body);
-      if(args.execution)assertJevStreamingExecutionV2(args.execution,provider);
-      if(!args.execution&&reserved.length)await store.markSubmitting(run,reserved);
-      if(args.execution) {
-        const outcome = await processJevStreamingWindowV2({run,calls,send_calls:reserved,store,provider,execution:args.execution,price,cancellation,hooks,observe_stream:args.observe_stream});
+      if(execution)assertJevStreamingExecutionV2(execution,provider);
+      if(!execution&&reserved.length)await store.markSubmitting(run,reserved);
+      if(execution) {
+        // Opt-in native inputs exclude call_roots/question digests as soon as
+        // reserve commits. Never prefetch through pending recovery or unknown.
+        let fedWindows=1;
+        const feed=continuous&&!pending.length&&!recoveryOnly&&!run.error_code&&(maxWindows??Infinity)>windows+1
+          ?async(available:number,maxCalls:number,admissionSignal:AbortSignal)=>{
+            if(renewal)await renewal;if(leaseError)throw leaseError;
+            if(admissionSignal.aborted||cancellation.signal.aborted||windows+fedWindows>=(maxWindows??Infinity))return[];
+            const inputs=(await(args.read_next_inputs?args.read_next_inputs(run,{max_rows:maxCalls,max_working_bytes:available}):store.inputs(run))).slice(0,maxCalls);
+            if(!inputs.length||admissionSignal.aborted||cancellation.signal.aborted)return[];
+            if(hooks.prepare_next&&!await hooks.prepare_next(run,inputs))return[];
+            if(admissionSignal.aborted||cancellation.signal.aborted)return[];
+            // Compile incrementally: never retain a second full request page
+            // merely to discover that its copied bodies exceed free memory.
+            const bounded:LabelingCallProposalV1<Input>[]=[];let bytes=0;
+            outer:for(const input of inputs)for(const proposal of hooks.propose(run,[input])){
+              const cost=jevCallWorkingBytesV2(proposal)+8192;
+              if(bytes+cost>available||bounded.length>=maxCalls)break outer;
+              bytes+=cost;bounded.push(proposal);
+            }
+            if(!bounded.length||admissionSignal.aborted||cancellation.signal.aborted)return[];
+            const next=await store.reserve(run,bounded);fedWindows++;
+            return next;
+          }:undefined;
+        const outcome = await processJevStreamingWindowV2({run,calls,send_calls:reserved,store,provider,execution:execution,price,cancellation,hooks,observe_stream:args.observe_stream,feed_next:feed});
         aggregate = { ...outcome, roots:(aggregate?.roots??0)+outcome.roots,
           labeled:(aggregate?.labeled??0)+outcome.labeled,
           settled_micro_usd:(aggregate?.settled_micro_usd??0)+outcome.settled_micro_usd,
           unresolved_billing_requests:(aggregate?.unresolved_billing_requests??0)+outcome.unresolved_billing_requests };
-        windows++;
+        windows+=fedWindows;
         if(run.error_code){const refreshed=await store.refresh(run);run.error_code=refreshed.error_code;}
         if(leaseError)throw leaseError;
-        if(cancellation.signal.aborted||outcome.status!=="running"||!calls.length||outcome.unresolved_billing_requests||hooks.recovery_only||windows>=(args.max_windows??Infinity))return aggregate;
+        if(feed||cancellation.signal.aborted||outcome.status!=="running"||!calls.length||outcome.unresolved_billing_requests||recoveryOnly||windows>=(maxWindows??Infinity))return aggregate;
         continue;
       }
     const rawPage:Array<{call:LabelingCallV1<Input>;raw:string}>=[];
@@ -138,7 +190,7 @@ export async function processJevLabelingPageV1<Input extends FacetInput,Result>(
   }catch(error){
     const code=error&&typeof error==="object"&&"code"in error?String(error.code):"";
     if(["labeling_forbidden","labeling_policy_changed","labeling_preparation_changed","labeling_context_changed",
-      "labeling_cap_exhausted","labeling_daily_cap_exhausted","labeling_raw_receipt_invalid"].includes(code))await store.fail(run,code);
+      "labeling_cap_exhausted","labeling_daily_cap_exhausted","labeling_raw_receipt_invalid"].includes(code))await store.fail(run,code,execution?{preserve_reserved:true}:undefined);
     throw error;
-  }finally{clearInterval(heartbeat);if(renewal)await renewal;await store.release(run,args.execution?{immediate:true}:undefined);}
+  }finally{clearInterval(heartbeat);if(renewal)await renewal;await store.release(run,execution?{immediate:true}:undefined);}
 }
