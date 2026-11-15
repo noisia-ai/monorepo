@@ -103,7 +103,12 @@ export async function refreshSignalListeningDiscoveryV1(args:SignalListeningAcce
  });
 }
 export async function seedSignalListeningDiscoveryV1(args:SignalListeningAccessV1&{configuration_id:string;map_id:string;round:number;source_generation_id:string;seeds:ListeningDiscoverySeedV1[]}){
- return tx(args,async c=>{const {row:g,cfg}=await start(c,args,'source_seed',args.source_generation_id);
+ return tx(args,c=>seedSignalListeningDiscoveryWithClientV1(c,args));
+}
+
+/** Caller owns BEGIN/COMMIT; source and authority guards are unchanged. */
+export async function seedSignalListeningDiscoveryWithClientV1(c:PoolClient,args:SignalListeningAccessV1&{configuration_id:string;map_id:string;round:number;source_generation_id:string;seeds:ListeningDiscoverySeedV1[]}){
+ await authorizeSignalListeningV1(c,args,'process');const {row:g,cfg}=await start(c,args,'source_seed',args.source_generation_id);
   if(new Set(args.seeds.map(s=>s.question_key)).size!==args.seeds.length||args.seeds.length!==cfg.configuration.questions.filter(q=>q.topic_source==='discovered').length)fail('listening_discovery_seeds_invalid');
   await emptyTopics(c,g,cfg.configuration,'source_seed',args.seeds);await roots(c,g);
   for(const seed of args.seeds){
@@ -118,7 +123,6 @@ export async function seedSignalListeningDiscoveryV1(args:SignalListeningAccessV
      FROM unnest($6::uuid[]) r(root_id) ON CONFLICT DO NOTHING`,[g.id,g.workspace_id,seed.question_key,seed.orphan_subset_id,signalListeningDiscoveryOrphanGroupDigestV1(seed.orphan_subset_id,seed.orphan_root_ids),seed.orphan_root_ids]);
    }
   }return seal(c,g);
- });
 }
 export async function setSignalListeningDiscoveryManualV1(args:SignalListeningAccessV1&{configuration_id:string;map_id:string;question_key:string;root_id:string;belongs:boolean}){
  return tx(args,async c=>{const {cfg,map}=await context(c,args),q=cfg.configuration.questions.find(q=>q.key===args.question_key);
@@ -137,7 +141,12 @@ export async function getSignalListeningDiscoveryGenerationV1(args:SignalListeni
  });
 }
 export async function snapshotSignalListeningDiscoveryOrphansV1(args:SignalListeningAccessV1&{generation_id:string}){
- return tx(args,async c=>{const id=randomUUID();
+ return tx(args,c=>snapshotSignalListeningDiscoveryOrphansWithClientV1(c,args));
+}
+
+/** Caller owns BEGIN/COMMIT; source and authority guards are unchanged. */
+export async function snapshotSignalListeningDiscoveryOrphansWithClientV1(c:PoolClient,args:SignalListeningAccessV1&{generation_id:string}){
+ await authorizeSignalListeningV1(c,args,'process');const id=randomUUID();
   await c.query(`INSERT INTO signal_listening_discovery_subsets(id,workspace_id,generation_id,created_by_user_id) VALUES($1,$2,$3,$4)`,[id,args.workspace_id,args.generation_id,args.actor_user_id]);
   await c.query(`INSERT INTO signal_listening_discovery_subset_roots(subset_id,generation_id,root_id,proof_digest)
    SELECT $1,generation_id,root_id,proof_digest FROM signal_listening_discovery_roots r WHERE generation_id=$2 AND workspace_id=$3
@@ -149,7 +158,6 @@ export async function snapshotSignalListeningDiscoveryOrphansV1(args:SignalListe
     COALESCE(jsonb_agg(jsonb_build_array(r.root_id,r.proof_digest) ORDER BY r.root_id),'[]'::jsonb) roots
     FROM signal_listening_discovery_subset_roots chosen JOIN signal_listening_discovery_roots r ON r.generation_id=chosen.generation_id AND r.root_id=chosen.root_id WHERE chosen.subset_id=$1) totals
    WHERE s.id=$1 RETURNING s.*`,[id])).rows[0]!;
- });
 }
 export async function readSignalListeningDiscoveryRootsV1(args:SignalListeningAccessV1&{generation_id:string;root_ids?:string[];after_root_id?:string;limit?:number}){
  const limit=args.limit??200;if(!Number.isSafeInteger(limit)||limit<1||limit>1024||args.root_ids&&(args.root_ids.length>1024||new Set(args.root_ids).size!==args.root_ids.length||args.after_root_id))fail('listening_discovery_page_invalid',422);

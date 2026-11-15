@@ -1,13 +1,14 @@
 import {createHash,randomUUID} from 'node:crypto';
+import {parseSignalListeningDiscoveryTransportV1} from './signal-listening-discovery-transport';
 import type {PoolClient} from 'pg';
 import {LISTENING_DISCOVERY_POLICY_V1,listeningDiscoveryPolicyDigestV1,
  createListeningDiscoveryEvidenceStreamV1,buildListeningDiscoveryEditorialRequestV1,applyListeningDiscoveryEditorialOutputV1,
  decideListeningDiscoveryStopV1,signalWorkspaceEmbeddingDigestV1 as digest,
  type ListeningDiscoveryMetadataV1,type ListeningDiscoveryOrphanGroupV1} from '@noisia/query-engine';
 import {authorizeSignalListeningV1,listeningTransactionV1,loadSignalListeningConfigurationWithClientV1,
- saveSignalListeningConfigurationV1,listeningFailV1,type SignalListeningAccessV1} from './signal-listening-configuration';
+ saveSignalListeningConfigurationWithClientV1,listeningFailV1,type SignalListeningAccessV1} from './signal-listening-configuration';
 import {getSignalListeningDiscoveryGenerationV1,readSignalListeningDiscoveryRootsV1,refreshSignalListeningDiscoveryV1,
- type ListeningDiscoveryGenerationV1} from './signal-listening-discovery';
+ seedSignalListeningDiscoveryWithClientV1,snapshotSignalListeningDiscoveryOrphansWithClientV1,type ListeningDiscoveryGenerationV1} from './signal-listening-discovery';
 import {admitSignalProcessingWithClientV1} from './signal-processing-policy';
 import {mapCurrent} from './signal-mass-labeling';
 import {prepareSignalListeningV1,type SignalListeningPreparationV1} from './signal-listening-preparation';
@@ -32,11 +33,12 @@ export type ListeningDiscoveryRawStoreV1={reference(a:{workspace_id:string;round
  load(a:{storage_key:string;sha256:string;size_bytes:number}):Promise<string>};
 export type ListeningDiscoveryOrphanManifestV1=ListeningDiscoveryOrphanGroupV1&{root_ids:string[]};
 async function policyLock(c:PoolClient,workspace:string){
+ const scope=(await c.query<{organization_id:string}>('SELECT organization_id FROM signal_workspaces WHERE id=$1',[workspace])).rows[0];if(!scope)fail('listening_discovery_scope_invalid');
+ await c.query("SELECT pg_advisory_xact_lock(hashtextextended('signal-processing-policy:'||$1,0))",[scope.organization_id]);
  const p=(await c.query<{id:string;organization_id:string;budget_timezone:string;configuration:unknown;max_execution_micro_usd:string|null}>(`SELECT p.id,p.organization_id,p.budget_timezone,a.configuration,a.max_execution_micro_usd::text
  FROM signal_workspaces w JOIN signal_processing_policy_versions p ON p.organization_id=w.organization_id AND p.status='active' AND p.valid_from<=clock_timestamp() AND p.valid_until>clock_timestamp()
  JOIN signal_processing_policy_actions a ON a.policy_version_id=p.id AND a.action='listening_discovery_review' WHERE w.id=$1 AND a.configuration=signal_listening_discovery_review_configuration_v1()`,[workspace])).rows[0];
  if(!p)return fail('listening_discovery_policy_unavailable');
- await c.query("SELECT pg_advisory_xact_lock(hashtextextended('signal-processing-policy:'||$1,0))",[p.organization_id]);
  await c.query('SELECT signal_processing_lock_v1($1,(clock_timestamp() AT TIME ZONE $2)::date)',[p.organization_id,p.budget_timezone]);return p;
 }
 async function moneyLock(c:PoolClient,roundId:string){
@@ -196,8 +198,7 @@ export async function markSignalListeningDiscoveryCallSentV1(args:{database:Sign
 export async function persistSignalListeningDiscoveryRawV1(args:{database:SignalListeningAccessV1['database'];call_id:string;attempt_token:string;raw_text:string;raw_store:ListeningDiscoveryRawStoreV1}){
  const call=(await args.database.query<ListeningDiscoveryCallV1>("SELECT * FROM engine_cost_events WHERE id=$1 AND attempt_token=$2 AND workspace_contract='listening-discovery-round-v1'",[args.call_id,args.attempt_token])).rows[0];if(!call)fail('listening_discovery_call_unavailable');
  const bytes=Buffer.from(args.raw_text,'utf8');if(bytes.length>8388608||bytes.toString('utf8')!==args.raw_text)fail('listening_discovery_raw_invalid',422);
- let wrapper:{body:string;http_status:number;provider_request_id?:string|null};try{wrapper=JSON.parse(args.raw_text);}catch{return fail('listening_discovery_raw_invalid',422);}
- if(typeof wrapper.body!=='string'||!Number.isInteger(wrapper.http_status)||wrapper.http_status<100||wrapper.http_status>599||wrapper.provider_request_id!=null&&(typeof wrapper.provider_request_id!=='string'||wrapper.provider_request_id.length>200))fail('listening_discovery_raw_invalid',422);
+ const wrapper=parseSignalListeningDiscoveryTransportV1(args.raw_text),complete=wrapper.complete&&wrapper.utf8_valid;
  const hash=sha(args.raw_text),input={workspace_id:call.workspace_id,round_id:call.listening_round_id,call_id:call.id,name:'review-'+hash.slice(7)+'.json',raw_text:args.raw_text,raw_sha256:hash,size_bytes:bytes.length};
  const reference=args.raw_store.reference(input);if(!reference.storage_key.startsWith('workspace-engine/'+call.workspace_id+'/'+call.listening_round_id+'/'))fail('listening_discovery_storage_invalid');
  const planned=await listeningTransactionV1(args.database,async c=>{await moneyLock(c,call.listening_round_id);
@@ -215,9 +216,9 @@ export async function persistSignalListeningDiscoveryRawV1(args:{database:Signal
   const intent=(await c.query<{verification_status:string}>('SELECT verification_status FROM signal_listening_discovery_raw_receipts WHERE call_id=$1 FOR UPDATE',[call.id])).rows[0];
   if(intent?.verification_status==='verified')return{call_id:call.id,replayed:true};
   await c.query("UPDATE signal_listening_discovery_raw_receipts SET verification_status='verified',verified_at=clock_timestamp() WHERE call_id=$1",[call.id]);
-  await c.query(`UPDATE engine_cost_events SET call_state=$3,response_storage_key=$4,response_sha256=$5,response_size_bytes=$6,response_http_status=$7,provider_request_id=$8,response_received_at=clock_timestamp()
-   WHERE id=$1 AND attempt_token=$2`,[call.id,call.attempt_token,wrapper.http_status===200?'response_persisted':'outcome_unknown',stored.storage_key,hash,bytes.length,wrapper.http_status,wrapper.provider_request_id??null]);
-  if(wrapper.http_status!==200){await c.query("UPDATE signal_listening_discovery_rounds SET status='outcome_unknown',error_code='listening_discovery_transport_unknown',execution_token=NULL,execution_expires_at=NULL WHERE id=$1",[call.listening_round_id]);await c.query("UPDATE signal_listening_discovery_executions SET status='outcome_unknown',error_code='listening_discovery_transport_unknown' WHERE id=(SELECT execution_id FROM signal_listening_discovery_rounds WHERE id=$1)",[call.listening_round_id]);}
+  await c.query(`UPDATE engine_cost_events SET call_state=$3,response_storage_key=$4,response_sha256=$5,response_size_bytes=$6,response_http_status=$7,provider_request_id=$8,response_received_at=clock_timestamp(),metadata=metadata||jsonb_build_object('response_complete',$9::boolean)
+   WHERE id=$1 AND attempt_token=$2`,[call.id,call.attempt_token,wrapper.http_status===200&&complete?'response_persisted':'outcome_unknown',stored.storage_key,hash,bytes.length,wrapper.http_status,wrapper.provider_request_id??null,complete]);
+  if(wrapper.http_status!==200||!complete){await c.query("UPDATE signal_listening_discovery_rounds SET status='outcome_unknown',error_code='listening_discovery_transport_unknown',execution_token=NULL,execution_expires_at=NULL WHERE id=$1",[call.listening_round_id]);await c.query("UPDATE signal_listening_discovery_executions SET status='outcome_unknown',error_code='listening_discovery_transport_unknown' WHERE id=(SELECT execution_id FROM signal_listening_discovery_rounds WHERE id=$1)",[call.listening_round_id]);}
   return{call_id:call.id,replayed:false};});
 }
 /** Only measured usage from the immutable raw wrapper settles money. Zero-usage HTTP errors remain unknown. */
@@ -227,7 +228,7 @@ export async function settleSignalListeningDiscoveryCallV1(args:{database:Signal
   await moneyLock(c,call.listening_round_id);const current=(await c.query<ListeningDiscoveryCallV1>('SELECT * FROM engine_cost_events WHERE id=$1 AND attempt_token=$2 FOR UPDATE',[call.id,call.attempt_token])).rows[0];if(!current)fail('listening_discovery_call_unavailable');Object.assign(call,current);if(call.call_state==='settled')return{cost_micro_usd:number(call.settled_micro_usd),replayed:true};
   const raw=(await c.query<{raw_text:string}>('SELECT raw_text FROM signal_listening_discovery_raw_receipts WHERE call_id=$1',[call.id])).rows[0];
   if(!raw||call.call_state!=='response_persisted')return{unresolved:true as const};
-  let body:{model:string;usage:Record<string,unknown>};try{body=JSON.parse((JSON.parse(raw.raw_text) as {body:string}).body);}catch{await c.query("UPDATE engine_cost_events SET call_state='outcome_unknown',metadata=metadata||'{\"error_code\":\"listening_discovery_usage_invalid\"}'::jsonb WHERE id=$1",[call.id]);return{unresolved:true as const};}
+  let body:{model:string;usage:Record<string,unknown>};try{const transport=parseSignalListeningDiscoveryTransportV1(raw.raw_text);if(!transport.complete||!transport.utf8_valid||transport.http_status!==200)return{unresolved:true as const};body=JSON.parse(transport.body);}catch{await c.query("UPDATE engine_cost_events SET call_state='outcome_unknown',metadata=metadata||'{\"error_code\":\"listening_discovery_usage_invalid\"}'::jsonb WHERE id=$1",[call.id]);return{unresolved:true as const};}
   const u=body.usage as {input_tokens:number;output_tokens:number;cache_read_input_tokens?:number;cache_creation_input_tokens?:number;cache_creation?:{ephemeral_5m_input_tokens?:number;ephemeral_1h_input_tokens?:number}};
   const tokens=[u?.input_tokens,u?.output_tokens,u?.cache_read_input_tokens??0,u?.cache_creation_input_tokens??0,u?.cache_creation?.ephemeral_5m_input_tokens??0,u?.cache_creation?.ephemeral_1h_input_tokens??0];
   if(!/^claude-sonnet-4-6(?:-[0-9]{8})?$/u.test(body.model??'')||tokens.some(n=>!Number.isSafeInteger(n)||n<0)||(u.cache_creation_input_tokens??0)!==(u.cache_creation?.ephemeral_5m_input_tokens??0)+(u.cache_creation?.ephemeral_1h_input_tokens??0)){
@@ -257,62 +258,108 @@ async function loadRound(args:SignalListeningAccessV1&{round_id:string}){
   const r=(await c.query<ListeningDiscoveryRoundV1&{quote:{orphan_groups?:ListeningDiscoveryOrphanManifestV1[]}}>('SELECT * FROM signal_listening_discovery_rounds WHERE id=$1 AND workspace_id=$2',[args.round_id,args.workspace_id])).rows[0];if(!r)fail('listening_discovery_round_unavailable');
   const p=await owner(c,args,r.execution_id);return{r,p};});
 }
+/** Lock order: organization policy/day -> configuration -> actor -> parent ->
+ * round. No configuration, source seed or phase write escapes this transaction. */
+async function mutationAuthority(c:PoolClient,args:SignalListeningAccessV1,roundId:string,allowRecovery=false){
+ const policy=await policyLock(c,args.workspace_id);
+ await c.query("SELECT pg_advisory_xact_lock(hashtextextended('signal-listening-config:'||$1,0))",[args.workspace_id]);
+ await authorizeSignalListeningV1(c,args,'process');
+ const p=(await c.query<ListeningDiscoveryExecutionV1>(`SELECT p.* FROM signal_listening_discovery_executions p JOIN signal_listening_discovery_rounds r ON r.execution_id=p.id
+ WHERE r.id=$1 AND r.workspace_id=$2 AND p.workspace_id=$2 AND p.actor_user_id=$3 FOR UPDATE OF p`,[roundId,args.workspace_id,args.actor_user_id])).rows[0];
+ if(!p)fail('listening_discovery_execution_unavailable');
+ const r=(await c.query<ListeningDiscoveryRoundV1>('SELECT * FROM signal_listening_discovery_rounds WHERE id=$1 AND workspace_id=$2 FOR UPDATE',[roundId,args.workspace_id])).rows[0];if(!r)fail('listening_discovery_round_unavailable');
+ if(p.status!=='active'&&!(allowRecovery&&p.status==='outcome_unknown'))fail('listening_discovery_parent_not_active');if(p.policy_version_id!==policy.id)fail('listening_discovery_policy_changed');
+ const exposure=number((await c.query('SELECT signal_listening_discovery_exposure_v1($1)::text n',[p.id])).rows[0].n),remaining=number(p.cap_micro_usd)-exposure;
+ if(remaining<=0)fail('listening_discovery_parent_cap_exhausted');await mapCurrent(c,args.workspace_id,p.map_id);return{p,r,remaining};
+}
 export async function applySignalListeningDiscoveryReviewV1(args:SignalListeningAccessV1&{round_id:string}){
  const {r,p}=await loadRound(args);if(r.status==='completed')return{status:'completed' as const,round_id:r.id,configuration_id:r.output_configuration_id,generation_id:r.output_generation_id};
  const raw=await listeningTransactionV1(args.database,async c=>{
-  const row=(await c.query<{raw_text:string;raw_sha256:string}>(`SELECT raw.raw_text,raw.raw_sha256 FROM engine_cost_events c JOIN signal_listening_discovery_raw_receipts raw ON raw.call_id=c.id WHERE c.listening_round_id=$1 AND c.call_state='settled'`,[r.id])).rows[0];if(!row)fail('listening_discovery_paid_receipt_required');return row;});
+  const row=(await c.query<{raw_text:string;raw_sha256:string}>(`SELECT raw.raw_text,raw.raw_sha256 FROM engine_cost_events c JOIN signal_listening_discovery_raw_receipts raw ON raw.call_id=c.id WHERE c.listening_round_id=$1 AND c.call_state='settled' AND raw.verification_status='verified'`,[r.id])).rows[0];if(!row)fail('listening_discovery_paid_receipt_required');return row;});
  const source=digest({contract_version:'listening-discovery-output-source-v1',round_id:r.id,request_digest:r.request_digest,raw_sha256:raw.raw_sha256});
- const latest=await listeningTransactionV1(args.database,c=>loadSignalListeningConfigurationWithClientV1(c,args.workspace_id));
- if(!latest)fail('listening_discovery_configuration_unavailable');
- // A lost save ACK is recognized by its immutable source seal. A later human
- // revision is never overwritten merely because the provider has been paid.
- if(latest.id!==r.configuration_id&&latest.source_digest!==source){
-  await listeningTransactionV1(args.database,c=>c.query("UPDATE signal_listening_discovery_rounds SET status='stale',error_code='listening_discovery_human_configuration_changed',execution_token=NULL,execution_expires_at=NULL WHERE id=$1",[r.id]));
-  await listeningTransactionV1(args.database,c=>c.query("UPDATE signal_listening_discovery_executions SET status='stale',error_code='listening_discovery_human_configuration_changed' WHERE id=$1",[p.id]));
-  return{status:'stale' as const,round_id:r.id};
- }
  const native=await nativeRequest({...args,generation_id:r.input_generation_id,ordinal:r.ordinal,orphan_groups:r.quote.orphan_groups??[]});
  if(native.request.request_body!==r.request_body||native.request.request_digest!==r.request_digest)fail('listening_discovery_request_binding_changed');
- let output:unknown;try{const b=JSON.parse((JSON.parse(raw.raw_text) as {body:string}).body) as {stop_reason:string;content:Array<{type:string;text?:string}>};
-  if(b.stop_reason!=='end_turn'||!Array.isArray(b.content)||b.content.some(x=>x.type!=='text'||typeof x.text!=='string'))throw Error('response');output=JSON.parse(b.content.map(x=>x.text).join(''));
- }catch{await listeningTransactionV1(args.database,c=>c.query("UPDATE signal_listening_discovery_rounds SET status='failed',error_code='listening_discovery_response_invalid' WHERE id=$1",[r.id]));await listeningTransactionV1(args.database,c=>c.query("UPDATE signal_listening_discovery_executions SET status='failed',error_code='listening_discovery_response_invalid' WHERE id=$1",[p.id]));return{status:'failed' as const,round_id:r.id};}
- let configuration:ReturnType<typeof applyListeningDiscoveryEditorialOutputV1>;try{configuration=applyListeningDiscoveryEditorialOutputV1(native.request,output);}catch{await listeningTransactionV1(args.database,c=>c.query("UPDATE signal_listening_discovery_rounds SET status='failed',error_code='listening_discovery_response_invalid',execution_token=NULL,execution_expires_at=NULL WHERE id=$1",[r.id]));await listeningTransactionV1(args.database,c=>c.query("UPDATE signal_listening_discovery_executions SET status='failed',error_code='listening_discovery_response_invalid' WHERE id=$1",[p.id]));return{status:'failed' as const,round_id:r.id};}
- const saved=latest.source_digest===source?latest:digest(configuration)===native.cfg.configuration_digest?native.cfg:await saveSignalListeningConfigurationV1({...args,expected_revision:native.cfg.revision,configuration,provenance:'agent',source_digest:source});
- // Seed generation is separate from a publication and carries previous-question
- // or orphan lineage. It never manufactures a JEV approval for a changed topic.
- const out=output as {topics:Array<{key:string;source_topic_keys:string[];orphan_group_keys:string[]}>};
- const {seedSignalListeningDiscoveryV1,snapshotSignalListeningDiscoveryOrphansV1}=await import('./signal-listening-discovery');
- let generation:ListeningDiscoveryGenerationV1;
- if(saved.id===r.configuration_id)generation=native.g;
- else{
-  const existing=(await args.database.query<ListeningDiscoveryGenerationV1>("SELECT * FROM signal_listening_discovery_generations WHERE workspace_id=$1 AND configuration_id=$2 AND source_generation_id=$3 AND status='ready' AND kind='source_seed' ORDER BY created_at DESC LIMIT 1",[args.workspace_id,saved.id,native.g.id])).rows[0];
-  if(existing)generation=existing;else{
-   const subset=await snapshotSignalListeningDiscoveryOrphansV1({...args,generation_id:native.g.id});
-   generation=await seedSignalListeningDiscoveryV1({...args,configuration_id:saved.id,map_id:p.map_id,round:r.ordinal,source_generation_id:native.g.id,
-    seeds:saved.configuration.questions.filter(q=>q.topic_source==='discovered').map(q=>{const topic=out.topics.find(t=>t.key===q.key);
-     const ids=[...new Set((topic?.orphan_group_keys??[]).flatMap(key=>r.quote.orphan_groups?.find(g=>g.group_key===key)?.root_ids??[]))];
-     return{question_key:q.key,source_topic_keys:topic?.source_topic_keys??[q.key],...(ids.length?{orphan_subset_id:subset.id,orphan_root_ids:ids}:{})};})});
+ let configuration:ReturnType<typeof applyListeningDiscoveryEditorialOutputV1>,output:{topics:Array<{key:string;source_topic_keys:string[];orphan_group_keys:string[]}>};
+ try{const transport=parseSignalListeningDiscoveryTransportV1(raw.raw_text);if(!transport.complete||!transport.utf8_valid||transport.http_status!==200)fail('listening_discovery_transport_incomplete');
+  const body=JSON.parse(transport.body) as {stop_reason:string;content:Array<{type:string;text?:string}>};
+  if(body.stop_reason!=='end_turn'||!Array.isArray(body.content)||body.content.some(x=>x.type!=='text'||typeof x.text!=='string'))throw Error('response');
+  const parsed:unknown=JSON.parse(body.content.map(x=>x.text).join(''));configuration=applyListeningDiscoveryEditorialOutputV1(native.request,parsed);output=parsed as typeof output;
+ }catch{await listeningTransactionV1(args.database,async c=>{await moneyLock(c,r.id);await c.query("UPDATE signal_listening_discovery_rounds SET status='failed',error_code='listening_discovery_response_invalid',execution_token=NULL,execution_expires_at=NULL WHERE id=$1",[r.id]);await c.query("UPDATE signal_listening_discovery_executions SET status='failed',error_code='listening_discovery_response_invalid' WHERE id=$1",[p.id]);});return{status:'failed' as const,round_id:r.id};}
+ return listeningTransactionV1(args.database,async c=>{
+  const held=await mutationAuthority(c,args,r.id);
+  if(held.r.status==='completed')return{status:'completed' as const,round_id:r.id,configuration_id:held.r.output_configuration_id,generation_id:held.r.output_generation_id};
+  if(!['reviewed','classifying'].includes(held.r.status))fail('listening_discovery_review_not_ready');
+  const latest=await loadSignalListeningConfigurationWithClientV1(c,args.workspace_id);if(!latest)fail('listening_discovery_configuration_unavailable');
+  const alreadySaved=latest.source_digest===source&&latest.configuration_digest===digest(configuration)&&latest.provenance==='agent';
+  if(latest.id!==r.configuration_id&&!alreadySaved){
+   await c.query("UPDATE signal_listening_discovery_rounds SET status='stale',error_code='listening_discovery_human_configuration_changed',execution_token=NULL,execution_expires_at=NULL WHERE id=$1",[r.id]);
+   await c.query("UPDATE signal_listening_discovery_executions SET status='stale',error_code='listening_discovery_human_configuration_changed' WHERE id=$1",[p.id]);return{status:'stale' as const,round_id:r.id};
   }
- }
- await listeningTransactionV1(args.database,async c=>{
-  await policyLock(c,args.workspace_id);await authorizeSignalListeningV1(c,args,'process');
-  if((await loadSignalListeningConfigurationWithClientV1(c,args.workspace_id))?.id!==saved.id)fail('listening_discovery_human_configuration_changed');
-  const exposure=number((await c.query('SELECT signal_listening_discovery_exposure_v1($1)::text n',[p.id])).rows[0].n),remaining=number(p.cap_micro_usd)-exposure;
-  if(remaining<=0)fail('listening_discovery_parent_cap_exhausted');
-  await c.query("UPDATE signal_listening_discovery_rounds SET output_configuration_id=$2,output_digest=$3,status='classifying',planned_child_cap_micro_usd=$4,execution_token=NULL,execution_expires_at=NULL WHERE id=$1",[r.id,saved.id,saved.configuration_digest,remaining]);
+  const saved=alreadySaved?latest:digest(configuration)===native.cfg.configuration_digest?native.cfg:await saveSignalListeningConfigurationWithClientV1(c,{...args,expected_revision:native.cfg.revision,configuration,provenance:'agent',source_digest:source});
+  let generation:ListeningDiscoveryGenerationV1;
+  if(saved.id===r.configuration_id)generation=native.g;
+  else{
+   const existing=(await c.query<ListeningDiscoveryGenerationV1>("SELECT * FROM signal_listening_discovery_generations WHERE workspace_id=$1 AND configuration_id=$2 AND source_generation_id=$3 AND status='ready' AND kind='source_seed' ORDER BY created_at DESC LIMIT 1",[args.workspace_id,saved.id,native.g.id])).rows[0];
+   if(existing)generation=existing;else{
+    const subset=await snapshotSignalListeningDiscoveryOrphansWithClientV1(c,{...args,generation_id:native.g.id});
+    generation=await seedSignalListeningDiscoveryWithClientV1(c,{...args,configuration_id:saved.id,map_id:p.map_id,round:r.ordinal,source_generation_id:native.g.id,
+     seeds:saved.configuration.questions.filter(q=>q.topic_source==='discovered').map(q=>{const topic=output.topics.find(t=>t.key===q.key),ids=[...new Set((topic?.orphan_group_keys??[]).flatMap(key=>r.quote.orphan_groups?.find(g=>g.group_key===key)?.root_ids??[]))];
+      return{question_key:q.key,source_topic_keys:topic?.source_topic_keys??[q.key],...(ids.length?{orphan_subset_id:subset.id,orphan_root_ids:ids}:{})};})});
+   }
+  }
+  // The money/actor/configuration locks remain held across every awaited write.
+  const remaining=number(p.cap_micro_usd)-number((await c.query('SELECT signal_listening_discovery_exposure_v1($1)::text n',[p.id])).rows[0].n);if(remaining<=0)fail('listening_discovery_parent_cap_exhausted');
+  await c.query("UPDATE signal_listening_discovery_rounds SET output_configuration_id=$2,output_digest=$3,status='classifying',planned_child_cap_micro_usd=$4,execution_token=NULL,execution_expires_at=NULL WHERE id=$1",[r.id,saved.id,saved.configuration_digest,held.r.planned_child_cap_micro_usd??remaining]);
+  return{status:'classifying' as const,round_id:r.id,configuration_id:saved.id,generation_id:generation.id};
  });
- return{status:'classifying' as const,round_id:r.id,configuration_id:saved.id,generation_id:generation.id};
 }
-export async function prepareSignalListeningDiscoveryChildV1(args:SignalListeningAccessV1&{round_id:string;provider_available:boolean;prototype_provider_available?:boolean}):Promise<SignalListeningPreparationV1>{
- const {r,p}=await loadRound(args);if(r.status!=='classifying'||!r.output_configuration_id||!r.planned_child_cap_micro_usd)fail('listening_discovery_child_not_ready');
- const cap=await listeningTransactionV1(args.database,async c=>{await policyLock(c,args.workspace_id);await authorizeSignalListeningV1(c,args,'process');
+export type ListeningDiscoveryChildPreparationV1=SignalListeningPreparationV1&{discovery_round_status:ListeningDiscoveryRoundV1['status'];recovery_pending:boolean};
+type ChildStateV1={status:'classifying'|'failed'|'stale'|'outcome_unknown';error_code:string|null;recovery_pending:boolean};
+async function childState(c:PoolClient,r:ListeningDiscoveryRoundV1){
+ return(await c.query<{value:ChildStateV1}>('SELECT signal_listening_discovery_child_state_v1($1,$2,$3) value',[r.classification_preparation_id,r.classification_run_id,r.execution_id])).rows[0]!.value;
+}
+async function childCustody(args:SignalListeningAccessV1&{round_id:string}){
+ return listeningTransactionV1(args.database,async c=>{const p=(await c.query<ListeningDiscoveryExecutionV1>('SELECT p.* FROM signal_listening_discovery_executions p JOIN signal_listening_discovery_rounds r ON r.execution_id=p.id WHERE r.id=$1 AND r.workspace_id=$2 AND p.workspace_id=$2 AND p.actor_user_id=$3',[args.round_id,args.workspace_id,args.actor_user_id])).rows[0];if(!p)fail('listening_discovery_execution_unavailable');
+  const r=(await c.query<ListeningDiscoveryRoundV1>('SELECT * FROM signal_listening_discovery_rounds WHERE id=$1 AND workspace_id=$2',[args.round_id,args.workspace_id])).rows[0]!;
+  const flow=r.classification_preparation_id?(await c.query<SignalListeningPreparationV1>('SELECT * FROM signal_listening_preparations WHERE id=$1 AND workspace_id=$2 AND actor_user_id=$3',[r.classification_preparation_id,args.workspace_id,args.actor_user_id])).rows[0]:undefined;
+  return{p,r,flow,state:flow?await childState(c,r):null};});
+}
+async function reconcileChildCustody(args:SignalListeningAccessV1&{round_id:string},recovering:boolean):Promise<ListeningDiscoveryChildPreparationV1>{
+ return listeningTransactionV1(args.database,async c=>{
+  if(recovering)await mutationAuthority(c,args,args.round_id,true);else await moneyLock(c,args.round_id);
+  const p=(await c.query<ListeningDiscoveryExecutionV1>('SELECT p.* FROM signal_listening_discovery_executions p JOIN signal_listening_discovery_rounds r ON r.execution_id=p.id WHERE r.id=$1 AND p.workspace_id=$2 AND p.actor_user_id=$3 FOR UPDATE OF p',[args.round_id,args.workspace_id,args.actor_user_id])).rows[0];if(!p)fail('listening_discovery_execution_unavailable');
+  const r=(await c.query<ListeningDiscoveryRoundV1>('SELECT * FROM signal_listening_discovery_rounds WHERE id=$1 AND workspace_id=$2 FOR UPDATE',[args.round_id,args.workspace_id])).rows[0]!;
+  const flow=(await c.query<SignalListeningPreparationV1>('SELECT * FROM signal_listening_preparations WHERE id=$1 AND workspace_id=$2 AND actor_user_id=$3 FOR UPDATE',[r.classification_preparation_id,args.workspace_id,args.actor_user_id])).rows[0];if(!flow)fail('listening_discovery_child_not_ready');
+  const state=await childState(c,r);let status=flow.status,error=flow.error_code;
+  if(r.classification_run_id){const run=(await c.query<{status:string;error_code:string|null}>('SELECT status,error_code FROM signal_labeling_runs WHERE id=$1 AND workspace_id=$2',[r.classification_run_id,args.workspace_id])).rows[0]!;
+   if(run.status==='completed'){status='completed';error=null;}else if(['failed','canceled'].includes(run.status)){status='failed';error=run.error_code;}else if(run.status==='running'||run.status==='queued'){status='labeling';error=null;}
+  }else if(flow.status==='failed'&&state.status==='classifying'&&flow.prototype_run_id){status='waiting_prototypes';error=null;}
+  if(status!==flow.status||error!==flow.error_code)await c.query('UPDATE signal_listening_preparations SET status=$2,error_code=$3,updated_at=clock_timestamp() WHERE id=$1',[flow.id,status,error]);
+  if(!['completed','stale','failed'].includes(r.status))await c.query('UPDATE signal_listening_discovery_rounds SET status=$2,error_code=$3,execution_token=NULL,execution_expires_at=NULL WHERE id=$1',[r.id,state.status,state.error_code]);
+  const parentStatus=state.status==='classifying'?'active':state.status;
+  if(p.status==='outcome_unknown'&&parentStatus==='active'&&!recovering)fail('listening_discovery_recovery_authority_required');
+  if(!['completed','stale','failed'].includes(p.status)||parentStatus!=='active')await c.query('UPDATE signal_listening_discovery_executions SET status=$2,error_code=$3 WHERE id=$1',[p.id,parentStatus,state.error_code]);
+  return{...flow,status,error_code:error,discovery_round_status:state.status,recovery_pending:state.recovery_pending};
+ });
+}
+export async function prepareSignalListeningDiscoveryChildV1(args:SignalListeningAccessV1&{round_id:string;provider_available:boolean;prototype_provider_available?:boolean}):Promise<ListeningDiscoveryChildPreparationV1>{
+ let custody=await childCustody(args);
+ if(custody.flow){const current=await reconcileChildCustody(args,custody.state?.status==='classifying'&&custody.p.status==='outcome_unknown');
+  if(current.discovery_round_status!=='classifying'||current.listening_run_id||current.status==='completed')return current;custody=await childCustody(args);
+ }
+ if(!args.provider_available)fail('listening_discovery_provider_unavailable',503);
+ const {r,p}=custody;if(r.status!=='classifying'||!r.output_configuration_id||!r.planned_child_cap_micro_usd)fail('listening_discovery_child_not_ready');
+ const cap=await listeningTransactionV1(args.database,async c=>{await mutationAuthority(c,args,r.id);
+  if((await loadSignalListeningConfigurationWithClientV1(c,args.workspace_id))?.id!==r.output_configuration_id)fail('listening_discovery_human_configuration_changed');
   const action=(await c.query<{max_execution_micro_usd:string|null}>("SELECT max_execution_micro_usd::text FROM signal_processing_policy_actions WHERE policy_version_id=$1 AND action='mass_labeling_jev'",[p.policy_version_id])).rows[0];if(!action)fail('listening_discovery_child_policy_missing');return Math.min(number(r.planned_child_cap_micro_usd),action.max_execution_micro_usd===null?Number.MAX_SAFE_INTEGER:number(action.max_execution_micro_usd));});
  const result=await prepareSignalListeningV1({...args,configuration_id:r.output_configuration_id,map_id:p.map_id,idempotency_key:'listening-discovery-child:'+r.id,cap_micro_usd:cap});
  const prepared=(await args.database.query<SignalListeningPreparationV1>('SELECT * FROM signal_listening_preparations WHERE id=$1 AND workspace_id=$2',[result.preparation_id,args.workspace_id])).rows[0];if(!prepared)fail('listening_discovery_child_not_ready');
- await listeningTransactionV1(args.database,async c=>{await policyLock(c,args.workspace_id);
-  await c.query('UPDATE signal_listening_discovery_rounds SET classification_preparation_id=$2,classification_run_id=$3 WHERE id=$1',[r.id,prepared.id,prepared.listening_run_id]);
+ await listeningTransactionV1(args.database,async c=>{await moneyLock(c,r.id);
+  const binding={...r,classification_preparation_id:prepared.id,classification_run_id:prepared.listening_run_id};const state=await childState(c,binding);
+  await c.query('UPDATE signal_listening_discovery_rounds SET classification_preparation_id=$2,classification_run_id=$3,status=$4,error_code=$5 WHERE id=$1',[r.id,prepared.id,prepared.listening_run_id,state.status,state.error_code]);
   if(prepared.listening_run_id)await c.query('INSERT INTO signal_listening_discovery_children(execution_id,workspace_id,run_id,preparation_id,round_id) VALUES($1,$2,$3,$4,$5) ON CONFLICT(run_id) DO NOTHING',[p.id,args.workspace_id,prepared.listening_run_id,prepared.id,r.id]);
- });return prepared;
+  if(state.status!=='classifying')await c.query('UPDATE signal_listening_discovery_executions SET status=$2,error_code=$3 WHERE id=$1',[p.id,state.status,state.error_code]);
+ });return reconcileChildCustody(args,false);
 }
 export async function completeSignalListeningDiscoveryRoundV1(args:SignalListeningAccessV1&{round_id:string}){
  const {r,p}=await loadRound(args);if(r.status==='completed')return r;

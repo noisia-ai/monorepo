@@ -32,10 +32,19 @@ export async function getSignalListeningConfigurationV1(args:SignalListeningAcce
 }
 export async function saveSignalListeningConfigurationV1(args:SignalListeningAccessV1&{expected_revision:number;
  configuration:SignalListeningConfigurationV1;provenance:'human'|'agent';source_digest?:string|null;state?:'published'|'proposal'}){
+ validateSignalListeningConfigurationV1(args.configuration);
+ if(!Number.isSafeInteger(args.expected_revision)||args.expected_revision<0||!['human','agent'].includes(args.provenance)
+  ||args.provenance==='agent'&&!/^sha256:[0-9a-f]{64}$/u.test(args.source_digest??''))listeningFailV1('listening_configuration_invalid',422);
+ return listeningTransactionV1(args.database,c=>saveSignalListeningConfigurationWithClientV1(c,args));
+}
+
+/** Caller owns the real transaction; all validation, CAS and human locks remain identical. */
+export async function saveSignalListeningConfigurationWithClientV1(c:PoolClient,args:SignalListeningAccessV1&{expected_revision:number;
+ configuration:SignalListeningConfigurationV1;provenance:'human'|'agent';source_digest?:string|null;state?:'published'|'proposal'}){
  const input=validateSignalListeningConfigurationV1(args.configuration);
  if(!Number.isSafeInteger(args.expected_revision)||args.expected_revision<0||!['human','agent'].includes(args.provenance)
   ||args.provenance==='agent'&&!/^sha256:[0-9a-f]{64}$/u.test(args.source_digest??''))listeningFailV1('listening_configuration_invalid',422);
- return listeningTransactionV1(args.database,async c=>{
+
   await c.query("SELECT pg_advisory_xact_lock(hashtextextended('signal-listening-config:'||$1,0))",[args.workspace_id]);
   await authorizeSignalListeningV1(c,args,'edit');
   const current=await loadSignalListeningConfigurationWithClientV1(c,args.workspace_id);
@@ -65,5 +74,4 @@ export async function saveSignalListeningConfigurationV1(args:SignalListeningAcc
   if(verified.some(q=>q.question_digest!==signalListeningQuestionDigestV1(next,next.questions.find(x=>x.key===q.question_key)!)))
    listeningFailV1('listening_question_digest_mismatch');
   signalListeningJevIdentityV1(saved.configuration);return saved;
- });
 }
