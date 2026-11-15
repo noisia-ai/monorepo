@@ -42,3 +42,18 @@ That case MUST remain contained/pending with the reservation and no fabricated r
 The injector stores no extra raw copy and never reuploads missing bytes. The successful
 32,768-root capacity arm still requires every root resolved; containment is not success
 for that arm. The fault list now has ten explicit cases, never an eight-case substitute.
+
+Fault-fixture cohort control is preregistered separately from capacity: three roots,
+flush_size=3, flush_interval_ms=1000, max_in_flight=3, max_flushes=1 and 16MiB memory.
+Synthetic latency remains 100–500ms. For recoverable ACK/rollback/restart/settlement/
+post-custody-lease cases, the page writer must receive the known three-call cohort
+BEFORE injecting. Failure to form that cohort fails the test, rather than changing
+the case to containment. Every recoverable case must still finish all three roots,
+six calls and four questions per root. The 32,768-root capacity arm retains the actual
+production 250ms default and every original threshold.
+
+Each oracle additionally binds the exact affected call IDs: apply parameters for
+transaction faults, or the real put input SHA → native page → member call IDs for
+Storage faults. A one-call page is validated as one call; unrelated siblings cannot
+make its COMMIT/ROLLBACK or custody proof pass or fail. Deliberate early-loss cases
+report native sibling outcomes and unresolved population without resetting unknowns.

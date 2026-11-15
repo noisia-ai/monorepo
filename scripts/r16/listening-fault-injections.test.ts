@@ -36,3 +36,15 @@ test('put rejection writes zero blobs and preserves no raw stash; ACK loss leave
   assert.deepEqual(await readFile(destination),bytes);assert.equal(server.metrics().object_puts,puts,'ACK recovery must only read existing bytes');
  }finally{await server.close();await rm(directory,{recursive:true,force:true});}
 });
+
+test('one-of-three page and transaction oracles select only the affected IDs, not unrelated sibling states',async()=>{
+ const {selectR16AffectedCallsV1:select,r16AffectedPageMembersV1:members}=await import('./listening-fault-injections');
+ const rows=[{id:'a',results_applied:false},{id:'b',results_applied:true},{id:'c',results_applied:true}];
+ const one=members({sha256:'page-sha',member_count:1},'page-sha',['a']);assert.deepEqual(one,['a']);
+ assert.ok(select(rows,one).every(row=>!row.results_applied),'single rolled-back page ignores committed siblings');
+ assert.ok(select(rows,['b','c']).every(row=>row.results_applied),'committed transaction subset ignores rolled-back sibling');
+ assert.throws(()=>members({sha256:'page-sha',member_count:3},'page-sha',['a']),/affected_page_invalid/);
+ assert.throws(()=>members({sha256:'other',member_count:1},'page-sha',['a']),/affected_page_invalid/);
+ for(const ids of[[],['a','a'],['foreign']])assert.throws(()=>select(rows,ids),/affected_calls_invalid/);
+ assert.throws(()=>select([...rows,rows[0]!],['a']),/affected_calls_invalid/);
+});
