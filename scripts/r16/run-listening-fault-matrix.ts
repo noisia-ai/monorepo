@@ -33,7 +33,7 @@ const ownedLab=()=>{
 /** Faults use isolated three-root native clones. No CLI, environment loading or
  * implicit execution: the orchestrator schedules the approved quiet-lab window. */
 export async function runR16ListeningFaultMatrixV1(args:{object_directory:string;redis_url:string;
- cases?:R16ListeningFaultKindV1[];writeArtifact(value:unknown):Promise<void>}){
+ cases?:R16ListeningFaultKindV1[];writeArtifact(value:unknown):Promise<void>;writeCaseArtifact?(value:unknown):Promise<void>}){
  ownedLab();const redis=new URL(args.redis_url);
  if(!['127.0.0.1','localhost','[::1]'].includes(redis.hostname)||!['redis:','rediss:'].includes(redis.protocol))throw Error('r16_listening_fault_local_redis_required');
  const cases=args.cases??[...registration.faults];
@@ -42,6 +42,8 @@ export async function runR16ListeningFaultMatrixV1(args:{object_directory:string
  const storageServer=await startR16HttpFilesystemStorageV1(args.object_directory),results:unknown[]=[];
  try{
   for(const kind of cases)await runMassLabelingAcceptanceFixtureV1('product',{beforeProcessing:async ctx=>{
+   let captureError:(error:unknown)=>Promise<void>=async error=>{await args.writeCaseArtifact?.({kind,phase:'case_error_before_admission',source,run_id:ctx.run_id,workspace_id:ctx.workspace_id,error:error instanceof Error?{message:error.message,stack:error.stack}:String(error)});};
+   try{
    const original=ctx.database,workload=r16ListeningWorkloadV1('defined_consumer_second_pass');
    const canceled=await original.query(`UPDATE signal_labeling_runs r SET status='canceled' WHERE r.id=$1 AND r.workspace_id=$2
     AND r.status='queued' AND NOT EXISTS(SELECT 1 FROM signal_labeling_calls c WHERE c.run_id=r.id) RETURNING r.id`,[ctx.run_id,ctx.workspace_id]);
@@ -124,9 +126,26 @@ export async function runR16ListeningFaultMatrixV1(args:{object_directory:string
     preflight:()=>assertR16ListeningSyntheticPreflightV1({storage,storage_url:storageServer.base_url,...workload,env:process.env})});
    const calls=async()=>(await original.query<CallRow>('SELECT id,request_digest,status,results_applied,settled_micro_usd::text,reserved_micro_usd::text,raw_storage_key,results FROM signal_labeling_calls WHERE run_id=$1 ORDER BY id',[run_id])).rows;
    const attempts:Array<{status?:string;error?:string}>=[];let witnessed=false;
+   const capture=async(phase:string,error?:unknown)=>{
+    if(!args.writeCaseArtifact)return;
+    const reads=await Promise.allSettled([
+     calls(),original.query('SELECT id,status,error_code,lease_token,lease_until,cap_micro_usd::text FROM signal_labeling_runs WHERE id=$1',[run_id]),
+     original.query('SELECT * FROM signal_labeling_raw_pages WHERE run_id=$1 ORDER BY id',[run_id]),
+     original.query('SELECT * FROM signal_labeling_raw_page_members WHERE run_id=$1 ORDER BY page_id,byte_offset',[run_id]),
+     census.readResolvedRootIds(),original.query(`SELECT COALESCE(sum(settled_micro_usd),0)::text settled,COALESCE(sum(reserved_micro_usd),0)::text reserved FROM signal_labeling_calls WHERE run_id=$1`,[run_id]),
+    ]);
+    const labels=['calls','run','native_pages','native_members','resolved_root_ids','native_money'];
+    const native=Object.fromEntries(reads.map((read,index)=>[labels[index],read.status==='fulfilled'?read.value:{read_error:read.reason instanceof Error?read.reason.message:String(read.reason)}]));
+    await args.writeCaseArtifact({kind,phase,diagnostic_subset:cases.length!==registration.faults.length,source,run_id,workspace_id:ctx.workspace_id,
+     configuration_digest:workload.configuration_digest,identity,policy_configuration_digest,affected_call_ids:affectedCallIds,
+     attempts:[...attempts],physical:[...physical],statuses:[...statuses],retry_after_ms:[...retry_after_ms],native,
+     boundary_evidence:[...boundaryEvidence],error:error instanceof Error?{message:error.message,stack:error.stack}:error});
+   };
+   captureError=error=>capture('case_error_before_drop',error);
+
    for(let attempt=0;attempt<12;attempt++){
     try{const result=await invoke();attempts.push({status:result.status});}catch(error){attempts.push({error:error instanceof Error?error.message:String(error)});}
-    const rows=await calls();
+    const rows=await calls();await capture('attempt_before_oracles');
     if(!witnessed&&kind==='postgres_commit'&&injected){
      const answers=(await original.query('SELECT count(*)::int n FROM signal_listening_answers WHERE call_id=ANY($1::uuid[])',[affectedCallIds])).rows[0];
      const affected=selectR16AffectedCallsV1(rows,affectedCallIds);assert.ok(affected.every(c=>!c.results_applied));assert.equal(answers.n,0,'ROLLBACK must leave zero durable apply/answers');
@@ -161,6 +180,7 @@ export async function runR16ListeningFaultMatrixV1(args:{object_directory:string
    // Fresh job, same native identity: all durable raw recovery is replayed
    // before missing eligible work; ambiguous physical calls cannot be resent.
    try{const result=await invoke();attempts.push({status:result.status});}catch(error){attempts.push({error:error instanceof Error?error.message:String(error)});}
+   await capture('final_before_oracles');
    const final=await calls(),resolved=await census.readResolvedRootIds(),unknown=final.filter(c=>c.status==='unknown');
    const physicalIds=new Set(physical.map(c=>c.call_id));
    assert.equal(physicalIds.size,physical.length,'no native request identity may be physically replayed');
@@ -199,6 +219,8 @@ export async function runR16ListeningFaultMatrixV1(args:{object_directory:string
     fault_fixture_control:{...execution,controlled_known_cohort:controlledCohort},native_root_census:{population:3,resolved:resolved.length,unresolved:3-resolved.length,root_ids:census.root_ids},before_recovery:first,after_recovery:final,
     affected_call_ids:affectedCallIds,affected_final:affectedFinal,sibling_outcomes:{known_durable:final.filter(c=>!affectedCallIds.includes(c.id)&&c.status==='settled'&&c.raw_storage_key),unreceipted_physical:noRawPhysical.filter(c=>!affectedCallIds.includes(c.id)),never_sent:unsent.filter(c=>!affectedCallIds.includes(c.id))},boundary_evidence:boundaryEvidence,native_money:budget,raw_pages:pages,physical,statuses,retry_after_ms,attempts,physical_replays:0,
     guard_denials:{actor:1,budget:1,physical_requests:0}});
+   await capture('case_passed');
+   }catch(error){await captureError(error);throw new Error(`r16_listening_fault_case_failed:${kind}`,{cause:error});}
   }});
   assert.equal((await captureR16SourceProvenanceV1(repo)).source_tree_sha256,source.source_tree_sha256);
   const artifact={contract_version:'r16-listening-native-fault-matrix-v1',case_count:results.length,required_case_count:registration.faults.length,completed_at:new Date().toISOString(),source,
