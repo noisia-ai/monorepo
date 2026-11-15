@@ -12,7 +12,11 @@ No hay aprobaciones humanas intermedias en los procesos de análisis: Sonnet 4.6
 
 ## Progreso
 
+- Ensayo H1 de 32f40ec8 finalizado y rechazado: 32,768 raíces resueltas, cero pendientes, 65,536 solicitudes; 71.55 raíces/s sobre 457.94 s. La matriz pasó diez casos, pero siguen fallando ventanas sostenidas, throughput y latencia HTTP. Es una mejora frente a 19.00/s, todavía lejos de 1,000/s. El perfil muestra selección/cierre repetidos y esperas SQL; se prepara un diagnóstico acotado antes de repetir la carga completa. CI general/runtime/calibración verdes no compensan este rechazo.
+
 Corte vigente del 15 de noviembre: estas entradas prevalecen sobre el historial anterior. El objetivo completo H0–H6 sigue abierto; no hubo despliegue ni gasto R16 en UAT.
+
+- Fuente 32f40ec8: CI general, runtime y calibración nativa remotos verdes; capacidad completa terminada y rechazada como se registra arriba. El paso de preparación inicial con PostgreSQL encontró 42804: el normalizador de fecha mezclaba texto y timestamptz en CASE. 9cf4b290/409d67ab corrige sólo el cast y añade normalización de microsegundos/representaciones equivalentes, revisado sin P0/P1/P2; falta repetición nativa. El otro job PostgreSQL encontró timeout de 20 s en la revisión de derechos de 340 inputs del recorrido híbrido histórico: se corrigió la consulta por procedencias del lote en 1be2b800/4af0e1dc, revisado sin P0/P1/P2 y sin subir ese límite; falta repetición nativa. Ambos resultados bloquean fusionar; ninguno mide capacidad. Se conservó la corrida hasta su resultado y se repiten los checks afectados sobre la corrección revisada.
 
 - Diagnóstico posterior a e541: la rama acotada de población conserva una alternativa NULL que fuerza escaneo completo bajo plan genérico, aun cuando el caller ya garantiza IDs explícitos. Una variante de sólo lectura baja una raíz caliente de 9.966 a 0.377 ms, con recibos separados; todavía no acredita la función nativa completa. 0317 para esa rama está integrada en 711b113a tras revisión sin P0/P1/P2; sus tres casos nativos quedan obligatorios en CI sin omisiones y aún no se han ejecutado. Se prepara 0318 para validar población una vez por statement/batch, sin caché entre sentencias ni relajación de autoridad, dinero, lease o precedencia humana. La cota de 131,072 validaciones individuales muestra que el índice aislado sigue siendo insuficiente: no se repite el ensayo completo hasta tener una corrección revisada y viable.
 - Fixture sintético: índice lineal revisado integrado en ef41ea56, conserva exactamente orden, bytes y digests de ambos lanes; dos pruebas pasan sin omisiones. No cambia consultas productivas ni cuenta como capacidad.
@@ -221,6 +225,8 @@ Recibo: separar Voyage/JEV por raíz de Claude por número de grupos y vueltas; 
 
 ## Sorpresas y descubrimientos
 
+- El parseo de PL/pgSQL no valida el SQL parametrizado del provisionador TypeScript: usar el mismo parámetro como timestamptz y texto en CASE requiere cast explícito de la rama textual. CI nativo lo detectó antes de crear una política real.
+
 - La revisión estática y TypeScript no detectaron una ambigüedad de la gramática PL/pgSQL: CASE sin paréntesis dentro de IF se cerraba en el THEN interno. CI lo rechazó antes del ensayo. Se conserva la reproducción nativa mínima de sintaxis y se exige de nuevo la migración completa, sin confundir ese parser aislado con aceptación de las funciones.
 
 - El disco cayó de 2.5 GiB a 371 MiB durante el trabajo. Se limpiaron únicamente cachés regenerables de descarga npm e índices pnpm/uv, recuperando margen hasta 1.2 GiB. No se eliminaron datasets, bases, recibos, runtimes ni dependencias instaladas. El piso de 4 GiB sigue vigente: ensayos pesados sólo en CI.
@@ -328,6 +334,10 @@ Recibo: separar Voyage/JEV por raíz de Claude por número de grupos y vueltas; 
 - El promedio del piloto completo incluye una etapa editorial que no escala por raíz. Multiplicarlo linealmente daba USD 205.81/millón; mantener explícitamente los grupos y una vuelta de referencia produce USD 114.035250. Ambos cálculos parten del mismo recibo, cuyo uso histórico permanece USD 17.280463.
 
 ## Registro de decisiones
+
+- 15 nov.: se publican las dos correcciones revisadas de fecha/derechos para obtener feedback nativo de PostgreSQL mientras se diagnostica H1. La repetición automática del ensayo completo se cancela explícitamente en esta cabeza sin corrección de capacidad; queda sin aceptación y se repetirá íntegro cuando exista un cambio viable revisado. No se cambia el umbral ni se reutiliza un resultado fallido como verde.
+
+- 15 nov., continuidad sin Docker: se prioriza preparar un ensayo privado en una base nueva y aislada del mismo servidor UAT existente. Una lectura acotada confirmó CREATEDB y la documentación oficial permite seleccionar otra base por el pooler; todavía no se creó nada. El plan debe verificar recursos y autoridad de restore antes de CREATE, usar template0 sin datos, un solo cliente y límites explícitos; no cambia roles ni servicios. El fingerprint de DDL exclusivamente público queda revisado y en reserva, sin publicarlo ni confundirlo con una copia real.
 
 - 15 nov.: el fundador cerró Docker local por consumo superior a 9 GB y bloqueo de su equipo. Se mantiene cerrado y no se reinicia ni se hacen más probes o pruebas PostgreSQL locales. Se conservan archivos y volúmenes. CI remoto y UAT continúan independientes. La extensión de la copia local queda suspendida por esta restricción; se estudia reconstruir sólo DDL público en CI y comparar privadamente firmas completas con la copia real, sin subir dumps, catálogos privados ni credenciales al repositorio público. Una diferencia impide afirmar equivalencia.
 
