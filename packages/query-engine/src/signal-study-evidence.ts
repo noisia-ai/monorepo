@@ -2,7 +2,7 @@ import {createHash} from 'node:crypto';
 import {signalWorkspaceEmbeddingDigestV1 as digest} from './signal-workspace-embeddings-v1';
 import {signalWorkspaceMassLabelingConfigV3} from './signal-workspace-engine-v1';
 import {validateSignalStudyV1,SIGNAL_STUDY_DIRECTIONS_V1,SIGNAL_STUDY_TARGETS_V1,SIGNAL_STUDY_USES_V1,
-  type SignalStudyAxesV1,type SignalStudyV1,type SignalStudyLayerV1,type SignalStudyDirectionV1,type SignalStudyPermissionV1} from './signal-study-contracts';
+  type SignalStudyTemplateSnapshotV1,type SignalStudyAxesV1,type SignalStudyV1,type SignalStudyLayerV1,type SignalStudyDirectionV1,type SignalStudyPermissionV1} from './signal-study-contracts';
 
 export type SignalStudyRootV1={root_id:string;text:string;text_sha256:string;vector:number[];axes:SignalStudyAxesV1;
   occurred_at:string;channel:string;source_url:string;listening_topic_keys:string[];private_person_names:string[];
@@ -64,8 +64,8 @@ export function buildSignalStudyMotivePopulationV1(roots:SignalStudyRootV1[]):{
 /** Fresh numerical fit over the shared relevant-fragment vectors. No new
  * embedding request, prior human taxonomy, direction-specific partition or
  * paused multimethod-engine execution is introduced by this manifest. */
-export function buildSignalStudyMotiveFitPlanV1(args:{study:SignalStudyV1;roots:SignalStudyRootV1[];embedding_space_digest:string}){
-  const study=validateSignalStudyV1(args.study),population=buildSignalStudyMotivePopulationV1(args.roots);
+export function buildSignalStudyMotiveFitPlanV1(args:{study:SignalStudyV1;roots:SignalStudyRootV1[];embedding_space_digest:string;template_snapshot?:SignalStudyTemplateSnapshotV1}){
+  const study=validateSignalStudyV1(args.study,args.template_snapshot),population=buildSignalStudyMotivePopulationV1(args.roots);
   if(!/^sha256:[a-f0-9]{64}$/u.test(args.embedding_space_digest))fail('study_embedding_space_invalid');
   const rows=population.roots.map(root=>({root_id:root.root_id,text:root.selected_fragment?.text??root.text,
     text_sha256:root.selected_fragment?.text_sha256??root.text_sha256,vector:[...root.vector],vector_digest:digest(root.vector),
@@ -177,10 +177,10 @@ export function signalStudyQueryBiasV1(args:{query_terms:string[];problem_terms:
     reason:matched.length?'The acquisition query includes problem vocabulary; direction partly reflects that selection.':'No configured problem term is present in the acquisition query; this does not prove absence of selection bias.',
     base_ratio:args.brand_baseline_roots?args.subject_roots/args.brand_baseline_roots:null,subject_roots:args.subject_roots,brand_baseline_roots:args.brand_baseline_roots};
 }
-export function signalStudyPromotionProposalV1(args:{study:SignalStudyV1;motive:SignalStudyMotiveV1;explicit_action:boolean;
+export function signalStudyPromotionProposalV1(args:{study:SignalStudyV1;template_snapshot?:SignalStudyTemplateSnapshotV1;motive:SignalStudyMotiveV1;explicit_action:boolean;
   target_revision:number}):{action:'promote_study_motive';target_revision:number;question:{key:string;type:'noul';text:string;positive:string;negative:string;
     scope:'all';origin:'methodology';human_locked:true;topic_source:'defined'};source:{study_digest:string;motive_key:string}}{
-  const study=validateSignalStudyV1(args.study);
+  const study=validateSignalStudyV1(args.study,args.template_snapshot);
   if(args.explicit_action!==true||!Number.isSafeInteger(args.target_revision)||args.target_revision<1)fail('study_promotion_explicit_action_required');
   return{action:'promote_study_motive',target_revision:args.target_revision,question:{key:args.motive.key,type:'noul',text:args.motive.name,
     positive:args.motive.definition,negative:'The configured motive is absent.',scope:'all',origin:'methodology',human_locked:true,topic_source:'defined'},

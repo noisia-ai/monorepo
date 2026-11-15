@@ -6,10 +6,11 @@ import{SIGNAL_STUDY_TB_TEMPLATE_V1,SIGNAL_STUDY_TB_TEMPLATE_DIGEST_V1,SIGNAL_STU
 import{validateSignalStudyV1,buildSignalStudyListeningConfigurationV1,type SignalStudyV1}from'./signal-study-contracts';
 import{buildSignalStudyExecutionConfigurationV1,validateSignalStudyExecutionConfigurationV1,buildSignalStudyConfiguredAxesRequestV1,
  signalStudyConfiguredCutV1,resolveSignalStudyConfiguredAxesV1,assertSignalStudyConfigurationRevisionV1,type SignalStudyExecutionConfigurationV1}from'./signal-study-configuration';
-import{buildSignalStudyConfiguredLayerReviewV1,buildSignalStudyLayerReviewV1,validateSignalStudyLayerReviewV1}from'./signal-study-editorial';
-import{sampleSignalStudyGroupV1,type SignalStudyRootV1}from'./signal-study-evidence';
+import{buildSignalStudyMotiveReviewV1,buildSignalStudyContrastReviewV1,buildSignalStudyConfiguredLayerReviewV1,buildSignalStudyLayerReviewV1,validateSignalStudyLayerReviewV1}from'./signal-study-editorial';
+import{buildSignalStudyMotiveFitPlanV1,signalStudyPromotionProposalV1,sampleSignalStudyGroupV1,type SignalStudyRootV1}from'./signal-study-evidence';
 import{signalListeningBaseTemplateV1,validateSignalListeningConfigurationV1}from'./signal-listening-contracts';
 import{signalWorkspaceEmbeddingDigestV1 as digest}from'./signal-workspace-embeddings-v1';
+import{buildSignalStudySummaryV1}from'./signal-study-output';
 import type{JevAnswerV1}from'./signal-mention-facets-jev-v1';
 function fixture(){
  const template={...structuredClone(SIGNAL_STUDY_TB_TEMPLATE_V1)};template.version='r16-analyst-v2';template.instructions='Stored {{subject}} instructions with analyst wording.';
@@ -115,3 +116,21 @@ test('new layer review uses the exact saved diagnostic revision and validates ag
  assert.equal(decision.motives[0]!.partitions[0]!.permission,'movable');
  assert.throws(()=>buildSignalStudyLayerReviewV1({...args,study:{...f.study,template_snapshot:f.snapshot}}),/explicit_configuration_required/);
 });
+
+ test('all later Study builders accept the explicit saved snapshot without changing Study identity',()=>{
+ const f=fixture(),before=digest(f.study),snapshot=f.snapshot;
+ const plan=buildSignalStudyMotiveFitPlanV1({study:f.study,template_snapshot:snapshot,roots:[],embedding_space_digest:before});
+ assert.equal(plan.study_digest,before);assert.equal(plan.fit_required,false);assert.equal('template_snapshot'in f.study,false);
+ const vector=Array.from({length:1024},(_,i)=>i===0?1:0),axes=resolveSignalStudyConfiguredAxesV1(f.configuration,answers(f.configuration));
+ const root:SignalStudyRootV1={root_id:'synthetic',text:'I enjoy a bicycle',text_sha256:'sha256:'+createHash('sha256').update('I enjoy a bicycle').digest('hex'),
+ vector,axes,occurred_at:'2026-02-01T00:00:00Z',channel:'synthetic',source_url:'https://example.com/synthetic',listening_topic_keys:[],private_person_names:[]};
+ const [sample]=sampleSignalStudyGroupV1({study_digest:before,group_key:'force',roots:[root],centroid:vector,seed:'synthetic'});
+ assert.equal(buildSignalStudyMotiveReviewV1({study:f.study,template_snapshot:snapshot,samples:[sample]}).study_digest,before);
+ const motive={key:'force',name:'Force',definition:'A configured force',centroid:vector,layer:'unclear' as const,human_locked:false};
+ assert.equal(buildSignalStudyContrastReviewV1({study:f.study,template_snapshot:snapshot,motives:[{...motive,sample}],affected_keys:['force']}).study_digest,before);
+ assert.equal(buildSignalStudySummaryV1({study:f.study,template_snapshot:snapshot,roots:[root],motives:[motive],memberships:[],cut_root_ids:[root.root_id],unresolved_root_ids:[]}).study_digest,before);
+ assert.equal(signalStudyPromotionProposalV1({study:f.study,template_snapshot:snapshot,motive,explicit_action:true,target_revision:1}).source.study_digest,before);
+ assert.throws(()=>signalStudyPromotionProposalV1({study:f.study,template_snapshot:snapshot,motive,explicit_action:false,target_revision:1}),/explicit_action_required/);
+ assert.throws(()=>buildSignalStudyMotiveFitPlanV1({study:f.study,roots:[],embedding_space_digest:before}),/study_invalid/);
+ assert.equal(digest(f.study),before);
+ });

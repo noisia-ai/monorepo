@@ -1,4 +1,4 @@
-import {validateSignalStudyV1,signalStudyPermissionForLayerV1,type SignalStudyV1,type SignalStudyDirectionV1,type SignalStudyLayerV1} from './signal-study-contracts';
+import {validateSignalStudyV1,signalStudyPermissionForLayerV1,type SignalStudyTemplateSnapshotV1,type SignalStudyV1,type SignalStudyDirectionV1,type SignalStudyLayerV1} from './signal-study-contracts';
 import {assertSignalStudyRootsV1,signalStudyNearestMotivesV1,type SignalStudyRootV1,type SignalStudyMotiveV1,type SignalStudyMembershipV1} from './signal-study-evidence';
 import {validateSignalListeningConfigurationV1,type SignalListeningConfigurationV1} from './signal-listening-contracts';
 import {buildSignalListeningJevRequestV1} from './signal-listening-contracts';
@@ -34,9 +34,9 @@ export type SignalStudySummaryV1={contract_version:'signal-study-output-v1';stat
   motive_by_topic:Array<{motive_key:string;aggregate:Aggregate;topic_key:string;mentions:number}>;
   motive_by_channel:Array<{motive_key:string;aggregate:Aggregate;channel:string;mentions:number}>;
   series:Array<{motive_key:string;aggregate:Aggregate;date:string;direction:Counts}>;limitations:string[]};
-export function buildSignalStudySummaryV1(args:{study:SignalStudyV1;roots:SignalStudyRootV1[];motives:SignalStudyMotiveV1[];
+export function buildSignalStudySummaryV1(args:{study:SignalStudyV1;template_snapshot?:SignalStudyTemplateSnapshotV1;roots:SignalStudyRootV1[];motives:SignalStudyMotiveV1[];
   memberships:SignalStudyMembershipV1[];cut_root_ids:string[];unresolved_root_ids:string[]}):SignalStudySummaryV1{
-  const study=validateSignalStudyV1(args.study);assertSignalStudyRootsV1(args.roots);
+  const study=validateSignalStudyV1(args.study,args.template_snapshot);assertSignalStudyRootsV1(args.roots);
   const byRoot=new Map(args.roots.map(root=>[root.root_id,root])),motives=new Map(args.motives.map(m=>[m.key,m]));
   const census=new Set(args.cut_root_ids),unresolved=new Set(args.unresolved_root_ids);
   if(census.size!==args.cut_root_ids.length||unresolved.size!==args.unresolved_root_ids.length

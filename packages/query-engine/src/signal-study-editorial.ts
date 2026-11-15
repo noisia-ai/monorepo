@@ -2,7 +2,7 @@ import {z} from 'zod';
 import {createHash} from 'node:crypto';
 import {signalWorkspaceEmbeddingDigestV1 as digest} from './signal-workspace-embeddings-v1';
 import {SIGNAL_STUDY_LAYERS_V1,SIGNAL_STUDY_TB_TEMPLATE_V1,signalStudyPermissionForLayerV1,validateSignalStudyV1,
-  type SignalStudyV1,type SignalStudyLayerV1,type SignalStudyPermissionV1} from './signal-study-contracts';
+  type SignalStudyTemplateSnapshotV1,type SignalStudyV1,type SignalStudyLayerV1,type SignalStudyPermissionV1} from './signal-study-contracts';
 import {validateSignalStudyExecutionConfigurationV1,type SignalStudyExecutionConfigurationV1}from'./signal-study-configuration';
 import {SIGNAL_STUDY_TB_TEMPLATE_DIGEST_V1}from'./signal-study-template-data';
 import type {SignalStudySampleV1} from './signal-study-evidence';
@@ -74,10 +74,10 @@ function assertRequest(review:SignalStudyEditorialRequestV1,mode:'layers'|'motiv
   if(digest(body)!==request_digest||review.mode!==mode||review.model!=='claude-sonnet-4-6')fail('request_invalid');
   for(const sample of review.source_samples)assertSample(sample);
 }
-export function buildSignalStudyContrastReviewV1(args:{study:SignalStudyV1;
+export function buildSignalStudyContrastReviewV1(args:{study:SignalStudyV1;template_snapshot?:SignalStudyTemplateSnapshotV1;
   motives:Array<{key:string;name:string;definition:string;human_locked:boolean;sample:SignalStudySampleV1}>;
   affected_keys:string[]}):SignalStudyEditorialRequestV1{
-  const study=validateSignalStudyV1(args.study),study_digest=digest(study);
+  const study=validateSignalStudyV1(args.study,args.template_snapshot),study_digest=digest(study);
   const keys=[...new Set(args.affected_keys)].sort(),selected=args.motives.filter(m=>keys.includes(m.key));
   if(!keys.length||keys.length!==args.affected_keys.length||selected.length!==keys.length||selected.length>40
     ||new Set(args.motives.map(m=>m.key)).size!==args.motives.length
@@ -98,8 +98,8 @@ export function validateSignalStudyContrastReviewV1(review:SignalStudyEditorialR
   }
   return output;
 }
-export function buildSignalStudyMotiveReviewV1(args:{study:SignalStudyV1;samples:SignalStudySampleV1[]}):SignalStudyEditorialRequestV1{
-  const study=validateSignalStudyV1(args.study),study_digest=digest(study);
+export function buildSignalStudyMotiveReviewV1(args:{study:SignalStudyV1;template_snapshot?:SignalStudyTemplateSnapshotV1;samples:SignalStudySampleV1[]}):SignalStudyEditorialRequestV1{
+  const study=validateSignalStudyV1(args.study,args.template_snapshot),study_digest=digest(study);
   if(!args.samples.length||args.samples.length>200||new Set(args.samples.map(s=>s.group_key)).size!==args.samples.length)fail('groups_invalid');
   return request({mode:'motives',study_digest,payload:{study_digest,subject:study.subject,business_question:study.business_question,
     groups:args.samples.map(sample=>({group_key:sample.group_key,population_count:sample.population_count,insufficient_sample:sample.insufficient_sample,rows:sample.rows}))},
