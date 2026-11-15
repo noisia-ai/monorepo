@@ -22,8 +22,10 @@ export type BlindSnapshotV1 = {
     target_options: Array<{ key: string; definition: string }>; use_options: Array<{ key: string; definition: string }>;
     layer_diagnostics: Array<{ key: string; layer: string; question: string; definition: string }> };
   layer_agreement: { eligible_count: number; pass_a_count: number; pass_a_digest: string | null; pass_b_count: number; pass_b_digest: string | null;
-    denominator: number; coverage: number; kappa: number | null;
-    status: "not_measured" | "insufficient_data" | "below_threshold" | "acceptable"; boundary_recoded_count: number } | null;
+    denominator: number; coverage: number; observed_agreement: number | null; expected_agreement: number | null; kappa: number | null;
+    estimation_status: "complete" | "not_estimable"; not_estimable_reason: "no_passes" | "incomplete_coverage" | "expected_agreement_one" | null;
+    action: "stable" | "recode_boundary_once" | "unstable_report" | "not_estimable";
+    status: "not_measured" | "insufficient_data" | "not_estimable" | "below_threshold" | "acceptable"; boundary_recoded_count: number } | null;
   receipts: { total_cost_usd: number; total_elapsed_ms: number; stages: Array<{ stage: string; cost_usd: number; elapsed_ms: number }> };
   listening: Array<{ mention_id: string; redacted_text: string; stage: "before" | "after";
     assignments: Array<{ topic_key: string; topic_name: string; topic_definition: string; volume_cohort: string; assigned: boolean }> }>;
@@ -135,20 +137,35 @@ function validLayerAgreement(value: NonNullable<BlindSnapshotV1["layer_agreement
     || !Number.isSafeInteger(value.denominator)
     || value.denominator < 0 || value.denominator > value.eligible_count || !Number.isFinite(value.coverage) || value.coverage < 0 || value.coverage > 1
     || value.denominator > Math.min(value.pass_a_count, value.pass_b_count)
+    || !agreement(value.observed_agreement) || !agreement(value.expected_agreement)
+    || !["complete", "not_estimable"].includes(value.estimation_status)
+    || ![null, "no_passes", "incomplete_coverage", "expected_agreement_one"].includes(value.not_estimable_reason)
+    || !["stable", "recode_boundary_once", "unstable_report", "not_estimable"].includes(value.action)
     || !Number.isSafeInteger(value.boundary_recoded_count) || value.boundary_recoded_count < 0 || value.boundary_recoded_count > value.denominator
-    || !["not_measured", "insufficient_data", "below_threshold", "acceptable"].includes(value.status)) return false;
+    || !["not_measured", "insufficient_data", "not_estimable", "below_threshold", "acceptable"].includes(value.status)) return false;
   if (Math.abs(value.coverage - (value.eligible_count ? value.denominator / value.eligible_count : 0)) > .000001) return false;
   if (value.kappa !== null && (!Number.isFinite(value.kappa) || value.kappa < -1 || value.kappa > 1)) return false;
   if (value.status === "not_measured") return value.kappa === null && value.denominator === 0
-    && value.pass_a_count === 0 && value.pass_b_count === 0;
+    && value.pass_a_count === 0 && value.pass_b_count === 0 && value.observed_agreement === null && value.expected_agreement === null
+    && value.estimation_status === "not_estimable" && value.not_estimable_reason === "no_passes" && value.action === "not_estimable";
   if (value.status === "insufficient_data") return value.kappa === null && value.denominator < value.eligible_count
-    && (value.pass_a_count > 0 || value.pass_b_count > 0);
+    && (value.pass_a_count > 0 || value.pass_b_count > 0) && value.observed_agreement === null && value.expected_agreement === null
+    && value.estimation_status === "not_estimable" && value.not_estimable_reason === "incomplete_coverage";
   const fullCoverage = value.eligible_count > 0 && value.pass_a_count === value.eligible_count && value.pass_b_count === value.eligible_count
     && value.denominator === value.eligible_count && value.coverage === 1;
-  if (value.status === "acceptable") return fullCoverage && value.kappa !== null && value.kappa >= .8;
-  if (value.status === "below_threshold") return fullCoverage && value.kappa !== null && value.kappa < .8;
+  if (value.status === "not_estimable") return fullCoverage && value.kappa === null && value.observed_agreement === 1
+    && value.expected_agreement === 1 && value.estimation_status === "not_estimable"
+    && value.not_estimable_reason === "expected_agreement_one" && value.action !== "stable";
+  if (!fullCoverage || value.kappa === null || value.observed_agreement === null || value.expected_agreement === null
+    || value.estimation_status !== "complete" || value.not_estimable_reason !== null || value.expected_agreement >= 1) return false;
+  const computed = (value.observed_agreement - value.expected_agreement) / (1 - value.expected_agreement);
+  if (Math.abs(computed - value.kappa) > .000001) return false;
+  if (value.status === "acceptable") return value.kappa >= .8;
+  if (value.status === "below_threshold") return value.kappa < .8;
   return false;
 }
+
+function agreement(value: number | null): boolean { return value === null || Number.isFinite(value) && value >= 0 && value <= 1; }
 
 function finiteNonNegative(n: number): boolean { return Number.isFinite(n) && n >= 0; }
 function hash(s: string): string { return createHash("sha256").update(s).digest("hex"); }

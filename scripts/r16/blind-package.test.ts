@@ -41,7 +41,8 @@ function syntheticSnapshot(): BlindSnapshotV1 {
       layer_diagnostics: ["island", "money_time", "nobody_knows", "without_network"].map((key, i) => ({ key,
         layer: ["psychological", "personal", "social", "cultural"][i]!, question: `Question ${key}`, definition: `Definition ${key}` })) },
     layer_agreement: { eligible_count: 10, pass_a_count: 10, pass_a_digest: "d".repeat(64), pass_b_count: 10, pass_b_digest: "e".repeat(64),
-      denominator: 10, coverage: 1, kappa: .82, status: "acceptable" as const, boundary_recoded_count: 2 },
+      denominator: 10, coverage: 1, observed_agreement: .91, expected_agreement: .5, kappa: .82, estimation_status: "complete" as const,
+      not_estimable_reason: null, action: "stable" as const, status: "acceptable" as const, boundary_recoded_count: 2 },
     receipts: { total_cost_usd: 0, total_elapsed_ms: 0, stages: [{ stage: "synthetic", cost_usd: 0, elapsed_ms: 0 }] }, listening, study };
 }
 
@@ -80,7 +81,8 @@ test("private answer key carries identity and labels while blind payloads omit t
   assert.equal(ambiguityCoverage?.selected, 30);
   assert.ok(built.key.rows.some(row => row.sample_code === "M01" && (row.answer as { layer?: string }).layer));
   assert.deepEqual(built.key.layer_agreement, { eligible_count: 10, pass_a_count: 10, pass_a_digest: "d".repeat(64), pass_b_count: 10,
-    pass_b_digest: "e".repeat(64), denominator: 10, coverage: 1, kappa: .82, status: "acceptable", boundary_recoded_count: 2 });
+    pass_b_digest: "e".repeat(64), denominator: 10, coverage: 1, observed_agreement: .91, expected_agreement: .5, kappa: .82,
+    estimation_status: "complete", not_estimable_reason: null, action: "stable", status: "acceptable", boundary_recoded_count: 2 });
   assert.ok(!("layer_agreement" in built.manifest));
   const nearest = built.key.rows.find(row => row.sample_code.startsWith("N-"));
   assert.ok(nearest);
@@ -140,10 +142,12 @@ test("unmeasured two-pass kappa stays null and marks package evidence incomplete
 test("partial agreement coverage cannot carry numeric kappa, while full low-kappa evidence remains reportable", () => {
   const partial = syntheticSnapshot();
   partial.layer_agreement = { eligible_count: 10, pass_a_count: 10, pass_a_digest: "d".repeat(64), pass_b_count: 1, pass_b_digest: "e".repeat(64),
-    denominator: 1, coverage: .1, kappa: 1, status: "acceptable", boundary_recoded_count: 0 };
+    denominator: 1, coverage: .1, observed_agreement: 1, expected_agreement: .5, kappa: 1, estimation_status: "complete",
+    not_estimable_reason: null, action: "stable", status: "acceptable", boundary_recoded_count: 0 };
   assert.throws(() => buildBlindPackageV1(partial, seed), /snapshot_invalid/);
 
-  partial.layer_agreement = { ...partial.layer_agreement, kappa: null, status: "insufficient_data" };
+  partial.layer_agreement = { ...partial.layer_agreement, observed_agreement: null, expected_agreement: null, kappa: null,
+    estimation_status: "not_estimable", not_estimable_reason: "incomplete_coverage", action: "recode_boundary_once", status: "insufficient_data" };
   const incomplete = buildBlindPackageV1(partial, seed);
   assert.equal(incomplete.key.layer_agreement?.kappa, null);
   assert.equal(incomplete.key.layer_agreement?.denominator, 1);
@@ -151,8 +155,19 @@ test("partial agreement coverage cannot carry numeric kappa, while full low-kapp
   assert.equal(incomplete.key.layer_agreement?.pass_b_count, 1);
   assert.equal(incomplete.manifest.completeness, "evidence_incomplete");
 
+  const degenerate = syntheticSnapshot();
+  degenerate.layer_agreement = { eligible_count: 10, pass_a_count: 10, pass_a_digest: "d".repeat(64), pass_b_count: 10, pass_b_digest: "e".repeat(64),
+    denominator: 10, coverage: 1, observed_agreement: 1, expected_agreement: 1, kappa: null, estimation_status: "not_estimable",
+    not_estimable_reason: "expected_agreement_one", action: "not_estimable", status: "not_estimable", boundary_recoded_count: 0 };
+  const nonEstimable = buildBlindPackageV1(degenerate, seed);
+  assert.equal(nonEstimable.key.layer_agreement?.kappa, null);
+  assert.equal(nonEstimable.key.layer_agreement?.expected_agreement, 1);
+  assert.equal(nonEstimable.key.layer_agreement?.not_estimable_reason, "expected_agreement_one");
+  assert.equal(nonEstimable.manifest.completeness, "complete", "full-census degeneracy is explicit, not a missing-coverage claim");
+
   const low = syntheticSnapshot();
-  low.layer_agreement = { ...low.layer_agreement!, kappa: .62, status: "below_threshold", boundary_recoded_count: 4 };
+  low.layer_agreement = { ...low.layer_agreement!, observed_agreement: .81, kappa: .62, status: "below_threshold",
+    action: "unstable_report", boundary_recoded_count: 4 };
   const reportable = buildBlindPackageV1(low, seed);
   assert.equal(reportable.manifest.completeness, "complete", "a measured low kappa is evidence, not a package shortfall");
   assert.equal(reportable.key.layer_agreement?.kappa, .62);
