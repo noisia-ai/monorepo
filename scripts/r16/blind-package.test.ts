@@ -13,13 +13,14 @@ function syntheticSnapshot(): BlindSnapshotV1 {
     for (let i = 0; i < 55; i++) listening.push({ mention_id: `listen-${stage}-${cohort}-${i}`, redacted_text: `synthetic mention ${stage} ${cohort} ${i}`,
       stage, assignments: [{ topic_key: `topic-${cohort}`, topic_name: `Synthetic topic ${cohort}`, topic_definition: "Synthetic definition", volume_cohort: cohort, assigned: i % 2 === 0 }] });
   }
-  const study = [] as Array<{ mention_id: string; redacted_text: string; direction: "trigger" | "barrier" | "mixed" | "none";
-    target: "category" | "own_brand" | "competitor_brand" | "alternative"; use: "literal" | "figurative_or_ironic" | "other";
-    in_cut: boolean; review_flags: string[]; motive_key?: string; motive_volume_cohort?: string; motive_name?: string; motive_definition?: string; nearest_volume_cohort?: string;
+  const study = [] as Array<{ mention_id: string; redacted_text: string; axes_status: "observed" | "not_asked_outside_cut";
+    direction: "trigger" | "barrier" | "mixed" | "none" | null;
+    target: "category" | "own_brand" | "competitor_brand" | "alternative" | null; use: "literal" | "figurative_or_ironic" | "other" | null;
+    in_cut: boolean; lexical_filter_match: boolean; base_voice_valid: boolean; review_flags: string[]; motive_key?: string; motive_volume_cohort?: string; motive_name?: string; motive_definition?: string; nearest_volume_cohort?: string;
     nearest_assigned_motive_key?: string;
     layer?: string; nearest_motives?: Array<{ motive_key: string; volume_cohort: string; name: string; definition: string }> }>;
   const add = (id: string, overrides: Partial<(typeof study)[number]> = {}) => study.push({ mention_id: id, redacted_text: `synthetic study mention ${id}`,
-    direction: "trigger", target: "category", use: "literal", in_cut: true, review_flags: [], ...overrides });
+    axes_status: "observed", direction: "trigger", target: "category", use: "literal", in_cut: true, lexical_filter_match: true, base_voice_valid: true, review_flags: [], ...overrides });
   for (const dir of ["mixed", "barrier", "trigger"] as const) for (let i = 0; i < 80; i++) add(`axis-${dir}-${i}`, { direction: dir });
   for (const target of ["own_brand", "competitor_brand", "alternative"] as const) for (let i = 0; i < 50; i++) add(`target-${target}-${i}`, { target });
   for (let i = 0; i < 35; i++) add(`false-irony-${i}`, { review_flags: ["false_irony_candidate"] });
@@ -32,6 +33,8 @@ function syntheticSnapshot(): BlindSnapshotV1 {
   for (const cohort of LISTENING_COHORTS_V1) for (let i = 0; i < 25; i++) add(`nearest-${cohort}-${i}`, { nearest_volume_cohort: cohort,
     nearest_assigned_motive_key: "n0", nearest_motives:
     LISTENING_COHORTS_V1.slice(0, 4).map((c, n) => ({ motive_key: `n${n}`, volume_cohort: c, name: `Candidate ${n}`, definition: "Synthetic candidate" })) });
+  for (let i = 0; i < 35; i++) add(`outside-lexical-${i}`, { axes_status: "not_asked_outside_cut", direction: null, target: null, use: null,
+    in_cut: false, lexical_filter_match: false, base_voice_valid: true });
   return { contract_version: "r16-blind-snapshot-v1" as const, exported_at: "2026-11-14T12:00:00.000Z", source: { export_contract: "synthetic-v1", export_digest: digest },
     study_provenance: { listening_before_digest: digest, listening_after_digest: "b".repeat(64), study_contract_version: "signal-study-v1",
       methodology_template_version: "r16-v1", methodology_template_digest: `sha256:${"c".repeat(64)}` },
@@ -43,14 +46,14 @@ function syntheticSnapshot(): BlindSnapshotV1 {
     layer_agreement: { eligible_count: 10, pass_a_count: 10, pass_a_digest: "d".repeat(64), pass_b_count: 10, pass_b_digest: "e".repeat(64),
       denominator: 10, coverage: 1, observed_agreement: .91, expected_agreement: .5, kappa: .82, estimation_status: "complete" as const,
       not_estimable_reason: null, action: "stable" as const, status: "acceptable" as const, boundary_recoded_count: 2 },
-    receipts: { total_cost_usd: 0, total_elapsed_ms: 0, stages: [{ stage: "synthetic", cost_usd: 0, elapsed_ms: 0 }] }, listening, study };
+    receipts: { status: "complete" as const, total_cost_usd: 0, total_elapsed_ms: 0, stages: [{ stage: "synthetic", cost_usd: 0, elapsed_ms: 0 }] }, listening, study };
 }
 
 test("same synthetic snapshot and custody seed produce identical blind packets and key", () => {
   const snapshot = syntheticSnapshot();
   const a = buildBlindPackageV1(snapshot, seed); const b = buildBlindPackageV1(snapshot, seed);
   assert.deepEqual(a, b);
-  assert.equal(a.packets.length, 51);
+  assert.equal(a.packets.length, 52);
   assert.ok(a.packets.every(packet => { validatePacketV1(packet); return packet.cases.every(row => !("mention_id" in row)); }));
   assert.equal(a.manifest.completeness, "complete");
   assert.equal(a.manifest.source_digest, a.key.custody_manifest.source_digest);
@@ -69,13 +72,26 @@ test("private answer key carries identity and labels while blind payloads omit t
   assert.doesNotMatch(JSON.stringify(built.manifest), /layer_agreement|boundary_recoded|eligible_count|\bkappa\b/u);
   const axes = built.key.rows.filter(row => row.sample_code === "TAX");
   assert.ok(axes.length >= 200);
-  assert.ok(axes.every(row => ["direction", "target", "use"].every(axis => axis in (row.answer as object))));
+  assert.ok(axes.every(row => ["direction", "target", "use"].every(axis => axis in (row.answer as object))
+    && (row.answer as { axes_status: string }).axes_status === "observed"));
   const axisAnswers = axes.map(row => row.answer as { direction: string; target: string; review_flags: string[] });
   assert.ok(axisAnswers.filter(a => a.direction === "mixed").length >= 50);
   for (const target of ["category", "own_brand", "competitor_brand", "alternative"]) assert.ok(axisAnswers.filter(a => a.target === target).length >= 40);
   assert.ok(axisAnswers.filter(a => a.review_flags.includes("false_irony_candidate")).length >= 30);
   assert.ok(axisAnswers.filter(a => a.review_flags.includes("ambiguous_brand_candidate")).length >= 30);
   assert.ok(axisAnswers.filter(a => a.direction === "none" && a.review_flags.includes("false_none_candidate")).length >= 60);
+  const outside = built.key.rows.filter(row => row.sample_code === "TAX-OUTSIDE");
+  assert.equal(outside.length, 30);
+  const outsideCoverage = built.key.custody_manifest.axis_coverage.find(item => item.code === "outside_lexical_missing_axes");
+  assert.deepEqual([outsideCoverage?.required, outsideCoverage?.selected, outsideCoverage?.shortfall], [30, 30, 0]);
+  assert.ok(built.key.rows.filter(row => row.sample_code === "TAX").every(row => (row.answer as { axes_status: string }).axes_status === "observed"));
+  assert.ok(outside.every(row => {
+    const answer = row.answer as { axes_status: string; direction: null; target: null; use: null };
+    return answer.axes_status === "not_asked_outside_cut" && answer.direction === null && answer.target === null && answer.use === null;
+  }));
+  const visibleOutside = built.packets.flatMap(packet => packet.cases).filter(row => outside.some(key => key.blind_id === row.blind_id));
+  assert.equal(visibleOutside.length, 30);
+  assert.ok(visibleOutside.every(row => !JSON.stringify(row).includes("not_asked_outside_cut") && /Independently code direction, target, and use/u.test(row.prompt)));
   assert.ok(built.key.custody_manifest.axis_coverage.every(item => item.selected >= item.required));
   const ambiguityCoverage = built.key.custody_manifest.axis_coverage.find(item => item.code === "ambiguous_brand");
   assert.equal(ambiguityCoverage?.selected, 30);
@@ -112,7 +128,7 @@ test("sampling deduplicates identities across strata and reports census shortfal
   assert.ok(built.manifest.shortfall_count > 0);
   const allIds = built.key.rows.map(row => row.mention_id);
   assert.equal(new Set(allIds).size, allIds.length);
-  assert.equal(built.manifest.strata.length, 51);
+  assert.equal(built.manifest.strata.length, 52);
 });
 
 test("missing native layer truth or nearest assignment reports shortfalls without placeholder answers", () => {
@@ -137,6 +153,23 @@ test("unmeasured two-pass kappa stays null and marks package evidence incomplete
   assert.equal(built.manifest.completeness, "evidence_incomplete");
   assert.deepEqual(built.manifest.incompleteness_reasons, ["required_metric_receipt_missing"]);
   assert.ok(!("layer_agreement" in built.manifest));
+});
+
+test("missing native cost or timing stays null and marks package incomplete instead of inventing zero", () => {
+  const snapshot = syntheticSnapshot();
+  snapshot.receipts = { status: "incomplete", total_cost_usd: null, total_elapsed_ms: null,
+    stages: [{ stage: "study_execution", cost_usd: null, elapsed_ms: null }] };
+  const built = buildBlindPackageV1(snapshot, seed);
+  assert.equal(built.manifest.completeness, "evidence_incomplete");
+  assert.equal(built.manifest.receipts.total_cost_usd, null);
+  assert.equal(built.manifest.receipts.total_elapsed_ms, null);
+  assert.equal(built.manifest.receipts.stages[0]?.cost_usd, null);
+  assert.ok(built.manifest.incompleteness_reasons.includes("required_metric_receipt_missing"));
+  snapshot.receipts.total_cost_usd = 0;
+  const partialMeasured = buildBlindPackageV1(snapshot, seed);
+  assert.equal(partialMeasured.manifest.completeness, "evidence_incomplete");
+  assert.equal(partialMeasured.manifest.receipts.total_cost_usd, 0);
+  assert.equal(partialMeasured.manifest.receipts.total_elapsed_ms, null);
 });
 
 test("partial agreement coverage cannot carry numeric kappa, while full low-kappa evidence remains reportable", () => {
@@ -183,6 +216,23 @@ test("invalid receipts, duplicate source identities, and weak seeds fail closed"
   assert.throws(() => buildBlindPackageV1(invalid, seed), /snapshot_invalid/);
   const invalidKappa = syntheticSnapshot(); invalidKappa.layer_agreement!.coverage = .5;
   assert.throws(() => buildBlindPackageV1(invalidKappa, seed), /snapshot_invalid/);
+  const fakeAxes = syntheticSnapshot();
+  fakeAxes.study[0]!.axes_status = "not_asked_outside_cut";
+  fakeAxes.study[0]!.direction = "none";
+  fakeAxes.study[0]!.target = null;
+  fakeAxes.study[0]!.use = null;
+  fakeAxes.study[0]!.in_cut = false;
+  fakeAxes.study[0]!.lexical_filter_match = false;
+  assert.throws(() => buildBlindPackageV1(fakeAxes, seed), /snapshot_invalid/);
+  const missingOutsideProof = syntheticSnapshot();
+  missingOutsideProof.study[0]!.axes_status = "not_asked_outside_cut";
+  missingOutsideProof.study[0]!.direction = null;
+  missingOutsideProof.study[0]!.target = null;
+  missingOutsideProof.study[0]!.use = null;
+  missingOutsideProof.study[0]!.in_cut = false;
+  missingOutsideProof.study[0]!.lexical_filter_match = false;
+  missingOutsideProof.study[0]!.base_voice_valid = false;
+  assert.throws(() => buildBlindPackageV1(missingOutsideProof, seed), /snapshot_invalid/);
 });
 
 test("private writer emits separated custody key, atomic package, and verifiable SHA manifest", async () => {
@@ -199,7 +249,7 @@ test("private writer emits separated custody key, atomic package, and verifiable
     await assert.rejects(() => writeBlindPackageV1({ snapshotPath: snapshotLink, seedPath, packageDir: resolve(temp, "symlink-output"),
       custodyKeyPath: resolve(temp, "custody", "symlink-key.json") }), /symlink_path_rejected/);
     await writeBlindPackageV1({ snapshotPath, seedPath, packageDir, custodyKeyPath: keyPath });
-    assert.deepEqual(await verifyBlindPackageV1(packageDir), { valid: true, files: 52 });
+  assert.deepEqual(await verifyBlindPackageV1(packageDir), { valid: true, files: 53 });
     const sums = await readFile(resolve(packageDir, "SHA256SUMS"), "utf8");
     assert.doesNotMatch(sums, /answer-key/u);
     assert.equal((await stat(packageDir)).mode & 0o777, 0o700);
@@ -217,14 +267,14 @@ test("private writer emits separated custody key, atomic package, and verifiable
     assert.equal(winners.length, 1, "exclusive hard-link publication permits only one concurrent custody key owner");
     const loser = racePackages.find(path => path !== winners[0])!;
     await assert.rejects(() => stat(loser), /ENOENT/u);
-    assert.deepEqual(await verifyBlindPackageV1(winners[0]!), { valid: true, files: 52 });
+    assert.deepEqual(await verifyBlindPackageV1(winners[0]!), { valid: true, files: 53 });
     assert.equal((await stat(raceKey)).mode & 0o777, 0o600);
 
     const samePackage = resolve(temp, "same-package"); const sameKey = resolve(temp, "custody", "same-package-key.json");
     const samePackageRace = await Promise.allSettled([1, 2].map(() => writeBlindPackageV1({ snapshotPath, seedPath,
       packageDir: samePackage, custodyKeyPath: sameKey })));
     assert.equal(samePackageRace.filter(x => x.status === "fulfilled").length, 1, "exclusive output lock permits only one directory publisher");
-    assert.deepEqual(await verifyBlindPackageV1(samePackage), { valid: true, files: 52 });
+    assert.deepEqual(await verifyBlindPackageV1(samePackage), { valid: true, files: 53 });
     const sumsBeforeOverwrite = await readFile(resolve(samePackage, "SHA256SUMS"), "utf8");
     const keyBeforeOverwrite = await readFile(sameKey, "utf8");
     await assert.rejects(() => writeBlindPackageV1({ snapshotPath, seedPath, packageDir: samePackage, custodyKeyPath: sameKey }));

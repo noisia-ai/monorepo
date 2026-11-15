@@ -10,7 +10,8 @@ const HASH_RE = /^[a-f0-9]{64}$/u;
 const OMIT_KEYS = new Set(["mention_id", "root_id", "workspace_id", "corpus_id", "study_id", "run_id", "topic_key", "motive_key",
   "direction", "target", "use", "layer", "permission", "label", "answer", "expected", "prediction", "confidence", "probability",
   "cohort", "stratum", "cut_membership", "in_cut", "model", "assigned", "assigned_motive_key", "system_assigned_motive_key", "predicted_motive_key", "ranked_candidate_keys",
-  "option_map", "nearest_motives", "flags", "review_flags", "false_none_candidate", "false_irony_candidate", "ambiguous_brand_candidate"]);
+  "option_map", "nearest_motives", "flags", "review_flags", "false_none_candidate", "false_irony_candidate", "ambiguous_brand_candidate",
+  "axes_status", "lexical_filter_match", "base_voice_valid"]);
 
 export type BlindSnapshotV1 = {
   contract_version: "r16-blind-snapshot-v1";
@@ -26,13 +27,16 @@ export type BlindSnapshotV1 = {
     estimation_status: "complete" | "not_estimable"; not_estimable_reason: "no_passes" | "incomplete_coverage" | "expected_agreement_one" | null;
     action: "stable" | "recode_boundary_once" | "unstable_report" | "not_estimable";
     status: "not_measured" | "insufficient_data" | "not_estimable" | "below_threshold" | "acceptable"; boundary_recoded_count: number } | null;
-  receipts: { total_cost_usd: number; total_elapsed_ms: number; stages: Array<{ stage: string; cost_usd: number; elapsed_ms: number }> };
+  receipts: { status: "complete" | "incomplete"; total_cost_usd: number | null; total_elapsed_ms: number | null;
+    stages: Array<{ stage: string; cost_usd: number | null; elapsed_ms: number | null }> };
   listening: Array<{ mention_id: string; redacted_text: string; stage: "before" | "after";
     assignments: Array<{ topic_key: string; topic_name: string; topic_definition: string; volume_cohort: string; assigned: boolean }> }>;
-  study: Array<{ mention_id: string; redacted_text: string; direction: typeof DIRECTIONS[number]; target: typeof TARGETS[number];
-    use: typeof USES[number]; in_cut: boolean; review_flags: string[]; motive_key?: string; motive_volume_cohort?: string;
+  study: Array<{ mention_id: string; redacted_text: string; axes_status: "observed" | "not_asked_outside_cut";
+    direction: typeof DIRECTIONS[number] | null; target: typeof TARGETS[number] | null; use: typeof USES[number] | null;
+    in_cut: boolean; lexical_filter_match: boolean; base_voice_valid: boolean; review_flags: string[]; motive_key?: string; motive_volume_cohort?: string;
     motive_name?: string; motive_definition?: string; layer?: string; nearest_volume_cohort?: string;
     nearest_assigned_motive_key?: string;
+    motive_memberships?: Array<{ motive_key: string; volume_cohort: string; name: string; definition: string; layer: string }>;
     nearest_motives?: Array<{ motive_key: string; volume_cohort: string; name: string; definition: string }> }>;
 };
 
@@ -64,12 +68,18 @@ export function validateSnapshotV1(value: unknown): BlindSnapshotV1 {
       || typeof d.definition !== "string" || !d.definition.trim()
       || !["psychological", "personal", "social", "cultural"].includes(d.layer))
     || (s.layer_agreement !== null && s.layer_agreement !== undefined && !validLayerAgreement(s.layer_agreement))
-    || !s.receipts || !finiteNonNegative(s.receipts.total_cost_usd) || !finiteNonNegative(s.receipts.total_elapsed_ms)
+    || !s.receipts || !["complete", "incomplete"].includes(s.receipts.status)
+    || (s.receipts.total_cost_usd !== null && !finiteNonNegative(s.receipts.total_cost_usd))
+    || (s.receipts.total_elapsed_ms !== null && !finiteNonNegative(s.receipts.total_elapsed_ms))
     || !Array.isArray(s.receipts.stages) || !s.receipts.stages.length || s.receipts.stages.some(x => !x || typeof x.stage !== "string" || !x.stage.trim()
-      || !finiteNonNegative(x.cost_usd) || !finiteNonNegative(x.elapsed_ms)) || !Array.isArray(s.listening) || !Array.isArray(s.study)) fail();
-  if (new Set(s.receipts.stages.map(x => x.stage)).size !== s.receipts.stages.length
-    || Math.abs(s.receipts.stages.reduce((n, x) => n + x.cost_usd, 0) - s.receipts.total_cost_usd) > .000001
-    || Math.abs(s.receipts.stages.reduce((n, x) => n + x.elapsed_ms, 0) - s.receipts.total_elapsed_ms) > 1) fail();
+      || (x.cost_usd !== null && !finiteNonNegative(x.cost_usd)) || (x.elapsed_ms !== null && !finiteNonNegative(x.elapsed_ms)))
+    || !Array.isArray(s.listening) || !Array.isArray(s.study)) fail();
+  if (new Set(s.receipts.stages.map(x => x.stage)).size !== s.receipts.stages.length) fail();
+  const allReceiptsMeasured = s.receipts.total_cost_usd !== null && s.receipts.total_elapsed_ms !== null
+    && s.receipts.stages.every(x => x.cost_usd !== null && x.elapsed_ms !== null);
+  if (s.receipts.status === "complete" && !allReceiptsMeasured || s.receipts.status === "incomplete" && allReceiptsMeasured
+    || allReceiptsMeasured && (Math.abs(s.receipts.stages.reduce((n, x) => n + x.cost_usd!, 0) - s.receipts.total_cost_usd!) > .000001
+      || Math.abs(s.receipts.stages.reduce((n, x) => n + x.elapsed_ms!, 0) - s.receipts.total_elapsed_ms!) > 1)) fail();
   for (const row of [...s.listening, ...s.study]) {
     if (!row || typeof row.mention_id !== "string" || !row.mention_id || typeof row.redacted_text !== "string" || !row.redacted_text.trim()) fail();
   }
@@ -92,12 +102,23 @@ export function validateSnapshotV1(value: unknown): BlindSnapshotV1 {
   const motiveDefinitions = new Map<string, { definitions: Set<string>; layers: Set<string> }>();
   const nearestDefinitions = new Map<string, string>();
   for (const row of s.study) {
-    if (!(DIRECTIONS as readonly string[]).includes(row.direction) || !(TARGETS as readonly string[]).includes(row.target)
-      || !(USES as readonly string[]).includes(row.use) || typeof row.in_cut !== "boolean" || !Array.isArray(row.review_flags)) fail();
+    if (typeof row.in_cut !== "boolean" || typeof row.lexical_filter_match !== "boolean" || typeof row.base_voice_valid !== "boolean"
+      || !Array.isArray(row.review_flags)) fail();
+    if (row.axes_status === "observed") {
+      if (!(DIRECTIONS as readonly string[]).includes(row.direction as string) || !(TARGETS as readonly string[]).includes(row.target as string)
+        || !(USES as readonly string[]).includes(row.use as string) || !row.lexical_filter_match || !row.base_voice_valid) fail();
+    } else if (row.axes_status === "not_asked_outside_cut") {
+      if (row.direction !== null || row.target !== null || row.use !== null || row.in_cut || row.lexical_filter_match || !row.base_voice_valid
+        || row.motive_key !== undefined || row.nearest_motives !== undefined) fail();
+    } else fail();
     if (row.review_flags.some(f => !["false_none_candidate", "false_irony_candidate", "ambiguous_brand_candidate"].includes(f))) fail();
     if (row.motive_key !== undefined && (typeof row.motive_key !== "string" || !row.motive_key.trim())) fail();
     if (row.motive_name !== undefined && typeof row.motive_name !== "string") fail();
     if (row.motive_definition !== undefined && typeof row.motive_definition !== "string") fail();
+    if (row.motive_memberships !== undefined && (!Array.isArray(row.motive_memberships) || new Set(row.motive_memberships.map(m => m?.motive_key)).size !== row.motive_memberships.length
+      || row.motive_memberships.some(m => !m || !m.motive_key?.trim() || !m.name?.trim() || !m.definition?.trim()
+        || !LISTENING_COHORTS_V1.includes(m.volume_cohort as typeof LISTENING_COHORTS_V1[number])
+        || !["psychological", "personal", "social", "cultural", "unclear"].includes(m.layer)))) fail();
     if (row.nearest_assigned_motive_key !== undefined && typeof row.nearest_assigned_motive_key !== "string") fail();
     if (row.nearest_motives !== undefined && !Array.isArray(row.nearest_motives)) fail();
     if (row.motive_volume_cohort !== undefined && !LISTENING_COHORTS_V1.includes(row.motive_volume_cohort as typeof LISTENING_COHORTS_V1[number])) fail();
@@ -107,6 +128,11 @@ export function validateSnapshotV1(value: unknown): BlindSnapshotV1 {
       if (row.motive_name && row.motive_definition) set.definitions.add(`${row.motive_name}\0${row.motive_definition}`);
       if (row.layer) set.layers.add(row.layer);
       motiveDefinitions.set(row.motive_key, set);
+    }
+    for (const membership of row.motive_memberships ?? []) {
+      const set = motiveDefinitions.get(membership.motive_key) ?? { definitions: new Set<string>(), layers: new Set<string>() };
+      set.definitions.add(`${membership.name}\0${membership.definition}`); set.layers.add(membership.layer);
+      motiveDefinitions.set(membership.motive_key, set);
     }
     for (const candidate of row.nearest_motives ?? []) if (candidate?.motive_key && candidate.name && candidate.definition) {
       const signature = `${candidate.name}\0${candidate.definition}\0${candidate.volume_cohort}`;
@@ -238,7 +264,7 @@ export function buildBlindPackageV1(snapshotValue: unknown, seed: string) {
   }
   takeAxis("false_none_inside", t.filter(r => r.direction === "none" && r.in_cut && r.review_flags.includes("false_none_candidate")), 30);
   takeAxis("false_none_outside", t.filter(r => r.direction === "none" && !r.in_cut && r.review_flags.includes("false_none_candidate")), 30);
-  takeAxis("axes_total", t.filter(r => r.direction !== "none"), Math.max(0, 200 - axisSelected.length), false);
+  takeAxis("axes_total", t.filter(r => r.axes_status === "observed" && r.direction !== "none"), Math.max(0, 200 - axisSelected.length), false);
   const guidance = s.study_guidance;
   const axisContext = [guidance.subject_context,
     `Direction options: ${guidance.direction_options.map(o => `${o.key}: ${o.definition}`).join("; ")}`,
@@ -246,23 +272,38 @@ export function buildBlindPackageV1(snapshotValue: unknown, seed: string) {
     `Use options: ${guidance.use_options.map(o => `${o.key}: ${o.definition}`).join("; ")}`].join("\n");
   const axisCases = axisSelected.map(r => ({ id: r.mention_id, text: r.redacted_text,
     prompt: "Independently code all three axes for this mention: direction, target, and use, using the definitions below.", context: axisContext,
-    answer: { direction: r.direction, target: r.target, use: r.use, in_cut: r.in_cut, review_flags: r.review_flags } }));
-  const axisPopulation = new Set(t.filter(r => !usedIdentities.has(r.mention_id)).map(r => r.mention_id)).size;
+    answer: { axes_status: r.axes_status, direction: r.direction, target: r.target, use: r.use, in_cut: r.in_cut, review_flags: r.review_flags } }));
+  const axisPopulation = new Set(t.filter(r => r.axes_status === "observed" && !usedIdentities.has(r.mention_id)).map(r => r.mention_id)).size;
   add("TAX", axisCases, 200, true, axisPopulation);
 
-  const topMotives = [...new Set(t.filter(r => r.motive_key).map(r => r.motive_key!))].sort((a, b) => {
-    const n = (key: string) => t.filter(r => r.motive_key === key).length;
-    return n(b) - n(a) || hash(`${seed}:motive-order:${a}`).localeCompare(hash(`${seed}:motive-order:${b}`));
-  }).slice(0, 20);
+  const outsideLexical = t.filter(r => r.axes_status === "not_asked_outside_cut" && !r.in_cut && !r.lexical_filter_match && r.base_voice_valid);
+  const outsidePrompt = "Independently code direction, target, and use for this mention, using the configured definitions below.";
+  add("TAX-OUTSIDE", outsideLexical.map(r => ({ id: r.mention_id, text: r.redacted_text, prompt: outsidePrompt, context: axisContext,
+    answer: { axes_status: r.axes_status, direction: r.direction, target: r.target, use: r.use, review_flags: r.review_flags } })), 30);
+  axisCoverage.push({ code: "outside_lexical_missing_axes", required: 30, selected: Math.min(30, outsideLexical.length),
+    shortfall: Math.max(0, 30 - outsideLexical.length) });
+
+  const motiveCounts = new Map<string, number>();
+  for (const row of t) {
+    const keys = new Set([...(row.motive_memberships ?? []).map(m => m.motive_key), ...(row.motive_key ? [row.motive_key] : [])]);
+    for (const key of keys) motiveCounts.set(key, (motiveCounts.get(key) ?? 0) + 1);
+  }
+  const topMotives = [...motiveCounts.keys()].sort((a, b) => motiveCounts.get(b)! - motiveCounts.get(a)!
+    || hash(`${seed}:motive-order:${a}`).localeCompare(hash(`${seed}:motive-order:${b}`))).slice(0, 20);
   for (let i = 0; i < 20; i++) {
     const motive = topMotives[i]; const code = `M${String(i + 1).padStart(2, "0")}`;
-    const rows = motive ? t.filter(r => r.motive_key === motive && r.direction !== "none" && r.layer && r.motive_name && r.motive_definition) : [];
-    const layerContext = [`Motive: ${rows[0]?.motive_name ?? ""}. ${rows[0]?.motive_definition ?? ""}`,
+    const rows = motive ? t.filter(r => r.direction !== "none" && (r.motive_memberships?.some(m => m.motive_key === motive && m.layer)
+      || r.motive_key === motive && r.layer && r.motive_name && r.motive_definition)) : [];
+    const detail = (r: typeof t[number]) => r.motive_memberships?.find(m => m.motive_key === motive) ?? (r.motive_key === motive && r.motive_name
+      && r.motive_definition && r.motive_volume_cohort && r.layer ? { motive_key: motive!, name: r.motive_name, definition: r.motive_definition,
+        volume_cohort: r.motive_volume_cohort, layer: r.layer } : undefined);
+    const firstDetail = rows.map(detail).find(Boolean);
+    const layerContext = [`Motive: ${firstDetail?.name ?? ""}. ${firstDetail?.definition ?? ""}`,
       `Diagnostic layers: ${guidance.layer_diagnostics.map(d => `${d.layer}: ${d.question} ${d.definition}`).join("; ")}`,
       "Select one layer only when supported by the text; otherwise select unclear."].join("\n");
     add(code, rows.map(r => ({ id: r.mention_id, text: r.redacted_text,
       prompt: "Does this mention belong to the described motive, and which diagnostic layer is supported by its text?",
-      context: layerContext, answer: { motive_key: motive, layer: r.layer, direction: r.direction } })), 10);
+      context: layerContext, answer: { motive_key: motive, layer: detail(r)?.layer, direction: r.direction } })), 10);
   }
   for (const cohort of LISTENING_COHORTS_V1) {
     const code = `N-${cohort}`;
@@ -289,11 +330,12 @@ export function buildBlindPackageV1(snapshotValue: unknown, seed: string) {
     selected: item.selected, shortfall: item.shortfall }))
     .sort((a, b) => rank(seed, "manifest-visible-strata", a.packet_ref).localeCompare(rank(seed, "manifest-visible-strata", b.packet_ref)));
   const privateAxisCoverage = axisCoverage.map(item => ({ ...item, ref: createHmac("sha256", seed).update(`axis-coverage\0${item.code}`).digest("hex").slice(0, 12),
-    packet_ref: publicRefs.get("TAX")! }));
+    packet_ref: item.code === "outside_lexical_missing_axes" ? publicRefs.get("TAX-OUTSIDE")! : publicRefs.get("TAX")! }));
   const visibleAxisCoverage = privateAxisCoverage.map(({ ref, packet_ref, required, selected, shortfall }) => ({ ref, packet_ref, required, selected, shortfall }))
     .sort((a, b) => rank(seed, "manifest-visible-axis-coverage", a.ref).localeCompare(rank(seed, "manifest-visible-axis-coverage", b.ref)));
   const totalShortfall = Object.values(census).reduce((n, x) => n + x.shortfall, 0) + axisCoverage.reduce((n, x) => n + x.shortfall, 0);
-  const missingAgreementEvidence = !s.layer_agreement || ["not_measured", "insufficient_data"].includes(s.layer_agreement.status);
+  const missingAgreementEvidence = !s.layer_agreement || ["not_measured", "insufficient_data"].includes(s.layer_agreement.status)
+    || s.receipts.status !== "complete";
   const completeness = totalShortfall ? "census_with_shortfalls" : missingAgreementEvidence ? "evidence_incomplete" : "complete";
   const manifest = { contract_version: "r16-blind-manifest-v1", snapshot_contract: s.contract_version,
     source_digest: s.source.export_digest, created_at: s.exported_at, seed_fingerprint: hash(seed),
@@ -401,7 +443,7 @@ export async function verifyBlindPackageV1(packageDir: string): Promise<{ valid:
   const observed = new Map<string, string>();
   const observedPackets = new Map<string, PacketV1>();
   for (const line of sums) {
-    const [expected, name] = line.split("  "); const contents = await readFile(resolve(dir, name), "utf8");
+    const [expected, name] = line.split("  "); if (!expected || !name) throw new Error("blind_checksums_invalid"); const contents = await readFile(resolve(dir, name), "utf8");
     if ((await lstat(resolve(dir, name))).isSymbolicLink()) throw new Error("blind_symlink_path_rejected");
     if (hash(contents) !== expected) throw new Error("blind_checksum_mismatch");
     if (observed.has(name)) throw new Error("blind_checksums_duplicate_entry");
@@ -446,7 +488,7 @@ export async function verifyBlindPackageV1(packageDir: string): Promise<{ valid:
 if (process.argv[1] && resolve(process.argv[1]) === resolve(new URL(import.meta.url).pathname)) {
   const [, , command, ...argv] = process.argv;
   const flags: Record<string, string> = {};
-  for (let i = 0; i < argv.length; i += 2) { if (!argv[i]?.startsWith("--") || !argv[i + 1]) throw new Error("blind_cli_usage"); flags[argv[i].slice(2)] = argv[i + 1]; }
+  for (let i = 0; i < argv.length; i += 2) { const flag = argv[i], value = argv[i + 1]; if (!flag?.startsWith("--") || !value) throw new Error("blind_cli_usage"); flags[flag.slice(2)] = value; }
   if (command === "build" && flags.snapshot && flags.seed && flags.out && flags.key) {
     const result = await writeBlindPackageV1({ snapshotPath: flags.snapshot, seedPath: flags.seed, packageDir: flags.out, custodyKeyPath: flags.key });
     console.log(JSON.stringify(result)); if (!result.complete) process.exitCode = 2;
