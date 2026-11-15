@@ -6,13 +6,14 @@ import {createProcessingPolicyIdentitiesV1} from './signal-processing-policy.fix
 import {quoteSignalListeningStudyPolicyV1,provisionSignalListeningStudyPolicyV1} from '../signal-listening-study-policy';
 import {readSignalProcessingPolicyWithQueryableV1} from '../signal-processing-policy';
 import {withSignalStudyFixtureV1} from './signal-study.synthetic.fixture';
+import {rotateSyntheticListeningStudyDailyCapV1} from './signal-listening-study-policy-rotation.synthetic.fixture';
 const enabled=process.env.NOISIA_R16_LISTENING_STUDY_POLICY_PG==='true';
 const allocation={budget_micro_usd:15000000,discovery_cap_micro_usd:9000000,study_cap_micro_usd:5000000,prototype_cap_micro_usd:1000000};
-async function fixture(fn:(v:Omit<Awaited<ReturnType<typeof createProcessingPolicyIdentitiesV1>>,'database'>&{database:Pick<Pool,'connect'>;raw:PoolClient;prior:{id:string;policy_digest:string};valid_until:string})=>Promise<void>){
+async function fixture(fn:(v:Omit<Awaited<ReturnType<typeof createProcessingPolicyIdentitiesV1>>,'database'>&{database:Pick<Pool,'connect'>;raw:PoolClient;prior:{id:string;policy_digest:string};valid_until:string})=>Promise<void>,dailyCap:number|null=20000000){
  const {openDatabase}=await import(new URL('../../../scripts/dev-corpus/guard.mjs',import.meta.url).href);const pool:Pool=await openDatabase(),raw=await pool.connect();
  try{await raw.query('BEGIN');const f=await createProcessingPolicyIdentitiesV1({database:pool,scoped:raw});
  const prior=(await raw.query(`INSERT INTO signal_processing_policy_versions(organization_id,version,status,valid_from,valid_until,budget_timezone,daily_cap_micro_usd,created_by_user_id)
- VALUES($1,1,'draft',clock_timestamp()-interval '1 minute',clock_timestamp()+interval '2 days','UTC',20000000,$2) RETURNING id`,[f.first.organization_id,f.actors.internal])).rows[0]!;
+ VALUES($1,1,'draft',clock_timestamp()-interval '1 minute',clock_timestamp()+interval '2 days','UTC',$3,$2) RETURNING id`,[f.first.organization_id,f.actors.internal,dailyCap])).rows[0]!;
  await raw.query(`INSERT INTO signal_processing_policy_actions(policy_version_id,action,kind,provider,model,configuration,configuration_digest,max_execution_micro_usd,automatic_allowed)
  VALUES($1,'mass_labeling_jev','provider','typesafe','jev-1.13.0','{}',signal_semantic_context_digest_json_v2('{}'),10000000,false),
  ($1,'corpus_preparation','free',NULL,NULL,'{}',signal_semantic_context_digest_json_v2('{}'),0,false)`,[prior.id]);
@@ -107,9 +108,25 @@ test('actual admitted R16 Study and closed-loop owners block replacement',{
  // The fixture contains an active native discovery owner, with real admissions
  // and provider receipts from its synthetic transport. No status or guard is bypassed.
  await assert.rejects(quoteSignalListeningStudyPolicyV1(args),/r16_policy_active_work/);
+ await assert.rejects(rotateSyntheticListeningStudyDailyCapV1({...f,prior_policy_id:f.policy.id,daily_cap_micro_usd:'9000000'}),/r16_policy_active_work_or_changed/,'a smaller daily limit does not authorize rotation while a native cycle is active');
  const execution=await f.request();assert.ok(execution.id);
  await assert.rejects(quoteSignalListeningStudyPolicyV1(args),/r16_policy_active_work/);
 }));
+test('native inheritance may only retain or reduce a daily limit, preserving the immutable allocation and denying reset',{
+ skip:!enabled,timeout:120000,
+},async()=>{
+ for(const dailyCap of [null,20000000])await fixture(async f=>{
+  const args={database:f.database,workspace_id:f.first.workspace_id,actor_user_id:f.actors.internal,expected_policy_id:f.prior.id,expected_policy_digest:f.prior.policy_digest,valid_until:f.valid_until,...allocation};
+  const quote=await quoteSignalListeningStudyPolicyV1(args),original=await provisionSignalListeningStudyPolicyV1({...args,plan_digest:quote.plan_digest,idempotency_key:randomUUID()});
+  const before=(await f.raw.query('SELECT to_jsonb(scope) value FROM signal_listening_study_policy_scopes scope WHERE id=$1',[original.scope_id])).rows[0]!.value;
+  const narrowed=await rotateSyntheticListeningStudyDailyCapV1({...args,prior_policy_id:original.policy_id,daily_cap_micro_usd:'19000000'});assert.equal(narrowed.scope_id,original.scope_id);
+  assert.equal((await f.raw.query('SELECT daily_cap_micro_usd::text cap FROM signal_processing_policy_versions WHERE id=$1',[narrowed.policy_id])).rows[0]!.cap,'19000000');
+  for(const cap of [null,'20000000'])await assert.rejects(rotateSyntheticListeningStudyDailyCapV1({...args,prior_policy_id:narrowed.policy_id,daily_cap_micro_usd:cap}),/r16_policy_active_work_or_changed/,'neither removing a finite daily limit nor increasing it can inherit the scope');
+  const active=(await f.raw.query('SELECT policy_digest FROM signal_processing_policy_versions WHERE id=$1',[narrowed.policy_id])).rows[0]!;
+  await assert.rejects(quoteSignalListeningStudyPolicyV1({...args,expected_policy_id:narrowed.policy_id,expected_policy_digest:active.policy_digest,budget_micro_usd:allocation.budget_micro_usd+1}),/r16_policy_scope_widened/);
+  assert.deepEqual((await f.raw.query('SELECT to_jsonb(scope) value FROM signal_listening_study_policy_scopes scope WHERE id=$1',[original.scope_id])).rows[0]!.value,before,'reducing a daily cap never replaces the ledger root or replenishes its allocation');
+ },dailyCap);
+});
 test('native provisioner feeds real Listening preparation/admission and the Study parent policy check without fixture R16 grants',{
  skip:!enabled,timeout:600000,
 },async()=>{
