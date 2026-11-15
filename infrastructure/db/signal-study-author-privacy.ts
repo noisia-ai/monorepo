@@ -12,7 +12,8 @@ export function signalStudyKnownAuthorPrivacyV1(metadata:SignalStudyAuthorMetada
  const provenance:Array<{field:typeof fields[number];sha256:string}>=[],names=new Set<string>();
  for(const field of selected){const label=metadata[field]?.normalize('NFC').trim();if(!label)continue;names.add(label);provenance.push({field,sha256:'sha256:'+createHash('sha256').update(label).digest('hex')});}
  const private_person_names=[...names].sort(),contract_version='signal-study-known-author-privacy-v1' as const;
- return{contract_version,private_person_names,provenance,
-  metadata_digest:digest({contract_version,source_author_label_recorded:metadata.source_author_label_recorded,fields:Object.fromEntries(selected.map(field=>[field,metadata[field]]))}),
+ const metadata_snapshot={contract_version,source_author_label_recorded:metadata.source_author_label_recorded,fields:Object.fromEntries(selected.map(field=>[field,metadata[field]]))};
+ return{contract_version,private_person_names,provenance,metadata_snapshot,
+  metadata_digest:digest(metadata_snapshot),
   roster_digest:digest(private_person_names)};
 }

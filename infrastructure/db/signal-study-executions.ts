@@ -29,9 +29,9 @@ export async function requestSignalStudyExecutionV1(args:StudyAccessV1&{configur
   if(ready.records.length)await c.query(`INSERT INTO signal_study_source_roots(execution_id,workspace_id,root_id,map_id,input_digest,asset_sha256,chunk_policy_version,chunk_sha256,chunk_index,start_offset,end_offset,embedding_config_digest,embedding_call_id,embedding_run_id,
    native_vector_sha256,base_cache,attributes,listening_topic_keys,question_cache_ids,occurred_at,channel,source_url,private_person_names,proof_json,proof_digest)
    SELECT $1,$2,x.root_id,$3,x.input_digest,x.asset_sha256,x.chunk_policy_version,x.chunk_sha256,x.chunk_index,x.start_offset,x.end_offset,x.embedding_config_digest,x.embedding_call_id,x.embedding_run_id,x.native_vector_sha256,
-   x.base_cache,x.attributes,x.listening_topic_keys,x.question_cache_ids,x.occurred_at,x.channel,x.source_url,'{}',x.proof_json,x.proof_digest
+   x.base_cache,x.attributes,x.listening_topic_keys,x.question_cache_ids,x.occurred_at,x.channel,x.source_url,x.private_person_names,x.proof_json,x.proof_digest
    FROM jsonb_to_recordset($4::jsonb)x(root_id uuid,input_digest text,asset_sha256 text,chunk_policy_version text,chunk_sha256 text,chunk_index integer,start_offset integer,end_offset integer,embedding_config_digest text,embedding_call_id uuid,embedding_run_id uuid,
-    native_vector_sha256 text,base_cache jsonb,attributes jsonb,listening_topic_keys text[],question_cache_ids uuid[],occurred_at timestamptz,channel text,source_url text,proof_json text,proof_digest text)`,
+    native_vector_sha256 text,base_cache jsonb,attributes jsonb,listening_topic_keys text[],question_cache_ids uuid[],occurred_at timestamptz,channel text,source_url text,private_person_names text[],proof_json text,proof_digest text)`,
    [id,args.workspace_id,map.id,JSON.stringify(ready.records.map(({row,proof_json,proof_digest})=>{const{full_text:_text,fragment:_fragment,vector_json,...saved}=row;return{...saved,native_vector_sha256:JSON.parse(proof_json).embedding_sha256,proof_json,proof_digest};}))]);
   await c.query('ANALYZE signal_study_source_roots');
   await c.query("SELECT set_config('noisia.study_source_verified_v1',$1,true)",[JSON.stringify({execution_id:id,source_digest:ready.source.source_digest,source_census_digest:ready.census})]);

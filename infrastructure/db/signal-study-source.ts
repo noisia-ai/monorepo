@@ -1,4 +1,5 @@
 import {createHash} from 'node:crypto';
+import{signalStudyKnownAuthorPrivacyV1,type SignalStudyAuthorMetadataV1}from'./signal-study-author-privacy';
 import type {PoolClient} from 'pg';
 import {signalStudyConfiguredCutV1,signalStudyJevTargetDigestV1,validateSignalStudyExecutionConfigurationV1,signalStudySourceUrlStateV1,SIGNAL_STUDY_EDITORIAL_COMPILER_V2,type SignalStudyExecutionConfigurationV1} from '@noisia/query-engine';
 import type {StudyRuntimeRootV1,StudyRuntimeSourceV1} from '../../services/workers/src/workers/signal-study-runtime';
@@ -13,6 +14,7 @@ const baseSql=`FROM signal_study_configuration_sources_v1 snapshot
  JOIN signal_mass_labeling_maps map ON map.id=snapshot.map_id AND map.workspace_id=snapshot.workspace_id
  JOIN signal_mass_labeling_items item ON item.map_id=map.id AND item.workspace_id=map.workspace_id AND item.root_id=frozen.root_id
  JOIN mentions mention ON mention.id=item.root_id AND mention.workspace_id=item.workspace_id AND mention.canonical_mention_id=mention.id AND mention.inclusion_status='included'
+ LEFT JOIN authors mention_author ON mention_author.id=mention.author_id
  LEFT JOIN signal_corpus_preparation_items prepared ON prepared.workspace_id=item.workspace_id AND prepared.run_id=map.preparation_run_id AND prepared.root_id=item.root_id AND prepared.disposition='eligible'
  LEFT JOIN signal_corpus_text_assets asset ON asset.workspace_id=item.workspace_id AND asset.text_sha256=prepared.asset_sha256 AND asset.chunk_policy_version=prepared.chunk_policy_version
  LEFT JOIN LATERAL(SELECT asset.chunks->'chunks'->item.chunk_index value) chunk ON true
@@ -47,8 +49,10 @@ const rowFields=`frozen.root_id,frozen.proof_digest listening_proof_digest,froze
  embedding_run.preparation_run_id embedding_preparation_run_id,embedding_run.input_contract embedding_input_contract,embedding_run.profile embedding_profile,
  embedding.request_digest embedding_request_digest,embedding.batch_digest embedding_batch_digest,embedding.response_digest embedding_raw_sha256,map.embedding_config_digest,
  answers.cache base_cache,attributes.value attributes,topics.keys listening_topic_keys,hints.ids question_cache_ids,
- mention.published_at occurred_at,COALESCE(mention.platform,'unknown') channel,COALESCE(mention.url,'') source_url`;
-type NativeRow={root_id:string;listening_proof_digest:string;listening_evaluations:unknown[];input_digest:string;corpus_preparation_run_id:string;entity_context_digest:string;asset_sha256:string;chunk_policy_version:string;chunk_sha256:string;chunk_index:number;
+ mention.published_at occurred_at,COALESCE(mention.platform,'unknown') channel,COALESCE(mention.url,'') source_url,mention.author_id source_author_id,mention.source_author_label_recorded,CASE WHEN mention.source_author_label_recorded THEN mention.source_author_label END source_author_label,
+ CASE WHEN NOT mention.source_author_label_recorded AND jsonb_typeof(mention.raw_metadata->'author')='string' THEN mention.raw_metadata->>'author' END legacy_author,
+ CASE WHEN NOT mention.source_author_label_recorded THEN mention_author.display_name END linked_author_display_name,CASE WHEN NOT mention.source_author_label_recorded THEN mention_author.handle END linked_author_handle`;
+type NativeRow=SignalStudyAuthorMetadataV1&{source_author_id:string|null;root_id:string;listening_proof_digest:string;listening_evaluations:unknown[];input_digest:string;corpus_preparation_run_id:string;entity_context_digest:string;asset_sha256:string;chunk_policy_version:string;chunk_sha256:string;chunk_index:number;
  start_offset:number;end_offset:number;full_text:string;fragment:string;vector_json:string;embedding_call_id:string;embedding_run_id:string;embedding_preparation_run_id:string|null;
  embedding_response_index:number;embedding_input_contract:string;embedding_profile:Record<string,unknown>;embedding_request_digest:string;embedding_batch_digest:string;embedding_raw_sha256:string;embedding_config_digest:string;
  base_cache:Record<string,{answer:StudyRuntimeRootV1['base_answers'][string];call_id:string;question_digest:string}>;attributes:Record<string,string[]>;listening_topic_keys:string[];question_cache_ids:string[];
@@ -57,9 +61,11 @@ function params(cfg:SignalStudyConfigurationRecordV1,ids:string[]|null=null){ret
 export async function prepareSignalStudySourceWithClientV1(c:PoolClient,cfg:SignalStudyConfigurationRecordV1,executionId:string,metadata:{query_terms:string[];problem_terms:string[]}){
  const configuration=validateSignalStudyExecutionConfigurationV1(cfg.envelope),validFilters=new Set(['platform','channel','topic',...configuration.source_listening.configuration.questions.map(q=>q.key)]);
  if(Object.keys(configuration.study.cut.filters).some(key=>!validFilters.has(key)))fail('cut_filter_invalid',422);
+ // Author metadata can appear in both the private proof JSON and the roster.
+ // Account for both JSON escaping layers BEFORE hydrating those known labels.
  const bound=(await c.query<{eligible:number;pending_base:number;invalid:number;working_bytes:string;ids:string[]}>(`WITH selected AS MATERIALIZED(SELECT frozen.root_id,${eligibleSql} eligible,NOT(answers.cache ?& ARRAY['voice','promotion']) pending,
   NOT COALESCE(${validSql},false) invalid,
-  (4*(COALESCE(octet_length(asset.full_text),0)+COALESCE(octet_length(cached.embedding::text),0)+octet_length(answers.cache::text)+octet_length(attributes.value::text)+hints.bytes+4096)+8192)::bigint working_bytes
+  (4*(COALESCE(octet_length(asset.full_text),0)+COALESCE(octet_length(cached.embedding::text),0)+octet_length(answers.cache::text)+octet_length(attributes.value::text)+hints.bytes+12*(CASE WHEN mention.source_author_label_recorded THEN COALESCE(octet_length(mention.source_author_label),0) ELSE COALESCE(octet_length(mention.raw_metadata->>'author'),0)+COALESCE(octet_length(mention_author.display_name),0)+COALESCE(octet_length(mention_author.handle),0) END)+4096)+8192)::bigint working_bytes
   ${baseSql} AND ${filteredSql}) SELECT count(*) FILTER(WHERE eligible)::int eligible,count(*) FILTER(WHERE pending)::int pending_base,
   count(*) FILTER(WHERE eligible AND invalid)::int invalid,COALESCE(sum(working_bytes) FILTER(WHERE eligible),0)::text working_bytes,
   ARRAY(SELECT root_id::text FROM selected WHERE eligible ORDER BY root_id LIMIT ${STUDY_SOURCE_MAX_ROOTS_V1+1}) ids FROM selected`,params(cfg))).rows[0]!;
@@ -74,6 +80,7 @@ export async function prepareSignalStudySourceWithClientV1(c:PoolClient,cfg:Sign
  const cacheById=new Map(cachedRows.map(({id,root_id,...answer})=>[id,{root_id,answer}]));
  const records=rows.map(row=>{
   if(sha(row.full_text)!==row.asset_sha256||sha(row.fragment)!==row.chunk_sha256||row.full_text.slice(row.start_offset,row.end_offset)!==row.fragment||row.fragment.length>1400)fail('fragment_provenance_invalid');
+  const privacy=signalStudyKnownAuthorPrivacyV1(row);
   const vector=JSON.parse(row.vector_json) as number[];if(vector.length!==1024||vector.some(v=>!Number.isFinite(v))||Math.abs(Math.hypot(...vector)-1)>.0001)fail('cached_vector_invalid');
   const proof={contract_version:'signal-study-cached-vector-source-proof-v1',workspace_id:cfg.workspace_id,execution_id:executionId,root_id:row.root_id,input_digest:row.input_digest,
    source_text_sha256:row.chunk_sha256,original_source_text_sha256:row.asset_sha256,chunk_sha256:row.chunk_sha256,
@@ -81,16 +88,16 @@ export async function prepareSignalStudySourceWithClientV1(c:PoolClient,cfg:Sign
    embedding_call_id:row.embedding_call_id,embedding_run_id:row.embedding_run_id,embedding_preparation_run_id:row.embedding_preparation_run_id,
    embedding_input_contract:row.embedding_input_contract,embedding_response_index:row.embedding_response_index,embedding_raw_sha256:row.embedding_raw_sha256,embedding_request_digest:row.embedding_request_digest,
    embedding_batch_digest:row.embedding_batch_digest,embedding_chunk_sha256:row.chunk_sha256,embedding_model:row.embedding_profile.model,embedding_profile:row.embedding_profile,
-   embedding_config_digest:row.embedding_config_digest,context_digest:row.entity_context_digest,embedding_sha256:sha(row.vector_json),base_cache:row.base_cache,listening_proof_digest:row.listening_proof_digest,listening_evaluations:row.listening_evaluations};
+   embedding_config_digest:row.embedding_config_digest,context_digest:row.entity_context_digest,embedding_sha256:sha(row.vector_json),base_cache:row.base_cache,listening_proof_digest:row.listening_proof_digest,listening_evaluations:row.listening_evaluations,author_privacy:{contract_version:privacy.contract_version,provenance:privacy.provenance,author_id:row.source_author_id,metadata_snapshot:privacy.metadata_snapshot,metadata_digest:privacy.metadata_digest,roster_digest:privacy.roster_digest}};
   const proof_json=JSON.stringify(proof),proof_digest=sha(proof_json);
   const cache=row.question_cache_ids.map(id=>{const saved=cacheById.get(id);if(!saved||saved.root_id!==row.root_id)fail('question_cache_provenance_invalid');return saved.answer;});
   const root:StudyRuntimeRootV1={root_id:row.root_id,text:row.full_text,text_sha256:row.asset_sha256,vector,occurred_at:new Date(row.occurred_at).toISOString(),channel:row.channel,source_url:row.source_url,
-   listening_topic_keys:row.listening_topic_keys,private_person_names:[],attributes:row.attributes,base_answers:{voice:row.base_cache.voice!.answer,promotion:row.base_cache.promotion!.answer},question_cache:cache,
+   listening_topic_keys:row.listening_topic_keys,private_person_names:privacy.private_person_names,attributes:row.attributes,base_answers:{voice:row.base_cache.voice!.answer,promotion:row.base_cache.promotion!.answer},question_cache:cache,
    selected_fragment:{text:row.fragment,text_sha256:row.chunk_sha256,start:row.start_offset,end:row.end_offset},
    embedding_proof:{embedding_call_id:row.embedding_call_id,embedding_run_id:row.embedding_run_id,preparation_run_id:row.embedding_preparation_run_id,input_contract:row.embedding_input_contract,
     text_sha256:row.chunk_sha256,vector_digest:digest(vector),proof_json,proof_digest,vector_json:row.vector_json}};
   if(signalStudyConfiguredCutV1({configuration,text:root.text,occurred_at:root.occurred_at,answers:root.base_answers,attributes:root.attributes})!=='included')fail('native_cut_mismatch');
-  return{row,root,proof_json,proof_digest};
+  return{row:{...row,private_person_names:privacy.private_person_names},root,proof_json,proof_digest};
  });
  const baseline=(await c.query<{corpus:number;brand:number}>(`SELECT count(*)::int corpus,count(*) FILTER(WHERE mention.published_at>=($3::jsonb#>>'{study,cut,start_at}')::timestamptz AND mention.published_at<($3::jsonb#>>'{study,cut,end_at}')::timestamptz)::int brand
   FROM signal_study_configuration_sources_v1 snapshot JOIN signal_listening_discovery_roots r ON r.generation_id=snapshot.generation_id AND r.workspace_id=snapshot.workspace_id
@@ -111,7 +118,7 @@ export async function prepareSignalStudySourceWithClientV1(c:PoolClient,cfg:Sign
  * to latest Listening or hydrates an outside-cut root. */
 export async function readSignalStudySourceWithClientV1(c:PoolClient,execution:Pick<SignalStudyExecutionRecordV1,'id'|'workspace_id'|'configuration_id'|'source_roots'|'source_header'|'source_digest'>):Promise<StudyRuntimeSourceV1>{
  const cfg=(await c.query<SignalStudyConfigurationRecordV1>('SELECT * FROM signal_study_configurations WHERE id=$1 AND workspace_id=$2',[execution.configuration_id,execution.workspace_id])).rows[0]!;
- const bounds=(await c.query<{n:number;bytes:string}>(`SELECT count(*)::int n,COALESCE(sum(4*(octet_length(asset.full_text)+octet_length(cached.embedding::text)+octet_length(saved.base_cache::text)+octet_length(saved.attributes::text)+octet_length(saved.proof_json)+8192+cardinality(saved.question_cache_ids)*2048)),0)::text bytes
+ const bounds=(await c.query<{n:number;bytes:string}>(`SELECT count(*)::int n,COALESCE(sum(4*(octet_length(asset.full_text)+octet_length(cached.embedding::text)+octet_length(saved.base_cache::text)+octet_length(saved.attributes::text)+octet_length(saved.proof_json)+octet_length(saved.private_person_names::text)+8192+cardinality(saved.question_cache_ids)*2048)),0)::text bytes
   FROM signal_study_source_roots saved JOIN signal_corpus_text_assets asset ON asset.workspace_id=saved.workspace_id AND asset.text_sha256=saved.asset_sha256 AND asset.chunk_policy_version=saved.chunk_policy_version
   JOIN signal_workspace_chunk_embeddings cached ON cached.workspace_id=saved.workspace_id AND cached.config_digest=saved.embedding_config_digest AND cached.chunk_sha256=saved.chunk_sha256
   WHERE saved.execution_id=$1 AND saved.workspace_id=$2`,[execution.id,execution.workspace_id])).rows[0]!;
@@ -128,7 +135,8 @@ export async function readSignalStudySourceWithClientV1(c:PoolClient,execution:P
  const roots:StudyRuntimeRootV1[]=[];
  for(const row of rows){const saved=row.source as unknown as NativeRow&{proof_json:string;proof_digest:string;native_vector_sha256:string;private_person_names:string[]};
   if(sha(row.full_text)!==saved.asset_sha256||sha(row.vector_json)!==saved.native_vector_sha256||sha(row.fragment)!==saved.chunk_sha256||row.full_text.slice(saved.start_offset,saved.end_offset)!==row.fragment)fail('source_changed');
-  const proof=JSON.parse(saved.proof_json),cache=saved.question_cache_ids.map(id=>{const hit=cacheById.get(id);if(!hit||hit.root_id!==row.root_id)fail('question_cache_provenance_invalid');return hit.answer;});
+  const proof=JSON.parse(saved.proof_json);if(proof.author_privacy&&(proof.author_privacy.roster_digest!==digest(saved.private_person_names)||proof.author_privacy.metadata_digest!==digest(proof.author_privacy.metadata_snapshot)))fail('author_privacy_provenance_invalid');
+  const cache=saved.question_cache_ids.map(id=>{const hit=cacheById.get(id);if(!hit||hit.root_id!==row.root_id)fail('question_cache_provenance_invalid');return hit.answer;});
   const vector=JSON.parse(row.vector_json) as number[];
   roots.push({root_id:row.root_id,text:row.full_text,text_sha256:saved.asset_sha256,vector,occurred_at:new Date(saved.occurred_at).toISOString(),channel:saved.channel,source_url:saved.source_url,listening_topic_keys:saved.listening_topic_keys,private_person_names:saved.private_person_names,
    attributes:saved.attributes,base_answers:{voice:saved.base_cache.voice!.answer,promotion:saved.base_cache.promotion!.answer},question_cache:cache as StudyRuntimeRootV1['question_cache'],
