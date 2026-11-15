@@ -1,9 +1,9 @@
 import {createHash} from 'node:crypto';
 import type {PoolClient} from 'pg';
-import {signalStudyConfiguredCutV1,signalStudyJevTargetDigestV1,validateSignalStudyExecutionConfigurationV1,type SignalStudyExecutionConfigurationV1} from '@noisia/query-engine';
+import {signalStudyConfiguredCutV1,signalStudyJevTargetDigestV1,validateSignalStudyExecutionConfigurationV1,signalStudySourceUrlStateV1,type SignalStudyExecutionConfigurationV1} from '@noisia/query-engine';
 import type {StudyRuntimeRootV1,StudyRuntimeSourceV1} from '../../services/workers/src/workers/signal-study-runtime';
 import {studyDigestV1 as digest,studyFailV1 as fail,type SignalStudyConfigurationRecordV1,type SignalStudyExecutionRecordV1} from './signal-study-core';
-export function signalStudySourceUrlStateV1(value:string):'valid'|'missing'|'invalid'{if(!value.trim())return'missing';try{const url=new URL(value);return['http:','https:'].includes(url.protocol)&&!url.username&&!url.password?'valid':'invalid';}catch{return'invalid';}}
+export {signalStudySourceUrlStateV1} from '@noisia/query-engine';
 export const STUDY_SOURCE_MAX_ROOTS_V1=32768;
 export const STUDY_SOURCE_MAX_BYTES_V1=128*1024*1024;
 const sha=(body:string)=>'sha256:'+createHash('sha256').update(body).digest('hex');

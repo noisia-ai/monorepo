@@ -2,6 +2,7 @@ import "./env/load";
 import {startSignalListeningDrainerV1} from "./workers/signal-listening-jev";
 import {startSignalListeningDiscoveryAutomationV1} from "./workers/signal-listening-discovery-automation";
 import {startSignalListeningDiscoveryDrainerV1} from "./workers/signal-listening-discovery";
+import {startSignalStudyDrainerV1} from "./workers/signal-study-worker";
 
 import { isDataOsWorkerEnabled, isEngineRuntimeEnabled } from "@noisia/query-engine";
 import { closeWorkerDatabasePoolsV1, pool } from "./db/client";
@@ -68,6 +69,7 @@ const listeningDrainer = dataOsWorker ? startSignalListeningDrainerV1() : null;
 const listeningDiscoveryAutomation = dataOsWorker ? startSignalListeningDiscoveryAutomationV1({should_stop:()=>shuttingDown}) : null;
 const listeningDiscoveryDrainer = dataOsWorker ? startSignalListeningDiscoveryDrainerV1({should_stop:()=>shuttingDown,
   wake_advance:()=>{void listeningDiscoveryAutomation?.drainNow();}}) : null;
+const studyDrainer = dataOsWorker ? startSignalStudyDrainerV1({should_stop:()=>shuttingDown}) : null;
 const workspaceEmbeddingsDrainer = dataOsWorker ? startSignalWorkspaceEmbeddingsDrainerV1() : null;
 const workspaceMonitoringInsightsDrainer = dataOsWorker ? startSignalWorkspaceMonitoringInsightsDrainerV1() : null;
 const topicConsolidationDrainer = dataOsWorker ? startSignalTopicConsolidationOutboxDrainerV1() : null;
@@ -149,6 +151,7 @@ async function shutdown() {
   await corpusPreparationDrainer?.close();
   await listeningDiscoveryAutomation?.close();
   await listeningDiscoveryDrainer?.close();
+  await studyDrainer?.close();
   await workspaceEmbeddingsDrainer?.close();
   await listeningDrainer?.close();
   await workspaceMonitoringInsightsDrainer?.close();
