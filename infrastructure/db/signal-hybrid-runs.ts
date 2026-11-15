@@ -50,13 +50,19 @@ export const HYBRID_PROVIDER_RIGHTS_BEFORE_SUBMIT_SQL_V1 = `WITH selected_calls 
  -- Guard the index cast; the original textual identity comparison remains below.
  SELECT DISTINCT root_text,CASE WHEN length(root_text)=36 AND root_text ~ '^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$'
   THEN root_text::uuid END root_id FROM requested_inputs
-), requested_paths AS MATERIALIZED (
- SELECT DISTINCT requested.root_text,path.import_batch_id,path.data_source_id
+), requested_origins AS MATERIALIZED (
+ -- Resolve each root once before joining import paths. Keep the UUID probe inside
+ -- the fence; workspace is checked before any origin enters the materialized set.
+ SELECT requested.root_text,origin.id
  FROM requested_roots requested
  CROSS JOIN LATERAL (
-  SELECT origin.id FROM mentions origin WHERE origin.workspace_id=$2
-   AND origin.canonical_mention_id=requested.root_id AND origin.canonical_mention_id::text=requested.root_text OFFSET 0
+  SELECT origin.id,origin.workspace_id FROM mentions origin
+  WHERE origin.canonical_mention_id=requested.root_id AND origin.canonical_mention_id::text=requested.root_text OFFSET 0
  ) origin
+ WHERE origin.workspace_id=$2
+), requested_paths AS MATERIALIZED (
+ SELECT DISTINCT origin.root_text,path.import_batch_id,path.data_source_id
+ FROM requested_origins origin
  JOIN signal_mention_import_memberships path ON path.workspace_id=$2 AND path.mention_id=origin.id
 ), eligible_batches AS MATERIALIZED (
  SELECT batch.id,batch.data_source_id

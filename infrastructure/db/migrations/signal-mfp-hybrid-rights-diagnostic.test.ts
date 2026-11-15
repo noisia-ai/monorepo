@@ -17,7 +17,7 @@ test('estimated and actual rights plans retain parent paths and costs but redact
 test('diagnostics omit unrecognized and nonscalar payloads rather than recursively printing them',()=>{
  const rows=projectHybridRightsPlanDiagnosticV1({'Node Type':{private:'must not appear'},Filter:['must not appear'],'Plan Rows':Infinity,
   'Inner Unique':true,'Rows Removed by Filter':99,'Secret':'must not appear',Plans:[{'Node Type':'CTE Scan','CTE Name':'eligible_batches'}]});
- assert.deepEqual(rows,[{path:'root',parent_path:null,inner_unique:true},{path:'root.0',parent_path:'root',node_type:'CTE Scan',cte:'eligible_batches'}]);
+ assert.deepEqual(rows,[{path:'root',parent_path:null,inner_unique:true,rows_removed_by_filter:99},{path:'root.0',parent_path:'root',node_type:'CTE Scan',cte:'eligible_batches'}]);
  assert.equal(HYBRID_RIGHTS_DIAGNOSTIC_TABLES_V1.length,8);assert.equal(new Set(HYBRID_RIGHTS_DIAGNOSTIC_TABLES_V1).size,8);
  assert.ok(HYBRID_RIGHTS_DIAGNOSTIC_SETTINGS_V1.includes('statement_timeout'));assert.ok(HYBRID_RIGHTS_DIAGNOSTIC_SETTINGS_V1.includes('jit_above_cost'));
 });

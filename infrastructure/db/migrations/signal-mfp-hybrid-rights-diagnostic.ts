@@ -14,6 +14,7 @@ const fields=[
  ["parent_relationship","Parent Relationship"],["subplan","Subplan Name"],["cte","CTE Name"],["join_type","Join Type"],["inner_unique","Inner Unique"],
  ["index_cond","Index Cond"],["recheck_cond","Recheck Cond"],["filter","Filter"],["join_filter","Join Filter"],["hash_cond","Hash Cond"],["merge_cond","Merge Cond"],
  ["plan_rows","Plan Rows"],["plan_width","Plan Width"],["actual_rows","Actual Rows"],["actual_loops","Actual Loops"],
+ ["rows_removed_by_filter","Rows Removed by Filter"],["rows_removed_by_join_filter","Rows Removed by Join Filter"],
  ["startup_cost","Startup Cost"],["total_cost","Total Cost"],["actual_startup_ms","Actual Startup Time"],["actual_total_ms","Actual Total Time"],
  ["shared_hit_blocks","Shared Hit Blocks"],["shared_read_blocks","Shared Read Blocks"],["temp_read_blocks","Temp Read Blocks"],["temp_written_blocks","Temp Written Blocks"],
 ] as const;
