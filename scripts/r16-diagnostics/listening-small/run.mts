@@ -5,7 +5,7 @@ import {mkdir,open,readFile} from 'node:fs/promises';
 import {join,resolve,sep} from 'node:path';
 import {fileURLToPath,pathToFileURL} from 'node:url';
 import {performance} from 'node:perf_hooks';
-import {createListeningObserver,finishListeningObserver} from './observer.mjs';
+import {createListeningObserver,finishListeningObserver,INNER_PLAN_MIN_DURATION_MS} from './observer.mjs';
 
 const ROOT_COUNT=4096;
 const MAX_MS=9*60*1000;
@@ -210,7 +210,8 @@ export async function runListeningSmallDiagnosticV1(){
             preparation_admission_wall_ms:startedProcessing-admissionStarted,classification_serving_wall_ms:performance.now()-startedProcessing,
             warmups:warmups.length,warmup_phases:warmupPhases,calibrations,commit_batch_count:commits.length},
           observed_http_latency:latencySummary,storage:storageServer.metrics(),sql_profile:profile.snapshot(),
-          inner_plan_capture:{diagnostic_only:true,threshold_roots:1024,max_captures_per_query_hash:2,observations:observer.snapshot().inner_plan_observations},
+          inner_plan_capture:{diagnostic_only:true,threshold_roots:1024,max_captures_per_query_hash:2,min_duration_ms:INNER_PLAN_MIN_DURATION_MS,
+            plans_below_min_duration_captured:false,observations:observer.snapshot().inner_plan_observations},
           root_census_sha256:sha([...rootSet].sort().join('\n')),
           serving_question_count:serving.length,total_wall_ms:performance.now()-started};
       }} });
@@ -221,8 +222,11 @@ export async function runListeningSmallDiagnosticV1(){
     process.stdout.write(JSON.stringify({status:'complete',diagnostic_only:true,h1_accepted:false,artifact:'artifacts/r16-listening-small/result.json'})+'\n');
     return result;
   }catch(error){
+    const observerSnapshot=await finishListeningObserver(observer);
     const failure={contract_version:'r16-listening-small-diagnostic-v1',diagnostic_only:true,h1_accepted:false,
-      status:'failed',stage,code:safeError(error),total_wall_ms:performance.now()-started,observer:await finishListeningObserver(observer)};
+      status:'failed',stage,code:safeError(error),total_wall_ms:performance.now()-started,observer:observerSnapshot,
+      inner_plan_capture:{diagnostic_only:true,threshold_roots:1024,max_captures_per_query_hash:2,min_duration_ms:INNER_PLAN_MIN_DURATION_MS,
+        plans_below_min_duration_captured:false,observations:observerSnapshot.inner_plan_observations}};
     await atomicJson(artifact,failure).catch(()=>undefined);
     await storageServer?.close().catch(()=>undefined);
     process.stderr.write('listening_small_diagnostic_failed; sanitized artifact written\n');

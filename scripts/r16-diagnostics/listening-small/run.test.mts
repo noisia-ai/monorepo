@@ -181,7 +181,8 @@ test('inner-plan setup failure rolls back its savepoint then runs the original q
 });
 
 test('inner-plan capture retains bounded ordered plans with query-text hashes and removes its handler',async()=>{
- const {EventEmitter}=await import('node:events');const {captureInnerPlanQueryV1}=await import('./observer.mjs');
+ const {EventEmitter}=await import('node:events');const {captureInnerPlanQueryV1,INNER_PLAN_MIN_DURATION_MS}=await import('./observer.mjs');
+ assert.equal(INNER_PLAN_MIN_DURATION_MS,50);
  const prior={GITHUB_ACTIONS:process.env.GITHUB_ACTIONS,NOISIA_R16_SMALL_DIAGNOSTIC:process.env.NOISIA_R16_SMALL_DIAGNOSTIC,DATABASE_URL:process.env.DATABASE_URL};
  Object.assign(process.env,{GITHUB_ACTIONS:'true',NOISIA_R16_SMALL_DIAGNOSTIC:'true',DATABASE_URL:'postgresql://postgres:synthetic@127.0.0.1:54321/noisia_mfp_ci'});
  try{
@@ -197,6 +198,7 @@ test('inner-plan capture retains bounded ordered plans with query-text hashes an
   assert.equal(captured.observation.analyze_overhead_measured,false);
   const serialized=JSON.stringify(captured);assert.ok(!serialized.includes('SELECT synthetic_nested_'));assert.ok(!serialized.includes("'{}'::jsonb"));
   assert.ok(statements.some(sql=>sql.startsWith("SET LOCAL auto_explain.log_level")));
+  assert.ok(statements.includes('SET LOCAL auto_explain.log_min_duration = 50'));
   assert.ok(statements.includes('ROLLBACK TO SAVEPOINT r16_inner_plan_capture_v1'));assert.equal(client.listenerCount('notice'),0);
  }finally{
   for(const key of ['GITHUB_ACTIONS','NOISIA_R16_SMALL_DIAGNOSTIC','DATABASE_URL'] as const){const value=prior[key];if(value===undefined)delete process.env[key];else process.env[key]=value;}

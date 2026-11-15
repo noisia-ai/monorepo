@@ -15,6 +15,7 @@ const PLAN_NUMBERS=['Plan Rows','Plan Width','Actual Rows','Actual Loops','Start
 const PLAN_NAMES=['Node Type','Relation Name','Alias','Index Name','Join Type'];
 const SAFE_CTE_NAMES=new Set(['allowed_roots','selected_items','items','prepared','qs']);
 const MAX_INNER_PLANS_PER_QUERY=32;
+export const INNER_PLAN_MIN_DURATION_MS=50;
 const SAFE_NODE_TYPES=new Set(['Aggregate','Append','Bitmap Heap Scan','Bitmap Index Scan','CTE Scan','Custom Scan','Foreign Scan','Function Scan',
  'Gather','Gather Merge','GroupAggregate','Hash','HashAggregate','Hash Join','Incremental Sort','Index Only Scan','Index Scan','Limit','LockRows',
  'Materialize','Memoize','Merge Append','Merge Join','ModifyTable','Nested Loop','ProjectSet','Recursive Union','Result','Sample Scan','Seq Scan',
@@ -94,7 +95,7 @@ export async function captureInnerPlanQueryV1(args:{client:any;query:()=>Promise
    setupStage='auto_explain_configuration';
    await client.query('SET LOCAL auto_explain.log_parameter_max_length = 0');
    await client.query("SET LOCAL auto_explain.log_level = 'NOTICE'");
-   await client.query('SET LOCAL auto_explain.log_min_duration = 0');
+   await client.query(`SET LOCAL auto_explain.log_min_duration = ${INNER_PLAN_MIN_DURATION_MS}`);
    await client.query('SET LOCAL auto_explain.log_nested_statements = on');
    await client.query('SET LOCAL auto_explain.log_analyze = on');
    await client.query('SET LOCAL auto_explain.log_buffers = on');
