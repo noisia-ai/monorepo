@@ -12,6 +12,10 @@ No hay aprobaciones humanas intermedias en los procesos de análisis: Sonnet 4.6
 
 ## Progreso
 
+- H3 integración: 92b39fce cierra la inanición por publicaciones completadas que una edición humana volvió inválidas. El selector pagina con precisión de microsegundos, comprueba autoridad vigente y alcanza al siguiente owner válido sin cambiar los recibos históricos. La revisión independiente no encontró P0/P1/P2. La integración 733456f9/f2f2b652 lee vectores por páginas y conserva huérfanas cuando no hay candidatos: query-engine 707/707, tipado/lint 11/11 y PostgreSQL monetario 1/1 sobre seis clones independientes, 282 migraciones y cero omisiones. Evidencia privada sellada; no acredita todavía la orquestación completa H3.
+- H4: integrados los contratos de plantilla, ejes, muestras, motivos, capas, estabilidad, contraste y salida direccional, con las tres observaciones P2 corregidas y revisión independiente aprobada. La persistencia, ejecución y UI siguen pendientes; las funciones puras no se presentan como un Estudio ejecutado.
+- H1 diagnóstico: el corte combinado 31ab9c12 pasó matriz 8/8 y ensayo corto de 1,002 raíces a 488/s. No es aceptación sostenida. Continúa el cambio para alimentar ventanas mientras persisten las anteriores; los lectores nativos de V2 y Escucha excluyen reservas y resultados inciertos sin perder aislamiento.
+
 - H3 integración monetaria: fdd5e06a importado como 222f8582, PostgreSQL dedicado 1/1 sin omisiones sobre cinco clones y tipado/lint 11/11. Se añaden helpers privados de contexto, renovación y liberación de lease, junto con recuperación de publicación completada sin nueva lease ni proveedor. La regresión detectó y corrigió una comprobación de expiración evaluada antes de esperar el lock; el reloj ahora usa la fila materializada después de adquirirlo. La prueba nativa final conserva las carreras de presupuesto y pasa. El transporte y su contabilidad de respuestas incompletas siguen en integración.
 
 - H1 CI en 841042c5: verify y PostgreSQL verdes; benchmark falló antes de JEV por statement_timeout en la invalidación semántica heredada durante INSERT de menciones. Se conserva la traza del trigger y se investigará una corrección productiva aditiva, sin ampliar timeouts ni saltar guards. El perfil por operación 1a9b4a28 y su matriz 8/8 están en diagnóstico de 1,002 raíces.
@@ -110,6 +114,9 @@ Recibo: separar Voyage/JEV por raíz de Claude por número de grupos y vueltas; 
 
 ## Sorpresas y descubrimientos
 
+- Una ronda completada sin snapshot puede perder legitimidad de publicación por una edición humana posterior. Reintentar siempre las más antiguas llenaba el límite del drainer y bloqueaba trabajo nuevo. Se separa la recuperación publicable de la historia inmutable y se prueba con límite uno y una admisión nativa posterior.
+- Conservar todos los vectores y textos para la revisión editorial excedía el presupuesto de memoria del corpus. Dos pasadas paginadas mantienen los mismos censos, digest, centroides y muestras; sólo se cargan los textos finalmente seleccionados. Cero evaluaciones es un estado válido de huérfanas; las probabilidades nulas siguen siendo inválidas.
+
 - El fixture de capacidad conserva de forma persistente los datos tras completar la corrida. Para perfilar sin alterar resultados se selló un pg_dump del laboratorio propio, se renombró la base sintética completa y se creó otra vacía. No se reiniciaron estados de llamadas ni se eliminó el corpus o sus recibos.
 - La traza CI distingue el timeout de importación del throughput JEV: sync_signal_mention_governance invoca la procedencia por raíz y ésta dispara invalidate_signal_semantic_review_from_attributions_v1. Los límites de fixture ya no explican esa interrupción; falta medir y corregir el costo de esa ruta sin omitir su invalidación.
 
@@ -144,6 +151,9 @@ Recibo: separar Voyage/JEV por raíz de Claude por número de grupos y vueltas; 
 - El promedio del piloto completo incluye una etapa editorial que no escala por raíz. Multiplicarlo linealmente daba USD 205.81/millón; mantener explícitamente los grupos y una vuelta de referencia produce USD 114.035250. Ambos cálculos parten del mismo recibo, cuyo uso histórico permanece USD 17.280463.
 
 ## Registro de decisiones
+
+- 2026-11-15: no mutar ni retirar rondas completadas sólo para desbloquear una cola. Filtrar su recuperabilidad actual, paginar por timestamp completo e ID y mantener la validación definitiva en la activación atómica. Con el análisis desactivado, recuperar custodia financiera pendiente y publicaciones válidas sin iniciar análisis nuevo.
+- 2026-11-15: integrar la evidencia paginada sin cambiar la selección de muestras ni reemplazarla por ejemplos cercanos; preservar igualdad exacta con el constructor anterior y probar colección de vectores entre páginas.
 
 - 2026-11-14: completar una vuelta no autoriza a reabrir su lease inmutable si se pierde el acuse de publicación. Recuperar únicamente la activación faltante mediante su owner autorizado e idempotente. El drainer apagado por omisión sólo lista conciliación/publicación ya pagadas; los nuevos envíos requieren enabled explícito.
 
