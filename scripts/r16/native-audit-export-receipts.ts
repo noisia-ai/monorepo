@@ -1,15 +1,55 @@
+import { signalWorkspaceEmbeddingDigestV1 as digest } from "../../packages/query-engine/src/signal-workspace-embeddings-v1.js";
 type Client = { query<T extends Record<string, unknown> = Record<string, unknown>>(sql: string, values?: unknown[]): Promise<{ rows: T[] }> };
 type Generation = { id: string; workspace_id: string; map_id: string; configuration_id: string; preparation_run_id: string };
 type Study = { id: string; workspace_id: string };
 type Event = { ledger: string; call_id: string; stage: string; status: string; settled_micro_usd: string | null;
   reserved_micro_usd: string | null; started_at: Date | string | null; ended_at: Date | string | null; timing_granularity: "call" | "run" };
 
+export type NativeListeningRoundPathRowV1 = { id: string; ordinal: number; input_generation_id: string;
+  output_generation_id: string | null; status: string };
+
+export function nativeListeningRoundPathV1<T extends NativeListeningRoundPathRowV1>(args: { initial_generation_id: string; before_generation_id: string;
+  after_generation_id: string; rounds: readonly T[] }): { rounds: T[]; generation_ids: string[] } | null {
+  const { initial_generation_id: initial, before_generation_id: before, after_generation_id: after } = args;
+  if (!initial || !before || !after || initial === after) return null;
+  const rounds = [...args.rounds].sort((a, b) => a.ordinal - b.ordinal || a.id.localeCompare(b.id));
+  const path: T[] = [], generations = [initial];
+  let cursor = initial, beforeCount = initial === before ? 1 : 0, reachedAfter = cursor === after;
+  for (let i = 0; i < rounds.length && !reachedAfter; i++) {
+    const round = rounds[i]!;
+    if (round.ordinal !== i + 1 || round.input_generation_id !== cursor || round.status !== "completed" || !round.output_generation_id
+      || generations.includes(round.output_generation_id)) return null;
+    path.push(round);
+    cursor = round.output_generation_id;
+    generations.push(cursor);
+    if (cursor === before) beforeCount++;
+    if (cursor === after) reachedAfter = true;
+  }
+  return reachedAfter && beforeCount === 1 && generations.indexOf(before) < generations.indexOf(after)
+    ? { rounds: path, generation_ids: generations } : null;
+}
+
+export function nativeWallSpanV1(intervals: Iterable<{ started_at: Date | string | number | null; ended_at: Date | string | number | null }>): number | null {
+  let minStart = Number.POSITIVE_INFINITY, maxEnd = Number.NEGATIVE_INFINITY, count = 0;
+  for (const interval of intervals) {
+    if (interval.started_at === null || interval.ended_at === null) return null;
+    const start = new Date(interval.started_at).getTime(), end = new Date(interval.ended_at).getTime();
+    if (!Number.isFinite(start) || !Number.isFinite(end)) return null;
+    minStart = Math.min(minStart, start);
+    maxEnd = Math.max(maxEnd, end);
+    count++;
+  }
+  return count ? maxEnd - minStart : null;
+}
+
 export async function loadNativeReceiptEvidenceV1(client: Client, before: Generation, after: Generation, study: Study) {
   const events: Event[] = [], limitations = new Set<string>();
   const manifest: Record<string, unknown> = { contract_version: "r16-native-ledger-receipts-v1", deduplication: "ledger+call_id",
     generation_preparation_run_ids: [before.preparation_run_id, after.preparation_run_id] };
-  const parents = (await client.query<{ id: string; initial_generation_id: string; initial_classification_run_id: string;
-    initial_preparation_id: string | null; status: string }>(`SELECT e.id,e.initial_generation_id,e.initial_classification_run_id,e.initial_preparation_id,e.status
+  const parents = (await client.query<{ id: string; workspace_id: string; map_id: string; initial_configuration_id: string;
+    initial_generation_id: string; initial_classification_run_id: string; initial_preparation_id: string | null;
+    configuration_digest: string; root_census_digest: string; root_count: number; status: string }>(`SELECT e.id,e.workspace_id,e.map_id,e.initial_configuration_id,
+      e.initial_generation_id,e.initial_classification_run_id,e.initial_preparation_id,e.configuration_digest,e.root_census_digest,e.root_count,e.status
     FROM signal_listening_discovery_executions e WHERE e.workspace_id=$1 AND e.map_id=$2
       AND (e.initial_generation_id=$3 OR EXISTS(SELECT 1 FROM signal_listening_discovery_rounds r WHERE r.execution_id=e.id AND (r.input_generation_id=$3 OR r.output_generation_id=$3)))
       AND (e.initial_generation_id=$4 OR EXISTS(SELECT 1 FROM signal_listening_discovery_rounds r WHERE r.execution_id=e.id AND (r.input_generation_id=$4 OR r.output_generation_id=$4)))
@@ -20,22 +60,47 @@ export async function loadNativeReceiptEvidenceV1(client: Client, before: Genera
   } else {
     const parent = parents[0]!;
     const rounds = (await client.query<{ id: string; ordinal: number; input_generation_id: string; output_generation_id: string | null;
+      configuration_id: string; configuration_digest: string; source_digest: string; output_configuration_id: string | null; output_digest: string | null;
       classification_run_id: string | null; classification_preparation_id: string | null; status: string }>(`SELECT id,ordinal,input_generation_id,output_generation_id,
+        configuration_id,configuration_digest,source_digest,output_configuration_id,output_digest,
         classification_run_id,classification_preparation_id,status FROM signal_listening_discovery_rounds
       WHERE workspace_id=$1 AND execution_id=$2 ORDER BY ordinal,id`, [before.workspace_id, parent.id])).rows;
-    let cursor = before.id; const path: typeof rounds = [];
-    for (let n = 0; n < rounds.length && cursor !== after.id; n++) {
-      const candidates = rounds.filter(item => item.input_generation_id === cursor);
-      if (candidates.length !== 1) {
-        if (candidates.length > 1) limitations.add("listening_generation_path_ambiguous");
-        break;
-      }
-      const round = candidates[0]!;
-      path.push(round);
-      if (round.status !== "completed" || !round.output_generation_id) break;
-      cursor = round.output_generation_id;
+    const verifiedPath = parent.workspace_id === before.workspace_id && parent.workspace_id === after.workspace_id
+      && parent.map_id === before.map_id && parent.map_id === after.map_id
+      ? nativeListeningRoundPathV1({ initial_generation_id: parent.initial_generation_id, before_generation_id: before.id,
+        after_generation_id: after.id, rounds }) : null;
+    const path = verifiedPath?.rounds ?? [];
+    let ancestryProofValid = false;
+    if (verifiedPath) {
+      const generationRows = (await client.query<{ id: string; workspace_id: string; map_id: string; configuration_id: string;
+        configuration_digest: string; configuration: Record<string, unknown>; configuration_state: string;
+        kind: string; status: string; snapshot_digest: string | null; actual_digest: string | null;
+        source_current: boolean; census_digest: string; counts: { roots?: number } | null }>(`SELECT g.id,g.workspace_id,g.map_id,g.configuration_id,
+          cfg.configuration_digest,cfg.configuration,cfg.state configuration_state,g.kind,g.status,g.snapshot_digest,
+          signal_listening_discovery_digest_v1(g.id) actual_digest,
+          signal_listening_discovery_source_current_v1(g.id) source_current,signal_listening_discovery_census_v1(g.id) census_digest,g.counts
+        FROM signal_listening_discovery_generations g JOIN signal_listening_configurations cfg
+          ON cfg.workspace_id=g.workspace_id AND cfg.id=g.configuration_id
+        WHERE g.workspace_id=$1 AND g.id=ANY($2::uuid[]) ORDER BY g.id`, [before.workspace_id, verifiedPath.generation_ids])).rows;
+      const generationById = new Map(generationRows.map(row => [row.id, row]));
+      const initial = generationById.get(parent.initial_generation_id);
+      ancestryProofValid = generationRows.length === verifiedPath.generation_ids.length
+        && generationRows.every(row => row.workspace_id === before.workspace_id && row.map_id === before.map_id && row.status === "ready"
+          && row.kind === "confirmed_members" && row.source_current && row.configuration_state === "published"
+          && digest(row.configuration) === row.configuration_digest && row.snapshot_digest !== null && row.snapshot_digest === row.actual_digest)
+        && !!initial && initial.configuration_id === parent.initial_configuration_id
+        && initial.configuration_digest === parent.configuration_digest
+        && initial.counts?.roots === parent.root_count && initial.census_digest === parent.root_census_digest
+        && path.every(round => {
+          const input = generationById.get(round.input_generation_id), output = generationById.get(round.output_generation_id!);
+          return !!input && !!output && round.configuration_id === input.configuration_id
+            && input.census_digest === parent.root_census_digest && output.census_digest === parent.root_census_digest
+            && round.configuration_digest === input.configuration_digest && round.source_digest === input.snapshot_digest
+            && round.output_configuration_id === output.configuration_id && round.output_digest === output.configuration_digest;
+        });
     }
-    if (cursor !== after.id || !path.length) limitations.add("listening_generation_path_incomplete");
+    if (!verifiedPath) limitations.add("listening_generation_path_incomplete");
+    if (verifiedPath && !ancestryProofValid) limitations.add("listening_generation_ancestry_proof_invalid");
     const roundIds = path.map(item => item.id);
     const children = roundIds.length ? (await client.query<{ run_id: string; preparation_id: string | null }>(`SELECT run_id,preparation_id
       FROM signal_listening_discovery_children WHERE workspace_id=$1 AND execution_id=$2 AND round_id=ANY($3::uuid[]) ORDER BY run_id`,
@@ -45,10 +110,16 @@ export async function loadNativeReceiptEvidenceV1(client: Client, before: Genera
       ...path.flatMap(r => r.classification_preparation_id ? [r.classification_preparation_id] : []),
       ...children.flatMap(x => x.preparation_id ? [x.preparation_id] : [])])];
     manifest.listening_parent = { id: parent.id, initial_generation_id: parent.initial_generation_id,
-      initial_classification_run_id: parent.initial_classification_run_id, status: parent.status,
+      initial_configuration_id: parent.initial_configuration_id, configuration_digest: parent.configuration_digest,
+      root_count: parent.root_count, initial_classification_run_id: parent.initial_classification_run_id, status: parent.status,
       rounds: path.map(r => ({ id: r.id, ordinal: r.ordinal, input_generation_id: r.input_generation_id,
-        output_generation_id: r.output_generation_id, status: r.status, classification_run_id: r.classification_run_id,
-        classification_preparation_id: r.classification_preparation_id })), generation_path_complete: cursor === after.id,
+        output_generation_id: r.output_generation_id, configuration_id: r.configuration_id,
+        configuration_digest: r.configuration_digest, source_digest: r.source_digest,
+        output_configuration_id: r.output_configuration_id, output_digest: r.output_digest,
+        status: r.status, classification_run_id: r.classification_run_id,
+        classification_preparation_id: r.classification_preparation_id })), generation_path_complete: !!verifiedPath && ancestryProofValid,
+      before_generation_index: verifiedPath?.generation_ids.indexOf(before.id) ?? null,
+      generation_ids: verifiedPath?.generation_ids ?? null, root_census_digest: parent.root_census_digest,
       child_run_count: children.length };
     if (parent.status !== "completed") limitations.add("listening_parent_not_completed");
     const roundCalls = roundIds.length ? (await client.query<{ id: string; call_state: string; settled_micro_usd: string | null;
@@ -159,28 +230,32 @@ export async function loadNativeReceiptEvidenceV1(client: Client, before: Genera
     if (prior && prior.stage !== event.stage) limitations.add("native_receipt_stage_conflict"); else unique.set(key, event);
   }
   const calls = [...unique.values()], grouped = new Map<string, Event[]>();
-  for (const event of calls) grouped.set(event.stage, [...(grouped.get(event.stage) ?? []), event]);
+  for (const event of calls) {
+    let group = grouped.get(event.stage);
+    if (!group) { group = []; grouped.set(event.stage, group); }
+    group.push(event);
+  }
   const terminal = (e: Event) => e.status === "settled" ? e.settled_micro_usd !== null
     : e.status === "completed_without_new_provider_call" || e.status === "definitely_not_sent";
   const summarize = (stage: string, items: Event[]) => {
     const knownCost = items.every(terminal), knownTime = items.every(e => e.started_at !== null && e.ended_at !== null);
     const cost = knownCost ? items.reduce((n, e) => n + BigInt(e.settled_micro_usd ?? "0"), 0n) : null;
     const reserved = items.reduce((n, e) => n + BigInt(terminal(e) ? "0" : e.reserved_micro_usd ?? "0"), 0n);
-    const times = knownTime ? items.flatMap(e => [new Date(e.started_at!).getTime(), new Date(e.ended_at!).getTime()]) : [];
+    const elapsed = knownTime ? nativeWallSpanV1(items) : null;
     return { stage, cost_usd: safeUsd(cost), reserved_usd: safeUsd(reserved),
-      elapsed_ms: knownTime && times.every(Number.isFinite) ? Math.max(...times) - Math.min(...times) : null };
+      elapsed_ms: elapsed };
   };
   const stages = [...grouped].sort(([a], [b]) => a.localeCompare(b)).map(([stage, items]) => summarize(stage, items));
   const allCostKnown = calls.length > 0 && calls.every(terminal), allTimeKnown = calls.length > 0 && calls.every(e => e.started_at !== null && e.ended_at !== null);
   const allCost = allCostKnown ? calls.reduce((n, e) => n + BigInt(e.settled_micro_usd ?? "0"), 0n) : null;
   const reserve = calls.reduce((n, e) => n + BigInt(terminal(e) ? "0" : e.reserved_micro_usd ?? "0"), 0n);
   const reserveUnknownCodes = new Set(["listening_parent_missing_or_ambiguous", "listening_generation_path_incomplete", "listening_generation_path_ambiguous",
+    "listening_generation_ancestry_proof_invalid",
     "listening_sonnet_round_receipt_missing", "listening_labeling_run_source_missing", "listening_labeling_run_not_completed",
     "listening_preparation_source_missing", "listening_voyage_run_source_missing", "listening_voyage_run_not_completed",
     "study_step_receipt_missing", "study_jev_run_source_missing", "study_jev_run_not_completed", "native_receipt_stage_conflict"]);
   const exposureKnown = ![...limitations].some(code => reserveUnknownCodes.has(code));
-  const timeValues = allTimeKnown ? calls.flatMap(e => [new Date(e.started_at!).getTime(), new Date(e.ended_at!).getTime()]) : [];
-  const wall = allTimeKnown && timeValues.every(Number.isFinite) ? Math.max(...timeValues) - Math.min(...timeValues) : null;
+  const wall = allTimeKnown ? nativeWallSpanV1(calls) : null;
   const totalUsd = safeUsd(allCost), reservedUsd = exposureKnown ? safeUsd(reserve) : null;
   if (!allCostKnown) limitations.add("native_cost_unsettled_or_missing");
   if (!allTimeKnown || wall === null) limitations.add("native_timing_incomplete");
