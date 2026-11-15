@@ -87,15 +87,17 @@ export async function exportNativeAuditSnapshotV1(args: NativeAuditExportArgsV1)
     ];
     const config = validateSignalStudyExecutionConfigurationV1(study.envelope);
     const studyRows = await loadStudyRows(client, study, config, after);
+    const membershipEvidence = await loadNativeMembershipEvidence(client, study, studyRows);
     const receiptRows = await loadStudyReceipts(client, study.id);
-    return { before, after, study, config, listening, studyRows, receiptRows };
+    return { before, after, study, config, listening, studyRows, membershipEvidence, receiptRows };
   });
 
   const { before, after, study, config } = collected;
   const limitations = [
     "native_candidate_flags_unavailable",
     "native_layer_agreement_receipt_not_persisted",
-    "native_nearest_four_centroid_rank_artifact_unavailable",
+    ...(!collected.membershipEvidence.nearest_four_available ? ["native_nearest_four_membership_cache_unavailable"] : []),
+    ...(!collected.membershipEvidence.motive_memberships_available ? ["native_motive_membership_cache_unavailable"] : []),
     "outside_private_person_name_roster_unavailable_for_outside_cut_roots",
     ...collected.receiptRows.limitations,
   ];
@@ -283,6 +285,106 @@ async function loadStudyRows(client: ReadClientV1, execution: StudyExecutionRow,
   }
   rows.push(...await loadOutsideLexicalRows(client, execution, config, after));
   return rows;
+}
+
+async function loadNativeMembershipEvidence(client: ReadClientV1, execution: StudyExecutionRow, rows: BlindSnapshotV1["study"]): Promise<{
+  motive_memberships_available: boolean; nearest_four_available: boolean;
+}> {
+  const summary = execution.output?.summary as { motives?: Array<{ key?: unknown; name?: unknown; layer?: unknown; mentions?: unknown }> } | undefined;
+  if (!summary || !Array.isArray(summary.motives)) throw new Error("native_audit_study_summary_missing");
+  const motives = summary.motives.map(m => {
+    if (typeof m.key !== "string" || typeof m.name !== "string" || !["psychological", "personal", "social", "cultural", "unclear"].includes(String(m.layer))
+      || !Number.isSafeInteger(m.mentions) || Number(m.mentions) < 0) throw new Error("native_audit_study_summary_motive_invalid");
+    return { key: m.key, name: m.name, layer: String(m.layer), mentions: Number(m.mentions) };
+  }).sort((a, b) => b.mentions - a.mentions || a.key.localeCompare(b.key));
+  const cohortByKey = new Map(motives.map((m, index) => [m.key, LISTENING_COHORTS_V1[Math.min(9, Math.floor(index * 10 / Math.max(1, motives.length)))]!]));
+  const configRows = (await client.query<{ id: string; stage: string; created_at: Date | string; stage_configuration: Record<string, unknown> }>(`SELECT id,stage,created_at,stage_configuration
+    FROM signal_study_jev_batches WHERE execution_id=$1 AND status='completed' AND stage IN('membership','dominance_membership')
+    ORDER BY created_at,id`, [execution.id])).rows;
+  const configs = new Map(configRows.map(batch => [batch.id, { ...batch, questions: Array.isArray(batch.stage_configuration.questions)
+    ? batch.stage_configuration.questions as Array<Record<string, unknown>> : [] }]));
+  const definitions = new Map<string, { name: string; definition: string; stage: string; created_at: Date | string }>();
+  for (const batch of configs.values()) for (const question of batch.questions) {
+    if (typeof question.key !== "string" || !motives.some(motive => motive.key === question.key)) continue;
+    if (typeof question.text !== "string" || !question.text.trim() || typeof question.positive !== "string" || !question.positive.trim()) continue;
+    const previous = definitions.get(question.key);
+    if (!previous || (batch.stage === "dominance_membership" ? 0 : 1) < (previous.stage === "dominance_membership" ? 0 : 1)
+      || batch.stage === previous.stage && new Date(batch.created_at) > new Date(previous.created_at)) {
+      definitions.set(question.key, { name: question.text, definition: question.positive, stage: batch.stage, created_at: batch.created_at });
+    }
+  }
+  const byId = new Map(rows.map(row => [row.mention_id, row]));
+  const selectedMemberships = new Map<string, Map<string, { probability: number; name: string; definition: string; batch_id: string }>>();
+  const nearestBatchByRoot = new Map<string, { batch_id: string; stage: string; created_at: Date | string; question_keys: string[] }>();
+  const rootIds = rows.filter(row => row.axes_status === "observed").map(row => row.mention_id);
+  for (let offset = 0; offset < rootIds.length; offset += BATCH_SIZE) {
+    const batch = rootIds.slice(offset, offset + BATCH_SIZE);
+    const answers = (await client.query<{ root_id: string; batch_id: string; stage: string; created_at: Date | string; question_keys: string[];
+      motive_key: string; ordinal: number; answer: Record<string, unknown> }>(`SELECT m.root_id,b.id batch_id,b.stage,b.created_at,m.question_keys,
+        question.key motive_key,question.ordinal::int ordinal,a.answer
+      FROM signal_study_jev_batches b JOIN signal_study_jev_members m ON m.batch_id=b.id AND m.workspace_id=b.workspace_id
+      CROSS JOIN LATERAL unnest(m.question_keys) WITH ORDINALITY question(key,ordinal)
+      JOIN signal_study_answers a ON a.batch_id=b.id AND a.workspace_id=m.workspace_id AND a.root_id=m.root_id AND a.question_key=question.key
+       AND a.state_sha256=m.state_sha256 AND a.target_digest=m.target_digest AND a.model='jev-1.13.0'
+       AND a.question_digest=m.question_digests->>a.question_key
+      JOIN signal_labeling_raw_pages page ON page.id=a.raw_page_id AND page.status='verified'
+      WHERE b.execution_id=$1 AND b.status='completed' AND b.stage IN('membership','dominance_membership') AND m.root_id=ANY($2::uuid[])
+      ORDER BY m.root_id,question.ordinal,CASE WHEN b.stage='dominance_membership' THEN 0 ELSE 1 END,b.created_at DESC,b.id DESC`, [execution.id, batch])).rows;
+    const priority = (stage: string) => stage === "dominance_membership" ? 0 : 1;
+    const chosenPerRootBatch = new Map<string, { batch_id: string; stage: string; created_at: Date | string; question_keys: string[] }>();
+    for (const answer of answers) {
+      const chosenBatch = chosenPerRootBatch.get(answer.root_id);
+      if (!chosenBatch || priority(answer.stage) < priority(chosenBatch.stage)
+        || priority(answer.stage) === priority(chosenBatch.stage) && new Date(answer.created_at) > new Date(chosenBatch.created_at)) {
+        chosenPerRootBatch.set(answer.root_id, { batch_id: answer.batch_id, stage: answer.stage, created_at: answer.created_at, question_keys: answer.question_keys });
+      }
+      const batchConfig = configs.get(answer.batch_id);
+      const question = batchConfig?.questions.find(item => item.key === answer.motive_key);
+      const probability = Number(answer.answer.noul);
+      if (answer.answer.type !== "noul" || !Number.isFinite(probability) || probability < 0 || probability > 1
+        || typeof question?.text !== "string" || !question.text.trim() || typeof question.positive !== "string" || !question.positive.trim()) {
+        throw new Error("native_audit_membership_answer_invalid");
+      }
+      const current = selectedMemberships.get(answer.root_id) ?? new Map();
+      const existing = current.get(answer.motive_key);
+      if (!existing || priority(answer.stage) < priority(configs.get(existing.batch_id)?.stage ?? "membership")
+        || priority(answer.stage) === priority(configs.get(existing.batch_id)?.stage ?? "membership")
+          && new Date(answer.created_at) > new Date(configs.get(existing.batch_id)?.created_at ?? 0)) {
+        current.set(answer.motive_key, { probability, name: question.text, definition: question.positive, batch_id: answer.batch_id });
+      }
+      selectedMemberships.set(answer.root_id, current);
+    }
+    for (const [rootId, selected] of chosenPerRootBatch) {
+      const previous = nearestBatchByRoot.get(rootId);
+      if (!previous || priority(selected.stage) < priority(previous.stage)
+        || priority(selected.stage) === priority(previous.stage) && new Date(selected.created_at) > new Date(previous.created_at)) nearestBatchByRoot.set(rootId, selected);
+    }
+  }
+  for (const [rootId, memberships] of selectedMemberships) {
+    const row = byId.get(rootId); if (!row || row.axes_status !== "observed" || row.direction === "none" || row.use !== "literal") continue;
+    row.motive_memberships = [...memberships].filter(([, value]) => value.probability >= .7).flatMap(([key, value]) => {
+      const motive = motives.find(item => item.key === key), volume_cohort = cohortByKey.get(key);
+      const definition = definitions.get(key)?.definition;
+      return motive && volume_cohort && definition ? [{ motive_key: key, volume_cohort, name: motive.name, definition, layer: motive.layer }] : [];
+    });
+    const nearestBatch = nearestBatchByRoot.get(rootId);
+    if (!nearestBatch || nearestBatch.question_keys.length !== 4) continue;
+    const ranked = nearestBatch.question_keys.map(key => {
+      const assigned = memberships.get(key), motive = motives.find(item => item.key === key), volume_cohort = cohortByKey.get(key);
+      if (!assigned || !motive || !volume_cohort) return null;
+      const definition = definitions.get(key)?.definition;
+      if (!definition) return null;
+      return { motive_key: key, volume_cohort, name: motive.name, definition };
+    });
+    if (ranked.some(item => item === null)) continue;
+    const assigned = ranked.find(item => (memberships.get(item!.motive_key)?.probability ?? 0) >= .7);
+    if (!assigned) continue;
+    row.nearest_motives = ranked as NonNullable<typeof row.nearest_motives>;
+    row.nearest_assigned_motive_key = assigned.motive_key;
+    row.nearest_volume_cohort = assigned.volume_cohort;
+  }
+  return { motive_memberships_available: selectedMemberships.size > 0,
+    nearest_four_available: [...byId.values()].some(row => row.nearest_motives?.length === 4) };
 }
 
 async function loadOutsideLexicalRows(client: ReadClientV1, execution: StudyExecutionRow,
