@@ -30,7 +30,8 @@ export type SignalListeningCalibrationPlanV1={scope:Access;configuration:SignalL
 /** Only committed, verified receipt profiles can unlock concurrency. Missing or
  * out-of-coverage shapes use normal reusable labels in one bounded warmup window. */
 export async function planSignalListeningCalibrationV1(args:Access&{configuration:SignalListeningConfigurationV1;
-  inputs:SignalListeningInputV1[];execution:JevStreamingExecutionV2;loadProfile:LoadProfile}):Promise<SignalListeningCalibrationPlanV1>{
+  inputs:SignalListeningInputV1[];execution:JevStreamingExecutionV2;loadProfile:LoadProfile;compile_request?:(input:SignalListeningInputV1)=>JevRequestV1}):Promise<SignalListeningCalibrationPlanV1>{
+  if(args.compile_request!==undefined&&typeof args.compile_request!=='function')fail('listening_calibration_compiler_invalid');
   if(digest(args.configuration)!==args.configuration_digest||args.inputs.some(input=>input.configuration_digest!==args.configuration_digest))fail('listening_calibration_configuration_invalid');
   const shapes=new Map(args.inputs.map(input=>{const shape=signalListeningCalibrationShapeV1(args.configuration,input);return[shape.shape_digest,shape];}));
   const profiles=new Map<string,Profile|null>();
@@ -42,7 +43,9 @@ export async function planSignalListeningCalibrationV1(args:Access&{configuratio
     pendingByShape.set(key,(pendingByShape.get(key)??0)+1);}
   for(const [key,profile]of profiles)if(profile&&profile.sample_count<32&&profile.sample_count+(pendingByShape.get(key)??0)>=32)profiles.set(key,null);
   const rows=args.inputs.map((input,index)=>{
-    const request=buildSignalListeningJevRequestV1(input,args.configuration),bytes=assertSignalListeningRequestTransportV1(request);
+    const request=(args.compile_request??(input=>buildSignalListeningJevRequestV1(input,args.configuration)))(input);
+    if(request.model!==args.configuration.model||request.state!==input.text||Object.keys(request.questions).sort().join(',')!==[...input.question_keys].sort().join(','))fail('listening_calibration_compiler_invalid');
+    const bytes=assertSignalListeningRequestTransportV1(request);
     const shape=signalListeningCalibrationShapeV1(args.configuration,input),profile=profiles.get(shape.shape_digest);
     if(profile)assertSignalListeningMeasuredContextV1(request,profile.max_input_tokens_per_byte);
     return{input,index,request,bytes,shape:shape.shape_digest,covered:Boolean(profile&&bytes>=profile.request_min_bytes&&bytes<=profile.request_max_bytes)};

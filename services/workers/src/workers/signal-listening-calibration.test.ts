@@ -16,6 +16,18 @@ function fixture(){
     request_max_bytes:bytes+100,max_input_tokens_per_byte:.25,sample_count:1,status:'measured'};
   return{configuration,workspace_id,configuration_digest,input,profile};
 }
+test('explicit validated compiler measures persisted whitespace/UTF8 bytes; the default H2 compiler remains unchanged',async()=>{
+ const f=fixture(),input={...f.input,text:'I drink té ☕'},compiled=buildSignalListeningJevRequestV1(input,f.configuration);
+ const exact={...compiled,questions:Object.fromEntries(Object.entries(compiled.questions).map(([key,q])=>[key,{...q,instructions:{rules:'  Persisted UTF8 té ☕ rules with trailing spaces  ',question:'  Frozen question  '}}]))};
+ const exactBytes=Buffer.byteLength(JSON.stringify(exact)),profile={...f.profile,request_min_bytes:exactBytes,request_max_bytes:exactBytes};
+ let compilations=0;const custom=await planSignalListeningCalibrationV1({...f,inputs:[input],execution,loadProfile:async()=>profile,compile_request:value=>{assert.equal(value,input);compilations++;return exact;}});
+ assert.equal(custom.warmup,false);assert.equal(custom.execution.max_in_flight,1024);assert.equal(compilations,1);
+ const implicit=await planSignalListeningCalibrationV1({...f,inputs:[input],execution,loadProfile:async()=>profile});
+ assert.equal(implicit.warmup,true,'default compiler cannot claim the different persisted byte coverage');
+ assert.deepEqual(buildSignalListeningJevRequestV1(input,f.configuration),compiled);
+ let reads=0;await assert.rejects(planSignalListeningCalibrationV1({...f,inputs:[input],execution,loadProfile:async()=>{reads++;return profile;},compile_request:'invalid' as never}),/compiler_invalid/);assert.equal(reads,0);
+ await assert.rejects(planSignalListeningCalibrationV1({...f,inputs:[input],execution,loadProfile:async()=>profile,compile_request:()=>({...exact,state:'different source'})}),/compiler_invalid/);
+});
 test('a missing profile bootstraps at most32 roots on one slot with fixed official quota and reusable ordinary requests',async()=>{
   const f=fixture(),plan=await planSignalListeningCalibrationV1({...f,inputs:[f.input],execution,loadProfile:async()=>null});
   assert.equal(plan.warmup,true);assert.equal(plan.execution.window_size,32);assert.equal(plan.execution.max_in_flight,1);
