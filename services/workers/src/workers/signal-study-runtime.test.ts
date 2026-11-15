@@ -3,7 +3,7 @@ import test from 'node:test';
 import {createHash,randomUUID} from 'node:crypto';
 import {SIGNAL_STUDY_TB_TEMPLATE_V1,SIGNAL_STUDY_TB_ROLES_V1,createSignalStudyTemplateSnapshotV1,
  buildSignalStudyExecutionConfigurationV1,buildSignalStudyConfiguredAxesRequestV1,signalListeningBaseTemplateV1,signalWorkspaceEmbeddingDigestV1 as digest,
- type SignalStudyV1} from '@noisia/query-engine';
+ SIGNAL_STUDY_EDITORIAL_COMPILER_V2,type SignalStudyEditorialFormatStopV1,type SignalStudyV1} from '@noisia/query-engine';
 import type{StudyNumericManifestV1}from'./signal-study-numeric';
 import {signalStudyRuntimeJobV1,studyRuntimeJevQuestionIdentityV1,type StudyRuntimeJevBatchPlanV1,type StudyRuntimeJevBatchCheckpointV1,type StudyRuntimeStoreV1,type StudyRuntimeLeaseV1,type StudyRuntimeSourceV1,
  type StudyRuntimeStepV1,type StudyRuntimeStepPlanV1,type StudyRuntimeReceiptV1,type StudyRuntimeOutputV1,type StudyRuntimeNumericComputedV1,type StudyRuntimeNumericPlanV1,type StudyRuntimeStoredNumericV1} from './signal-study-runtime';
@@ -65,12 +65,13 @@ function fixture(count=160){
     }));return receipt({model:'jev-1.13.0',answers,usage:{input_tokens:10,output_tokens:5}});
    }
    const payload=JSON.parse(body.messages[0].content).untrusted_data,input_digest=digest(payload);let value:unknown;
-   if(payload.groups)value={contract_version:'signal-study-motive-output-v1',input_digest,insufficient_group_keys:[],motives:payload.groups.map((g:{group_key:string;rows:Array<{root_id:string}>},i:number)=>({key:i?'motive_b':'motive_a',name:'Synthetic force '+i,definition:'Synthetic force evidence '+i,group_keys:[g.group_key],evidence_root_ids:[g.rows[0]!.root_id]}))};
+   if(payload.contract_version==='signal-study-reconciliation-input-v2')value={contract_version:'signal-study-reconciliation-output-v2',input_digest,clusters:payload.candidates.map((c:{candidate_id:string})=>({representative_id:c.candidate_id,member_ids:[c.candidate_id]}))};
+   else if(payload.groups)value={contract_version:'signal-study-motive-output-v1',input_digest,insufficient_group_keys:[],motives:payload.groups.map((g:{group_key:string;rows:Array<{root_id:string}>},i:number)=>({key:i?'motive_b':'motive_a',name:'Synthetic force '+i,definition:'Synthetic force evidence '+i,group_keys:[g.group_key],evidence_root_ids:[g.rows[0]!.root_id]}))};
    else if(payload.affected_keys){dominant=false;value={contract_version:'signal-study-contrast-output-v1',input_digest,definitions:payload.motives.map((m:{key:string;sample:Array<{root_id:string}>})=>({key:m.key,name:'Contrasted force',definition:'A narrower synthetic force',contrast_reason:'Synthetic contrast',evidence_root_ids:[m.sample[0]!.root_id]}))};}
    else{const passB=payload.motives[0].sampling.independence==='disjoint'&&sends.filter(p=>p.kind==='sonnet'&&p.request_body.includes('"diagnostics"')).length%2===0;
-    value={contract_version:'signal-study-layer-output-v1',input_digest,motives:payload.motives.map((m:{key:string;sample:Array<{root_id:string;text:string}>})=>{
-     const a=m.key==='motive_a',layer=repair&&!payload.contrast_rule&&passB?(a?'personal':'psychological'):(a?'psychological':'personal');
-     return{motive_key:m.key,partitions:[{key:a?'force_a':'force_b',name:'Partition '+m.key,definition:'Evidence-backed synthetic force',sample_root_ids:m.sample.map(r=>r.root_id),layer,
+    value={contract_version:'signal-study-layer-output-v1',input_digest,motives:payload.motives.map((m:{key:string;name:string;partition_keys?:string[];sample:Array<{root_id:string;text:string}>})=>{
+     const a=m.key==='motive_a'||Boolean(m.partition_keys&&m.name==='Synthetic force 0'),layer=repair&&!payload.contrast_rule&&passB?(a?'personal':'psychological'):(a?'psychological':'personal');
+     return{motive_key:m.key,partitions:[{key:m.partition_keys?.[0]??(a?'force_a':'force_b'),name:'Partition '+m.key,definition:'Evidence-backed synthetic force',sample_root_ids:m.sample.map(r=>r.root_id),layer,
       diagnostics:payload.diagnostics.map((d:{key:string;layer:string})=>({key:d.key,result:d.layer===layer?'yes':'no',force_disappears_without:d.layer===layer,reason:'Synthetic counterfactual'})),
       evidence:{root_id:m.sample[0]!.root_id,quote:'feel calm',private_person_names:[]},normative_evidence:null,permission_override:override&&a?{permission:'partial',reason:'Exact stored analyst justification.'}:null}]};})};
    }
@@ -310,4 +311,32 @@ test('native receipt persistence reports unknown or sent as outcome_unknown befo
   journal.receipt={...journal.receipt!,sha256:'sha256:'+'0'.repeat(64)};};
  mismatch.store.settle=async()=>{settlements++;return'settled';};
  assert.equal((await signalStudyRuntimeJobV1(mismatch.execution_id,mismatch)).status,'receipt_pending');assert.equal(settlements,0);
+});
+
+function batchingFixture(){
+ const f=fixture(),stops:SignalStudyEditorialFormatStopV1[]=[];
+ f.source.editorial_compiler_version=SIGNAL_STUDY_EDITORIAL_COMPILER_V2;sealSource(f);
+ f.store.recordFormatStop=async(_lease,stop)=>{stops.push(stop);};
+ return{f,stops};
+}
+test('V2 discovery reconciles all local motives and uses identical canonical stages across restart',async()=>{
+ const{f,stops}=batchingFixture();const result=await signalStudyRuntimeJobV1(f.execution_id,f);
+ assert.equal(result.status,'completed');assert.equal(stops.length,0);assert.equal(f.output?.summary.denominator,160);assert.equal(f.output?.stability?.kappa,1);
+ const sonnet=f.sends.filter(s=>s.kind==='sonnet');assert.equal(sonnet.length,4);
+ const payloads=sonnet.map(s=>JSON.parse(JSON.parse(s.request_body).messages[0].content).untrusted_data);
+ assert.equal(payloads.filter(p=>p.contract_version==='signal-study-reconciliation-input-v2').length,1);
+ assert.equal(payloads.filter(p=>p.groups).flatMap(p=>p.groups).length,2);
+ assert.equal(f.journal.size,4);const keys=[...f.journal.keys()].sort();
+ const count=f.sends.length;assert.equal((await signalStudyRuntimeJobV1(f.execution_id,f)).status,'completed');assert.equal(f.sends.length,count);assert.equal(f.fitCalls,1);assert.deepEqual([...f.journal.keys()].sort(),keys);
+});
+test('V2 preflights an oversized indivisible sample before any Sonnet and preserves complete cut',async()=>{
+ const{f,stops}=batchingFixture();for(const root of f.source.roots){root.text+=' '+ 'x'.repeat(14000);root.text_sha256=sha(root.text);root.embedding_proof.text_sha256=root.text_sha256;}sealSource(f);
+ const result=await signalStudyRuntimeJobV1(f.execution_id,f);assert.equal(result.status,'format_stop');assert.equal(stops.length,1);
+ assert.equal(stops[0]!.reason,'request_bytes');assert.ok(stops[0]!.observed>524288);assert.equal(f.sends.filter(s=>s.kind==='sonnet').length,0);assert.equal(f.journal.size,0);
+ assert.equal(f.source.roots.length,160);assert.equal(f.source.selection.eligible_roots,160);assert.equal(f.fitCalls,1);
+ const before=f.sends.length;assert.equal((await signalStudyRuntimeJobV1(f.execution_id,f)).status,'format_stop');assert.equal(f.sends.length,before);assert.equal(f.fitCalls,1);
+});
+test('V2 requires durable format-stop authority before any batch or physical send',async()=>{
+ const{f}=batchingFixture();delete f.store.recordFormatStop;
+ await assert.rejects(signalStudyRuntimeJobV1(f.execution_id,f),/native_format_stop_store_required/u);assert.equal(f.sends.length,0);assert.equal(f.batches.size,0);assert.equal(f.fitCalls,0);
 });

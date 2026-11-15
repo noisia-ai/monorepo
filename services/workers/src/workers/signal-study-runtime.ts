@@ -1,6 +1,10 @@
 import {createHash} from 'node:crypto';
 import type{StudyNumericManifestV1}from'@noisia/query-engine';
 import {
+ SIGNAL_STUDY_EDITORIAL_COMPILER_V2,compileSignalStudyDiscoveryBatchesV2,compileSignalStudyLayerPairV2,compileSignalStudyContrastBatchesV2,
+ buildSignalStudyMotiveReconciliationV2,validateSignalStudyMotiveReconciliationV2,validateSignalStudyDiscoveryBatchPrefixV2,
+ aggregateSignalStudyLayerBatchesV2,assertSignalStudyLayerDecisionPrefixV1,validateSignalStudyLayerBatchV2,SignalStudyEditorialRequestSizeErrorV1,
+ type SignalStudyEditorialFormatStopV1,type SignalStudyEditorialCompilationV2,type SignalStudyEditorialBatchPlanV2,
  validateSignalStudyExecutionConfigurationV1,buildSignalStudyConfiguredAxesRequestV1,resolveSignalStudyConfiguredAxesV1,signalStudyConfiguredCutV1,
  buildSignalStudyMotiveFitPlanV1,buildSignalStudyMotivePopulationV1,sampleSignalStudyGroupV1,signalStudyConfirmedCentroidV1,
  buildSignalStudyMotiveReviewV1,validateSignalStudyMotiveReviewV1,buildSignalStudyConfiguredLayerReviewV1,validateSignalStudyLayerReviewV1,
@@ -29,7 +33,7 @@ export type StudyRuntimeSourceV1={configuration:SignalStudyExecutionConfiguratio
  selection:{scope:'listening_consumer_cut';source_listening_digest:string;cut_digest:string;eligible_root_ids_digest:string;
   eligible_roots:number;pending_base_roots:number;corpus_roots:number};
  embedding_space_digest:string;source_preparation_run_ids:string[];sampling_seed:string;query_terms:string[];problem_terms:string[];query_metadata?:{query_terms_declared:boolean;problem_terms_declared:boolean};brand_baseline_roots:number;
- source_digest:string;human_revision_digest:string;max_roots:number;max_bytes:number};
+ source_digest:string;human_revision_digest:string;max_roots:number;max_bytes:number;editorial_compiler_version?:typeof SIGNAL_STUDY_EDITORIAL_COMPILER_V2};
 export type StudyRuntimeReceiptV1={body_base64:string;body_bytes:number;sha256:string;complete:boolean;http_status:number|null;provider_request_id:string|null};
 export type StudyRuntimeStepPlanV1={key:string;kind:'sonnet';request_body:string;request_sha256:string;source_digest:string};
 export type StudyRuntimeStepV1=StudyRuntimeStepPlanV1&{status:'planned'|'sent'|'raw'|'committed'|'unknown';
@@ -58,6 +62,7 @@ export type StudyRuntimeStoreV1={
  claim(execution_id:string):Promise<StudyRuntimeLeaseV1|null>;
  renew(lease:StudyRuntimeLeaseV1):Promise<boolean>;release(lease:StudyRuntimeLeaseV1):Promise<void>;
  source(lease:StudyRuntimeLeaseV1):Promise<StudyRuntimeSourceV1|null>;
+ recordFormatStop?(lease:StudyRuntimeLeaseV1,stop:SignalStudyEditorialFormatStopV1):Promise<void>;
  /** CPU is separate from the paid send journal. Null means NO immutable intent.
   * Pending/verified intents recover remote custody only; never trigger a refit.
   * persistNumeric stages/readbacks ALL artifacts before inserting that intent. */
@@ -102,6 +107,7 @@ export type StudyRuntimeOutputV1={contract_version:'signal-study-runtime-output-
  stability:ReturnType<typeof signalStudyLayerStabilityV1>|null;dominance:ReturnType<typeof signalStudyDominancePlanV1>|null;
  verified_evidence:ReturnType<typeof verifySignalStudyVerbatimV1>[];insufficient_group_keys:string[];
  promotion:{status:'explicit_action_required';automatic:false}};
+class EditorialFormatStopped extends Error{constructor(readonly stop:SignalStudyEditorialFormatStopV1){super('format_stop');}}
 class Paused extends Error {constructor(readonly status:string,readonly progress?:{batch_id:string;completed:number;total:number}){super(status);}}
 const sha=(value:string|Buffer)=>'sha256:'+createHash('sha256').update(value).digest('hex');
 function fail(code:string):never{throw Error('study_runtime_'+code);}
@@ -144,6 +150,13 @@ export async function signalStudyRuntimeJobV1(execution_id:string,options:{store
  try{
   if(lease.execution_id!==execution_id||!uuid.test(lease.workspace_id)||!uuid.test(lease.execution_token))fail('lease_invalid');
   const raw=await store.source(lease);if(!raw)throw new Paused('stale');
+  if(raw.editorial_compiler_version!==undefined&&raw.editorial_compiler_version!==SIGNAL_STUDY_EDITORIAL_COMPILER_V2)fail('editorial_compiler_invalid');
+  const batching=raw.editorial_compiler_version===SIGNAL_STUDY_EDITORIAL_COMPILER_V2;
+  if(batching&&!store.recordFormatStop)fail('native_format_stop_store_required');
+  const compiled=async(value:SignalStudyEditorialCompilationV2):Promise<SignalStudyEditorialBatchPlanV2>=>{
+   if(value.status==='format_stop'){await active();await store.recordFormatStop!(lease,value);throw new EditorialFormatStopped(value);}
+   return value;
+  };
   const configuration=validateSignalStudyExecutionConfigurationV1(raw.configuration),{source_digest,...source}=raw;
   if(source_digest!==digest(source)||source_digest!==lease.source_digest||digest(configuration)!==lease.configuration_digest
    ||raw.human_revision_digest!==lease.human_revision_digest||configuration.study.workspace_id!==lease.workspace_id)fail('source_binding_invalid');
@@ -246,7 +259,7 @@ export async function signalStudyRuntimeJobV1(execution_id:string,options:{store
    }
    dependency({kind:'jev_batch',key:owner.batch_id,digest:checkpoint.checkpoint_digest});return answers;
   }
-  const editorial=<T>(stage:string,request:SignalStudyEditorialRequestV1,validate:(request:SignalStudyEditorialRequestV1,value:unknown)=>T)=>
+  const editorial=<R extends{request_body:string},T>(stage:string,request:R,validate:(request:R,value:unknown)=>T)=>
    step(stage,'sonnet',request.request_body,value=>{
     const body=value as {model?:string;content?:Array<{type:string;text?:string}>};
     if(body.model!=='claude-sonnet-4-6'||!Array.isArray(body.content)||body.content.filter(c=>c.type==='text').length!==1)fail('sonnet_response_invalid');
@@ -298,10 +311,29 @@ export async function signalStudyRuntimeJobV1(execution_id:string,options:{store
   const byRoot=new Map(roots.map(r=>[r.root_id,r]));
   const samples=(key:string,ids:string[])=>{const selected=ids.map(id=>byRoot.get(id)??fail('sample_root_missing'));
    return sampleSignalStudyGroupV1({study_digest:configuration.study_digest,group_key:key,roots:selected,centroid:signalStudyConfirmedCentroidV1(selected),seed:raw.sampling_seed,random_count:35,far_count:5});};
-  const discovered=numeric.groups.length?await editorial('motives',buildSignalStudyMotiveReviewV1({study,template_snapshot:snapshot,samples:numeric.groups.map(g=>samples(g.key,g.root_ids)[0])}),validateSignalStudyMotiveReviewV1):{motives:[],insufficient_group_keys:[]};
+  const discoverySamples=numeric.groups.map(g=>samples(g.key,g.root_ids)[0]);
+  const discover=async()=>{
+   if(!numeric.groups.length)return{motives:[],insufficient_group_keys:[]};
+   if(!batching)return editorial('motives',buildSignalStudyMotiveReviewV1({study,template_snapshot:snapshot,samples:discoverySamples}),validateSignalStudyMotiveReviewV1);
+   const plan=await compiled(compileSignalStudyDiscoveryBatchesV2({configuration,samples:discoverySamples})),values:unknown[]=[];
+   for(const node of plan.nodes){
+    const value=await editorial(node.stage,node.request,(request,data)=>{const parsed=validateSignalStudyMotiveReviewV1(request,data);validateSignalStudyDiscoveryBatchPrefixV2(plan,[...values,parsed]);return parsed;});values.push(value);
+   }
+   const global=buildSignalStudyMotiveReconciliationV2({configuration,discovery_plan:plan,local_values:values});
+   if('status'in global){if(global.status==='no_candidates')return global.value;await compiled(global);throw Error('unreachable');}
+   return editorial(global.stage,global,validateSignalStudyMotiveReconciliationV2);
+  };
+  const discovered=await discover();
   let motives:SignalStudyMotiveV1[]=discovered.motives.map(m=>({...m,centroid:signalStudyConfirmedCentroidV1(m.group_keys.flatMap(key=>numeric.groups.find(g=>g.key===key)!.root_ids).map(id=>byRoot.get(id)!)),layer:'unclear',human_locked:false}));
   const motiveRoots=new Map(discovered.motives.map(m=>[m.key,m.group_keys.flatMap(key=>numeric.groups.find(g=>g.key===key)!.root_ids)]));
   const pair=async(keys:string[],recode?:{attempt:1;boundary_keys:string[];contrast_rule:string})=>{
+   if(batching){
+    const plan=await compiled(compileSignalStudyLayerPairV2({configuration,recode,motives:motives.filter(m=>keys.includes(m.key)).map(m=>({...m,samples:samples(m.key,motiveRoots.get(m.key)!)}))}));
+    const values:SignalStudyLayerDecisionV1[]=[];
+    for(const node of plan.nodes){const value=await editorial(node.stage,node.request,(request,data)=>{const parsed=validateSignalStudyLayerBatchV2(request,data);
+      assertSignalStudyLayerDecisionPrefixV1(values.filter(v=>v.pass===parsed.pass),parsed);return parsed;});values.push(value);}
+    return aggregateSignalStudyLayerBatchesV2(plan,values);
+   }
    const decisions:SignalStudyLayerDecisionV1[]=[];
    for(const pass of ['a','b']as const){
     const batches:SignalStudyLayerDecisionV1[]=[];
@@ -336,10 +368,13 @@ export async function signalStudyRuntimeJobV1(execution_id:string,options:{store
   if(motives.length)memberships=await classify(population.roots,motives,'membership');
   let dominance=roots.length&&motives.length?signalStudyDominancePlanV1({roots,motives,memberships,cut_root_ids:roots.map(r=>r.root_id)}):null;
   if(dominance?.motive_keys.length){
-   const affected=dominance.motive_keys,request=buildSignalStudyContrastReviewV1({study,template_snapshot:snapshot,affected_keys:affected,
-    motives:motives.map(m=>({...m,sample:samples(m.key,memberships.filter(row=>row.motive_key===m.key&&row.probability>=.7).map(row=>row.root_id).length?
-     memberships.filter(row=>row.motive_key===m.key&&row.probability>=.7).map(row=>row.root_id):population.roots.map(r=>r.root_id))[0]}))});
-   const contrasted=await editorial('dominance_contrast',request,validateSignalStudyContrastReviewV1);
+   const affected=dominance.motive_keys,contrastMotives=motives.map(m=>({...m,sample:samples(m.key,memberships.filter(row=>row.motive_key===m.key&&row.probability>=.7).map(row=>row.root_id).length?
+     memberships.filter(row=>row.motive_key===m.key&&row.probability>=.7).map(row=>row.root_id):population.roots.map(r=>r.root_id))[0]}));
+   let contrasted:{definitions:Array<{key:string;name:string;definition:string}>};
+   if(batching){const plan=await compiled(compileSignalStudyContrastBatchesV2({configuration,motives:contrastMotives,affected_keys:affected})),definitions:Array<{key:string;name:string;definition:string}>=[];
+    for(const node of plan.nodes){const value=await editorial(node.stage,node.request,validateSignalStudyContrastReviewV1);definitions.push(...value.definitions);}
+    if(new Set(definitions.map(d=>d.key)).size!==affected.length||definitions.map(d=>d.key).sort().join(',')!==[...affected].sort().join(','))fail('contrast_coverage_invalid');contrasted={definitions};
+   }else contrasted=await editorial('dominance_contrast',buildSignalStudyContrastReviewV1({study,template_snapshot:snapshot,affected_keys:affected,motives:contrastMotives}),validateSignalStudyContrastReviewV1);
    motives=motives.map(m=>{const d=contrasted.definitions.find(d=>d.key===m.key);return d?{...m,name:d.name,definition:d.definition}:m;});
    const target=new Set(dominance.reask_root_ids);
    memberships=[...memberships.filter(row=>!target.has(row.root_id)||!affected.includes(row.motive_key)||row.human_locked),
@@ -353,6 +388,13 @@ export async function signalStudyRuntimeJobV1(execution_id:string,options:{store
    query_bias,
    stability,dominance,verified_evidence,insufficient_group_keys:discovered.insufficient_group_keys,promotion:{status:'explicit_action_required',automatic:false}};
   await active();if(!await store.finish(lease,output,digest(output)))throw new Paused('stale');return{status:'completed',output};
- }catch(error){if(error instanceof Paused)return{status:error.status,...(error.progress?{progress:error.progress}:{})};throw error;}
+ }catch(error){
+  if(error instanceof EditorialFormatStopped)return{status:'format_stop',format_stop:error.stop};
+  if(error instanceof SignalStudyEditorialRequestSizeErrorV1&&store.recordFormatStop){
+   const stop:SignalStudyEditorialFormatStopV1={status:'format_stop',compiler_version:'legacy-v1',phase:'legacy-editorial',unit_keys:[],reason:'request_bytes',observed:error.request_bytes,limit:524288,estimate_profile:null};
+   try{await active();await store.recordFormatStop(lease,stop);}catch(stopped){if(stopped instanceof Paused)return{status:stopped.status};throw stopped;}
+   return{status:'format_stop',format_stop:stop};
+  }
+  if(error instanceof Paused)return{status:error.status,...(error.progress?{progress:error.progress}:{})};throw error;}
  finally{clearInterval(timer);if(renewal)await renewal;await store.release(lease);}
 }
