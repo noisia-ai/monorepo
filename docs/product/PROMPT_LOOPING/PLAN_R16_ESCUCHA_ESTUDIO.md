@@ -14,6 +14,14 @@ No hay aprobaciones humanas intermedias en los procesos de análisis: Sonnet 4.6
 
 Corte vigente del 15 de noviembre: estas entradas prevalecen sobre el historial anterior. El objetivo completo H0–H6 sigue abierto; no hubo despliegue ni gasto R16 en UAT.
 
+- Diagnóstico posterior a e541: la rama acotada de población conserva una alternativa NULL que fuerza escaneo completo bajo plan genérico, aun cuando el caller ya garantiza IDs explícitos. Una variante de sólo lectura baja una raíz caliente de 9.966 a 0.377 ms, con recibos separados; todavía no acredita la función nativa completa. 0317 para esa rama está integrada en 711b113a tras revisión sin P0/P1/P2; sus tres casos nativos quedan obligatorios en CI sin omisiones y aún no se han ejecutado. Se prepara 0318 para validar población una vez por statement/batch, sin caché entre sentencias ni relajación de autoridad, dinero, lease o precedencia humana. La cota de 131,072 validaciones individuales muestra que el índice aislado sigue siendo insuficiente: no se repite el ensayo completo hasta tener una corrección revisada y viable.
+- Fixture sintético: índice lineal revisado integrado en ef41ea56, conserva exactamente orden, bytes y digests de ambos lanes; dos pruebas pasan sin omisiones. No cambia consultas productivas ni cuenta como capacidad.
+
+- CI vigente e541e448: CI general, runtime, PostgreSQL y calibración pasaron. PostgreSQL acredita 104 casos MFP y 79 de Escucha, más 22 de Study/censo/worker/exportación, todos sin omisiones. El caso nuevo publicó físicamente paquete y clave separada, verificando SHA, permisos y shortfalls con el snapshot nativo real de fixture; pasó en 240.79 s. El ensayo de capacidad V2 terminó rechazado: 32,768 raíces completas, cero pendientes y 65,536 solicitudes, pero 19.00 raíces/s sobre 1,724.72 s; fallaron throughput, ventanas sostenidas y latencia observada. La matriz pasó 10/10. No autoriza gasto ni despliegue; el perfil SQL se conserva y se investiga antes de repetir.
+- Ensayo previo a UAT revisado: las 22 migraciones pendientes 0295–0316 se aplicaron exactamente una vez en una copia nueva sólo del esquema real, con ledger 62→84. Conservó permisos históricos; añadió 53 tablas con RLS y 177 funciones restringidas, sin índices inválidos ni nuevas restricciones NOT VALID. El esquema real y su ledger 0294 permanecen intactos. La copia no acredita tiempos de índices sobre tablas pobladas ni comportamiento del corpus real; esas limitaciones quedan en el recibo privado.
+- Ejecutor UAT concreto y paquete privado a2618a3c revisados sin P0/P1/P2: default sólo lectura, identidad y TLS, firma/ledger/prefijo exactos, propiedad de advisory lock comprobada en el backend, transacción+ledger por archivo, parada anterior a COMMIT y reanudación sin reaplicar. Pasaron 35 focales, cuatro comprobaciones PostgreSQL locales del lock y dry-run real UAT sólo lectura. Se observaron apagadas las capacidades R16 de ambos servicios. Sólo el orquestador ejecutará apply después de CI/capacidad y coordinación.
+- Crédito y cuota refrescados por lectura de consola Noisia: USD 26.05 editorial, USD 28.77 JEV, recarga automática editorial apagada, 80 solicitudes/s y 100,000 tokens de entrada/s compartidos entre claves. Sin compras, cambios de cuenta ni solicitudes pagadas R16. Se volverá a contrastar con la cotización antes del envío.
+
 - CI sobre 40035b83 inició los cuatro workflows. La calibración aislada falló antes de migrar: la emulación oficial de roles Supabase exige modo de esquema desechable y el script tenía reset_schema=false. Se corrige únicamente el arranque CI, tras revisión sin P0/P1/P2: se exige ausencia tanto del contenedor como de su volumen, se crea el laboratorio nuevo en loopback y se usa el modo desechable requerido. No se relaja el helper ni la guarda de población vacía. Hace falta el job real nuevo verde; el fallo anterior queda registrado.
 
 - Corte 15:50 UTC, H6: el empaquetador recibe el snapshot nativo directamente, congela una única referencia JSON antes de esperar y verifica por streaming sus bytes persistidos. La revisión cerró los dos P2 de mutación durante lectura y cierre del stream. Treinta y siete focales pasan; el conjunto de scripts termina con 68 aprobadas, cero fallos y dos omisiones de PostgreSQL opt-in, que CI ejecuta por separado. La prueba física nueva publica paquete y clave separada y verifica SHA/modos/shortfalls; su ensayo local se detuvo por el umbral de disco, por lo que esa cobertura queda pendiente del CI final y no se declara aprobada. Los casos nativos anteriores de exportación conservan sus resultados.
@@ -202,6 +210,12 @@ Recibo: separar Voyage/JEV por raíz de Claude por número de grupos y vueltas; 
 
 ## Sorpresas y descubrimientos
 
+- 15 nov., e541e448: el ensayo completo de Escucha preservó censo, custodia y serving, pero el coste nativo domina la clasificación. Reserva sumó 492.06 s en 18 consultas; marcado de envío 489.05 s y adjunción de crudos 465.02 s (duraciones solapadas, no sumables). La preparación de la admisión tardó 285.57 s. HTTP p50 315.91 ms, p95 463.22 ms, máximo 613.41 ms, con 668 respuestas sobre 500 ms. El fixture tiene además un coste cuadrático independiente ya localizado; eliminarlo no demuestra corregidas estas consultas. No se adjudica una causa de planner ni capacidad sin una nueva prueba.
+
+
+- La aparente deriva del esquema UAT era de representación: el inspector usaba otro search_path y calificaba 285 defaults de la misma función. Con los ajustes históricos se observó exactamente la firma registrada. En la copia, pg_dump compactó ordinales de columnas eliminadas y la collation local ordenó ACL de otra forma; la comparación semántica preserva definiciones y miembros, con hashes binarios separados.
+- pg_dump desactiva sus timeouts de sentencia y Supavisor sustituye application_name de startup. Se conserva un dump completo de sólo esquema con TLS, bloqueo de un segundo y límite exterior de 120 s; no se afirma un timeout servidor de 30 s. Una repetición exterior de 30 s se canceló y quedó como diagnóstico, sin usarse como copia. No se construyó un proxy ni se alteró el esquema real para satisfacer el inspector.
+
 - La prueba local de calibración usó un laboratorio con los roles ya preparados; el job independiente de CI debe crearlos. Su helper exige explícitamente reset_schema=true en un destino local desechable. Una comprobación nueva de volumen ausente impide reutilizar accidentalmente una base retenida antes de activar ese modo en CI.
 
 - El writer por bloques no resolvía por sí solo la lectura del snapshot: el empaquetador todavía hacía readFile/JSON.parse sobre una cadena. El nuevo camino programático verifica el mismo objeto contra bytes persistidos sin ese parser. Congelar la referencia antes del primer await es necesario para que un objeto distinto no llegue al paquete después de aprobar su hash.
@@ -299,6 +313,12 @@ Recibo: separar Voyage/JEV por raíz de Claude por número de grupos y vueltas; 
 - El promedio del piloto completo incluye una etapa editorial que no escala por raíz. Multiplicarlo linealmente daba USD 205.81/millón; mantener explícitamente los grupos y una vuelta de referencia produce USD 114.035250. Ambos cálculos parten del mismo recibo, cuyo uso histórico permanece USD 17.280463.
 
 ## Registro de decisiones
+
+- 15 nov.: rechazar expresamente e541e448 V2 aunque complete todas las preguntas y CI funcional esté verde. Conservar artefactos y hashes, investigar el perfil SQL sin bajar umbrales ni reinterpretar recibos, y repetir sólo tras una corrección concreta revisada. El disco local permanece bajo el piso de 4 GiB: no se crean fixtures grandes ni se eliminan datos históricos para forzar el ensayo; CI conserva la carga pesada.
+
+
+- 15 nov.: mantener la evidencia de esquema sólo como ensayo de DDL, con límites explícitos de datos, versiones y roles. El ejecutor real revalida inmediatamente identidad, estado, firma y exclusión antes de cada archivo y confirma invariantes después; no usa el éxito de una copia vacía como prueba de tiempos reales.
+- 15 nov.: resolver la representación del inspector y acreditar igualdad semántica sin modificar el ledger ni el esquema. Aceptar el dump completo dentro de su límite exterior de 120 s con su limitación documentada; el umbral diagnóstico de 30 s no es un criterio del fundador y no justifica más ingeniería de transporte.
 
 - 15 nov.: corregir el bootstrap de la calibración mediante el modo oficial de laboratorio desechable y dos guardas de recurso nuevo; no alterar las restricciones de emulación ni probar fingiendo GITHUB_ACTIONS localmente. Repetir CI real sobre la cabeza corregida antes de cualquier fusión.
 
@@ -400,6 +420,8 @@ Recibo: separar Voyage/JEV por raíz de Claude por número de grupos y vueltas; 
 - 2026-11-14: publicar una fórmula condicional con coeficientes medidos en R15 y costo editorial por grupos/vueltas; actualizar la proyección histórica sin cambiar sus recibos ni presentarla como costo medido de R16. Reconstrucción verificada con aritmética decimal exacta.
 
 ## Resultado y retrospectiva
+
+Corte e541e448: CI funcional/PostgreSQL verde, capacidad H1 rechazada a 19.00 raíces/s. H0–H6 continúa abierto; no hubo migraciones, despliegue ni gasto R16 en UAT. Se investiga la regresión de SQL antes de repetir el ensayo; no se presenta la integridad del resultado como aceptación de rendimiento.
 
 Actualización 15:37 UTC: la siguiente evidencia de capacidad debe usar V2 y una fuente final nueva; todavía no hay resultado. La integración funcional y los siete casos nativos adicionales pasan, pero siguen pendientes CI remoto final, capacidad y toda la aceptación real UAT. La frontera metodológica nueva se detalla en Progreso y Registro de decisiones; los resultados históricos siguientes no se reinterpretan.
 
