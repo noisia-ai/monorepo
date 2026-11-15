@@ -329,6 +329,35 @@ jobs:
           for check in "${checks[@]}"; do
             pnpm exec node --import tsx "$check"
           done
+      - name: Diagnose hybrid rights with the complete preceding MFP test context
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.scope == 'listening-smoke' }}
+        env:
+          NOISIA_MFP_PG_CI: 'true'
+        run: |
+          shopt -s nullglob
+          tests=(infrastructure/db/migrations/signal-mfp-*.integration.test.ts)
+          prefix=()
+          found=false
+          for test_file in "${tests[@]}"; do
+            prefix+=("$test_file")
+            if [[ "$test_file" == infrastructure/db/migrations/signal-mfp-hybrid-selector.integration.test.ts ]]; then
+              found=true
+              break
+            fi
+          done
+          if [[ "$found" != true ]]; then
+            echo '::error::Exact MFP hybrid prefix endpoint is missing'
+            exit 1
+          fi
+          set +e
+          pnpm exec node --test --test-concurrency=1 --import tsx "${prefix[@]}" | tee mfp-hybrid-rights-diagnostic.tap
+          test_status=${PIPESTATUS[0]}
+          set -e
+          if ! grep -qx '# skipped 0' mfp-hybrid-rights-diagnostic.tap; then
+            echo '::error::Hybrid provider-rights context diagnostic was skipped'
+            exit 1
+          fi
+          exit "$test_status"
       - name: Verify focused Listening input bounds and second-shape calibration on native PostgreSQL
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.scope == 'listening-smoke' }}
         env:
@@ -344,21 +373,6 @@ jobs:
             echo '::error::R16 Listening smoke tests were skipped'
             exit 1
           fi
-      - name: Diagnose hybrid provider-rights plan on native PostgreSQL
-        if: ${{ github.event_name == 'workflow_dispatch' && inputs.scope == 'listening-smoke' }}
-        env:
-          NOISIA_MFP_PG_CI: 'true'
-        run: |
-          set +e
-          pnpm exec node --test --test-concurrency=1 --import tsx \
-            infrastructure/db/migrations/signal-mfp-hybrid-selector.integration.test.ts | tee mfp-hybrid-rights-diagnostic.tap
-          test_status=${PIPESTATUS[0]}
-          set -e
-          if ! grep -qx '# skipped 0' mfp-hybrid-rights-diagnostic.tap; then
-            echo '::error::Hybrid provider-rights diagnostic was skipped'
-            exit 1
-          fi
-          exit "$test_status"
       - name: Persist synthetic second-shape component proof
         if: always()
         uses: actions/upload-artifact@v4
