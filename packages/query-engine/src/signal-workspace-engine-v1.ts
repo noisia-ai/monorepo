@@ -72,10 +72,19 @@ export type SignalWorkspaceCachedVectorSourceV1 = {
 export type SignalWorkspaceCachedVectorSnapshotV1 = Omit<SignalWorkspaceEngineSnapshotV1,"embedding_run_id">&{
   embedding_run_id?:never;cached_vector_source:SignalWorkspaceCachedVectorSourceV1;
 };
-export type SignalWorkspaceNumericSnapshotV1=SignalWorkspaceEngineSnapshotV1|SignalWorkspaceCachedVectorSnapshotV1;
+export type SignalWorkspaceStudyCachedVectorSourceV1={
+ kind:"sealed-study-consumer-cut-v1";execution_id:string;study_digest:string;source_digest:string;cut_digest:string;fit_plan_digest:string;
+ proof_census_digest:string;root_count:number;source_preparation_run_ids:string[];preparation_unknown_root_ids:string[];
+ proofs:{file:"source-proofs.jsonl";sha256:string;rows:number};
+};
+export type SignalWorkspaceStudyCachedVectorSnapshotV1=Omit<SignalWorkspaceEngineSnapshotV1,"embedding_run_id"|"preparation_run_id">&{
+ embedding_run_id?:never;preparation_run_id?:never;cached_vector_source:SignalWorkspaceStudyCachedVectorSourceV1;
+};
+export type SignalWorkspaceNumericSnapshotV1=SignalWorkspaceEngineSnapshotV1|SignalWorkspaceCachedVectorSnapshotV1|SignalWorkspaceStudyCachedVectorSnapshotV1;
 export type SignalWorkspaceEngineInputManifestV1 = (
   (Omit<SignalWorkspaceEngineSnapshotV1,"roots"|"chunks"|"guides"|"dimensions">&{cached_vector_source?:never})
   |Omit<SignalWorkspaceCachedVectorSnapshotV1,"roots"|"chunks"|"guides"|"dimensions">
+  |Omit<SignalWorkspaceStudyCachedVectorSnapshotV1,"roots"|"chunks"|"guides"|"dimensions">
 ) & {
   contract_version: typeof SIGNAL_WORKSPACE_ENGINE_INPUT_V1;
   records: { file: "chunks.jsonl"; sha256: string; rows: number; roots: number };

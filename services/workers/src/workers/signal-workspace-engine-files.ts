@@ -70,7 +70,13 @@ export async function spoolSignalWorkspaceEngineInputV1(args: {
 }): Promise<SignalWorkspaceEngineInputManifestV1> {
   const s = args.snapshot;
   const cached="cached_vector_source"in s?s.cached_vector_source:undefined;
-  if(cached){
+  if(cached?.kind==="sealed-study-consumer-cut-v1"){
+    if("embedding_run_id"in s||"preparation_run_id"in s||s.guides!==0||!uuidPattern.test(cached.execution_id)
+      ||![cached.study_digest,cached.source_digest,cached.cut_digest,cached.fit_plan_digest,cached.proof_census_digest,cached.proofs.sha256].every(h=>digestPattern.test(h))
+      ||cached.root_count!==s.roots||cached.proofs.rows!==s.roots||cached.proofs.file!=="source-proofs.jsonl"||!args.source_proofs_path
+      ||![cached.source_preparation_run_ids,cached.preparation_unknown_root_ids].every(ids=>Array.isArray(ids)&&ids.every(id=>uuidPattern.test(id))
+        &&new Set(ids).size===ids.length&&[...ids].sort().join(',')===ids.join(',')))return fail("cached_source_invalid");
+  }else if(cached){
     if("embedding_run_id"in s||s.guides!==0||cached.kind!=="sealed-listening-orphan-subset-v1"
       ||![cached.generation_id,cached.subset_id].every(id=>uuidPattern.test(id))
       ||![cached.generation_digest,cached.subset_digest,cached.proofs.sha256].every(hash=>digestPattern.test(hash))
@@ -78,7 +84,7 @@ export async function spoolSignalWorkspaceEngineInputV1(args: {
       ||![cached.root_count,cached.cached_count].every(n=>Number.isSafeInteger(n)&&n>=0)
       ||cached.cached_count>cached.root_count||!args.source_proofs_path) return fail("cached_source_invalid");
   }else if(!s.embedding_run_id||!uuidPattern.test(s.embedding_run_id)||args.source_proofs_path)return fail("snapshot_invalid");
-  if (![s.workspace_id, s.preparation_run_id].every(value => uuidPattern.test(value))
+  if (![s.workspace_id,...(cached?.kind==="sealed-study-consumer-cut-v1"?[]:[s.preparation_run_id!])].every(value => uuidPattern.test(value))
     || ![s.embedding_config_digest, s.context_digest, s.catalog_digest].every(value => digestPattern.test(value))
     || ![s.roots, s.chunks, s.guides, s.input_revision].every(value => Number.isSafeInteger(value) && value >= 0)
     || s.dimensions !== 1024 || s.chunk_policy_version !== "corpus-text-chunks-v1") return fail("snapshot_invalid");
