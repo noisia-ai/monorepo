@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
 import test from 'node:test';
 import {buildSignalListeningJevRequestV1,signalListeningBaseTemplateV1,signalListeningCalibrationShapeV1,
-  signalWorkspaceEmbeddingDigestV1 as digest,type SignalListeningInputV1,type SignalListeningCalibrationProfileV1} from '@noisia/query-engine';
+  signalWorkspaceEmbeddingDigestV1 as digest,validateSignalListeningConfigurationV1,type SignalListeningInputV1,type SignalListeningCalibrationProfileV1} from '@noisia/query-engine';
 import {createCalibratedJevRuntimeProviderV2} from '../providers/jev-streaming-runtime';
 import {planSignalListeningCalibrationV1,createSignalListeningCalibratedProviderV1} from './signal-listening-calibration';
 const execution={max_in_flight:1024,flush_size:1024,max_flushes:2,max_buffered_bytes:256*1024*1024,flush_interval_ms:250,window_size:4096};
@@ -135,4 +135,62 @@ test('closing a parallel warmup drains handed-off siblings and rejects new physi
  const request=buildSignalListeningJevRequestV1(f.input,f.configuration),pending=runtime.provider.evaluate(request);
  const closing=runtime.provider.close!();await assert.rejects(runtime.provider.evaluate(request),/listening_provider_closed/);
  assert.equal(physical,1);assert.equal(closed,0);release();await pending;await closing;assert.equal(closed,1);
+});
+
+function prefetchFixture(){
+ const f=fixture(),configuration=validateSignalListeningConfigurationV1({...f.configuration,questions:[...f.configuration.questions,{key:'consumer_topic',type:'noul' as const,
+  text:'Does the consumer discuss tea?',positive:'Consumer tea',negative:'Other discussion',scope:'consumer_category' as const,
+  origin:'brand_os' as const,human_locked:true,topic_source:'defined' as const}]});
+ const configuration_digest=digest(configuration),input={...f.input,configuration_digest},next={...input,question_keys:['consumer_topic']};
+ const profile=(value:SignalListeningInputV1):SignalListeningCalibrationProfileV1=>{
+  const shape=signalListeningCalibrationShapeV1(configuration,value),bytes=Buffer.byteLength(JSON.stringify(buildSignalListeningJevRequestV1(value,configuration)));
+  return{...f.profile,scope:{...f.profile.scope,configuration_digest,shape_digest:shape.shape_digest,phase:shape.phase},
+   scope_digest:digest(shape),source_digest:digest(['verified',shape.shape_digest]),source_call_ids:Array.from({length:32},()=>randomUUID()),
+   request_min_bytes:bytes,request_max_bytes:bytes+100,sample_count:32};
+ };
+ return{...f,configuration,configuration_digest,input,next,base:profile(input),consumer:profile(next)};
+}
+test('prefetch may extend an absent shape only from its existing valid measured profile without changing requests or execution',async()=>{
+ const f=prefetchFixture(),plan=await planSignalListeningCalibrationV1({...f,inputs:[f.input],execution,loadProfile:async()=>f.base});
+ const request=buildSignalListeningJevRequestV1(f.next,f.configuration),before=JSON.stringify(request),bounds={execution:{...plan.execution},response:plan.response_bound_bytes};
+ let clients=0,loads=0;const runtime=createSignalListeningCalibratedProviderV1({plan,factory:()=>{clients++;throw Error('preflight cannot create a transport');}});
+ assert.equal(plan.profiles.has(f.consumer.scope.shape_digest),false);assert.equal(runtime.prepareMeasuredRequests([request]),false);
+ assert.equal(await runtime.prepareMeasuredRequestsWithProfiles([request,request],async id=>{loads++;assert.equal(id,f.consumer.scope.shape_digest);return f.consumer;}),true);
+ assert.equal(loads,1);assert.equal(clients,0);assert.equal(plan.profiles.get(f.consumer.scope.shape_digest)?.source_digest,f.consumer.source_digest);
+ assert.deepEqual(plan.profiles.get(f.consumer.scope.shape_digest)?.source_call_ids,f.consumer.source_call_ids);
+ assert.equal(runtime.prepareMeasuredRequests([request]),true);assert.equal(JSON.stringify(request),before);
+ assert.deepEqual({execution:plan.execution,response:plan.response_bound_bytes},bounds);
+});
+test('prefetch extension rejects missing, finite, uncovered or larger responses atomically and never upgrades a warmup',async()=>{
+ const f=prefetchFixture(),request=buildSignalListeningJevRequestV1(f.next,f.configuration);
+ const make=async()=>{const plan=await planSignalListeningCalibrationV1({...f,inputs:[f.input],execution,loadProfile:async()=>f.base});
+  return{plan,runtime:createSignalListeningCalibratedProviderV1({plan,factory:()=>{throw Error('no preflight HTTP');}})};};
+ for(const profile of [null,{...f.consumer,sample_count:31,source_call_ids:f.consumer.source_call_ids.slice(0,31)},
+  {...f.consumer,request_max_bytes:f.consumer.request_min_bytes-1,request_min_bytes:1}]){
+  const {plan,runtime}=await make();assert.equal(await runtime.prepareMeasuredRequestsWithProfiles([request],async()=>profile),false);
+  assert.equal(plan.profiles.has(f.consumer.scope.shape_digest),false);
+ }
+ const {plan,runtime}=await make();assert.equal(await runtime.prepareMeasuredRequestsWithProfiles([request,{...request,state:'outside '.repeat(300)}],async()=>f.consumer),false);
+ assert.equal(plan.profiles.has(f.consumer.scope.shape_digest),false,'a later out-of-coverage request cannot partially extend the Map');
+ const wide={...request,questions:{consumer_topic:{type:'choice' as const,instructions:request.questions.consumer_topic!.instructions,criteria:Object.fromEntries(Array.from({length:64},(_,i)=>['key_'+i+'x'.repeat(150),'criterion']))}}};
+ let loads=0;assert.equal(await runtime.prepareMeasuredRequestsWithProfiles([wide],async()=>{loads++;return f.consumer;}),false);assert.equal(loads,0);assert.equal(plan.response_bound_bytes,16384);
+ const bounded=await planSignalListeningCalibrationV1({...f,inputs:[f.input],execution:{...execution,window_size:1},loadProfile:async()=>f.base});
+ assert.equal(await createSignalListeningCalibratedProviderV1({plan:bounded}).prepareMeasuredRequestsWithProfiles([request],async()=>{throw Error('profile metadata must stay bounded by the original window');}),false);
+ assert.equal(bounded.profiles.size,1);
+ const warm=await planSignalListeningCalibrationV1({...f,inputs:[f.input],execution,loadProfile:async()=>null});
+ assert.equal(await createSignalListeningCalibratedProviderV1({plan:warm}).prepareMeasuredRequestsWithProfiles([request],async()=>{throw Error('warmup cannot load a prefetch profile');}),false);
+});
+test('prefetch propagates authority failures and rejects foreign or malformed ledger profiles without storing them',async()=>{
+ const f=prefetchFixture(),request=buildSignalListeningJevRequestV1(f.next,f.configuration);
+ const make=async()=>{const plan=await planSignalListeningCalibrationV1({...f,inputs:[f.input],execution,loadProfile:async()=>f.base});return{plan,runtime:createSignalListeningCalibratedProviderV1({plan})};};
+ const denied=await make();await assert.rejects(denied.runtime.prepareMeasuredRequestsWithProfiles([request],async()=>{throw Error('listening_forbidden');}),/listening_forbidden/);
+ for(const bad of [{scope:{...f.consumer.scope,workspace_id:randomUUID()}},{scope:{...f.consumer.scope,configuration_digest:digest('other')}},
+  {scope:{...f.consumer.scope,model:'other'}},{scope:{...f.consumer.scope,compiler_version:'other' as never}},
+  {scope:{...f.consumer.scope,phase:'base' as const}},{scope:{...f.consumer.scope,shape_digest:digest('other')}},
+  {source_digest:'invalid'},{source_call_ids:Array(32).fill(f.consumer.source_call_ids[0])}]){
+  const {plan,runtime}=await make();await assert.rejects(runtime.prepareMeasuredRequestsWithProfiles([request],async()=>({...f.consumer,...bad})),/listening_calibration_profile_invalid/);
+  assert.equal(plan.profiles.has(f.consumer.scope.shape_digest),false);
+ }
+ const context=await make();await assert.rejects(context.runtime.prepareMeasuredRequestsWithProfiles([request],async()=>({...f.consumer,max_input_tokens_per_byte:1000})),/context_estimate_exceeded/);
+ assert.equal(context.plan.profiles.has(f.consumer.scope.shape_digest),false);
 });

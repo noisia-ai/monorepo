@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
 import test from 'node:test';
 import {buildSignalListeningJevRequestV1,signalListeningRequestDigestV1,signalListeningBaseTemplateV1,signalListeningJevIdentityV1,signalListeningQuestionDigestV1,
-  signalListeningCalibrationShapeV1,signalListeningConsumerCutV1,labelerDigestV1,entityContextDigestV1,signalWorkspaceEmbeddingDigestV1 as digest,
+  signalListeningCalibrationShapeV1,signalListeningConsumerCutV1,validateSignalListeningConfigurationV1,labelerDigestV1,entityContextDigestV1,signalWorkspaceEmbeddingDigestV1 as digest,
   type SignalListeningCalibrationProfileV1,type SignalListeningConfigurationV1,type SignalListeningInputV1,type SignalListeningResultV1} from '@noisia/query-engine';
 import type {LabelingRunV1,LabelingCallV1} from '@noisia/db';
 import type {JevProviderV1,JevRequestV1} from '../providers/typesafe-jev';
@@ -207,7 +207,7 @@ test('automatic measured listening stops before reserving or sending the next pa
  try{
   for(const name of names)process.env[name]='true';
   const result=await signalListeningJevJobV1(f.run.id,{database,store:f.store,provider:f.provider,execution:{...execution,window_size:2},
-   preflight:async()=>{},calibration:{load:async()=>profile,derive:async()=>{throw Error('measured continuity cannot derive a warmup');}}});
+   preflight:async()=>{},calibration:{load:async args=>args.shape_digest===shape.shape_digest?profile:null,derive:async()=>{throw Error('measured continuity cannot derive a warmup');}}});
   assert.equal(result.status,'running');assert.equal(f.requests.length,2);assert.equal(f.calls.length,2);
   assert.ok(f.calls.every(call=>call.inputs[0]!.root_id!==corpus[2]!.root_id));
   assert.ok(f.requests.every(request=>Object.keys(request.questions).sort().join(',')==='promotion,voice'));
@@ -273,4 +273,31 @@ test('planned page recovery reuses the injected shared-account factory for verif
   assert.equal(result.labeled,3);assert.equal(factoryCalls,1);assert.equal(observations,3);assert.equal(handoffs,0);assert.equal(closed,1);assert.equal(f.requests.length,0);
   assert.ok(f.calls.every(c=>c.results_applied&&c.status==='settled'));
  }finally{for(const[key,value]of[['NOISIA_SIGNAL_LISTENING_ENABLED',previous.owner],['NOISIA_TYPESAFE_ACCOUNT_ID',previous.account]]as const)if(value===undefined)delete process.env[key];else process.env[key]=value;}
+});
+
+test('measured prefetch loads an existing second-phase profile before reserving and keeps one invocation without new warmup',async()=>{
+ const draft=signalListeningBaseTemplateV1({category:'tea',lexicon_terms:['tea']});
+ draft.questions.push({key:'consumer_topic',type:'noul',text:'Consumer tea?',positive:'Consumer tea',negative:'Other',scope:'consumer_category',origin:'brand_os',human_locked:true,topic_source:'defined'});
+ const configuration=validateSignalListeningConfigurationV1(draft);
+ const f=fixture(configuration,[['voice','promotion']]),sample=(await f.store.inputs(f.run))[0]!;
+ const consumer={...sample,root_id:randomUUID(),question_keys:['consumer_topic'],question_digests:{consumer_topic:signalListeningQuestionDigestV1(configuration,configuration.questions.at(-1)!)}};
+ // The third root already has its bases: the native reader may expose its
+ // consumer phase after an initial page containing only base-question roots.
+ const corpus=[{...sample,root_id:randomUUID()},{...sample,root_id:randomUUID()},consumer];
+ f.store.inputs=async()=>corpus.filter(input=>!f.calls.some(call=>call.inputs.some(sent=>sent.root_id===input.root_id))).slice(0,2);
+ f.store.finish=async()=>f.calls.length===3?'completed':'running';
+ const profiles=new Map(corpus.map(input=>{const shape=signalListeningCalibrationShapeV1(configuration,input),bytes=Buffer.byteLength(JSON.stringify(buildSignalListeningJevRequestV1(input,configuration)));
+  const scope={workspace_id:f.run.workspace_id,configuration_digest:digest(configuration),model:shape.model,compiler_version:shape.compiler_version,phase:shape.phase,shape_digest:shape.shape_digest};
+  return[shape.shape_digest,{scope,scope_digest:digest(scope),source_digest:digest(['stored-ledger',shape.shape_digest]),source_call_ids:Array.from({length:32},()=>randomUUID()),source_run_id:f.run.id,
+   request_min_bytes:bytes,request_max_bytes:bytes+100,max_input_tokens_per_byte:.25,sample_count:32,status:'measured'} as SignalListeningCalibrationProfileV1];}));
+ const loads:string[]=[];const database={query:async(sql:string)=>({rows:sql.includes('signal_workspace_features')?[{enabled:true}]:[{workspace_id:f.run.workspace_id,labeler_digest:f.run.labeler_digest,recovery_only:false}]})}as NonNullable<Parameters<typeof signalListeningJevJobV1>[1]>['database'];
+ const names=['NOISIA_SIGNAL_LISTENING_ENABLED','NOISIA_JEV_PROVIDER_ENABLED']as const,previous=names.map(key=>process.env[key]);
+ try{for(const name of names)process.env[name]='true';
+  const outcome=await signalListeningJevJobV1(f.run.id,{database,store:f.store,provider:f.provider,execution:{...execution,window_size:2},preflight:async()=>{},
+   calibration:{load:async args=>{assert.equal(args.workspace_id,f.run.workspace_id);assert.equal(args.actor_user_id,f.run.actor_user_id);assert.equal(args.configuration_digest,digest(configuration));loads.push(args.shape_digest);return profiles.get(args.shape_digest)??null;},
+    derive:async()=>{throw Error('continuity cannot create or derive another warmup');}}});
+  assert.equal(outcome.status,'completed');assert.equal(f.requests.length,3);assert.equal(f.calls.length,3);assert.equal(new Set(f.calls.map(call=>call.request_digest)).size,3);
+  assert.ok(f.calls.every(call=>call.status==='settled'&&call.results_applied));assert.equal(loads.length,2);assert.equal(new Set(loads).size,2);
+  assert.ok(f.requests.some(request=>Object.keys(request.questions).join(',')==='consumer_topic'));
+ }finally{names.forEach((key,i)=>{if(previous[i]===undefined)delete process.env[key];else process.env[key]=previous[i];});}
 });
