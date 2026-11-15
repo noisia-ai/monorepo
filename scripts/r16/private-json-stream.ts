@@ -1,9 +1,10 @@
 import { createHash, randomBytes } from "node:crypto";
 import { chmod, mkdir, open, link, lstat, unlink } from "node:fs/promises";
 import { dirname, resolve, sep } from "node:path";
+import { types as utilTypes } from "node:util";
 
-const JSON_CHUNK_CODE_UNITS = 16 * 1024;
-const SINK_CHUNK_CODE_UNITS = 64 * 1024;
+const JSON_CHUNK_CODE_UNITS = 8 * 1024;
+const SINK_CHUNK_BYTES = 64 * 1024;
 
 function* stringTokens(value: string): Generator<string> {
   yield '"';
@@ -21,47 +22,102 @@ function* stringTokens(value: string): Generator<string> {
   yield '"';
 }
 
-function preparedJsonValue(value: unknown, key: string): unknown {
-  if ((typeof value === "object" && value !== null) || typeof value === "bigint") {
-    const toJSON = (value as { toJSON?: unknown }).toJSON;
-    if (typeof toJSON === "function") return toJSON.call(value, key);
-  }
-  return value;
-}
-
 function renderable(value: unknown): boolean {
   return value !== undefined && typeof value !== "function" && typeof value !== "symbol";
 }
 
-function* jsonTokens(value: unknown, pretty: boolean, stack: Set<object>, depth: number, key: string, prepared = false): Generator<string> {
-  const item = prepared ? value : preparedJsonValue(value, key);
+const unsupportedType = () => new TypeError("native_audit_json_unsupported_type");
+
+function* utf8SafeChunks(value: string, maximumBytes: number): Generator<string> {
+  let start = 0, cursor = 0, bytes = 0;
+  while (cursor < value.length) {
+    const codePoint = value.codePointAt(cursor)!;
+    const codeUnits = codePoint > 0xffff ? 2 : 1;
+    const nextBytes = codePoint <= 0x7f ? 1 : codePoint <= 0x7ff ? 2 : codePoint <= 0xffff ? 3 : 4;
+    if (bytes && bytes + nextBytes > maximumBytes) {
+      yield value.slice(start, cursor);
+      start = cursor;
+      bytes = 0;
+    }
+    bytes += nextBytes;
+    cursor += codeUnits;
+  }
+  if (start < value.length) yield value.slice(start);
+}
+
+function assertSupportedJsonValue(value: unknown, active = new Set<object>()): void {
+  if (value === null || value === undefined || typeof value === "string" || typeof value === "boolean"
+    || typeof value === "number" || typeof value === "symbol") return;
+  if (typeof value === "function" || typeof value === "bigint") throw unsupportedType();
+  if (typeof value !== "object") throw unsupportedType();
+  if (utilTypes.isProxy(value)) throw unsupportedType();
+  if (utilTypes.isDate(value)) {
+    if (Object.getPrototypeOf(value) !== Date.prototype || Reflect.ownKeys(value).length !== 0) throw unsupportedType();
+    Date.prototype.toISOString.call(value);
+    return;
+  }
+  const isArray = Array.isArray(value), prototype = Object.getPrototypeOf(value);
+  if (isArray ? prototype !== Array.prototype : prototype !== Object.prototype && prototype !== null) throw unsupportedType();
+  for (const prototypeWithJson of [Object.prototype, ...(isArray ? [Array.prototype] : [])]) {
+    const inheritedToJson = Object.getOwnPropertyDescriptor(prototypeWithJson, "toJSON");
+    if (inheritedToJson && ("get" in inheritedToJson || "set" in inheritedToJson || typeof inheritedToJson.value === "function")) throw unsupportedType();
+  }
+  if (active.has(value)) throw unsupportedType();
+  active.add(value);
+  try {
+    for (const key of Reflect.ownKeys(value)) {
+      const descriptor = Object.getOwnPropertyDescriptor(value, key);
+      if (!descriptor || "get" in descriptor || "set" in descriptor || typeof descriptor.value === "function") throw unsupportedType();
+      if (isArray && key !== "length" && (typeof key !== "string" || !/^(?:0|[1-9][0-9]*)$/u.test(key))) throw unsupportedType();
+    }
+    for (const key of Object.keys(value)) {
+      const descriptor = Object.getOwnPropertyDescriptor(value, key);
+      if (!descriptor) throw unsupportedType();
+      assertSupportedJsonValue(descriptor.value, active);
+    }
+  } finally { active.delete(value); }
+}
+
+function* jsonTokens(value: unknown, pretty: boolean, stack: Set<object>, depth: number): Generator<string> {
+  const item = value;
   if (item === null) { yield "null"; return; }
   if (typeof item === "string") { yield* stringTokens(item); return; }
   if (typeof item === "boolean") { yield item ? "true" : "false"; return; }
   if (typeof item === "number") { yield JSON.stringify(item) ?? "null"; return; }
-  if (typeof item === "bigint") throw new TypeError("Do not know how to serialize a BigInt");
+  if (typeof item === "bigint" || typeof item === "function") throw unsupportedType();
   if (!renderable(item)) return;
   if (typeof item !== "object") return;
+  if (utilTypes.isDate(item)) { yield* stringTokens(Date.prototype.toISOString.call(item)); return; }
   if (stack.has(item)) throw new TypeError("Converting circular structure to JSON");
   stack.add(item);
   try {
-    const indent = (level: number) => pretty ? "  ".repeat(level) : "";
+    const indentation = function* (level: number): Generator<string> {
+      if (!pretty) return;
+      let spaces = level * 2;
+      while (spaces > 0) { const count = Math.min(spaces, JSON_CHUNK_CODE_UNITS); yield " ".repeat(count); spaces -= count; }
+    };
     if (Array.isArray(item)) {
       if (item.length === 0) { yield "[]"; return; }
       yield pretty ? "[\n" : "[";
       for (let index = 0; index < item.length; index++) {
         if (index) yield pretty ? ",\n" : ",";
-        if (pretty) yield indent(depth + 1);
-        const child = preparedJsonValue(item[index], String(index));
+        yield* indentation(depth + 1);
+        const descriptor = Object.getOwnPropertyDescriptor(item, String(index));
+        if (descriptor && ("get" in descriptor || "set" in descriptor)) throw unsupportedType();
+        const child = descriptor?.value;
+        if (typeof child === "function") throw unsupportedType();
         if (!renderable(child)) yield "null";
-        else yield* jsonTokens(child, pretty, stack, depth + 1, String(index), true);
+        else yield* jsonTokens(child, pretty, stack, depth + 1);
       }
-      yield pretty ? `\n${indent(depth)}]` : "]";
+      if (pretty) { yield "\n"; yield* indentation(depth); }
+      yield "]";
       return;
     }
     const entries: Array<[string, unknown]> = [];
     for (const property of Object.keys(item)) {
-      const child = preparedJsonValue((item as Record<string, unknown>)[property], property);
+      const descriptor = Object.getOwnPropertyDescriptor(item, property);
+      if (!descriptor || "get" in descriptor || "set" in descriptor || typeof descriptor.value === "function") throw unsupportedType();
+      const child = descriptor.value;
       if (renderable(child)) entries.push([property, child]);
     }
     if (entries.length === 0) { yield "{}"; return; }
@@ -69,36 +125,48 @@ function* jsonTokens(value: unknown, pretty: boolean, stack: Set<object>, depth:
     for (let index = 0; index < entries.length; index++) {
       const [property, child] = entries[index]!;
       if (index) yield pretty ? ",\n" : ",";
-      if (pretty) yield indent(depth + 1);
+      yield* indentation(depth + 1);
       yield* stringTokens(property);
       yield pretty ? ": " : ":";
-      yield* jsonTokens(child, pretty, stack, depth + 1, property, true);
+      yield* jsonTokens(child, pretty, stack, depth + 1);
     }
-    yield pretty ? `\n${indent(depth)}}` : "}";
+    if (pretty) { yield "\n"; yield* indentation(depth); }
+    yield "}";
   } finally {
     stack.delete(item);
   }
 }
 
-/** Emits JSON.stringify-compatible text in bounded chunks without creating one full serialized string. */
+/** Emits JSON.stringify-compatible text for approved JSON primitives/plain structures and Date values.
+ * Each sink call is at most 64 KiB UTF-8; 8K UTF-16 source chunks cap worst-case escaped string tokens below that.
+ * Functions, accessors, proxies, custom prototypes and toJSON methods are rejected without invocation. */
 export async function streamJsonV1(value: unknown, sink: (chunk: string) => Promise<void> | void,
   options: { pretty?: boolean; trailing_newline?: boolean } = {}): Promise<void> {
+  assertSupportedJsonValue(value);
+  await emitJsonV1(value, sink, options);
+}
+
+async function emitJsonV1(value: unknown, sink: (chunk: string) => Promise<void> | void,
+  options: { pretty?: boolean; trailing_newline?: boolean }): Promise<void> {
   const pretty = options.pretty ?? true;
-  let pending: string[] = [], pendingLength = 0, tokenCount = 0;
+  let pending: string[] = [], pendingBytes = 0, tokenCount = 0;
   const flush = async () => {
-    if (!pendingLength) return;
+    if (!pendingBytes) return;
     await sink(pending.join(""));
     pending = [];
-    pendingLength = 0;
+    pendingBytes = 0;
   };
-  for (const token of jsonTokens(value, pretty, new Set(), 0, "")) {
-    if (pendingLength && pendingLength + token.length > SINK_CHUNK_CODE_UNITS) await flush();
-    pending.push(token);
-    pendingLength += token.length;
-    tokenCount++;
+  for (const token of jsonTokens(value, pretty, new Set(), 0)) {
+    for (const chunk of utf8SafeChunks(token, SINK_CHUNK_BYTES)) {
+      const chunkBytes = Buffer.byteLength(chunk, "utf8");
+      if (pendingBytes && pendingBytes + chunkBytes > SINK_CHUNK_BYTES) await flush();
+      pending.push(chunk);
+      pendingBytes += chunkBytes;
+      tokenCount++;
+    }
   }
   if (!tokenCount) throw new TypeError("Value is not JSON serializable");
-  if (options.trailing_newline) { pending.push("\n"); pendingLength++; }
+  if (options.trailing_newline) { pending.push("\n"); pendingBytes++; }
   await flush();
 }
 
@@ -113,7 +181,7 @@ function* canonicalTokens(value: unknown, stack: Set<object>, inArray = false): 
   if (typeof value === "string") { yield* stringTokens(value); return; }
   if (typeof value === "boolean") { yield value ? "true" : "false"; return; }
   if (typeof value === "number") { yield JSON.stringify(value) ?? "null"; return; }
-  if (typeof value === "bigint") throw new TypeError("Do not know how to serialize a BigInt");
+  if (typeof value === "bigint" || typeof value === "function") throw unsupportedType();
   if (!renderable(value)) { if (inArray) yield "null"; return; }
   if (typeof value !== "object") return;
   if (stack.has(value)) throw new TypeError("Converting circular structure to JSON");
@@ -149,8 +217,10 @@ function* canonicalTokens(value: unknown, stack: Set<object>, inArray = false): 
   }
 }
 
-/** Matches signalWorkspaceEmbeddingDigestV1 while hashing canonical JSON incrementally. */
+/** Matches signalWorkspaceEmbeddingDigestV1 for JSON primitives/plain structures, without a normalized copy.
+ * Raw Date objects preserve the existing digest behavior as `{}`; serialized manifests normalize Dates first. */
 export function canonicalJsonDigestV1(value: unknown): string {
+  assertSupportedJsonValue(value);
   const hash = createHash("sha256");
   let wrote = false;
   for (const chunk of canonicalTokens(value, new Set())) { hash.update(chunk, "utf8"); wrote = true; }
@@ -179,6 +249,8 @@ export async function rejectSymlinkComponentsV1(path: string): Promise<void> {
 
 /** Writes a private JSON file through an exclusive temp inode, fsync, and no-overwrite hard-link publication. */
 export async function writePrivateJsonFileV1(path: string, value: unknown, privateRoot: string): Promise<void> {
+  // Reject unsupported values before any file or directory is created.
+  assertSupportedJsonValue(value);
   const absoluteRoot = resolve(privateRoot), absolutePath = resolve(path);
   if (absolutePath === absoluteRoot || !absolutePath.startsWith(`${absoluteRoot}${sep}`)) {
     throw new Error("native_audit_paths_must_be_private_r16_data");
@@ -201,7 +273,7 @@ export async function writePrivateJsonFileV1(path: string, value: unknown, priva
   let file: Awaited<ReturnType<typeof open>> | undefined, published = false, tempStat: { dev: number; ino: number } | undefined;
   try {
     file = await open(tempPath, "wx", 0o600);
-    await streamJsonV1(value, chunk => writeAll(file!, chunk), { pretty: true, trailing_newline: true });
+    await emitJsonV1(value, chunk => writeAll(file!, chunk), { pretty: true, trailing_newline: true });
     await file.sync();
     tempStat = await file.stat();
     await file.close(); file = undefined;

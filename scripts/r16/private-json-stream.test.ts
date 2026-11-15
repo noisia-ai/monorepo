@@ -43,7 +43,37 @@ test("streaming JSON preserves split UTF-16 pairs and escapes unpaired surrogate
   assert.deepEqual(JSON.parse(result), value);
 });
 
-test("streaming writer rejects symlink paths and rolls back its exclusive temp file on serialization failure", async () => {
+test("all sink writes stay within 64 KiB even when every source character expands to six JSON bytes", async () => {
+  const control = "\u0001".repeat(20_000), value = { [control]: control };
+  let output = "", maximumBytes = 0;
+  await streamJsonV1(value, chunk => {
+    const bytes = Buffer.byteLength(chunk, "utf8");
+    maximumBytes = Math.max(maximumBytes, bytes);
+    output += chunk;
+  }, { pretty: true });
+  assert.ok(maximumBytes <= 64 * 1024);
+  assert.equal(output, JSON.stringify(value, null, 2));
+  assert.deepEqual(JSON.parse(output), value);
+});
+
+test("unsupported methods, accessors and boxed primitives fail without invocation or publication", async () => {
+  const root = await privateTestRoot();
+  try {
+    let invoked = false;
+    const withToJson = { value: "synthetic", toJSON() { invoked = true; return "changed"; } };
+    const withGetter = Object.defineProperty({}, "value", { enumerable: true, get() { invoked = true; return "changed"; } });
+    const boxed = new Number(7);
+    const before = await readdir(root);
+    for (const [index, value] of [withToJson, withGetter, boxed].entries()) {
+      await assert.rejects(writePrivateJsonFileV1(join(root, `unsupported-${index}.json`), value, root), /native_audit_json_unsupported_type/u);
+      assert.throws(() => canonicalJsonDigestV1(value), /native_audit_json_unsupported_type/u);
+    }
+    assert.equal(invoked, false);
+    assert.deepEqual(await readdir(root), before);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test("streaming writer rejects symlink paths and rolls back its owned temp file after a mid-write type change", async () => {
   const root = await privateTestRoot();
   try {
     const outside = join(root, "outside"); await mkdir(outside, { mode: 0o700 });
@@ -51,8 +81,16 @@ test("streaming writer rejects symlink paths and rolls back its exclusive temp f
     await assert.rejects(writePrivateJsonFileV1(join(symlinkPath, "leak.json"), { safe: true }, root), /symlink_path_rejected/u);
 
     const target = join(root, "rollback", "failed.json");
-    const faulty = { first: "partial bytes", get second(): never { throw new Error("synthetic serialization failure"); } };
-    await assert.rejects(writePrivateJsonFileV1(target, faulty, root), /synthetic serialization failure/u);
+    const faulty: Record<string, unknown> = { large: "x".repeat(2 * 1024 * 1024), later: "initially valid" };
+    let mutated = false, getterInvoked = false;
+    const write = writePrivateJsonFileV1(target, faulty, root);
+    setTimeout(() => {
+      Object.defineProperty(faulty, "later", { configurable: true, enumerable: true, get() { getterInvoked = true; return "unsafe"; } });
+      mutated = true;
+    }, 0);
+    await assert.rejects(write, /native_audit_json_unsupported_type/u);
+    assert.equal(mutated, true);
+    assert.equal(getterInvoked, false);
     await assert.rejects(stat(target), { code: "ENOENT" });
     assert.deepEqual(await readdir(join(root, "rollback")), []);
   } finally { await rm(root, { recursive: true, force: true }); }
@@ -63,9 +101,9 @@ test("virtual JSON stream exceeds Node's max string length with bounded sink chu
   const itemCost = shared.length + 4;
   const count = Math.ceil((bufferConstants.MAX_STRING_LENGTH + 1) / itemCost) + 2;
   const value = new Array(count).fill(shared);
-  let codeUnits = 0, maxChunk = 0, chunks = 0;
-  await streamJsonV1(value, chunk => { codeUnits += chunk.length; maxChunk = Math.max(maxChunk, chunk.length); chunks++; }, { pretty: true });
+  let codeUnits = 0, maxChunkBytes = 0, chunks = 0;
+  await streamJsonV1(value, chunk => { codeUnits += chunk.length; maxChunkBytes = Math.max(maxChunkBytes, Buffer.byteLength(chunk)); chunks++; }, { pretty: true });
   assert.ok(codeUnits > bufferConstants.MAX_STRING_LENGTH);
-  assert.ok(maxChunk <= 64 * 1024 + 32 * 1024, `writer emitted an unexpectedly large sink chunk: ${maxChunk}`);
+  assert.ok(maxChunkBytes <= 64 * 1024, `writer emitted an unexpectedly large sink chunk: ${maxChunkBytes} bytes`);
   assert.ok(chunks < 20_000, `bounded sink coalescing regressed: ${chunks} chunks`);
 });
