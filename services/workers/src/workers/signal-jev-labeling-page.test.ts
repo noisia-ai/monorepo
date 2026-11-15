@@ -133,3 +133,18 @@ test('a supported 4096-member flush paginates application at the native 2000-roo
   cancellation:new AbortController(),hooks:{map:(_run,call)=>[call.inputs[0]!.root_id],error:()=>[],labeled:()=>true}});
  assert.equal(physical,2001);assert.equal(result.labeled,2001);assert.deepEqual(sizes,[2000,1]);
 });
+
+test('native continuous inputs are byte-bounded before initial hydration and oversize failures retain their owner',async()=>{
+ type Args=Parameters<typeof processJevLabelingPageV1<FacetInput,string>>[0];
+ const run={id:'bounded',lease_token:'lease',error_code:null}as LabelingRunV1;
+ let reads=0,reserves=0,failures=0,releases=0;
+ const store={claim:async()=>run,renew:async()=>{},release:async()=>{releases++;},calls:async()=>[],
+  inputs:async(_run:LabelingRunV1,bounds?:{max_rows:number;max_working_bytes:number;on_oversize?:string})=>{
+   reads++;assert.equal(bounds?.max_rows,execution.window_size);assert.equal(bounds?.on_oversize,'error');
+   assert.equal(bounds?.max_working_bytes,execution.max_buffered_bytes-(4096*24+64*1024));
+   throw Error('labeling_input_memory_bound');
+  },reserve:async()=>{reserves++;return[];},fail:async()=>{failures++;}}as unknown as Args['store'];
+ await assert.rejects(processJevLabelingPageV1({run_id:run.id,store,provider:{max_response_bytes:4096,evaluate:async()=>{throw Error('unexpected HTTP');}},execution,
+  hooks:{continuous_windows:()=>true,price:()=>llmPriceV1('typesafe','jev-1.13.0','sync',.042),propose:()=>[],map:()=>[],error:()=>[],labeled:()=>true}}),/labeling_input_memory_bound/);
+ assert.equal(reads,1);assert.equal(reserves,0);assert.equal(failures,0);assert.equal(releases,1);
+});

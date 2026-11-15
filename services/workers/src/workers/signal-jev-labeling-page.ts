@@ -87,7 +87,12 @@ export async function processJevLabelingPageV1<Input extends FacetInput,Result>(
       let calls=(recoveryOnly?pending.filter(call=>Boolean(call.raw_body)):pending).slice(0,execution?.window_size??200);
       if(recoveryOnly&&!calls.length)return {status:"recovery_unavailable"};
       if(!calls.length&&!run.error_code&&!recoveryOnly){
-        const proposals=hooks.propose(run,await store.inputs(run)).slice(0,execution?.window_size??200);
+        // Native continuous consumers reserve room for at least one response
+        // before hydrating input text or compiling copied request bodies.
+        const inputBudget=execution&&continuous?execution.max_buffered_bytes-assertJevStreamingExecutionV2(execution,provider):undefined;
+        if(inputBudget!==undefined&&inputBudget<1)throw Error('jev_stream_input_memory_budget_exceeded');
+        const inputs=await store.inputs(run,inputBudget===undefined?undefined:{max_rows:execution!.window_size,max_working_bytes:inputBudget,on_oversize:'error'});
+        const proposals=hooks.propose(run,inputs).slice(0,execution?.window_size??200);
         if(proposals.length)calls=(await store.reserve(run,proposals)).slice(0,execution?.window_size??200);
       }
       const reserved=run.error_code?[]:calls.filter(call=>call.status==="reserved"&&!call.raw_body);
@@ -101,7 +106,7 @@ export async function processJevLabelingPageV1<Input extends FacetInput,Result>(
           ?async(available:number,maxCalls:number,admissionSignal:AbortSignal)=>{
             if(renewal)await renewal;if(leaseError)throw leaseError;
             if(admissionSignal.aborted||cancellation.signal.aborted||windows+fedWindows>=(maxWindows??Infinity))return[];
-            const inputs=(await(args.read_next_inputs?args.read_next_inputs(run,{max_rows:maxCalls,max_working_bytes:available}):store.inputs(run))).slice(0,maxCalls);
+            const inputs=(await(args.read_next_inputs?args.read_next_inputs(run,{max_rows:maxCalls,max_working_bytes:available}):store.inputs(run,{max_rows:maxCalls,max_working_bytes:available,on_oversize:'empty'}))).slice(0,maxCalls);
             if(!inputs.length||admissionSignal.aborted||cancellation.signal.aborted)return[];
             if(hooks.prepare_next&&!await hooks.prepare_next(run,inputs))return[];
             if(admissionSignal.aborted||cancellation.signal.aborted)return[];
