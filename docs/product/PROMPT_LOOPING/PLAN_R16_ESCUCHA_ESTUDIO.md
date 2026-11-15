@@ -12,6 +12,15 @@ No hay aprobaciones humanas intermedias en los procesos de análisis: Sonnet 4.6
 
 ## Progreso
 
+- H1 custodia observada: tras la lectura completa, el scheduler sustituye la reserva del máximo posible por una reserva conservadora de los bytes reales (mínimo entre el máximo anterior y raw×24+64 KiB), sin liberar la custodia hasta aplicación y feedback. La reserva completa antes de HTTP sigue intacta; la transferencia explícita evita doble liberación. Dos regresiones fallaban antes; 63 focales pasan, incluidos gates de las cuatro etapas, UTF-8 cercano al límite con codec JSONL/base64 y lectura de archivo, y fallo de Storage tras transferir. Workers 1,027/44 omisiones de entorno, tipado/lint 11/11 y revisión independiente sin P0/P1/P2. Nueva medición y matriz de fallos pendientes.
+
+- H1 diagnóstico corto c6bd1c50: 4,096 raíces completas, 18 páginas y 9.93 s (412.50 raíces/s), con preparación sintética separada de 24.99 s. Rechazado y demasiado corto para aceptación sostenida; no se compara directamente con la población de 32,768. La corrección de flush conserva validez funcional, pero no acredita velocidad. Se investiga el presupuesto máximo retenido después de conocer el tamaño real de cada respuesta, sin reducir la memoria de custodia necesaria ni fingir persistencia.
+
+- H3 integración 58c4f522: las dieciséis pruebas nativas de avances y la nueva prueba del drainer completo pasaron 17/17, sin omisiones, con 285 migraciones por clon y 94.77 s. El caso nuevo usa el lector y el ajuste numérico de producción sobre un subset vacío legítimo, Storage privado de fixture con fsync/readback y admisión PostgreSQL real; no envía Sonnet ni reclasifica raíces. La reagrupación BERTopic no vacía se probó por separado con Python real, 14/14 sin omisiones. CI incorpora ambos recorridos explícitos; falta ejecutar el workflow remoto y el ciclo completo en UAT.
+
+- H3 0304: el seguimiento f0a9a7e5 corrige los dos P2 con tres regresiones que fallaban antes del cambio. PostgreSQL dedicado 16/16, sin omisiones, y tipado/lint 11/11; la revisión confirma el cierre de ambos. La integración contiene el drainer nativo y la activación previa al aviso de avance, revisados sin P0/P1/P2. Falta la validación PostgreSQL conjunta de esta rama y el inicio inicial ligado a intención/cap original (0305 en implementación).
+- H4 configuración: integrados la plantilla JSON y el envelope explícito a3ca3f18/512712ef. Los pasos de ajuste, interpretación, contraste, salida y promoción reciben el snapshot externo sin alterar la identidad del Study; query-engine 713/713. El primer checkpoint del worker fue rechazado por imponer JEV por raíz en serie; se cambia al contrato masivo H1 antes de integrar. Persistencia y ejecución nativa siguen pendientes.
+
 - H1 batching: se reprodujo con cuatro llamadas y memoria libre que ocupar todos los slots HTTP forzaba una página de una sola respuesta antes del temporizador. La corrección distingue saturación HTTP de presión de memoria y conserva los límites de tamaño/tiempo y el drenaje final. La regresión falló en a1ec18b5 y pasa con el cambio; sesenta pruebas focales pasan. Falta revisión, matriz y nueva medición completa; no se atribuye una mejora de velocidad a la prueba unitaria.
 
 - H1 a1ec18b5 terminó 32,768 raíces y 177 páginas en 58.07 s: 564.30 raíces/s, mínimo de una ventana completa igual a cero. Rechazado por velocidad sostenida y latencia observada fuera de 100–500 ms; usar los defaults de la factory no bastó. La preparación sintética separada tardó 641.21 s. Recibo completo conservado en privado; sigue pendiente localizar el cuello y alcanzar la meta antes de usar JEV real.
@@ -132,6 +141,8 @@ Recibo: separar Voyage/JEV por raíz de Claude por número de grupos y vueltas; 
 
 ## Sorpresas y descubrimientos
 
+- Una respuesta pequeña conservaba hasta el final la reserva para una respuesta máxima de 16 KiB. El perfil anterior mostró 39 de 59 muestras con al menos 90% de memoria reservada y 21 sin HTTP en vuelo. El nuevo cálculo sólo libera el exceso conocido y mantiene el margen del codec. La prueba de custodia aislada usa una ventana sin prefetch para no confundir la reserva de una lectura siguiente con los bytes de la respuesta; la continuidad se verifica en otras pruebas.
+
 - La condición de espera por slots HTTP llamaba al mismo flush forzado que la falta de memoria. Una respuesta temprana seguida de otra cohorte llena podía partir el lote antes del temporizador. El caso mínimo deja todas las respuestas y presupuesto intactos y muestra una página prematura de una fila; el cambio la conserva hasta el límite normal o el drenaje final.
 
 - El segundo ensayo completo con la factory compartida quedó prácticamente igual al anterior (564 frente a 562 raíces/s): las páginas tuvieron mediana de 164 filas aunque el máximo configurado era 1,024. El tamaño configurado no equivale al lote efectivamente persistido; el perfil y el calendario de admisiones deben explicar las pausas antes de otra medición.
@@ -187,6 +198,10 @@ Recibo: separar Voyage/JEV por raíz de Claude por número de grupos y vueltas; 
 
 ## Registro de decisiones
 
+- 2026-11-15: reducir la reserva de una respuesta sólo después de completarse la lectura acotada y conocerse el wrapper exacto. Conservar el mismo factor conservador y límite máximo; transferir la propiedad a la fila de custodia y hacer que el catch libere sólo lo que aún posee. No interpretar esa reserva como RSS medido ni como persistencia, liquidación o devolución de cuota.
+
+- 2026-11-15: añadir gates explícitos de PostgreSQL para límites de entrada, dinero, endurecimiento, avances y drainer, todos con cero omisiones. Ejecutar también Node→spool→BERTopic real en CI con dependencias CPU fijadas, sin descarga de modelos. Distinguir la prueba nativa de subset vacío de la prueba numérica no vacía; ninguna sustituye la aceptación completa de UAT.
+
 - 2026-11-15: tratar por separado slots HTTP ocupados y memoria insuficiente. Con memoria disponible, esperar otra respuesta sin forzar un lote pequeño; mantener flush por tamaño, temporizador, presión real y drenaje al finalizar. Verificar la hipótesis con mediciones de lotes reales antes de atribuirle capacidad sostenida.
 
 - 2026-11-15: rechazar a1ec18b5 con los mismos criterios de latencia y capacidad. Conservar evidencia y toda la base sintética; no repetir la corrida ni aumentar concurrencia a ciegas. Perfilar lotes reales y pausas antes del siguiente cambio. El drainer automático sólo continúa padres admitidos; el inicio inicial sigue pendiente de una intención explícita ligada al límite original, nunca de inferir autorización por encontrar filas del ledger.
@@ -238,6 +253,8 @@ Recibo: separar Voyage/JEV por raíz de Claude por número de grupos y vueltas; 
 - 2026-11-14: publicar una fórmula condicional con coeficientes medidos en R15 y costo editorial por grupos/vueltas; actualizar la proyección histórica sin cambiar sus recibos ni presentarla como costo medido de R16. Reconstrucción verificada con aritmética decimal exacta.
 
 ## Resultado y retrospectiva
+
+La integración local vigente pasa 17 pruebas dedicadas PostgreSQL sin omisiones (285 migraciones), incluidas la continuación automática y la recuperación de custodia/admisión. Catorce pruebas con Python real verifican por separado la reagrupación no vacía. Los checkpoints de H4 todavía necesitan owner y driver nativos; el primer worker fue devuelto a corrección por serializar JEV. El ensayo completo más reciente de capacidad terminó 32,768 raíces a 564.30/s y sigue rechazado. Ninguna de estas pruebas acredita la ejecución real de R16, sus muestras o su calidad. UAT conserva R15; R16 no ha consumido nuevas llamadas pagadas ni desplegado migraciones allí.
 
 R16 sigue en ejecución con alcance completo H0–H6. ADR033 y el modelo condicional de costo están integrados en develop. H1, H2 y la persistencia inicial H3 están implementados en ramas revisadas; H5 tiene léxico genérico con pruebas locales y nativas. H3 monetario y H4 siguen en desarrollo. Las pruebas por contrato y PostgreSQL sostienen estos avances, pero no sustituyen la aceptación integral.
 

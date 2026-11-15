@@ -1,7 +1,7 @@
-import { mkdtemp, writeFile, rm } from "node:fs/promises";
+import { mkdtemp, writeFile, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
 import { createWorkspaceEngineStorageV1 } from "./signal-workspace-engine-storage";
 import assert from "node:assert/strict";
@@ -15,6 +15,7 @@ import {
   type MassLabelingResultV1,
 } from "@noisia/query-engine";
 import type { LabelingRunV1, LabelingCallV1 } from "@noisia/db";
+import {buildLabelingRawPageV1,parseLabelingRawPageV1} from "@noisia/db";
 import { processMassLabelingJevV1, signalMassLabelingJevJobV1, MASS_LABELING_JEV_PENDING_RUNS_SQL_V1 } from "./signal-mass-labeling-jev";
 import { JevProviderErrorV1, createTypesafeJevClientV1, type JevProviderV1, type JevRequestV1 } from "../providers/typesafe-jev";
 
@@ -571,7 +572,7 @@ test('streaming reserves codec working memory until durable flush finishes', {ti
     execution: { ...streaming, max_in_flight: 16, max_flushes: 1, max_buffered_bytes: 1024 * 1024 },
     observe_stream: metrics => { snapshots.push(metrics); } });
   assert.equal(outcome.status, 'completed'); assert.equal(outcome.labeled, 16);
-  assert.equal(beforeDurability, 1, 'request/input metadata and body receipt cannot release the capacity reserved for JSONL copies');
+  assert.ok(beforeDurability > 1, 'known small responses release only their excess peak reservation, allowing the next HTTP before persistence finishes');
   assert.ok(snapshots.every(s => s.reserved_working_bytes >= 0 && s.reserved_working_bytes <= 1024 * 1024));
   assert.ok(snapshots.some(s => s.in_flight === 0 && s.active_flushes > 0 && s.reserved_working_bytes > 0),
     'the measured reservation includes flushes after all HTTP requests returned');
@@ -952,4 +953,69 @@ test('occupied HTTP slots do not force tiny raw pages while response memory rema
   assert.deepEqual(batches,[],'a full HTTP frontier is not response-memory pressure');
  }finally{allow.forEach(gate=>gate.resolve());await task;}
  assert.equal(f.results.length,4);assert.deepEqual(batches,[['call-0','call-1','call-2','call-3']]);
+});
+
+
+test('observed raw custody remains reserved through persistence, settlement, apply and feedback',{timeout:10000},async()=>{
+ const f=fixture(1),deferred=()=>{let resolve!:()=>void;const promise=new Promise<void>(done=>{resolve=done;});return{promise,resolve};};
+ const stages=['persist','settle','apply','feedback']as const;
+ const entered=Object.fromEntries(stages.map(key=>[key,deferred()]))as Record<typeof stages[number],ReturnType<typeof deferred>>;
+ const allowed=Object.fromEntries(stages.map(key=>[key,deferred()]))as typeof entered;
+ let current=0,expected=0,metadata=0;
+ const snapshots:number[]=[];
+ const {jevCallWorkingBytesV2}=await import('./signal-jev-streaming-window');
+ const original={settle:f.store.settlePage,apply:f.store.apply};
+ f.store.persistRawPage=async(run,rows)=>{entered.persist.resolve();await allowed.persist.promise;for(const row of rows)row.call.raw_body=row.raw;};
+ f.store.settlePage=async(run,rows)=>{entered.settle.resolve();await allowed.settle.promise;await original.settle(run,rows);};
+ f.store.apply=async(run,rows)=>{entered.apply.resolve();await allowed.apply.promise;await original.apply(run,rows);};
+ const provider:JevProviderV1={max_response_bytes:16384,max_concurrency:1,async evaluate(request){
+  const raw=f.response(request);metadata=jevCallWorkingBytesV2(f.calls[0]!);
+  assert.equal(current,metadata+16384*24+65536,'full response capacity is held before evaluate resolves');
+  expected=Math.min(16384*24+65536,Buffer.byteLength(JSON.stringify(raw))*24+65536);return raw;
+ },async observeUsage(){entered.feedback.resolve();await allowed.feedback.promise;}};
+ const task=processMassLabelingJevV1({run_id:f.run.id,store:f.store,provider,
+  execution:{...streaming,max_in_flight:1,flush_size:1,window_size:1},observe_stream:m=>{current=m.reserved_working_bytes;snapshots.push(current);}});
+ try{for(const stage of stages){await entered[stage].promise;assert.equal(current,metadata+expected,'custody remains held during '+stage);allowed[stage].resolve();}
+  assert.equal((await task).labeled,1);assert.equal(current,0);assert.ok(snapshots.every(bytes=>bytes>=0&&bytes<=streaming.max_buffered_bytes));
+ }finally{for(const stage of stages)allowed[stage].resolve();await task;}
+});
+
+test('bounded UTF-8 near the response limit keeps full custody through JSONL codec readback',async()=>{
+ const f=fixture(1),snapshots:number[]=[];let body='',rawBytes=0,serialized='';
+ const client=createTypesafeJevClientV1({enabled:true,api_key:'synthetic',concurrency:1,max_response_bytes:16384,
+  fetch:async(_url,init)=>{const request=JSON.parse(String(init?.body))as JevRequestV1,source=JSON.parse(f.response(request).body);
+   const unit='é"\\\n🧪',empty=JSON.stringify({...source,padding:''});
+   const count=Math.floor((16300-Buffer.byteLength(empty))/Buffer.byteLength(JSON.stringify(unit).slice(1,-1)));
+   body=JSON.stringify({...source,padding:unit.repeat(count)});const bytes=Buffer.from(body),cut=bytes.indexOf(Buffer.from('🧪'))+2;
+   assert.ok(bytes.length>=15000&&bytes.length<16384);assert.ok(cut>2);
+   return new Response(new ReadableStream({start(controller){controller.enqueue(bytes.subarray(0,cut));controller.enqueue(bytes.subarray(cut));controller.close();}}),{status:200});}});
+ const provider:JevProviderV1={...client,async evaluate(request,options){const raw=await client.evaluate(request,options);serialized=JSON.stringify(raw);rawBytes=Buffer.byteLength(serialized);return raw;}};
+ f.store.persistRawPage=async(_run,rows)=>{assert.equal(rows.length,1);assert.equal(rows[0]!.raw,serialized);assert.equal(JSON.parse(rows[0]!.raw).body,body);
+  assert.ok(rawBytes>16384,'wrapper escaping can exceed the bounded provider body without losing bytes');
+  const scope={workspace_id:randomUUID(),run_id:randomUUID()},call_id=randomUUID();
+  const page=buildLabelingRawPageV1({...scope,receipts:[{call_id,request_digest:rows[0]!.call.request_digest,raw:rows[0]!.raw}]});
+  const directory=await mkdtemp(join(tmpdir(),'noisia-raw-custody-codec-'));
+  try{const file=join(directory,'page.jsonl');await writeFile(file,page.raw_text,{mode:0o600});
+   const raw_text=await readFile(file,'utf8'),decoded=parseLabelingRawPageV1({...scope,...page,raw_text});
+   assert.equal(decoded.get(call_id),serialized);assert.deepEqual(Buffer.from(decoded.get(call_id)!),Buffer.from(serialized));
+   assert.equal(JSON.parse(decoded.get(call_id)!).body,body);
+  }finally{await rm(directory,{recursive:true,force:true});}
+  for(const row of rows)row.call.raw_body=row.raw;};
+ const outcome=await processMassLabelingJevV1({run_id:f.run.id,store:f.store,provider,
+  execution:{...streaming,max_in_flight:1,flush_size:1,window_size:1},observe_stream:m=>snapshots.push(m.reserved_working_bytes)});
+ assert.equal(outcome.labeled,1);assert.ok(snapshots.every(bytes=>bytes>=0&&bytes<=streaming.max_buffered_bytes));assert.equal(snapshots.at(-1),0);
+});
+
+test('a storage failure after observed-custody transfer releases no response reservation twice or sends again',async()=>{
+ const f=fixture(1),snapshots:number[]=[];let sends=0;
+ f.store.persistRawPage=async()=>{throw Error('synthetic page custody failure');};
+ const provider:JevProviderV1={max_response_bytes:16384,max_concurrency:1,async evaluate(request){sends++;return f.response(request);}};
+ const args={run_id:f.run.id,store:f.store,provider,execution:{...streaming,max_in_flight:1,flush_size:1,window_size:1},
+  observe_stream:(m:{reserved_working_bytes:number})=>snapshots.push(m.reserved_working_bytes)};
+ await assert.rejects(processMassLabelingJevV1(args),/synthetic page custody failure/);
+ assert.equal(sends,1);assert.ok(snapshots.every(bytes=>bytes>=0&&bytes<=streaming.max_buffered_bytes));
+ const {jevCallWorkingBytesV2}=await import('./signal-jev-streaming-window');
+ assert.equal(snapshots.at(-1),jevCallWorkingBytesV2(f.calls[0]!),'only the retained unknown call metadata remains, with no raw custody or peak reservation');
+ assert.equal(f.calls[0]!.status,'unknown');assert.equal(f.calls[0]!.results_applied,false);
+ assert.equal((await processMassLabelingJevV1(args)).status,'outcome_unknown');assert.equal(sends,1);
 });
