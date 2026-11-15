@@ -83,13 +83,17 @@ export async function verifyHybridJevPageContinuationV1(a:{client:PoolClient;dat
  const nodes=(plan:RightsPlan):RightsPlan[]=>[plan,...(plan.Plans??[]).flatMap(nodes)];
  const redact=(value:unknown)=>String(value).replace(/'(?:[^']|'')*'/gu,"'<literal>'")
   .replace(/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/giu,'<uuid>');
- const planDiagnostic=nodes(rightsPlan).map(node=>Object.fromEntries([
-  ['node_type',node['Node Type']],['relation',node['Relation Name']],['alias',node['Alias']],['index',node['Index Name']],
-  ['index_cond',node['Index Cond']],['recheck_cond',node['Recheck Cond']],['filter',node['Filter']],['join_filter',node['Join Filter']],
-  ['plan_rows',node['Plan Rows']],['actual_rows',node['Actual Rows']],['actual_loops',node['Actual Loops']],
-  ['startup_cost',node['Startup Cost']],['total_cost',node['Total Cost']],['actual_startup_ms',node['Actual Startup Time']],
-  ['actual_total_ms',node['Actual Total Time']],['shared_hit_blocks',node['Shared Hit Blocks']],['shared_read_blocks',node['Shared Read Blocks']],
- ].filter(([,value])=>value!==undefined).map(([key,value])=>[key,typeof value==='string'?redact(value):value])));
+ const planDiagnostic=nodes(rightsPlan).map(node=>{
+  const fields:Array<[string,unknown]>=[
+   ['node_type',node['Node Type']],['relation',node['Relation Name']],['alias',node['Alias']],['index',node['Index Name']],
+   ['index_cond',node['Index Cond']],['recheck_cond',node['Recheck Cond']],['filter',node['Filter']],['join_filter',node['Join Filter']],
+   ['plan_rows',node['Plan Rows']],['actual_rows',node['Actual Rows']],['actual_loops',node['Actual Loops']],
+   ['startup_cost',node['Startup Cost']],['total_cost',node['Total Cost']],['actual_startup_ms',node['Actual Startup Time']],
+   ['actual_total_ms',node['Actual Total Time']],['shared_hit_blocks',node['Shared Hit Blocks']],['shared_read_blocks',node['Shared Read Blocks']],
+  ];
+  return Object.fromEntries(fields.filter(([,value])=>value!==undefined)
+   .map(([key,value])=>[key,typeof value==='string'?redact(value):value]));
+ });
  console.log(JSON.stringify({gate:'mfp_hybrid_rights_plan_diagnostic',nodes:planDiagnostic}));
  assert.equal(nodes(rightsPlan).filter(n=>n['Subplan Name']==='CTE eligible_batches').length,1,'current provenance policy is planned once per statement');
  assert.ok(nodes(rightsPlan).some(n=>n['Index Cond']?.includes('canonical_mention_id =')&&n['Index Cond'].includes('.root_id')&&!n['Index Cond'].includes('::text')),'requested canonical UUIDs retain the root index lookup');
