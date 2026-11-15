@@ -1,6 +1,8 @@
 import { createHash, createHmac, randomUUID } from "node:crypto";
 import { chmod, link, lstat, mkdir, mkdtemp, readFile, readdir, rename, rm, stat, unlink, writeFile } from "node:fs/promises";
+import { createReadStream } from "node:fs";
 import { dirname, resolve, sep } from "node:path";
+import { streamJsonV1 } from "./private-json-stream.js";
 
 export const LISTENING_COHORTS_V1 = ["C01", "C02", "C03", "C04", "C05", "C06", "C07", "C08", "C09", "C10"] as const;
 const DIRECTIONS = ["trigger", "barrier", "mixed", "none"] as const;
@@ -411,7 +413,32 @@ export function validatePacketV1(packet: unknown): asserts packet is PacketV1 {
   }
 }
 
-export async function writeBlindPackageV1(args: { snapshotPath: string; seedPath: string; packageDir: string; custodyKeyPath: string }) {
+type BlindPackageWriteArgsV1 = { snapshotPath: string; seedPath: string; packageDir: string; custodyKeyPath: string };
+type PreparedBlindPackageWriteV1 = { snapshotPath: string; seedPath: string; packageDir: string; keyPath: string; seed: string };
+
+export async function writeBlindPackageV1(args: BlindPackageWriteArgsV1) {
+  const prepared = await prepareBlindPackageWriteV1(args);
+  const raw = JSON.parse(await readFile(prepared.snapshotPath, "utf8"));
+  return publishBlindPackageV1(prepared, raw);
+}
+
+/** Programmatic path for an exporter-returned object; verifies exact private-file bytes before sampling. */
+export async function writeBlindPackageFromExportedSnapshotV1(args: BlindPackageWriteArgsV1 & { snapshot: unknown }) {
+  const prepared = await prepareBlindPackageWriteV1(args);
+  await assertBlindSnapshotStreamMatchesV1(args.snapshot, createReadStream(prepared.snapshotPath));
+  return publishBlindPackageV1(prepared, args.snapshot);
+}
+
+/** Incrementally compares a stored artifact to the serialization of its supplied snapshot. */
+export async function assertBlindSnapshotStreamMatchesV1(snapshot: unknown, persistedBytes: AsyncIterable<Uint8Array>): Promise<void> {
+  const expected = createHash("sha256");
+  await streamJsonV1(snapshot, chunk => { expected.update(chunk, "utf8"); }, { pretty: true, trailing_newline: true });
+  const actual = createHash("sha256");
+  for await (const chunk of persistedBytes) actual.update(chunk);
+  if (expected.digest("hex") !== actual.digest("hex")) throw new Error("blind_snapshot_file_mismatch");
+}
+
+async function prepareBlindPackageWriteV1(args: BlindPackageWriteArgsV1): Promise<PreparedBlindPackageWriteV1> {
   const privateRoot = resolve(".data/piloto-masivo/r16");
   const snapshotPath = resolve(args.snapshotPath), seedPath = resolve(args.seedPath), packageDir = resolve(args.packageDir), keyPath = resolve(args.custodyKeyPath);
   for (const path of [snapshotPath, seedPath, packageDir, keyPath]) if (path !== privateRoot && !path.startsWith(`${privateRoot}${sep}`))
@@ -419,12 +446,19 @@ export async function writeBlindPackageV1(args: { snapshotPath: string; seedPath
   if (packageDir === keyPath || keyPath.startsWith(`${packageDir}${sep}`) || packageDir.startsWith(`${keyPath}${sep}`)) throw new Error("blind_key_must_be_separate");
   for (const input of [snapshotPath, seedPath]) await rejectSymlinkComponents(input);
   for (const output of [packageDir, keyPath]) await rejectSymlinkComponents(dirname(output));
-  for (const input of [snapshotPath, seedPath]) if (((await stat(input)).mode & 0o077) !== 0) throw new Error("blind_input_permissions_too_open");
+  for (const input of [snapshotPath, seedPath]) {
+    const info = await stat(input);
+    if (!info.isFile() || (info.mode & 0o077) !== 0) throw new Error("blind_input_permissions_too_open");
+  }
   try { await lstat(packageDir); throw new Error("blind_output_exists"); } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
   try { await lstat(keyPath); throw new Error("blind_key_exists"); } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
-  const raw = JSON.parse(await readFile(snapshotPath, "utf8"));
   const seed = (await readFile(seedPath, "utf8")).trim();
-  const built = buildBlindPackageV1(raw, seed);
+  return { snapshotPath, seedPath, packageDir, keyPath, seed };
+}
+
+async function publishBlindPackageV1(prepared: PreparedBlindPackageWriteV1, snapshot: unknown) {
+  const { packageDir, keyPath, seed } = prepared;
+  const built = buildBlindPackageV1(snapshot, seed);
   await mkdir(dirname(keyPath), { recursive: true, mode: 0o700 });
   await chmod(dirname(keyPath), 0o700);
   await mkdir(dirname(packageDir), { recursive: true, mode: 0o700 });

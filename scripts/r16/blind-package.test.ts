@@ -1,8 +1,13 @@
 import assert from "node:assert/strict";
+import { constants as bufferConstants } from "node:buffer";
+import { PassThrough } from "node:stream";
+import { once } from "node:events";
 import test from "node:test";
 import { mkdtemp, mkdir, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
-import { buildBlindPackageV1, LISTENING_COHORTS_V1, validatePacketV1, validateSnapshotV1, verifyBlindPackageV1, writeBlindPackageV1, type BlindSnapshotV1 } from "./blind-package.js";
+import { assertBlindSnapshotStreamMatchesV1, buildBlindPackageV1, LISTENING_COHORTS_V1, validatePacketV1, validateSnapshotV1,
+  verifyBlindPackageV1, writeBlindPackageFromExportedSnapshotV1, writeBlindPackageV1, type BlindSnapshotV1 } from "./blind-package.js";
+import { streamJsonV1, writePrivateJsonFileV1 } from "./private-json-stream.js";
 
 const seed = "synthetic-seed-for-r16-blind-package-tests-2026";
 const digest = "a".repeat(64);
@@ -342,4 +347,46 @@ test("private writer emits separated custody key, atomic package, and verifiable
     assert.equal(await readFile(resolve(samePackage, "SHA256SUMS"), "utf8"), sumsBeforeOverwrite);
     assert.equal(await readFile(sameKey, "utf8"), keyBeforeOverwrite);
   } finally { await rm(temp, { recursive: true, force: true }); }
+});
+
+test("exported-object package path checks streamed private bytes before publishing", async () => {
+  const privateRoot = resolve(".data/piloto-masivo/r16");
+  await mkdir(privateRoot, { recursive: true, mode: 0o700 });
+  const temp = await mkdtemp(resolve(privateRoot, ".synthetic-exported-snapshot-test-"));
+  try {
+    const snapshot = syntheticSnapshot();
+    const snapshotPath = resolve(temp, "snapshot.json"), seedPath = resolve(temp, "seed.txt");
+    const packageDir = resolve(temp, "auditor"), keyPath = resolve(temp, "custody", "answer-key.json");
+    await mkdir(resolve(temp, "custody"), { mode: 0o700 });
+    await writePrivateJsonFileV1(snapshotPath, snapshot, temp);
+    await writeFile(seedPath, seed, { mode: 0o600 });
+
+    const mismatchPackage = resolve(temp, "mismatch-auditor"), mismatchKey = resolve(temp, "custody", "mismatch-key.json");
+    const mismatch = { ...snapshot, exported_at: "2026-11-15T00:00:00.000Z" };
+    await assert.rejects(() => writeBlindPackageFromExportedSnapshotV1({ snapshotPath, seedPath, packageDir: mismatchPackage,
+      custodyKeyPath: mismatchKey, snapshot: mismatch }), /blind_snapshot_file_mismatch/u);
+    await assert.rejects(stat(mismatchPackage), { code: "ENOENT" });
+    await assert.rejects(stat(mismatchKey), { code: "ENOENT" });
+
+    await writeBlindPackageFromExportedSnapshotV1({ snapshotPath, seedPath, packageDir, custodyKeyPath: keyPath, snapshot });
+    assert.deepEqual(await verifyBlindPackageV1(packageDir), { valid: true, files: 53 });
+  } finally { await rm(temp, { recursive: true, force: true }); }
+});
+
+test("exported-object verifier compares a virtual snapshot larger than Node's string limit without collecting it", async () => {
+  const shared = "\u0000".repeat(9_000);
+  const count = Math.ceil((bufferConstants.MAX_STRING_LENGTH + 1) / (shared.length * 6 + 4)) + 2;
+  const snapshot = new Array(count).fill(shared);
+  const bytes = new PassThrough({ highWaterMark: 64 * 1024 });
+  const producer = (async () => {
+    try {
+      await streamJsonV1(snapshot, async chunk => {
+        if (!bytes.write(Buffer.from(chunk, "utf8"))) await once(bytes, "drain");
+      }, { pretty: true, trailing_newline: true });
+      bytes.end();
+    } catch (error) { bytes.destroy(error as Error); throw error; }
+  })();
+  await assertBlindSnapshotStreamMatchesV1(snapshot, bytes);
+  await producer;
+  assert.ok(count * shared.length * 6 > bufferConstants.MAX_STRING_LENGTH);
 });
