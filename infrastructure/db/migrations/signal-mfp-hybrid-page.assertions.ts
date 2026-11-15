@@ -100,7 +100,7 @@ export async function verifyHybridJevPageContinuationV1(a:{client:PoolClient;dat
  assert.equal(nodes(rightsPlan).filter(n=>n['Subplan Name']==='CTE eligible_batches').length,1,'current provenance policy is planned once per statement');
  assert.ok(nodes(rightsPlan).some(n=>n['Index Cond']?.includes('canonical_mention_id =')&&n['Index Cond'].includes('.root_id')&&!n['Index Cond'].includes('::text')),'requested canonical UUIDs retain the root index lookup');
  const rootCount=new Set(prior.flatMap(call=>call.inputs.map(input=>input.root_id))).size;
- const originProbes=nodes(rightsPlan).filter(n=>n['Relation Name']==='mentions'&&n['Alias']==='origin');
+ const originProbes=nodes(rightsPlan).filter(n=>n['Relation Name']==='mentions');
  assert.ok(originProbes.length>0,'the actual plan includes the origin lookup');
  assert.ok(originProbes.every(n=>Number(n['Actual Loops'])<=rootCount),
   'origin lookups are bounded by distinct requested roots, independent of import-path multiplicity');
