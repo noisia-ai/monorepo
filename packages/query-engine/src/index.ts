@@ -1290,3 +1290,5 @@ export * from "./signal-listening-prototypes";
 
 export * from './signal-listening-calibration';
 export * from './signal-lexicon-evidence-v1';
+export * from './signal-listening-discovery-v1';
+export * from './signal-listening-discovery-editorial-v1';
