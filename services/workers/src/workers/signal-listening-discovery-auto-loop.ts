@@ -13,8 +13,11 @@ export type ListeningDiscoveryNumericCheckpointV1=ListeningDiscoveryStoredNumeri
 type LeaseArgs={database:Database;lease:ListeningDiscoveryAdvanceLeaseV1};
 /** Required native DB contracts; deliberately no SQL fallback or local state.
  * claim/context revalidate admission, map/policy and human precedence. ensureSubset
- * and persistNumeric are idempotent CAS under this lease; persistence verifies the
- * byte hashes, complete subset membership and original numerical artifacts.
+ * and persistNumeric are idempotent under this lease. Persistence first loads
+ * an existing journal without another upload; otherwise it stages and verifies
+ * EVERY artifact before a CAS creates the immutable DB intent. A committed
+ * intent therefore survives local cleanup with recoverable private byte custody.
+ * The CAS also verifies complete subset membership and original numeric hashes.
  * enqueue atomically rechecks owner cap, policy, map, human freeze, stop/max3 and
  * verified numeric checkpoint, then invokes the existing round owner exactly once.
  */

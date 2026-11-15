@@ -4,6 +4,7 @@ import{tmpdir}from'node:os';
 import{hashWorkspaceEngineFileV1}from'./signal-workspace-engine-files';
 import{buildWorkspaceEngineStorageKeyV1,type WorkspaceEngineStorageV1}from'./signal-workspace-engine-storage';
 import type{ListeningOrphanNumericResultV1}from'./signal-listening-orphan-regroup';
+import type{ListeningDiscoveryAdvanceLeaseV1}from'./signal-listening-discovery-auto-loop';
 export type ListeningDiscoveryNumericArtifactDescriptorV1={workspace_id:string;execution_id:string;checkpoint_id:string;name:string;
  sha256:string;size_bytes:number;storage_key?:string};
 export type ListeningDiscoveryNumericStorageV1={
@@ -16,7 +17,8 @@ const logical=/^(?:(?:input|output)\/)?[a-z][a-z0-9_.-]{0,100}$/u,sha=/^sha256:[
 function fail(reason:string):never{throw Error('listening_discovery_numeric_storage_'+reason);}
 /** Native private multipart custody. Local paths exist only in this transient
  * upload closure; a recovery instance verifies remote references with no files.
- * DB ownership/CAS is mandatory before invoking these callbacks. */
+ * A valid native advance lease authorizes staging. DB creates its checkpoint
+ * intent only AFTER every staged artifact has verified readback. */
 export function createListeningDiscoveryNumericStorageV1(args:{storage:WorkspaceEngineStorageV1;
  scope?:{workspace_id:string;execution_id:string};artifacts?:ListeningOrphanNumericResultV1['artifacts']}):ListeningDiscoveryNumericStorageV1{
  const artifacts=new Map((args.artifacts??[]).map(artifact=>[artifact.name,artifact]));
@@ -45,4 +47,14 @@ export function createListeningDiscoveryNumericStorageV1(args:{storage:Workspace
    ||!await verify({...d,storage_key:stored.storage_key}))fail('verification_failed');
   return{storage_key:stored.storage_key,sha256:stored.sha256,size_bytes:stored.size_bytes,verified:true};
  }};
+}
+
+/** Bind the generic native factory without persisting local paths. Recovery is
+ * file-free; only a first persist may capture this result's private upload map. */
+export function createListeningDiscoveryNumericStorageBindingsV1(storage:WorkspaceEngineStorageV1){
+ return{numeric_storage:createListeningDiscoveryNumericStorageV1({storage}),
+  numeric_storage_for_result:(lease:ListeningDiscoveryAdvanceLeaseV1,numeric:ListeningOrphanNumericResultV1)=>{
+   if(numeric.manifest.workspace_id!==lease.workspace_id||numeric.manifest.generation_id!==lease.source_generation_id)fail('result_scope_invalid');
+   return createListeningDiscoveryNumericStorageV1({storage,scope:{workspace_id:lease.workspace_id,execution_id:lease.execution_id},artifacts:numeric.artifacts});
+  }};
 }

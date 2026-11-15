@@ -60,10 +60,10 @@ test('automatic owner advances three rounds through native admission and resumes
  assert.deepEqual(await signalListeningDiscoveryAdvanceJobV1(f.execution_id,f.options),{status:'stopped',reason:'max_rounds'});
  assert.equal(f.counts().admissions,3);assert.equal(f.counts().computations,3);
 });
-test('planned numeric persistence ACK loss resumes sealed checkpoint without regrouping and enqueue ACK loss never opens another review',async()=>{
+test('staged numeric persistence ACK loss resumes sealed custody without regrouping and enqueue ACK loss never opens another review',async()=>{
  const f=fixture();f.setPersistAckLost();await assert.rejects(signalListeningDiscoveryAdvanceJobV1(f.execution_id,f.options),/persist_ack_lost/);
  assert.equal(f.counts().admissions,0);f.setEnqueueAckLost();await assert.rejects(signalListeningDiscoveryAdvanceJobV1(f.execution_id,f.options),/enqueue_ack_lost/);
- assert.equal(f.counts().computations,1);assert.equal(f.counts().admissions,1);
+ assert.equal(f.counts().computations,1);assert.equal(f.counts().persists,1,'existing custody bypasses persistence and its upload callback');assert.equal(f.counts().admissions,1);
  assert.equal((await signalListeningDiscoveryAdvanceJobV1(f.execution_id,f.options)).status,'waiting_round');assert.equal(f.counts().admissions,1);
 });
 test('sealed native stop decisions, stale policy/map and human freeze prevent automatic admission',async()=>{
@@ -103,7 +103,7 @@ test('native initial stop, missing context and enqueue CAS veto cannot create an
  assert.equal(stopped.counts().persists,0);assert.equal(stopped.counts().admissions,0);
 });
 
-test('a planned numeric checkpoint stays pending without recomputation or enqueue and cannot starve another admitted owner',async()=>{
+test('an existing legacy planned numeric checkpoint stays pending without recomputation or enqueue and cannot starve another admitted owner',async()=>{
  const planned=fixture();planned.stores.loadNumeric=async()=>({status:'pending',manifest_sha256:digest('planned')});
  assert.equal((await signalListeningDiscoveryAdvanceJobV1(planned.execution_id,planned.options)).status,'waiting_numeric');
  assert.equal(planned.counts().computations,0);assert.equal(planned.counts().admissions,0);assert.equal(planned.counts().releases,1);
