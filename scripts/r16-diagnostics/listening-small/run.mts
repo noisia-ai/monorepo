@@ -5,6 +5,7 @@ import {mkdir,open,readFile} from 'node:fs/promises';
 import {join,resolve,sep} from 'node:path';
 import {fileURLToPath,pathToFileURL} from 'node:url';
 import {performance} from 'node:perf_hooks';
+import {createListeningObserver} from './observer.mjs';
 
 const ROOT_COUNT=4096;
 const MAX_MS=9*60*1000;
@@ -12,7 +13,8 @@ const NOOP={diagnostic_only:true,h1_accepted:false,status:'no_database_action'} 
 const providerSecrets=['ANTHROPIC_API_KEY','ANTHROPIC_AUTH_TOKEN','OPENAI_API_KEY','TYPESAFE_API_KEY',
   'NOISIA_TYPESAFE_API_KEY','VOYAGE_API_KEY','VOYAGEAI_API_KEY','SONNET_API_KEY'];
 const probeFiles=['.github/workflows/r16-listening-small-diagnostic.yml',
-  'scripts/r16-diagnostics/listening-small/run.mts','scripts/r16-diagnostics/listening-small/run.test.mts'] as const;
+  'scripts/r16-diagnostics/listening-small/run.mts','scripts/r16-diagnostics/listening-small/run.test.mts',
+  'scripts/r16-diagnostics/listening-small/observer.mts'] as const;
 const sha=(value:string)=>`sha256:${createHash('sha256').update(value).digest('hex')}`;
 const percentile=(xs:number[],p:number)=>{if(!xs.length)return 0;const s=[...xs].sort((a,b)=>a-b);return s[Math.ceil(s.length*p)-1]!;};
 
@@ -68,6 +70,7 @@ export async function runListeningSmallDiagnosticV1(){
   const started=performance.now();
   let stage='imports';
   let storageServer:any;
+  const observer=createListeningObserver();
   try{
     Object.assign(process.env,{NOISIA_R16_LOCAL_PG_LAB:'r16-benchmark-pg17',NOISIA_R16_NATIVE_FIXTURE_PG:'true',
       NOISIA_SIGNAL_LISTENING_ENABLED:'true',NOISIA_JEV_PROVIDER_ENABLED:'true',NOISIA_JEV_STREAMING_V2_ENABLED:'true',
@@ -111,7 +114,9 @@ export async function runListeningSmallDiagnosticV1(){
       import_batch_size:512,preparation_page_size:100,embedding_page_limit:264,
       beforeProcessing:async(ctx:any)=>{
         stage='prepare_admission';
-        const db=profile.wrapDatabase(ctx.database);
+        const db=profile.wrapDatabase(observer.wrapDatabase(ctx.database));
+        const databaseName=(await ctx.database.query('SELECT current_database() database')).rows[0].database;
+        await observer.startSampler({target,url:process.env.DATABASE_URL!,database:databaseName});
         const canceled=await db.query(`UPDATE signal_labeling_runs r SET status='canceled' WHERE r.id=$1 AND r.workspace_id=$2
           AND r.status='queued' AND NOT EXISTS(SELECT 1 FROM signal_labeling_calls c WHERE c.run_id=r.id) RETURNING r.id`,[ctx.run_id,ctx.workspace_id]);
         assert.equal(canceled.rows.length,1,'fixture_legacy_run_has_physical_calls');
@@ -135,7 +140,7 @@ export async function runListeningSmallDiagnosticV1(){
             NOISIA_TYPESAFE_ACCOUNT_REDIS_URL:process.env.R16BENCH_REDIS_URL!,NOISIA_TYPESAFE_ACCOUNT_RPS:'10000',
             NOISIA_TYPESAFE_ACCOUNT_INPUT_TPS:'10000000'},fetch:countedFetch});
         const unprofiled=jobModule.createSignalListeningRuntimeStoreV1(db,{execution,storage});
-        const profiled=profile.wrapStore(unprofiled);
+        const profiled=observer.wrapStore(profile.wrapStore(unprofiled));
         const store={...profiled,async apply(...args:any[]){await profiled.apply(...args);const roots=[...new Set(args[1].flatMap((row:any)=>row.results.map((x:any)=>x.root_id)))];
           for(let n=0;n<roots.length;n+=1024){const resolved=await census.readResolvedRootIds(roots.slice(n,n+1024));commits.push(resolved.length);}}};
         const rootSet=new Set<string>();
@@ -203,18 +208,20 @@ export async function runListeningSmallDiagnosticV1(){
             unknown_micro_usd:runStatus.run?.unknown_micro_usd,job_count:jobs,call_count:counts.rows[0]?.job_count,
             preparation_admission_wall_ms:startedProcessing-admissionStarted,classification_serving_wall_ms:performance.now()-startedProcessing,
             warmups:warmups.length,warmup_phases:warmupPhases,calibrations,commit_batch_count:commits.length},
-          observed_http_latency:latencySummary,storage:storageServer.metrics(),sql_profile:profile.snapshot(),
+          observer:observer.snapshot(),observed_http_latency:latencySummary,storage:storageServer.metrics(),sql_profile:profile.snapshot(),
           root_census_sha256:sha([...rootSet].sort().join('\n')),
           serving_question_count:serving.length,total_wall_ms:performance.now()-started};
       }} });
     stage='write_artifact';
+    await observer.close();
     await atomicJson(artifact,result);
     await storageServer.close();storageServer=undefined;
     process.stdout.write(JSON.stringify({status:'complete',diagnostic_only:true,h1_accepted:false,artifact:'artifacts/r16-listening-small/result.json'})+'\n');
     return result;
   }catch(error){
     const failure={contract_version:'r16-listening-small-diagnostic-v1',diagnostic_only:true,h1_accepted:false,
-      status:'failed',stage,code:safeError(error),total_wall_ms:performance.now()-started};
+      status:'failed',stage,code:safeError(error),observer:observer.snapshot(),total_wall_ms:performance.now()-started};
+    await observer.close();
     await atomicJson(artifact,failure).catch(()=>undefined);
     await storageServer?.close().catch(()=>undefined);
     process.stderr.write('listening_small_diagnostic_failed; sanitized artifact written\n');

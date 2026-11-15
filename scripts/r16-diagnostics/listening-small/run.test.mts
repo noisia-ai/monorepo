@@ -61,3 +61,36 @@ test('calibration observations preserve native phase shapes from the query-engin
   shapeDigests.pop();
   assert.deepEqual(captured.shape_digests,[base.shape_digest,consumer.shape_digest]);
 });
+
+test('neutral observer retains hashes and operation timing without SQL, binds or returned rows',async()=>{
+ const {createListeningObserver,queryHash}=await import('./observer.mjs');const observer=createListeningObserver();
+ try{const db=observer.wrapDatabase({async query(){return{rows:[{secret:'never record'}]};}});
+ const store=observer.wrapStore({async inputs(){return db.query('SELECT private_value FROM synthetic WHERE credential=$1',['secret-bind']);}});
+ await store.inputs();const snapshot=observer.snapshot(),serialized=JSON.stringify(snapshot);
+ assert.ok(serialized.includes(queryHash('SELECT private_value FROM synthetic WHERE credential=$1')!));
+ for(const forbidden of ['private_value','credential','secret-bind','never record'])assert.ok(!serialized.includes(forbidden));
+ const events=snapshot.events as any[];assert.equal(events.filter(x=>x.kind==='query').length,1);assert.equal(events.find(x=>x.kind==='query').operation,'inputs');
+ assert.equal(events.find(x=>x.kind==='query').pid,null);assert.ok(events.every(x=>x.end_ms>=x.start_ms));
+ }finally{await observer.close();}
+});
+
+test('neutral events are bounded and wait rows expose only allowed metadata',async()=>{
+ const {boundedEvents,safeWaitRow,queryHash}=await import('./observer.mjs');const bounded=boundedEvents(2);
+ bounded.push(1);bounded.push(2);bounded.push(3);assert.deepEqual(bounded.snapshot(),{events:[1,2],dropped:1,limit:2});
+ assert.deepEqual(safeWaitRow({pid:12,wait_event_type:'Lock',wait_event:'tuple',blocking_pids:[13,'SQL',-1],query:'secret'}),{pid:12,wait_event_type:'Lock',wait_event:'tuple',blocking_pids:[13]});
+ assert.equal(safeWaitRow({pid:12,wait_event_type:'SELECT secret',wait_event:null}).wait_event_type,'redacted');
+ assert.throws(()=>safeWaitRow({pid:'secret'}),/invalid_pid/u);assert.equal(queryHash({text:'SELECT  1'}),queryHash(' SELECT 1 '));
+});
+
+test('sampler refuses non-CI before starting any child and observer cleanup stops sampling',async()=>{
+ const {createListeningObserver}=await import('./observer.mjs');const observer=createListeningObserver();
+ try{await assert.rejects(observer.startSampler({target:'/missing',url:'postgresql://localhost/x',database:'noisia_mfp_ci'}),/ci_only|target_invalid/u);}finally{await observer.close();}
+ const before=observer.snapshot().events.length;await new Promise(resolve=>setTimeout(resolve,280));assert.equal(observer.snapshot().events.length,before);
+});
+
+test('child cleanup sends stop only to its owned child and waits for exit',async()=>{
+ const {EventEmitter}=await import('node:events');const {closeOwnedChild}=await import('./observer.mjs');
+ const child=new EventEmitter() as any;Object.assign(child,{exitCode:null,signalCode:null,connected:true});let message:unknown;
+ child.send=(m:unknown)=>{message=m;queueMicrotask(()=>{child.exitCode=0;child.emit('exit',0);});};child.kill=()=>assert.fail('graceful child must not be killed');
+ await closeOwnedChild(child);assert.deepEqual(message,{kind:'stop'});await closeOwnedChild(child);
+});
