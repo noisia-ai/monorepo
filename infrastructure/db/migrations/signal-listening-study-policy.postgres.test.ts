@@ -86,6 +86,9 @@ test('quote and provision reject unauthorized actors, stale CAS, changed quote, 
  await assert.rejects(quoteSignalListeningStudyPolicyV1({...args,valid_until:new Date(Date.now()-1000).toISOString()}),/r16_policy_dates_invalid/);
  await assert.rejects(quoteSignalListeningStudyPolicyV1({...args,discovery_cap_micro_usd:16000000}),/r16_policy_budget_invalid/);
  const quote=await quoteSignalListeningStudyPolicyV1(args);
+ assert.equal(quote.request.valid_until,f.valid_until,'finite PostgreSQL timestamp normalization returns canonical text with exact microseconds');
+ const sameInstant=f.valid_until.replace('T',' ').replace('Z','+00:00');
+ assert.equal((await quoteSignalListeningStudyPolicyV1({...args,valid_until:sameInstant})).plan_digest,quote.plan_digest,'equivalent timestamp text cannot change the canonical reviewed plan');
  await assert.rejects(provisionSignalListeningStudyPolicyV1({...args,plan_digest:'sha256:'+'0'.repeat(64),idempotency_key:randomUUID()}),/r16_policy_plan_changed/);
  const badDatabase={connect:async()=>{const c=await f.database.connect();return{query:(sql:string,params?:unknown[])=>sql.includes("SET status='active'")?Promise.reject(Error('synthetic_activation_failure')):c.query(sql,params),release:()=>c.release()};}} as Pick<Pool,'connect'>;
  await assert.rejects(provisionSignalListeningStudyPolicyV1({...args,database:badDatabase,plan_digest:quote.plan_digest,idempotency_key:randomUUID()}),/synthetic_activation_failure/);

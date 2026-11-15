@@ -42,7 +42,7 @@ async function lock(c:PoolClient,args:SignalListeningStudyPolicyArgsV1){
 }
 async function normalizedRequest(c:PoolClient,args:SignalListeningStudyPolicyArgsV1):Promise<Request>{
  const valid_until=(await c.query<{value:string}>(`SELECT CASE WHEN isfinite($1::timestamptz)
-  THEN to_char($1::timestamptz AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') ELSE $1 END value`,[args.valid_until])).rows[0]!.value;
+  THEN to_char($1::timestamptz AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') ELSE $1::text END value`,[args.valid_until])).rows[0]!.value;
  return{contract_version:'signal-listening-study-policy-request-v1',workspace_id:args.workspace_id,actor_user_id:args.actor_user_id,
   expected_policy_id:args.expected_policy_id,expected_policy_digest:args.expected_policy_digest,valid_until,
   budget_micro_usd:args.budget_micro_usd,discovery_cap_micro_usd:args.discovery_cap_micro_usd,study_cap_micro_usd:args.study_cap_micro_usd,
