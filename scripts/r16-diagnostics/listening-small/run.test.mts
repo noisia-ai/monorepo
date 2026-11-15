@@ -94,3 +94,12 @@ test('child cleanup sends stop only to its owned child and waits for exit',async
  child.send=(m:unknown)=>{message=m;queueMicrotask(()=>{child.exitCode=0;child.emit('exit',0);});};child.kill=()=>assert.fail('graceful child must not be killed');
  await closeOwnedChild(child);assert.deepEqual(message,{kind:'stop'});await closeOwnedChild(child);
 });
+
+test('final observer snapshot includes late cleanup events with consistent counters and an immutable cutoff',async()=>{
+ const {boundedEvents,finishListeningObserver}=await import('./observer.mjs');const events=boundedEvents(1);
+ const early=events.snapshot();let closed=false;
+ const final=await finishListeningObserver({async close(){await Promise.resolve();events.push({kind:'late_child_sample'});events.push({kind:'overflow'});closed=true;},snapshot(){assert.equal(closed,true);return events.snapshot();}});
+ assert.deepEqual(early,{events:[],dropped:0,limit:1});
+ assert.deepEqual(final,{events:[{kind:'late_child_sample'}],dropped:1,limit:1});
+ events.push({kind:'after_cutoff'});assert.equal(final.dropped,1);assert.equal(final.events.length,1);
+});
