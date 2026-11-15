@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import {provisionSyntheticListeningStudyPolicyV1} from './signal-listening-study-policy.synthetic.fixture';
 import {randomUUID,createHash} from 'node:crypto';
 import {mkdtemp,writeFile,readFile,open,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
@@ -10,7 +11,7 @@ import {prepareSignalListeningV1,continueSignalListeningPreparationV1} from '../
 import {createBrandContextSyntheticVoyageProviderV1} from './signal-brand-context.synthetic.fixture';
 import {signalWorkspaceEmbeddingsJobV1} from '../../../services/workers/src/workers/signal-workspace-embeddings';
 import {createSignalListeningStoreV1} from '../signal-listening-runs';
-import {signalListeningBaseTemplateV1,buildSignalListeningJevRequestV1,signalListeningRequestDigestV1,mapSignalListeningJevResponseV1,SIGNAL_WORKSPACE_EMBEDDING_PROFILE_V1 as embeddingProfile,type SignalListeningConfigurationV1} from '@noisia/query-engine';
+import {signalListeningBaseTemplateV1,buildSignalListeningJevRequestV1,signalListeningRequestDigestV1,mapSignalListeningJevResponseV1,type SignalListeningConfigurationV1} from '@noisia/query-engine';
 import {jevUsageV1} from '../../../services/workers/src/workers/signal-jev-labeling-page';
 import type {ListeningDiscoveryInitialIntentV1} from '../signal-listening-discovery-initial';
 const sha=(bytes:string|Buffer)=>'sha256:'+createHash('sha256').update(bytes).digest('hex');
@@ -35,11 +36,8 @@ async function setup(ctx:{database:Parameters<typeof prepareSignalListeningV1>[0
   policy=(await db.query(`INSERT INTO signal_processing_policy_versions(organization_id,version,status,valid_from,valid_until,budget_timezone,daily_cap_micro_usd,created_by_user_id)
    SELECT organization_id,version+1,'draft',valid_from,valid_until,budget_timezone,daily_cap_micro_usd,created_by_user_id FROM signal_processing_policy_versions WHERE id=$1 RETURNING *`,[prior.id])).rows[0];
   await db.query("INSERT INTO signal_processing_policy_actions SELECT $2,action,kind,provider,model,configuration,configuration_digest,CASE WHEN action='mass_labeling_jev' THEN 10000000 ELSE max_execution_micro_usd END,automatic_allowed FROM signal_processing_policy_actions WHERE policy_version_id=$1",[prior.id,policy.id]);
-  await db.query(`INSERT INTO signal_processing_policy_actions(policy_version_id,action,kind,provider,model,configuration,configuration_digest,max_execution_micro_usd,automatic_allowed)
-   SELECT $1,'listening_discovery_review','provider','anthropic','claude-sonnet-4-6',c,signal_labeling_digest_v1(c),10000000,false FROM(SELECT signal_listening_discovery_review_configuration_v1() c)x`,[policy.id]);
-  if(options.prototypes)await db.query(`INSERT INTO signal_processing_policy_actions(policy_version_id,action,kind,provider,model,configuration,configuration_digest,max_execution_micro_usd,automatic_allowed)
-   VALUES($1,'topic_prototype_embeddings','provider','voyage','voyage-4-large',$2::jsonb,signal_semantic_context_digest_json_v2($2::jsonb),100000,false)`,[policy.id,JSON.stringify(embeddingProfile)]);
   await db.query("UPDATE signal_processing_policy_versions SET status='revoked' WHERE id=$1",[prior.id]);await db.query("UPDATE signal_processing_policy_versions SET status='active' WHERE id=$1",[policy.id]);
+  policy=await provisionSyntheticListeningStudyPolicyV1(access,{prototype_cap_micro_usd:options.prototypes?100000:null});
  }
  async function request(options:Partial<Parameters<typeof prepareSignalListeningV1>[0]>={}){
   const result=await prepareSignalListeningV1({...access,configuration_id:cfg.id,map_id:ctx.map_id,idempotency_key:randomUUID(),cap_micro_usd:4000000,provider_available:true,origin:'initial',auto_discovery:true,prototype_provider_available:true,...options});

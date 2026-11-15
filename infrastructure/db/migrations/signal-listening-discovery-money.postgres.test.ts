@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import {provisionSyntheticListeningStudyPolicyV1} from './signal-listening-study-policy.synthetic.fixture';
 import {randomUUID,createHash} from 'node:crypto';
 import {mkdtemp,writeFile,readFile,open,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
@@ -83,15 +84,15 @@ test('discovery reviews use native admissions, durable receipts and one shared l
    await assert.rejects(quoteSignalListeningDiscoveryRoundV1({...access,actor_user_id:randomUUID(),generation_id:confirmed.id,ordinal:1,orphan_groups:[]}),/forbidden|unavailable/);
    await assert.rejects(quoteSignalListeningDiscoveryRoundV1({...access,workspace_id:randomUUID(),generation_id:confirmed.id,ordinal:1,orphan_groups:[]}),/forbidden|unavailable/);
    const existingExposure=Number((await db.query('SELECT total_micro_usd::text FROM signal_processing_org_exposure_v1($1,current_date,$2)',[oldPolicy.organization_id,oldPolicy.budget_timezone])).rows[0].total_micro_usd);
-   const policy=(await db.query(`INSERT INTO signal_processing_policy_versions(organization_id,version,status,valid_from,valid_until,budget_timezone,daily_cap_micro_usd,created_by_user_id)
-    SELECT organization_id,version+1,'draft',valid_from,valid_until,budget_timezone,COALESCE($2::bigint,daily_cap_micro_usd),created_by_user_id FROM signal_processing_policy_versions WHERE id=$1 RETURNING *`,[oldPolicy.id,mode==='race'?existingExposure+reviewQuote.reservation_micro_usd:null])).rows[0];
-   await db.query(`INSERT INTO signal_processing_policy_actions SELECT $2,action,kind,provider,model,configuration,configuration_digest,max_execution_micro_usd,automatic_allowed FROM signal_processing_policy_actions WHERE policy_version_id=$1`,[oldPolicy.id,policy.id]);
-   await db.query(`INSERT INTO signal_processing_policy_actions(policy_version_id,action,kind,provider,model,configuration,configuration_digest,max_execution_micro_usd,automatic_allowed)
-    SELECT $1,'listening_discovery_review','provider','anthropic','claude-sonnet-4-6',configuration,signal_labeling_digest_v1(configuration),10000000,false FROM(SELECT signal_listening_discovery_review_configuration_v1() configuration)x`,[policy.id]);
-   await db.query(`INSERT INTO signal_processing_policy_actions(policy_version_id,action,kind,provider,model,configuration,configuration_digest,max_execution_micro_usd,automatic_allowed) SELECT $1,'corpus_embeddings','provider','voyage','voyage-4-large',$2::jsonb,signal_labeling_digest_v1($2::jsonb),1000000,false WHERE NOT EXISTS(SELECT 1 FROM signal_processing_policy_actions WHERE policy_version_id=$1 AND action='corpus_embeddings')`,[policy.id,JSON.stringify(profile)]);
-   await db.query("UPDATE signal_processing_policy_versions SET status='revoked' WHERE id=$1",[oldPolicy.id]);await db.query("UPDATE signal_processing_policy_versions SET status='active' WHERE id=$1",[policy.id]);
+   const basePolicy=(await db.query(`INSERT INTO signal_processing_policy_versions(organization_id,version,status,valid_from,valid_until,budget_timezone,daily_cap_micro_usd,created_by_user_id)
+    SELECT organization_id,version+1,'draft',valid_from,valid_until,budget_timezone,COALESCE($2::bigint,daily_cap_micro_usd),created_by_user_id FROM signal_processing_policy_versions WHERE id=$1 RETURNING *`,[oldPolicy.id,mode==='race'?existingExposure+reviewQuote.reservation_micro_usd+19:null])).rows[0];
+   await db.query(`INSERT INTO signal_processing_policy_actions SELECT $2,action,kind,provider,model,configuration,configuration_digest,max_execution_micro_usd,automatic_allowed FROM signal_processing_policy_actions WHERE policy_version_id=$1`,[oldPolicy.id,basePolicy.id]);
+   await db.query(`INSERT INTO signal_processing_policy_actions(policy_version_id,action,kind,provider,model,configuration,configuration_digest,max_execution_micro_usd,automatic_allowed) SELECT $1,'corpus_embeddings','provider','voyage','voyage-4-large',$2::jsonb,signal_labeling_digest_v1($2::jsonb),1000000,false WHERE NOT EXISTS(SELECT 1 FROM signal_processing_policy_actions WHERE policy_version_id=$1 AND action='corpus_embeddings')`,[basePolicy.id,JSON.stringify(profile)]);
+   await db.query("UPDATE signal_processing_policy_versions SET status='revoked' WHERE id=$1",[oldPolicy.id]);await db.query("UPDATE signal_processing_policy_versions SET status='active' WHERE id=$1",[basePolicy.id]);
+   const scopedParentCap=mode==='race'?reviewQuote.reservation_micro_usd+18:4000000;
+   const policy=await provisionSyntheticListeningStudyPolicyV1(access,{discovery_cap_micro_usd:scopedParentCap,study_cap_micro_usd:mode==='race'?1:5000000});
    await assert.rejects(startSignalListeningDiscoveryExecutionV1({...access,generation_id:confirmed.id,classification_run_id:started.run_id,cap_micro_usd:10000001,idempotency_key:randomUUID()}),/policy_cap_exceeded/);
-   const execution=await startSignalListeningDiscoveryExecutionV1({...access,generation_id:confirmed.id,classification_run_id:started.run_id,cap_micro_usd:4000000,idempotency_key:randomUUID()});
+   const execution=await startSignalListeningDiscoveryExecutionV1({...access,generation_id:confirmed.id,classification_run_id:started.run_id,cap_micro_usd:scopedParentCap,idempotency_key:randomUUID()});
    assert.equal(Number((await db.query('SELECT signal_listening_discovery_exposure_v1($1)::text n',[execution.id])).rows[0].n),18,'parent counts the already-paid JEV run');
    const round=await enqueueSignalListeningDiscoveryRoundV1({...access,execution_id:execution.id,generation_id:confirmed.id,orphan_groups:[],provider_available:true});
    assert.equal(round.request_body,eagerRequest.request_body,'native streaming enqueue preserves every eager request byte');
@@ -132,14 +133,14 @@ test('discovery reviews use native admissions, durable receipts and one shared l
     const brand=randomUUID(),prep=randomUUID();await db.query("INSERT INTO brands(id,organization_id,slug,name,status) VALUES($1,$2,$3,'Synthetic money sibling','active')",[brand,policy.organization_id,'money-'+brand]);
     const ws=(await db.query('SELECT id FROM signal_workspaces WHERE brand_id=$1',[brand])).rows[0].id;
     const revision=(await db.query('SELECT input_revision::text FROM signal_corpus_preparation_input_state WHERE workspace_id=$1',[ws])).rows[0].input_revision;
-    const text='Synthetic budget-race corpus sibling with an uncached exact text.',asset=sha(text),chunks=prepareWorkspaceCorpusTextChunksV1(text,asset);
+    const text='Synthetic budget-race corpus sibling with an uncached exact text. '.repeat(30),asset=sha(text),chunks=prepareWorkspaceCorpusTextChunksV1(text,asset);
     await db.query(`INSERT INTO signal_corpus_preparation_runs(id,workspace_id,actor_user_id,status,phase,input_revision,completed_at,worker_job_id) VALUES($1,$2,$3,'completed','complete',$4,clock_timestamp(),$1::uuid::text)`,[prep,ws,ctx.actor_user_id,revision]);
     await db.query(`INSERT INTO signal_corpus_text_assets(workspace_id,text_sha256,chunk_policy_version,full_text,chunks,prepared_at) VALUES($1,$2,'corpus-text-chunks-v1',$3,$4::jsonb,clock_timestamp())`,[ws,asset,text,JSON.stringify(chunks)]);
     await db.query(`INSERT INTO signal_corpus_preparation_items(workspace_id,run_id,root_id,asset_sha256,disposition,root_metadata,provenance,semantic_eligible,fingerprint) VALUES($1,$2,$3,$4,'eligible','{}','[]',true,$4)`,[ws,prep,randomUUID(),asset]);
     const quoted=await quoteSignalWorkspaceEmbeddingsStoreV1({database:db,workspace_id:ws,actor_user_id:ctx.actor_user_id,profile});
     const admitted=await requestSignalWorkspaceEmbeddingsStoreV1({database:db,workspace_id:ws,actor_user_id:ctx.actor_user_id,profile,preparation_run_id:prep,quote_digest:quoted.quote_digest,idempotency_key:randomUUID(),hard_cap_micro_usd:1000,provider_available:true});
     const siblingLease=await claimSignalWorkspaceEmbeddingRunV1({database:db,run_id:admitted.run_id,worker_job_id:(await db.query('SELECT worker_job_id FROM signal_workspace_embedding_runs WHERE id=$1',[admitted.run_id])).rows[0].worker_job_id});assert.ok(siblingLease);
-    const batch=await readSignalWorkspaceEmbeddingBatchV1({database:db,lease:siblingLease});assert.ok(batch.inputs.length>0);assert.ok(batch.reserved_micro_usd>0);
+    const batch=await readSignalWorkspaceEmbeddingBatchV1({database:db,lease:siblingLease});assert.ok(batch.inputs.length>0);assert.ok(batch.reserved_micro_usd>19);
     const race=await Promise.allSettled([reserveSignalListeningDiscoveryCallV1({database:db,provider_available:true,lease}),reserveSignalWorkspaceEmbeddingCallV1({database:db,lease:siblingLease,batch})]);
     assert.equal(race.filter(r=>r.status==='fulfilled').length,1,'one of two real independent producer transactions reserves');
     const rejected=race.find(r=>r.status==='rejected');assert.ok(rejected&&rejected.status==='rejected');assert.match(String(rejected.reason),/processing_daily_cap_exhausted/,'the losing native owner fails on the shared daily cap, not scope');

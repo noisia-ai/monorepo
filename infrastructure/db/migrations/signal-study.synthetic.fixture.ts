@@ -21,14 +21,7 @@ async function seed(f:Parameters<Parameters<typeof withDiscoveryAdvanceFixtureV1
  }
  const serving=(await db.query('SELECT * FROM signal_listening_serving_snapshots WHERE id=$1',[listeningSnapshot.id])).rows[0]!;
  const listening=(await db.query<{id:string;configuration_digest:string;configuration:SignalListeningConfigurationV1}>('SELECT * FROM signal_listening_configurations WHERE id=$1 AND workspace_id=$2',[serving.configuration_id,f.workspace_id])).rows[0]!;
- // Legitimate synthetic organization policy, never a test admission bypass.
- const prior=(await db.query('SELECT * FROM signal_processing_policy_versions WHERE id=$1',[f.policy.id])).rows[0]!;
- const policy=(await db.query(`INSERT INTO signal_processing_policy_versions(organization_id,version,status,valid_from,valid_until,budget_timezone,daily_cap_micro_usd,created_by_user_id)
-  SELECT organization_id,version+1,'draft',valid_from,valid_until,budget_timezone,daily_cap_micro_usd,created_by_user_id FROM signal_processing_policy_versions WHERE id=$1 RETURNING *`,[prior.id])).rows[0]!;
- await db.query('INSERT INTO signal_processing_policy_actions SELECT $2,action,kind,provider,model,configuration,configuration_digest,max_execution_micro_usd,automatic_allowed FROM signal_processing_policy_actions WHERE policy_version_id=$1',[prior.id,policy.id]);
- await db.query(`INSERT INTO signal_processing_policy_actions(policy_version_id,action,kind,provider,model,configuration,configuration_digest,max_execution_micro_usd,automatic_allowed)
-  SELECT $1,'study_analysis','provider','anthropic','claude-sonnet-4-6',c,signal_labeling_digest_v1(c),10000000,false FROM(SELECT signal_study_analysis_configuration_v1() c)x`,[policy.id]);
- await db.query("UPDATE signal_processing_policy_versions SET status='revoked' WHERE id=$1",[prior.id]);await db.query("UPDATE signal_processing_policy_versions SET status='active' WHERE id=$1",[policy.id]);
+ const policy=f.policy;
  const corpus=await ensureSignalStudyCorpusV1(access);
  // The explicit external snapshot is stored data; the worker cannot substitute
  // its internal default even though this synthetic fixture starts from the seed.

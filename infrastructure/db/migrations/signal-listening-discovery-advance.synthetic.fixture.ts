@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import {provisionSyntheticListeningStudyPolicyV1} from './signal-listening-study-policy.synthetic.fixture';
 import {randomUUID,createHash} from 'node:crypto';
 import {mkdtemp,open,readFile,writeFile,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
@@ -58,15 +59,15 @@ async function seed(ctx:FixtureContext,files:string,options:FixtureOptions){
  const prior=(await db.query('SELECT p.* FROM signal_processing_policy_versions p JOIN signal_workspaces w ON w.organization_id=p.organization_id WHERE w.id=$1 AND p.status=\'active\'',[ctx.workspace_id])).rows[0];
  const quote=options.org_race?await money.quoteSignalListeningDiscoveryRoundV1({...access,generation_id:confirmed.id,ordinal:1,orphan_groups:[]}):null;
  const exposure=options.org_race?Number((await db.query("SELECT total_micro_usd::text value FROM signal_processing_org_exposure_v1($1,(clock_timestamp() AT TIME ZONE $2)::date,$2)",[prior.organization_id,prior.budget_timezone])).rows[0].value):0;
- const policy=(await db.query(`INSERT INTO signal_processing_policy_versions(organization_id,version,status,valid_from,valid_until,budget_timezone,daily_cap_micro_usd,created_by_user_id)
-  SELECT organization_id,version+1,'draft',valid_from,valid_until,budget_timezone,COALESCE($2::bigint,daily_cap_micro_usd),created_by_user_id FROM signal_processing_policy_versions WHERE id=$1 RETURNING *`,[prior.id,quote?exposure+quote.reservation_micro_usd:null])).rows[0];
- await db.query("INSERT INTO signal_processing_policy_actions SELECT $2,action,kind,provider,model,configuration,configuration_digest,max_execution_micro_usd,automatic_allowed FROM signal_processing_policy_actions WHERE policy_version_id=$1 AND(NOT $3::boolean OR action<>'mention_facets')",[prior.id,policy.id,options.org_race===true]);
+ const basePolicy=(await db.query(`INSERT INTO signal_processing_policy_versions(organization_id,version,status,valid_from,valid_until,budget_timezone,daily_cap_micro_usd,created_by_user_id)
+  SELECT organization_id,version+1,'draft',valid_from,valid_until,budget_timezone,COALESCE($2::bigint,daily_cap_micro_usd),created_by_user_id FROM signal_processing_policy_versions WHERE id=$1 RETURNING *`,[prior.id,quote?exposure+quote.reservation_micro_usd+19:null])).rows[0];
+ await db.query("INSERT INTO signal_processing_policy_actions SELECT $2,action,kind,provider,model,configuration,configuration_digest,max_execution_micro_usd,automatic_allowed FROM signal_processing_policy_actions WHERE policy_version_id=$1 AND(NOT $3::boolean OR action<>'mention_facets')",[prior.id,basePolicy.id,options.org_race===true]);
  if(options.org_race)await db.query(`INSERT INTO signal_processing_policy_actions(policy_version_id,action,kind,provider,model,configuration,configuration_digest,max_execution_micro_usd,automatic_allowed)
-  SELECT $1,'mention_facets','provider','typesafe','jev-1.13.0',c,signal_labeling_digest_v1(c),1000000,false FROM(SELECT '{"contract_version":"mention-facets-jev-v1"}'::jsonb c)x`,[policy.id]);
- await db.query(`INSERT INTO signal_processing_policy_actions(policy_version_id,action,kind,provider,model,configuration,configuration_digest,max_execution_micro_usd,automatic_allowed)
-  SELECT $1,'listening_discovery_review','provider','anthropic','claude-sonnet-4-6',configuration,signal_labeling_digest_v1(configuration),10000000,false FROM(SELECT signal_listening_discovery_review_configuration_v1() configuration)x`,[policy.id]);
- await db.query("UPDATE signal_processing_policy_versions SET status='revoked' WHERE id=$1",[prior.id]);await db.query("UPDATE signal_processing_policy_versions SET status='active' WHERE id=$1",[policy.id]);
- const execution=await money.startSignalListeningDiscoveryExecutionV1({...access,generation_id:confirmed.id,classification_run_id:first.run_id,cap_micro_usd:options.cap_micro_usd??4000000,idempotency_key:randomUUID()});
+  SELECT $1,'mention_facets','provider','typesafe','jev-1.13.0',c,signal_labeling_digest_v1(c),1000000,false FROM(SELECT '{"contract_version":"mention-facets-jev-v1"}'::jsonb c)x`,[basePolicy.id]);
+ await db.query("UPDATE signal_processing_policy_versions SET status='revoked' WHERE id=$1",[prior.id]);await db.query("UPDATE signal_processing_policy_versions SET status='active' WHERE id=$1",[basePolicy.id]);
+ const scopedParentCap=quote?quote.reservation_micro_usd+18:4000000;
+ const policy=await provisionSyntheticListeningStudyPolicyV1(access,{discovery_cap_micro_usd:scopedParentCap,study_cap_micro_usd:quote?1:5000000});
+ const execution=await money.startSignalListeningDiscoveryExecutionV1({...access,generation_id:confirmed.id,classification_run_id:first.run_id,cap_micro_usd:options.cap_micro_usd??scopedParentCap,idempotency_key:randomUUID()});
  const artifacts=new Map<string,Buffer>(),remote=new Map<string,string>();let uploads=0,allowUploads=true;
  let afterPut:((d:ListeningDiscoveryNumericArtifactDescriptorV1)=>Promise<void>)|undefined;
  const storage:ListeningDiscoveryNumericStorageV1={reference(d){assert.equal(d.workspace_id,ctx.workspace_id);assert.equal(d.execution_id,execution.id);

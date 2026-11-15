@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import {provisionSyntheticListeningStudyPolicyV1} from './signal-listening-study-policy.synthetic.fixture';
 import {randomUUID,createHash} from 'node:crypto';
 import {mkdtemp,writeFile,readFile,open,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
@@ -63,13 +64,13 @@ for(const mode of ['incomplete','utf8','nul','overcap','revoked','concurrent_rev
    const oldPolicy=(await db.query("SELECT p.* FROM signal_processing_policy_versions p JOIN signal_workspaces w ON w.organization_id=p.organization_id WHERE w.id=$1 AND p.status='active'",[ctx.workspace_id])).rows[0];
    const reviewQuote=await quoteSignalListeningDiscoveryRoundV1({...access,generation_id:confirmed.id,ordinal:1,orphan_groups:[]});
    const existingExposure=Number((await db.query('SELECT total_micro_usd::text FROM signal_processing_org_exposure_v1($1,current_date,$2)',[oldPolicy.organization_id,oldPolicy.budget_timezone])).rows[0].total_micro_usd);
-   const policy=(await db.query(`INSERT INTO signal_processing_policy_versions(organization_id,version,status,valid_from,valid_until,budget_timezone,daily_cap_micro_usd,created_by_user_id)
-    SELECT organization_id,version+1,'draft',valid_from,valid_until,budget_timezone,COALESCE($2::bigint,daily_cap_micro_usd),created_by_user_id FROM signal_processing_policy_versions WHERE id=$1 RETURNING *`,[oldPolicy.id,mode==='race'?existingExposure+reviewQuote.reservation_micro_usd:null])).rows[0];
-   await db.query(`INSERT INTO signal_processing_policy_actions SELECT $2,action,kind,provider,model,configuration,configuration_digest,max_execution_micro_usd,automatic_allowed FROM signal_processing_policy_actions WHERE policy_version_id=$1`,[oldPolicy.id,policy.id]);
-   await db.query(`INSERT INTO signal_processing_policy_actions(policy_version_id,action,kind,provider,model,configuration,configuration_digest,max_execution_micro_usd,automatic_allowed)
-    SELECT $1,'listening_discovery_review','provider','anthropic','claude-sonnet-4-6',configuration,signal_labeling_digest_v1(configuration),10000000,false FROM(SELECT signal_listening_discovery_review_configuration_v1() configuration)x`,[policy.id]);
-   await db.query(`INSERT INTO signal_processing_policy_actions(policy_version_id,action,kind,provider,model,configuration,configuration_digest,max_execution_micro_usd,automatic_allowed) SELECT $1,'corpus_embeddings','provider','voyage','voyage-4-large',$2::jsonb,signal_labeling_digest_v1($2::jsonb),1000000,false WHERE NOT EXISTS(SELECT 1 FROM signal_processing_policy_actions WHERE policy_version_id=$1 AND action='corpus_embeddings')`,[policy.id,JSON.stringify(profile)]);
-   await db.query("UPDATE signal_processing_policy_versions SET status='revoked' WHERE id=$1",[oldPolicy.id]);await db.query("UPDATE signal_processing_policy_versions SET status='active' WHERE id=$1",[policy.id]);
+   const basePolicy=(await db.query(`INSERT INTO signal_processing_policy_versions(organization_id,version,status,valid_from,valid_until,budget_timezone,daily_cap_micro_usd,created_by_user_id)
+    SELECT organization_id,version+1,'draft',valid_from,valid_until,budget_timezone,COALESCE($2::bigint,daily_cap_micro_usd),created_by_user_id FROM signal_processing_policy_versions WHERE id=$1 RETURNING *`,[oldPolicy.id,mode==='race'?existingExposure+reviewQuote.reservation_micro_usd+19:null])).rows[0];
+   await db.query(`INSERT INTO signal_processing_policy_actions SELECT $2,action,kind,provider,model,configuration,configuration_digest,max_execution_micro_usd,automatic_allowed FROM signal_processing_policy_actions WHERE policy_version_id=$1`,[oldPolicy.id,basePolicy.id]);
+   await db.query(`INSERT INTO signal_processing_policy_actions(policy_version_id,action,kind,provider,model,configuration,configuration_digest,max_execution_micro_usd,automatic_allowed) SELECT $1,'corpus_embeddings','provider','voyage','voyage-4-large',$2::jsonb,signal_labeling_digest_v1($2::jsonb),1000000,false WHERE NOT EXISTS(SELECT 1 FROM signal_processing_policy_actions WHERE policy_version_id=$1 AND action='corpus_embeddings')`,[basePolicy.id,JSON.stringify(profile)]);
+   await db.query("UPDATE signal_processing_policy_versions SET status='revoked' WHERE id=$1",[oldPolicy.id]);await db.query("UPDATE signal_processing_policy_versions SET status='active' WHERE id=$1",[basePolicy.id]);
+   const scopedParentCap=mode==='race'?reviewQuote.reservation_micro_usd+18:4000000;
+   const policy=await provisionSyntheticListeningStudyPolicyV1(access,{discovery_cap_micro_usd:scopedParentCap,study_cap_micro_usd:mode==='race'?1:5000000});
    await assert.rejects(startSignalListeningDiscoveryExecutionV1({...access,generation_id:confirmed.id,classification_run_id:started.run_id,cap_micro_usd:10000001,idempotency_key:randomUUID()}),/policy_cap_exceeded/);
    const execution=await startSignalListeningDiscoveryExecutionV1({...access,generation_id:confirmed.id,classification_run_id:started.run_id,cap_micro_usd:mode==='overcap'?reviewQuote.reservation_micro_usd+19:4000000,idempotency_key:randomUUID()});
    assert.equal(Number((await db.query('SELECT signal_listening_discovery_exposure_v1($1)::text n',[execution.id])).rows[0].n),18,'parent counts the already-paid JEV run');
@@ -137,7 +138,9 @@ for(const mode of ['incomplete','utf8','nul','overcap','revoked','concurrent_rev
      if(sql.startsWith('SELECT max_execution_micro_usd::text FROM signal_processing_policy_actions'))preflight=true;
      if(sql==='COMMIT'&&preflight&&!changed){changed=true;const d=await db.connect();try{await d.query('BEGIN');
       const next=(await d.query(`INSERT INTO signal_processing_policy_versions(organization_id,version,status,valid_from,valid_until,budget_timezone,daily_cap_micro_usd,created_by_user_id) SELECT organization_id,version+1,'draft',valid_from,valid_until,budget_timezone,daily_cap_micro_usd,created_by_user_id FROM signal_processing_policy_versions WHERE id=$1 RETURNING id`,[policy.id])).rows[0].id;
-      await d.query('INSERT INTO signal_processing_policy_actions SELECT $2,action,kind,provider,model,configuration,configuration_digest,max_execution_micro_usd,automatic_allowed FROM signal_processing_policy_actions WHERE policy_version_id=$1',[policy.id,next]);
+      // Withdrawing R16 authority is a real policy change. Copying its actions
+      // without their workspace receipt is deliberately forbidden by0319.
+      await d.query("INSERT INTO signal_processing_policy_actions SELECT $2,action,kind,provider,model,configuration,configuration_digest,max_execution_micro_usd,automatic_allowed FROM signal_processing_policy_actions WHERE policy_version_id=$1 AND action NOT IN('listening_discovery_review','study_analysis')",[policy.id,next]);
       await d.query("UPDATE signal_processing_policy_versions SET status='revoked' WHERE id=$1",[policy.id]);await d.query("UPDATE signal_processing_policy_versions SET status='active' WHERE id=$1",[next]);await d.query('COMMIT');
      }catch(e){await d.query('ROLLBACK');throw e;}finally{d.release();}}
      return value;};const value=Reflect.get(target,key);return typeof value==='function'?value.bind(target):value;}});}} as typeof db;
