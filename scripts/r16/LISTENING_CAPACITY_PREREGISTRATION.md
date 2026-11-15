@@ -17,7 +17,7 @@ Neither arm inserts a measured token profile. The first ordinary pending request
 The numerator is DISTINCT roots fully resolved for every eligible question in the
 frozen configuration. It is never the number of HTTP calls: the second pass can make
 HTTP requests exceed corpus roots. Excluded questions must have native scope evidence.
-The denominator begins before the first Listening job and includes every warmup,
+The denominator begins immediately BEFORE prepareSignalListeningV1 and includes native admission, the initial census, every warmup,
 restart, second pass, final census reconciliation and serving reads. Cold time additionally includes fixture setup and is reported.
 All complete 1-second windows after the fixed first 5 seconds must exceed 1,000 roots/s,
 with at least 20 seconds measured, and wall throughput must also exceed 1,000 roots/s.

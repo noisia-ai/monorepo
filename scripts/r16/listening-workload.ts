@@ -10,7 +10,7 @@ export const R16_LISTENING_PREREGISTRATION_V1=Object.freeze({
   target_distinct_resolved_roots_per_second:1000,window_ms:1000,
   sustained_start_ms:5000,minimum_sustained_ms:20000,
   minimum_observed_http_ms:100,maximum_observed_http_ms:500,
-  cold_clock:'before_fixture_setup',wall_clock:'before_first_listening_job_including_all_warmups',
+  cold_clock:'before_fixture_setup',wall_clock:'before_prepareSignalListeningV1_including_admission_initial_census_all_warmups_and_serving',
   warmup:'ordinary_pending_roots_only;derive_from_settled_verified_applied_receipts',
   faults:['429','529','raw_page_write','postgres_commit','settlement_ack_lost',
     'worker_restart_after_page','lease_expiry','lease_expiry_after_durable'],

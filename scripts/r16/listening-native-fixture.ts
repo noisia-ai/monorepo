@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
+import {performance} from 'node:perf_hooks';
 import {runMassLabelingAcceptanceFixtureV1} from '../../infrastructure/db/migrations/signal-mass-labeling-acceptance.synthetic.fixture';
 import {saveSignalListeningConfigurationV1} from '../../infrastructure/db/signal-listening-configuration';
 import {prepareSignalListeningV1} from '../../infrastructure/db/signal-listening-preparation';
@@ -27,12 +28,13 @@ export function createR16ListeningNativeFixtureV1(options:{
     assert.equal(canceled.rows.length,1,'only the fixture queued Mass run with zero calls may be canceled');
     const access={database:ctx.database,workspace_id:ctx.workspace_id,actor_user_id:ctx.actor_user_id};
     const cfg=await saveSignalListeningConfigurationV1({...access,expected_revision:0,provenance:'human',configuration:context.workload.configuration});
+    const admission_started_at_ms=performance.now();
     const prepared=await prepareSignalListeningV1({...access,configuration_id:cfg.id,map_id:ctx.map_id,
      idempotency_key:`r16-listening-benchmark:${randomUUID()}`,cap_micro_usd:20000000,provider_available:true,prototype_provider_available:false});
     assert.ok(prepared.status==='labeling'&&prepared.run_id,'native preparation must admit a Listening run; no handwritten admission');
     const binding={...access,configuration_id:cfg.id,map_id:ctx.map_id,question_key:'voice'};
     const census=await options.loadNativeCensus({...binding,run_id:prepared.run_id});
-    result={value:await run({...census,access:binding,run_id:prepared.run_id})};
+    result={value:await run({...census,access:binding,run_id:prepared.run_id,admission_started_at_ms})};
    }}});
   assert.ok(result,'native fixture callback did not run');return result.value;
  };

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {validateSignalListeningConfigurationV1,signalWorkspaceEmbeddingDigestV1 as digest} from '../../packages/query-engine/src/index';
 import {R16_LISTENING_PREREGISTRATION_V1 as registration,r16ListeningWorkloadV1} from './listening-workload';
-import {reconcileR16ListeningResolvedRootsV1} from './run-listening-benchmark';
+import {assertR16ListeningAdmissionClockV1,reconcileR16ListeningResolvedRootsV1} from './run-listening-benchmark';
 test('preregistered R16 workloads bind generic Listening identity and consumer second pass, without legacy T&B',()=>{
  const a=r16ListeningWorkloadV1('defined_consumer_second_pass'),b=r16ListeningWorkloadV1('discovered_four');
  for(const w of[a,b]){assert.deepEqual(validateSignalListeningConfigurationV1(w.configuration),w.configuration);assert.equal(w.configuration_digest,digest(w.configuration));
@@ -31,4 +31,15 @@ test('all fixed sustained windows and cold wall throughput remain mandatory desp
  const gap=summary({wall_elapsed_ms:25000,resolved_roots:32768,commits:commits.filter(c=>c.at_ms!==8500),latency_ms:[300]});
  assert.equal(gap.gates.every_sustained_window,false);assert.equal(gap.minimum_window_roots_per_second,0);
  assert.equal(summary({wall_elapsed_ms:20000,resolved_roots:32768,commits,latency_ms:[501]}).gates.observed_http_latency,false);
+});
+
+
+test('admission clock includes preparation and initial census, rejects missing or postdated timestamps',async()=>{
+ const start=assertR16ListeningAdmissionClockV1(100,200,6200);assert.equal(start,200);
+ assert.equal(6200-start,6000,'preparation and initial census cannot disappear before the first job');
+ for(const args of[[100,NaN,6200],[100,99,6200],[100,6201,6200],[-1,200,6200],[100,200,Infinity]])
+  assert.throws(()=>assertR16ListeningAdmissionClockV1(args[0]!,args[1]!,args[2]!),/admission_clock_invalid/);
+ const {summarizeR16ListeningCapacityV1:summary}=await import('./listening-workload');
+ const measured=summary({wall_elapsed_ms:40200-start,resolved_roots:32768,commits:[{at_ms:30000,roots:32768}],latency_ms:[300]});
+ assert.equal(measured.gates.wall_throughput,false);assert.equal(measured.gates.every_sustained_window,false);
 });
