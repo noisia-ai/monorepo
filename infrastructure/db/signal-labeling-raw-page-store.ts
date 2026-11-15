@@ -30,6 +30,14 @@ export function createLabelingRawPageStoreV1(options:{database:LabelingDatabaseV
   }
   async function attach(run:LabelingRunV1,page:Page){
     await withRunReadFence(run,async c=>{
+      // Match planning's global call-id order before taking the page lock.
+      // Reentry of this same page must not hold calls while attachment holds
+      // its page and waits for those calls (a SHARE run fence allows both).
+      const locked=(await c.query<{id:string}>(`SELECT c.id FROM signal_labeling_calls c
+        JOIN signal_labeling_raw_page_members m ON m.call_id=c.id AND m.workspace_id=c.workspace_id AND m.run_id=c.run_id
+        WHERE m.page_id=$1 AND m.workspace_id=$2 AND m.run_id=$3 ORDER BY c.id FOR UPDATE OF c`,
+        [page.id,run.workspace_id,run.id])).rows;
+      if(locked.length!==page.member_count)invalid();
       const row=(await c.query<Page>('SELECT * FROM signal_labeling_raw_pages WHERE id=$1 AND workspace_id=$2 AND run_id=$3 FOR UPDATE',
         [page.id,run.workspace_id,run.id])).rows[0];
       if(!row||row.sha256!==page.sha256||row.storage_key!==page.storage_key||Number(row.size_bytes)!==Number(page.size_bytes))invalid();

@@ -86,3 +86,21 @@ test('expiry between upload and attach leaves a recoverable page for a new lease
   assert.equal((await context.database.query('SELECT status FROM signal_labeling_raw_pages WHERE run_id=$1',[run.id])).rows[0].status,'verified');
  });
 });
+test('same-page plan reentry and attach use one call/page lock order',{skip:!enabled,timeout:120000},async()=>{
+ await fixture(async({context,store,run,calls,intercept,writes})=>{
+  const attachHeld=deferred(),releaseAttach=deferred(),planCallsHeld=deferred(),releasePlan=deferred();let attachCaught=false,reentry=false,planCaught=false;
+  intercept.after=async sql=>{
+   if(/SELECT \* FROM signal_labeling_raw_pages WHERE id=\$1 AND workspace_id/u.test(sql)&&!attachCaught){attachCaught=true;attachHeld.resolve();await releaseAttach.promise;}
+   if(reentry&&!planCaught&&/SELECT id,request_digest,raw_sha256,raw_storage_key FROM signal_labeling_calls/u.test(sql)){planCaught=true;planCallsHeld.resolve();await releasePlan.promise;}
+  };
+  const raw='the same immutable physical wrapper',first=store.persistRawPage(run,[{call:calls[0]!,raw}]);await attachHeld.promise;
+  reentry=true;const second=store.persistRawPage(run,[{call:calls[0]!,raw}]);
+  const reentryOwnsCalls=await Promise.race([planCallsHeld.promise.then(()=>true),delay(200).then(()=>false)]);
+  releaseAttach.resolve();if(reentryOwnsCalls)await delay(50);releasePlan.resolve();
+  const results=await Promise.allSettled([first,second]);
+  for(const result of results)assert.equal(result.status,'fulfilled',result.status==='rejected'?String(result.reason):'same-page retry must serialize without 40P01');
+  assert.equal((await context.database.query('SELECT count(*)::int n FROM signal_labeling_raw_pages WHERE run_id=$1',[run.id])).rows[0].n,1);
+  assert.equal((await context.database.query('SELECT count(*)::int n FROM signal_labeling_raw_page_members WHERE run_id=$1',[run.id])).rows[0].n,1);
+  assert.equal((await store.calls(run)).find(c=>c.id===calls[0]!.id)?.raw_body,raw);assert.ok(writes()>=1&&writes()<=2);
+ });
+});
