@@ -14,6 +14,8 @@ No hay aprobaciones humanas intermedias en los procesos de análisis: Sonnet 4.6
 
 Corte vigente del 15 de noviembre: estas entradas prevalecen sobre el historial anterior. El objetivo completo H0–H6 sigue abierto; no hubo despliegue ni gasto R16 en UAT.
 
+- CI sobre 40035b83 inició los cuatro workflows. La calibración aislada falló antes de migrar: la emulación oficial de roles Supabase exige modo de esquema desechable y el script tenía reset_schema=false. Se corrige únicamente el arranque CI, tras revisión sin P0/P1/P2: se exige ausencia tanto del contenedor como de su volumen, se crea el laboratorio nuevo en loopback y se usa el modo desechable requerido. No se relaja el helper ni la guarda de población vacía. Hace falta el job real nuevo verde; el fallo anterior queda registrado.
+
 - Corte 15:50 UTC, H6: el empaquetador recibe el snapshot nativo directamente, congela una única referencia JSON antes de esperar y verifica por streaming sus bytes persistidos. La revisión cerró los dos P2 de mutación durante lectura y cierre del stream. Treinta y siete focales pasan; el conjunto de scripts termina con 68 aprobadas, cero fallos y dos omisiones de PostgreSQL opt-in, que CI ejecuta por separado. La prueba física nueva publica paquete y clave separada y verifica SHA/modos/shortfalls; su ensayo local se detuvo por el umbral de disco, por lo que esa cobertura queda pendiente del CI final y no se declara aprobada. Los casos nativos anteriores de exportación conservan sus resultados.
 - Operación: con 3.9 GiB libres, la guarda detuvo exclusivamente el fixture local. La matriz y el ensayo completo V2, más la publicación física del paquete nativo, se ejecutarán sobre la cabeza final en las VM limpias de CI. Se conservan los artefactos y bases históricas; no se baja el umbral local ni se eliminan recibos para conseguir espacio.
 
@@ -200,6 +202,8 @@ Recibo: separar Voyage/JEV por raíz de Claude por número de grupos y vueltas; 
 
 ## Sorpresas y descubrimientos
 
+- La prueba local de calibración usó un laboratorio con los roles ya preparados; el job independiente de CI debe crearlos. Su helper exige explícitamente reset_schema=true en un destino local desechable. Una comprobación nueva de volumen ausente impide reutilizar accidentalmente una base retenida antes de activar ese modo en CI.
+
 - El writer por bloques no resolvía por sí solo la lectura del snapshot: el empaquetador todavía hacía readFile/JSON.parse sobre una cadena. El nuevo camino programático verifica el mismo objeto contra bytes persistidos sin ese parser. Congelar la referencia antes del primer await es necesario para que un objeto distinto no llegue al paquete después de aprobar su hash.
 - El espacio físico descendió hasta activar el piso local de 4 GiB durante el nuevo caso de publicación. Es una parada del laboratorio, sin veredicto del producto. El caso queda explícito en CI y sus omisiones están prohibidas allí; no se sustituye por el resultado puro.
 
@@ -295,6 +299,8 @@ Recibo: separar Voyage/JEV por raíz de Claude por número de grupos y vueltas; 
 - El promedio del piloto completo incluye una etapa editorial que no escala por raíz. Multiplicarlo linealmente daba USD 205.81/millón; mantener explícitamente los grupos y una vuelta de referencia produce USD 114.035250. Ambos cálculos parten del mismo recibo, cuyo uso histórico permanece USD 17.280463.
 
 ## Registro de decisiones
+
+- 15 nov.: corregir el bootstrap de la calibración mediante el modo oficial de laboratorio desechable y dos guardas de recurso nuevo; no alterar las restricciones de emulación ni probar fingiendo GITHUB_ACTIONS localmente. Repetir CI real sobre la cabeza corregida antes de cualquier fusión.
 
 - 15 nov., 15:50 UTC: ejecutar los ensayos finales en las VM existentes de CI y conservar el piso de seguridad local y todos los artefactos preservados. La publicación física del paquete nativo sigue como cobertura obligatoria del workflow PostgreSQL. El conjunto local de scripts con dos opt-in omitidos no acredita ese caso.
 

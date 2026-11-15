@@ -9,6 +9,10 @@ if docker inspect r16-benchmark-pg17 >/dev/null 2>&1; then
   echo 'R16 calibration requires a fresh independent lab' >&2
   exit 1
 fi
+if docker volume inspect r16bench-benchmark-pg17_postgres-data >/dev/null 2>&1; then
+  echo 'R16 calibration refuses a pre-existing database volume' >&2
+  exit 1
+fi
 
 repo_root="$(git rev-parse --show-toplevel)"
 export R16BENCH_RUN_ID="benchmark-pg17"
@@ -24,7 +28,9 @@ set +a
 export NOISIA_R16_LOCAL_PG_LAB="r16-benchmark-pg17"
 export DATABASE_SSL="false"
 export NOISIA_DB_SMOKE_ALLOW_REMOTE="false"
-export NOISIA_DB_SMOKE_RESET_SCHEMA="false"
+# The official Supabase-role emulation requires disposable-schema mode. The
+# fresh-container AND fresh-volume guards above exclude any retained database.
+export NOISIA_DB_SMOKE_RESET_SCHEMA="true"
 export NOISIA_DB_SMOKE_EMULATE_SUPABASE_ROLES="true"
 export NOISIA_R16_NATIVE_FIXTURE_PG="true"
 export NOISIA_R16_LISTENING_CALIBRATION_SCALE_PG="true"
