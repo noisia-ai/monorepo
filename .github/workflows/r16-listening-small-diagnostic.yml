@@ -1,0 +1,138 @@
+name: R16 listening small diagnostic
+run-name: R16 diagnostic-only 4096 roots (${{ github.event_name }})
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - '.github/workflows/r16-listening-small-diagnostic.yml'
+      - 'scripts/r16-diagnostics/listening-small/**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: r16-listening-small-${{ github.event.pull_request.head.ref || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  listening-small:
+    name: listening-small-${{ matrix.label }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: baseline-32f
+            target_ref: 32f40ec89a21da90235c3589a4820ae05dedf6fc
+          - label: candidate
+            target_ref: ${{ github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - name: Checkout benchmark target
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ matrix.target_ref }}
+          path: target
+
+      - name: Checkout diagnostic harness only
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          path: probe
+          sparse-checkout: scripts/r16-diagnostics/listening-small
+          sparse-checkout-cone-mode: false
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.2
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: target/pnpm-lock.yaml
+
+      - name: Install target dependencies
+        working-directory: target
+        run: corepack pnpm install --frozen-lockfile
+
+      - name: Run pure diagnostic guard tests
+        working-directory: target
+        run: corepack pnpm exec tsx --test ../probe/scripts/r16-diagnostics/listening-small/run.test.mts
+
+      - name: Allocate owned PG17 and Redis lab
+        working-directory: target
+        env:
+          R16BENCH_RUN_ID: benchmark-pg17
+          R16BENCH_SERVICES: postgres,redis
+        run: |
+          set -euo pipefail
+          if docker inspect r16-benchmark-pg17 >/dev/null 2>&1; then
+            echo '::error::owned PG container already exists'
+            exit 1
+          fi
+          if docker volume inspect r16bench-benchmark-pg17_postgres-data >/dev/null 2>&1; then
+            echo '::error::owned PG volume already exists'
+            exit 1
+          fi
+          scripts/r16/lab-up.sh
+
+      - name: Apply target public migrations and run native diagnostic
+        working-directory: target
+        env:
+          R16BENCH_RUN_ID: benchmark-pg17
+          NOISIA_R16_LOCAL_PG_LAB: r16-benchmark-pg17
+          NOISIA_R16_NATIVE_FIXTURE_PG: 'true'
+          NOISIA_R16_SMALL_DIAGNOSTIC: 'true'
+          NOISIA_DB_SMOKE_ALLOW_REMOTE: 'false'
+          NOISIA_DB_SMOKE_RESET_SCHEMA: 'true'
+          NOISIA_DB_SMOKE_EMULATE_SUPABASE_ROLES: 'true'
+          NOISIA_SIGNAL_LISTENING_ENABLED: 'true'
+          NOISIA_JEV_PROVIDER_ENABLED: 'true'
+          NOISIA_JEV_STREAMING_V2_ENABLED: 'true'
+          NOISIA_JEV_STREAM_BUFFER_BYTES: '536870912'
+          NOISIA_MASS_LABELING_ENABLED: 'true'
+          R16_DIAGNOSTIC_TARGET_ROOT: ${{ github.workspace }}/target
+          R16_DIAGNOSTIC_ARTIFACT: ${{ github.workspace }}/artifacts/r16-listening-small/result.json
+          R16_DIAGNOSTIC_TARGET_LABEL: ${{ matrix.label }}
+        run: |
+          set -euo pipefail
+          lab_dir="$GITHUB_WORKSPACE/target/.data/piloto-masivo/r16/labs/benchmark-pg17"
+          cleanup() {
+            if [ -d "$GITHUB_WORKSPACE/target" ]; then
+              (cd "$GITHUB_WORKSPACE/target" && R16BENCH_RUN_ID=benchmark-pg17 scripts/r16/lab-down.sh) >/dev/null 2>&1 || true
+            fi
+            if [ ! -f "$R16_DIAGNOSTIC_ARTIFACT" ]; then
+              mkdir -p "$(dirname "$R16_DIAGNOSTIC_ARTIFACT")"
+              printf '%s\n' '{"contract_version":"r16-listening-small-diagnostic-v1","diagnostic_only":true,"h1_accepted":false,"status":"failed_before_runner"}' > "$R16_DIAGNOSTIC_ARTIFACT"
+            fi
+          }
+          trap cleanup EXIT
+          set -a
+          source "$lab_dir/connection.env"
+          set +a
+          export DATABASE_SSL=false
+          corepack pnpm --filter @noisia/db db:smoke:migrations
+          timeout 10m corepack pnpm exec tsx ../probe/scripts/r16-diagnostics/listening-small/run.mts --run
+
+      - name: Ensure sanitized artifact exists
+        if: always()
+        env:
+          R16_DIAGNOSTIC_ARTIFACT: ${{ github.workspace }}/artifacts/r16-listening-small/result.json
+        run: |
+          if [ ! -f "$R16_DIAGNOSTIC_ARTIFACT" ]; then
+            mkdir -p "$(dirname "$R16_DIAGNOSTIC_ARTIFACT")"
+            printf '%s\n' '{"contract_version":"r16-listening-small-diagnostic-v1","diagnostic_only":true,"h1_accepted":false,"status":"failed_before_runner"}' > "$R16_DIAGNOSTIC_ARTIFACT"
+          fi
+
+      - name: Upload synthetic aggregate artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: r16-listening-small-${{ matrix.label }}-${{ github.run_id }}
+          path: artifacts/r16-listening-small/result.json
+          if-no-files-found: error
+          retention-days: 14
