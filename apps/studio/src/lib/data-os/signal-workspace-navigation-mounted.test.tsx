@@ -234,7 +234,7 @@ test("Topics to Mentions uses the native API and applies the table on the mounte
   const calls: string[] = [], saved = globalThis.fetch;
   browser.history.replaceState(null, "", "/signal/synthetic/topics-narratives?view=all_conversations");
   globalThis.fetch = async url => {
-    if(String(url).endsWith('/listening/human-edits'))return Response.json({error:'listening_human_snapshot_unavailable'},{status:404});
+    if(String(url).endsWith('/listening/human-edits'))return Response.json({error:'listening_not_enabled'},{status:404});
     calls.push(String(url));
     return String(url).includes("/mentions?") ? response() : Response.json(overviewPayload());
   };

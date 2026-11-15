@@ -144,7 +144,8 @@ export function SignalListeningConfiguration({workspaceId,editable=true}:{worksp
       <p>{t('incremental')}</p>
       <button className="admin-button" type="button" disabled={busy||running||unresolved||dirty||!status.map||status.map_stale||!budget} onClick={run}>{running?t('running'):t('run')}</button>
     </div>:null}
-    {status?.configuration?<PublishedListeningTopics workspaceId={workspaceId} allowMerge={canEdit} disabled={busy||running||dirty}
+    {status?.configuration?<PublishedListeningTopics workspaceId={workspaceId} allowMerge={canEdit} disabled={busy||running||dirty} observeListening={false}
+      refreshToken={JSON.stringify([status.configuration.id,status.configuration.revision,status.discovery?.intent_id,status.discovery?.status,status.discovery?.execution_status])}
       onSaved={async()=>{
         const current=generation.current,response=await fetch(url,{cache:'no-store'});if(!response.ok)return false;
         const result=await response.json()as Status;if(current!==generation.current)return false;reconcileStatus(result);return true;

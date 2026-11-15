@@ -389,7 +389,7 @@ test('a native CAS rejection refreshes context without silently replaying a diff
 test('published Listening topics localize themes, distinguish origins and hide outside topics until requested',async()=>{
   const f=humanFixture(),savedFetch=globalThis.fetch;
   globalThis.fetch=async()=>Response.json({...f.context,can_edit:false});
-  const app=await mountHuman(<PublishedListeningTopics workspaceId="workspace" allowMerge/>, 'es-MX');
+  const app=await mountHuman(<PublishedListeningTopics workspaceId="workspace" observeListening={false} allowMerge/>, 'es-MX');
   try{
     assert.ok(app.host.textContent?.includes('Ocasiones'));assert.ok(app.host.textContent?.includes('ES Festivals'));
     assert.ok(app.host.textContent?.includes(app.messages.ListeningHuman.defined));assert.ok(app.host.textContent?.includes(app.messages.ListeningHuman.discovered));
@@ -407,7 +407,7 @@ test('merging published topics requires compatible scopes and a selected destina
     if(options?.method==='POST'){posts.push(JSON.parse(String(options.body)));return Response.json({...f.receipt,operation:'merge'});}
     return Response.json(++reads===1?f.context:merged);
   };
-  const app=await mountHuman(<PublishedListeningTopics workspaceId="workspace" allowMerge onSaved={async()=>{saves++;return true;}}/>);
+  const app=await mountHuman(<PublishedListeningTopics workspaceId="workspace" observeListening={false} allowMerge onSaved={async()=>{saves++;return true;}}/>);
   try{
     const checkbox=(name:string)=>app.host.querySelector(`input[aria-label="Select ${name} for merging"]`)as HTMLInputElement;
     await act(async()=>checkbox('Festivals').click());
@@ -438,8 +438,7 @@ test('a confirmed correction with a failed refresh retries only the saved reads,
   }finally{await app.close();globalThis.fetch=savedFetch;}
 });
 
-test('native mention removal refreshes the list and the open drawer through a focused read without a reload',async()=>{
-  const f=humanFixture(),savedFetch=globalThis.fetch,requests:Array<{url:string;method:string;body?:string}>=[];let saved=false;
+function nativeHumanMentionsData(f:ReturnType<typeof humanFixture>){
   const record:SignalMentionsViewData['records'][number]={subject_id:humanId(20),occurred_at:'2026-09-01T12:00:00Z',text_snippet:'Synthetic listening evidence',title:null,
     url:'https://example.test/mention',platform:'web',language:'en',country:null,content_type:'post',conversation_role:'root_post',sentiment:null,sentiment_score:null,
     engagement:{},interaction_count:0,thread_key:'synthetic',tags:[{taxonomy_key:'legacy',taxonomy_name:'Legacy',term_key:'historical',label:'Historical tag must remain hidden',value:null,score:1}],
@@ -448,6 +447,12 @@ test('native mention removal refreshes the list and the open drawer through a fo
     page:{limit:50,offset:0,next_cursor:null,next_offset:null},filter:{contract_version:'signal-backend-v1',date_range:{start:'2026-09-01',end:'2026-09-30'},timezone:'UTC',granularity:'day',dimensions:{}},comparison:{mode:'none',date_range:null},
     native:{workspace_id:'workspace',generation_id:humanId(30),scope_digest:'sha256:synthetic',is_current:true,is_processing:false,available_dates:{date_from:null,date_to:null},
       filters:{date_from:null,date_to:null,search_query:null,platforms:[]},sort_direction:'desc',metric_denominator:1,evidence_visible_total:1,withheld_evidence_count:0,integrity_withheld_count:0}};
+  return{record,data};
+}
+
+test('native mention removal refreshes the list and the open drawer through a focused read without a reload',async()=>{
+  const f=humanFixture(),savedFetch=globalThis.fetch,requests:Array<{url:string;method:string;body?:string}>=[];let saved=false;
+  const {record,data}=nativeHumanMentionsData(f);
   globalThis.fetch=async(input,options)=>{
     const url=String(input),method=options?.method??'GET';requests.push({url,method,...(options?.body?{body:String(options.body)}:{})});
     if(url.endsWith('/listening/human-edits')){
@@ -481,7 +486,7 @@ test('a confirmed merge keeps its recovery control when the context read fails a
     if(options?.method==='POST'){posts++;return Response.json({...f.receipt,operation:'merge'});}
     reads++;return reads===2?Response.json({error:'synthetic_read_failure'},{status:503}):Response.json(reads===1?f.context:f.nextContext);
   };
-  const app=await mountHuman(<PublishedListeningTopics workspaceId="workspace" allowMerge onSaved={async()=>{saves++;return true;}}/>);
+  const app=await mountHuman(<PublishedListeningTopics workspaceId="workspace" observeListening={false} allowMerge onSaved={async()=>{saves++;return true;}}/>);
   try{
     await act(async()=>{(app.host.querySelector('input[aria-label="Select Festivals for merging"]')as HTMLInputElement).click();});
     await act(async()=>{(app.host.querySelector('input[aria-label="Select Meals for merging"]')as HTMLInputElement).click();});
@@ -492,5 +497,119 @@ test('a confirmed merge keeps its recovery control when the context read fails a
     await act(async()=>humanButton(app.host,app.messages.ListeningHuman.refresh)!.click());
     assert.equal(posts,1);assert.equal(reads,3);assert.equal(saves,1);
     assert.ok(app.host.textContent?.includes(app.messages.ListeningHuman.saved));
+  }finally{await app.close();globalThis.fetch=savedFetch;}
+});
+
+test('Brand OS reveals the published map when discovery completes without changing the configuration revision',async()=>{
+  const f=humanFixture(),savedFetch=globalThis.fetch,savedInterval=globalThis.setInterval,savedClear=globalThis.clearInterval;
+  let completed=false,poll:(()=>void)|undefined,contexts=0;
+  globalThis.setInterval=((callback:()=>void)=>{poll=callback;return 1;})as unknown as typeof setInterval;
+  globalThis.clearInterval=(()=>undefined)as typeof clearInterval;
+  globalThis.fetch=async input=>{
+    if(String(input).endsWith('/human-edits')){contexts++;return completed?Response.json(f.context):Response.json({error:'listening_human_snapshot_unavailable'},{status:404});}
+    return Response.json({contract_version:'signal-listening-status-v1',configuration:{id:f.context.expected.configuration_id,revision:1,configuration:f.context.configuration},
+      run:{id:'run',status:'completed'},map:{id:f.context.expected.map_id,root_count:3},capabilities:{can_edit_topics:true,can_request_processing:true},
+      discovery:{intent_id:'initial',status:'started',execution_status:completed?'completed':'active'}});
+  };
+  const app=await mountHuman(<SignalListeningConfiguration workspaceId="workspace"/>);
+  try{
+    assert.equal(app.host.querySelector('[aria-label="Published Listening topics"]'),null);assert.equal(contexts,1);assert.ok(poll);
+    completed=true;await act(async()=>poll!());
+    assert.ok(app.host.querySelector('[aria-label="Published Listening topics"]'));assert.equal(contexts,2);
+    assert.ok(app.host.textContent?.includes('Occasions'));
+  }finally{await app.close();globalThis.fetch=savedFetch;globalThis.setInterval=savedInterval;globalThis.clearInterval=savedClear;}
+});
+
+test('standalone published topics poll only an active Listening process and appear after its first publication',async()=>{
+  const f=humanFixture(),savedFetch=globalThis.fetch,savedTimeout=globalThis.setTimeout,savedClear=globalThis.clearTimeout;
+  const timers:Array<()=>void>=[];let completed=false,contexts=0,statuses=0;
+  globalThis.setTimeout=((callback:()=>void,ms?:number,...args:unknown[])=>{
+    if(ms===3000){timers.push(callback);return 12345;}return savedTimeout(callback,ms,...args);
+  })as unknown as typeof setTimeout;
+  globalThis.clearTimeout=((timer:ReturnType<typeof setTimeout>)=>{if(Number(timer)!==12345)savedClear(timer);})as typeof clearTimeout;
+  globalThis.fetch=async input=>{
+    if(String(input).endsWith('/human-edits')){contexts++;return completed?Response.json(f.context):Response.json({error:'listening_human_snapshot_unavailable'},{status:404});}
+    statuses++;return Response.json({contract_version:'signal-listening-status-v1',configuration:{id:f.context.expected.configuration_id,revision:1},
+      discovery:{intent_id:'initial',status:'started',execution_status:completed?'completed':'active'}});
+  };
+  const app=await mountHuman(<PublishedListeningTopics workspaceId="workspace"/>);
+  try{
+    assert.equal(contexts,1);assert.equal(statuses,1);assert.equal(timers.length,1);assert.equal(app.host.textContent,'');
+    completed=true;await act(async()=>timers.shift()!());
+    assert.ok(app.host.textContent?.includes(app.messages.ListeningHuman.publishedTitle));assert.equal(contexts,2);assert.equal(timers.length,0);
+    assert.ok(statuses<=3,'completion stops the active poll rather than starting a permanent metadata loop');
+  }finally{await app.close();globalThis.fetch=savedFetch;globalThis.setTimeout=savedTimeout;globalThis.clearTimeout=savedClear;}
+});
+
+test('disabled and idle legacy workspaces have no permanent published-map polling loop',async()=>{
+  const savedFetch=globalThis.fetch,savedTimeout=globalThis.setTimeout,savedClear=globalThis.clearTimeout;let polls=0;
+  globalThis.setTimeout=((callback:()=>void,ms?:number,...args:unknown[])=>{if(ms===3000){polls++;return 12345;}return savedTimeout(callback,ms,...args);})as unknown as typeof setTimeout;
+  globalThis.clearTimeout=((timer:ReturnType<typeof setTimeout>)=>{if(Number(timer)!==12345)savedClear(timer);})as typeof clearTimeout;
+  try{for(const mode of ['disabled','idle']as const){
+    let contexts=0,statuses=0;
+    globalThis.fetch=async input=>{
+      if(String(input).endsWith('/human-edits')){contexts++;return Response.json({error:mode==='disabled'?'listening_not_enabled':'listening_human_snapshot_unavailable'},{status:404});}
+      statuses++;return Response.json({contract_version:'signal-listening-status-v1',configuration:null,run:null,preparation:null,discovery:null});
+    };
+    const app=await mountHuman(<PublishedListeningTopics workspaceId="workspace"/>);
+    try{
+      assert.equal(contexts,mode==='disabled'?1:2);assert.equal(statuses,mode==='disabled'?0:1);
+      await app.render(<PublishedListeningTopics workspaceId="workspace"/>);
+      assert.equal(contexts,mode==='disabled'?1:2);assert.equal(statuses,mode==='disabled'?0:1);
+      assert.equal(app.host.textContent,'');assert.equal(polls,0,'idle and disabled states schedule no future poll');
+    }finally{await app.close();}
+  }}finally{globalThis.fetch=savedFetch;globalThis.setTimeout=savedTimeout;globalThis.clearTimeout=savedClear;}
+});
+
+test('a delayed post-edit focus read respects a later close, open or URL selection instead of reopening A',async()=>{
+  const f=humanFixture(),savedFetch=globalThis.fetch;
+  try{for(const intent of ['close','open_b','url_b','url_b_silent','outside_page_b']as const){
+    const {record,data}=nativeHumanMentionsData(f),other={...record,subject_id:humanId(21),text_snippet:'Second mention B'};
+    const initial={...data,record,total_count:2,records:[record,other]},updated={...record,listening_labels:f.nextLabels};
+    const updatedOther={...other,listening_labels:{...f.labels,binding:f.nextLabels.binding}};
+    let saved=false,resolvePage:((response:Response)=>void)|undefined;const focuses:Array<string|null>=[];
+    browser.history.replaceState(null,'','/signal/synthetic/mentions?view=all_conversations&mention='+record.subject_id);
+    globalThis.fetch=async(input,options)=>{
+      const url=String(input);
+      if(url.endsWith('/human-edits')){if(options?.method==='POST'){saved=true;return Response.json(f.receipt);}return Response.json(saved?f.nextContext:f.context);}
+      focuses.push(new URL(url,'https://studio.invalid').searchParams.get('mention'));
+      if(focuses.length===1)return new Promise<Response>(resolve=>{resolvePage=resolve;});
+      assert.equal(intent,'outside_page_b');return Response.json({...initial,records:[updated],record:updatedOther});
+    };
+    function Mentions(){const[current,setCurrent]=React.useState<SignalMentionsViewData>(initial);return <SignalV2Mentions brandName="Synthetic" coverage={{date_from:null,date_through:null}} data={current}
+      initialMention={current.record??null} loading={false} onApplyFilter={async()=>true} onDataChange={setCurrent} onOpenControls={()=>{}} workspaceId="workspace"/>;}
+    const app=await mountHuman(<Mentions/>);
+    try{
+      await act(async()=>humanButton(document,app.messages.ListeningHuman.remove)!.click());assert.ok(resolvePage);assert.deepEqual(focuses,[record.subject_id]);
+      if(intent==='close'){
+        const close=document.querySelector(`button[aria-label="${app.messages.SignalV2.mentions.detail.close}"]`)as HTMLButtonElement;assert.ok(close);await act(async()=>close.click());
+      }else if(intent==='url_b'||intent==='url_b_silent'){
+        browser.history.replaceState(null,'','/signal/synthetic/mentions?view=all_conversations&mention='+other.subject_id);
+        if(intent==='url_b')await act(async()=>browser.dispatchEvent(new browser.PopStateEvent('popstate')));
+      }else{
+        const row=[...app.host.querySelectorAll('tr')].find(row=>row.textContent?.includes('Second mention B'));assert.ok(row);
+        await act(async()=>row.dispatchEvent(new browser.MouseEvent('click',{bubbles:true})as unknown as Event));
+      }
+      await act(async()=>resolvePage!(Response.json({...initial,record:updated,records:intent==='outside_page_b'?[updated]:[updated,updatedOther]})));
+      const drawer=document.querySelector('.signal-v2-mention-drawer__verbatim');
+      if(intent==='close'){assert.equal(drawer,null);assert.equal(new URL(window.location.href).searchParams.get('mention'),null);}
+      else{assert.ok(drawer?.textContent?.includes('Second mention B'));assert.ok(!drawer?.textContent?.includes('Synthetic listening evidence'));
+        assert.equal(new URL(window.location.href).searchParams.get('mention'),other.subject_id);}
+      assert.equal(focuses.length,intent==='outside_page_b'?2:1);
+    }finally{await app.close();}
+  }}finally{globalThis.fetch=savedFetch;}
+});
+
+
+test('a denied Listening status read removes editing controls from an otherwise published catalogue',async()=>{
+  const f=humanFixture(),savedFetch=globalThis.fetch;let contexts=0,statuses=0;
+  globalThis.fetch=async input=>{
+    if(String(input).endsWith('/human-edits')){contexts++;return Response.json(f.context);}
+    statuses++;return Response.json({error:'listening_forbidden'},{status:403});
+  };
+  const app=await mountHuman(<PublishedListeningTopics workspaceId="workspace" allowMerge/>);
+  try{
+    assert.equal(contexts,1);assert.equal(statuses,1);assert.equal(humanButton(app.host,app.messages.ListeningHuman.merge),undefined);
+    assert.equal(app.host.querySelector('[aria-label="Published Listening topics"]'),null);
   }finally{await app.close();globalThis.fetch=savedFetch;}
 });

@@ -84,7 +84,7 @@ function SignalImportedTopics({ data, loading, manageTopicsHref, onOpenMentions,
       controls={<button className="signal-v2-filter" type="button" disabled={loading} onClick={() => void onRefresh?.()}>
         <ArrowClockwise size={16} />{t("workspaceTopics.refresh")}</button>} />
     {refreshFailed ? <div className="signal-v2-error" role="alert">{t("workspaceTopics.refreshError")}</div> : null}
-    <PublishedListeningTopics workspaceId={data.workspace_id} allowMerge disabled={loading} onSaved={onRefresh}/>
+    <PublishedListeningTopics workspaceId={data.workspace_id} allowMerge disabled={loading} refreshToken={data.observed_at} onSaved={onRefresh}/>
     <h2 className="signal-v2-card__heading">{tHuman("legacyTitle")}</h2>
     <section className="signal-v2-tn__empty" aria-busy={loading} role="status">
       <Quotes size={24} aria-hidden /><strong>{t("imported.topicsTitle")}</strong>
@@ -248,7 +248,7 @@ function SignalComputedWorkspaceTopics({ initialBundle, brandName, data, loading
         <button className="signal-v2-filter" type="button" disabled={loading} onClick={() => void refresh()}><ArrowClockwise size={16} />{t("refresh")}</button>
         <span>{t("workspaceTimezone", { timezone: workspaceTimezone })}</span></>} />
     {refreshFailed ? <div className="signal-v2-error" role="alert">{t("refreshError")}</div> : null}
-    {surface === "topics" ? <><PublishedListeningTopics workspaceId={data.workspace_id} allowMerge disabled={loading} onSaved={refresh}/>
+    {surface === "topics" ? <><PublishedListeningTopics workspaceId={data.workspace_id} allowMerge disabled={loading} refreshToken={data.observed_at} onSaved={refresh}/>
       <h2 className="signal-v2-card__heading">{tHuman("legacyTitle")}</h2></> : null}
     {data.consumer_indicators ? <SignalWorkspaceConsumerIndicators data={data} loading={loading}
       workspaceTimezone={workspaceTimezone} onOpenMention={onOpenMention} /> : null}

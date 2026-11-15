@@ -16,8 +16,8 @@ const language=(locale:string)=>locale.startsWith('es')?'es':locale.startsWith('
 function topicName(question:SignalListeningQuestionV1,locale:string){
  return question.localization?.[language(locale)].name??question.text;
 }
-function useHumanContext(workspaceId:string){
- const [context,setContext]=useState<Context|null>(null),[loading,setLoading]=useState(false),[error,setError]=useState(false);
+function useHumanContext(workspaceId:string,refreshToken?:string,observeListening=false){
+ const [context,setContext]=useState<Context|null>(null),[loading,setLoading]=useState(false),[error,setError]=useState(false),[missing,setMissing]=useState<'snapshot'|'disabled'|'denied'|null>(null);
  const request=useRef<AbortController|null>(null),sequence=useRef(0),contextWorkspace=useRef<string|null>(null);
  const invalidate=useCallback(()=>{sequence.current++;request.current?.abort();},[]);
  const refresh=useCallback(async()=>{
@@ -26,17 +26,52 @@ function useHumanContext(workspaceId:string){
   try{
    const response=await fetch(endpoint(workspaceId),{cache:'no-store',signal:controller.signal});
    if(controller.signal.aborted||version!==sequence.current)return null;
-   if([401,403,404].includes(response.status)){setContext(null);return null;}
+   if([401,403,404].includes(response.status)){
+    const body=response.status===404?await response.json().catch(()=>null)as {error?:string}|null:null;
+    if(controller.signal.aborted||version!==sequence.current)return null;
+    contextWorkspace.current=workspaceId;setContext(null);
+    setMissing(response.status!==404?'denied':body?.error==='listening_human_snapshot_unavailable'?'snapshot':'disabled');return null;
+   }
    if(!response.ok)throw Error('unavailable');
    const value=await response.json()as Context;
    if(controller.signal.aborted||version!==sequence.current)return null;
    if(value.contract_version!=='signal-listening-human-edit-context-v1'||!value.expected||!Array.isArray(value.configuration?.questions)
     ||typeof value.can_edit!=='boolean')throw Error('invalid_context_contract');
-   contextWorkspace.current=workspaceId;setContext(value);return value;
+   contextWorkspace.current=workspaceId;setMissing(null);setContext(value);return value;
   }catch{if(!controller.signal.aborted&&version===sequence.current){setContext(null);setError(true);}return null;}
   finally{if(version===sequence.current)setLoading(false);}
  },[workspaceId]);
- useEffect(()=>{contextWorkspace.current=null;setContext(null);void refresh();return invalidate;},[refresh,invalidate]);
+ useEffect(()=>{
+  if(contextWorkspace.current!==workspaceId){setContext(null);setMissing(null);}
+  void refresh();return invalidate;
+ },[refresh,invalidate,workspaceId,refreshToken]);
+ const canObserve=observeListening&&contextWorkspace.current===workspaceId&&(Boolean(context)||missing==='snapshot');
+ useEffect(()=>{
+  if(!canObserve)return;
+  const controller=new AbortController();let timer:ReturnType<typeof setTimeout>|undefined,previous:string|undefined;
+  const poll=async()=>{
+   if(controller.signal.aborted)return;
+   try{
+    const response=await fetch(`/api/data-os/signal/${encodeURIComponent(workspaceId)}/listening`,{cache:'no-store',signal:controller.signal});
+    if(controller.signal.aborted)return;
+    if([401,403,404].includes(response.status)){setContext(null);setMissing(response.status===404?'disabled':'denied');return;}
+    if(!response.ok)return;
+    const status=await response.json()as {contract_version?:string;configuration?:{id:string;revision:number}|null;run?:{status:string}|null;
+     preparation?:{status:string}|null;discovery?:{intent_id:string;status:string;execution_status:string|null}|null};
+    if(controller.signal.aborted||status.contract_version!=='signal-listening-status-v1')return;
+    const active=['queued','running'].includes(status.run?.status??'')
+     ||['preparing','waiting_prototypes','ready_for_labeling','labeling'].includes(status.preparation?.status??'')
+     ||['preparing','admitted','waiting_recovery'].includes(status.discovery?.status??'')||status.discovery?.execution_status==='active';
+    const token=JSON.stringify([status.configuration?.id,status.configuration?.revision,status.discovery?.intent_id,status.discovery?.status,status.discovery?.execution_status]);
+    // Poll only an actual active Listening process. A legacy workspace without
+    // publication gets one race-closing read, never a permanent metadata loop.
+    if(previous!==undefined&&token!==previous||previous===undefined&&!active&&missing==='snapshot')await refresh();
+    if(controller.signal.aborted)return;previous=token;
+    if(active)timer=setTimeout(()=>void poll(),3000);
+   }catch{/* A failed status read confers no processing right or retry loop. */}
+  };
+  void poll();return()=>{controller.abort();if(timer)clearTimeout(timer);};
+ },[canObserve,workspaceId,refresh,refreshToken,missing]);
  return{context:contextWorkspace.current===workspaceId?context:null,loading,error,refresh};
 }
 function useHumanMutation(workspaceId:string,refresh:Refresh,onSaved?:OnSaved){
@@ -132,8 +167,8 @@ export function ListeningMentionActions({workspaceId,rootId,labels,onSaved}:{wor
 /** A versioned published catalogue, independent of the historical term_key map.
  * Counts are intentionally absent: this endpoint supplies definitions, not an
  * aggregate population. Human edits require its native completed snapshot. */
-export function PublishedListeningTopics({workspaceId,allowMerge=false,disabled=false,onSaved}:{workspaceId:string;allowMerge?:boolean;disabled?:boolean;onSaved?:OnSaved}){
- const t=useTranslations('ListeningHuman'),locale=useLocale(),{context,loading,error,refresh}=useHumanContext(workspaceId);
+export function PublishedListeningTopics({workspaceId,allowMerge=false,disabled=false,onSaved,refreshToken,observeListening=true}:{workspaceId:string;allowMerge?:boolean;disabled?:boolean;onSaved?:OnSaved;refreshToken?:string;observeListening?:boolean}){
+ const t=useTranslations('ListeningHuman'),locale=useLocale(),{context,loading,error,refresh}=useHumanContext(workspaceId,refreshToken,observeListening);
  const mutation=useHumanMutation(workspaceId,refresh,onSaved),[outside,setOutside]=useState(false),[selected,setSelected]=useState<string[]>([]),[target,setTarget]=useState('');
  useEffect(()=>{setSelected([]);setTarget('');},[workspaceId,context?.expected.configuration_id]);
  const topics=context?.configuration.questions.filter(question=>question.type==='noul'&&question.topic_source)??[];
