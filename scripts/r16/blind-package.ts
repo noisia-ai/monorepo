@@ -1,5 +1,5 @@
-import { createHash, createHmac } from "node:crypto";
-import { chmod, lstat, mkdir, mkdtemp, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { createHash, createHmac, randomUUID } from "node:crypto";
+import { chmod, link, lstat, mkdir, mkdtemp, readFile, readdir, rename, rm, stat, unlink, writeFile } from "node:fs/promises";
 import { dirname, resolve, sep } from "node:path";
 
 export const LISTENING_COHORTS_V1 = ["C01", "C02", "C03", "C04", "C05", "C06", "C07", "C08", "C09", "C10"] as const;
@@ -9,7 +9,8 @@ const USES = ["literal", "figurative_or_ironic", "other"] as const;
 const HASH_RE = /^[a-f0-9]{64}$/u;
 const OMIT_KEYS = new Set(["mention_id", "root_id", "workspace_id", "corpus_id", "study_id", "run_id", "topic_key", "motive_key",
   "direction", "target", "use", "layer", "permission", "label", "answer", "expected", "prediction", "confidence", "probability",
-  "cohort", "stratum", "cut_membership", "model", "assigned", "nearest_motives", "flags", "review_flags"]);
+  "cohort", "stratum", "cut_membership", "in_cut", "model", "assigned", "assigned_motive_key", "system_assigned_motive_key", "predicted_motive_key", "ranked_candidate_keys",
+  "option_map", "nearest_motives", "flags", "review_flags", "false_none_candidate", "false_irony_candidate", "ambiguous_brand_candidate"]);
 
 export type BlindSnapshotV1 = {
   contract_version: "r16-blind-snapshot-v1";
@@ -17,29 +18,49 @@ export type BlindSnapshotV1 = {
   source: { export_contract: string; export_digest: string };
   study_provenance: { listening_before_digest: string; listening_after_digest: string; study_contract_version: string;
     methodology_template_version: string; methodology_template_digest: string };
+  study_guidance: { subject_context: string; direction_options: Array<{ key: string; definition: string }>;
+    target_options: Array<{ key: string; definition: string }>; use_options: Array<{ key: string; definition: string }>;
+    layer_diagnostics: Array<{ key: string; layer: string; question: string; definition: string }> };
+  layer_agreement: { eligible_count: number; denominator: number; coverage: number; kappa: number | null;
+    status: "not_measured" | "insufficient_data" | "below_threshold" | "acceptable"; boundary_recoded_count: number } | null;
   receipts: { total_cost_usd: number; total_elapsed_ms: number; stages: Array<{ stage: string; cost_usd: number; elapsed_ms: number }> };
   listening: Array<{ mention_id: string; redacted_text: string; stage: "before" | "after";
     assignments: Array<{ topic_key: string; topic_name: string; topic_definition: string; volume_cohort: string; assigned: boolean }> }>;
   study: Array<{ mention_id: string; redacted_text: string; direction: typeof DIRECTIONS[number]; target: typeof TARGETS[number];
     use: typeof USES[number]; in_cut: boolean; review_flags: string[]; motive_key?: string; motive_volume_cohort?: string;
     motive_name?: string; motive_definition?: string; layer?: string; nearest_volume_cohort?: string;
+    nearest_assigned_motive_key?: string;
     nearest_motives?: Array<{ motive_key: string; volume_cohort: string; name: string; definition: string }> }>;
 };
 
-type CaseV1 = { blind_id: string; text: string; prompt: string; context?: string };
+type CaseV1 = { blind_id: string; text: string; prompt: string; context?: string; options?: Array<{ key: string; text: string }> };
 type PacketV1 = { contract_version: "r16-blind-packet-v1"; packet_ref: string; cases: CaseV1[] };
 type KeyRow = { blind_id: string; mention_id: string; sample_code: string; stage?: string; topic_key?: string; answer: unknown };
-type KeyV1 = { contract_version: "r16-blind-custody-key-v1"; seed_fingerprint: string; rows: KeyRow[] };
+type StratumCount = { quota: number; available: number; selected: number; shortfall: number };
+type KeyV1 = { contract_version: "r16-blind-custody-key-v1"; seed_fingerprint: string; rows: KeyRow[];
+  custody_manifest: { source_digest: string; study_provenance: BlindSnapshotV1["study_provenance"];
+    strata: Array<{ sample_code: string; packet_ref: string } & StratumCount>;
+    axis_coverage: Array<{ code: string; ref: string; packet_ref: string; required: number; selected: number; shortfall: number }> };
+  layer_agreement: BlindSnapshotV1["layer_agreement"] };
 
 export function validateSnapshotV1(value: unknown): BlindSnapshotV1 {
   if (!value || typeof value !== "object") throw new Error("blind_snapshot_invalid");
   const s = value as BlindSnapshotV1;
   const fail = () => { throw new Error("blind_snapshot_invalid"); };
   if (s.contract_version !== "r16-blind-snapshot-v1" || !Number.isFinite(Date.parse(s.exported_at))
-    || !s.source || typeof s.source.export_contract !== "string" || !HASH_RE.test(s.source.export_digest)
+    || !s.source || typeof s.source.export_contract !== "string" || !s.source.export_contract.trim() || !HASH_RE.test(s.source.export_digest)
     || !s.study_provenance || !HASH_RE.test(s.study_provenance.listening_before_digest) || !HASH_RE.test(s.study_provenance.listening_after_digest)
     || s.study_provenance.study_contract_version !== "signal-study-v1" || s.study_provenance.methodology_template_version !== "r16-v1"
     || !/^sha256:[a-f0-9]{64}$/u.test(s.study_provenance.methodology_template_digest)
+    || !s.study_guidance || typeof s.study_guidance.subject_context !== "string" || !s.study_guidance.subject_context.trim()
+    || !validOptions(s.study_guidance.direction_options, DIRECTIONS) || !validOptions(s.study_guidance.target_options, TARGETS)
+    || !validOptions(s.study_guidance.use_options, USES) || !Array.isArray(s.study_guidance.layer_diagnostics)
+    || s.study_guidance.layer_diagnostics.length !== 4 || new Set(s.study_guidance.layer_diagnostics.map(d => d?.key)).size !== 4
+    || new Set(s.study_guidance.layer_diagnostics.map(d => d?.layer)).size !== 4
+    || s.study_guidance.layer_diagnostics.some(d => !d || !d.key || typeof d.question !== "string" || !d.question.trim()
+      || typeof d.definition !== "string" || !d.definition.trim()
+      || !["psychological", "personal", "social", "cultural"].includes(d.layer))
+    || (s.layer_agreement !== null && s.layer_agreement !== undefined && !validLayerAgreement(s.layer_agreement))
     || !s.receipts || !finiteNonNegative(s.receipts.total_cost_usd) || !finiteNonNegative(s.receipts.total_elapsed_ms)
     || !Array.isArray(s.receipts.stages) || !s.receipts.stages.length || s.receipts.stages.some(x => !x || typeof x.stage !== "string" || !x.stage.trim()
       || !finiteNonNegative(x.cost_usd) || !finiteNonNegative(x.elapsed_ms)) || !Array.isArray(s.listening) || !Array.isArray(s.study)) fail();
@@ -58,18 +79,64 @@ export function validateSnapshotV1(value: unknown): BlindSnapshotV1 {
       keys.add(a.topic_key);
     }
   }
+  const listeningDefinitions = new Map<string, string>();
+  for (const row of s.listening) for (const a of row.assignments) {
+    const key = `${row.stage}\0${a.topic_key}`; const definition = `${a.topic_name}\0${a.topic_definition}\0${a.volume_cohort}`;
+    const previous = listeningDefinitions.get(key);
+    if (previous && previous !== definition) throw new Error("blind_snapshot_listening_definition_inconsistent");
+    listeningDefinitions.set(key, definition);
+  }
+  const motiveDefinitions = new Map<string, { definitions: Set<string>; layers: Set<string> }>();
+  const nearestDefinitions = new Map<string, string>();
   for (const row of s.study) {
     if (!(DIRECTIONS as readonly string[]).includes(row.direction) || !(TARGETS as readonly string[]).includes(row.target)
       || !(USES as readonly string[]).includes(row.use) || typeof row.in_cut !== "boolean" || !Array.isArray(row.review_flags)) fail();
-    if (row.review_flags.some(f => !["false_none_candidate", "false_irony_candidate"].includes(f))) fail();
+    if (row.review_flags.some(f => !["false_none_candidate", "false_irony_candidate", "ambiguous_brand_candidate"].includes(f))) fail();
+    if (row.motive_key !== undefined && (typeof row.motive_key !== "string" || !row.motive_key.trim())) fail();
+    if (row.motive_name !== undefined && typeof row.motive_name !== "string") fail();
+    if (row.motive_definition !== undefined && typeof row.motive_definition !== "string") fail();
+    if (row.nearest_assigned_motive_key !== undefined && typeof row.nearest_assigned_motive_key !== "string") fail();
+    if (row.nearest_motives !== undefined && !Array.isArray(row.nearest_motives)) fail();
     if (row.motive_volume_cohort !== undefined && !LISTENING_COHORTS_V1.includes(row.motive_volume_cohort as typeof LISTENING_COHORTS_V1[number])) fail();
-    if (row.nearest_volume_cohort !== undefined && (!LISTENING_COHORTS_V1.includes(row.nearest_volume_cohort as typeof LISTENING_COHORTS_V1[number])
-      || row.nearest_motives?.length !== 4)) fail();
-    if (row.nearest_motives && row.nearest_motives.length > 4) fail();
+    if (row.layer !== undefined && !["psychological", "personal", "social", "cultural", "unclear"].includes(row.layer)) fail();
+    if (row.motive_key) {
+      const set = motiveDefinitions.get(row.motive_key) ?? { definitions: new Set<string>(), layers: new Set<string>() };
+      if (row.motive_name && row.motive_definition) set.definitions.add(`${row.motive_name}\0${row.motive_definition}`);
+      if (row.layer) set.layers.add(row.layer);
+      motiveDefinitions.set(row.motive_key, set);
+    }
+    for (const candidate of row.nearest_motives ?? []) if (candidate?.motive_key && candidate.name && candidate.definition) {
+      const signature = `${candidate.name}\0${candidate.definition}\0${candidate.volume_cohort}`;
+      const previous = nearestDefinitions.get(candidate.motive_key);
+      if (previous && previous !== signature) throw new Error("blind_snapshot_nearest_motive_definition_inconsistent");
+      nearestDefinitions.set(candidate.motive_key, signature);
+    }
+  }
+  for (const values of motiveDefinitions.values()) {
+    if (values.definitions.size > 1) throw new Error("blind_snapshot_motive_definition_inconsistent");
+    if (values.layers.size > 1) throw new Error("blind_snapshot_motive_layer_inconsistent");
   }
   if (new Set(s.listening.map(r => `${r.mention_id}\0${r.stage}`)).size !== s.listening.length) throw new Error("blind_snapshot_duplicate_listening_identity");
   if (new Set(s.study.map(r => r.mention_id)).size !== s.study.length) throw new Error("blind_snapshot_duplicate_study_identity");
   return s;
+}
+
+function validOptions(options: Array<{ key: string; definition: string }>, keys: readonly string[]): boolean {
+  return Array.isArray(options) && options.length === keys.length && new Set(options.map(x => x?.key)).size === keys.length
+    && keys.every(key => options.some(x => x?.key === key && typeof x.definition === "string" && x.definition.trim()));
+}
+function validLayerAgreement(value: NonNullable<BlindSnapshotV1["layer_agreement"]>): boolean {
+  if (!value || !Number.isSafeInteger(value.eligible_count) || value.eligible_count < 0 || !Number.isSafeInteger(value.denominator)
+    || value.denominator < 0 || value.denominator > value.eligible_count || !Number.isFinite(value.coverage) || value.coverage < 0 || value.coverage > 1
+    || !Number.isSafeInteger(value.boundary_recoded_count) || value.boundary_recoded_count < 0 || value.boundary_recoded_count > value.denominator
+    || !["not_measured", "insufficient_data", "below_threshold", "acceptable"].includes(value.status)) return false;
+  if (Math.abs(value.coverage - (value.eligible_count ? value.denominator / value.eligible_count : 0)) > .000001) return false;
+  if (value.kappa !== null && (!Number.isFinite(value.kappa) || value.kappa < -1 || value.kappa > 1)) return false;
+  if (value.status === "not_measured") return value.kappa === null && value.denominator === 0;
+  if (value.status === "insufficient_data") return value.kappa === null && value.denominator > 0;
+  if (value.status === "acceptable") return value.denominator > 0 && value.kappa !== null && value.kappa >= .8;
+  if (value.status === "below_threshold") return value.denominator > 0 && value.kappa !== null && value.kappa < .8;
+  return false;
 }
 
 function finiteNonNegative(n: number): boolean { return Number.isFinite(n) && n >= 0; }
@@ -81,9 +148,10 @@ function choose<T>(rows: T[], count: number, seed: string, code: string, id: (ro
 function opaqueId(seed: string, code: string, mentionId: string, serial?: string): string {
   return createHmac("sha256", seed).update(`case\0${code}\0${mentionId}\0${serial ?? ""}`).digest("hex").slice(0, 24);
 }
-function caseRow(seed: string, code: string, mentionId: string, text: string, prompt: string, answer: unknown, context?: string, serial?: string) {
+function caseRow(seed: string, code: string, mentionId: string, text: string, prompt: string, answer: unknown, context?: string,
+  options?: Array<{ key: string; text: string }>, serial?: string) {
   const blind_id = opaqueId(seed, code, mentionId, serial);
-  return { packet: { blind_id, text, prompt, ...(context ? { context } : {}) } as CaseV1,
+  return { packet: { blind_id, text, prompt, ...(context ? { context } : {}), ...(options ? { options } : {}) } as CaseV1,
     key: { blind_id, mention_id: mentionId, sample_code: code, answer } as KeyRow };
 }
 
@@ -94,18 +162,19 @@ export function buildBlindPackageV1(snapshotValue: unknown, seed: string) {
   const packets: PacketV1[] = [];
   const keyRows: KeyRow[] = [];
   const usedIdentities = new Set<string>();
-  const census: Record<string, { quota: number; available: number; selected: number; shortfall: number }> = {};
+  const census: Record<string, StratumCount> = {};
   const publicRefs = new Map<string, string>();
-  const add = (code: string, candidates: Array<{ id: string; text: string; answer: unknown; prompt: string; context?: string }>, quota: number) => {
+  const add = (code: string, candidates: Array<{ id: string; text: string; answer: unknown; prompt: string; context?: string;
+    options?: Array<{ key: string; text: string }> }>, quota: number, useAll = false, populationAvailable?: number) => {
     const ordered = [...candidates].sort((a, b) => rank(seed, `${code}:dedupe`, `${a.id}\0${JSON.stringify(a.answer)}`)
       .localeCompare(rank(seed, `${code}:dedupe`, `${b.id}\0${JSON.stringify(b.answer)}`)));
     const ids = new Set<string>();
     const unique = ordered.filter(c => !usedIdentities.has(c.id) && !ids.has(c.id) && Boolean(ids.add(c.id)));
-    const selected = choose(unique, quota, seed, code, c => c.id);
-    census[code] = { quota, available: unique.length, selected: selected.length, shortfall: Math.max(0, quota - selected.length) };
+    const selected = useAll ? unique : choose(unique, quota, seed, code, c => c.id);
+    census[code] = { quota, available: populationAvailable ?? unique.length, selected: selected.length, shortfall: Math.max(0, quota - selected.length) };
     const packetRef = createHmac("sha256", seed).update(`manifest-stratum\0${code}`).digest("hex").slice(0, 12);
     publicRefs.set(code, packetRef);
-    const rows = selected.map(c => caseRow(seed, code, c.id, c.text, c.prompt, c.answer, c.context));
+    const rows = selected.map(c => caseRow(seed, code, c.id, c.text, c.prompt, c.answer, c.context, c.options));
     const packet = rows.map(r => r.packet).sort((a, b) => rank(seed, `${code}:order`, a.blind_id).localeCompare(rank(seed, `${code}:order`, b.blind_id)));
     for (const row of selected) usedIdentities.add(row.id);
     packets.push({ contract_version: "r16-blind-packet-v1", packet_ref: packetRef, cases: packet });
@@ -121,20 +190,37 @@ export function buildBlindPackageV1(snapshotValue: unknown, seed: string) {
   }
 
   const t = s.study;
-  const axisCandidates = [
-    ["T01", t.filter(r => r.direction === "mixed"), 50, "Does this mention express both attraction and restraint, guilt, or rejection toward its target?"],
-    ["T02", t.filter(r => r.target === "category"), 40, "Which target does the expressed force concern: category, own brand, competitor brand, or alternative?"],
-    ["T03", t.filter(r => r.target === "own_brand"), 40, "Which target does the expressed force concern: category, own brand, competitor brand, or alternative?"],
-    ["T04", t.filter(r => r.target === "competitor_brand"), 40, "Which target does the expressed force concern: category, own brand, competitor brand, or alternative?"],
-    ["T05", t.filter(r => r.target === "alternative"), 40, "Which target does the expressed force concern: category, own brand, competitor brand, or alternative?"],
-    ["T06", t.filter(r => r.review_flags.includes("false_irony_candidate")), 30, "Is this a literal consumption evaluation, figurative or ironic use, or other?"],
-    ["T07", t.filter(r => r.direction === "none" && r.in_cut && r.review_flags.includes("false_none_candidate")), 30, "Does this mention express a trigger, barrier, mixed force, or no force?"],
-    ["T08", t.filter(r => r.direction === "none" && !r.in_cut && r.review_flags.includes("false_none_candidate")), 30, "Does this mention express a trigger, barrier, mixed force, or no force?"],
-  ] as const;
-  for (const [code, sourceRows, quota, prompt] of axisCandidates) {
-    add(code, sourceRows.map(r => ({ id: r.mention_id, text: r.redacted_text, prompt,
-      answer: { direction: r.direction, target: r.target, use: r.use, in_cut: r.in_cut } })), quota);
+  const axisSelected: typeof t = [];
+  const axisIds = new Set<string>();
+  const axisCoverage: Array<{ code: string; required: number; selected: number; shortfall: number }> = [];
+  const takeAxis = (code: string, rows: typeof t, required: number, trackCoverage = true) => {
+    const eligible = rows.filter(r => !usedIdentities.has(r.mention_id) && !axisIds.has(r.mention_id));
+    const chosen = choose(eligible, required, seed, `axes:${code}`, r => r.mention_id);
+    for (const row of chosen) { axisSelected.push(row); axisIds.add(row.mention_id); }
+    if (trackCoverage) axisCoverage.push({ code, required, selected: chosen.length, shortfall: Math.max(0, required - chosen.length) });
+  };
+  takeAxis("mixed", t.filter(r => r.direction === "mixed"), 50);
+  takeAxis("false_irony", t.filter(r => r.review_flags.includes("false_irony_candidate")), 30);
+  takeAxis("ambiguous_brand", t.filter(r => r.review_flags.includes("ambiguous_brand_candidate")), 30);
+  for (const target of TARGETS) {
+    const already = axisSelected.filter(r => r.target === target).length;
+    takeAxis(`target_${target}`, t.filter(r => r.target === target), Math.max(0, 40 - already));
+    const coverage = axisCoverage.at(-1)!;
+    coverage.required = 40; coverage.selected += already; coverage.shortfall = Math.max(0, 40 - coverage.selected);
   }
+  takeAxis("false_none_inside", t.filter(r => r.direction === "none" && r.in_cut && r.review_flags.includes("false_none_candidate")), 30);
+  takeAxis("false_none_outside", t.filter(r => r.direction === "none" && !r.in_cut && r.review_flags.includes("false_none_candidate")), 30);
+  takeAxis("axes_total", t.filter(r => r.direction !== "none"), Math.max(0, 200 - axisSelected.length), false);
+  const guidance = s.study_guidance;
+  const axisContext = [guidance.subject_context,
+    `Direction options: ${guidance.direction_options.map(o => `${o.key}: ${o.definition}`).join("; ")}`,
+    `Target options: ${guidance.target_options.map(o => `${o.key}: ${o.definition}`).join("; ")}`,
+    `Use options: ${guidance.use_options.map(o => `${o.key}: ${o.definition}`).join("; ")}`].join("\n");
+  const axisCases = axisSelected.map(r => ({ id: r.mention_id, text: r.redacted_text,
+    prompt: "Independently code all three axes for this mention: direction, target, and use, using the definitions below.", context: axisContext,
+    answer: { direction: r.direction, target: r.target, use: r.use, in_cut: r.in_cut, review_flags: r.review_flags } }));
+  const axisPopulation = new Set(t.filter(r => !usedIdentities.has(r.mention_id)).map(r => r.mention_id)).size;
+  add("TAX", axisCases, 200, true, axisPopulation);
 
   const topMotives = [...new Set(t.filter(r => r.motive_key).map(r => r.motive_key!))].sort((a, b) => {
     const n = (key: string) => t.filter(r => r.motive_key === key).length;
@@ -142,31 +228,55 @@ export function buildBlindPackageV1(snapshotValue: unknown, seed: string) {
   }).slice(0, 20);
   for (let i = 0; i < 20; i++) {
     const motive = topMotives[i]; const code = `M${String(i + 1).padStart(2, "0")}`;
-    const rows = motive ? t.filter(r => r.motive_key === motive && r.direction !== "none") : [];
+    const rows = motive ? t.filter(r => r.motive_key === motive && r.direction !== "none" && r.layer && r.motive_name && r.motive_definition) : [];
+    const layerContext = [`Motive: ${rows[0]?.motive_name ?? ""}. ${rows[0]?.motive_definition ?? ""}`,
+      `Diagnostic layers: ${guidance.layer_diagnostics.map(d => `${d.layer}: ${d.question} ${d.definition}`).join("; ")}`,
+      "Select one layer only when supported by the text; otherwise select unclear."].join("\n");
     add(code, rows.map(r => ({ id: r.mention_id, text: r.redacted_text,
-      prompt: "Does this mention belong to the described motive, and does its text support the proposed diagnostic layer?",
-      context: rows.find(x => x.motive_key === motive)?.motive_name ? `Motive: ${rows.find(x => x.motive_key === motive)!.motive_name}. ${rows.find(x => x.motive_key === motive)!.motive_definition ?? ""}` : undefined,
-      answer: { motive_key: motive, layer: r.layer, direction: r.direction } })), 10);
+      prompt: "Does this mention belong to the described motive, and which diagnostic layer is supported by its text?",
+      context: layerContext, answer: { motive_key: motive, layer: r.layer, direction: r.direction } })), 10);
   }
   for (const cohort of LISTENING_COHORTS_V1) {
     const code = `N-${cohort}`;
-    const candidates = t.filter(r => r.direction !== "none" && r.nearest_volume_cohort === cohort)
-      .map(r => ({ id: r.mention_id, text: r.redacted_text, prompt: "Which of the four candidate motives, if any, best explains the force expressed in this mention?",
-        context: r.nearest_motives!.map((m, i) => `${i + 1}. ${m.name}: ${m.definition}`).join("\n"),
-        answer: { nearest_motives: r.nearest_motives!.map(m => m.motive_key), cohort } }));
+    const candidates = t.filter(r => r.direction !== "none" && r.nearest_volume_cohort === cohort && r.nearest_assigned_motive_key
+      && r.nearest_motives?.length === 4 && new Set(r.nearest_motives.map(m => m.motive_key)).size === 4
+      && r.nearest_motives.every(m => m.motive_key && m.name?.trim() && m.definition?.trim()
+        && LISTENING_COHORTS_V1.includes(m.volume_cohort as typeof LISTENING_COHORTS_V1[number]))
+      && r.nearest_motives.some(m => m.motive_key === r.nearest_assigned_motive_key))
+      .map(r => {
+        const ranked = r.nearest_motives!;
+        const shuffled = [...ranked].sort((a, b) => rank(seed, `${code}:options`, `${r.mention_id}:${a.motive_key}`)
+          .localeCompare(rank(seed, `${code}:options`, `${r.mention_id}:${b.motive_key}`)));
+        const options = shuffled.map((m, i) => ({ key: String.fromCharCode(65 + i), text: `${m.name}: ${m.definition}` }));
+        const option_map = Object.fromEntries(shuffled.map((m, i) => [String.fromCharCode(65 + i), m.motive_key]));
+        return { id: r.mention_id, text: r.redacted_text, prompt: "Which option best matches the force expressed in this mention? Choose A, B, C, or D.",
+          options, answer: { system_assigned_motive_key: r.nearest_assigned_motive_key, ranked_candidate_keys: ranked.map(m => m.motive_key), option_map, cohort } };
+      });
     add(code, candidates, 20);
   }
 
   // Every selected source identity appears in one packet only, including across listening stages.
-  const totalShortfall = Object.values(census).reduce((n, x) => n + x.shortfall, 0);
-  const blindStrata = Object.fromEntries(Object.entries(census).map(([k, v]) => [publicRefs.get(k)!, v]));
+  const privateStrata = Object.entries(census).map(([sample_code, counts]) => ({ sample_code, packet_ref: publicRefs.get(sample_code)!, ...counts }));
+  const blindStrata = privateStrata.map(item => ({ packet_ref: item.packet_ref, quota: item.quota, available: item.available,
+    selected: item.selected, shortfall: item.shortfall }))
+    .sort((a, b) => rank(seed, "manifest-visible-strata", a.packet_ref).localeCompare(rank(seed, "manifest-visible-strata", b.packet_ref)));
+  const privateAxisCoverage = axisCoverage.map(item => ({ ...item, ref: createHmac("sha256", seed).update(`axis-coverage\0${item.code}`).digest("hex").slice(0, 12),
+    packet_ref: publicRefs.get("TAX")! }));
+  const visibleAxisCoverage = privateAxisCoverage.map(({ ref, packet_ref, required, selected, shortfall }) => ({ ref, packet_ref, required, selected, shortfall }))
+    .sort((a, b) => rank(seed, "manifest-visible-axis-coverage", a.ref).localeCompare(rank(seed, "manifest-visible-axis-coverage", b.ref)));
+  const totalShortfall = Object.values(census).reduce((n, x) => n + x.shortfall, 0) + axisCoverage.reduce((n, x) => n + x.shortfall, 0);
+  const missingAgreementEvidence = !s.layer_agreement || ["not_measured", "insufficient_data"].includes(s.layer_agreement.status);
+  const completeness = totalShortfall ? "census_with_shortfalls" : missingAgreementEvidence ? "evidence_incomplete" : "complete";
   const manifest = { contract_version: "r16-blind-manifest-v1", snapshot_contract: s.contract_version,
     source_digest: s.source.export_digest, created_at: s.exported_at, seed_fingerprint: hash(seed),
-    strata: blindStrata,
-    completeness: totalShortfall ? "census_with_shortfalls" : "complete",
+    strata: blindStrata, axis_coverage: visibleAxisCoverage,
+    completeness, incompleteness_reasons: missingAgreementEvidence ? ["required_metric_receipt_missing"] : [],
     shortfall_count: totalShortfall, receipts: s.receipts, packet_count: packets.length,
     case_count: packets.reduce((n, p) => n + p.cases.length, 0), answer_key_separate: true };
-  const key: KeyV1 = { contract_version: "r16-blind-custody-key-v1", seed_fingerprint: hash(seed), rows: keyRows };
+  const key: KeyV1 = { contract_version: "r16-blind-custody-key-v1", seed_fingerprint: hash(seed), rows: keyRows,
+    custody_manifest: { source_digest: s.source.export_digest, study_provenance: s.study_provenance,
+      strata: privateStrata.sort((a, b) => a.sample_code.localeCompare(b.sample_code)), axis_coverage: privateAxisCoverage },
+    layer_agreement: s.layer_agreement };
   packets.sort((a, b) => rank(seed, "packet-file-order", a.packet_ref).localeCompare(rank(seed, "packet-file-order", b.packet_ref)));
   return { packets, manifest, key };
 }
@@ -177,7 +287,9 @@ export function validatePacketV1(packet: unknown): asserts packet is PacketV1 {
   const ids = new Set<string>();
   for (const c of p.cases) {
     if (!/^[a-f0-9]{24}$/u.test(c.blind_id) || ids.has(c.blind_id) || typeof c.text !== "string" || !c.text.trim()
-      || typeof c.prompt !== "string" || !c.prompt.trim() || Object.keys(c).some(k => OMIT_KEYS.has(k))) throw new Error("blind_packet_invalid");
+      || typeof c.prompt !== "string" || !c.prompt.trim() || Object.keys(c).some(k => OMIT_KEYS.has(k))
+      || (c.options !== undefined && (c.options.length !== 4 || new Set(c.options.map(o => o.key)).size !== 4
+        || !["A", "B", "C", "D"].every(key => c.options!.some(o => o.key === key && o.text.trim()))))) throw new Error("blind_packet_invalid");
     ids.add(c.blind_id);
   }
 }
@@ -199,9 +311,14 @@ export async function writeBlindPackageV1(args: { snapshotPath: string; seedPath
   await mkdir(dirname(keyPath), { recursive: true, mode: 0o700 });
   await chmod(dirname(keyPath), 0o700);
   await mkdir(dirname(packageDir), { recursive: true, mode: 0o700 });
-  const stagingDir = await mkdtemp(resolve(dirname(packageDir), ".blind-package-")); await chmod(stagingDir, 0o700);
-  const keyTemp = `${keyPath}.${process.pid}.tmp`;
+  const lockPath = `${packageDir}.lock`;
+  await writeFile(lockPath, `${process.pid}\n`, { mode: 0o600, flag: "wx" });
+  try { await lstat(packageDir); throw new Error("blind_output_exists"); } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") { await rm(lockPath, { force: true }); throw error; } }
+  let stagingDir = "";
+  const keyTemp = `${keyPath}.${process.pid}.${randomUUID()}.tmp`;
+  let keyPublished = false; let packagePublished = false;
   try {
+  stagingDir = await mkdtemp(resolve(dirname(packageDir), ".blind-package-")); await chmod(stagingDir, 0o700);
   const filenames: string[] = [];
   for (let i = 0; i < built.packets.length; i++) {
     const packet = built.packets[i]; validatePacketV1(packet);
@@ -221,11 +338,19 @@ export async function writeBlindPackageV1(args: { snapshotPath: string; seedPath
   const sumsTemp = resolve(stagingDir, "SHA256SUMS.tmp");
   await writeFile(sumsTemp, sums, { mode: 0o600, flag: "wx" }); await rename(sumsTemp, resolve(stagingDir, "SHA256SUMS"));
   await writeFile(keyTemp, `${JSON.stringify(built.key, null, 2)}\n`, { mode: 0o600, flag: "wx" }); await chmod(keyTemp, 0o600);
+  await link(keyTemp, keyPath); keyPublished = true;
   await rename(stagingDir, packageDir);
-  await rename(keyTemp, keyPath); await chmod(keyPath, 0o600);
+  packagePublished = true;
+  await unlink(keyTemp);
+  await unlink(lockPath);
   } catch (error) {
-    await rm(stagingDir, { recursive: true, force: true });
+    if (keyPublished && !packagePublished) {
+      try { const [tempInfo, keyInfo] = await Promise.all([stat(keyTemp), stat(keyPath)]); if (tempInfo.dev === keyInfo.dev && tempInfo.ino === keyInfo.ino) await unlink(keyPath); }
+      catch { /* Leave any path we cannot prove is our own untouched. */ }
+    }
+    if (stagingDir) await rm(stagingDir, { recursive: true, force: true });
     await rm(keyTemp, { force: true });
+    await rm(lockPath, { force: true });
     throw error;
   }
   return { packageDir, custodyKeyPath: keyPath, complete: built.manifest.completeness === "complete", shortfallCount: built.manifest.shortfall_count };
@@ -241,33 +366,51 @@ async function rejectSymlinkComponents(path: string): Promise<void> {
 }
 
 export async function verifyBlindPackageV1(packageDir: string): Promise<{ valid: boolean; files: number }> {
-  const dir = resolve(packageDir); const sums = (await readFile(resolve(dir, "SHA256SUMS"), "utf8")).trim().split("\n");
+  const dir = resolve(packageDir); await rejectSymlinkComponents(dir);
+  const sums = (await readFile(resolve(dir, "SHA256SUMS"), "utf8")).trim().split("\n");
   if (!sums.length || sums.some(line => !/^[a-f0-9]{64}  [a-z0-9-]+\.json$/u.test(line))) throw new Error("blind_checksums_invalid");
   let files = 0;
   const observed = new Map<string, string>();
   const observedPackets = new Map<string, PacketV1>();
   for (const line of sums) {
     const [expected, name] = line.split("  "); const contents = await readFile(resolve(dir, name), "utf8");
+    if ((await lstat(resolve(dir, name))).isSymbolicLink()) throw new Error("blind_symlink_path_rejected");
     if (hash(contents) !== expected) throw new Error("blind_checksum_mismatch");
+    if (observed.has(name)) throw new Error("blind_checksums_duplicate_entry");
     const parsed = JSON.parse(contents); if (name.startsWith("packet-")) { validatePacketV1(parsed); observedPackets.set(name, parsed); }
     observed.set(name, expected); files++;
   }
   const manifest = JSON.parse(await readFile(resolve(dir, "manifest.json"), "utf8"));
   const refs = new Set<string>();
-  const strata = manifest.strata as Record<string, { quota: number; available: number; selected: number; shortfall: number }>;
-  const rows = Object.values(strata ?? {});
-  const expectedShortfall = rows.reduce((n, x) => n + x.shortfall, 0);
-  if (manifest.contract_version !== "r16-blind-manifest-v1" || !HASH_RE.test(manifest.source_digest) || !HASH_RE.test(manifest.seed_fingerprint)
+  const strata = manifest.strata as Array<StratumCount & { packet_ref: string }>;
+  const rows = Array.isArray(strata) ? strata : [];
+  const axisCoverage = manifest.axis_coverage as Array<{ ref: string; packet_ref: string; required: number; selected: number; shortfall: number }>;
+  const axisRows = Array.isArray(axisCoverage) ? axisCoverage : [];
+  const expectedShortfall = rows.reduce((n, x) => n + x.shortfall, 0) + axisRows.reduce((n, x) => n + x.shortfall, 0);
+  const names = new Set(await readdir(dir));
+  const expectedNames = new Set([...observed.keys(), "SHA256SUMS"]);
+  if ([...names].some(name => !expectedNames.has(name)) || [...expectedNames].some(name => !names.has(name))
+    || !observed.has("manifest.json") || manifest.contract_version !== "r16-blind-manifest-v1"
+    || !HASH_RE.test(manifest.source_digest) || !HASH_RE.test(manifest.seed_fingerprint)
     || !Number.isFinite(Date.parse(manifest.created_at)) || !Array.isArray(manifest.packet_files) || !rows.length || manifest.answer_key_separate !== true
-    || rows.some(x => !Number.isSafeInteger(x.quota) || x.quota < 1 || !Number.isSafeInteger(x.available) || x.available < 0
-      || !Number.isSafeInteger(x.selected) || x.selected < 0 || x.selected > x.available || x.selected > x.quota
+    || rows.some(x => !/^[a-f0-9]{12}$/u.test(x.packet_ref) || !Number.isSafeInteger(x.quota) || x.quota < 1 || !Number.isSafeInteger(x.available) || x.available < 0
+      || !Number.isSafeInteger(x.selected) || x.selected < 0 || x.selected > x.available
       || x.shortfall !== Math.max(0, x.quota - x.selected))
-    || manifest.shortfall_count !== expectedShortfall || manifest.completeness !== (expectedShortfall ? "census_with_shortfalls" : "complete")
+    || !axisRows.length || axisRows.some(x => !/^[a-f0-9]{12}$/u.test(x.ref) || !/^[a-f0-9]{12}$/u.test(x.packet_ref)
+      || !rows.some(s => s.packet_ref === x.packet_ref) || !Number.isSafeInteger(x.required) || x.required < 0
+      || !Number.isSafeInteger(x.selected) || x.selected < 0 || !Number.isSafeInteger(x.shortfall) || x.shortfall !== Math.max(0, x.required - x.selected))
+    || !Array.isArray(manifest.incompleteness_reasons) || manifest.incompleteness_reasons.some((x: string) => x !== "required_metric_receipt_missing")
+    || manifest.shortfall_count !== expectedShortfall
+    || !["complete", "census_with_shortfalls", "evidence_incomplete"].includes(manifest.completeness)
+    || (expectedShortfall > 0 && manifest.completeness !== "census_with_shortfalls")
+    || (expectedShortfall === 0 && (!Array.isArray(manifest.incompleteness_reasons)
+      || manifest.completeness !== (manifest.incompleteness_reasons.length ? "evidence_incomplete" : "complete")))
     || manifest.packet_files.some((file: { name: string; sha256: string; packet_ref: string }) => observed.get(file.name) !== file.sha256
-      || !Object.hasOwn(strata, file.packet_ref) || refs.has(file.packet_ref) || !refs.add(file.packet_ref)
+      || !rows.some(x => x.packet_ref === file.packet_ref) || refs.has(file.packet_ref) || !refs.add(file.packet_ref)
       || observedPackets.get(file.name)?.packet_ref !== file.packet_ref)
     || manifest.packet_files.length !== [...observed.keys()].filter(k => k.startsWith("packet-")).length) throw new Error("blind_manifest_invalid");
-  if (refs.size !== Object.keys(strata).length || manifest.packet_count !== manifest.packet_files.length
+  if (refs.size !== rows.length || new Set(rows.map(x => x.packet_ref)).size !== rows.length
+    || new Set(axisRows.map(x => x.ref)).size !== axisRows.length || manifest.packet_count !== manifest.packet_files.length
     || manifest.case_count !== [...observedPackets.values()].reduce((n, packet) => n + packet.cases.length, 0)) throw new Error("blind_manifest_invalid");
   return { valid: true, files };
 }
