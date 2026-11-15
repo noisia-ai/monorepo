@@ -159,6 +159,17 @@ export function signalStudyDominancePlanV1(args:{roots:SignalStudyRootV1[];motiv
   const reask=new Set<string>();for(const key of motive_keys)for(const id of asked.get(key)??[])reask.add(id);
   return{motive_keys,layer_keys,reask_root_ids:[...reask].sort(),locked_motive_keys:affected.filter(m=>m.human_locked).map(m=>m.key).sort()};
 }
+/** Redaction makes no claim about axes, cut membership or a verified source.
+ * Audit examples outside the cut must not invent model answers to redact text. */
+export function redactSignalStudyTextV1(text:string,private_person_names:string[]=[]):{display_text:string;redacted:boolean}{
+  if(typeof text!=='string'||!Array.isArray(private_person_names)||private_person_names.some(name=>typeof name!=='string'))fail('study_verbatim_privacy_invalid');
+  let display=text.normalize('NFC').replace(/@[\p{L}\p{N}_.-]+/gu,'[usuario]');
+  for(const name of private_person_names.map(name=>name.normalize('NFC')).filter(name=>name.trim()).sort((a,b)=>b.length-a.length)){
+    const escaped=name.replace(/[.*+?^${}()|[\]\\]/gu,'\\$&');
+    display=display.replace(new RegExp(escaped,'giu'),'[persona]');
+  }
+  return{display_text:display,redacted:display!==text};
+}
 /** The unredacted literal span remains private. Display is generated only after
  * exact UTF-8 substring verification and redaction; redacted prose is never
  * represented as an untouched source quote. */
@@ -169,13 +180,9 @@ export function verifySignalStudyVerbatimV1(root:SignalStudyRootV1,quote:string,
   if(!signalStudyEvidencePublishableV1(root))fail('study_verbatim_source_invalid');
   const url=new URL(root.source_url);
   if(additional_private_person_names.some(name=>!name.trim()||!quote.includes(name)))fail('study_verbatim_privacy_invalid');
-  let display=quote.normalize('NFC').replace(/@[\p{L}\p{N}_.-]+/gu,'[usuario]');
-  for(const name of [...root.private_person_names,...additional_private_person_names].map(name=>name.normalize('NFC')).filter(name=>name.trim()).sort((a,b)=>b.length-a.length)){
-    const escaped=name.replace(/[.*+?^${}()|[\]\\]/gu,'\\$&');
-    display=display.replace(new RegExp(escaped,'giu'),'[persona]');
-  }
-  return{root_id:root.root_id,literal_sha256:'sha256:'+createHash('sha256').update(quote).digest('hex'),display_text:display,
-    redacted:display!==quote,source_url:url.href,channel:root.channel,occurred_at:root.occurred_at};
+  const display=redactSignalStudyTextV1(quote,[...root.private_person_names,...additional_private_person_names]);
+  return{root_id:root.root_id,literal_sha256:'sha256:'+createHash('sha256').update(quote).digest('hex'),...display,
+    source_url:url.href,channel:root.channel,occurred_at:root.occurred_at};
 }
 export function signalStudyQueryBiasV1(args:{query_terms:string[];problem_terms:string[];subject_roots:number;brand_baseline_roots:number;metadata?:{query_terms_declared:boolean;problem_terms_declared:boolean}}):{
   status:'possible_query_bias'|'query_not_problem_selected'|'unknown_query_metadata';reason:string;base_ratio:number|null;subject_roots:number;brand_baseline_roots:number}{
