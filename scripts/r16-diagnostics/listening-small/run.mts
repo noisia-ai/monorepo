@@ -38,6 +38,13 @@ export function assertListeningSmallGuardV1(env:NodeJS.ProcessEnv,args:string[])
   assert.equal(out,resolve(env.GITHUB_WORKSPACE??'','artifacts','r16-listening-small','result.json'),'artifact_path_not_bound');
 }
 
+export function captureCalibrationObservationV1(event:{warmup:boolean;selected_roots:number;max_in_flight:number;shape_digests:string[]}){
+  if(!Array.isArray(event.shape_digests)||event.shape_digests.some(digest=>typeof digest!=='string'))
+    throw Error('listening_calibration_observation_invalid');
+  return{warmup:event.warmup,selected_roots:event.selected_roots,max_in_flight:event.max_in_flight,
+    shape_digests:[...event.shape_digests]};
+}
+
 async function atomicJson(path:string,value:unknown){
   await mkdir(join(path,'..'),{recursive:true});
   const h=await open(path,'wx',0o600);try{await h.writeFile(JSON.stringify(value,null,2)+'\n');await h.sync();}finally{await h.close();}
@@ -140,7 +147,7 @@ export async function runListeningSmallDiagnosticV1(){
             preflight:()=>preflightModule.assertR16ListeningSyntheticPreflightV1({storage,storage_url:storageServer.base_url,
               configuration:workload.configuration,configuration_digest:workload.configuration_digest,env:process.env}),
             calibrated_provider_factory:providerFactory,
-            observe_calibration:(event:any)=>calibrations.push({warmup:event.warmup,selected_roots:event.selected_roots,max_in_flight:event.max_in_flight})});
+            observe_calibration:(event:any)=>calibrations.push(captureCalibrationObservationV1(event))});
           jobs++;
           if(['failed','outcome_unknown','lease_lost'].includes(outcome.status))throw Error('native_job_failed');
           const resolved=await census.readResolvedRootIds();resolved.forEach((id:string)=>rootSet.add(id));

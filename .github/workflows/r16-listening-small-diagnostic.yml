@@ -65,6 +65,8 @@ jobs:
 
       - name: Run pure diagnostic guard tests
         working-directory: target
+        env:
+          R16_DIAGNOSTIC_TARGET_ROOT: ${{ github.workspace }}/target
         run: corepack pnpm exec tsx --test ../probe/scripts/r16-diagnostics/listening-small/run.test.mts
 
       - name: Allocate owned PG17 and Redis lab

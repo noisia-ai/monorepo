@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {assertListeningSmallGuardV1,runListeningSmallDiagnosticV1} from './run.mjs';
+import {join} from 'node:path';
+import {pathToFileURL} from 'node:url';
+import {assertListeningSmallGuardV1,captureCalibrationObservationV1,runListeningSmallDiagnosticV1} from './run.mjs';
 
 test('diagnostic CLI has no database side effect without explicit run flag',async()=>{
   assert.doesNotThrow(()=>assertListeningSmallGuardV1({},[]));
@@ -35,4 +37,27 @@ test('diagnostic run binds target and artifact to this workflow workspace',()=>{
   assert.doesNotThrow(()=>assertListeningSmallGuardV1(env,['--run']));
   env.R16_DIAGNOSTIC_TARGET_ROOT='/tmp/work/elsewhere';
   assert.throws(()=>assertListeningSmallGuardV1(env,['--run']),/target_root_outside_workspace/u);
+});
+
+test('calibration observations preserve native phase shapes from the query-engine contract',async()=>{
+  const target=process.env.R16_DIAGNOSTIC_TARGET_ROOT;
+  assert.ok(target,'pure test needs the checked out public target root');
+  const [contracts,calibration]=await Promise.all([
+    import(pathToFileURL(join(target,'packages/query-engine/src/signal-listening-contracts.ts')).href),
+    import(pathToFileURL(join(target,'packages/query-engine/src/signal-listening-calibration.ts')).href),
+  ]) as any;
+  const configuration=contracts.signalListeningBaseTemplateV1({category:'synthetic fixture category',lexicon_terms:['synthetic']});
+  configuration.questions.push({key:'consumer_test_v1',type:'noul',text:'Synthetic consumer classification',
+    scope:'consumer_category',origin:'brand_os',human_locked:true,topic_source:'defined',
+    positive:'Synthetic consumer topic applies',negative:'Synthetic consumer topic does not apply'});
+  const baseKeys=configuration.questions.filter(question=>question.origin==='base').map(question=>question.key);
+  const consumerKeys=configuration.questions.filter(question=>question.scope==='consumer_category').map(question=>question.key);
+  const base=calibration.signalListeningCalibrationShapeV1(configuration,{question_keys:baseKeys});
+  const consumer=calibration.signalListeningCalibrationShapeV1(configuration,{question_keys:consumerKeys});
+  assert.equal(base.phase,'base');
+  assert.equal(consumer.phase,'consumer_category');
+  const shapeDigests=[base.shape_digest,consumer.shape_digest];
+  const captured=captureCalibrationObservationV1({warmup:true,selected_roots:32,max_in_flight:32,shape_digests:shapeDigests});
+  shapeDigests.pop();
+  assert.deepEqual(captured.shape_digests,[base.shape_digest,consumer.shape_digest]);
 });
