@@ -185,6 +185,9 @@ export async function signalStudyRuntimeJobV1(execution_id:string,options:{store
    if(journal.status==='planned'){
     await active();await drivers.preflight(plan);await active();
     const marked=await store.markSent(lease,plan);if(marked!=='sent')throw new Paused(marked);
+    // Authority may change while the native sent CAS is awaited. Preserve that
+    // reservation as sent/ambiguous; a stopped handoff must never become a retry.
+    await active();
     // Nothing after this boundary may retry the physical operation. Even an ACK
     // lost from markSent leaves sent in the native journal and blocks a resend.
     let receipt:StudyRuntimeReceiptV1;

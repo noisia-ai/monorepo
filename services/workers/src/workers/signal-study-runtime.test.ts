@@ -280,3 +280,16 @@ test('empty numeric census cannot be relabeled completed by rehashing its manife
   const manifest=JSON.parse(checkpoint.manifest_json);manifest.status='completed';checkpoint.manifest_json=JSON.stringify(manifest);checkpoint.manifest_sha256=sha(checkpoint.manifest_json);return checkpoint;};
  await assert.rejects(signalStudyRuntimeJobV1(f.execution_id,f),/study_runtime_numeric_/);assert.equal(f.sends.length,0);assert.equal(f.output,undefined);
 });
+
+test('flag flip during markSent preserves the sent reservation and prevents physical handoff; restart never resends it',async()=>{
+ const f=fixture(),mark=f.store.markSent;let stopped=false,physicalBeforeMark=0;
+ f.store.markSent=async(...args)=>{const result=await mark(...args);physicalBeforeMark=f.sends.length;stopped=true;return result;};
+ assert.equal((await signalStudyRuntimeJobV1(f.execution_id,{...f,should_stop:()=>stopped})).status,'stopped');
+ assert.equal(f.sends.length,physicalBeforeMark,'no physical operation after the flag flipped inside the awaited CAS');
+ assert.equal(f.sends.filter(p=>p.kind==='sonnet').length,0);
+ const sent=[...f.journal.values()];assert.equal(sent.length,1);assert.equal(sent[0]!.status,'sent');assert.equal(sent[0]!.receipt,undefined);
+ assert.ok(f.events.includes('release'));assert.equal(f.output,undefined);
+ stopped=false;
+ assert.equal((await signalStudyRuntimeJobV1(f.execution_id,{...f,should_stop:()=>stopped})).status,'outcome_unknown');
+ assert.equal(f.sends.length,physicalBeforeMark);assert.equal([...f.journal.values()][0]!.status,'sent');
+});
