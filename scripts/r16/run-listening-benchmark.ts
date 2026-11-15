@@ -4,14 +4,14 @@ import {dirname,resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {assertR16ListeningSyntheticPreflightV1} from './listening-preflight';
 import {captureR16SourceProvenanceV1} from './source-provenance';
-import {getSignalListeningStatusV1,readSignalListeningQuestionMetricsV1} from '../../infrastructure/db/signal-listening-serving';
+import {getSignalListeningStatusV1,readSignalListeningQuestionMetricsV1,readSignalListeningQuestionsMetricsV1} from '../../infrastructure/db/signal-listening-serving';
 import {signalWorkspaceEmbeddingDigestV1 as digest} from '../../packages/query-engine/src/index';
 import {signalListeningJevJobV1,createSignalListeningRuntimeStoreV1} from '../../services/workers/src/workers/signal-listening-jev';
 import {createCalibratedJevRuntimeProviderV2,jevStreamingExecutionFromEnvV2} from '../../services/workers/src/providers/jev-streaming-runtime';
 import {createWorkspaceEngineStorageV1,type WorkspaceEngineStorageV1} from '../../services/workers/src/workers/signal-workspace-engine-storage';
 import {createSyntheticJevFetchV1,deterministicR16LatencyV1} from './synthetic-jev';
 import {startR16HttpFilesystemStorageV1} from './http-filesystem-storage';
-import {r16ListeningWorkloadV1,summarizeR16ListeningCapacityV1,R16_LISTENING_PREREGISTRATION_V1 as registration,type R16ListeningArmV1} from './listening-workload';
+import {r16ListeningWorkloadV2,summarizeR16ListeningCapacityV2,R16_LISTENING_PREREGISTRATION_V2 as registration,type R16ListeningArmV1} from './listening-workload';
 import type {R16QueryProfilerV1} from './query-profiler';
 
 /** Native fixture ownership is deliberately external: seeding may not invent a
@@ -39,13 +39,13 @@ export function reconcileR16ListeningResolvedRootsV1(expected:ReadonlySet<string
  * returns measurements, not acceptance; same-source native fault pack is required. */
 export async function runR16ListeningBenchmarkV1(args:{arm:R16ListeningArmV1;object_directory:string;redis_url:string;
  query_profiler?:R16QueryProfilerV1;
- writePreregistration(value:ReturnType<typeof r16ListeningWorkloadV1>&{registration:typeof registration;source_provenance:Awaited<ReturnType<typeof captureR16SourceProvenanceV1>>}):Promise<void>;
- withNativeFixture<T>(context:{workload:ReturnType<typeof r16ListeningWorkloadV1>;storage:WorkspaceEngineStorageV1},run:(fixture:R16ListeningFixtureV1)=>Promise<T>):Promise<T>;
+ writePreregistration(value:ReturnType<typeof r16ListeningWorkloadV2>&{registration:typeof registration;source_provenance:Awaited<ReturnType<typeof captureR16SourceProvenanceV1>>}):Promise<void>;
+ withNativeFixture<T>(context:{workload:ReturnType<typeof r16ListeningWorkloadV2>;storage:WorkspaceEngineStorageV1},run:(fixture:R16ListeningFixtureV1)=>Promise<T>):Promise<T>;
  max_jobs?:number;
 }){
  const redis=new URL(args.redis_url);
  if(!['127.0.0.1','localhost','[::1]'].includes(redis.hostname)||!['redis:','rediss:'].includes(redis.protocol))throw Error('r16_listening_redis_not_local');
- const workload=r16ListeningWorkloadV1(args.arm),coldStart=performance.now();
+ const workload=r16ListeningWorkloadV2(args.arm),coldStart=performance.now();
  // The persisted preregistration precedes fixture work and every physical send.
  const repo=resolve(dirname(fileURLToPath(import.meta.url)),'../..'),source_provenance=await captureR16SourceProvenanceV1(repo);
  await args.writePreregistration({...workload,registration,source_provenance});
@@ -99,18 +99,26 @@ export async function runR16ListeningBenchmarkV1(args:{arm:R16ListeningArmV1;obj
     job_spans.push({start_ms:jobStart,end_ms:performance.now()-start,warmup:calibration.slice(calibrationIndex).some(event=>event.warmup)});
     if(['failed','outcome_unknown','lease_lost'].includes(outcome.status))break;
    }
+  // The job promise has drained native apply/settlement, calibration and provider
+  // cleanup. Confirm its completed identity/exposure before closing active time.
+  const processingStatus=await getSignalListeningStatusV1(f.access);
+  const native_processing_complete=processingStatus.run?.id===f.run_id&&processingStatus.run.status==='completed'
+   &&processingStatus.run.reserved_micro_usd==='0'&&processingStatus.run.unknown_micro_usd==='0'
+   &&resolved.size===expected.size;
   const classification_wall_elapsed_ms=performance.now()-start;
   const beforeFinal=resolved.size;await sample();
   assert.equal(resolved.size,beforeFinal,'final census found roots not observed after native page apply');
-  const metrics=await Promise.all(workload.question_keys.map(question_key=>readSignalListeningQuestionMetricsV1({...f.access,question_key})));
+  const metrics=await readSignalListeningQuestionsMetricsV1({...f.access,question_keys:workload.question_keys});
   const wall_elapsed_ms=performance.now()-start;
-  const capacity=summarizeR16ListeningCapacityV1({wall_elapsed_ms,resolved_roots:resolved.size,commits,latency_ms});
+  const capacity=summarizeR16ListeningCapacityV2({wall_elapsed_ms,processing_elapsed_ms:classification_wall_elapsed_ms,
+   native_processing_complete,resolved_roots:resolved.size,commits,latency_ms});
   const capacity_gates={...capacity.gates,
    expected_primary_request_count:args.arm!=='defined_consumer_second_pass'||requests===expected.size*registration.expected_primary_http_calls_per_resolved_root,
-   serving:metrics.every(m=>m.counts.pending===0&&m.counts.awaiting_base===0&&m.distribution.length>0&&m.trend.length>0
+   serving:metrics.length===workload.question_keys.length&&metrics.every((m,i)=>m.question_key===workload.question_keys[i]
+    &&m.configuration_id===f.access.configuration_id&&m.counts.pending===0&&m.counts.awaiting_base===0&&m.distribution.length>0&&m.trend.length>0
     &&m.topic_cross.length>0)};
   assert.equal((await captureR16SourceProvenanceV1(repo)).source_tree_sha256,source_provenance.source_tree_sha256,'source changed during measurement');
-  return{contract_version:'r16-listening-capacity-measurement-v1',acceptance:'pending_native_fault_and_census_validation',
+  return{contract_version:'r16-listening-capacity-measurement-v2',acceptance:'pending_native_fault_and_census_validation',
    capacity_gates,capacity,source_provenance,job_spans,warmup_wall_ms:job_spans.filter(span=>span.warmup).reduce((sum,span)=>sum+span.end_ms-span.start_ms,0),workload,root_census_digest:digest([...expected].sort()),cold_elapsed_ms:performance.now()-coldStart,wall_elapsed_ms,classification_wall_elapsed_ms,
    fully_resolved_distinct_roots:resolved.size,requests,requests_per_resolved_root:resolved.size?requests/resolved.size:null,latency_ms,calibration,commits,jobs,metrics,storage:storageServer.metrics(),
    unresolved_roots:expected.size-resolved.size,storage_spans,sql_profile:args.query_profiler?.snapshot()??null};

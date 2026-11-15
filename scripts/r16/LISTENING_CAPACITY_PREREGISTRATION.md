@@ -1,5 +1,8 @@
 # R16 Listening capacity, preregistration V1
 
+Historical contract, retained unchanged below. New measurements use
+`LISTENING_CAPACITY_PREREGISTRATION_V2.md`; previous V1 verdicts remain rejected.
+
 This benchmark is separate from the failed MassV2 run C676 (440.69 roots/s).
 The source commit/tree, configuration, policy, root census, model and this contract
 must be frozen before starting either arm. No provider network or paid stage is allowed.

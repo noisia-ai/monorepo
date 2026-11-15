@@ -16,6 +16,14 @@ export const R16_LISTENING_PREREGISTRATION_V1=Object.freeze({
     'worker_restart_after_page','lease_expiry','lease_expiry_after_durable','raw_page_ack_lost','postgres_commit_ack_lost'],
   legacy_failed_reference:'C676:440.69 roots/s;MassV2;not R16 acceptance',
 } as const);
+/** New measurements only. V1 and its rejected historical results remain intact. */
+export const R16_LISTENING_PREREGISTRATION_V2=Object.freeze({
+ ...R16_LISTENING_PREREGISTRATION_V1,
+ contract_version:'r16-listening-capacity-preregistration-v2',
+ sustained_clock:'fixed_1s_windows_from_5s_until_native_processing_and_drain_complete',
+ verification_tail:'included_in_wall_throughput_and_reported_in_full;not_active_production_windows',
+ historical_v1_results:'remain_rejected;new_full_same_source_run_required',
+} as const);
 export type R16ListeningArmV1='defined_consumer_second_pass'|'discovered_four';
 export function r16ListeningWorkloadV1(arm:R16ListeningArmV1){
   const configuration=signalListeningBaseTemplateV1({category:'synthetic fixture category',lexicon_terms:['synthetic']});
@@ -34,6 +42,10 @@ export function r16ListeningWorkloadV1(arm:R16ListeningArmV1){
     question_keys:frozen.questions.map(q=>q.key).sort()};
 }
 
+export function r16ListeningWorkloadV2(arm:R16ListeningArmV1){
+ return {...r16ListeningWorkloadV1(arm),preregistration_digest:digest(R16_LISTENING_PREREGISTRATION_V2)};
+}
+
 /** Rates concern only resolved DISTINCT roots; calls can exceed roots in two phases. */
 export function summarizeR16ListeningCapacityV1(args:{wall_elapsed_ms:number;resolved_roots:number;
  commits:Array<{at_ms:number;roots:number}>;latency_ms:number[]}){
@@ -49,4 +61,27 @@ export function summarizeR16ListeningCapacityV1(args:{wall_elapsed_ms:number;res
    every_sustained_window:windows.length>0&&windows.every(n=>n>=1000),
    wall_throughput:Number.isFinite(rate)&&rate>=1000,
    observed_http_latency:args.latency_ms.length>0&&args.latency_ms.every(ms=>ms>=100&&ms<=500)}};
+}
+
+/** Native processing includes admission, every question, persistence and drain.
+ * The verification-only tail remains in the end-to-end rate and diagnostics. */
+export function summarizeR16ListeningCapacityV2(args:Parameters<typeof summarizeR16ListeningCapacityV1>[0]&{
+ processing_elapsed_ms:number;native_processing_complete:boolean;
+}){
+ const historical=summarizeR16ListeningCapacityV1(args);
+ const validEnd=Number.isFinite(args.processing_elapsed_ms)&&args.processing_elapsed_ms>0
+  &&args.processing_elapsed_ms<=args.wall_elapsed_ms;
+ const end=validEnd?args.processing_elapsed_ms:0;
+ const windows=historical.windows.slice(0,Math.floor(Math.max(0,end-5000)/1000));
+ return {...historical,contract_version:'r16-listening-capacity-summary-v2',windows,
+  minimum_window_roots_per_second:windows.length?Math.min(...windows):0,
+  processing_elapsed_ms:args.processing_elapsed_ms,
+  verification_tail_ms:validEnd?args.wall_elapsed_ms-end:null,
+  full_wall_windows:historical.windows,
+  verification_only_full_windows:validEnd?historical.windows.filter((_,i)=>5000+i*1000>=end):[],
+  gates:{...historical.gates,
+   native_processing_complete:validEnd&&args.native_processing_complete,
+   commit_census:historical.gates.commit_census&&validEnd&&args.commits.every(c=>c.at_ms<=end),
+   sustained_duration:validEnd&&end-5000>=20000,
+   every_sustained_window:windows.length>0&&windows.every(n=>n>=1000)}};
 }
