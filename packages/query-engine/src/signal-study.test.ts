@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {createHash} from 'node:crypto';
 import {SIGNAL_STUDY_TB_TEMPLATE_V1,SIGNAL_STUDY_TB_TEMPLATE_DIGEST_V1,validateSignalStudyV1,
-  buildSignalStudyListeningConfigurationV1,signalStudyCutV1,resolveSignalStudyAxesV1,
+  buildSignalStudyListeningConfigurationV1,buildSignalStudyAxesRequestV1,signalStudyCutV1,resolveSignalStudyAxesV1,
   SIGNAL_STUDY_DIRECTIONS_V1,SIGNAL_STUDY_TARGETS_V1,SIGNAL_STUDY_USES_V1,type SignalStudyV1,type SignalStudyLayerV1} from './signal-study-contracts';
 import {signalListeningBaseTemplateV1,buildSignalListeningJevRequestV1} from './signal-listening-contracts';
 import {signalWorkspaceEmbeddingDigestV1 as digest} from './signal-workspace-embeddings-v1';
@@ -78,6 +78,18 @@ test('consumer cut uses cached base, exact listening scope, period and additiona
   const filtered={...study,cut:{...study.cut,filters:{channel:['forum']}}};
   assert.equal(signalStudyCutV1({...args,study:filtered,attributes:{channel:['video']}}),'excluded');
   assert.equal(signalStudyCutV1({...args,study:filtered,attributes:{channel:['forum']}}),'included');
+});
+test('Study axes request asks only the three new configured questions and keeps the cut bound to original base answers',()=>{
+  const config=buildSignalStudyListeningConfigurationV1(study,['bicycle']);
+  const input={text:'I want this bicycle but I cannot afford it.'},request=buildSignalStudyAxesRequestV1(input,config);
+  assert.deepEqual(Object.keys(request.questions),['study_direction','study_target','study_use']);
+  assert.equal('voice'in request.questions,false);assert.equal('promotion'in request.questions,false);assert.equal(request.state,input.text);
+  const source={study,listening:base,text:input.text,occurred_at:'2026-02-15T00:00:00Z',
+    answers:{voice:choice(['individual','brand'],'individual'),promotion:{type:'noul' as const,noul:.1}}};
+  assert.equal(signalStudyCutV1(source),'included');
+  assert.throws(()=>signalStudyCutV1({...source,listening:config}),/listening_scope_mismatch/);
+  assert.throws(()=>buildSignalStudyAxesRequestV1(input,base),/axes_configuration_invalid/);
+  assert.equal(signalStudyCutV1(source),'included','building a methodology request does not replace the original scope or cached base');
 });
 test('axes preserve mixed, isolate competitor rejection and irony, and invert conventional rejection only for an alternative subject',()=>{
   assert.equal(axes('mixed').direction,'mixed');
@@ -186,6 +198,19 @@ test('kappa uses all motifs, boundary recode is limited to once, unchanged motif
   assert.throws(()=>applySignalStudyBoundaryRecodeV1({initial,recoded:decisions(first,first,1)}),/scope_invalid/);
   assert.equal(signalStudyLayerStabilityV1(...decisions(['personal','personal'],['personal','personal'])).action,'not_estimable');
 });
+test('a split in one of nine motifs prevents publishing kappa from the other eight',()=>{
+  const labels:SignalStudyLayerV1[]=['psychological','personal','social','cultural','psychological','personal','social','cultural','personal'];
+  const [a,b]=decisions(labels,labels),last=b.motives[8]!;
+  last.partitions=[{...last.partitions[0]!,key:'split_personal'},{...last.partitions[0]!,key:'split_social',layer:'social'}];
+  const estimate=signalStudyLayerStabilityV1(a,b);
+  assert.equal(estimate.compared_motives,8);assert.equal(estimate.total_motives,9);
+  assert.equal(estimate.kappa,null);assert.equal(estimate.observed_agreement,null);assert.equal(estimate.expected_agreement,null);
+  assert.equal(estimate.estimation_status,'not_estimable');
+  assert.deepEqual(estimate.boundary_keys,['motive_8']);assert.equal(estimate.action,'recode_boundary_once');
+  const recoded=decisions(labels,labels,1).map(d=>({...d,motives:[d.motives[8]!]})) as [SignalStudyLayerDecisionV1,SignalStudyLayerDecisionV1];
+  const final=applySignalStudyBoundaryRecodeV1({initial:[a,b],recoded});
+  assert.equal(final.stability.total_motives,9);assert.equal(final.stability.compared_motives,9);assert.equal(final.stability.kappa,1);
+});
 test('dominance uses the full cut, strict >50%, targets only affected questions and all previously asked roots, including rejected ones',()=>{
   const roots=Array.from({length:6},(_,i)=>root(i)),m= motive();
   const memberships=roots.map((r,i)=>({root_id:r.root_id,motive_key:m.key,probability:i<3?.9:.1,source:'jev' as const,human_locked:false}));
@@ -199,6 +224,16 @@ test('dominance uses the full cut, strict >50%, targets only affected questions 
   assert.equal(validateSignalStudyContrastReviewV1(review,{contract_version:'signal-study-contrast-output-v1',input_digest:review.input_digest,definitions:[{key:m.key,name:m.name,
     definition:'Pleasure explicitly contrasted with price.',contrast_reason:'Price alone does not qualify.',evidence_root_ids:[sample.rows[0]!.root_id]}]}).definitions.length,1);
   assert.throws(()=>buildSignalStudyContrastReviewV1({study,motives:[{...m,human_locked:true,sample}],affected_keys:[m.key]}),/contrast_scope_invalid/);
+});
+test('contrast sees unmodified neighboring definitions as readonly context while its output is limited to affected keys',()=>{
+  const m=motive(),neighbor={...motive('price','personal'),name:'Price feasibility',definition:'Material affordability only; not pleasure.',human_locked:true,sample:samples('price')[0]};
+  const review=buildSignalStudyContrastReviewV1({study,motives:[{...m,sample:samples()[0]},neighbor],affected_keys:[m.key]});
+  const payload=JSON.parse(JSON.parse(review.request_body).messages[0].content).untrusted_data;
+  assert.deepEqual(payload.neighbor_context,[{key:neighbor.key,name:neighbor.name,definition:neighbor.definition,human_locked:true}]);
+  assert.equal(payload.motives.length,1);assert.equal(review.source_samples.length,1);
+  const output={contract_version:'signal-study-contrast-output-v1',input_digest:review.input_digest,definitions:[{key:neighbor.key,
+    name:'Changed neighbor',definition:'An unauthorized new definition.',contrast_reason:'Must not change this context.',evidence_root_ids:[review.source_samples[0]!.rows[0]!.root_id]}]};
+  assert.throws(()=>validateSignalStudyContrastReviewV1(review,output),/contrast_scope_invalid/);
 });
 test('verbatims verify original bytes before redacting handles and private names and require source provenance',()=>{
   const original=root(1),quote='I enjoy it with @fixture and Private Fixture.';
@@ -222,6 +257,13 @@ test('deterministic output reports category, competitor, irony and tensions sepa
   assert.throws(()=>buildSignalStudySummaryV1({study,roots,motives:[m],memberships,...census,cut_root_ids:[...census.cut_root_ids,id(999)]}),/coverage_incomplete/);
   const partial=buildSignalStudySummaryV1({study,roots,motives:[m],memberships,cut_root_ids:[...census.cut_root_ids,id(999)],unresolved_root_ids:[id(999)]});
   assert.equal(partial.denominator,6);assert.equal(partial.unresolved_axes,1);assert.equal(partial.motives[0]!.share_of_cut,.5);
+});
+test('direction balance excludes figurative and other uses without erasing their original axis distribution',()=>{
+  const roots=[root(0,'trigger'),root(1,'barrier','category','figurative_or_ironic'),root(2,'mixed','category','other')];
+  const output=buildSignalStudySummaryV1({study,roots,motives:[],memberships:[],cut_root_ids:roots.map(r=>r.root_id),unresolved_root_ids:[]});
+  assert.deepEqual(output.direction,{trigger:1,barrier:0,mixed:0,none:0});
+  assert.deepEqual(output.axes_raw_direction,{trigger:1,barrier:1,mixed:1,none:0});
+  assert.equal(output.figurative_or_ironic,1);assert.equal(output.other_use,1);assert.equal(output.denominator,3);
 });
 test('query bias carries an actual brand baseline and promotion requires an explicit action with revision, never mutating BrandOS',()=>{
   assert.equal(signalStudyQueryBiasV1({query_terms:['problem'],problem_terms:['problem'],subject_roots:20,brand_baseline_roots:200}).base_ratio,.1);

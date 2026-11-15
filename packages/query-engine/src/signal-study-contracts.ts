@@ -1,8 +1,8 @@
 import {z} from 'zod';
 import {signalWorkspaceEmbeddingDigestV1 as digest} from './signal-workspace-embeddings-v1';
-import {signalListeningBaseTemplateV1,validateSignalListeningConfigurationV1,signalListeningConsumerCutV1,
+import {signalListeningBaseTemplateV1,validateSignalListeningConfigurationV1,signalListeningConsumerCutV1,buildSignalListeningJevRequestV1,
   type SignalListeningConfigurationV1} from './signal-listening-contracts';
-import type {JevAnswerV1} from './signal-mention-facets-jev-v1';
+import type {JevAnswerV1,JevRequestV1} from './signal-mention-facets-jev-v1';
 
 const text=z.string().trim().min(1),key=text.regex(/^[a-z][a-z0-9_]{0,63}$/u);
 export const SIGNAL_STUDY_DIRECTIONS_V1=['trigger','barrier','mixed','none'] as const;
@@ -87,6 +87,18 @@ export function buildSignalStudyListeningConfigurationV1(value:SignalStudyV1,lex
     questions:[...base.questions,...SIGNAL_STUDY_TB_TEMPLATE_V1.questions.map(q=>({key:q.key,type:'choice' as const,
       text:interpolate(q.text,study.subject),options:q.options.map(o=>({key:o.key,definition:interpolate(o.definition,study.subject)})),
       scope:'all' as const,origin:'methodology' as const,human_locked:false}))]});
+}
+/** The cut has already reused the original Listening base answers. A Study
+ * requests only its three newly configured axes; it must not repay voice or
+ * promotion under the methodology-specific instructions. */
+export function buildSignalStudyAxesRequestV1(input:{text:string},configuration:SignalListeningConfigurationV1):JevRequestV1{
+  const config=validateSignalListeningConfigurationV1(configuration);
+  for(const expected of SIGNAL_STUDY_TB_TEMPLATE_V1.questions){
+    const actual=config.questions.find(question=>question.key===expected.key);
+    if(actual?.type!=='choice'||actual.origin!=='methodology'
+      ||actual.options.map(option=>option.key).sort().join(',')!==expected.options.map(option=>option.key).sort().join(','))throw Error('study_axes_configuration_invalid');
+  }
+  return buildSignalListeningJevRequestV1({text:input.text,question_keys:SIGNAL_STUDY_TB_TEMPLATE_V1.questions.map(question=>question.key)},config);
 }
 export function signalStudyCutV1(args:{study:SignalStudyV1;listening:SignalListeningConfigurationV1;text:string;
   occurred_at:string;answers:Record<string,JevAnswerV1>;attributes?:Record<string,string[]>}):'awaiting_base'|'included'|'excluded'{

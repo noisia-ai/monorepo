@@ -26,7 +26,7 @@ type Aggregate='subject'|'competitor'|'alternative';
 const counts=():Counts=>({trigger:0,barrier:0,mixed:0,none:0});
 export type SignalStudySummaryV1={contract_version:'signal-study-output-v1';status:'directional';study_digest:string;population_digest:string;
   denominator:number;resolved_axes:number;unresolved_axes:number;count_unit:'mentions_with_signal';multilabel:true;
-  direction:Counts;subject_direction:Counts;competitor_direction:Counts;alternative_direction:Counts;figurative_or_ironic:number;other_use:number;
+  direction:Counts;axes_raw_direction:Counts;subject_direction:Counts;competitor_direction:Counts;alternative_direction:Counts;figurative_or_ironic:number;other_use:number;
   motives:Array<{key:string;name:string;layer:SignalStudyLayerV1;permission:ReturnType<typeof signalStudyPermissionForLayerV1>;
     permission_overridden:boolean;permission_override_reason:string|null;
     mentions:number;share_of_cut:number;subject:Counts;competitor:Counts;alternative:Counts;mixed:number}>;
@@ -44,8 +44,12 @@ export function buildSignalStudySummaryV1(args:{study:SignalStudyV1;roots:Signal
     ||byRoot.size+unresolved.size!==census.size)throw Error('study_output_coverage_incomplete');
   if(motives.size!==args.motives.length)throw Error('study_motive_duplicate');
   for(const root of args.roots)if(Date.parse(root.occurred_at)<Date.parse(study.cut.start_at)||Date.parse(root.occurred_at)>=Date.parse(study.cut.end_at))throw Error('study_output_cut_mismatch');
-  const direction=counts(),subject=counts(),competitor=counts(),alternative=counts();let figurative=0,other=0;
-  for(const root of args.roots){direction[root.axes.direction]++;
+  const direction=counts(),rawDirection=counts(),subject=counts(),competitor=counts(),alternative=counts();let figurative=0,other=0;
+  for(const root of args.roots){
+    // Keep the original classifier axis for audit, separately from the literal
+    // force balance and any subject-relative alternative inversion.
+    rawDirection[root.axes.source_direction]++;
+    if(root.axes.use==='literal')direction[root.axes.direction]++;
     switch(root.axes.aggregate){case'subject':subject[root.axes.direction]++;break;case'competitor':competitor[root.axes.direction]++;break;
       case'alternative':alternative[root.axes.direction]++;break;case'figurative_or_ironic':figurative++;break;case'other':other++;break;}}
   const byMotive=new Map<string,Set<string>>(),byLayer=new Map<SignalStudyLayerV1,Set<string>>(),unique=new Set<string>();
@@ -91,7 +95,7 @@ export function buildSignalStudySummaryV1(args:{study:SignalStudyV1;roots:Signal
   return{contract_version:'signal-study-output-v1',status:'directional',study_digest:digest(study),
     population_digest:digest({roots:args.roots.map(r=>({root_id:r.root_id,text_sha256:r.text_sha256,axes:r.axes})).sort((a,b)=>a.root_id.localeCompare(b.root_id)),
       unresolved_root_ids:[...unresolved].sort(),cut_root_ids:[...census].sort()}),
-    denominator:census.size,resolved_axes:byRoot.size,unresolved_axes:unresolved.size,count_unit:'mentions_with_signal',multilabel:true,direction,subject_direction:subject,competitor_direction:competitor,
+    denominator:census.size,resolved_axes:byRoot.size,unresolved_axes:unresolved.size,count_unit:'mentions_with_signal',multilabel:true,direction,axes_raw_direction:rawDirection,subject_direction:subject,competitor_direction:competitor,
     alternative_direction:alternative,figurative_or_ironic:figurative,other_use:other,motives:rows,layers,
     motive_by_topic:[...topics.values()].sort((a,b)=>a.motive_key.localeCompare(b.motive_key)||a.aggregate.localeCompare(b.aggregate)||a.topic_key.localeCompare(b.topic_key)),
     motive_by_channel:[...channels.values()].sort((a,b)=>a.motive_key.localeCompare(b.motive_key)||a.aggregate.localeCompare(b.aggregate)||a.channel.localeCompare(b.channel)),

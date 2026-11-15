@@ -58,7 +58,7 @@ function request(args:{mode:'motives'|'layers'|'contrast';study_digest:string;pa
   const input_digest=digest(args.payload);
   const request_body=JSON.stringify({model:'claude-sonnet-4-6',max_tokens:32768,thinking:{type:'disabled'},
     system:BASE_PROMPT+'\n'+(args.mode==='layers'?LAYER_PROMPT:args.mode==='motives'?DISCOVERY_PROMPT:
-      'A server-calculated motive or layer exceeded half of the cut. Rewrite ONLY the supplied motive keys in contrast to their neighbors, with explicit inclusion and exclusion boundaries grounded in the sample. Keep exact keys, one result per key; never alter a human-locked definition. Do not infer new counts. Return name<=160, definition<=1200, contrast_reason<=1600 characters and exact sample evidence IDs.'),
+      'A server-calculated motive or layer exceeded half of the cut. Rewrite ONLY the supplied motive keys in contrast to their neighbors, with explicit inclusion and exclusion boundaries grounded in the sample. neighbor_context is read-only reference material: never modify or return its keys. Keep exact affected keys, one result per key; never alter a human-locked definition. Do not infer new counts. Return name<=160, definition<=1200, contrast_reason<=1600 characters and exact sample evidence IDs.'),
     output_config:{format:{type:'json_schema',schema:args.mode==='layers'?LAYER_WIRE:args.mode==='motives'?DISCOVERY_WIRE:CONTRAST_WIRE}},
     messages:[{role:'user',content:JSON.stringify({input_digest,untrusted_data:args.payload})}]});
   if(Buffer.byteLength(request_body,'utf8')>512*1024)fail('request_size_exceeded');
@@ -78,9 +78,12 @@ export function buildSignalStudyContrastReviewV1(args:{study:SignalStudyV1;
   const study=validateSignalStudyV1(args.study),study_digest=digest(study);
   const keys=[...new Set(args.affected_keys)].sort(),selected=args.motives.filter(m=>keys.includes(m.key));
   if(!keys.length||keys.length!==args.affected_keys.length||selected.length!==keys.length||selected.length>40
+    ||new Set(args.motives.map(m=>m.key)).size!==args.motives.length
     ||selected.some(m=>m.human_locked||m.sample.group_key!==m.key))fail('contrast_scope_invalid');
   return request({mode:'contrast',study_digest,
-    payload:{study_digest,subject:study.subject,business_question:study.business_question,affected_keys:keys,motives:selected.map(m=>({key:m.key,name:m.name,definition:m.definition,sample:m.sample.rows}))},
+    payload:{study_digest,subject:study.subject,business_question:study.business_question,affected_keys:keys,
+      neighbor_context:args.motives.filter(m=>!keys.includes(m.key)).map(m=>({key:m.key,name:m.name,definition:m.definition,human_locked:m.human_locked})),
+      motives:selected.map(m=>({key:m.key,name:m.name,definition:m.definition,sample:m.sample.rows}))},
     samples:selected.map(m=>m.sample),motive_keys:keys,pass:null,recode_attempt:0,boundary_keys:keys});
 }
 export function validateSignalStudyContrastReviewV1(review:SignalStudyEditorialRequestV1,value:unknown):z.infer<typeof contrastOutputSchema>{
@@ -166,6 +169,7 @@ export function validateSignalStudyLayerReviewV1(review:SignalStudyEditorialRequ
 }
 export function signalStudyLayerStabilityV1(first:SignalStudyLayerDecisionV1,second:SignalStudyLayerDecisionV1):{
   kappa:number|null;observed_agreement:number|null;expected_agreement:number|null;compared_motives:number;
+  estimation_status:'complete'|'not_estimable';
   total_motives:number;boundary_keys:string[];action:'stable'|'recode_boundary_once'|'unstable_report'|'not_estimable'}{
   if(first.study_digest!==second.study_digest||first.pass!=='a'||second.pass!=='b'||first.request_digest===second.request_digest
     ||first.recode_attempt!==second.recode_attempt||first.motives.map(m=>m.motive_key).sort().join(',')!==second.motives.map(m=>m.motive_key).sort().join(','))fail('blind_pair_invalid');
@@ -177,10 +181,13 @@ export function signalStudyLayerStabilityV1(first:SignalStudyLayerDecisionV1,sec
     if(a!==b||a==='unclear'||b==='unclear')boundaries.push(motive.motive_key);
     countsA.set(a,(countsA.get(a)??0)+1);countsB.set(b,(countsB.get(b)??0)+1);
   }
-  const observed=n?agree/n:null,expected=n?[...countsA].reduce((sum,[layer,count])=>sum+count*(countsB.get(layer)??0),0)/(n*n):null;
+  // A split prevents alignment of the original motif census. Report the
+  // coverage shortfall, never a convenient kappa over the remaining subset.
+  const complete=n>0&&n===first.motives.length&&!split;
+  const observed=complete?agree/n:null,expected=complete?[...countsA].reduce((sum,[layer,count])=>sum+count*(countsB.get(layer)??0),0)/(n*n):null;
   const kappa=observed!==null&&expected!==null&&expected<1?(observed-expected)/(1-expected):null;
   const stable=kappa!==null&&kappa>=.8&&!split;
-  return{kappa,observed_agreement:observed,expected_agreement:expected,compared_motives:n,total_motives:first.motives.length,
+  return{kappa,observed_agreement:observed,expected_agreement:expected,estimation_status:kappa===null?'not_estimable':'complete',compared_motives:n,total_motives:first.motives.length,
     boundary_keys:boundaries.sort(),action:stable?'stable':first.recode_attempt===1?'unstable_report':boundaries.length?'recode_boundary_once':'not_estimable'};
 }
 
