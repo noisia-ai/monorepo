@@ -164,7 +164,7 @@ export async function readSignalListeningDiscoveryRootsV1(args:SignalListeningAc
  return tx(args,async c=>{
   const g=(await c.query<ListeningDiscoveryGenerationV1>("SELECT * FROM signal_listening_discovery_generations WHERE workspace_id=$1 AND id=$2 AND status='ready'",[args.workspace_id,args.generation_id])).rows[0];if(!g)fail('listening_discovery_generation_unavailable');
   await mapCurrent(c,args.workspace_id,g.map_id);
-  const rows=(await c.query<{root_id:string;proof:Record<string,unknown>;proof_digest:string;text:string;vector:string|null;allowed:boolean;source_sha:string;vector_sha:string|null}>(`SELECT r.root_id,r.proof,r.proof_digest,i.text,
+  const rows=(await c.query<{root_id:string;proof:Record<string,unknown>;proof_json:string;proof_digest:string;text:string;vector:string|null;allowed:boolean;source_sha:string;vector_sha:string|null}>(`SELECT r.root_id,r.proof,signal_labeling_json_v1(r.proof) proof_json,r.proof_digest,i.text,
    CASE WHEN receipt.status='settled' THEN e.embedding::text END vector,signal_listening_root_right_v1($1,r.root_id,'llm-processing') allowed,
    'sha256:'||encode(sha256(convert_to(i.text,'UTF8')),'hex') source_sha,
    CASE WHEN receipt.status='settled' THEN 'sha256:'||encode(sha256(convert_to(e.embedding::text,'UTF8')),'hex') END vector_sha
@@ -174,7 +174,7 @@ export async function readSignalListeningDiscoveryRootsV1(args:SignalListeningAc
    WHERE r.workspace_id=$1 AND r.generation_id=$2 AND($5::uuid[] IS NULL OR r.root_id=ANY($5)) AND($6::uuid IS NULL OR r.root_id>$6)
    ORDER BY r.root_id LIMIT $7`,[args.workspace_id,g.id,g.map_id,g.embedding_config_digest,args.root_ids??null,args.after_root_id??null,limit])).rows;
   if(args.root_ids&&rows.length!==args.root_ids.length||rows.some(r=>!r.allowed||r.source_sha!==r.proof.source_text_sha256||r.vector_sha!==r.proof.embedding_sha256))fail('listening_discovery_snapshot_stale');
-  return{generation:g,roots:rows.map(r=>({root_id:r.root_id,proof:r.proof,proof_digest:r.proof_digest,text:r.text,vector:r.vector?JSON.parse(r.vector) as number[]:null})),next_root_id:rows.at(-1)?.root_id??null};
+  return{generation:g,roots:rows.map(r=>({root_id:r.root_id,proof:r.proof,proof_json:r.proof_json,proof_digest:r.proof_digest,text:r.text,vector_json:r.vector,vector:r.vector?JSON.parse(r.vector) as number[]:null})),next_root_id:rows.at(-1)?.root_id??null};
  });
 }
 export async function readSignalListeningDiscoveryOrphanSubsetV1(args:SignalListeningAccessV1&{subset_id:string;after_root_id?:string;limit?:number}){

@@ -67,6 +67,11 @@ test('discovery reviews use native admissions, durable receipts and one shared l
    const eagerRoots:ListeningDiscoveryRootV1[]=nativeSource.roots.map(r=>({root_id:r.root_id,input_sha256:r.proof.source_text_sha256 as string,
     in_category:r.proof.in_category as boolean,vector:r.vector!,evaluations:(r.proof.evaluations as Array<{question_key:string;probability:number}>)
      .map(e=>({topic_key:e.question_key,probability:e.probability}))}));
+   for(const root of nativeSource.roots){
+    assert.equal(sha(root.proof_json),root.proof_digest,'native canonical proof bytes retain their sealed hash without JS decimal conversion');
+    assert.deepEqual(JSON.parse(root.proof_json),root.proof);
+    if(root.vector_json!==null){assert.equal(sha(root.vector_json),root.proof.embedding_sha256);assert.deepEqual(JSON.parse(root.vector_json),root.vector);}
+   }
    const eagerEvidence=buildListeningDiscoveryEvidenceV1({workspace_id:ctx.workspace_id,vector_space_digest:confirmed.embedding_config_digest,
     map_digest:cfg.configuration_digest,round:1,expected_root_count:3,expected_population_digest:listeningDiscoveryPopulationDigestV1(eagerRoots),
     roots:eagerRoots,topic_keys:cfg.configuration.questions.filter(q=>q.topic_source).map(q=>q.key)});
