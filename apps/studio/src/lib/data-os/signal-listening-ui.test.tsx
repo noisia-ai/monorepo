@@ -108,3 +108,38 @@ test('changing a question and receiving an error never shows the prior question 
     assert.ok(host.textContent?.includes(messages.Listening.error));assert.ok(!host.textContent?.includes('unique_old_question_label'));
   }finally{await act(async()=>root.unmount());host.remove();globalThis.fetch=oldFetch;}
 });
+test('metrics opens on a visible voice question when an outside topic is first',async()=>{
+ const messages=JSON.parse(await readFile(new URL('../../../messages/en-US.json',import.meta.url),'utf8'));
+ const base=signalListeningBaseTemplateV1({category:'tea',lexicon_terms:['tea']});
+ const configuration={...base,questions:[{key:'autos',type:'noul',text:'Outside cars',positive:'Cars',negative:'Other',scope:'all',domain:'outside',origin:'brand_os',human_locked:true},...base.questions]};
+ const original=globalThis.fetch,questions:string[]=[];
+ globalThis.fetch=async input=>{const url=String(input);if(!url.includes('/metrics?'))return Response.json({configuration:{id:'cfg',configuration},map:{id:'map'}});
+  const q=new URL(url,'https://studio.invalid').searchParams.get('question_key')!;questions.push(q);
+  return Response.json({contract_version:'signal-listening-question-metrics-v1',configuration_id:'cfg',question_key:q,counts:{asked:0,eligible:3,pending:3},distribution:[],trend:[],topic_cross:[]});};
+ const host=document.createElement('div');document.body.appendChild(host);const root=createRoot(host);
+ try{await act(async()=>{root.render(<NextIntlClientProvider locale="en-US" messages={messages} timeZone="UTC"><SignalListeningMetrics workspaceId="workspace" from="2026-01-01" to="2026-01-31" timezone="UTC"/></NextIntlClientProvider>);});
+  assert.deepEqual(questions,['voice']);assert.equal(host.querySelector('select')!.value,'voice');assert.ok(!host.querySelector('option[value="autos"]'));
+ }finally{await act(async()=>root.unmount());host.remove();globalThis.fetch=original;}
+});
+test('retry refreshes changed configuration IDs but auth and transport errors retain their own request context',async()=>{
+ const messages=JSON.parse(await readFile(new URL('../../../messages/en-US.json',import.meta.url),'utf8'));
+ const configuration=signalListeningBaseTemplateV1({category:'tea',lexicon_terms:['tea']}),original=globalThis.fetch;
+ try{for(const mode of ['changed','forbidden','transport']as const){
+  let statuses=0,metrics=0;
+  globalThis.fetch=async input=>{const url=String(input);
+   if(!url.includes('/metrics?')){statuses++;return Response.json({configuration:{id:statuses===1?'old':'new',configuration},map:{id:'map'}});}
+   metrics++;if(mode!=='changed')return Response.json({error:mode},{status:mode==='forbidden'?403:503});
+   return Response.json({contract_version:'signal-listening-question-metrics-v1',configuration_id:'new',question_key:'voice',counts:{asked:3,eligible:3,pending:0},distribution:[{option_key:'new_configuration_distribution',count:3}],trend:[],topic_cross:[]});
+  };
+  const host=document.createElement('div');document.body.appendChild(host);const root=createRoot(host);
+  try{
+   await act(async()=>{root.render(<NextIntlClientProvider locale="en-US" messages={messages} timeZone="UTC"><SignalListeningMetrics workspaceId="workspace" from="2026-01-01" to="2026-01-31" timezone="UTC"/></NextIntlClientProvider>);});
+   assert.equal(statuses,1);assert.equal(metrics,1);assert.ok(host.querySelector('[role="alert"]'));
+   const retry=[...host.querySelectorAll('button')].find(button=>button.textContent===messages.Listening.retry)!;
+   await act(async()=>{retry.click();});
+   assert.equal(statuses,mode==='changed'?2:1);assert.equal(metrics,2);
+   if(mode==='changed'){assert.ok(host.textContent?.includes('new_configuration_distribution'));assert.equal(host.querySelector('[role="alert"]'),null);}
+   else assert.ok(host.querySelector('[role="alert"]'));
+  }finally{await act(async()=>root.unmount());host.remove();}
+ }}finally{globalThis.fetch=original;}
+});
