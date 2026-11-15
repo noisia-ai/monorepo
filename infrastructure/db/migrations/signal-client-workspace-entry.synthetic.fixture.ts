@@ -22,7 +22,7 @@ export type SyntheticTransactionV1={database:Pool;scoped:PoolClient;query:Worksp
 /** Accepted import only: no preparation, embeddings, execution or provider receipt.
  * The caller must own an approved synthetic-only transaction and its rollback. */
 export async function syntheticImportedWorkspaceFixtureV1(tx:SyntheticTransactionV1,
- identity?:{organization_id:string;brand_id:string;actor_user_id:string;workspace_id:string},options:{root_count?:number;long_text?:boolean;batch_size?:number;study_vector_groups?:boolean;study_text_length?:number}={}){
+ identity?:{organization_id:string;brand_id:string;actor_user_id:string;workspace_id:string},options:{root_count?:number;long_text?:boolean;batch_size?:number;study_vector_groups?:boolean;study_author_metadata?:boolean;study_text_length?:number}={}){
  const {database,query}=tx;
  const roots:string[]=[];
  const texts: string[]=options.root_count===undefined?[...NOI19_SYNTHETIC_TEXTS]:
@@ -30,6 +30,7 @@ export async function syntheticImportedWorkspaceFixtureV1(tx:SyntheticTransactio
  if(options.study_vector_groups){assert.ok(options.root_count&&options.root_count>=60&&options.root_count<=240);const forces=['A bicycle purchase feels reassuring with a smooth quiet ride.','A bicycle repair budget creates hesitation around costly spare parts.','Friends encourage a bicycle commute with shared weekend trips.'];for(let i=0;i<texts.length;i++)texts[i]+=' '+forces[i%3];}
  if(options.study_text_length!==undefined){assert.equal(options.study_vector_groups,true);assert.ok(Number.isInteger(options.study_text_length)&&options.study_text_length>=1000&&options.study_text_length<=13000);for(let i=0;i<texts.length;i++)texts[i]=texts[i]!.padEnd(options.study_text_length,` Synthetic fixture root ${i.toString().padStart(4,'0')}. Preparation material.`);}
  if(options.long_text&&texts.length)texts[0]=`${texts[0]} ${'Synthetic excerpt continuation. '.repeat(100)}`;
+ if(options.study_author_metadata){assert.equal(options.batch_size??1,1);for(let i=0;i<texts.length;i++)texts[i]+=' '+(i%3===0?'Known Fixture Person Zero':i%3===1?'Suppressed Legacy Person One':'Known Legacy Person Two and Linked Fixture Person Two')+' talks with @fixture_user.';}
  const org=identity?.organization_id??randomUUID(),brand=identity?.brand_id??randomUUID(),actor_user_id=identity?.actor_user_id??randomUUID(),source=randomUUID(),batch=randomUUID();
  if(!identity){
  await query("INSERT INTO organizations(id,slug,legal_name,status) VALUES($1,$2,'Synthetic NOI-19 test organization','active')",[org,`noi19-${org}`]);
@@ -46,15 +47,16 @@ export async function syntheticImportedWorkspaceFixtureV1(tx:SyntheticTransactio
  const batchSize=options.batch_size??1;
  assert(Number.isSafeInteger(batchSize)&&batchSize>=1&&batchSize<=2048,'synthetic import batch size must remain bounded');
  const rows=texts.map((text,index)=>{const id=randomUUID();roots.push(id);return{id,workspace_id,data_source_id:source,
-  provider_record_id:`noi19-${id}-${index}`,source_file_id:batch,text_hash:fixtureSha(text),text,text_length:text.length,url:options.study_vector_groups?`https://example.test/synthetic-study/${index}`:null};});
+  provider_record_id:`noi19-${id}-${index}`,source_file_id:batch,text_hash:fixtureSha(text),text,text_length:text.length,url:options.study_vector_groups||options.study_author_metadata?`https://example.test/synthetic-study/${index}`:null,author_id:options.study_author_metadata?randomUUID():null,source_author_label_recorded:!!options.study_author_metadata&&index%3!==2,source_author_label:options.study_author_metadata&&index%3===0?'Known Fixture Person Zero':null,raw_metadata:options.study_author_metadata?{author:index%3===0?'Ignored Legacy Person Zero':index%3===1?'Suppressed Legacy Person One':'Known Legacy Person Two'}:null};});
  for(let offset=0;offset<rows.length;offset+=batchSize){
   const page=rows.slice(offset,offset+batchSize);
   if(batchSize===1){
    const row=page[0]!;
+   if(row.author_id)await query("INSERT INTO authors(id,platform,external_id,handle,display_name) VALUES($1::uuid,'synthetic',$1::uuid::text,$2,$3)",[row.author_id,'linked_fixture_'+offset,offset%3===2?'Linked Fixture Person Two':'Ignored Linked Person']);
    await query(`INSERT INTO mentions(id,workspace_id,data_source_id,canonical_mention_id,provider_record_id,external_id,source_system,
-    source_file_id,text_hash,text_raw,text_clean,text_length,published_at,platform,resolved_platform,language,inclusion_status,url)
-    VALUES($1,$2,$3,$1,$4,$4,'synthetic',$5,$6,$7,$7,$8,'2026-09-01T12:00:00Z','synthetic','synthetic','en','included',$9)`,
-    [row.id,workspace_id,source,row.provider_record_id,batch,row.text_hash,row.text,row.text_length,row.url]);
+    source_file_id,text_hash,text_raw,text_clean,text_length,published_at,platform,resolved_platform,language,inclusion_status,url,author_id,source_author_label_recorded,source_author_label,raw_metadata)
+    VALUES($1,$2,$3,$1,$4,$4,'synthetic',$5,$6,$7,$7,$8,'2026-09-01T12:00:00Z','synthetic','synthetic','en','included',$9,$10,$11,$12,$13::jsonb)`,
+    [row.id,workspace_id,source,row.provider_record_id,batch,row.text_hash,row.text,row.text_length,row.url,row.author_id,row.source_author_label_recorded,row.source_author_label,row.raw_metadata===null?null:JSON.stringify(row.raw_metadata)]);
    await query(`INSERT INTO signal_mention_import_memberships(workspace_id,mention_id,import_batch_id,data_source_id,ingestion_disposition)
     VALUES($1,$2,$3,$4,'included') ON CONFLICT(mention_id,import_batch_id) DO NOTHING`,[workspace_id,row.id,batch,source]);
    continue;
@@ -105,7 +107,7 @@ export async function syntheticClientWorkspaceFixtureV1(tx:SyntheticTransactionV
  identity?:{organization_id:string;brand_id:string;actor_user_id:string;workspace_id:string};
  root_count?:number;
  study_vector_groups?:boolean;
- study_text_length?:number;
+ study_author_metadata?:boolean;study_text_length?:number;
  long_text?:boolean;
  import_batch_size?:number;
  preparation_page_size?:number;
@@ -114,7 +116,7 @@ export async function syntheticClientWorkspaceFixtureV1(tx:SyntheticTransactionV
  projection?:Parameters<typeof workspaceProjectionFixtureBodyV1>[1];
 }={}){
  const {database,query,scoped}=tx;
- const {workspace_id,actor_user_id}=await syntheticImportedWorkspaceFixtureV1(tx,options.identity,{root_count:options.root_count,long_text:options.long_text,batch_size:options.import_batch_size,study_vector_groups:options.study_vector_groups,study_text_length:options.study_text_length});
+ const {workspace_id,actor_user_id}=await syntheticImportedWorkspaceFixtureV1(tx,options.identity,{root_count:options.root_count,long_text:options.long_text,batch_size:options.import_batch_size,study_vector_groups:options.study_vector_groups,study_author_metadata:options.study_author_metadata,study_text_length:options.study_text_length});
  const access={database,workspace_id,actor_user_id};
  const prep=await requestSignalWorkspaceCorpusPreparationStoreV1({...access,idempotency_key:randomUUID()});
  const prepJob=(await query('SELECT worker_job_id FROM signal_corpus_preparation_runs WHERE id=$1',[prep.run_id])).rows[0]!.worker_job_id;

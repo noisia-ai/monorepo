@@ -33,9 +33,10 @@ export type R16BenchmarkFixtureV1={root_count:number;execution_cap_micro_usd:num
 /** Test-only fixture: native admissions, rights, preparation and provider caps
  * are populated through the same contracts as the acceptance suite. */
 export async function runMassLabelingAcceptanceFixtureV1(authorization:MassLabelingAcceptanceModeV1,
-  options:{benchmark?:R16BenchmarkFixtureV1;beforeProcessing?:R16BenchmarkFixtureV1['beforeProcessing'];population_count?:number;study_text_length?:number}={}){
+  options:{benchmark?:R16BenchmarkFixtureV1;beforeProcessing?:R16BenchmarkFixtureV1['beforeProcessing'];population_count?:number;study_author_metadata?:boolean;study_text_length?:number}={}){
   const benchmark=options.benchmark;
   if(options.population_count!==undefined){assert.equal(authorization,'product');assert.equal(benchmark,undefined);assert.ok(options.beforeProcessing);assert.ok(Number.isInteger(options.population_count)&&options.population_count>=60&&options.population_count<=240);}
+  if(options.study_author_metadata){assert.equal(authorization,'product');assert.equal(benchmark,undefined);assert.ok(options.beforeProcessing);}
   if(options.study_text_length!==undefined){assert.equal(authorization,'product');assert.equal(benchmark,undefined);assert.ok(options.population_count!==undefined&&options.beforeProcessing);assert.ok(Number.isInteger(options.study_text_length)&&options.study_text_length>=1000&&options.study_text_length<=13000);}
   if(options.beforeProcessing){assert.ok(authorization==='product'||authorization==='product-recovery');assert.equal(benchmark,undefined);}
   if(benchmark){
@@ -132,7 +133,7 @@ export async function runMassLabelingAcceptanceFixtureV1(authorization:MassLabel
     const syntheticSaves=createSignalTopicEditorialRenewalSyntheticSavesV1(undefined,{brand_name:"Synthetic fixture"});
     const seed = await seedSignalTopicEditorialRenewalSourceV1({database, scoped, query, cleanup: async () => {},
       saves:syntheticSaves,
-      root_count:rootCount,study_vector_groups:options.population_count!==undefined,study_text_length:options.study_text_length,import_batch_size:benchmark?.import_batch_size,preparation_page_size:benchmark?.preparation_page_size,embedding_page_limit:options.study_text_length===undefined?benchmark?.embedding_page_limit:64,allow_benchmark_population:Boolean(benchmark),numeric_daily_cap_micro_usd: benchmark?100_000_000:10_000_000, projection: {split_guided_groups:true,interpretation_configuration:globalConfiguration,engine_config: {profile_version: "workspace-bertopic-mass-labeling-v1", fixture: true},
+      root_count:rootCount,study_vector_groups:options.population_count!==undefined,study_author_metadata:options.study_author_metadata,study_text_length:options.study_text_length,import_batch_size:benchmark?.import_batch_size,preparation_page_size:benchmark?.preparation_page_size,embedding_page_limit:options.study_text_length===undefined?benchmark?.embedding_page_limit:64,allow_benchmark_population:Boolean(benchmark),numeric_daily_cap_micro_usd: benchmark?100_000_000:10_000_000, projection: {split_guided_groups:true,interpretation_configuration:globalConfiguration,engine_config: {profile_version: "workspace-bertopic-mass-labeling-v1", fixture: true},
         onCheckpoint: async fixture => {
           if(fixture.proposals.length!==2)return;
           const assignment=[...fixture.bodies.entries()].find(([key])=>key.endsWith("/assignments.guided.jsonl"))![1];
