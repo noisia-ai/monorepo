@@ -14,8 +14,8 @@ import {signalListeningBaseTemplateV1,buildSignalListeningJevRequestV1,signalLis
 import {jevUsageV1} from '../../../services/workers/src/workers/signal-jev-labeling-page';
 import type {ListeningDiscoveryInitialIntentV1} from '../signal-listening-discovery-initial';
 const sha=(bytes:string|Buffer)=>'sha256:'+createHash('sha256').update(bytes).digest('hex');
-export async function withInitialDiscoveryFixtureV1(fn:(f:Awaited<ReturnType<typeof setup>>)=>Promise<void>,options:{review_enabled?:boolean;prototypes?:boolean}={}){
- return runMassLabelingAcceptanceFixtureV1('product',{beforeProcessing:async ctx=>{
+export async function withInitialDiscoveryFixtureV1(fn:(f:Awaited<ReturnType<typeof setup>>)=>Promise<void>,options:{review_enabled?:boolean;prototypes?:boolean;population_count?:number}={}){
+ return runMassLabelingAcceptanceFixtureV1('product',{population_count:options.population_count,beforeProcessing:async ctx=>{
   const files=await mkdtemp(join(tmpdir(),'r16-initial-discovery-'));
   try{await fn(await setup(ctx,files,options));}finally{await rm(files,{recursive:true,force:true});}
  }});

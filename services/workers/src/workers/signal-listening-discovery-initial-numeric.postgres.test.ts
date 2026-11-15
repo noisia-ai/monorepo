@@ -11,7 +11,7 @@ import {buildWorkspaceEngineStorageKeyV1,type WorkspaceEngineStorageV1} from './
 const sha=(value:Buffer|string)=>'sha256:'+createHash('sha256').update(value).digest('hex');
 const enabled=process.env.NOISIA_R16_DISCOVERY_INITIAL_NUMERIC_PG==='true';
 
-for(const defined of [false,true])test('native base'+(defined?' and defined topics':' only')+' automatically reuses real vectors and enqueues its first review',{
+for(const {defined,count}of [{defined:false,count:3},{defined:true,count:3},{defined:false,count:240}])test('native base'+(defined?' and defined topics':' only')+' with '+count+' roots automatically reuses real vectors and enqueues its first review',{
  skip:!enabled,timeout:600000,
 },async()=>withInitialDiscoveryFixtureV1(async f=>{
  assert.ok(process.env.NOISIA_WORKSPACE_ENGINE_PYTHON,'a real numerical Python runtime is required');
@@ -35,10 +35,13 @@ for(const defined of [false,true])test('native base'+(defined?' and defined topi
  const initial=(await f.database.query('SELECT execution_id,status FROM signal_listening_discovery_initial_intents WHERE id=$1',[intent.id])).rows[0];assert.equal(initial.status,'started');
  const checkpoint=(await f.database.query('SELECT manifest_json,verification_status FROM signal_listening_discovery_numeric_checkpoints WHERE execution_id=$1',[initial.execution_id])).rows[0];
  assert.equal(checkpoint.verification_status,'verified');const manifest=JSON.parse(checkpoint.manifest_json);
- if(!defined){assert.ok(manifest.root_count>0);assert.ok(manifest.cached_count>0);assert.equal(manifest.status,'insufficient_population');}
+ if(!defined){assert.ok(manifest.root_count>0);assert.ok(manifest.cached_count>0);
+  if(count===3)assert.equal(manifest.status,'insufficient_population');
+  else{assert.equal(manifest.root_count,count);assert.equal(manifest.status,'completed');assert.ok(manifest.groups.length>0);assert.ok(manifest.grouped_count>0);}
+ }
  assert.equal((await f.database.query('SELECT count(*)::int n FROM signal_workspace_embedding_calls WHERE workspace_id=$1',[f.workspace_id])).rows[0].n,before);
  const round=(await f.database.query('SELECT status FROM signal_listening_discovery_rounds WHERE execution_id=$1',[initial.execution_id])).rows[0];assert.equal(round.status,'queued');
  assert.equal((await f.database.query("SELECT count(*)::int n FROM engine_cost_events WHERE workspace_id=$1 AND workspace_contract='listening-discovery-round-v1'",[f.workspace_id])).rows[0].n,0);
  assert.equal((await f.database.query('SELECT count(*)::int n FROM signal_processing_admissions WHERE target_id=$1',[result.run_id])).rows[0].n,1);
  assert.deepEqual(await drainSignalListeningDiscoveryAutomationOnceV1(options),{candidates:0,advanced:0,failed:0});
-}));
+},{...(count===3?{}:{population_count:count})}));
