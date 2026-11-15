@@ -42,8 +42,8 @@ HTTP filesystem Storage fsync/readback and page settlement. Preserve memory, tok
 RPS, lease, rights, policy, caps and no-replay gates. The native page-parallel opt-in
 is owned by the orchestrator; this harness does not change it.
 
-The eight faults remain: 429, 529, raw-page write, PG commit, settlement ACK loss,
-restart after page, lease expiry, lease expiry after durable write. Their artifact
+The ten explicit faults are: 429, 529, raw-page write, PG commit, settlement ACK loss,
+restart after page, lease expiry, lease expiry after durable write, Storage put ACK loss and COMMIT ACK loss. The original write/COMMIT cases now require actual pre-write rejection/precommit rollback; ACK losses are additional cases. Their artifact
 must bind this exact source/policy/system identifier and Listening identity. Legacy
 Mass fault artifacts are regression evidence, not acceptance for this arm.
 

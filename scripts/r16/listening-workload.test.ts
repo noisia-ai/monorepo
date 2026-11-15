@@ -11,7 +11,7 @@ test('preregistered R16 workloads bind generic Listening identity and consumer s
  assert.ok(!w.question_keys.includes('trigger_barrier'));}
  assert.equal(a.question_keys.length,4);assert.equal(b.question_keys.length,8);
  assert.equal(b.configuration.questions.filter(q=>'topic_source'in q&&q.topic_source==='discovered').length,4);
- assert.equal(registration.root_count,32768);assert.equal(registration.faults.length,8);
+ assert.equal(registration.root_count,32768);assert.equal(registration.faults.length,10);
  assert.equal(registration.target_distinct_resolved_roots_per_second,1000);assert.equal(registration.minimum_sustained_ms,20000);
 });
 test('native resolved census is DISTINCT roots, never two-pass HTTP calls; no missing/foreign/duplicate/interpolated root',()=>{

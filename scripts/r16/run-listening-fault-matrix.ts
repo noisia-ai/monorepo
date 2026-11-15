@@ -1,4 +1,7 @@
 import assert from 'node:assert/strict';
+import {mkdtemp} from 'node:fs/promises';
+import {join} from 'node:path';
+import {createR16PutFaultV1,r16NativeCommitBoundaryV1} from './listening-fault-injections';
 import {randomUUID} from 'node:crypto';
 import {performance} from 'node:perf_hooks';
 import {dirname,resolve} from 'node:path';
@@ -64,14 +67,15 @@ export async function runR16ListeningFaultMatrixV1(args:{object_directory:string
    const policy_configuration_digest=r16PolicyConfigurationDigestV1({action:identity.action,configuration:identity.configuration,
     configuration_digest:identity.configuration_digest,model:identity.model,provider:identity.provider,policy_version_id:identity.policy_version_id,
     policy_digest:identity.policy_digest,policy_daily_cap_micro_usd:identity.daily_cap,policy_max_execution_micro_usd:identity.action_cap});
-   let armed=false,injected=false,expiry=false,storageAck=false;
+   let armed=false,injected=false,expiry=false;const boundaryEvidence:unknown[]=[];
    // Only apply's REAL transaction is armed. Throw AFTER its actual COMMIT,
    // never fabricate a commit or mutate a ledger to make recovery succeed.
    const database=Object.assign(Object.create(original),{query:original.query.bind(original),connect:async()=>{
     const client=await original.connect();return Object.assign(Object.create(client),{release:()=>client.release(),query:async(sql:string,values?:unknown[])=>{
-     const value=await client.query(sql,values);
-     if(kind==='postgres_commit'&&armed&&!injected&&sql.trim().toUpperCase()==='COMMIT'){injected=true;throw Error('r16_listening_native_commit_ack_lost');}
-     return value;
+     const hit=armed&&!injected&&['postgres_commit','postgres_commit_ack_lost'].includes(kind)&&sql.trim().toUpperCase()==='COMMIT';
+     if(hit)injected=true;
+     return r16NativeCommitBoundaryV1(sql,hit?(kind==='postgres_commit'?'rollback_before_commit':'ack_after_commit'):null,
+      statement=>client.query(statement,statement===sql?values:undefined));
     }});
    }}) as Database;
    const physical:Array<{call_id:string;request_digest:string;body:string}>=[],statuses:number[]=[],retry_after_ms:number[]=[];
@@ -93,8 +97,9 @@ export async function runR16ListeningFaultMatrixV1(args:{object_directory:string
      NOISIA_TYPESAFE_ACCOUNT_REDIS_URL:args.redis_url,NOISIA_TYPESAFE_ACCOUNT_RPS:'10000',NOISIA_TYPESAFE_ACCOUNT_INPUT_TPS:'10000000'},
     fetch:async(...params)=>{const response=await synthetic(...params);const value=response.headers.get('retry-after');if(value)retry_after_ms.push(Number(value)*1000);return response;}});
    const baseStorage=createWorkspaceEngineStorageV1({url:storageServer.base_url,service_role_key:'synthetic-local-only',bucket:'corpus-files'});
-   const storage:WorkspaceEngineStorageV1={...baseStorage,async put(...params){const stored=await baseStorage.put(...params);
-    if(kind==='raw_page_write'&&!storageAck){storageAck=true;throw Error('r16_listening_storage_ack_lost');}return stored;}};
+   const missingCheckDirectory=await mkdtemp(join(args.object_directory,'missing-blob-check-'));
+   const putFault=createR16PutFaultV1(baseStorage,kind==='raw_page_write'?'reject_before_put':kind==='raw_page_ack_lost'?'ack_after_put':null);
+   const storage=putFault.storage,putsBeforeCase=storageServer.metrics().object_puts;
    const base=createSignalListeningRuntimeStoreV1(database,{execution,storage});
    const store:Store={...base,
     async apply(...params){if(kind==='lease_expiry_after_durable')await expire();armed=true;try{return await base.apply(...params);}finally{armed=false;}},
@@ -110,10 +115,40 @@ export async function runR16ListeningFaultMatrixV1(args:{object_directory:string
    const invoke=()=>signalListeningJevJobV1(run_id,{database,store,execution,calibrated_provider_factory:factory,
     preflight:()=>assertR16ListeningSyntheticPreflightV1({storage,storage_url:storageServer.base_url,...workload,env:process.env})});
    const calls=async()=>(await original.query<CallRow>('SELECT id,request_digest,status,results_applied,settled_micro_usd::text,reserved_micro_usd::text,raw_storage_key,results FROM signal_labeling_calls WHERE run_id=$1 ORDER BY id',[run_id])).rows;
-   const attempts:Array<{status?:string;error?:string}>=[];
+   const attempts:Array<{status?:string;error?:string}>=[];let witnessed=false,recoveryPhysicalBarrier:number|undefined;
    for(let attempt=0;attempt<12;attempt++){
     try{const result=await invoke();attempts.push({status:result.status});}catch(error){attempts.push({error:error instanceof Error?error.message:String(error)});}
-    const rows=await calls();if(rows.some(c=>c.status==='unknown'&&!c.raw_storage_key)||['429','529','lease_expiry'].includes(kind)&&attempt>=1)break;
+    const rows=await calls();
+    if(recoveryPhysicalBarrier!==undefined){assert.equal(physical.length,recoveryPhysicalBarrier,'first durable recovery pass must not call the provider');recoveryPhysicalBarrier=undefined;}
+    if(!witnessed&&kind==='postgres_commit'&&injected){
+     const answers=(await original.query('SELECT count(*)::int n FROM signal_listening_answers WHERE call_id=ANY($1::uuid[])',[rows.map(c=>c.id)])).rows[0];
+     assert.ok(rows.length>0&&rows.every(c=>!c.results_applied));assert.equal(answers.n,0,'ROLLBACK must leave zero durable apply/answers');
+     boundaryEvidence.push({boundary:'rollback_before_commit',calls:rows,durable_answers:answers.n});witnessed=true;recoveryPhysicalBarrier=physical.length;
+    }
+    if(!witnessed&&kind==='postgres_commit_ack_lost'&&injected){
+     const answers=(await original.query('SELECT count(*)::int n FROM signal_listening_answers WHERE call_id=ANY($1::uuid[])',[rows.map(c=>c.id)])).rows[0];
+     assert.ok(rows.length>0&&rows.every(c=>c.results_applied));assert.ok(answers.n>0,'COMMIT ACK loss must preserve actual committed answers');
+     boundaryEvidence.push({boundary:'ack_after_commit',calls:rows,durable_answers:answers.n});witnessed=true;
+    }
+    if(!witnessed&&kind==='raw_page_ack_lost'&&putFault.injected){
+     const stored=(await original.query<{id:string;storage_key:string;sha256:string;size_bytes:string;status:string}>(
+      'SELECT id,storage_key,sha256,size_bytes::text,status FROM signal_labeling_raw_pages WHERE run_id=$1',[run_id])).rows;
+     assert.ok(stored.length>0);assert.ok(storageServer.metrics().object_puts>putsBeforeCase,'put ACK loss must follow real blob writes');
+     for(const page of stored)await createLabelingRawPagesStorageV1(baseStorage).load({workspace_id:ctx.workspace_id,run_id,page_id:page.id,storage_key:page.storage_key,sha256:page.sha256,size_bytes:Number(page.size_bytes)});
+     boundaryEvidence.push({boundary:'ack_after_put',blob_readback_verified:true,pages:stored});witnessed=true;recoveryPhysicalBarrier=physical.length;
+    }
+    if(!witnessed&&kind==='raw_page_write'&&putFault.injected){
+     const planned=(await original.query<{id:string;storage_key:string;sha256:string;size_bytes:string;status:string;member_count:number}>(
+      'SELECT id,storage_key,sha256,size_bytes::text,status,member_count FROM signal_labeling_raw_pages WHERE run_id=$1',[run_id])).rows;
+     assert.equal(storageServer.metrics().object_puts,putsBeforeCase,'rejected put must not write any blob');
+     assert.ok(planned.length>0&&planned.every(p=>p.status==='planned'));assert.ok(rows.every(c=>!c.results_applied&&c.settled_micro_usd===null));
+     const page=planned[0]!;assert.equal(page.member_count,3);
+     const members=(await original.query('SELECT count(*)::int n FROM signal_labeling_raw_page_members WHERE page_id=$1',[page.id])).rows[0];assert.equal(members.n,3);
+     await assert.rejects(baseStorage.get({workspace_id:ctx.workspace_id,execution_id:run_id,stored:{storage_key:page.storage_key,sha256:page.sha256,size_bytes:Number(page.size_bytes),media_type:'application/x-ndjson'},destination:join(missingCheckDirectory,'missing-page')}));
+     boundaryEvidence.push({boundary:'reject_before_blob',planned_pages:planned,native_members:members.n,puts_at_rejection:putsBeforeCase,retained_raw_bytes:false});
+     witnessed=true;
+    }
+    if(rows.some(c=>c.status==='unknown'&&!c.raw_storage_key)||['429','529','lease_expiry','raw_page_write'].includes(kind)&&attempt>=1)break;
     if((await census.readResolvedRootIds()).length===3)break;
    }
    const first=await calls(),physicalBefore=physical.length;
@@ -131,24 +166,26 @@ export async function runR16ListeningFaultMatrixV1(args:{object_directory:string
    const budget=(await original.query(`SELECT COALESCE((SELECT sum(settled_micro_usd) FROM signal_labeling_calls WHERE run_id=$1),0)::text settled,
     e.total_micro_usd::text exposure FROM signal_processing_org_exposure_v1($2::uuid,$3::date,$4::text) e`,[run_id,census.organization_id,identity.budget_date,identity.budget_timezone])).rows[0];
    assert.ok(BigInt(budget.settled)<=BigInt(identity.execution_cap));assert.ok(BigInt(budget.exposure)<=BigInt(identity.daily_cap));
-   const contained=['429','529','lease_expiry'].includes(kind);
-   if(contained){assert.ok(unknown.length>0);assert.equal(physical.length,physicalBefore,'unknown recovery must not admit new physical work');
+   const contained=['429','529','lease_expiry','raw_page_write'].includes(kind);
+   if(contained){if(kind!=='raw_page_write')assert.ok(unknown.length>0);assert.equal(physical.length,physicalBefore,'unknown recovery must not admit new physical work');
     assert.ok(unknown.every(c=>c.settled_micro_usd===null&&BigInt(c.reserved_micro_usd)>0));assert.ok(resolved.length<3);
+    if(kind==='raw_page_write'){assert.equal(resolved.length,0);assert.equal(storageServer.metrics().object_puts,putsBeforeCase);assert.ok(final.every(c=>!c.results_applied&&c.settled_micro_usd===null&&BigInt(c.reserved_micro_usd)>0));}
    }else{assert.equal(resolved.length,3,`${kind} must resolve all four questions per root after native restart`);assert.equal(unknown.length,0);
     assert.equal(final.length,6);assert.ok(final.every(c=>c.status==='settled'&&c.results_applied&&c.raw_storage_key));}
    if(kind==='429'||kind==='529'){assert.ok(statuses.includes(Number(kind)));assert.ok(retry_after_ms.some(ms=>ms>=1000));}
    if(kind==='lease_expiry'||kind==='lease_expiry_after_durable')assert.ok(expiry);
-   if(kind==='raw_page_write')assert.ok(storageAck);
-   if(['postgres_commit','settlement_ack_lost','worker_restart_after_page'].includes(kind))assert.ok(injected);
-   results.push({kind,outcome:contained?'contained_unknown':'recovered',run_id,configuration_digest:workload.configuration_digest,
+   if(kind==='raw_page_write'||kind==='raw_page_ack_lost')assert.ok(putFault.injected);
+   if(['raw_page_write','raw_page_ack_lost','postgres_commit','postgres_commit_ack_lost'].includes(kind))assert.ok(witnessed);
+   if(['postgres_commit','postgres_commit_ack_lost','settlement_ack_lost','worker_restart_after_page'].includes(kind))assert.ok(injected);
+   results.push({kind,outcome:kind==='raw_page_write'?'contained_receipt_pending':contained?'contained_unknown':'recovered',run_id,configuration_digest:workload.configuration_digest,
     admission_started_at_ms,elapsed_ms:performance.now()-admission_started_at_ms,source,identity,policy_configuration_digest,
-    native_root_census:{population:3,resolved:resolved.length,root_ids:census.root_ids},before_recovery:first,after_recovery:final,
-    native_money:budget,raw_pages:pages,physical,statuses,retry_after_ms,attempts,physical_replays:0,
+    native_root_census:{population:3,resolved:resolved.length,unresolved:3-resolved.length,root_ids:census.root_ids},before_recovery:first,after_recovery:final,
+    boundary_evidence:boundaryEvidence,native_money:budget,raw_pages:pages,physical,statuses,retry_after_ms,attempts,physical_replays:0,
     guard_denials:{actor:1,budget:1,physical_requests:0}});
   }});
   assert.equal((await captureR16SourceProvenanceV1(repo)).source_tree_sha256,source.source_tree_sha256);
-  const artifact={contract_version:'r16-listening-native-fault-matrix-v1',completed_at:new Date().toISOString(),source,
-   diagnostic_subset:cases.length!==8,configuration_digest:r16ListeningWorkloadV1('defined_consumer_second_pass').configuration_digest,
+  const artifact={contract_version:'r16-listening-native-fault-matrix-v1',case_count:results.length,required_case_count:registration.faults.length,completed_at:new Date().toISOString(),source,
+   diagnostic_subset:cases.length!==registration.faults.length,configuration_digest:r16ListeningWorkloadV1('defined_consumer_second_pass').configuration_digest,
    results,storage:storageServer.metrics()};await args.writeArtifact(artifact);return artifact;
  }finally{await storageServer.close();}
 }

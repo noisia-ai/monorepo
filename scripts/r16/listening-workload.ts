@@ -13,7 +13,7 @@ export const R16_LISTENING_PREREGISTRATION_V1=Object.freeze({
   cold_clock:'before_fixture_setup',wall_clock:'before_prepareSignalListeningV1_including_admission_initial_census_all_warmups_and_serving',
   warmup:'ordinary_pending_roots_only;derive_from_settled_verified_applied_receipts',
   faults:['429','529','raw_page_write','postgres_commit','settlement_ack_lost',
-    'worker_restart_after_page','lease_expiry','lease_expiry_after_durable'],
+    'worker_restart_after_page','lease_expiry','lease_expiry_after_durable','raw_page_ack_lost','postgres_commit_ack_lost'],
   legacy_failed_reference:'C676:440.69 roots/s;MassV2;not R16 acceptance',
 } as const);
 export type R16ListeningArmV1='defined_consumer_second_pass'|'discovered_four';

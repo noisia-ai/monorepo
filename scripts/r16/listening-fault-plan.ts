@@ -11,8 +11,10 @@ export function r16ListeningNativeFaultPlanV1(source:{source_tree_sha256:string;
   request_version:'listening-jev-v1' as const,configuration_digest:workload.configuration_digest,
   native_owner:'signalListeningJevJobV1' as const,
   injection:kind==='429'||kind==='529'?'synthetic_http_rejection_before_usage'
-   :kind==='raw_page_write'?'storage_write_failure_before_durable_ack'
-   :kind==='postgres_commit'?'native_transaction_commit_failure'
+   :kind==='raw_page_write'?'reject_before_storage_write_contained_without_raw_bytes'
+   :kind==='raw_page_ack_lost'?'throw_after_real_storage_put'
+   :kind==='postgres_commit'?'native_rollback_before_commit'
+   :kind==='postgres_commit_ack_lost'?'throw_after_real_native_commit'
    :kind==='settlement_ack_lost'?'throw_after_native_settlement_commit'
    :kind==='worker_restart_after_page'?'throw_after_native_page_commit_then_new_job'
    :kind==='lease_expiry'?'expire_own_native_lease_before_durable_custody'
