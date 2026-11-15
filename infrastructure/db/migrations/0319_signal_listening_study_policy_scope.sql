@@ -102,8 +102,8 @@ BEGIN
   cap:=CASE action_key WHEN 'listening_discovery_review' THEN NEW.discovery_cap_micro_usd WHEN 'study_analysis' THEN NEW.study_cap_micro_usd ELSE NEW.prototype_cap_micro_usd END;
   SELECT * INTO a FROM signal_processing_policy_actions WHERE policy_version_id=successor.id AND action=action_key;
   IF a.action IS NULL OR a.kind<>'provider' OR a.configuration IS DISTINCT FROM cfg OR a.configuration_digest IS DISTINCT FROM signal_semantic_context_digest_json_v2(cfg)
-   OR a.provider IS DISTINCT FROM CASE WHEN action_key='topic_prototype_embeddings' THEN 'voyage' ELSE 'anthropic' END
-   OR a.model IS DISTINCT FROM CASE WHEN action_key='topic_prototype_embeddings' THEN 'voyage-4-large' ELSE 'claude-sonnet-4-6' END
+   OR a.provider IS DISTINCT FROM (CASE WHEN action_key='topic_prototype_embeddings' THEN 'voyage' ELSE 'anthropic' END)
+   OR a.model IS DISTINCT FROM (CASE WHEN action_key='topic_prototype_embeddings' THEN 'voyage-4-large' ELSE 'claude-sonnet-4-6' END)
    OR a.max_execution_micro_usd IS NOT NULL AND cap>a.max_execution_micro_usd
    OR action_key='topic_prototype_embeddings' AND NOT signal_brand_context_prototype_configuration_v1(a.configuration)
    OR NOT EXISTS(SELECT 1 FROM signal_processing_policy_actions old WHERE old.policy_version_id=prior.id AND old.action=action_key)
