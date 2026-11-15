@@ -12,6 +12,14 @@ No hay aprobaciones humanas intermedias en los procesos de análisis: Sonnet 4.6
 
 ## Progreso
 
+- 2026-11-15, integración H5: catálogo publicado y correcciones humanas en Brand OS/Menciones/Tópicos integrados tras revisión sin P0/P1/P2 (2cdf3998, 08a91dc0, 5d7a0504). Sesenta y dos focales montados pasan sin omisiones. Los dos P2 de seguimiento están cerrados: completar H3 actualiza el catálogo incluso con la misma configuración/revisión; una respuesta tardía no reabre una mención cerrada ni desplaza el foco elegido después. Tipado/lint integrados 11/11; la suite completa encontró cinco fixtures antiguos que no admitían el nuevo import, se amplió únicamente su allowlist de presentación y el conjunto termina con 1,369 aprobadas, cero fallos y siete omisiones de entorno. Sigue pendiente UAT.
+
+- 2026-11-15, H3 numérico conjunto: tres casos PostgreSQL/Python pasan sin omisiones, con 288 migraciones por clon y 70.74 s: base-only y base+definidos de tres raíces declaran insuficiencia; el caso base-only de 240 raíces obtiene grupos BERTopic reales, reutiliza vectores y encola la primera revisión. No envía Sonnet ni crea nuevos embeddings. Esta evidencia sustituye la anterior espera por transporte local; el ciclo pagado completo y UAT siguen pendientes.
+
+- H1 fidelidad: el benchmark anterior de 32,768 raíces terminó a 440.69/s y se conserva rechazado. Ejercitaba Mass V2 y sus proyecciones históricas; no acreditaba el consumidor Listening de R16. El nuevo harness mantiene población, latencia observada, umbral sostenido, Redis/Storage/PostgreSQL y serving reales, con base y dos tópicos definidos de alcance consumidor/categoría que requieren segunda pasada. Su censo nativo pasa un caso PostgreSQL sin omisiones: no acredita raíces sólo por tener la base cacheada, exige todas las preguntas elegibles y rechaza cambios de configuración, tenant/actor o población. Falta revisión, matriz de fallos y medición completa; no se acredita capacidad.
+
+- H4: el owner obtuvo un recorrido nativo de 240 raíces con agrupación real, recibos HTTP simulados y ledger, dos pasadas de capas y reutilización de caché individual. Es evidencia local del owner, todavía sin integrar ni aceptar: faltan matriz de fallos/autoridad/dinero, revisión, ensamblado del worker y Studio, y pruebas UAT. Se integró por separado 1ee8f3ac para volver a comprobar la habilitación después del CAS de envío; si cambia durante ese await no se envía y se conserva la exposición incierta.
+
 - H5 integración local: edición nativa versionada para quitar/mover/fusionar, filtros de pendientes y estimación humana, selector/guard/completitud de huérfanas efectivos. La API montada conserva actor de sesión, CAS completo, idempotencia y permiso de edición, sin autoridad de procesamiento. Menciones recibe un namespace separado con snapshot ligado, probabilidades originales y decisiones humanas independientes; cubre lista y foco y rechaza carreras de snapshot. Veinticuatro focales API/lectura pasan; tipado/lint 11/11. Los seis casos PostgreSQL del owner y la corrección Python se revisaron por separado; falta validar la integración conjunta, terminar UI y aceptación UAT.
 
 - H3 revisión del arranque encontró que el builder de evidencia aún rechazaba cero tópicos después de crear el parent base-only. Se elimina esa exigencia, manteniendo censo, unicidad y máximo 256; evidencia paginada/pura y solicitud editorial vacías pasan 28 focales, y query-engine 714/714. La prueba nueva conjunta PostgreSQL/Python debe verificar el avance desde base-only hasta encolar la revisión con vectores cacheados e insuficiencia explícita para tres raíces; sigue pendiente por transporte local. Tipado/lint 11/11. No se presenta ese caso pequeño como ajuste BERTopic con grupos.
@@ -152,6 +160,10 @@ Recibo: separar Voyage/JEV por raíz de Claude por número de grupos y vueltas; 
 
 ## Sorpresas y descubrimientos
 
+- La instrumentación histórica medía un adaptador diferente al consumidor final: Mass V2 escribía etiquetas e intereses heredados; Listening resuelve preguntas configurables, caché por pregunta y alcance después de la base. Cambiar el consumidor exige nueva preregistración y evidencia nativa, sin borrar el resultado fallido ni reducir los umbrales. En el censo, una respuesta de base cacheada no equivale a una raíz resuelta cuando quedan tópicos elegibles pendientes.
+
+- La integración del catálogo introdujo un import que cinco fixtures antiguos de presentación rechazaban antes de montar el componente. Se corrige el arnés, conservando sus verificaciones de navegación/inspección y la cobertura montada propia del catálogo. Los fallos y la repetición quedan registrados; no se usan como evidencia de un problema en UAT.
+
 - El drawer de Menciones del workspace oculta deliberadamente los tags heredados. Añadir etiquetas a ese campo no habría mostrado las correcciones; se conecta una sección explícita de Escucha y un namespace nuevo, preservando la semántica histórica. Los lotes de lectura respetan ocho claves y hasta doscientas raíces; una relectura del snapshot evita devolver etiquetas mezcladas si ocurre una edición durante la carga.
 
 - Crear la intención y el parent no acreditaba el inicio automático completo: una validación posterior exigía al menos un tópico. La revisión independiente lo detectó antes de publicar este arranque. Se extiende la aceptación hasta la revisión encolada y se incorpora al job que combina PostgreSQL con el runtime Python, sin fabricar un tema para pasar la validación.
@@ -217,6 +229,10 @@ Recibo: separar Voyage/JEV por raíz de Claude por número de grupos y vueltas; 
 - El promedio del piloto completo incluye una etapa editorial que no escala por raíz. Multiplicarlo linealmente daba USD 205.81/millón; mantener explícitamente los grupos y una vuelta de referencia produce USD 114.035250. Ambos cálculos parten del mismo recibo, cuyo uso histórico permanece USD 17.280463.
 
 ## Registro de decisiones
+
+- 2026-11-15: contar capacidad de Listening por raíces distintas con TODAS sus preguntas elegibles resueltas o excluidas por el selector nativo. Sellar owner/run/configuración/mapa/contexto y comprobar acceso vigente en cada lectura; muestrear después del apply en lotes de hasta 1,024 y hacer el censo total final sin acreditar progreso tardío. El helper es de laboratorio, sólo lectura, sin exportación productiva ni respuestas/perfiles/admisiones fabricadas.
+
+- 2026-11-15: cerrar las carreras de publicación y foco en la UI antes de integrar el hito humano. Conservar separación de catálogos R15/R16, permisos nativos y probabilidades originales. La revisión local y los fixtures montados no sustituyen el recorrido desde Dashboard en UAT.
 
 - H5: las expectativas de snapshot recibidas del navegador sólo sirven para CAS; los stores vuelven a validar permiso, fuente y finalización. Ninguna acción humana crea admisión o llamada al proveedor. Conservar probability JEV, effective_belongs y procedencia humana por separado, y mantener el catálogo R15 fuera de las claves de Escucha.
 
