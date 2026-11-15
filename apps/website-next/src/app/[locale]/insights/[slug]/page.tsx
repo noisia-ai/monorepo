@@ -47,7 +47,7 @@ export default async function InsightPage({ params }: { params: Promise<Params> 
   });
   return (
     <>
-      <Feed stories={stories} collections={getFeedCollections(stories, locale)} initialId={slug} initialTitle={content.title} />
+      <Feed stories={stories} collections={await getFeedCollections(stories, locale)} initialId={slug} initialTitle={content.title} />
       {jsonLd ? <JsonLd data={jsonLd} /> : null}
     </>
   );

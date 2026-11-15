@@ -29,7 +29,7 @@ export default async function InsightsPage({
     <>
       <Feed
         stories={stories}
-        collections={getFeedCollections(stories, locale)}
+        collections={await getFeedCollections(stories, locale)}
         initialFilter={collection ? { type: "collection", id: collection } : industry ? { type: "industry", id: industry } : undefined}
       />
       {jsonLd ? <JsonLd data={jsonLd} /> : null}

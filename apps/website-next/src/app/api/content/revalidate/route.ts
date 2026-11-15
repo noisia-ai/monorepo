@@ -2,6 +2,7 @@ import { createHash, timingSafeEqual } from "node:crypto";
 import { revalidatePath, revalidateTag } from "next/cache";
 import { NextResponse, type NextRequest } from "next/server";
 import { STORIES_TAG } from "@/content/stories";
+import { STUDIES_TAG } from "@/content/studies";
 
 /**
  * Called by `pnpm content:publish` after a piece or a study changes state, so the feed, the
@@ -24,7 +25,8 @@ export async function POST(request: NextRequest) {
   if (!authorized(request, secret)) return NextResponse.json({ ok: false }, { status: 401 });
 
   revalidateTag(STORIES_TAG);
+  revalidateTag(STUDIES_TAG);
   // Every page reads the registry (breadcrumbs, lists, metadata), so the whole tree is refreshed.
   revalidatePath("/", "layout");
-  return NextResponse.json({ ok: true, revalidated: [STORIES_TAG, "/"] }, { headers: { "Cache-Control": "no-store" } });
+  return NextResponse.json({ ok: true, revalidated: [STORIES_TAG, STUDIES_TAG, "/"] }, { headers: { "Cache-Control": "no-store" } });
 }

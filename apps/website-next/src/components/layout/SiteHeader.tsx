@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useLocale, useTranslations } from "next-intl";
-import { ArrowRight, Book, Compass, Group, MediaVideo, Menu, Network, Xmark } from "iconoir-react";
+import { ArrowRight, Book, Compass, Group, MediaVideo, Menu, Network, Page, Xmark } from "iconoir-react";
 import { useParams } from "next/navigation";
 import { Link, getPathname, usePathname } from "@/i18n/navigation";
 import { useAlternateHref } from "./alternate";
@@ -11,7 +11,7 @@ import { mainNav } from "./nav";
 import styles from "./SiteHeader.module.css";
 import { Logo } from "@/components/brand/Logo";
 
-const MENU_ICONS = { solutions: Compass, howItWorks: Network, methods: Book, insights: MediaVideo, about: Group } as const; // methods/about live in the footer
+const MENU_ICONS = { solutions: Compass, howItWorks: Network, methods: Book, insights: MediaVideo, studies: Page, about: Group } as const; // methods/about live in the footer
 
 export function SiteHeader() {
   const t = useTranslations("nav");
@@ -60,6 +60,12 @@ export function SiteHeader() {
     };
   }, [open]);
 
+  // The longest entry that prefixes the path wins, so the studies index doesn't also light up Insights.
+  const activeHref = mainNav
+    .map((item) => item.href as string)
+    .filter((href) => pathname === href || pathname.startsWith(`${href}/`))
+    .sort((a, b) => b.length - a.length)[0];
+
   const other = locale === "en" ? "es" : "en";
   // The switch must be right before hydration too. Pages with translated slugs register their
   // exact twin (SetAlternate); until then a translated-slug page points to its section index.
@@ -94,7 +100,7 @@ export function SiteHeader() {
         </Link>
         <nav className={styles.desktopNav} aria-label={t("mainNav")}>
           {mainNav.map((item) => (
-            <Link key={item.key} href={item.href} className={styles.navLink} aria-current={pathname.startsWith(item.href) ? "page" : undefined}>
+            <Link key={item.key} href={item.href} className={styles.navLink} aria-current={item.href === activeHref ? "page" : undefined}>
               {t(item.key)}
             </Link>
           ))}

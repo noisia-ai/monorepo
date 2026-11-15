@@ -38,6 +38,8 @@ export default function middleware(request: NextRequest) {
       return new NextResponse("Noisia UAT", { status: 401, headers: { "WWW-Authenticate": 'Basic realm="Noisia UAT", charset="UTF-8"' } });
     }
   }
+  // Personal links (/e/<token>) are a route of their own, outside the locale tree.
+  if (request.nextUrl.pathname.startsWith("/e/")) return NextResponse.next();
   if (request.nextUrl.pathname === "/" && preferredHomeLocale(request) === "en") {
     const url = request.nextUrl.clone();
     url.pathname = "/en";

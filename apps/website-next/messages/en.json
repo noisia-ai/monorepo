@@ -9,6 +9,7 @@
     "howItWorks": "How it works",
     "methods": "Methods",
     "insights": "Insights",
+    "studies": "Studies",
     "about": "About",
     "cta": "Book a workshop",
     "menu": "Menu",
@@ -20,6 +21,7 @@
     "howItWorksDesc": "Our software and the people who run it",
     "methodsDesc": "How we understand why people do what they do",
     "insightsDesc": "Short video findings, with their evidence",
+    "studiesDesc": "Full Noisia studies, by industry and market",
     "aboutDesc": "Who we are and how we work",
     "languageLabel": "Language",
     "menuCta": "Book a free workshop",
@@ -38,7 +40,9 @@
     "movilidad": "Mobility",
     "apuestas-y-gaming": "Betting and gaming",
     "retail": "Retail",
-    "cultura-y-sociedad": "Culture and society"
+    "cultura-y-sociedad": "Culture and society",
+    "banca-y-fintech": "Banking and fintech",
+    "seguros": "Insurance"
   },
   "feed": {
     "label": "Insights",
