@@ -39,7 +39,7 @@ type StudyExecutionRow = {
   source_current: boolean; owner_current: boolean; envelope: Record<string, unknown>;
   listening_generation_id: string | null; listening_source_digest: string | null; source_roots: number; source_digest: string;
   frozen_source_kind: string; frozen_source_id: string; frozen_base_snapshot_id: string; frozen_configuration_id: string;
-  frozen_generation_id: string; frozen_source_digest: string; bound_source_kind: string | null; bound_source_id: string | null;
+  frozen_generation_id: string; frozen_source_round_id: string; frozen_source_digest: string; bound_source_kind: string | null; bound_source_id: string | null;
   bound_base_snapshot_id: string; bound_configuration_id: string; bound_generation_id: string | null; bound_source_digest: string | null;
 };
 type StudyRootRow = { root_id: string; asset_sha256: string; full_text: string; private_person_names: string[];
@@ -200,7 +200,7 @@ export async function exportNativeAuditSnapshotV1(args: NativeAuditExportArgsV1)
     await client.query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY");
     const before = await loadGeneration(client, args.workspace_id, args.actor_user_id, args.listening_before_generation_id);
     const after = await loadGeneration(client, args.workspace_id, args.actor_user_id, args.listening_after_generation_id);
-    if (before.id === after.id || before.map_id !== after.map_id) throw new Error("native_audit_listening_pair_invalid");
+    if (before.map_id !== after.map_id) throw new Error("native_audit_listening_pair_invalid");
     const study = await loadStudyExecution(client, args.workspace_id, args.study_execution_id);
     if (study.actor_user_id !== args.actor_user_id) {
       await authorizeSignalListeningV1(client as unknown as Parameters<typeof authorizeSignalListeningV1>[0], { workspace_id: args.workspace_id, actor_user_id: args.actor_user_id }, "view");
@@ -229,7 +229,8 @@ export async function exportNativeAuditSnapshotV1(args: NativeAuditExportArgsV1)
     const config = validateSignalStudyExecutionConfigurationV1(study.envelope);
     const studyRows = await loadStudyRows(client, study, config, after, privacyEvidence);
     const membershipEvidence = await loadNativeMembershipEvidence(client, study, studyRows);
-    const receiptRows = await loadNativeReceiptEvidenceV1(client, before, after, study);
+    const receiptRows = await loadNativeReceiptEvidenceV1(client, before, after,
+      { id: study.id, workspace_id: study.workspace_id, listening_source_round_id: study.frozen_source_round_id });
     return { before, after, study, config, listening, studyRows, membershipEvidence, receiptRows, privacyEvidence };
   });
 
@@ -291,7 +292,7 @@ export async function exportNativeAuditSnapshotV1(args: NativeAuditExportArgsV1)
       study_output_verified_digest: study.actual_output_digest },
     study_listening_source: { kind: study.frozen_source_kind, id: study.frozen_source_id,
       base_snapshot_id: study.frozen_base_snapshot_id, configuration_id: study.frozen_configuration_id,
-      generation_id: study.frozen_generation_id, snapshot_digest: study.frozen_source_digest },
+      generation_id: study.frozen_generation_id, round_id: study.frozen_source_round_id, snapshot_digest: study.frozen_source_digest },
     source_row_counts: { before_roots: Number(before.counts?.roots ?? 0), after_roots: Number(after.counts?.roots ?? 0),
       listening_rows: collected.listening.length, study_roots: study.source_roots, study_rows: collected.studyRows.length },
     native_axis_candidate_flags: { source: "persisted_study_axes_candidate_only", none: collected.studyRows.filter(row => row.review_flags.includes("false_none_candidate")).length,
@@ -359,14 +360,15 @@ async function loadStudyExecution(client: ReadClientV1, workspaceId: string, exe
       signal_labeling_digest_v1(e.output) actual_output_digest,signal_study_source_current_v1(e.id) source_current,
       signal_study_owner_current_v1(e.id) owner_current,cfg.envelope,cfg.listening_generation_id,cfg.listening_source_digest,e.source_roots,
       source.source_kind frozen_source_kind,source.id frozen_source_id,source.base_snapshot_id frozen_base_snapshot_id,
-      source.configuration_id frozen_configuration_id,source.generation_id frozen_generation_id,source.snapshot_digest frozen_source_digest,
+      source.configuration_id frozen_configuration_id,source.generation_id frozen_generation_id,source.round_id frozen_source_round_id,
+      source.snapshot_digest frozen_source_digest,
       cfg.listening_source_kind bound_source_kind,cfg.listening_source_id bound_source_id,cfg.listening_snapshot_id bound_base_snapshot_id,
       cfg.listening_configuration_id bound_configuration_id,cfg.listening_generation_id bound_generation_id,cfg.listening_source_digest bound_source_digest
     FROM signal_study_executions e JOIN signal_study_configurations cfg ON cfg.id=e.configuration_id AND cfg.workspace_id=e.workspace_id
     JOIN signal_study_configuration_sources_v1 source ON source.study_configuration_id=cfg.id AND source.workspace_id=e.workspace_id
     JOIN signal_study_outputs output ON output.execution_id=e.id AND output.workspace_id=e.workspace_id AND output.output_digest=e.output_digest
     WHERE e.workspace_id=$1 AND e.id=$2`, [workspaceId, executionId])).rows[0];
-  if (!row || row.status !== "completed" || !row.source_current || !row.owner_current || !row.output
+  if (!row || row.status !== "completed" || !row.source_current || !row.owner_current || !row.output || !row.frozen_source_round_id
     || row.output_digest !== row.actual_output_digest) {
     throw new Error("native_audit_study_execution_invalid");
   }
@@ -685,7 +687,6 @@ function assertInput(args: NativeAuditExportArgsV1): void {
   for (const id of [args.workspace_id, args.actor_user_id, args.listening_before_generation_id, args.listening_after_generation_id, args.study_execution_id]) {
     if (!UUID.test(id)) throw new Error("native_audit_source_identity_invalid");
   }
-  if (args.listening_before_generation_id === args.listening_after_generation_id) throw new Error("native_audit_listening_pair_invalid");
 }
 
 function privatePath(path: string): string {

@@ -8,19 +8,29 @@ const round = (ordinal: number, input: string, output: string | null, status = "
 
 test("receipt ancestry includes initial rounds before an intermediate BEFORE and reaches exact AFTER", () => {
   const path = nativeListeningRoundPathV1({ initial_generation_id: "g0", before_generation_id: "g2", after_generation_id: "g3",
-    rounds: [round(1, "g0", "g1"), round(2, "g1", "g2"), round(3, "g2", "g3")] });
+    after_round_id: "round-3", rounds: [round(1, "g0", "g1"), round(2, "g1", "g2"), round(3, "g2", "g3")] });
   assert.deepEqual(path?.generation_ids, ["g0", "g1", "g2", "g3"]);
   assert.deepEqual(path?.rounds.map(item => item.id), ["round-1", "round-2", "round-3"]);
 });
 
 test("missing, forged, or incomplete ancestry cannot produce a complete receipt path", () => {
-  const base = { initial_generation_id: "g0", before_generation_id: "g2", after_generation_id: "g3" };
+  const base = { initial_generation_id: "g0", before_generation_id: "g2", after_generation_id: "g3", after_round_id: "round-3" };
   assert.equal(nativeListeningRoundPathV1({ ...base, rounds: [round(2, "g1", "g2"), round(3, "g2", "g3")] }), null,
     "a path beginning at BEFORE's predecessor omits initial costs and is rejected");
   assert.equal(nativeListeningRoundPathV1({ ...base, rounds: [round(1, "g0", "g1"), round(2, "g1", "gx"), round(3, "g2", "g3")] }), null,
     "BEFORE must occur on the same chained ancestry");
   assert.equal(nativeListeningRoundPathV1({ ...base, rounds: [round(1, "g0", "g1"), round(2, "g1", "g2"), round(3, "g2", null, "active")] }), null,
     "AFTER must be reached by completed rounds");
+});
+
+test("receipt ancestry uses the Study's exact terminal round when generations converge or remain unchanged", () => {
+  const path = nativeListeningRoundPathV1({ initial_generation_id: "g0", before_generation_id: "g1", after_generation_id: "g1",
+    after_round_id: "round-2", rounds: [round(1, "g0", "g1"), round(2, "g1", "g1")] });
+  assert.deepEqual(path?.rounds.map(item => item.id), ["round-1", "round-2"], "the paid no-op review remains in the census");
+  assert.equal(path?.before_generation_index, 1);
+  assert.equal(path?.after_generation_index, 2);
+  assert.equal(nativeListeningRoundPathV1({ initial_generation_id: "g1", before_generation_id: "g1", after_generation_id: "g1",
+    after_round_id: "wrong-round", rounds: [round(1, "g1", "g1")] }), null, "no-op requires the exact frozen round binding");
 });
 
 test("receipt adapter marks missing initial ancestry incomplete and withholds totals", async () => {
@@ -43,7 +53,7 @@ test("receipt adapter marks missing initial ancestry incomplete and withholds to
   const evidence = await loadNativeReceiptEvidenceV1(client as never,
     { id: "g2", workspace_id: "workspace", map_id: "map", configuration_id: "cfg", preparation_run_id: "prep-before" },
     { id: "g3", workspace_id: "workspace", map_id: "map", configuration_id: "cfg", preparation_run_id: "prep-after" },
-    { id: "study", workspace_id: "workspace" });
+    { id: "study", workspace_id: "workspace", listening_source_round_id: "round-3" });
   assert.equal(evidence.complete, false);
   assert.equal(evidence.total_cost_usd, null);
   assert.equal(evidence.total_elapsed_ms, null);

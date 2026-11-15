@@ -1,7 +1,7 @@
 import { signalWorkspaceEmbeddingDigestV1 as digest } from "../../packages/query-engine/src/signal-workspace-embeddings-v1.js";
 type Client = { query<T extends Record<string, unknown> = Record<string, unknown>>(sql: string, values?: unknown[]): Promise<{ rows: T[] }> };
 type Generation = { id: string; workspace_id: string; map_id: string; configuration_id: string; preparation_run_id: string };
-type Study = { id: string; workspace_id: string };
+type Study = { id: string; workspace_id: string; listening_source_round_id: string };
 type Event = { ledger: string; call_id: string; stage: string; status: string; settled_micro_usd: string | null;
   reserved_micro_usd: string | null; started_at: Date | string | null; ended_at: Date | string | null; timing_granularity: "call" | "run" };
 
@@ -9,24 +9,28 @@ export type NativeListeningRoundPathRowV1 = { id: string; ordinal: number; input
   output_generation_id: string | null; status: string };
 
 export function nativeListeningRoundPathV1<T extends NativeListeningRoundPathRowV1>(args: { initial_generation_id: string; before_generation_id: string;
-  after_generation_id: string; rounds: readonly T[] }): { rounds: T[]; generation_ids: string[] } | null {
+  after_generation_id: string; after_round_id: string; rounds: readonly T[] }):
+  { rounds: T[]; generation_ids: string[]; before_generation_index: number; after_generation_index: number } | null {
   const { initial_generation_id: initial, before_generation_id: before, after_generation_id: after } = args;
-  if (!initial || !before || !after || initial === after) return null;
+  if (!initial || !before || !after || !args.after_round_id) return null;
   const rounds = [...args.rounds].sort((a, b) => a.ordinal - b.ordinal || a.id.localeCompare(b.id));
   const path: T[] = [], generations = [initial];
-  let cursor = initial, beforeCount = initial === before ? 1 : 0, reachedAfter = cursor === after;
-  for (let i = 0; i < rounds.length && !reachedAfter; i++) {
+  let cursor = initial, beforeIndex = initial === before ? 0 : -1, reachedAnchor = false;
+  for (let i = 0; i < rounds.length && !reachedAnchor; i++) {
     const round = rounds[i]!;
     if (round.ordinal !== i + 1 || round.input_generation_id !== cursor || round.status !== "completed" || !round.output_generation_id
-      || generations.includes(round.output_generation_id)) return null;
+      ) return null;
     path.push(round);
     cursor = round.output_generation_id;
     generations.push(cursor);
-    if (cursor === before) beforeCount++;
-    if (cursor === after) reachedAfter = true;
+    if (beforeIndex < 0 && cursor === before) beforeIndex = generations.length - 1;
+    if (round.id === args.after_round_id) {
+      if (cursor !== after || beforeIndex < 0 || beforeIndex >= generations.length - 1) return null;
+      reachedAnchor = true;
+    }
   }
-  return reachedAfter && beforeCount === 1 && generations.indexOf(before) < generations.indexOf(after)
-    ? { rounds: path, generation_ids: generations } : null;
+  return reachedAnchor ? { rounds: path, generation_ids: generations, before_generation_index: beforeIndex,
+    after_generation_index: generations.length - 1 } : null;
 }
 
 export function nativeWallSpanV1(intervals: Iterable<{ started_at: Date | string | number | null; ended_at: Date | string | number | null }>): number | null {
@@ -68,10 +72,11 @@ export async function loadNativeReceiptEvidenceV1(client: Client, before: Genera
     const verifiedPath = parent.workspace_id === before.workspace_id && parent.workspace_id === after.workspace_id
       && parent.map_id === before.map_id && parent.map_id === after.map_id
       ? nativeListeningRoundPathV1({ initial_generation_id: parent.initial_generation_id, before_generation_id: before.id,
-        after_generation_id: after.id, rounds }) : null;
+        after_generation_id: after.id, after_round_id: study.listening_source_round_id, rounds }) : null;
     const path = verifiedPath?.rounds ?? [];
     let ancestryProofValid = false;
     if (verifiedPath) {
+      const uniqueGenerationIds = [...new Set(verifiedPath.generation_ids)];
       const generationRows = (await client.query<{ id: string; workspace_id: string; map_id: string; configuration_id: string;
         configuration_digest: string; configuration: Record<string, unknown>; configuration_state: string;
         kind: string; status: string; snapshot_digest: string | null; actual_digest: string | null;
@@ -81,10 +86,10 @@ export async function loadNativeReceiptEvidenceV1(client: Client, before: Genera
           signal_listening_discovery_source_current_v1(g.id) source_current,signal_listening_discovery_census_v1(g.id) census_digest,g.counts
         FROM signal_listening_discovery_generations g JOIN signal_listening_configurations cfg
           ON cfg.workspace_id=g.workspace_id AND cfg.id=g.configuration_id
-        WHERE g.workspace_id=$1 AND g.id=ANY($2::uuid[]) ORDER BY g.id`, [before.workspace_id, verifiedPath.generation_ids])).rows;
+        WHERE g.workspace_id=$1 AND g.id=ANY($2::uuid[]) ORDER BY g.id`, [before.workspace_id, uniqueGenerationIds])).rows;
       const generationById = new Map(generationRows.map(row => [row.id, row]));
       const initial = generationById.get(parent.initial_generation_id);
-      ancestryProofValid = generationRows.length === verifiedPath.generation_ids.length
+      ancestryProofValid = generationRows.length === uniqueGenerationIds.length
         && generationRows.every(row => row.workspace_id === before.workspace_id && row.map_id === before.map_id && row.status === "ready"
           && row.kind === "confirmed_members" && row.source_current && row.configuration_state === "published"
           && digest(row.configuration) === row.configuration_digest && row.snapshot_digest !== null && row.snapshot_digest === row.actual_digest)
@@ -118,8 +123,10 @@ export async function loadNativeReceiptEvidenceV1(client: Client, before: Genera
         output_configuration_id: r.output_configuration_id, output_digest: r.output_digest,
         status: r.status, classification_run_id: r.classification_run_id,
         classification_preparation_id: r.classification_preparation_id })), generation_path_complete: !!verifiedPath && ancestryProofValid,
-      before_generation_index: verifiedPath?.generation_ids.indexOf(before.id) ?? null,
-      generation_ids: verifiedPath?.generation_ids ?? null, root_census_digest: parent.root_census_digest,
+      before_generation_index: verifiedPath?.before_generation_index ?? null,
+      after_generation_index: verifiedPath?.after_generation_index ?? null,
+      generation_ids: verifiedPath?.generation_ids ?? null, listening_source_round_id: study.listening_source_round_id,
+      root_census_digest: parent.root_census_digest,
       child_run_count: children.length };
     if (parent.status !== "completed") limitations.add("listening_parent_not_completed");
     const roundCalls = roundIds.length ? (await client.query<{ id: string; call_state: string; settled_micro_usd: string | null;
