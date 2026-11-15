@@ -53,6 +53,10 @@ La base ya dispone de operaciones por lote y proyecciones incrementales; se reut
 
 Los procesos avanzan automáticamente dentro de su autoridad y presupuesto iniciales. El agente de juicio es Sonnet 4.6, nunca Opus. Revisión técnica, aplicación controlada de migraciones y contratación comercial son controles operativos separados de los pasos analíticos.
 
+Las acciones nuevas de Descubrimiento y Estudio requieren un aprovisionamiento nativo explícito, con cotización, autoridad administrativa y comparación de la política anterior. El recibo limita el permiso al workspace solicitado; una acción organizacional no concede acceso a los demás workspaces. Las acciones históricas conservan sus restricciones. Completar una política clásica o habilitar Monitoreo hereda el mismo ámbito y presupuesto, sin reiniciar el saldo al rotar o retirar y reintroducir acciones.
+
+El presupuesto del ámbito se aplica al conjunto de ejecuciones, además de sus topes individuales. Cada ciclo de Escucha y ejecución de Estudio reserva su cap antes del primer gasto, con identidad durable e idempotente. El ciclo incluye su clasificación inicial, prototipos y vueltas posteriores, sin sumar dos veces sus hijos. Mientras pueda generar gasto o queden resultados inciertos, conserva la reserva; sólo el cierre definitivo permite devolver la parte no usada, manteniendo exposición real y pendiente. La admisión serializa la comprobación del total y la nueva reserva. Esto permite reutilizar caché y repetir una ejecución dentro del saldo autorizado sin añadir aprobaciones humanas al análisis.
+
 El recibo separa partidas que escalan por raíz de las que escalan por grupos y vueltas. No extrapola linealmente toda la factura editorial de un piloto al tamaño de otro corpus. Conserva uso a tarifa, cargos observados, reservas y exposición incierta como magnitudes distintas.
 
 ## Consecuencias y verificación
