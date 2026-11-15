@@ -22,6 +22,10 @@ import {
   writeFacetResultsV1,
   type LabelingDatabaseV1,
 } from "./signal-mention-facets";
+import {createLabelingRawPageStoreV1} from "./signal-labeling-raw-page-store";
+import {LABELING_RAW_PAGE_MAX_MEMBERS_V1,type LabelingRawPageStorageV1} from "./signal-labeling-raw-pages";
+import {validateLabelingInputBoundsV1,type LabelingInputBoundsV1} from './signal-labeling-input-bounds';
+export type {LabelingInputBoundsV1} from './signal-labeling-input-bounds';
 export type LabelingPolicyV1={organization_id:string;budget_date:string;budget_timezone:string;daily_cap_micro_usd:string|null;
  max_execution_micro_usd:string|null;provider:string;model:string;action:string;funding_receipt_id?:string|null;effective_total_cap_micro_usd?:string};
 export type LabelingRequestPolicyV1=Pick<LabelingPolicyV1,"max_execution_micro_usd"|"provider"|"model">;
@@ -526,6 +530,11 @@ export function createSignalLabelingStoreV1<
     policy_action?: "concept_membership_jev" | "concept_membership_claude" | "mass_labeling_jev";
     /** H1 verifies each decision against this call's results in the same transaction. */
     persist_results_before_write?: boolean;
+    /** Native page adapters only: mutations touch disjoint calls/results and
+     * never update the run lifecycle. Requires durable page custody. */
+    parallel_native_pages?: boolean;
+    bounded_inputs?:(client:PoolClient,run:LabelingRunV1,bounds:LabelingInputBoundsV1)=>Promise<Input[]>;
+    has_inputs?:(client:PoolClient,run:LabelingRunV1)=>Promise<boolean>;
     inputs: (
       client: LabelingDatabaseV1 | PoolClient,
       run: LabelingRunV1,
@@ -540,6 +549,9 @@ export function createSignalLabelingStoreV1<
     beforeSubmit?: (client: PoolClient, run: LabelingRunV1, calls: LabelingCallV1<Input>[]) => Promise<void>;
   };
   database: LabelingDatabaseV1;
+  /** Explicit R16 opt-in. Historical consumers keep their page of 200. */
+  page_size?: number;
+  rawPages?: LabelingRawPageStorageV1;
   /** Runtime preflight, cached by the existing private storage adapter. */
   assertRawReady?: () => Promise<void>;
   /** True only for a runtime writer that authenticates a byte-for-byte readback. */
@@ -561,6 +573,8 @@ export function createSignalLabelingStoreV1<
   }) => Promise<string>;
 }) {
   const db = options.database;
+  const pageSize=options.page_size??200;
+  if(!Number.isInteger(pageSize)||pageSize<1||pageSize>LABELING_RAW_PAGE_MAX_MEMBERS_V1)fail("labeling_page_size_invalid",400);
   async function lock(c: PoolClient, run: LabelingRunV1) {
     const found = (
       await c.query(
@@ -569,6 +583,51 @@ export function createSignalLabelingStoreV1<
       )
     ).rows[0];
     if (!found) fail("labeling_lease_lost");
+  }
+  // Raw planning/attachment updates only its own page/calls. SHARE allows
+  // disjoint pages to progress, while conflicting with every lease UPDATE.
+  // Check the physical clock after acquiring the fence: a waiter cannot use
+  // transaction-start `now()` to attach after its lease expired behind a writer.
+  async function rawRunReadFence(c:PoolClient,run:LabelingRunV1){
+    const found=(await c.query(`WITH raw_run_fence AS MATERIALIZED(
+      SELECT id,lease_until FROM signal_labeling_runs
+      WHERE id=$1 AND lease_token=$2 AND workspace_id=$3 FOR SHARE)
+      SELECT id FROM raw_run_fence WHERE lease_until>clock_timestamp()`,
+      [run.id,run.lease_token,run.workspace_id])).rows[0];
+    if(!found)fail("labeling_lease_lost");
+  }
+  const rawPages=options.rawPages?createLabelingRawPageStoreV1({database:db,storage:options.rawPages,
+    withRunReadFence:(run,fn)=>tx(db,async c=>{await rawRunReadFence(c,run);return fn(c);})}):null;
+  async function pageMutationFence(c:PoolClient,run:LabelingRunV1){
+    if(options.adapter?.parallel_native_pages===true&&rawPages)await rawRunReadFence(c,run);
+    else await lock(c,run);
+  }
+  async function lockMutationCalls(c:PoolClient,run:LabelingRunV1,calls:LabelingCallV1<Input>[],pages?:Array<{call:LabelingCallV1<Input>;results:Result[]}>){
+    const ids=calls.map(call=>call.id);
+    if(new Set(ids).size!==ids.length)fail('labeling_result_call_conflict');
+    // Match raw planning/attachment's global call order. PostgreSQL compares
+    // JSONB results without reserializing canonical numeric spellings in JS.
+    const found=await c.query<{id:string}>(`SELECT id FROM signal_labeling_calls
+      WHERE workspace_id=$1 AND run_id=$2 AND id=ANY($3::uuid[]) ORDER BY id FOR UPDATE`,[run.workspace_id,run.id,ids]);
+    if(found.rows.length!==calls.length)fail('labeling_result_call_conflict');
+    if(!pages)return new Set<string>();
+    // A separate statement sees the committed row after any lock wait. Never
+    // approve a divergent replay from a pre-wait snapshot of results_applied.
+    const checked=await c.query<{id:string;results_applied:boolean;replay_ok:boolean}>(`SELECT call.id,call.results_applied,
+      (NOT call.results_applied OR call.results IS NOT DISTINCT FROM planned.results) replay_ok
+      FROM signal_labeling_calls call JOIN jsonb_to_recordset($4::jsonb) planned(id uuid,results jsonb) ON planned.id=call.id
+      WHERE call.workspace_id=$1 AND call.run_id=$2 AND call.id=ANY($3::uuid[])`,
+      [run.workspace_id,run.id,ids,JSON.stringify(pages.map(page=>({id:page.call.id,results:page.results})))]);
+    if(checked.rows.length!==calls.length)fail('labeling_result_call_conflict');
+    if(checked.rows.some(row=>!row.replay_ok))fail('labeling_result_replay_conflict');
+    return new Set(checked.rows.filter(row=>row.results_applied).map(row=>row.id));
+  }
+
+  async function registerMutationFence(c:PoolClient,run:LabelingRunV1,operation:'mark'|'apply'){
+    // One deferred check per transaction covers waits after the initial fence,
+    // including a delayed COMMIT; it never upgrades SHARE to UPDATE.
+    await c.query(`INSERT INTO signal_labeling_page_mutation_fences(workspace_id,run_id,lease_token,operation)
+      VALUES($1,$2,$3,$4)`,[run.workspace_id,run.id,run.lease_token,operation]);
   }
   async function authority(c: PoolClient, run: LabelingRunV1, amount: number) {
     // Policy lifecycle triggers take this lock. Read only after acquiring it so a
@@ -647,6 +706,39 @@ export function createSignalLabelingStoreV1<
     return policy;
   }
   return {
+    ...(rawPages?{
+      /** Only the live scheduler may provide IDs it never delivered to evaluate.
+       * Missing raw alone is never evidence that a crashed process did not send. */
+      async requeueUnsent(run:LabelingRunV1,calls:LabelingCallV1<Input>[]){
+        if(!calls.length)return;
+        if(new Set(calls.map(call=>call.id)).size!==calls.length)fail("labeling_unsent_requeue_conflict");
+        await tx(db,async c=>{
+          await lock(c,run);await authority(c,run,0);
+          if(!(await c.query(`SELECT 1 FROM signal_labeling_runs WHERE id=$1 AND workspace_id=$2
+            AND lease_token=$3::uuid AND lease_until>clock_timestamp()`,[run.id,run.workspace_id,run.lease_token])).rows.length)
+            fail("labeling_lease_lost");
+          await c.query("SELECT set_config('noisia.labeling_unsent_requeue_v1',$1,true)",
+            [JSON.stringify({contract_version:'signal-labeling-unsent-requeue-v1',run_id:run.id,workspace_id:run.workspace_id,
+              lease_token:run.lease_token,calls:calls.map(call=>({id:call.id,request_digest:call.request_digest}))})]);
+          const changed=await c.query(`UPDATE signal_labeling_calls call SET status='reserved',stop_reason=NULL,updated_at=clock_timestamp()
+            FROM jsonb_to_recordset($3::jsonb) known(id uuid,request_digest text)
+            WHERE call.run_id=$1 AND call.workspace_id=$2 AND call.id=known.id AND call.request_digest=known.request_digest
+              AND EXISTS(SELECT 1 FROM signal_labeling_runs held WHERE held.id=$1 AND held.workspace_id=$2
+                AND held.lease_token=$4::uuid AND held.lease_until>clock_timestamp())
+              AND call.status IN('submitting','reserved') AND call.provider_batch_id IS NULL
+              AND call.raw_sha256 IS NULL AND call.raw_storage_key IS NULL AND call.raw_size_bytes IS NULL
+              AND call.raw_storage_verified_at IS NULL AND call.raw_storage_verified_key IS NULL
+              AND call.usage IS NULL AND call.settled_micro_usd IS NULL AND call.terminal_exposure_micro_usd=0
+              AND NOT call.results_applied AND call.results IS NULL
+              AND NOT EXISTS(SELECT 1 FROM signal_labeling_raw_page_members member
+                WHERE member.workspace_id=call.workspace_id AND member.run_id=call.run_id AND member.call_id=call.id)
+            RETURNING call.id`,[run.id,run.workspace_id,JSON.stringify(calls.map(call=>({id:call.id,request_digest:call.request_digest}))),run.lease_token]);
+          await c.query("SELECT set_config('noisia.labeling_unsent_requeue_v1','',true)");
+          if(changed.rows.length!==calls.length)fail("labeling_unsent_requeue_conflict");
+        });
+        for(const call of calls)call.status='reserved';
+      },
+    }:{}),
     async claim(runId: string): Promise<LabelingRunV1 | null> {
       return tx(db, async (c) => {
         const token = randomUUID();
@@ -675,7 +767,7 @@ export function createSignalLabelingStoreV1<
         ).rows[0]!;
       });
     },
-    async fail(run: LabelingRunV1, code: string) {
+    async fail(run: LabelingRunV1, code: string,mode:{preserve_reserved?:boolean}={}) {
       await tx(db, async (c) => {
         await lock(c, run);
         if(code==="labeling_raw_receipt_invalid"){
@@ -687,7 +779,7 @@ export function createSignalLabelingStoreV1<
           await c.query(`UPDATE signal_labeling_runs SET error_code=$2,status='failed',updated_at=now() WHERE id=$1`,[run.id,code]);
           return;
         }
-        await c.query(
+        if(!rawPages||mode.preserve_reserved!==true)await c.query(
           `UPDATE signal_labeling_calls SET status='failed',updated_at=now() WHERE run_id=$1 AND status='reserved'`,
           [run.id],
         );
@@ -708,21 +800,31 @@ export function createSignalLabelingStoreV1<
         if (!changed.rows.length) fail("labeling_lease_lost");
       });
     },
-    async release(run: LabelingRunV1) {
+    async release(run: LabelingRunV1, cadence: {immediate?:boolean}={}) {
       await db.query(
         `UPDATE signal_labeling_runs SET lease_token=NULL,lease_until=NULL,
          next_poll_at=CASE WHEN EXISTS(SELECT 1 FROM signal_labeling_calls WHERE run_id=$1 AND status='unknown')
-           THEN now()+interval '1 hour' ELSE now()+interval '30 seconds' END WHERE id=$1 AND lease_token=$2`,
-        [run.id, run.lease_token],
+           THEN now()+interval '1 hour' WHEN $3::boolean AND error_code IS NULL THEN now()
+           ELSE now()+interval '30 seconds' END WHERE id=$1 AND lease_token=$2`,
+        [run.id, run.lease_token, cadence.immediate===true],
       );
     },
-    async inputs(run: LabelingRunV1) {
+    async inputs(run: LabelingRunV1,bounds?:LabelingInputBoundsV1) {
+      if(bounds){
+        let read:LabelingInputBoundsV1;try{read=validateLabelingInputBoundsV1(bounds,pageSize);}catch{fail('labeling_input_bounds_invalid',400);}
+        if(!options.adapter?.bounded_inputs)fail('labeling_bounded_inputs_unavailable',409);
+        return tx(db,async c=>{await c.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY');
+          return options.adapter!.bounded_inputs!(c,run,read);}).catch(error=>{
+            if(error instanceof Error&&['labeling_input_memory_bound','labeling_input_metadata_invalid'].includes(error.message))fail(error.message,409);
+            throw error;
+          });
+      }
       if (options.adapter) return options.adapter.inputs(db, run);
       return selectFacetInputsV1(
         db,
         run.workspace_id,
         run.cursor_root_id,
-        200,
+        pageSize,
       ) as Promise<Input[]>;
     },
     async reserve(
@@ -784,17 +886,29 @@ export function createSignalLabelingStoreV1<
         await db.query<LabelingCallV1<Input>>(
           `SELECT * FROM signal_labeling_calls WHERE run_id=$1
            ${options.adapter?.pending_calls_only ? "AND NOT results_applied" : ""}
-           ORDER BY created_at,id ${options.adapter?.pending_calls_only ? "LIMIT 200" : ""}`,
-          [run.id],
+           ORDER BY created_at,id ${options.adapter?.pending_calls_only ? "LIMIT $2" : ""}`,
+          options.adapter?.pending_calls_only?[run.id,pageSize]:[run.id],
         )
       ).rows.map((call) => ({ ...call, raw_body: call.raw_body ?? null }));
+      let pageCalls=new Set<string>();
+      if(rawPages){
+        try{pageCalls=await rawPages.loadCalls(run,calls.filter(c=>!c.results_applied));}
+        catch(error){
+          if(error instanceof SignalLabelingError)throw error;
+          if(error instanceof SyntaxError||error instanceof Error&&["labeling_raw_page_invalid","labeling_raw_receipt_invalid",
+            "workspace_engine_storage_object_missing","workspace_engine_storage_digest_invalid","workspace_engine_storage_part_invalid",
+            "workspace_engine_storage_manifest_invalid","workspace_engine_storage_reference_invalid",
+            "workspace_engine_storage_response_too_large"].includes(error.message))fail("labeling_raw_receipt_invalid",503);
+          fail("labeling_raw_storage_unavailable",503);
+        }
+      }
       for (const call of calls) {
         const stored = call as LabelingCallV1<Input> & {
           raw_storage_key?: string | null;
           raw_sha256?: string | null;
           raw_size_bytes?: string | number | null;
         };
-        if (stored.raw_storage_key && stored.raw_sha256 && !call.raw_body && !call.results_applied) {
+        if (!pageCalls.has(call.id) && stored.raw_storage_key && stored.raw_sha256 && !call.raw_body && !call.results_applied) {
           if (!options.loadRaw) fail("labeling_raw_loader_unavailable", 503);
           const size = Number(stored.raw_size_bytes);
           if (!Number.isSafeInteger(size) || size < 0) fail("labeling_raw_receipt_invalid", 503);
@@ -828,9 +942,13 @@ export function createSignalLabelingStoreV1<
     async markSubmitting(run: LabelingRunV1, calls: LabelingCallV1<Input>[]) {
       await options.assertRawReady?.();
       await tx(db, async (c) => {
-        await lock(c, run);
+        await pageMutationFence(c,run);
         await authority(c, run, 0);
+        if(options.adapter?.parallel_native_pages===true&&rawPages)await lockMutationCalls(c,run,calls);
         await options.adapter?.beforeSubmit?.(c, run, calls);
+        if(options.adapter?.parallel_native_pages===true&&rawPages){
+          await rawRunReadFence(c,run);await registerMutationFence(c,run,'mark');
+        }
         const changed = await c.query(
           `UPDATE signal_labeling_calls SET status='submitting',updated_at=now() WHERE run_id=$1 AND id=ANY($2::uuid[]) AND status='reserved' RETURNING id`,
           [run.id, calls.map((x) => x.id)],
@@ -954,6 +1072,8 @@ export function createSignalLabelingStoreV1<
       run: LabelingRunV1,
       pages: Array<{ call: LabelingCallV1<Input>; raw: string }>,
     ) {
+      if(!pages.length)return;
+      if(rawPages)return rawPages.persist(run,pages);
       const receipts = [];
       for (const page of pages) {
         const sha = `sha256:${createHash("sha256").update(page.raw).digest("hex")}`;
@@ -1013,7 +1133,12 @@ export function createSignalLabelingStoreV1<
       pages: Array<{ call: LabelingCallV1<Input>; results: Result[] }>,
     ) {
       await tx(db, async (c) => {
-        await lock(c, run);
+        await pageMutationFence(c,run);
+        if(options.adapter?.parallel_native_pages===true&&rawPages){
+          const applied=await lockMutationCalls(c,run,pages.map(page=>page.call),pages);
+          pages=pages.filter(page=>!applied.has(page.call.id));if(!pages.length)return;
+          await rawRunReadFence(c,run);await registerMutationFence(c,run,'apply');
+        }
         const persistResults = async () => {
           const changed = await c.query(
           `UPDATE signal_labeling_calls call SET results_applied=true,results=page.results,updated_at=now()
@@ -1077,7 +1202,7 @@ export function createSignalLabelingStoreV1<
                 )
               ).rows[0]!.count,
             );
-        const available = (
+        const available = options.adapter?.has_inputs ? Number(await options.adapter.has_inputs(c,run)) : (
           options.adapter
             ? await options.adapter.inputs(c, run)
             : await selectFacetInputsV1(

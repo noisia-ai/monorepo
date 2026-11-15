@@ -67,10 +67,16 @@ test("H1 quarantines a returned provider response when durable raw storage fails
   assert.deepEqual(f.events,["reserve","submitting","provider","raw","failed:true","run_failed","release"]);
 });
 
-for(const status of [429,529] as const)test(`H1 HTTP ${status} retains raw and zero observed cost without charging reserve`,async()=>{
+for(const status of [429,529] as const)test(`H1 HTTP ${status} retains raw and unknown exposure without manufacturing zero usage`,async()=>{
   const f=fixture(status);
   await runHybridMembershipTickV1({run_id:run.id,stage:"jev",store:f.store,jevPrice:0.5,jev:f.provider});
-  assert.deepEqual(f.events,["reserve","submitting","provider","raw","settle","apply","run_failed","release"]);
+  assert.deepEqual(f.events,["reserve","submitting","provider","raw","failed:true","apply","run_failed","release"]);
+  assert.equal(f.calls[0]!.status,"unknown");assert.equal(f.calls[0]!.results_applied,true);
+  assert.equal(JSON.parse(f.calls[0]!.raw_body).http_status,status);
+  const raw=f.calls[0]!.raw_body;
+  await runHybridMembershipTickV1({run_id:run.id,stage:"jev",store:f.store,jevPrice:0.5,jev:f.provider});
+  assert.equal(f.events.filter(event=>event==="provider").length,1);
+  assert.equal(f.events.includes("settle"),false);assert.equal(f.calls[0]!.raw_body,raw);
 });
 
 test("batch confirmation preserves each root/concept JEV receipt and visible rationale",async()=>{
