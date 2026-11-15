@@ -216,17 +216,25 @@ export async function processJevStreamingWindowV2<I extends FacetInput, R>(args:
       if (fatal) throw fatal;
     }
     async function send(call:LabelingCallV1<I>){
+      let ownedReservation=reservationBytes;
       inFlight++;observe();
       try{
         const physical=await provider.evaluate(call.request as JevRequestV1,{signal:cancellation.signal});
         const raw=JSON.stringify(physical),bytes=Buffer.byteLength(raw);
         if(bytes>reservationBytes)throw Error('jev_stream_response_memory_bound');
-        observedRaw.add(call.id);buffered.push({call,raw,bytes,memory_bytes:reservationBytes});bufferedBytes+=bytes;observe();
+        // The bounded reader has completed. Keep conservative codec/copy
+        // custody for these exact bytes, rather than the largest possible body.
+        // Only the excess peak reservation is now available to another HTTP.
+        const custodyBytes=Math.min(reservationBytes,bytes*24+64*1024);
+        release(ownedReservation-custodyBytes);ownedReservation=custodyBytes;
+        observedRaw.add(call.id);buffered.push({call,raw,bytes,memory_bytes:custodyBytes});
+        ownedReservation=0; // consume owns this reservation through apply/feedback
+        bufferedBytes+=bytes;observe();
         const throttled=[429,529].includes(physical.http_status);if(throttled)cancellation.abort();
         flush(throttled||bufferedBytes>=e.max_buffered_bytes/2);
         if(physical.rate_limit_update_failed)fail(Error('jev_rate_cooldown_unavailable'));
       }catch(error){
-        release(reservationBytes);const failure=jevProviderErrorV1(error);
+        if(ownedReservation)release(ownedReservation);const failure=jevProviderErrorV1(error);
         if(cancellation.signal.aborted&&isJevPreFetchCancellationV1(error)){
           // First-party identity proves fetch never started. Keep the same money
           // reservation; no physical receipt, free response or result is invented.
