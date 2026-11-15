@@ -4,37 +4,15 @@ import {mkdtemp,open,stat,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {createInterface} from 'node:readline';
-import {signalWorkspaceEmbeddingDigestV1 as digest,signalWorkspaceMassLabelingConfigV3,type SignalWorkspaceEngineChunkV1} from '@noisia/query-engine';
+import {signalWorkspaceEmbeddingDigestV1 as digest,signalWorkspaceMassLabelingConfigV3,type SignalWorkspaceEngineChunkV1,type StudyNumericContextV1,type StudyNumericRowV1,type StudyNumericAdapterV1,type StudyNumericManifestV1} from '@noisia/query-engine';
 import {spoolSignalWorkspaceEngineInputV1,hashWorkspaceEngineFileV1} from './signal-workspace-engine-files';
 import {runWorkspaceEngineProcessV1,validateWorkspaceEngineOutputV1} from './signal-workspace-engine-process';
 import {readWorkspaceEngineInterpretationEvidenceV1} from './signal-workspace-engine-evidence';
 import {createListeningDiscoveryNumericStorageV1} from './signal-listening-discovery-numeric-storage';
 import type {WorkspaceEngineStorageV1} from './signal-workspace-engine-storage';
-import type {StudyRuntimeDriversV1,StudyRuntimeLeaseV1,StudyRuntimeNumericPlanV1,StudyRuntimeNumericComputedV1,StudyRuntimeNumericV1} from './signal-study-runtime';
+import type {StudyRuntimeDriversV1,StudyRuntimeLeaseV1,StudyRuntimeNumericComputedV1,StudyRuntimeNumericV1} from './signal-study-runtime';
 
-export type StudyNumericContextV1={workspace_id:string;execution_id:string;study_digest:string;source_digest:string;cut_digest:string;
- fit_plan_digest:string;proof_census_digest:string;context_digest:string;embedding_config_digest:string;embedding_space_digest:string;
- input_revision:number;root_count:number;source_preparation_run_ids:string[];preparation_unknown_root_ids:string[];sampling_seed:string};
-export type StudyNumericRowV1={root_id:string;text:string;vector:number[];proof_json:string;proof_digest:string;vector_json:string};
-export type StudyNumericAdapterV1={
- /** Resolve native owner and replay the exact fit plan from the frozen cut and
-  * committed axes. Header count alone is never proof of membership or rights. */
- load(args:{lease:StudyRuntimeLeaseV1;numeric_plan:StudyRuntimeNumericPlanV1;fit_plan:Parameters<StudyRuntimeDriversV1['fit']>[0]['fit_plan']}):Promise<StudyNumericContextV1|null>;
- /** SQL proof2 is derived AFTER axes: no self-referential hash in Source proof1.
-  * The native joins prove root→asset→exact UTF16 fragment→paid raw call/vector,
-  * model/config/context/rights and real/nullable embedding preparation lineage.
-  * Select IDs/octet lengths BEFORE hydration; never silently omit an oversize root. */
- read(args:{lease:StudyRuntimeLeaseV1;context:StudyNumericContextV1;after_root_id?:string;limit:number;max_working_bytes:number}):Promise<{
-  proof_census_digest:string;roots:StudyNumericRowV1[];next_root_id:string|null}>;
- assertCurrent(args:{lease:StudyRuntimeLeaseV1;context:StudyNumericContextV1}):Promise<void>;
-};
-export type StudyNumericManifestV1={contract_version:'signal-study-numeric-v1';workspace_id:string;execution_id:string;study_digest:string;
- source_digest:string;cut_digest:string;request_sha256:string;fit_plan_digest:string;numeric_config:ReturnType<typeof signalWorkspaceMassLabelingConfigV3>;
- numeric_config_digest:string;seed_digest:string;embedding_space_digest:string;proof_census_digest:string;source_proofs_sha256:string;
- source_preparation_run_ids:string[];preparation_unknown_root_ids:string[];preparation_unknown_count:number;root_count:number;grouped_count:number;unassigned_count:number;
- status:'empty'|'insufficient_population'|'completed';input_manifest_sha256:string;output_manifest_sha256:string|null;
- groups:StudyRuntimeNumericV1['groups'];unassigned_root_ids:string[];
- artifacts:Array<{name:string;sha256:string;size_bytes:number}>};
+export type{StudyNumericContextV1,StudyNumericRowV1,StudyNumericAdapterV1,StudyNumericManifestV1}from'@noisia/query-engine';
 const uuid=/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/u,hash=/^sha256:[a-f0-9]{64}$/u;
 const sha=(text:string)=>'sha256:'+createHash('sha256').update(text).digest('hex');
 function fail(code:string):never{throw Error('study_numeric_'+code);}

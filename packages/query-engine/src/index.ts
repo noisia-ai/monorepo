@@ -1303,3 +1303,5 @@ export * from './signal-study-output';
 export * from './signal-listening-discovery-streaming-v1';
 
 export * from './signal-study-jev-contracts';
+
+export type{StudyNumericContextV1,StudyNumericRowV1,StudyNumericAdapterV1,StudyNumericManifestV1}from'./signal-study-numeric-contracts';

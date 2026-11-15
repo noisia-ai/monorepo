@@ -1,5 +1,5 @@
 import {createHash} from 'node:crypto';
-import type{StudyNumericManifestV1}from'./signal-study-numeric';
+import type{StudyNumericManifestV1}from'@noisia/query-engine';
 import {
  validateSignalStudyExecutionConfigurationV1,buildSignalStudyConfiguredAxesRequestV1,resolveSignalStudyConfiguredAxesV1,signalStudyConfiguredCutV1,
  buildSignalStudyMotiveFitPlanV1,buildSignalStudyMotivePopulationV1,sampleSignalStudyGroupV1,signalStudyConfirmedCentroidV1,
