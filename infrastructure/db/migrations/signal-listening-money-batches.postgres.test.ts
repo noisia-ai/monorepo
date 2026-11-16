@@ -21,7 +21,7 @@ import {withDiscoveryAdvanceFixtureV1} from './signal-listening-discovery-advanc
 import {createSignalListeningDiscoveryAdvanceStoreV1} from '../signal-listening-discovery-advance';
 import {activateSignalListeningServingSnapshotV1,lockSignalListeningDiscoveryPolicyWithClientV1,type ListeningDiscoveryRoundV1} from '../signal-listening-discovery-money';
 
-import {anchorListeningStatementOracleParametersV1} from './signal-listening-statement-validator.oracle';
+import {anchorListeningStatementOracleParametersV1,listeningExpectedProjectionOracleSqlV1} from './signal-listening-statement-validator.oracle';
 import {listeningTransitionSetReferencesV1,assertListeningTransitionSetOracleV1} from './signal-listening-transition-set.oracle';
 import {ownerTargetSetReferencesV1,assertOwnerTargetSetOracleV1} from './signal-listening-owner-target-sets.oracle';
 
@@ -165,37 +165,48 @@ for(const defect of ['text','digest','question_digest','duplicate_question']as c
 test('selected materialization and full join match old validators and atomically reject forged siblings',{
  skip:!enabled,timeout:600000,
 },async()=>withMoneyFixture(1000000,async f=>{
- const sources=await Promise.all(['0318_signal_listening_statement_population.sql','0322_signal_listening_statement_selected_materialization.sql','0323_signal_listening_statement_selected_full_join.sql']
+ const sources=await Promise.all(['0318_signal_listening_statement_population.sql','0322_signal_listening_statement_selected_materialization.sql','0323_signal_listening_statement_selected_full_join.sql','0328_signal_listening_owner_target_sets.sql','0329_signal_listening_expected_projection.sql']
   .map(name=>readFile(new URL('./'+name,import.meta.url),'utf8')));
  // The exact native validation statements run against the same native owner,
  // population and typed batch. No public trigger is replaced for the oracle.
  const validators=sources.map(source=>{
   const text=source.match(/EXECUTE format\(\$validation\$([\s\S]*?)\$validation\$,batch_sql\)/u)?.[1];assert.ok(text);
   assert.equal((text.match(/%s/g)??[]).length,1);
-  return text.replace('%s','SELECT n.* FROM jsonb_to_recordset($8::jsonb) n(id uuid,inputs jsonb,request jsonb,request_digest text)');
+  return text.replace('%s','SELECT n.* FROM jsonb_populate_recordset(NULL::signal_labeling_calls,$8::jsonb) n');
  });
  const owner=(await f.database.query(`SELECT o.configuration_id,o.map_id,c.configuration_digest FROM signal_listening_runs o
   JOIN signal_listening_configurations c ON c.id=o.configuration_id AND c.workspace_id=o.workspace_id
   WHERE o.run_id=$1 AND o.workspace_id=$2`,[f.run.id,f.run.workspace_id])).rows[0];assert.ok(owner);
- async function oracle(c:PoolClient,rows:ReturnType<typeof proposals>,missingSelectedId?:string){
+ async function oracle(c:PoolClient,rows:ReturnType<typeof proposals>,missingSelectedId?:string,exactBatchJson?:string){
   const params=[f.run.id,f.run.workspace_id,owner.configuration_id,owner.map_id,f.run.entity_context_digest,
-   f.inputs.map(i=>i.root_id),owner.configuration_digest,JSON.stringify(rows)];
+   f.inputs.map(i=>i.root_id),owner.configuration_digest,exactBatchJson??JSON.stringify(rows)];
   const outputs=[];
   for(const sql of validators){
    const flags=(await c.query(anchorListeningStatementOracleParametersV1(sql),params)).rows[0];
-   const end=sql.indexOf('\n   SELECT COALESCE(');assert.ok(end>0);
-   const perCall=(await c.query(anchorListeningStatementOracleParametersV1(sql.slice(0,end)+"\nSELECT COALESCE(jsonb_agg(to_jsonb(e) ORDER BY e.id),'[]'::jsonb) expected FROM expected e WHERE $1::uuid IS NOT NULL AND $7::text IS NOT NULL"),params)).rows[0].expected;
+   const projected=await c.query(listeningExpectedProjectionOracleSqlV1(sql),params);
+   const exact=(await c.query(listeningExpectedProjectionOracleSqlV1(sql,true),params)).rows.map(r=>r.value as string);
+   const perCall=exact.map(value=>JSON.parse(value));
+   const metadata=projected.fields.map(field=>({name:field.name,type:field.dataTypeID,modifier:field.dataTypeModifier,size:field.dataTypeSize,format:field.format}));
+   assert.deepEqual(metadata.map(({name,type})=>({name,type})),[
+    {name:'id',type:2950},{name:'request',type:3802},{name:'request_digest',type:25},{name:'i',type:3802},
+    {name:'selected_count',type:23},{name:'digests',type:3802},{name:'basis',type:3802},{name:'expected_request',type:3802}]);
+   if(exactBatchJson){assert.ok(exact[0]!.includes('1234567890.1234567890123456789'),'SQL JSON text retains arbitrary JSONB numeric precision');assert.ok(exact[0]!.includes('00:00:00.123456'),'input JSON timestamp microseconds survive projection');}
    assert.equal(perCall.length,rows.length);
    assert.deepEqual(perCall.map((row:{id:string})=>row.id).sort(),rows.map(row=>row.id).sort(),'FULL never adds an unmatched-right ID or drops a batch call');
    if(missingSelectedId){const missing=perCall.find((row:{id:string})=>row.id===missingSelectedId);assert.ok(missing);assert.equal(missing.selected_count,null,'a call with no selected question survives the join');}
-   outputs.push({flags,perCall});
+   outputs.push({flags,exact,metadata});
   }
-  for(const output of outputs.slice(1))assert.deepEqual(output,outputs[0],'materialization and FULL preserve all three flags and exact per-call request/digest/basis aggregates');
+  for(const output of outputs.slice(1))assert.deepEqual(output,outputs[0],'all validators preserve three flags, eight typed expected values, NULLs, multiplicity and exact JSON bytes');
   return outputs.at(-1)!.flags;
  }
  await transaction(f,async c=>{
   const flags=await oracle(c,structuredClone(proposals(f,1000)));
   assert.deepEqual(flags,{invalid_questions:false,invalid_request:false,invalid_prior:false});
+  assert.deepEqual(await oracle(c,[]),flags,'empty expected relations retain all three flags');
+  const rows=structuredClone(proposals(f,1000));
+  const precise=(await c.query(`SELECT jsonb_set(jsonb_set($1::jsonb,'{0,inputs,0,native_precision_probe}',
+   '1234567890.1234567890123456789'::jsonb),'{0,inputs,0,published_at}','"2026-01-01T00:00:00.123456Z"'::jsonb)::text batch`,[JSON.stringify(rows)])).rows[0].batch;
+  assert.deepEqual(await oracle(c,rows,undefined,precise),flags,'precision probes in unread input metadata never alter validation');
  });
  for(const defect of ['text','request_digest','question_digest','duplicate_question','input_digest','map_id','configuration_digest','scope_basis','empty_questions']as const){
   const rows=structuredClone(proposals(f,1000)),bad=rows[1]!,input=bad.inputs[0]!;
@@ -223,6 +234,7 @@ test('selected materialization and full join match old validators and atomically
  await transaction(f,async c=>{
   const calls=(await insert(c,f,1000)).rows;assert.equal(calls.length,3);nativeIds=calls.map(row=>row.id);
   const persisted=(await c.query('SELECT to_jsonb(call) value FROM signal_labeling_calls call WHERE run_id=$1 ORDER BY id',[f.run.id])).rows.map(r=>r.value as Record<string,unknown>);
+  assert.deepEqual(await oracle(c,persisted as ReturnType<typeof proposals>),{invalid_questions:false,invalid_request:false,invalid_prior:false},'complete actual native call rows retain validation despite unused ledger fields');
   // Counterfactual transition relations only: no forged call or admission is
   // written. Actual table records supply the complete named row descriptor.
   const old=persisted.map(row=>({...row,created_at:'2026-01-01T00:00:00.123456Z'}));
