@@ -356,3 +356,32 @@ test('a new claimed run/config compiles fresh bytes and raw invalid JSON still f
  await assert.rejects(processSignalListeningJevV1({run_id:bad.run.id,store:bad.store,provider:bad.provider,execution}),/configuration_invalid/);
  assert.equal(bad.requests.length,0);
 });
+
+
+test('job stream observation cannot change physical attempts, raw custody or settlement even when callback mutates and throws',async()=>{
+ const config=signalListeningBaseTemplateV1({category:'tea',lexicon_terms:['tea']});
+ const names=['NOISIA_SIGNAL_LISTENING_ENABLED','NOISIA_JEV_PROVIDER_ENABLED']as const,previous=names.map(k=>process.env[k]);
+ const snapshots:Array<{in_flight:number;reserved_working_bytes:number;buffered_responses:number;active_flushes:number}>=[];
+ async function execute(observed:boolean){
+  const f=fixture(config,[['voice','promotion']]),sample=(await f.store.inputs(f.run))[0]!;let reserved=false;
+  f.store.inputs=async()=>reserved?[]:[sample];const reserve=f.store.reserve;
+  f.store.reserve=async(run,rows)=>{reserved=true;return reserve(run,rows);};
+  const database={query:async(sql:string)=>({rows:sql.includes('signal_workspace_features')?[{enabled:true}]:[{workspace_id:f.run.workspace_id,labeler_digest:f.run.labeler_digest,recovery_only:false}]})}as NonNullable<Parameters<typeof signalListeningJevJobV1>[1]>['database'];
+  const outcome=await signalListeningJevJobV1(f.run.id,{database,store:f.store,provider:f.provider,execution,preflight:async()=>{},
+   calibration:{load:async()=>null,derive:async()=>null},...(observed?{observe_stream:(metrics:typeof snapshots[number])=>{
+    snapshots.push({...metrics});metrics.in_flight=-999;throw Error('observer exception must not affect custody');
+   }}:{})});
+  return{outcome,requests:f.requests,events:f.events,calls:f.calls.map(call=>({status:call.status,applied:call.results_applied,
+   reserved:call.reserved_micro_usd,raw:call.raw_body})),answers:f.results.map(r=>r.answers)};
+ }
+ try{
+  names.forEach(k=>process.env[k]='true');const baseline=await execute(false),observed=await execute(true);
+  assert.equal(baseline.outcome.labeled,1);assert.equal(observed.outcome.labeled,1);
+  assert.deepEqual(observed.requests,baseline.requests);assert.equal(observed.requests.length,1);
+  assert.deepEqual(observed.calls,baseline.calls);assert.deepEqual(observed.answers,baseline.answers);
+  assert.deepEqual(observed.events,['durable','settled','apply']);assert.deepEqual(observed.events,baseline.events);
+  assert.ok(snapshots.some(s=>s.in_flight===1));assert.ok(snapshots.some(s=>s.active_flushes===1));
+  assert.ok(snapshots.every(s=>s.in_flight>=0&&s.reserved_working_bytes>=0&&s.buffered_responses>=0&&s.active_flushes>=0));
+  assert.equal(snapshots.at(-1)!.in_flight,0);assert.equal(snapshots.at(-1)!.active_flushes,0);
+ }finally{names.forEach((k,i)=>{if(previous[i]===undefined)delete process.env[k];else process.env[k]=previous[i];});}
+});

@@ -13,7 +13,7 @@ import {JevProviderErrorV1,type JevProviderV1} from '../providers/typesafe-jev';
 import {processJevLabelingPageV1,jevUsageV1,type JevPreparedExecutionV1,type JevNextInputBoundsV2} from './signal-jev-labeling-page';
 import {createLabelingRawPagesStorageV1} from './signal-labeling-receipt-storage';
 import {createWorkspaceEngineStorageV1,type WorkspaceEngineStorageV1} from './signal-workspace-engine-storage';
-import {assertJevStreamingExecutionV2,jevCallWorkingBytesV2,type JevStreamingExecutionV2} from './signal-jev-streaming-window';
+import {assertJevStreamingExecutionV2,jevCallWorkingBytesV2,type JevStreamingExecutionV2,type JevStreamingMetricsV2} from './signal-jev-streaming-window';
 
 import {listeningHasRawV1,selectSignalListeningRecoveryV1,createSignalListeningRecoveryProviderV1} from './signal-listening-recovery';
 import {planSignalListeningCalibrationV1,createSignalListeningCalibratedProviderV1} from './signal-listening-calibration';
@@ -54,6 +54,7 @@ export function createSignalListeningSelectionIndexV1(key:(input:SignalListening
  * never invents questions, negative labels, eligibility or a second provider attempt. */
 export function processSignalListeningJevV1(args:{run_id:string;store:Store;provider:JevProviderV1;
   execution:JevStreamingExecutionV2;lease_renewal_ms?:number;recovery_only?:boolean;
+  observe_stream?:(metrics:JevStreamingMetricsV2)=>void;
   prepare?(run:Readonly<LabelingRunV1>):Promise<JevPreparedExecutionV1>;
   selection?:()=>SignalListeningInputV1[]|undefined;
   read_next_inputs?(run:LabelingRunV1,bounds:JevNextInputBoundsV2):Promise<SignalListeningInputV1[]>;
@@ -120,6 +121,7 @@ export async function signalListeningJevJobV1(run_id:string,options:{
   database?:Parameters<typeof createSignalListeningStoreV1>[0]['database'];store?:Store;provider?:JevProviderV1;
   execution?:JevStreamingExecutionV2;preflight?:()=>Promise<void>;
   /** Instrumentation sees copied scalar metadata, never the mutable plan. */
+  observe_stream?:(metrics:JevStreamingMetricsV2)=>void;
   observe_calibration?:(event:{warmup:boolean;selected_roots:number;max_in_flight:number;shape_digests:string[]})=>void;
   calibrated_provider_factory?:typeof createCalibratedJevRuntimeProviderV2;
   calibration?:{load:typeof loadSignalListeningCalibrationV1;derive:typeof deriveSignalListeningCalibrationV1};
@@ -163,7 +165,7 @@ export async function signalListeningJevJobV1(run_id:string,options:{
     return hydrated??metadata??await store.calls(leased,{metadata_only:true});
   }};
   try{
-    return await processSignalListeningJevV1({run_id,execution,store:boundedStore,provider:unavailable,recovery_only:run.recovery_only,selection:()=>selection,compiled_snapshot:()=>jobContext?.snapshot,
+    return await processSignalListeningJevV1({run_id,execution,observe_stream:options.observe_stream,store:boundedStore,provider:unavailable,recovery_only:run.recovery_only,selection:()=>selection,compiled_snapshot:()=>jobContext?.snapshot,
       prepare_next:async(_leased,inputs)=>{
         if(!jobContext)throw Error('listening_identity_invalid');jobContext.assert(_leased);
         const {snapshot,configuration,configuration_digest}=jobContext,next=inputs.slice(0,execution.window_size);
