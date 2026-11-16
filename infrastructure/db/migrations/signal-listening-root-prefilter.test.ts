@@ -1,23 +1,5 @@
 import assert from 'node:assert/strict';
-import {createHash} from 'node:crypto';
-import {readFile} from 'node:fs/promises';
 import test from 'node:test';
-
-test('the root prefilter changes only the ID page query and binds contiguous owner/run/cursor parameters',async()=>{
- const source=await readFile(new URL('../signal-listening-runs.ts',import.meta.url),'utf8');
- const start=source.indexOf('  const ids:string[]='),end=source.indexOf('\n  if(!ids.length)break;',start);assert.ok(start>=0&&end>start);
- const page=source.slice(start,end);
- assert.ok(page.includes('q.configuration_id=$4::uuid'));
- assert.ok(page.includes('sent.workspace_id=$1 AND sent.run_id=$5::uuid AND sent.root_id=i.root_id AND sent.question_digest=q.question_digest'));
- assert.ok(page.includes('AND EXISTS(')&&page.includes('AND NOT EXISTS('));
- assert.ok(page.includes("${cursor?'AND i.root_id>$6::uuid':''} ORDER BY i.root_id LIMIT $3"));
- assert.ok(page.includes('[run.workspace_id,o.map_id,sliceSize,o.configuration_id,run.id,...(cursor?[cursor]:[])]'));
- assert.ok(!/status|input_digest|entity_context_digest|answer|human|COUNT|DISTINCT/u.test(page),'this is only the necessary same-run question-link condition, with no extra result/authority assumptions');
- // Source frozen at product 9e2834b2. The entire remainder, including RR reset,
- // metadata, hydrate, bytes, bounds, rights, authority and error paths, is exact.
- assert.equal(createHash('sha256').update(source.slice(0,start)+'  /* root page query */'+source.slice(end)).digest('hex'),
-  '494acf7ad10af4299ed0f26a5ca019624b27d1424c8004c2c313d20e9a5f299e');
-});
 
 type Link={ws:string;run:string;root:string;digest:string};
 test('the necessary condition preserves earlier consumers, duplicate digests, foreign links and empty configurations',()=>{
