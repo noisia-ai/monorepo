@@ -612,7 +612,7 @@ jobs:
               --test-concurrency=1 --import tsx infrastructure/db/migrations/signal-listening-money-batches.postgres.test.ts \
               > "$R16_RESERVE_MONEY_TAP" 2>&1
             reserve_money_status=$?
-            timeout 12m corepack pnpm exec node --test --test-name-pattern='^generic mass labeling with RAW pages retains its default reservation cursor$' \
+            timeout 12m corepack pnpm exec node --test --test-name-pattern='^(?:generic mass labeling with RAW pages retains its default reservation cursor|RAW attachment locks UUID order before a blocked last member and leaves disjoint calls compatible)$' \
               --test-concurrency=1 --import tsx infrastructure/db/migrations/signal-labeling-raw-page-locks.postgres.test.ts \
               > "$R16_RESERVE_RAW_PAGE_TAP" 2>&1
             reserve_raw_status=$?
@@ -630,6 +630,7 @@ jobs:
             ]},
             {file: process.argv[4], status: Number(process.argv[5]), expected: [
               'generic mass labeling with RAW pages retains its default reservation cursor',
+              'RAW attachment locks UUID order before a blocked last member and leaves disjoint calls compatible',
             ]},
           ];
           for (const group of groups) {
@@ -647,7 +648,7 @@ jobs:
               return rows.length !== 1 || !rows[0].endsWith(` - ${title}`);
             })) throw new Error('reserve shared smoke TAP did not report each exact selected title once as passing');
           }
-          process.stdout.write('reserve shared smoke: 7 exact selected PostgreSQL cases passed\n');
+          process.stdout.write('reserve shared smoke: 8 exact selected PostgreSQL cases passed\n');
           NODE
 
             set +e

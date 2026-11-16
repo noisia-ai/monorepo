@@ -110,7 +110,7 @@ test('workflow shared smoke execution condition selects SQL and neutral runs onl
  }
 });
 
-test('workflow input-contract selector and inline TAP gate enforce five cases and the 31-case main census',async()=>{
+test('workflow input-contract selector and inline TAP gate enforce five cases and the 32-case main census',async()=>{
  const workflowPath=new URL('../../../.github/workflows/r16-listening-small-diagnostic.yml',import.meta.url);
  const workflow=await readFile(workflowPath,'utf8');
  const patternMatch=workflow.match(/--test-name-pattern='([^']+)'[\s\\\n]*--test-concurrency=1 --import tsx infrastructure\/db\/migrations\/signal-listening-input-bounds\.postgres\.test\.ts/u);
@@ -146,12 +146,53 @@ test('workflow input-contract selector and inline TAP gate enforce five cases an
  }finally{await rm(dir,{recursive:true,force:true});}
 
  // Existing workflow gates contribute 26 exact main-job passes; five focused input cases make 31.
- const baselineCounts=[1,3,10,3,2,7];
+ const baselineCounts=[1,3,10,3,2,8];
  assert.ok(workflow.includes('selected.length !== 1')&&workflow.includes('^# tests 3$')
   &&workflow.includes('selected.length !== 10')&&workflow.includes('selected.length !== 2'),
   'the existing oracle, runtime, fence, reader, recovery and reserve gates must remain in the workflow');
- assert.equal(baselineCounts.reduce((sum,count)=>sum+count,0)+expected.length,31,
-  'main diagnostic selected-case census must be 31; isolated RAW acceptance contributes six for 37 overall');
+ assert.equal(baselineCounts.reduce((sum,count)=>sum+count,0)+expected.length,32,
+  'main diagnostic selected-case census must be 32; isolated RAW acceptance contributes six for 38 overall');
+});
+
+test('workflow RAW reservation selector and inline TAP gate require both exact cases and preserve the 32/38 census',async()=>{
+ const workflowPath=new URL('../../../.github/workflows/r16-listening-small-diagnostic.yml',import.meta.url);
+ const workflow=await readFile(workflowPath,'utf8');
+ const patternMatches=[...workflow.matchAll(/--test-name-pattern='([^']+)'[\s\\\n]*--test-concurrency=1 --import tsx infrastructure\/db\/migrations\/signal-labeling-raw-page-locks\.postgres\.test\.ts/gu)];
+ const reservationPattern=patternMatches.find(match=>match[1].includes('generic mass labeling with RAW pages retains its default reservation cursor'));
+ assert.ok(reservationPattern,'main workflow must keep a focused selector on the RAW page lock suite');
+ const selector=new RegExp(reservationPattern[1]);
+ const gateStart=workflow.indexOf('node - "$R16_RESERVE_MONEY_TAP" "$reserve_money_status" "$R16_RESERVE_RAW_PAGE_TAP" "$reserve_raw_status"');
+ assert.ok(gateStart>=0,'main RAW reservation TAP gate must exist');
+ const heredocStart=workflow.indexOf("<<'NODE'\n",gateStart);assert.ok(heredocStart>=0);
+ const bodyStart=heredocStart+"<<'NODE'\n".length;const bodyEnd=workflow.indexOf('\n          NODE',bodyStart);assert.ok(bodyEnd>bodyStart);
+ const gate=workflow.slice(bodyStart,bodyEnd).split(/\r?\n/u).map(line=>line.startsWith('          ')?line.slice(10):line).join('\n');
+ const groupsMatch=gate.match(/const groups = \[([\s\S]*?)\n\s*\];/u);assert.ok(groupsMatch,'TAP gate must enumerate money and RAW selected titles');
+ const arrays=[...groupsMatch[1].matchAll(/expected:\s*\[([\s\S]*?)\]/gu)].map(match=>[...match[1].matchAll(/^\s*'([^']+)'[,]?\s*$/gmu)].map(title=>title[1]));
+ assert.equal(arrays.length,2);assert.equal(arrays[0]?.length,6);assert.equal(arrays[1]?.length,2);
+ const orderTitle='RAW attachment locks UUID order before a blocked last member and leaves disjoint calls compatible';
+ assert.deepEqual(arrays[1],['generic mass labeling with RAW pages retains its default reservation cursor',orderTitle]);
+ assert.ok(arrays[1]?.every(title=>selector.test(title)),'selector must include both exact gated RAW cases');
+ assert.equal(selector.test('unrelated RAW page lock case'),false);
+ assert.ok(workflow.includes('reserve shared smoke: 8 exact selected PostgreSQL cases passed'));
+
+ const dir=await mkdtemp(join(tmpdir(),'r16-raw-selector-'));const moneyPath=join(dir,'money.tap'),rawPath=join(dir,'raw.tap');
+ const execute=async(money:string,raw:string,moneyStatus=0,rawStatus=0)=>{
+  await writeFile(moneyPath,money);await writeFile(rawPath,raw);
+  return spawnSync(process.execPath,['-',moneyPath,String(moneyStatus),rawPath,String(rawStatus)],{encoding:'utf8',input:gate});
+ };
+ try{
+  const moneyTap=arrays[0]!.map((title,index)=>`ok ${index+1} - ${title}`).join('\n');
+  const rawTap=arrays[1]!.map((title,index)=>`ok ${index+1} - ${title}`).join('\n');
+  const pass=await execute(moneyTap,rawTap);assert.equal(pass.status,0,pass.stderr||pass.stdout);
+  const skipped=await execute(moneyTap,rawTap.replace(`ok 2 - ${orderTitle}`,`ok 2 - ${orderTitle} # SKIP not available`));
+  assert.notEqual(skipped.status,0,'the selected order case cannot be skipped');
+  const missing=await execute(moneyTap,rawTap.replace(`ok 2 - ${orderTitle}`,''));
+  assert.notEqual(missing.status,0,'the order case must be present exactly once');
+  const failed=await execute(moneyTap,rawTap,0,1);assert.notEqual(failed.status,0,'nonzero RAW TAP process status must fail the gate');
+ }finally{await rm(dir,{recursive:true,force:true});}
+ const priorOtherMainCases=1+3+10+3+2;
+ assert.equal(priorOtherMainCases+arrays[0]!.length+arrays[1]!.length+5,32,
+  'main selected census must be 32; six isolated RAW cases make 38');
 });
 
 test('RAW attach acceptance runs only in its isolated job and main job consumes exact evidence',async()=>{
