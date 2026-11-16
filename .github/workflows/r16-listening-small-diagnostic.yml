@@ -1386,7 +1386,7 @@ jobs:
           mainlab_default_precheck=false
           if [ "$STATEMENT_SHARED_WIRE_SOURCE_KIND" = six ]; then
             timeout 2m corepack pnpm exec node --import tsx ../probe/scripts/r16-diagnostics/listening-small/mainlab-default-runtime.mjs capture \
-              "$R16_DIAGNOSTIC_TARGET_REF_REQUESTED" before "$R16_DIAGNOSTIC_MAINLAB_DEFAULT_BEFORE"
+              before "$R16_DIAGNOSTIC_TARGET_REF_REQUESTED" "$R16_DIAGNOSTIC_MAINLAB_DEFAULT_BEFORE"
             mainlab_default_precheck=true
           fi
           if [ "$R16_DIAGNOSTIC_MODE" != legacy ]; then
@@ -1451,11 +1451,21 @@ jobs:
           NODE
           fi
           if [ "$mainlab_default_precheck" = true ]; then
+            set +e
             timeout 2m corepack pnpm exec node --import tsx ../probe/scripts/r16-diagnostics/listening-small/mainlab-default-runtime.mjs capture \
-              "$R16_DIAGNOSTIC_TARGET_REF_REQUESTED" after "$R16_DIAGNOSTIC_MAINLAB_DEFAULT_AFTER"
-            timeout 2m corepack pnpm exec node --import tsx ../probe/scripts/r16-diagnostics/listening-small/mainlab-default-runtime.mjs assemble \
-              "$R16_DIAGNOSTIC_TARGET_REF_REQUESTED" "$R16_DIAGNOSTIC_MAINLAB_DEFAULT_BEFORE" \
-              "$R16_DIAGNOSTIC_MAINLAB_DEFAULT_AFTER" "$R16_DIAGNOSTIC_MAINLAB_DEFAULT_ARTIFACT"
+              after "$R16_DIAGNOSTIC_TARGET_REF_REQUESTED" "$R16_DIAGNOSTIC_MAINLAB_DEFAULT_AFTER"
+            mainlab_after_status=$?
+            mainlab_assemble_status=0
+            if [ "$mainlab_after_status" -eq 0 ]; then
+              timeout 2m corepack pnpm exec node --import tsx ../probe/scripts/r16-diagnostics/listening-small/mainlab-default-runtime.mjs assemble \
+                "$R16_DIAGNOSTIC_TARGET_REF_REQUESTED" "$R16_DIAGNOSTIC_MAINLAB_DEFAULT_BEFORE" \
+                "$R16_DIAGNOSTIC_MAINLAB_DEFAULT_AFTER" "$R16_DIAGNOSTIC_MAINLAB_DEFAULT_ARTIFACT"
+              mainlab_assemble_status=$?
+            fi
+            set -e
+            if [ "$diagnostic_status" -ne 0 ]; then exit "$diagnostic_status"; fi
+            if [ "$mainlab_after_status" -ne 0 ]; then exit "$mainlab_after_status"; fi
+            if [ "$mainlab_assemble_status" -ne 0 ]; then exit "$mainlab_assemble_status"; fi
           fi
           if [ "$diagnostic_status" -ne 0 ]; then exit "$diagnostic_status"; fi
 

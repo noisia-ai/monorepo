@@ -139,7 +139,7 @@ test('mainlab default receipt pair accepts phase-only change and rejects changed
  assert.throws(()=>validateDefaultRuntimePairV1({...before,runtime_kind:'B'},after,'C'),/statement_default_runtime_kind_mismatch/u);
 });
 
-test('mainlab evidence envelope binds both real pg_proc phases to the requested clean six-source target',()=>{
+test('mainlab evidence envelope binds both real pg_proc phases to the requested clean six-source target',async()=>{
  const requested='a'.repeat(40),paths=['infrastructure/db/migrations/0330_signal_listening_statement_shared_wire.sql',
   'infrastructure/db/migrations/0331_signal_listening_statement_payload.sql',
   'infrastructure/db/migrations/signal-listening-statement-shared-wire.fixture.ts',
@@ -160,6 +160,12 @@ test('mainlab evidence envelope binds both real pg_proc phases to the requested 
  const badSource={...capture('after'),source_files:source_files.map((entry,index)=>index?entry:{...entry,sha256:'not-a-sha'})};
  assert.throws(()=>buildMainlabDefaultRuntimeV1(requested,capture('before'),badSource),/mainlab_default_source_sha_invalid/u);
  assert.throws(()=>buildMainlabDefaultRuntimeV1(requested,capture('before'),{...capture('after'),runtime:{...runtime('after'),default_arm:'B'}}),/statement_default_arm_mismatch/u);
+ const helper=fileURLToPath(new URL('./mainlab-default-runtime.mjs',import.meta.url)),output=join(tmpdir(),'r16-mainlab-no-write.json');
+ for(const phase of ['before','after']){
+  const cli=spawnSync(process.execPath,[helper,'capture',phase,'not-a-40-character-sha',output],{encoding:'utf8'});
+  assert.notEqual(cli.status,0);assert.match(cli.stderr,/mainlab_default_requested_sha_invalid/u);
+  assert.doesNotMatch(cli.stderr,/mainlab_default_phase_invalid/u,'real CLI argument order must reach the SHA guard after a valid phase');
+ }
 });
 
 test('the workflow persists the full pure TAP and target/probe-bound zero-skip receipt',async()=>{
@@ -420,12 +426,25 @@ test('statement shared-wire probe and MFP jobs gate five exact cases on isolated
  assert.ok(mfpJob.includes('Upload statement shared-wire TAP receipt')&&mfpJob.includes('Stop and remove only the owned statement shared-wire lab'));
  const mainNativeStart=probe.indexOf('      - name: Apply migrations, focused oracle, and native diagnostic');assert.ok(mainNativeStart>=0);
  const mainNative=probe.slice(mainNativeStart,probe.indexOf('      - name: ',mainNativeStart+'      - name: Apply migrations, focused oracle, and native diagnostic'.length));
- const captureBefore=mainNative.indexOf('mainlab-default-runtime.mjs capture \\\n              "$R16_DIAGNOSTIC_TARGET_REF_REQUESTED" before');
+ const captureBefore=mainNative.indexOf('mainlab-default-runtime.mjs capture \\\n              before "$R16_DIAGNOSTIC_TARGET_REF_REQUESTED"');
  const diagnosticRun=mainNative.indexOf('../probe/scripts/r16-diagnostics/listening-small/run.mts --run');
- const captureAfter=mainNative.indexOf('mainlab-default-runtime.mjs capture \\\n              "$R16_DIAGNOSTIC_TARGET_REF_REQUESTED" after');
+ const captureAfter=mainNative.indexOf('mainlab-default-runtime.mjs capture \\\n              after "$R16_DIAGNOSTIC_TARGET_REF_REQUESTED"');
  const assemble=mainNative.indexOf('mainlab-default-runtime.mjs assemble');
  assert.ok(captureBefore>=0&&diagnosticRun>captureBefore&&captureAfter>diagnosticRun&&assemble>captureAfter,
   'Mainlab pg_proc must be read before and after the same mini runner and assembled into the candidate artifact');
+ const statusStart=mainNative.indexOf('          if [ "$mainlab_default_precheck" = true ]; then',diagnosticRun);
+ const statusEnd=mainNative.indexOf('\n          fi\n          if [ "$diagnostic_status" -ne 0 ]; then exit "$diagnostic_status"; fi',statusStart);
+ assert.ok(statusStart>=0&&statusEnd>statusStart,'mainlab postcheck status block exists');
+ const statusBlock=mainNative.slice(statusStart,statusEnd+'\n          fi'.length).split(/\r?\n/u)
+  .map(line=>line.startsWith('          ')?line.slice(10):line).join('\n');
+ const runStatusBlock=(diagnosticStatus:number,afterStatus:number,assembleStatus:number)=>spawnSync('/bin/bash',['-euo','pipefail','-c',
+  `set -euo pipefail\ndiagnostic_status=${diagnosticStatus}\nmainlab_default_precheck=true\ncalls=0\ntimeout() { calls=$((calls+1)); if [ "$calls" -eq 1 ]; then return "$AFTER_STATUS"; fi; return "$ASSEMBLE_STATUS"; }\n${statusBlock}\n`,
+ ],{encoding:'utf8',env:{PATH:process.env.PATH??'/usr/bin:/bin',AFTER_STATUS:String(afterStatus),ASSEMBLE_STATUS:String(assembleStatus),
+  R16_DIAGNOSTIC_TARGET_REF_REQUESTED:'a'.repeat(40),R16_DIAGNOSTIC_MAINLAB_DEFAULT_AFTER:'/tmp/after',
+  R16_DIAGNOSTIC_MAINLAB_DEFAULT_BEFORE:'/tmp/before',R16_DIAGNOSTIC_MAINLAB_DEFAULT_ARTIFACT:'/tmp/result'}});
+ assert.equal(runStatusBlock(17,22,23).status,17,'the original mini-runner failure stays primary when postcheck also fails');
+ assert.equal(runStatusBlock(0,22,23).status,22,'an after-read failure fails a successful mini runner');
+ assert.equal(runStatusBlock(0,0,23).status,23,'an envelope assembly failure fails a successful mini runner');
 });
 
 test('target 0330 source exposes the five exact native cases through its existing isolated fixture',async()=>{
