@@ -1,6 +1,7 @@
 import {signalListeningBaseTemplateV1,validateSignalListeningConfigurationV1,buildSignalListeningJevRequestV1,
  signalListeningQuestionDigestV1,SIGNAL_LISTENING_REQUEST_VERSION_V1}
  from '../../../packages/query-engine/src/signal-listening-contracts.js';
+import {signalWorkspaceEmbeddingDigestV1 as digest} from '../../../packages/query-engine/src/signal-workspace-embeddings-v1.js';
 
 // Experimental only: public protocol functions are never replaced.
 export const candidateSql = `CREATE FUNCTION pg_temp.r16_json_flat_v1(value jsonb)
@@ -60,7 +61,7 @@ export function listeningPreimage(i:number){
  const root_id=`00000000-0000-4000-8000-${String(i+1).padStart(12,'0')}`;
  const input={root_id,input_digest:'sha256:'+'1'.repeat(64),text:`Texto sintético ${i} de cerveza. `.repeat(256),
   question_keys:config.questions.map(q=>q.key),question_digests:Object.fromEntries(config.questions.map(q=>[q.key,signalListeningQuestionDigestV1(config,q)])),
-  scope_basis:{voice:'00000000-0000-4000-8000-000000000100',promotion:'00000000-0000-4000-8000-000000000101'}};
+  scope_basis:Object.fromEntries(config.questions.filter(q=>q.scope==='consumer_category').map(q=>[q.key,digest({voice:'00000000-0000-4000-8000-000000000100',promotion:'00000000-0000-4000-8000-000000000101'})]))};
  const request=buildSignalListeningJevRequestV1(input,config);
  return {request_version:SIGNAL_LISTENING_REQUEST_VERSION_V1,run_id:'00000000-0000-4000-8000-000000000200',
   root_id,input_digest:input.input_digest,entity_context_digest:'sha256:'+'2'.repeat(64),question_digests:input.question_digests,
