@@ -117,12 +117,12 @@ export function createJevHttpTokenWitnessV1(clock=()=>performance.now(),eventLim
 
 export function diagnosticModeV1(env:NodeJS.ProcessEnv){
  const mode=env.R16_DIAGNOSTIC_MODE??'legacy';
- assert.ok(mode==='legacy'||mode==='neutral_only','diagnostic_mode_invalid');return mode;
+ assert.ok(mode==='legacy'||mode==='neutral_only'||mode==='sql_frontier_only','diagnostic_mode_invalid');return mode;
 }
 export function listeningResourceProfileV1(env:NodeJS.ProcessEnv,mode:string):ListeningResourceProfileV1{
  const requested=env.R16_DIAGNOSTIC_RESOURCE_PROFILE??'baseline_512m';
  assert.ok(requested==='baseline_512m'||requested==='bounded_2g','resource_profile_invalid');
- assert.ok(requested!=='bounded_2g'||mode==='neutral_only','resource_profile_requires_neutral_only');
+ assert.ok(requested!=='bounded_2g'||mode==='neutral_only'||mode==='sql_frontier_only','resource_profile_requires_neutral_mode');
  return requested;
 }
 export function assertListeningResourceProfileV1(profile:ListeningResourceProfileV1,mode:string,env:NodeJS.ProcessEnv,
@@ -139,7 +139,7 @@ export function assertListeningResourceProfileV1(profile:ListeningResourceProfil
  return effective;
 }
 export function assertDiagnosticExecArgsV1(mode:string,args:string[],profileDir:string){
- if(mode==='neutral_only')assert.ok(!args.some(a=>a.startsWith('--cpu-prof')||a.startsWith('--heap')),'neutral_profiler_forbidden');
+ if(mode!=='legacy')assert.ok(!args.some(a=>a.startsWith('--cpu-prof')||a.startsWith('--heap')),'diagnostic_profiler_forbidden');
  else assertCpuProfilerArgsV1(args,profileDir);
 }
 export function assertListeningSmallGuardV1(env:NodeJS.ProcessEnv,args:string[]){
@@ -148,6 +148,11 @@ export function assertListeningSmallGuardV1(env:NodeJS.ProcessEnv,args:string[])
   assert.equal(env.NOISIA_R16_SMALL_DIAGNOSTIC,'true','diagnostic_opt_in_required');
   const mode=diagnosticModeV1(env);
   listeningResourceProfileV1(env,mode);
+  if(mode==='sql_frontier_only'){
+    assert.equal(env.GITHUB_EVENT_NAME,'workflow_dispatch','sql_frontier_requires_manual_dispatch');
+    assert.equal(env.R16_DIAGNOSTIC_TARGET_LABEL,'candidate','sql_frontier_requires_candidate_target');
+    assert.ok(/^[0-9a-f]{40}$/u.test(env.R16_DIAGNOSTIC_TARGET_REF_REQUESTED??''),'sql_frontier_target_ref_required');
+  }
   if(providerSecrets.some(key=>env[key]!==undefined)||Object.keys(env).some(key=>/(?:SONNET|VOYAGE)/u.test(key)&&/(?:API_KEY|TOKEN)/u.test(key)))
     throw Error('provider_credentials_forbidden');
   assert.ok(env.R16_DIAGNOSTIC_TARGET_ROOT,'target_root_required');
@@ -250,15 +255,17 @@ export async function runListeningSmallDiagnosticV1(){
   const started=performance.now();
   const mode=diagnosticModeV1(process.env);
   const neutralOnly=mode==='neutral_only';
+  const sqlFrontierOnly=mode==='sql_frontier_only';
+  const profilerDisabled=mode!=='legacy';
   let resourceProfile:ListeningResourceProfileV1|undefined;
   let effectiveExecution:ListeningExecutionV1|undefined;
   resourceProfile=listeningResourceProfileV1(process.env,mode);
-  assertDiagnosticExecArgsV1(neutralOnly?'neutral_only':'legacy',process.execArgv,resolve(process.env.R16_DIAGNOSTIC_CPU_PROFILE_DIR!));
+  assertDiagnosticExecArgsV1(mode,process.execArgv,resolve(process.env.R16_DIAGNOSTIC_CPU_PROFILE_DIR!));
   const monotonicOrigin=process.hrtime.bigint();
   let stage='imports';
   let storageServer:any;
   let httpTokenWitness:ReturnType<typeof createJevHttpTokenWitnessV1>|undefined;
-  const observer=createListeningObserver({neutral_only:neutralOnly});
+  const observer=createListeningObserver({neutral_only:neutralOnly,sql_frontier_only:sqlFrontierOnly});
   observer.setInnerPlanRootCount(ROOT_COUNT);
   try{
     Object.assign(process.env,{NOISIA_R16_LOCAL_PG_LAB:'r16-benchmark-pg17',NOISIA_R16_NATIVE_FIXTURE_PG:'true',
@@ -413,18 +420,19 @@ export async function runListeningSmallDiagnosticV1(){
             classification_start_performance_ms:startedProcessing,classification_end_performance_ms:classificationEndPerformanceMs,
             classification_start_hrtime_ns:classificationStartHrtime.toString(),classification_end_hrtime_ns:classificationEndHrtime!.toString(),
             warmups:warmups.length,warmup_phases:warmupPhases,calibrations,commit_batch_count:commits.length},
-          diagnostic_mode:neutralOnly?'neutral_only':'legacy',
+          diagnostic_mode:mode,
           resource_profile:{requested_profile:resourceProfile,execution:effectiveExecution},
-          cpu_profile:neutralOnly?{enabled:false,reason:'neutral_only',classification_clock:classificationClock,capacity_claim:false}:cpuProfileMetadataV1({main_pid:process.pid,sampler_pid:observerSnapshot.sampler_process_pid,
+          cpu_profile:profilerDisabled?{enabled:false,reason:sqlFrontierOnly?'sql_frontier_only':'neutral_only',classification_clock:classificationClock,capacity_claim:false}:cpuProfileMetadataV1({main_pid:process.pid,sampler_pid:observerSnapshot.sampler_process_pid,
             clock:classificationClock,exec_args:process.execArgv,
             profile_dir:resolve(process.env.R16_DIAGNOSTIC_CPU_PROFILE_DIR!)}),
           observed_http_latency:latencySummary,storage:storageServer.metrics(),sql_profile:profile.snapshot(),
           token_budget_http_witness:httpTokenWitness.snapshot(),
-          inner_plan_capture:{enabled:!neutralOnly,disabled_reason:neutralOnly?'neutral_only':null,diagnostic_only:true,threshold_roots:1024,max_captures_per_query_hash:INNER_PLAN_CAPTURE_ORDINALS.length,capture_ordinals:INNER_PLAN_CAPTURE_ORDINALS,min_duration_ms:INNER_PLAN_MIN_DURATION_MS,
+          inner_plan_capture:{enabled:!profilerDisabled,disabled_reason:profilerDisabled?mode:null,diagnostic_only:true,threshold_roots:1024,max_captures_per_query_hash:INNER_PLAN_CAPTURE_ORDINALS.length,capture_ordinals:INNER_PLAN_CAPTURE_ORDINALS,min_duration_ms:INNER_PLAN_MIN_DURATION_MS,
             plans_below_min_duration_captured:false,observations:observerSnapshot.inner_plan_observations},
           dml_plan_capture:{enabled:!neutralOnly,disabled_reason:neutralOnly?'neutral_only':null,diagnostic_only:true,opt_in_required:true,min_batch_size:DML_PLAN_MIN_BATCH,max_captures_per_query_hash:1,min_duration_ms:DML_PLAN_MIN_DURATION_MS,
-            plans_below_min_duration_captured:false,max_plans_per_capture:DML_PLAN_MAX_PLANS,trigger_names_allowlisted:true,raw_query_or_values_recorded:false,
+            plans_below_min_duration_captured:false,max_plans_per_capture:DML_PLAN_MAX_PLANS+(sqlFrontierOnly?1:0),...(sqlFrontierOnly?{nested_plan_limit:DML_PLAN_MAX_PLANS,outer_plan_absence:'unknown'}:{}),trigger_names_allowlisted:true,raw_query_or_values_recorded:false,
             analyze_timing_enabled:!neutralOnly,analyze_timing_overhead_measured:false,capacity_claim:false,
+            sql_frontier:sqlFrontierOnly?observerSnapshot.sql_frontier_capture:null,
             observations:observerSnapshot.dml_plan_observations},
           root_census_sha256:sha([...rootSet].sort().join('\n')),
           serving_question_count:serving.length,total_wall_ms:performance.now()-started};
@@ -440,18 +448,19 @@ export async function runListeningSmallDiagnosticV1(){
     try{observerSnapshot=await finishListeningObserver(observer);}catch(cleanupError){observerSnapshot={...observer.snapshot(),cleanup_error:safeError(cleanupError)};}
     const failure={contract_version:'r16-listening-small-diagnostic-v1',diagnostic_only:true,h1_accepted:false,
       status:'failed',stage,code:safeError(error),total_wall_ms:performance.now()-started,process_id:process.pid,
-      diagnostic_mode:neutralOnly?'neutral_only':'legacy',
+      diagnostic_mode:mode,
       resource_profile:{requested_profile:resourceProfile??process.env.R16_DIAGNOSTIC_RESOURCE_PROFILE??'baseline_512m',execution:effectiveExecution??null},
-      cpu_profile:neutralOnly?{enabled:false,reason:'neutral_only',capacity_claim:false}:{enabled:true,profiler:'node_cpu_prof',interval_us:1000,main_process_pid:process.pid,
+      cpu_profile:profilerDisabled?{enabled:false,reason:sqlFrontierOnly?'sql_frontier_only':'neutral_only',capacity_claim:false}:{enabled:true,profiler:'node_cpu_prof',interval_us:1000,main_process_pid:process.pid,
         sampler_process_pid:observerSnapshot.sampler_process_pid??null,output:'pid_scoped_cpu_profiles_only',heap_profile:false,
         source_text_embedded:false,overhead_measured:false,capacity_claim:false},observer:observerSnapshot,
       token_budget_http_witness:httpTokenWitness?.snapshot()??{contract_version:'r16-jev-http-token-witness-v1',diagnostic_only:true,
         h1_accepted:false,status:'not_started',capacity_claim:false,event_timing_overhead_measured:false},
-      inner_plan_capture:{enabled:!neutralOnly,disabled_reason:neutralOnly?'neutral_only':null,diagnostic_only:true,threshold_roots:1024,max_captures_per_query_hash:INNER_PLAN_CAPTURE_ORDINALS.length,capture_ordinals:INNER_PLAN_CAPTURE_ORDINALS,min_duration_ms:INNER_PLAN_MIN_DURATION_MS,
+      inner_plan_capture:{enabled:!profilerDisabled,disabled_reason:profilerDisabled?mode:null,diagnostic_only:true,threshold_roots:1024,max_captures_per_query_hash:INNER_PLAN_CAPTURE_ORDINALS.length,capture_ordinals:INNER_PLAN_CAPTURE_ORDINALS,min_duration_ms:INNER_PLAN_MIN_DURATION_MS,
         plans_below_min_duration_captured:false,observations:observerSnapshot.inner_plan_observations},
       dml_plan_capture:{enabled:!neutralOnly,disabled_reason:neutralOnly?'neutral_only':null,diagnostic_only:true,opt_in_required:true,min_batch_size:DML_PLAN_MIN_BATCH,max_captures_per_query_hash:1,min_duration_ms:DML_PLAN_MIN_DURATION_MS,
-        plans_below_min_duration_captured:false,max_plans_per_capture:DML_PLAN_MAX_PLANS,trigger_names_allowlisted:true,raw_query_or_values_recorded:false,
+        plans_below_min_duration_captured:false,max_plans_per_capture:DML_PLAN_MAX_PLANS+(sqlFrontierOnly?1:0),...(sqlFrontierOnly?{nested_plan_limit:DML_PLAN_MAX_PLANS,outer_plan_absence:'unknown'}:{}),trigger_names_allowlisted:true,raw_query_or_values_recorded:false,
         analyze_timing_enabled:!neutralOnly,analyze_timing_overhead_measured:false,capacity_claim:false,
+        sql_frontier:sqlFrontierOnly?observerSnapshot.sql_frontier_capture:null,
         observations:observerSnapshot.dml_plan_observations}};
     await atomicJson(artifact,failure).catch(()=>undefined);
     await storageServer?.close().catch(()=>undefined);

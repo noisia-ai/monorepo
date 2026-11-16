@@ -28,17 +28,20 @@ test('default resource profile resolves through the product getter to the baseli
   {max_in_flight:1024,max_buffered_bytes:536870912,flush_size:1024,max_flushes:2,flush_interval_ms:250,window_size:4096});
 });
 
-test('bounded resource profile resolves through the product getter only for neutral mode',async()=>{
+test('bounded resource profile resolves through the product getter only for neutral modes',async()=>{
  const {getExecution,envFor}=await streamProfileDependencies();
  const env={...envFor('bounded_2g'),R16_DIAGNOSTIC_RESOURCE_PROFILE:'bounded_2g'};
  assert.equal(listeningResourceProfileV1(env,'neutral_only'),'bounded_2g');
  assert.deepEqual(assertListeningResourceProfileV1('bounded_2g','neutral_only',env,getExecution),
   {max_in_flight:4096,max_buffered_bytes:2147483648,flush_size:4096,max_flushes:2,flush_interval_ms:1000,window_size:4096});
+ assert.equal(listeningResourceProfileV1(env,'sql_frontier_only'),'bounded_2g');
+ assert.deepEqual(assertListeningResourceProfileV1('bounded_2g','sql_frontier_only',env,getExecution),
+  {max_in_flight:4096,max_buffered_bytes:2147483648,flush_size:4096,max_flushes:2,flush_interval_ms:1000,window_size:4096});
 });
 
 test('resource profile selection rejects unknown names and bounded mode outside neutral runs',()=>{
  assert.throws(()=>listeningResourceProfileV1({R16_DIAGNOSTIC_RESOURCE_PROFILE:'surprise'},'neutral_only'),/resource_profile_invalid/u);
- assert.throws(()=>listeningResourceProfileV1({R16_DIAGNOSTIC_RESOURCE_PROFILE:'bounded_2g'},'legacy'),/resource_profile_requires_neutral_only/u);
+ assert.throws(()=>listeningResourceProfileV1({R16_DIAGNOSTIC_RESOURCE_PROFILE:'bounded_2g'},'legacy'),/resource_profile_requires_neutral_mode/u);
 });
 
 test('resource profile guard rejects environment and effective tuple drift without allocating the profile budget',async()=>{
@@ -86,6 +89,22 @@ test('diagnostic run binds target and artifact to this workflow workspace',()=>{
   env.R16_DIAGNOSTIC_CPU_PROFILE_DIR='/tmp/work/artifacts/r16-listening-small/cpu-profile-candidate';
   env.R16_DIAGNOSTIC_TARGET_ROOT='/tmp/work/elsewhere';
   assert.throws(()=>assertListeningSmallGuardV1(env,['--run']),/target_root_outside_workspace/u);
+});
+
+test('SQL frontier mode is manual candidate-only with an explicit immutable target ref and no profiler',()=>{
+ assert.equal(diagnosticModeV1({R16_DIAGNOSTIC_MODE:'sql_frontier_only'}),'sql_frontier_only');
+ assert.doesNotThrow(()=>assertDiagnosticExecArgsV1('sql_frontier_only',['--import','tsx'],'/unused'));
+ assert.throws(()=>assertDiagnosticExecArgsV1('sql_frontier_only',['--cpu-prof'],'/unused'),/profiler_forbidden/u);
+ const env={GITHUB_ACTIONS:'true',GITHUB_EVENT_NAME:'workflow_dispatch',NOISIA_R16_SMALL_DIAGNOSTIC:'true',
+  R16_DIAGNOSTIC_MODE:'sql_frontier_only',R16_DIAGNOSTIC_TARGET_LABEL:'candidate',R16_DIAGNOSTIC_TARGET_REF_REQUESTED:'c'.repeat(40),
+  GITHUB_WORKSPACE:'/tmp/work',R16_DIAGNOSTIC_TARGET_ROOT:'/tmp/work/target',R16_DIAGNOSTIC_PROBE_ROOT:'/tmp/work/probe',
+  R16_DIAGNOSTIC_PROBE_REF_REQUESTED:'b'.repeat(40),R16_DIAGNOSTIC_ARTIFACT:'/tmp/work/artifacts/r16-listening-small/result.json',
+  R16_DIAGNOSTIC_CPU_PROFILE_DIR:'/tmp/work/artifacts/r16-listening-small/cpu-profile-candidate',
+  DATABASE_URL:'postgresql://postgres:pw@127.0.0.1:5432/noisia_mfp_ci',R16BENCH_REDIS_URL:'redis://127.0.0.1:6379'};
+ assert.doesNotThrow(()=>assertListeningSmallGuardV1(env,['--run']));
+ assert.throws(()=>assertListeningSmallGuardV1({...env,GITHUB_EVENT_NAME:'pull_request'},['--run']),/sql_frontier_requires_manual_dispatch/u);
+ assert.throws(()=>assertListeningSmallGuardV1({...env,R16_DIAGNOSTIC_TARGET_LABEL:'baseline-32f'},['--run']),/sql_frontier_requires_candidate_target/u);
+ assert.throws(()=>assertListeningSmallGuardV1({...env,R16_DIAGNOSTIC_TARGET_REF_REQUESTED:''},['--run']),/target_ref_required/u);
 });
 
 test('CPU profile metadata is PID-scoped, bounded to CPU sampling, and records classification clocks',()=>{
@@ -495,6 +514,36 @@ test('DML plan specs match the complete source SQL, bind arity and batch-value p
  assert.equal(dmlPlanBatchSize(reserveHash,['INSERT', ['run','workspace','provider','model','transport','not-json','date','UTC']]),null);
 });
 
+test('RAW attach frontier requires bounded persistRawPage context and exact SQL binds while retaining only counts',async()=>{
+ const {queryHash,dmlPlanQuerySpec,rawPageDmlContextFromStoreArgsV1,rawPageDmlBatchSizeV1,SQL_FRONTIER_DML_BATCH_LIMIT}=await import('./observer.mjs');
+ const lockSql=`SELECT c.id FROM signal_labeling_calls c
+        JOIN signal_labeling_raw_page_members m ON m.call_id=c.id AND m.workspace_id=c.workspace_id AND m.run_id=c.run_id
+        WHERE m.page_id=$1 AND m.workspace_id=$2 AND m.run_id=$3 ORDER BY c.id FOR UPDATE OF c`;
+ const updateSql=`UPDATE signal_labeling_calls c SET raw_sha256=m.raw_sha256,raw_storage_key=p.storage_key,
+        raw_size_bytes=m.raw_size_bytes,raw_storage_verified_at=COALESCE(c.raw_storage_verified_at,p.verified_at),
+        raw_storage_verified_key=p.storage_key,updated_at=CASE WHEN c.raw_sha256 IS NULL THEN clock_timestamp() ELSE c.updated_at END
+        FROM signal_labeling_raw_page_members m JOIN signal_labeling_raw_pages p ON p.id=m.page_id
+        WHERE m.page_id=$1 AND m.workspace_id=$2 AND m.run_id=$3 AND c.id=m.call_id AND c.workspace_id=m.workspace_id AND c.run_id=m.run_id
+          AND c.request_digest=m.request_digest AND p.status='verified'
+          AND (c.raw_sha256 IS NULL OR c.raw_sha256=m.raw_sha256 AND c.raw_storage_key=p.storage_key AND c.raw_size_bytes=m.raw_size_bytes)
+        RETURNING c.id`;
+ const lockHash=queryHash(lockSql),updateHash=queryHash(updateSql);
+ assert.equal(lockHash,'sha256:b8180180dfc8340b89511bb2ecf806c6f7bc811c7c257d2a7409915751ec5670');
+ assert.equal(updateHash,'sha256:99746d65e4fad037daa0402f77a11a5677c191c74ef01741a1182cf05e201d20');
+ assert.equal(dmlPlanQuerySpec(lockHash)?.label,'raw_attach_call_lock');assert.equal(dmlPlanQuerySpec(updateHash)?.label,'raw_attach_call_update');
+ const rows=Array.from({length:256},(_,i)=>({call:{id:`00000000-0000-4000-8000-${String(i+1).padStart(12,'0')}`},sensitive:'must-not-be-retained'}));
+ const run={id:'11111111-1111-4111-8111-111111111111',workspace_id:'22222222-2222-4222-8222-222222222222'};
+ const context=rawPageDmlContextFromStoreArgsV1([run,rows]);assert.deepEqual(context,{operation:'persistRawPage',run_id:run.id,workspace_id:run.workspace_id,batch_size:256});
+ assert.equal(JSON.stringify(context).includes('sensitive'),false);assert.equal(rawPageDmlBatchSizeV1(lockHash,[lockSql,['33333333-3333-4333-8333-333333333333',run.workspace_id,run.id]],context),256);
+ assert.equal(rawPageDmlBatchSizeV1(updateHash,[updateSql,['33333333-3333-4333-8333-333333333333',run.workspace_id,run.id]],context),256);
+ assert.equal(rawPageDmlBatchSizeV1(lockHash,[lockSql,['33333333-3333-4333-8333-333333333333','44444444-4444-4444-8444-444444444444',run.id]],context),null);
+ assert.equal(rawPageDmlBatchSizeV1(lockHash,[lockSql,['33333333-3333-4333-8333-333333333333',run.workspace_id,run.id]],{...context,batch_size:SQL_FRONTIER_DML_BATCH_LIMIT+1}),null);
+ assert.equal(rawPageDmlBatchSizeV1(lockHash,[lockSql+' /* drift */',['33333333-3333-4333-8333-333333333333',run.workspace_id,run.id]],context),null);
+ assert.equal(rawPageDmlContextFromStoreArgsV1([run,[...rows.slice(0,255),rows[0]]]),null);
+ assert.equal(rawPageDmlContextFromStoreArgsV1([run,[{call:{id:'not-a-uuid'}}]]),null);
+ assert.equal(rawPageDmlContextFromStoreArgsV1([run,Array(SQL_FRONTIER_DML_BATCH_LIMIT+1).fill(rows[0])]),null);
+});
+
 test('function-stat OID contract ignores the source functions’ real argument names',async()=>{
  const target=process.env.R16_DIAGNOSTIC_TARGET_ROOT;assert.ok(target,'function-stat contract test needs checked out public target root');
  const listening=await readFile(join(target,'infrastructure/db/migrations/0296_signal_listening_configuration.sql'),'utf8');
@@ -569,6 +618,24 @@ test('DML savepoint releases before the original write, captures once and keeps 
  assert.equal(captured.observation.analyze_timing_enabled,true);assert.equal(captured.observation.analyze_timing_overhead_measured,false);
  assert.equal(statements.some(sql=>sql.startsWith('ROLLBACK TO SAVEPOINT')),false);
  const serialized=JSON.stringify(captured);for(const forbidden of ['private_0','unknown_private_trigger','hidden','UPDATE synthetic_table'])assert.ok(!serialized.includes(forbidden));
+}));
+
+test('SQL frontier capture preserves the outer plan after nested notices, bounds nested plans, and never launches actor work',async()=>withDmlPlanTestEnv(async()=>{
+ const {captureDmlPlanQueryV1,DML_PLAN_MAX_PLANS}=await import('./observer.mjs');const {client,events}=fakeDmlPlanClient();
+ const outerSql='UPDATE synthetic_table SET value=$1 WHERE id=$2';let writes=0;
+ const captured=await captureDmlPlanQueryV1({client,query:async()=>{writes++;
+  for(let i=0;i<10;i++)client.emit('notice',{message:'duration: 61 ms plan: '+JSON.stringify({'Query Text':`SELECT nested_${i}`,
+   'Execution Time':61,Plan:{'Node Type':'Seq Scan','Relation Name':'synthetic_table','Actual Rows':1,'Actual Loops':1}})});
+  client.emit('notice',{message:'duration: 62 ms plan: '+JSON.stringify({'Query Text':outerSql,'Execution Time':62,
+   Plan:{'Node Type':'ModifyTable','Relation Name':'signal_labeling_calls','Actual Rows':256,'Actual Loops':1}})});
+  events.push('write');return{rowCount:256};},query_hash:'sha256:1e5b3d3837b8c7354d6c25d941461f0d36e55d5cc3d42cbd31c627ba0662859b',
+  batch_size:256,database:'noisia_mfp_ci',role:'postgres',env:process.env,sql_frontier_only:true,outer_query_text:outerSql,query_values:{private:'not-for-actor'}});
+ assert.equal(writes,1);assert.equal(captured.observation?.outer_plan_status,'captured');assert.equal(captured.observation?.nested_plan_limit,DML_PLAN_MAX_PLANS);
+ assert.equal(captured.observation?.plans.filter(plan=>plan.frontier_role==='outer').length,1);
+ assert.equal(captured.observation?.plans.filter(plan=>plan.frontier_role==='nested').length,DML_PLAN_MAX_PLANS);
+ assert.equal(captured.observation?.plans_dropped,2);assert.ok(captured.observation&&!('actor_function_diagnostic' in captured.observation));
+ assert.ok(captured.observation?.plans.at(-1)?.frontier_role==='outer');
+ const artifact=JSON.stringify(captured.observation);assert.ok(!artifact.includes('UPDATE synthetic_table')&&!artifact.includes('private')&&!artifact.includes('query_values'));
 }));
 
 test('DML setup fallback rolls back before exactly one write and leaves it in the outer transaction ledger',async()=>withDmlPlanTestEnv(async()=>{
@@ -809,6 +876,7 @@ test('invalid pre-write observed counters cannot become a transaction-zero basel
 
 test('neutral mode is explicit, rejects CPU flags and preserves legacy profiler requirement',()=>{
  assert.equal(diagnosticModeV1({}),'legacy');assert.equal(diagnosticModeV1({R16_DIAGNOSTIC_MODE:'neutral_only'}),'neutral_only');
+ assert.equal(diagnosticModeV1({R16_DIAGNOSTIC_MODE:'sql_frontier_only'}),'sql_frontier_only');
  assert.throws(()=>diagnosticModeV1({R16_DIAGNOSTIC_MODE:'silently-disable'}),/mode_invalid/u);
  assert.doesNotThrow(()=>assertDiagnosticExecArgsV1('neutral_only',['--import','tsx'],'/unused'));
  assert.throws(()=>assertDiagnosticExecArgsV1('neutral_only',['--cpu-prof'],'/unused'),/profiler_forbidden/u);

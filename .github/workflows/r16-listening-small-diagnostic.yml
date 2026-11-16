@@ -6,14 +6,14 @@ on:
     inputs:
       mode:
         type: choice
-        options: [legacy, neutral_only]
+        options: [legacy, neutral_only, sql_frontier_only]
         default: legacy
-        description: Neutral timing disables CPU and all auto_explain captures
+        description: SQL frontier captures bounded DML plans without CPU profiling
       resource_profile:
         type: choice
         options: [baseline_512m, bounded_2g]
         default: baseline_512m
-        description: bounded_2g is available only for a manual neutral_only run
+        description: bounded_2g is available only for manual neutral_only or sql_frontier_only runs
       reserve_shared_smoke:
         type: boolean
         default: false
@@ -21,7 +21,7 @@ on:
       target_ref:
         type: string
         required: false
-        description: Exact 40-character product commit with Listening stream hook (neutral mode)
+        description: Exact 40-character product commit with Listening stream hook (neutral and SQL frontier modes)
   pull_request:
     paths:
       - '.github/workflows/r16-listening-small-diagnostic.yml'
@@ -42,7 +42,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        label: ${{ inputs.mode == 'neutral_only' && fromJSON('["candidate"]') || fromJSON('["baseline-32f","candidate"]') }}
+        label: ${{ (inputs.mode == 'neutral_only' || inputs.mode == 'sql_frontier_only') && fromJSON('["candidate"]') || fromJSON('["baseline-32f","candidate"]') }}
     steps:
       - name: Checkout benchmark target
         uses: actions/checkout@v4
@@ -83,7 +83,7 @@ jobs:
         run: corepack pnpm exec tsx --test ../probe/scripts/r16-diagnostics/listening-small/run.test.mts
 
       - name: Validate neutral target binding
-        if: inputs.mode == 'neutral_only'
+        if: inputs.mode == 'neutral_only' || inputs.mode == 'sql_frontier_only'
         env:
           TARGET_REF: ${{ inputs.target_ref }}
         run: test "${#TARGET_REF}" = 40 && [[ "$TARGET_REF" =~ ^[0-9a-f]{40}$ ]]
@@ -94,16 +94,23 @@ jobs:
           RESOURCE_PROFILE: ${{ inputs.resource_profile || 'baseline_512m' }}
           RESERVE_SHARED_SMOKE: ${{ inputs.reserve_shared_smoke || false }}
           EVENT_NAME: ${{ github.event_name }}
+          TARGET_REF: ${{ inputs.target_ref }}
         run: |
           set -euo pipefail
           case "$RESOURCE_PROFILE" in
             baseline_512m) ;;
             bounded_2g)
-              test "$MODE" = neutral_only
+              test "$MODE" = neutral_only -o "$MODE" = sql_frontier_only
               test "$EVENT_NAME" = workflow_dispatch
               ;;
             *) echo '::error::unknown diagnostic resource profile'; exit 1 ;;
           esac
+          if [ "$MODE" = sql_frontier_only ]; then
+            test "$EVENT_NAME" = workflow_dispatch
+            test -n "$TARGET_REF"
+            test "${#TARGET_REF}" = 40
+            [[ "$TARGET_REF" =~ ^[0-9a-f]{40}$ ]]
+          fi
           if [ "$RESERVE_SHARED_SMOKE" = true ]; then
             if [ "$MODE" != neutral_only ] || [ "$EVENT_NAME" != workflow_dispatch ]; then
               echo '::error::reserve_shared_smoke requires a manual neutral_only run'
@@ -148,11 +155,11 @@ jobs:
           NOISIA_R16_RAW_PAGE_LOCKS_PG: ${{ inputs.reserve_shared_smoke && 'true' || 'false' }}
           NOISIA_R16_INPUT_BOUNDS_PG: ${{ inputs.reserve_shared_smoke && 'true' || 'false' }}
           NOISIA_R16_LISTENING_SECOND_SHAPE_PG: ${{ inputs.reserve_shared_smoke && 'true' || 'false' }}
-          NOISIA_JEV_STREAM_MAX_IN_FLIGHT: ${{ inputs.resource_profile == 'bounded_2g' && inputs.mode == 'neutral_only' && '4096' || '1024' }}
-          NOISIA_JEV_STREAM_BUFFER_BYTES: ${{ inputs.resource_profile == 'bounded_2g' && inputs.mode == 'neutral_only' && '2147483648' || '536870912' }}
-          NOISIA_JEV_STREAM_FLUSH_SIZE: ${{ inputs.resource_profile == 'bounded_2g' && inputs.mode == 'neutral_only' && '4096' || '1024' }}
+          NOISIA_JEV_STREAM_MAX_IN_FLIGHT: ${{ inputs.resource_profile == 'bounded_2g' && (inputs.mode == 'neutral_only' || inputs.mode == 'sql_frontier_only') && '4096' || '1024' }}
+          NOISIA_JEV_STREAM_BUFFER_BYTES: ${{ inputs.resource_profile == 'bounded_2g' && (inputs.mode == 'neutral_only' || inputs.mode == 'sql_frontier_only') && '2147483648' || '536870912' }}
+          NOISIA_JEV_STREAM_FLUSH_SIZE: ${{ inputs.resource_profile == 'bounded_2g' && (inputs.mode == 'neutral_only' || inputs.mode == 'sql_frontier_only') && '4096' || '1024' }}
           NOISIA_JEV_STREAM_MAX_FLUSHES: '2'
-          NOISIA_JEV_STREAM_FLUSH_INTERVAL_MS: ${{ inputs.resource_profile == 'bounded_2g' && inputs.mode == 'neutral_only' && '1000' || '250' }}
+          NOISIA_JEV_STREAM_FLUSH_INTERVAL_MS: ${{ inputs.resource_profile == 'bounded_2g' && (inputs.mode == 'neutral_only' || inputs.mode == 'sql_frontier_only') && '1000' || '250' }}
           NOISIA_JEV_STREAM_WINDOW_SIZE: '4096'
           R16_DIAGNOSTIC_RESOURCE_PROFILE: ${{ inputs.resource_profile || 'baseline_512m' }}
           NOISIA_MASS_LABELING_ENABLED: 'true'
@@ -386,7 +393,7 @@ jobs:
           process.stdout.write('Listening input contracts: 4 exact selected PostgreSQL cases passed\n');
           NODE
           fi
-          if [ "$R16_DIAGNOSTIC_MODE" = neutral_only ]; then
+          if [ "$R16_DIAGNOSTIC_MODE" != legacy ]; then
             timeout 10m corepack pnpm exec node --import tsx \
               ../probe/scripts/r16-diagnostics/listening-small/run.mts --run
           else
@@ -443,7 +450,7 @@ jobs:
           fi
 
       - name: Upload CPU profiles
-        if: always() && steps.native_diagnostic.outcome == 'success' && inputs.mode != 'neutral_only'
+        if: always() && steps.native_diagnostic.outcome == 'success' && (inputs.mode == '' || inputs.mode == 'legacy')
         uses: actions/upload-artifact@v4
         with:
           name: r16-listening-small-cpu-profile-${{ matrix.label }}-${{ github.run_id }}

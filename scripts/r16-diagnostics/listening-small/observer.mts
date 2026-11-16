@@ -22,9 +22,9 @@ export const INNER_PLAN_MIN_DURATION_MS=50;
 export const DML_PLAN_MIN_DURATION_MS=50;
 export const DML_PLAN_MIN_BATCH=256;
 export const DML_PLAN_MAX_PLANS=8;
-type FunctionStatsGroupV1='answers'|'canonical';
-type DmlPlanUnitV1='call_ids'|'answer_rows'|'call_proposals';
-type DmlPlanQuerySpecV1={label:string;batch_unit:DmlPlanUnitV1;values_count:number;batch_value_index:number;batch_kind:'array'|'json_array';function_stats?:FunctionStatsGroupV1};
+type FunctionStatsGroupV1='answers'|'canonical'|'raw_pages';
+type DmlPlanUnitV1='call_ids'|'answer_rows'|'call_proposals'|'raw_page_members';
+type DmlPlanQuerySpecV1={label:string;batch_unit:DmlPlanUnitV1;values_count:number;batch_value_index:number;batch_kind:'array'|'json_array'|'raw_page_context';function_stats?:FunctionStatsGroupV1};
 const DML_PLAN_QUERY_SPECS=new Map<string,DmlPlanQuerySpecV1>([
  ['sha256:1e5b3d3837b8c7354d6c25d941461f0d36e55d5cc3d42cbd31c627ba0662859b',
   {label:'mark_submitting',batch_unit:'call_ids',values_count:2,batch_value_index:1,batch_kind:'array',function_stats:'canonical'}],
@@ -32,9 +32,21 @@ const DML_PLAN_QUERY_SPECS=new Map<string,DmlPlanQuerySpecV1>([
   {label:'listening_answers_insert',batch_unit:'answer_rows',values_count:4,batch_value_index:3,batch_kind:'json_array',function_stats:'answers'}],
  ['sha256:4ece6654c82e3d48416690d80208f849288cd5cfed5e16f0464dd3accfba33dd',
   {label:'reserve_calls_insert',batch_unit:'call_proposals',values_count:8,batch_value_index:5,batch_kind:'json_array',function_stats:'canonical'}],
+ ['sha256:b8180180dfc8340b89511bb2ecf806c6f7bc811c7c257d2a7409915751ec5670',
+  {label:'raw_attach_call_lock',batch_unit:'raw_page_members',values_count:3,batch_value_index:-1,batch_kind:'raw_page_context',function_stats:'raw_pages'}],
+ ['sha256:99746d65e4fad037daa0402f77a11a5677c191c74ef01741a1182cf05e201d20',
+  {label:'raw_attach_call_update',batch_unit:'raw_page_members',values_count:3,batch_value_index:-1,batch_kind:'raw_page_context',function_stats:'raw_pages'}],
 ]);
+const LEGACY_DML_PLAN_QUERY_HASHES=new Set([
+ 'sha256:1e5b3d3837b8c7354d6c25d941461f0d36e55d5cc3d42cbd31c627ba0662859b',
+ 'sha256:7a86df2f02e720b156e7f9d7132eba342080fc9d169d7cf8e1cbdfa74de067a7',
+ 'sha256:4ece6654c82e3d48416690d80208f849288cd5cfed5e16f0464dd3accfba33dd',
+]);
+export const SQL_FRONTIER_DML_CAPTURE_LIMIT=5;
+export const SQL_FRONTIER_DML_BATCH_LIMIT=4096;
 const SAFE_DML_TRIGGER_NAMES=new Set(['aac_signal_study_call_guard','listening_human_new_call_guard','listening_statement_money_insert','listening_statement_money_update',
  'mass_labeling_call_root','mass_labeling_scoped_insert_total','mass_labeling_scoped_money','mass_labeling_scoped_update_total','signal_listening_answer_guard',
+ 'signal_labeling_raw_page_guard','signal_labeling_raw_page_member_guard','signal_labeling_raw_page_call_guard',
  'signal_listening_call_guard','signal_listening_link_call','signal_study_jev_link','z_listening_discovery_child_capacity']);
 const ANSWER_FUNCTION_STAT_SIGNATURES=[
  'public.signal_listening_answer_guard_v1()',
@@ -47,7 +59,19 @@ const CANONICAL_FUNCTION_STAT_SIGNATURES=[
  'public.signal_labeling_json_v1(jsonb)',
  'public.signal_listening_statement_roots_v1(uuid[])',
 ] as const;
-const functionStatSignatures=(group:FunctionStatsGroupV1):readonly string[]=>group==='answers'?ANSWER_FUNCTION_STAT_SIGNATURES:CANONICAL_FUNCTION_STAT_SIGNATURES;
+const RAW_PAGE_FUNCTION_STAT_SIGNATURES=[
+ 'public.signal_labeling_raw_page_guard_v1()',
+ 'public.signal_labeling_raw_page_member_guard_v1()',
+ 'public.signal_labeling_raw_page_call_guard_v1()',
+ 'public.signal_listening_call_guard_v1()',
+ 'public.signal_listening_statement_money_v1()',
+ 'public.guard_mass_labeling_scoped_money_v1()',
+ 'public.guard_mass_labeling_scoped_money_total_v1()',
+ 'public.signal_study_jev_call_guard_v1()',
+ 'public.signal_listening_discovery_child_capacity_v1()',
+] as const;
+const functionStatSignatures=(group:FunctionStatsGroupV1):readonly string[]=>group==='answers'?ANSWER_FUNCTION_STAT_SIGNATURES
+ :group==='raw_pages'?RAW_PAGE_FUNCTION_STAT_SIGNATURES:CANONICAL_FUNCTION_STAT_SIGNATURES;
 // Counts cover this backend's original DML and its triggers, not only expected.
 // SQL inlining can hide digest calls; JSON recursion counts are not mention counts.
 const FUNCTION_STATS_SCOPE={view:'pg_stat_xact_user_functions',scope:'same_backend_current_transaction_delta',
@@ -63,10 +87,31 @@ export function queryHash(value:unknown){const sql=typeof value==='string'?value
 export function dmlPlanQuerySpec(hash:string|null){return hash?DML_PLAN_QUERY_SPECS.get(hash)??null:null;}
 export function dmlPlanBatchSize(hash:string|null,args:unknown[]){
  const spec=dmlPlanQuerySpec(hash);if(!spec||args.length!==2||!Array.isArray(args[1])||args[1].length!==spec.values_count)return null;
+ if(spec.batch_kind==='raw_page_context')return null;
  const value=(args[1] as unknown[])[spec.batch_value_index];
  if(spec.batch_kind==='array')return Array.isArray(value)?value.length:null;
  if(typeof value!=='string')return null;
  try{const rows=JSON.parse(value);return Array.isArray(rows)?rows.length:null;}catch{return null;}
+}
+export type RawPageDmlContextV1={operation:string;run_id:string;workspace_id:string;batch_size:number};
+export function rawPageDmlContextFromStoreArgsV1(args:unknown[]):RawPageDmlContextV1|null{
+ if(args.length!==2||!args[0]||typeof args[0]!=='object'||!Array.isArray(args[1]))return null;
+ const run=args[0] as {id?:unknown;workspace_id?:unknown},rows=args[1];
+ if(typeof run.id!=='string'||!UUID_PATTERN.test(run.id)||typeof run.workspace_id!=='string'||!UUID_PATTERN.test(run.workspace_id)
+  ||rows.length<1||rows.length>SQL_FRONTIER_DML_BATCH_LIMIT)return null;
+ const calls=new Set<string>();
+ for(const row of rows){const id=(row as {call?:{id?:unknown}}|null)?.call?.id;
+  if(typeof id!=='string'||!UUID_PATTERN.test(id)||calls.has(id))return null;calls.add(id);}
+ return{operation:'persistRawPage',run_id:run.id,workspace_id:run.workspace_id,batch_size:rows.length};
+}
+export function rawPageDmlBatchSizeV1(hash:string|null,args:unknown[],context:RawPageDmlContextV1|null|undefined){
+ const spec=dmlPlanQuerySpec(hash);if(!spec||spec.batch_kind!=='raw_page_context'||!context||context.operation!=='persistRawPage'
+  ||!Number.isSafeInteger(context.batch_size)||context.batch_size<1||context.batch_size>SQL_FRONTIER_DML_BATCH_LIMIT
+  ||args.length!==2||queryHash(args[0])!==hash||!Array.isArray(args[1])||args[1].length!==3)return null;
+ const [pageId,workspaceId,runId]=args[1];
+ if(typeof pageId!=='string'||!UUID_PATTERN.test(pageId)||typeof workspaceId!=='string'||!UUID_PATTERN.test(workspaceId)
+  ||typeof runId!=='string'||!UUID_PATTERN.test(runId)||workspaceId!==context.workspace_id||runId!==context.run_id)return null;
+ return context.batch_size;
 }
 export function dmlPlanCaptureEnvironmentAllowed(env:NodeJS.ProcessEnv){
  if(env.GITHUB_ACTIONS!=='true'||env.NOISIA_R16_SMALL_DIAGNOSTIC!=='true'||env.NOISIA_R16_LISTENING_DML_PLAN_PG!=='true'
@@ -136,7 +181,7 @@ type InnerPlanTimingV1={capture_wall_ms:number;setup_ms:number;query_wall_ms:num
 export type InnerPlanObservationV1=
  |({query_hash:string;label:string;query_ordinal:number;status:'inner_plan_unavailable';reason:'transaction_scope_unverified'|'auto_explain_load_unavailable'|'capture_setup_unavailable'}&InnerPlanTimingV1)
  |({query_hash:string;label:string;query_ordinal:number;status:'captured'|'plan_notice_unavailable';plans:Array<{sequence:number;query_text_sha256:string|null;planning_time_ms:number|null;execution_time_ms:number|null;plan:Record<string,unknown>}>;plan_notices_seen:number;plans_dropped:number}&InnerPlanTimingV1);
-type DmlPlanV1={sequence:number;query_text_sha256:string|null;planning_time_ms:number|null;execution_time_ms:number|null;
+type DmlPlanV1={sequence:number;query_text_sha256:string|null;planning_time_ms:number|null;execution_time_ms:number|null;frontier_role?:'outer'|'nested';
  plan:Record<string,unknown>;triggers:Array<{name:string;relation:string|null;time_ms:number|null;calls:number}>;triggers_seen:number;triggers_omitted:number;triggers_unknown_time:number};
 type DmlPlanTimingV1={setup_ms:number;query_wall_ms:number;cleanup_ms:number;setup_cleanup_wall_ms:number;analyze_timing_overhead_measured:false};
 type FunctionStatsDeltaV1={signature:string;status:'captured'|'function_absent'|'stats_unobserved'|'lookup_unobserved'|'counter_invalid';
@@ -152,9 +197,9 @@ type ActorFunctionDiagnosticV1={status:'captured'|'scope_unavailable';reason?:'c
  timing_on:true;query_wall_includes_nested:true;analyze_overhead_measured:false;capacity_claim:false};
 export type DmlPlanObservationV1=({query_hash:string;label:string;batch_size:number;batch_unit:DmlPlanUnitV1;status:'setup_unavailable';
  reason:'transaction_scope_unverified'|'auto_explain_load_unavailable'|'capture_setup_unavailable';plans:DmlPlanV1[];plan_notices_seen:number;plans_dropped:number;
- triggers_omitted_count:number;triggers_unknown_time_count:number;analyze_timing_enabled:false;function_stats?:FunctionStatsArtifactV1}&DmlPlanTimingV1)|({query_hash:string;label:string;batch_size:number;batch_unit:DmlPlanUnitV1;status:'captured'|'plan_notice_unavailable';
+ triggers_omitted_count:number;triggers_unknown_time_count:number;analyze_timing_enabled:false;function_stats?:FunctionStatsArtifactV1;outer_plan_status?:'captured'|'unknown';nested_plan_limit?:8}&DmlPlanTimingV1)|({query_hash:string;label:string;batch_size:number;batch_unit:DmlPlanUnitV1;status:'captured'|'plan_notice_unavailable';
  plans:DmlPlanV1[];plan_notices_seen:number;plans_dropped:number;triggers_omitted_count:number;triggers_unknown_time_count:number;analyze_timing_enabled:true;
- function_stats?:FunctionStatsArtifactV1;actor_function_diagnostic?:ActorFunctionDiagnosticV1;analyze_timing_overhead_measured:false}&DmlPlanTimingV1);
+ function_stats?:FunctionStatsArtifactV1;actor_function_diagnostic?:ActorFunctionDiagnosticV1;outer_plan_status?:'captured'|'unknown';nested_plan_limit?:8;analyze_timing_overhead_measured:false}&DmlPlanTimingV1);
 function dmlCaptureGucs(prior:Map<string,string>){
  return[
   ['auto_explain.log_min_duration','-1'],
@@ -302,15 +347,19 @@ async function captureActorFunctionDiagnosticV1(args:{client:any;callIds:string[
  return{...output,status:'captured'};
 }
 /** Instruments one already-issued write only after setup is complete. The setup savepoint is released before the original DML and is never rolled back afterward. */
-export async function captureDmlPlanQueryV1(args:{client:any;query:()=>Promise<any>;query_hash:string;batch_size:number;database:string;role:string;env:NodeJS.ProcessEnv;query_values?:unknown;clock?:()=>number}):Promise<{result:any;observation:DmlPlanObservationV1|null}>{
+export async function captureDmlPlanQueryV1(args:{client:any;query:()=>Promise<any>;query_hash:string;batch_size:number;database:string;role:string;env:NodeJS.ProcessEnv;query_values?:unknown;sql_frontier_only?:boolean;outer_query_text?:string;clock?:()=>number}):Promise<{result:any;observation:DmlPlanObservationV1|null}>{
  const {client,query,query_hash,batch_size,database,role,env}=args,spec=dmlPlanQuerySpec(query_hash),clock=args.clock??(()=>performance.now());
  if(!spec||batch_size<DML_PLAN_MIN_BATCH||!dmlPlanCaptureEnvironmentAllowed(env)||database!=='noisia_mfp_ci'||role!=='postgres')
   return{result:await query(),observation:null};
- const plans:DmlPlanV1[]=[];let planNoticesSeen=0,plansDropped=0,triggersOmittedCount=0,triggersUnknownTimeCount=0;
+ const plans:DmlPlanV1[]=[];let planNoticesSeen=0,plansDropped=0,triggersOmittedCount=0,triggersUnknownTimeCount=0,nestedPlansStored=0,outerPlanCaptured=false;
+ const outerQueryTextHash=args.sql_frontier_only&&args.outer_query_text?`sha256:${createHash('sha256').update(args.outer_query_text,'utf8').digest('hex')}`:null;
  let savepoint=false,dmlStarted=false,setupStage='savepoint',setupMs=0,queryWallMs=0,cleanupMs=0,prior=new Map<string,string>(),detached=false;
  let functionStatsBefore:Map<string,FunctionStatsRowV1>|null=null,functionStatsReadBeforeMs:number|null=null,functionStatsReadAfterMs:number|null=null;
  const onNotice=(notice:unknown)=>{const plan=safeDmlAutoExplainNotice(notice);if(!plan)return;planNoticesSeen++;
   triggersOmittedCount+=plan.triggers_omitted;triggersUnknownTimeCount+=plan.triggers_unknown_time;
+  const isOuter=outerQueryTextHash!==null&&plan.query_text_sha256===outerQueryTextHash;
+  if(isOuter){if(outerPlanCaptured){plansDropped++;return;}outerPlanCaptured=true;plans.push({sequence:planNoticesSeen,...plan,frontier_role:'outer'});return;}
+  if(args.sql_frontier_only){if(nestedPlansStored< DML_PLAN_MAX_PLANS){nestedPlansStored++;plans.push({sequence:planNoticesSeen,...plan,frontier_role:'nested'});}else plansDropped++;return;}
   if(plans.length<DML_PLAN_MAX_PLANS)plans.push({sequence:planNoticesSeen,...plan});else plansDropped++;};
  const detach=()=>{if(!detached){detached=true;client.off('notice',onNotice);}};
  const rollbackSetup=async()=>{if(savepoint){const cleanupStarted=clock();try{
@@ -373,6 +422,7 @@ export async function captureDmlPlanQueryV1(args:{client:any;query:()=>Promise<a
    return{result:original,observation:{query_hash,label:spec.label,batch_size,batch_unit:spec.batch_unit,
     status:'setup_unavailable',reason,plans,plan_notices_seen:planNoticesSeen,plans_dropped:plansDropped,triggers_omitted_count:triggersOmittedCount,
     triggers_unknown_time_count:triggersUnknownTimeCount,analyze_timing_enabled:false,
+    ...(args.sql_frontier_only?{outer_plan_status:'unknown' as const,nested_plan_limit:DML_PLAN_MAX_PLANS as 8}:{}),
     ...(spec.function_stats?{function_stats:{...FUNCTION_STATS_SCOPE,status:'setup_unavailable' as const,read_before_ms:functionStatsReadBeforeMs,read_after_ms:null,
      total_time_inclusive:true as const,self_time_excludes_nested_calls:true as const,overhead_measured:false as const,capacity_claim:false as const,deltas:[]}}:{}),
     setup_ms:setupMs,query_wall_ms:queryWallMs,cleanup_ms:cleanupMs,setup_cleanup_wall_ms:setupMs+cleanupMs,analyze_timing_overhead_measured:false}};
@@ -403,6 +453,7 @@ export async function captureDmlPlanQueryV1(args:{client:any;query:()=>Promise<a
    status:plans.length?'captured':'plan_notice_unavailable',plans,plan_notices_seen:planNoticesSeen,plans_dropped:plansDropped,triggers_omitted_count:triggersOmittedCount,
    triggers_unknown_time_count:triggersUnknownTimeCount,analyze_timing_enabled:true,...(functionStats?{function_stats:functionStats}:{}),
    ...(actorFunctionDiagnostic?{actor_function_diagnostic:actorFunctionDiagnostic}:{}),
+   ...(args.sql_frontier_only?{outer_plan_status:outerPlanCaptured?'captured' as const:'unknown' as const,nested_plan_limit:DML_PLAN_MAX_PLANS as 8}:{}),
    setup_ms:setupMs,query_wall_ms:queryWallMs,cleanup_ms:cleanupMs,setup_cleanup_wall_ms:setupMs+cleanupMs,analyze_timing_overhead_measured:false}};
  }finally{
   try{if(savepoint&&!dmlStarted)await rollbackSetup();}finally{detach();}
@@ -490,9 +541,10 @@ export function projectObserverTimeToPerformanceRangeV1(anchor:{performance_befo
   end_performance_ms:anchor.performance_after_ms+eventOffsetMs,
   uncertainty_ms:anchor.performance_after_ms-anchor.performance_before_ms};
 }
-export function createListeningObserver(options:{neutral_only?:boolean}={}){
+type ListeningObserverScopeV1={operation:string;sequence:number;job:number;raw_page?:RawPageDmlContextV1|null};
+export function createListeningObserver(options:{neutral_only?:boolean;sql_frontier_only?:boolean}={}){
  const performanceBefore=performance.now(),origin=process.hrtime.bigint(),performanceAfter=performance.now();
- const performanceOrigin=performanceBefore,now=()=>Number(process.hrtime.bigint()-origin)/1e6,events=boundedEvents(),scope=new AsyncLocalStorage<{operation:string;sequence:number;job:number}>();
+ const performanceOrigin=performanceBefore,now=()=>Number(process.hrtime.bigint()-origin)/1e6,events=boundedEvents(),scope=new AsyncLocalStorage<ListeningObserverScopeV1>();
  let storeSequence=0,querySequence=0,streamSequence=0,jobSequence=0,jobStreamStart=0,invalidStream=0;
  type StreamState={sequence:number;at_ms:number;job:number;in_flight:number;reserved_working_bytes:number;buffered_responses:number;active_flushes:number};
  let lastStream:StreamState|null=null;
@@ -507,18 +559,29 @@ export function createListeningObserver(options:{neutral_only?:boolean}={}){
  const gc=new PerformanceObserver(list=>{for(const entry of list.getEntries())events.push({kind:'gc',at_ms:now(),start_ms:entry.startTime-performanceOrigin,end_ms:entry.startTime-performanceOrigin+entry.duration,duration_ms:entry.duration,gc_kind:(entry as any).detail?.kind??null});});gc.observe({entryTypes:['gc']});
  let closing=false;const detach:Array<()=>void>=[];let child:ChildProcess|undefined;const pids=new Set<number>();let samplerStatus='not_started';
  let planRootCount=0;const planQueryOrdinals=new Map<string,number>(),planObservations:unknown[]=[];
- const dmlPlanCounts=new Map<string,number>(),dmlPlanObservations:unknown[]=[];
+ const dmlPlanCounts=new Map<string,number>(),dmlPlanObservations:unknown[]=[];let sqlFrontierCaptureCount=0;
  function pid(value:any){if(Number.isSafeInteger(value?.processID)&&value.processID>0&&!pids.has(value.processID)){pids.add(value.processID);if(child?.connected)child.send({kind:'pids',pids:[...pids]},()=>{});}}
  function query(owner:any){return async(...args:any[])=>{pid(owner);const start=now(),context=scope.getStore(),op=context?.operation??'unlabeled',job=context?.job??jobSequence,sequence=++querySequence,hash=queryHash(args[0]);
-  const label=innerPlanQueryLabel(hash),queryOrdinal=nextInnerPlanQueryOrdinalV1(hash,label!==null&&planRootCount>=1024,planQueryOrdinals);try{
-  const dmlSpec=options.neutral_only?null:dmlPlanQuerySpec(hash),dmlBatch=dmlSpec?dmlPlanBatchSize(hash,args):null;
-  if(!options.neutral_only&&dmlSpec&&dmlBatch!==null&&dmlBatch>=DML_PLAN_MIN_BATCH&&(dmlPlanCounts.get(hash!)??0)<1
+  const label=innerPlanQueryLabel(hash),queryOrdinal=options.neutral_only||options.sql_frontier_only?null:
+   nextInnerPlanQueryOrdinalV1(hash,label!==null&&planRootCount>=1024,planQueryOrdinals);try{
+  const dmlSpec=options.neutral_only?null:dmlPlanQuerySpec(hash);
+  const rawPageBatch=options.sql_frontier_only&&dmlSpec?.batch_kind==='raw_page_context'
+   ?rawPageDmlBatchSizeV1(hash,args,context?.raw_page):null;
+  const dmlBatch=dmlSpec?.batch_kind==='raw_page_context'?rawPageBatch:dmlSpec?dmlPlanBatchSize(hash,args):null;
+  const dmlProfileAllowed=options.sql_frontier_only?Boolean(dmlSpec):Boolean(hash&&LEGACY_DML_PLAN_QUERY_HASHES.has(hash));
+  const profileCaptureLimit=options.sql_frontier_only?SQL_FRONTIER_DML_CAPTURE_LIMIT:Number.POSITIVE_INFINITY;
+  if(!options.neutral_only&&dmlProfileAllowed&&dmlSpec&&dmlBatch!==null&&dmlBatch>=DML_PLAN_MIN_BATCH
+   &&(!options.sql_frontier_only||dmlBatch<=SQL_FRONTIER_DML_BATCH_LIMIT)
+   &&(dmlPlanCounts.get(hash!)??0)<1&&sqlFrontierCaptureCount<profileCaptureLimit
    &&dmlPlanCaptureEnvironmentAllowed(process.env)&&typeof owner.on==='function'&&typeof owner.off==='function'){
    dmlPlanCounts.set(hash!,1);
-   const captured=await captureDmlPlanQueryV1({client:owner,query:()=>owner.query(...args),query_hash:hash!,batch_size:dmlBatch,database:'noisia_mfp_ci',role:'postgres',env:process.env,query_values:args[1]});
+   if(options.sql_frontier_only)sqlFrontierCaptureCount++;
+   const originalSql=typeof args[0]==='string'?args[0]:typeof args[0]?.text==='string'?args[0].text:undefined;
+   const captured=await captureDmlPlanQueryV1({client:owner,query:()=>owner.query(...args),query_hash:hash!,batch_size:dmlBatch,database:'noisia_mfp_ci',role:'postgres',env:process.env,
+    ...(!options.sql_frontier_only?{query_values:args[1]}:{}),...(options.sql_frontier_only?{sql_frontier_only:true,outer_query_text:originalSql}:{})});
    if(captured.observation)dmlPlanObservations.push(captured.observation);return captured.result;
   }
-  if(!options.neutral_only&&label&&shouldCaptureInnerPlanOrdinalV1(queryOrdinal)&&typeof owner.on==='function'&&typeof owner.off==='function'){
+  if(!options.neutral_only&&!options.sql_frontier_only&&label&&shouldCaptureInnerPlanOrdinalV1(queryOrdinal)&&typeof owner.on==='function'&&typeof owner.off==='function'){
    const captured=await captureInnerPlanQueryV1({client:owner,query:()=>owner.query(...args),query_hash:hash!,query_ordinal:queryOrdinal!,root_count:planRootCount,database:'noisia_mfp_ci',role:'postgres'});
    if(captured.observation)planObservations.push(captured.observation);return captured.result;
   }
@@ -533,11 +596,12 @@ export function createListeningObserver(options:{neutral_only?:boolean}={}){
  };const v=Reflect.get(target,key);return typeof v==='function'?v.bind(target):v;}});},
  wrapStore(store:any){return new Proxy(store,{get(t,k){const value=Reflect.get(t,k);if(typeof k!=='string'||!STORE_OPERATIONS.has(k)||typeof value!=='function')return typeof value==='function'?value.bind(t):value;return async(...args:any[])=>{
  const operation=k==='calls'&&Array.isArray(args[1]?.call_ids)?'hydrate':k,sequence=++storeSequence,job=jobSequence,start=now(),streamBefore=streamSnapshot();
+ const rawPage=operation==='persistRawPage'?rawPageDmlContextFromStoreArgsV1(args):null;
  const active=(activeStores.get(operation)??0)+1;activeStores.set(operation,active);
  let result:unknown,status='failed';
  const suppliedBatch=Array.isArray(args[1])?args[1].length:null;
  events.push({kind:'store_start',operation,sequence,job,start_ms:start,batch_size:suppliedBatch,active_same_operation:active,last_stream:streamBefore});
- try{result=await scope.run({operation,sequence,job},()=>value.apply(t,args));status='complete';return result;}
+ try{result=await scope.run({operation,sequence,job,...(rawPage?{raw_page:rawPage}:{})},()=>value.apply(t,args));status='complete';return result;}
  finally{
   activeStores.set(operation,(activeStores.get(operation)??1)-1);
   const returnedBatch=(operation==='inputs'||operation==='calls'||operation==='hydrate')&&Array.isArray(result)?result.length:null;
@@ -562,7 +626,9 @@ export function createListeningObserver(options:{neutral_only?:boolean}={}){
   child.on('error',()=>{samplerStatus='failed';});child.on('exit',()=>{if(!closing)samplerStatus='exited_early';});child.send({kind:'init',...args,origin:String(origin),pids:[...pids]},()=>{});
  },
  setInnerPlanRootCount(value:number){if(!Number.isSafeInteger(value)||value<0)throw Error('observer_invalid_root_count');planRootCount=value;},
- snapshot(){return{contract_version:'r16-neutral-observer-v1',...events.snapshot(),clock_anchor:clockAnchor,sampler_status:samplerStatus,sampler_process_pid:child?.pid??null,fixture_pids:[...pids],neutral_only:options.neutral_only===true,connection_observation_scope:'explicit database.connect only; Pool.query internal checkout unobserved',stream_metrics_source:'native observe_stream; working bytes are reservation, not RSS',stream_observations:streamSequence,invalid_stream_observations:invalidStream,last_stream:streamSnapshot(),inner_plan_observations:[...planObservations],
+ snapshot(){return{contract_version:'r16-neutral-observer-v1',...events.snapshot(),clock_anchor:clockAnchor,sampler_status:samplerStatus,sampler_process_pid:child?.pid??null,fixture_pids:[...pids],neutral_only:options.neutral_only===true,sql_frontier_only:options.sql_frontier_only===true,connection_observation_scope:'explicit database.connect only; Pool.query internal checkout unobserved',stream_metrics_source:'native observe_stream; working bytes are reservation, not RSS',stream_observations:streamSequence,invalid_stream_observations:invalidStream,last_stream:streamSnapshot(),inner_plan_observations:[...planObservations],
+  sql_frontier_capture:{enabled:options.sql_frontier_only===true,scope:options.sql_frontier_only?'five_source_whitelisted_DML_hashes':null,max_captures:options.sql_frontier_only?SQL_FRONTIER_DML_CAPTURE_LIMIT:0,max_batch_size:options.sql_frontier_only?SQL_FRONTIER_DML_BATCH_LIMIT:0,captures_started:sqlFrontierCaptureCount,
+   cpu_profiling_enabled:false,heap_profiling_enabled:false,inner_plan_ordinals_enabled:false,inner_plan_captures_enabled:false,actor_post_diagnostic_enabled:false,capacity_claim:false},
   dml_plan_observations:[...dmlPlanObservations],event_loop_delay_ms:{min:delay.count?delay.min/1e6:0,max:delay.max/1e6,mean:delay.count?delay.mean/1e6:0,p50:delay.percentile(50)/1e6,p99:delay.percentile(99)/1e6},diagnostic_only:true,h1_accepted:false};},
  async close(){closing=true;clearInterval(heartbeat);gc.disconnect();delay.disable();for(const remove of detach)remove();if(child)await closeOwnedChild(child);},
  };
