@@ -2,6 +2,12 @@ import type { AccessMode, FullLanguage, Market } from "@/content/studies/schema"
 
 /** Copy of the studies index, the study page and the full-study viewer. */
 
+const names: Record<"es" | "en", Record<Market, string>> = {
+  es: { MX: "México", UK: "Reino Unido", BR: "Brasil", DE: "Alemania", "US-CA": "Estados Unidos y Canadá", ES: "España", FR: "Francia" },
+  en: { MX: "Mexico", UK: "United Kingdom", BR: "Brazil", DE: "Germany", "US-CA": "United States and Canada", ES: "Spain", FR: "France" }
+};
+const list = (locale: string, items: string[]) => new Intl.ListFormat(locale, { type: "conjunction" }).format(items);
+
 type Copy = {
   metaTitle: string;
   metaDescription: string;
@@ -17,6 +23,10 @@ type Copy = {
   editorialReport: string;
   reportNote: string;
   markets: Record<Market, string>;
+  /** "Mexico"; "United Kingdom and Germany"; with three or more, "4 markets". */
+  marketSummary: (markets: Market[]) => string;
+  /** Every market, in full: "United Kingdom, Germany, Spain and France". */
+  marketList: (markets: Market[]) => string;
   access: Record<AccessMode, string>;
   languages: Record<FullLanguage, string>;
   allStudies: string;
@@ -59,7 +69,9 @@ export const studiesPage: Record<"es" | "en", Copy> = {
     expiredLink: "Ese enlace ya venció o no existe. Pide uno nuevo a tu contacto en Noisia.",
     editorialReport: "Reporte editorial",
     reportNote: "Reporte interactivo",
-    markets: { MX: "México", UK: "Reino Unido", BR: "Brasil", DE: "Alemania", "US-CA": "Estados Unidos y Canadá" },
+    markets: names.es,
+    marketSummary: (markets) => (markets.length > 2 ? `${markets.length} mercados` : list("es-MX", markets.map((m) => names.es[m]))),
+    marketList: (markets) => list("es-MX", markets.map((m) => names.es[m])),
     access: { abierto: "Libre", registro: "Con registro", solo_link: "Bajo solicitud" },
     languages: { es: "español", en: "inglés", pt: "portugués", de: "alemán" },
     allStudies: "Todos los estudios",
@@ -105,7 +117,9 @@ export const studiesPage: Record<"es" | "en", Copy> = {
     expiredLink: "That link has expired or does not exist. Ask your Noisia contact for a new one.",
     editorialReport: "Editorial report",
     reportNote: "Interactive report, in Spanish",
-    markets: { MX: "Mexico", UK: "United Kingdom", BR: "Brazil", DE: "Germany", "US-CA": "United States and Canada" },
+    markets: names.en,
+    marketSummary: (markets) => (markets.length > 2 ? `${markets.length} markets` : list("en-US", markets.map((m) => names.en[m]))),
+    marketList: (markets) => list("en-US", markets.map((m) => names.en[m])),
     access: { abierto: "Free", registro: "Sign-up", solo_link: "On request" },
     languages: { es: "Spanish", en: "English", pt: "Portuguese", de: "German" },
     allStudies: "All studies",

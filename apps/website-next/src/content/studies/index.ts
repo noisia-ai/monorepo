@@ -16,7 +16,8 @@ export type Study = {
   id: string;
   accessMode: AccessMode;
   industry: string;
-  market: Market;
+  /** One or more; the first is the main one. */
+  markets: Market[];
   method: string | null;
   periodLabel: string | null;
   periodStart: string | null;
@@ -38,6 +39,7 @@ type Row = {
   access_mode: AccessMode;
   industry: string;
   market: Market;
+  markets?: Market[] | null;
   method: string | null;
   period_label: string | null;
   period_start: Date | string | null;
@@ -66,7 +68,7 @@ function fromRow(row: Row): Study | null {
     id: row.id,
     accessMode: row.access_mode,
     industry: row.industry,
-    market: row.market,
+    markets: row.markets?.length ? row.markets : [row.market],
     method: row.method,
     periodLabel: row.period_label,
     periodStart: day(row.period_start),

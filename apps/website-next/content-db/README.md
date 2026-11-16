@@ -65,6 +65,10 @@ Google Chrome one image per slide (the phone view), the cover and, when `deck/` 
 Files are stored per study version in `content.study_files`; loading changed files bumps the
 version and removes the old ones.
 
+`market` is one market (`"MX"`) or a list for a study that reads several side by side
+(`["UK", "DE", "ES", "FR"]`, the main one first). The index filter finds the study under each of
+them; the card shows one or two names, or "4 markets".
+
 What readers get:
 
 | Page | Path | Cache |
