@@ -18,8 +18,17 @@ export async function rawAttachSnapshotV1(c:PoolClient,run:string):Promise<Snaps
  return(await c.query(`SELECT c.id,(to_jsonb(c)-'updated_at')::text stable,c.updated_at::text updated_at,
   c.raw_sha256 IS NULL fresh FROM signal_labeling_calls c WHERE c.run_id=$1 ORDER BY c.id`,[run])).rows;
 }
-export type RawAttachPlanV1={arm:string;members:number;plan:unknown;execution_ms:number;planning_ms:number;
+export type RawAttachPlanV1={phase:'plan-captured';arm:string;members:number;actual_rows:unknown;plan:unknown;execution_ms:number;planning_ms:number;
  trigger_stats:Array<{name:string;calls:number;ms:number}>;selected_nodes:Record<string,unknown>[]};
+/** A lazy InitPlan may be unexecuted. Unknown values are never inferred as 0. */
+export function rawAttachAtMostOnceV1(loops:unknown):boolean{
+ return typeof loops==='number'&&Number.isSafeInteger(loops)&&loops>=0&&loops<=1;
+}
+export function rawAttachPhaseV1(phase:string,arm:string,members:number,event:string,error?:unknown){
+ const code=typeof error==='object'&&error!==null&&'code'in error&&typeof error.code==='string'
+  &&/^[A-Z0-9_]{1,40}$/u.test(error.code)?error.code:undefined;
+ console.log('# raw attach oracle phase '+JSON.stringify({phase,arm,members,event,...(error===undefined?{}:{code:code??'unknown'})}));
+}
 function nodes(plan:Record<string,unknown>,out:Record<string,unknown>[]=[]){
  const keys=['Node Type','Parent Relationship','Subplan Name','Relation Name','Index Name','CTE Name','Alias','Plan Rows','Plan Width',
   'Actual Rows','Actual Loops','Actual Total Time','Rows Removed by Filter','Rows Removed by Join Filter','Shared Hit Blocks',
@@ -33,42 +42,54 @@ export async function assertRawAttachOracleV1(c:PoolClient,args:[string,string,s
  const before=await rawAttachSnapshotV1(c,args[2]),ordered=[...expected].sort();let reference:Snapshot|undefined;
  for(const [arm,sql]of [['original',rawAttachBeforeSqlV1],['candidate',labelingRawPageAttachSqlV1]]as const){
   await c.query('SAVEPOINT raw_attach_arm');
+  let phase='physical-clock-before';
   try{
    const lower=(await c.query('SELECT clock_timestamp()::text value')).rows[0].value;
    // Actual UPDATE with all native guards. Map construction is inside EXPLAIN,
    // and the plan includes target scans, all InitPlans, widths and buffer/temp IO.
-   const actual=(await c.query('EXPLAIN (ANALYZE,BUFFERS,FORMAT JSON) '+sql,args)).rows[0]['QUERY PLAN'][0];
-   const upper=(await c.query('SELECT clock_timestamp()::text value')).rows[0].value;
-   assert.equal(actual.Plan['Actual Rows'],expected.length,'RETURNING must emit exactly the page member count');
+   phase='explain';const actual=(await c.query('EXPLAIN (ANALYZE,BUFFERS,FORMAT JSON) '+sql,args)).rows[0]['QUERY PLAN'][0];
    const observed=nodes(actual.Plan);
+   const captured:RawAttachPlanV1={phase:'plan-captured',arm,members:expected.length,actual_rows:actual.Plan['Actual Rows'],plan:actual,
+    execution_ms:actual['Execution Time'],planning_ms:actual['Planning Time'],
+    trigger_stats:(actual.Triggers??[]).map((t:Record<string,unknown>)=>({name:String(t['Trigger Name']),calls:Number(t.Calls),ms:Number(t.Time)})),selected_nodes:observed};
+   plans.push(captured);
+   // Emit the sanitized actual plan BEFORE every validation, even if this arm
+   // subsequently fails. Full SQL/IndexCond/Filter/binds stay only in memory.
+   const {plan,...safe}=captured;console.log('# raw attach original/candidate native plan '+JSON.stringify(safe));
+   phase='physical-clock-after';const upper=(await c.query('SELECT clock_timestamp()::text value')).rows[0].value;
+   phase='returning-count';assert.equal(actual.Plan['Actual Rows'],expected.length,'RETURNING must emit exactly the page member count');
    if(arm==='candidate'){
+    phase='member-scan-bound';
     const memberScans=observed.filter(n=>n['Relation Name']==='signal_labeling_raw_page_members');
     assert.ok(memberScans.length>0);assert.ok(memberScans.every(n=>n['Actual Loops']===1),'candidate scans page members only once');
     const mapScans=observed.filter(n=>n['CTE Name']==='raw_attach_page');
-    assert.ok(mapScans.length>0);assert.ok(mapScans.every(n=>n['Actual Loops']===1),'uncorrelated map/ID/scalar InitPlans cannot rescan once per target call');
+    phase='map-scan-bound';assert.ok(mapScans.length>0);
+    assert.ok(mapScans.every(n=>rawAttachAtMostOnceV1(n['Actual Loops'])),'uncorrelated map/ID/scalar InitPlans must have a known 0 or 1 loops; rescans and unknowns are rejected');
    }
+   phase='exact-target-ids';
    const found=(await c.query(`SELECT c.id FROM signal_labeling_calls c JOIN signal_labeling_raw_pages p ON p.id=$1
     WHERE c.run_id=$3 AND c.workspace_id=$2 AND c.raw_storage_key=p.storage_key ORDER BY c.id`,args)).rows.map(r=>r.id);
    assert.deepEqual(found,ordered,'native attach must change exactly the selected page and no disjoint call');
-   const after=await rawAttachSnapshotV1(c,args[2]);
+   phase='snapshot-and-disjoint';const after=await rawAttachSnapshotV1(c,args[2]);
    assert.equal(after.length,before.length);
    for(let i=0;i<after.length;i++){
     const a=after[i]!,b=before[i]!;assert.equal(a.id,b.id);
     if(!ordered.includes(a.id))assert.deepEqual(a,b,'disjoint calls remain byte-identical');
     else if(!b.fresh)assert.equal(a.updated_at,b.updated_at,'partial replay preserves its original timestamp exactly');
    }
-   const fresh=before.filter(row=>row.fresh&&ordered.includes(row.id)).map(row=>row.id);
+   phase='physical-timestamp-bracket';const fresh=before.filter(row=>row.fresh&&ordered.includes(row.id)).map(row=>row.id);
    const stamps=(await c.query(`SELECT COALESCE(bool_and(updated_at BETWEEN $2::timestamptz AND $3::timestamptz),true) valid
     FROM signal_labeling_calls WHERE id=ANY($1::uuid[])`,[fresh,lower,upper])).rows[0];
    assert.equal(stamps.valid,true,'first attachment uses the real physical clock inside this arm bracket');
-   if(reference)assert.deepEqual(after.map(({updated_at,...row})=>row),reference.map(({updated_at,...row})=>row),
+   phase='cross-arm-equivalence';if(reference)assert.deepEqual(after.map(({updated_at,...row})=>row),reference.map(({updated_at,...row})=>row),
     'both arms preserve every other field including native bigint, timestamp microseconds, JSON and lineage');
    else reference=after;
-   const replay=await c.query(sql,args);assert.deepEqual(replay.rows.map(r=>r.id).sort(),ordered);
+   phase='exact-replay';const replay=await c.query(sql,args);assert.deepEqual(replay.rows.map(r=>r.id).sort(),ordered);
    assert.deepEqual(await rawAttachSnapshotV1(c,args[2]),after,'exact replay preserves every field including updated_at');
-   plans.push({arm,members:expected.length,plan:actual,execution_ms:actual['Execution Time'],planning_ms:actual['Planning Time'],
-    trigger_stats:(actual.Triggers??[]).map((t:Record<string,unknown>)=>({name:String(t['Trigger Name']),calls:Number(t.Calls),ms:Number(t.Time)})),selected_nodes:observed});
-  }finally{await c.query('ROLLBACK TO SAVEPOINT raw_attach_arm');await c.query('RELEASE SAVEPOINT raw_attach_arm');}
+   rawAttachPhaseV1('exact-replay',arm,expected.length,'complete');
+  }catch(error){rawAttachPhaseV1(phase,arm,expected.length,'failed',error);throw error;}
+  finally{await c.query('ROLLBACK TO SAVEPOINT raw_attach_arm');await c.query('RELEASE SAVEPOINT raw_attach_arm');}
+  rawAttachPhaseV1('rollback-preimage',arm,expected.length,'checking');
   assert.deepEqual(await rawAttachSnapshotV1(c,args[2]),before,'each DML arm rolls all siblings back to the identical preimage');
  }
 }
