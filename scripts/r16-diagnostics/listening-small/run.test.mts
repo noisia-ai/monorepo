@@ -260,18 +260,19 @@ async function withDmlPlanTestEnv<T>(action:()=>Promise<T>){
  try{return await action();}finally{for(const key of keys){const value=prior[key];if(value===undefined)delete process.env[key];else process.env[key]=value;}}
 }
 const FUNCTION_STATS_BEFORE=[
- {schema_name:'public',function_name:'signal_listening_answer_guard_v1',identity_arguments:'',calls:10,total_time_ms:2,self_time_ms:1},
- {schema_name:'public',function_name:'signal_listening_root_right_v1',identity_arguments:'uuid, uuid, text',calls:40,total_time_ms:12,self_time_ms:10},
- {schema_name:'public',function_name:'signal_processing_lock_actor_v1',identity_arguments:'uuid, uuid, boolean',calls:5,total_time_ms:8,self_time_ms:6},
+ {signature:'public.signal_listening_answer_guard_v1()',function_present:true,stats_observed:true,calls:10,total_time_ms:2,self_time_ms:1},
+ {signature:'public.signal_listening_root_right_v1(uuid, uuid, text)',function_present:true,stats_observed:true,calls:40,total_time_ms:12,self_time_ms:10},
+ {signature:'public.signal_processing_lock_actor_v1(uuid, uuid, boolean)',function_present:true,stats_observed:true,calls:5,total_time_ms:8,self_time_ms:6},
 ];
 const FUNCTION_STATS_AFTER=[
- {schema_name:'public',function_name:'signal_listening_answer_guard_v1',identity_arguments:'',calls:11,total_time_ms:2.5,self_time_ms:1.3},
- {schema_name:'public',function_name:'signal_listening_root_right_v1',identity_arguments:'uuid, uuid, text',calls:42,total_time_ms:13,self_time_ms:11},
- {schema_name:'public',function_name:'signal_processing_lock_actor_v1',identity_arguments:'uuid, uuid, boolean',calls:6,total_time_ms:9,self_time_ms:7},
+ {signature:'public.signal_listening_answer_guard_v1()',function_present:true,stats_observed:true,calls:11,total_time_ms:2.5,self_time_ms:1.3},
+ {signature:'public.signal_listening_root_right_v1(uuid, uuid, text)',function_present:true,stats_observed:true,calls:42,total_time_ms:13,self_time_ms:11},
+ {signature:'public.signal_processing_lock_actor_v1(uuid, uuid, boolean)',function_present:true,stats_observed:true,calls:6,total_time_ms:9,self_time_ms:7},
 ];
-function fakeDmlPlanClient(options:{readOnly?:string;failLoad?:boolean;failRestore?:boolean;failStatsBefore?:boolean;failStatsAfter?:boolean}={}){
- const client=new EventEmitter() as any,statements:string[]=[],events:string[]=[],restores:Array<{name:string;value:string;local:boolean}>=[];
- let statsReads=0;
+function fakeDmlPlanClient(options:{readOnly?:string;failLoad?:boolean;failRestore?:boolean;failStatsBefore?:boolean;failStatsAfter?:boolean;
+ absentSignatures?:string[];unobservedSignatures?:string[];unobservedBeforeSignatures?:string[];missingSignatures?:string[];restoreFailsAfterStatsError?:boolean}={}){
+ const client=new EventEmitter() as any,statements:string[]=[],events:string[]=[],restores:Array<{name:string;value:string;local:boolean}>=[],functionStatLookups:string[][]=[];
+ let statsReads=0,transactionAborted=false;
  const oldValues:Record<string,string>={log_min_messages:'warning',client_min_messages:'notice',log_statement:'none',log_parameter_max_length:'0',
   'auto_explain.log_parameter_max_length':'0','auto_explain.log_level':'notice','auto_explain.log_min_duration':'-1',
   'auto_explain.log_nested_statements':'off','auto_explain.log_analyze':'off','auto_explain.log_buffers':'off',
@@ -281,14 +282,22 @@ function fakeDmlPlanClient(options:{readOnly?:string;failLoad?:boolean;failResto
   if(sql.startsWith('SAVEPOINT')){events.push('savepoint');return{rows:[]};}
   if(sql.startsWith('SELECT current_database'))return{rows:[{database:'noisia_mfp_ci',role:'postgres',read_only:options.readOnly??'off',superuser:true}]};
   if(sql.startsWith("LOAD 'auto_explain'")){events.push('load');if(options.failLoad)throw Error('private extension failure');return{rows:[]};}
-  if(sql.includes('pg_stat_xact_user_functions')){statsReads++;if((statsReads===1&&options.failStatsBefore)||(statsReads===2&&options.failStatsAfter))throw Error('synthetic_function_stats_error');return{rows:statsReads===1?FUNCTION_STATS_BEFORE:FUNCTION_STATS_AFTER};}
+  if(sql.includes('pg_stat_xact_user_functions')){statsReads++;functionStatLookups.push((values?.[0] as string[]|undefined)??[]);
+   if((statsReads===1&&options.failStatsBefore)||(statsReads===2&&options.failStatsAfter)){if(statsReads===2&&options.restoreFailsAfterStatsError)transactionAborted=true;throw Error('synthetic_function_stats_error');}
+   const source=statsReads===1?FUNCTION_STATS_BEFORE:FUNCTION_STATS_AFTER;
+   const rows=source.filter(row=>!options.missingSignatures?.includes(row.signature)).map(row=>options.absentSignatures?.includes(row.signature)
+    ?{signature:row.signature,function_present:false,stats_observed:false,calls:null,total_time_ms:null,self_time_ms:null}
+    :options.unobservedSignatures?.includes(row.signature)||(statsReads===1&&options.unobservedBeforeSignatures?.includes(row.signature))
+     ?{signature:row.signature,function_present:true,stats_observed:false,calls:null,total_time_ms:null,self_time_ms:null}:row);
+   return{rows};}
   if(sql.startsWith('SELECT name,current_setting'))return{rows:(values?.[0] as string[]).map(name=>({name,value:oldValues[name]}))};
   if(sql.startsWith('RELEASE SAVEPOINT')){events.push('release');return{rows:[]};}
   if(sql.startsWith('ROLLBACK TO SAVEPOINT')){events.push('rollback');return{rows:[]};}
-  if(sql.startsWith('SELECT set_config')){events.push('restore');restores.push({name:String(values?.[0]),value:String(values?.[1]),local:sql.includes('true')});if(options.failRestore)throw Error('private restore failure');return{rows:[]};}
+  if(sql.startsWith('SELECT set_config')){events.push('restore');restores.push({name:String(values?.[0]),value:String(values?.[1]),local:sql.includes('true')});if(options.failRestore)throw Error('synthetic restore failure');
+   if(transactionAborted)throw Error('25P02 current transaction is aborted');return{rows:[]};}
   return{rows:[]};
  };
- return{client,statements,events,restores,oldValues};
+ return{client,statements,events,restores,oldValues,functionStatLookups};
 }
 
 test('DML plan specs match the complete source SQL, bind arity and batch-value positions',async()=>{
@@ -316,6 +325,26 @@ test('DML plan specs match the complete source SQL, bind arity and batch-value p
  assert.equal(dmlPlanBatchSize(reserveHash,['INSERT', ['run','workspace','provider','model','transport',JSON.stringify(Array(256).fill({synthetic:true})),'date','UTC']]),256);
  assert.equal(dmlPlanBatchSize(reserveHash,['INSERT', ['run','workspace','provider','model','transport',JSON.stringify(Array(255).fill({synthetic:true})),'date','UTC']]),255);
  assert.equal(dmlPlanBatchSize(reserveHash,['INSERT', ['run','workspace','provider','model','transport','not-json','date','UTC']]),null);
+});
+
+test('function-stat OID contract ignores the source functions’ real argument names',async()=>{
+ const target=process.env.R16_DIAGNOSTIC_TARGET_ROOT;assert.ok(target,'function-stat contract test needs checked out public target root');
+ const listening=await readFile(join(target,'infrastructure/db/migrations/0296_signal_listening_configuration.sql'),'utf8');
+ const policy=await readFile(join(target,'infrastructure/db/migrations/0155_signal_processing_policy.sql'),'utf8');
+ assert.match(listening,/CREATE FUNCTION signal_listening_root_right_v1\(w uuid,r uuid,purpose text\)/u);
+ assert.match(policy,/CREATE FUNCTION signal_processing_lock_actor_v1\(target_workspace uuid,target_actor uuid,require_request boolean DEFAULT true\)/u);
+ await withDmlPlanTestEnv(async()=>{
+  const {captureDmlPlanQueryV1}=await import('./observer.mjs');const {client,statements,functionStatLookups}=fakeDmlPlanClient();
+  await captureDmlPlanQueryV1({client,query:async()=>({rowCount:256}),query_hash:'sha256:7a86df2f02e720b156e7f9d7132eba342080fc9d169d7cf8e1cbdfa74de067a7',
+   batch_size:256,database:'noisia_mfp_ci',role:'postgres',env:process.env});
+  const lookup=statements.find(sql=>sql.includes('pg_stat_xact_user_functions'))??'';
+  assert.match(lookup,/to_regprocedure\(signature\)::oid/u);assert.doesNotMatch(lookup,/pg_get_function_identity_arguments|identity_arguments/u);
+  assert.deepEqual(functionStatLookups[0],[
+   'public.signal_listening_answer_guard_v1()',
+   'public.signal_listening_root_right_v1(uuid, uuid, text)',
+   'public.signal_processing_lock_actor_v1(uuid, uuid, boolean)',
+  ]);
+ });
 });
 
 test('DML capture guard requires the explicit owned CI loopback lab opt-in',async()=>{
@@ -400,7 +429,8 @@ test('answers INSERT reports allowlisted inclusive same-transaction function-sta
   {signature:'public.signal_listening_root_right_v1(uuid, uuid, text)',calls:2},
   {signature:'public.signal_processing_lock_actor_v1(uuid, uuid, boolean)',calls:1},
  ]);
- assert.ok(Math.abs(stats!.deltas[0]!.total_time_ms-.5)<1e-9);assert.ok(Math.abs(stats!.deltas[0]!.self_time_ms-.3)<1e-9);
+ assert.ok(stats?.deltas.every(row=>row.status==='captured'));
+ assert.ok(Math.abs(stats!.deltas[0]!.total_time_ms!-.5)<1e-9);assert.ok(Math.abs(stats!.deltas[0]!.self_time_ms!-.3)<1e-9);
  assert.deepEqual(stats?.deltas.slice(1).map(row=>[row.total_time_ms,row.self_time_ms]),[[1,1],[1,1]]);
  assert.equal(stats?.read_before_ms,1);assert.equal(stats?.read_after_ms,1);
  assert.equal(captured.observation.query_wall_ms,1);
@@ -409,6 +439,31 @@ test('answers INSERT reports allowlisted inclusive same-transaction function-sta
  assert.equal(restores.at(-2)?.name,'track_functions');assert.equal(restores.at(-2)?.value,oldValues.track_functions);
  assert.equal(client.listenerCount('notice'),0);
  const serialized=JSON.stringify(captured);for(const forbidden of ['INSERT INTO','...','workspace_id','private','run_id'])assert.ok(!serialized.includes(forbidden));
+}));
+
+test('function stats distinguishes absent functions, unobserved counters, and missing lookup rows from measured zero',async()=>withDmlPlanTestEnv(async()=>{
+ const {captureDmlPlanQueryV1}=await import('./observer.mjs');
+ const answer='public.signal_listening_answer_guard_v1()',root='public.signal_listening_root_right_v1(uuid, uuid, text)',actor='public.signal_processing_lock_actor_v1(uuid, uuid, boolean)';
+ const {client}=fakeDmlPlanClient({absentSignatures:[answer],unobservedSignatures:[root],missingSignatures:[actor]});
+ const captured=await captureDmlPlanQueryV1({client,query:async()=>({rowCount:256}),
+  query_hash:'sha256:7a86df2f02e720b156e7f9d7132eba342080fc9d169d7cf8e1cbdfa74de067a7',batch_size:256,
+  database:'noisia_mfp_ci',role:'postgres',env:process.env});
+ const deltas=captured.observation?.function_stats?.deltas;assert.ok(deltas);
+ assert.deepEqual(deltas.map(({signature,status,calls,total_time_ms,self_time_ms})=>({signature,status,calls,total_time_ms,self_time_ms})),[
+  {signature:answer,status:'function_absent',calls:null,total_time_ms:null,self_time_ms:null},
+  {signature:root,status:'stats_unobserved',calls:null,total_time_ms:null,self_time_ms:null},
+  {signature:actor,status:'lookup_unobserved',calls:null,total_time_ms:null,self_time_ms:null},
+ ]);
+}));
+
+test('a missing pre-write transaction counter row is declared before using its transaction-start zero baseline',async()=>withDmlPlanTestEnv(async()=>{
+ const {captureDmlPlanQueryV1}=await import('./observer.mjs');const root='public.signal_listening_root_right_v1(uuid, uuid, text)';
+ const {client}=fakeDmlPlanClient({unobservedBeforeSignatures:[root]});
+ const captured=await captureDmlPlanQueryV1({client,query:async()=>({rowCount:256}),
+  query_hash:'sha256:7a86df2f02e720b156e7f9d7132eba342080fc9d169d7cf8e1cbdfa74de067a7',batch_size:256,
+  database:'noisia_mfp_ci',role:'postgres',env:process.env});
+ const row=captured.observation?.function_stats?.deltas.find(item=>item.signature===root);
+ assert.deepEqual(row,{signature:root,status:'captured',baseline:'transaction_local_row_absent_zero_before_dml',calls:42,total_time_ms:13,self_time_ms:11});
 }));
 
 test('function-stat setup failure falls back before the original answers write exactly once',async()=>withDmlPlanTestEnv(async()=>{
@@ -428,6 +483,17 @@ test('post-write function-stat failure propagates without replay or rollback',as
   database:'noisia_mfp_ci',role:'postgres',env:process.env}),/synthetic_function_stats_error/u);
  assert.equal(writes,1);assert.equal(events.includes('rollback'),false);assert.equal(client.listenerCount('notice'),0);
  assert.equal(restores.at(-2)?.name,'track_functions');assert.equal(restores.at(-2)?.value,oldValues.track_functions);
+}));
+
+test('stats-read error remains primary when aborted-transaction cleanup also fails',async()=>withDmlPlanTestEnv(async()=>{
+ const {captureDmlPlanQueryV1}=await import('./observer.mjs');const {client,events}=fakeDmlPlanClient({failStatsAfter:true,restoreFailsAfterStatsError:true});let writes=0;
+ let caught:unknown;try{await captureDmlPlanQueryV1({client,query:async()=>{writes++;events.push('write');return{rowCount:256};},
+  query_hash:'sha256:7a86df2f02e720b156e7f9d7132eba342080fc9d169d7cf8e1cbdfa74de067a7',batch_size:256,
+  database:'noisia_mfp_ci',role:'postgres',env:process.env});}catch(error){caught=error;}
+ assert.ok(caught instanceof AggregateError);assert.equal((caught as AggregateError).errors.length,2);
+ assert.match(String((caught as AggregateError).errors[0]),/synthetic_function_stats_error/u);
+ assert.match(String((caught as AggregateError).errors[1]),/25P02/u);
+ assert.equal(writes,1);assert.equal(events.includes('rollback'),false);assert.equal(client.listenerCount('notice'),0);
 }));
 
 test('reserve INSERT capture labels proposal batches distinctly from answer rows',async()=>withDmlPlanTestEnv(async()=>{
@@ -466,6 +532,6 @@ test('DML read-only scope mismatch falls back before write, while DML and cleanu
  assert.equal(failedWrites,1);assert.equal(queryError.client.listenerCount('notice'),0);assert.equal(queryError.events.includes('rollback'),false);
  const cleanupError=fakeDmlPlanClient({failRestore:true});let cleanupWrites=0;
  await assert.rejects(captureDmlPlanQueryV1({client:cleanupError.client,query:async()=>{cleanupWrites++;cleanupError.events.push('write');return{rowCount:256};},
-  query_hash:hash,batch_size:256,database:'noisia_mfp_ci',role:'postgres',env:process.env}),/private restore failure/u);
+  query_hash:hash,batch_size:256,database:'noisia_mfp_ci',role:'postgres',env:process.env}),/synthetic restore failure/u);
  assert.equal(cleanupWrites,1);assert.equal(cleanupError.client.listenerCount('notice'),0);assert.equal(cleanupError.events.includes('rollback'),false);
 }));

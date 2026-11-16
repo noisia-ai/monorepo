@@ -38,7 +38,6 @@ const SAFE_FUNCTION_STAT_SIGNATURES=[
  'public.signal_listening_root_right_v1(uuid, uuid, text)',
  'public.signal_processing_lock_actor_v1(uuid, uuid, boolean)',
 ] as const;
-const SAFE_FUNCTION_STAT_NAMES=['signal_listening_answer_guard_v1','signal_listening_root_right_v1','signal_processing_lock_actor_v1'];
 const DML_BASE_GUCS=['log_min_messages','client_min_messages','log_statement','log_parameter_max_length'];
 const DML_AUTO_EXPLAIN_GUCS=['auto_explain.log_parameter_max_length','auto_explain.log_level','auto_explain.log_min_duration','auto_explain.log_nested_statements',
  'auto_explain.log_analyze','auto_explain.log_buffers','auto_explain.log_timing','auto_explain.log_format','auto_explain.log_verbose','auto_explain.log_triggers'];
@@ -126,7 +125,8 @@ export type InnerPlanObservationV1=
 type DmlPlanV1={sequence:number;query_text_sha256:string|null;planning_time_ms:number|null;execution_time_ms:number|null;
  plan:Record<string,unknown>;triggers:Array<{name:string;relation:string|null;time_ms:number|null;calls:number}>;triggers_seen:number;triggers_omitted:number;triggers_unknown_time:number};
 type DmlPlanTimingV1={setup_ms:number;query_wall_ms:number;cleanup_ms:number;setup_cleanup_wall_ms:number;analyze_timing_overhead_measured:false};
-type FunctionStatsDeltaV1={signature:string;calls:number;total_time_ms:number;self_time_ms:number};
+type FunctionStatsDeltaV1={signature:string;status:'captured'|'function_absent'|'stats_unobserved'|'lookup_unobserved';
+ baseline:'observed_before'|'transaction_local_row_absent_zero_before_dml'|null;calls:number|null;total_time_ms:number|null;self_time_ms:number|null};
 type FunctionStatsArtifactV1={status:'captured'|'setup_unavailable';read_before_ms:number|null;read_after_ms:number|null;
  total_time_inclusive:true;self_time_excludes_nested_calls:true;overhead_measured:false;capacity_claim:false;deltas:FunctionStatsDeltaV1[]};
 export type DmlPlanObservationV1=({query_hash:string;label:string;batch_size:number;batch_unit:DmlPlanUnitV1;status:'setup_unavailable';
@@ -143,28 +143,39 @@ function dmlCaptureGucs(prior:Map<string,string>){
   ['auto_explain.log_min_duration',prior.get('auto_explain.log_min_duration')!],
  ] as const;
 }
-type FunctionStatsRowV1={calls:number;total_time_ms:number;self_time_ms:number};
+type FunctionStatsRowV1={function_present:boolean|null;stats_observed:boolean;calls:number|null;total_time_ms:number|null;self_time_ms:number|null};
 async function readFunctionStatsV1(client:any):Promise<Map<string,FunctionStatsRowV1>>{
- const result=await client.query(`SELECT n.nspname AS schema_name,p.proname AS function_name,
-  pg_get_function_identity_arguments(p.oid) AS identity_arguments,f.calls::float8 AS calls,
-  f.total_time::float8 AS total_time_ms,f.self_time::float8 AS self_time_ms
-  FROM pg_stat_xact_user_functions f JOIN pg_proc p ON p.oid=f.funcid JOIN pg_namespace n ON n.oid=p.pronamespace
-  WHERE n.nspname='public' AND p.proname=ANY($1::text[])`,[SAFE_FUNCTION_STAT_NAMES]);
+ const result=await client.query(`WITH requested(signature) AS (SELECT unnest($1::text[])),
+  resolved AS (SELECT signature,to_regprocedure(signature)::oid AS function_oid FROM requested)
+  SELECT r.signature,(p.oid IS NOT NULL) AS function_present,(f.funcid IS NOT NULL) AS stats_observed,
+   f.calls::float8 AS calls,f.total_time::float8 AS total_time_ms,f.self_time::float8 AS self_time_ms
+  FROM resolved r LEFT JOIN pg_proc p ON p.oid=r.function_oid
+  LEFT JOIN pg_stat_xact_user_functions f ON f.funcid=r.function_oid`,[SAFE_FUNCTION_STAT_SIGNATURES]);
  const stats=new Map<string,FunctionStatsRowV1>();
  for(const row of result.rows??[]){
-  if(row?.schema_name!=='public'||typeof row.function_name!=='string'||typeof row.identity_arguments!=='string')continue;
-  const signature=`public.${row.function_name}(${row.identity_arguments})`;
+  if(typeof row?.signature!=='string')continue;
+  const signature=row.signature;
   if(!(SAFE_FUNCTION_STAT_SIGNATURES as readonly string[]).includes(signature))continue;
+  const function_present=typeof row.function_present==='boolean'?row.function_present:null;
   const calls=Number(row.calls),total_time_ms=Number(row.total_time_ms),self_time_ms=Number(row.self_time_ms);
-  if(!Number.isSafeInteger(calls)||!Number.isFinite(total_time_ms)||!Number.isFinite(self_time_ms))continue;
-  stats.set(signature,{calls,total_time_ms,self_time_ms});
+  const stats_observed=row.stats_observed===true&&row.calls!==null&&row.total_time_ms!==null&&row.self_time_ms!==null&&
+   Number.isSafeInteger(calls)&&Number.isFinite(total_time_ms)&&Number.isFinite(self_time_ms);
+  stats.set(signature,{function_present,stats_observed,calls:stats_observed?calls:null,total_time_ms:stats_observed?total_time_ms:null,self_time_ms:stats_observed?self_time_ms:null});
  }
  return stats;
 }
 function functionStatsDeltaV1(before:Map<string,FunctionStatsRowV1>,after:Map<string,FunctionStatsRowV1>):FunctionStatsDeltaV1[]{
- return SAFE_FUNCTION_STAT_SIGNATURES.map(signature=>{const prior=before.get(signature)??{calls:0,total_time_ms:0,self_time_ms:0};
-  const next=after.get(signature)??{calls:prior.calls,total_time_ms:prior.total_time_ms,self_time_ms:prior.self_time_ms};
-  return{signature,calls:next.calls-prior.calls,total_time_ms:next.total_time_ms-prior.total_time_ms,self_time_ms:next.self_time_ms-prior.self_time_ms};});
+ return SAFE_FUNCTION_STAT_SIGNATURES.map(signature=>{const prior=before.get(signature),next=after.get(signature);
+  if(!prior||!next||prior.function_present===null||next.function_present===null)
+   return{signature,status:'lookup_unobserved',baseline:null,calls:null,total_time_ms:null,self_time_ms:null};
+  if(!prior.function_present||!next.function_present)
+   return{signature,status:'function_absent',baseline:null,calls:null,total_time_ms:null,self_time_ms:null};
+  if(!next.stats_observed||next.calls===null||next.total_time_ms===null||next.self_time_ms===null)
+   return{signature,status:'stats_unobserved',baseline:null,calls:null,total_time_ms:null,self_time_ms:null};
+  const base:{calls:number;total_time_ms:number;self_time_ms:number}=prior.stats_observed&&prior.calls!==null&&prior.total_time_ms!==null&&prior.self_time_ms!==null
+   ?{calls:prior.calls,total_time_ms:prior.total_time_ms,self_time_ms:prior.self_time_ms}:{calls:0,total_time_ms:0,self_time_ms:0};
+  return{signature,status:'captured',baseline:prior.stats_observed?'observed_before':'transaction_local_row_absent_zero_before_dml',
+   calls:next.calls-base.calls,total_time_ms:next.total_time_ms-base.total_time_ms,self_time_ms:next.self_time_ms-base.self_time_ms};});
 }
 /** Instruments one already-issued write only after setup is complete. The setup savepoint is released before the original DML and is never rolled back afterward. */
 export async function captureDmlPlanQueryV1(args:{client:any;query:()=>Promise<any>;query_hash:string;batch_size:number;database:string;role:string;env:NodeJS.ProcessEnv;clock?:()=>number}):Promise<{result:any;observation:DmlPlanObservationV1|null}>{
@@ -252,7 +263,10 @@ export async function captureDmlPlanQueryV1(args:{client:any;query:()=>Promise<a
    catch(error){statsReadError=error;}
    finally{functionStatsReadAfterMs=clock()-statsStarted;if(functionStats)functionStats.read_after_ms=functionStatsReadAfterMs;}
   }
-  await restoreSettings();if(statsReadError)throw statsReadError;
+  let restoreError:unknown;try{await restoreSettings();}catch(error){restoreError=error;}
+  if(statsReadError&&restoreError)throw new AggregateError([statsReadError,restoreError],'function_stats_read_and_restore_failed');
+  if(statsReadError)throw statsReadError;
+  if(restoreError)throw restoreError;
   return{result,observation:{query_hash,label:spec.label,batch_size,batch_unit:spec.batch_unit,
    status:plans.length?'captured':'plan_notice_unavailable',plans,plan_notices_seen:planNoticesSeen,plans_dropped:plansDropped,triggers_omitted_count:triggersOmittedCount,
    triggers_unknown_time_count:triggersUnknownTimeCount,analyze_timing_enabled:true,...(functionStats?{function_stats:functionStats}:{}),
