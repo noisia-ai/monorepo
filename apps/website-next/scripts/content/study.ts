@@ -4,7 +4,7 @@ import { extname, join, relative, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
 import puppeteer from "puppeteer-core";
-import { studySchema, type StudyInput } from "../../src/content/studies/schema";
+import { studyMarkets, studySchema, type StudyInput } from "../../src/content/studies/schema";
 import { connect, parseArgs } from "./env";
 import { lintDeckHtml, lintTexts } from "./lint";
 
@@ -234,7 +234,7 @@ try {
     study.id,
     study.access,
     study.industry,
-    study.market,
+    studyMarkets(study)[0],
     study.method,
     study.period.label,
     study.period.start,
@@ -246,13 +246,14 @@ try {
     "deck/index.html",
     builderPdf!.path,
     slideCount,
-    version
+    version,
+    studyMarkets(study)
   ];
   await db.query(
     `insert into content.studies (id, access_mode, industry, market, method, period_label, period_start, period_end, base, summary,
-                                  full_language, cover_path, deck_path, pdf_path, slide_count, version)
-     values ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10::jsonb, $11, $12, $13, $14, $15, $16)
-     on conflict (id) do update set access_mode = excluded.access_mode, industry = excluded.industry, market = excluded.market,
+                                  full_language, cover_path, deck_path, pdf_path, slide_count, version, markets)
+     values ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10::jsonb, $11, $12, $13, $14, $15, $16, $17::text[])
+     on conflict (id) do update set access_mode = excluded.access_mode, industry = excluded.industry, market = excluded.market, markets = excluded.markets,
        method = excluded.method, period_label = excluded.period_label, period_start = excluded.period_start,
        period_end = excluded.period_end, base = excluded.base, summary = excluded.summary, full_language = excluded.full_language,
        cover_path = excluded.cover_path, deck_path = excluded.deck_path, pdf_path = excluded.pdf_path,

@@ -373,7 +373,7 @@ function studyPages(studies: Study[]): SeoPage[] {
       description: study.summary[lang].dek,
       name: study.summary[lang].title,
       headline: study.summary[lang].title,
-      kicker: `${(messages[lang].industries as Record<string, string>)[study.industry] ?? study.industry} · ${studiesPage[lang].markets[study.market]}`
+      kicker: `${(messages[lang].industries as Record<string, string>)[study.industry] ?? study.industry} · ${studiesPage[lang].marketList(study.markets)}`
     }))
   }));
 }

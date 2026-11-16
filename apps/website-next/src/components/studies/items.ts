@@ -14,7 +14,8 @@ export type StudyCardItem = {
   dek: string;
   industry: string;
   industryLabel: string;
-  market: Market;
+  markets: { key: Market; label: string }[];
+  /** Short form for the card: one or two names, or "4 markets". */
   marketLabel: string;
   meta: string;
   badge: string;
@@ -46,8 +47,8 @@ export async function studyCardItems(locale: string): Promise<StudyCardItem[]> {
       dek: study.summary[lang].dek,
       industry: study.industry,
       industryLabel: label(study.industry),
-      market: study.market,
-      marketLabel: c.markets[study.market],
+      markets: study.markets.map((key) => ({ key, label: c.markets[key] })),
+      marketLabel: c.marketSummary(study.markets),
       meta: [study.method, study.summary[lang].period_label ?? study.periodLabel].filter(Boolean).join(" · "),
       badge: c.access[study.accessMode],
       gated: study.accessMode !== "abierto",
@@ -65,7 +66,7 @@ export async function studyCardItems(locale: string): Promise<StudyCardItem[]> {
     dek: lang === "en" ? (reportSummaryEn[report.slug] ?? report.meta.subtitle) : report.meta.subtitle,
     industry: "cultura-y-sociedad",
     industryLabel: label("cultura-y-sociedad"),
-    market: "MX",
+    markets: [{ key: "MX", label: c.markets.MX }],
     marketLabel: c.markets.MX,
     meta: c.reportNote,
     badge: c.access.abierto,

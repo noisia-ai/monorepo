@@ -58,7 +58,7 @@ export default async function StudyPage({ params }: { params: Promise<Params> })
         description: s.dek,
         datePublished: study.publishedAt?.slice(0, 10),
         image: cover ?? undefined,
-        extra: { keywords: [study.method, industry, c.markets[study.market]].filter(Boolean).join(", ") }
+        extra: { keywords: [study.method, industry, ...study.markets.map((m) => c.markets[m])].filter(Boolean).join(", ") }
       })
     ]
   });
@@ -70,7 +70,7 @@ export default async function StudyPage({ params }: { params: Promise<Params> })
           <span className={styles.kicker}>
             {study.draft ? <span className={styles.draft}>{c.draft}</span> : null}
             <span>
-              {industry} · {c.markets[study.market]}
+              {industry} · {c.marketList(study.markets)}
             </span>
           </span>
           <h1 className={styles.studyTitle}>{s.title}</h1>

@@ -6,7 +6,7 @@ import { z } from "zod";
  * Client studies never go here.
  */
 
-export const MARKETS = ["MX", "UK", "BR", "DE", "US-CA"] as const;
+export const MARKETS = ["MX", "UK", "BR", "DE", "US-CA", "ES", "FR"] as const;
 export const ACCESS_MODES = ["abierto", "registro", "solo_link"] as const;
 export const FULL_LANGUAGES = ["es", "en", "pt", "de"] as const;
 
@@ -33,7 +33,8 @@ export const studySummarySchema = z.object({
 export const studySchema = z.object({
   id: z.string().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, "lowercase words joined by hyphens"),
   industry: z.string().regex(/^[a-z0-9-]+$/),
-  market: z.enum(MARKETS),
+  /** One market ("MX") or several (["UK", "DE", "ES", "FR"]) for a study that reads them side by side. */
+  market: z.union([z.enum(MARKETS), z.array(z.enum(MARKETS)).min(1).max(8)]),
   method: text,
   period: z.object({ label: text, start: isoDate, end: isoDate }),
   base: z.object({ mentions: z.number().int().positive(), channels: z.array(text).min(1), cut_date: isoDate }),
@@ -44,4 +45,9 @@ export const studySchema = z.object({
 });
 
 export type StudyInput = z.infer<typeof studySchema>;
+
+/** The markets of a study as a list without repeats, in the order given. The first is the main one. */
+export function studyMarkets(input: Pick<StudyInput, "market">): Market[] {
+  return [...new Set(Array.isArray(input.market) ? input.market : [input.market])];
+}
 export type StudySummary = z.infer<typeof studySummarySchema>;

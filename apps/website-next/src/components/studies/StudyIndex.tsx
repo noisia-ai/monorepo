@@ -71,7 +71,7 @@ export function StudyCard({ item, featured = false, labels }: { item: StudyCardI
           {featured ? <span className={styles.latest}>{labels.latest}</span> : null}
           {item.draft ? <span className={styles.draft}>{labels.draft}</span> : null}
           <span>
-            {item.industryLabel} · {item.marketLabel}
+            {item.industryLabel} · <span title={item.markets.length > 2 ? item.markets.map((m) => m.label).join(", ") : undefined}>{item.marketLabel}</span>
           </span>
         </span>
         <span className={styles.cardTitle}>{item.title}</span>
@@ -104,12 +104,12 @@ export function StudyIndex({ items, labels }: { items: StudyCardItem[]; labels: 
   }, [items]);
   const markets = useMemo(() => {
     const seen = new Map<string, string>();
-    for (const item of items) seen.set(item.market, item.marketLabel);
+    for (const item of items) for (const m of item.markets) seen.set(m.key, m.label);
     // Mexico goes first: it is where the studies start.
     return [...seen].map(([key, label]) => ({ key, label })).sort((a, b) => (a.key === "MX" ? -1 : b.key === "MX" ? 1 : a.label.localeCompare(b.label)));
   }, [items]);
 
-  const shown = items.filter((item) => (!industry || item.industry === industry) && (!market || item.market === market));
+  const shown = items.filter((item) => (!industry || item.industry === industry) && (!market || item.markets.some((m) => m.key === market)));
   const filtered = Boolean(industry || market);
   const [first, ...rest] = shown;
 
