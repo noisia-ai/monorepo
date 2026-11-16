@@ -131,7 +131,7 @@ jobs:
             mkdir -p "$(dirname "$R16_MONEY_ORACLE_TAP")"
             set +e
             timeout 4m env NOISIA_R16_LISTENING_MONEY_BATCHES_PG=true corepack pnpm exec tsx --test \
-              --test-name-pattern='^materialized selected matches the old native validator and atomically rejects forged siblings$' \
+              --test-name-pattern='^selected materialization and full join match old validators and atomically reject forged siblings$' \
               --test-concurrency=1 infrastructure/db/migrations/signal-listening-money-batches.postgres.test.ts \
               > "$R16_MONEY_ORACLE_TAP" 2>&1
             oracle_status=$?
@@ -143,7 +143,7 @@ jobs:
             node - "$R16_MONEY_ORACLE_TAP" <<'NODE'
           const fs = require('node:fs');
           const tap = fs.readFileSync(process.argv[2], 'utf8');
-          const title = 'materialized selected matches the old native validator and atomically rejects forged siblings';
+          const title = 'selected materialization and full join match old validators and atomically reject forged siblings';
           const selected = tap.split(/\r?\n/u).filter((line) => /^ok \d+ - /.test(line) && line.endsWith(title));
           if (selected.length !== 1 || /^ok \d+ - .*# SKIP/u.test(selected[0])) {
             throw new Error('focused native oracle did not report exactly one executed passing test');
