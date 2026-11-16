@@ -12,6 +12,12 @@ No hay aprobaciones humanas intermedias en los procesos de análisis: Sonnet 4.6
 
 ## Progreso
 
+- 0327 integrada localmente como ef56b355 tras revisión sin P0/P1/P2: cambia sólo batch_sql del UPDATE por parejas materializadas, cast al tipo compuesto nominal y filtro posterior de ambos IDs. El resto del trigger queda literal, incluido expected, orden de errores y locks. El focal financiero existente añade comparación contra 0323 de tipos/columnas/microsegundos, nueve relaciones contrafactuales y UPDATE nativo válido tras rechazo atómico de identidad alterada. Hay 33 migraciones pendientes; confirmación SQL nativa y rendimiento todavía pendientes.
+- CI completo de 0325 (43804353558) termina todo verde, incluido Study 23/23. En 74425e15, migrated-schema pasa MFP 104/104 y Escucha 104/105: falla sólo initial unknown con RAW por el fixture que omitía finish/refresh antes de nuevas llamadas. El runtime sí ejecuta esa frontera y conserva bloqueados los unknown sin bytes. 9297cd7a corrige sólo fixture/test tras revisión sin P0/P1/P2, sin tocar runtime, 0308 o lease. Tipado/lint 11/11, diez focales de integración y treinta del propietario pasan; los dos casos nativos se añaden como gate antes del mini.
+
+- 0326 nativa verificada: mini 43808106309 verde, ocho ZIP sellados y diecisiete oráculos aprobados sin omisiones (money1, actor3, páginas10, lectores3). Conserva 4,096 raíces/8,192 llamadas, 25.078 s, HTTP 124.331–484.662 ms; unas 163.3 raíces/s, todavía sin H1. Las quince capturas de lectura no superan 486 ms y desaparece el rescaneo final amplio. Smoke 43808114773 también verde: actor3, límites/lazy/segunda forma4, híbrido1 y escala1.
+- El coste residual de mark está medido: tres agregados secuenciales recorren cada uno transition rows 1,024 × 1,024 y suman 406.967 ms, 43.3% del trigger de 939.118 ms; expected es otro Result de 377.247 ms. Se evalúa una barrera de set-match equivalente para ese selector, sin asumir que todos los UPDATE conservan el conjunto de IDs. No se modificó todavía dinero ni otra migración.
+
 - 0326 integrada localmente como 40b05056 tras revisión sin P0/P1/P2: amplía el slice a todos los digests y reutiliza el conjunto en el join final, con el mismo ON de cinco claves y sin otras cláusulas cambiadas. El modelo contempla digests repetidos sin asumir UNIQUE; el oracle añade 0325 raw/effective en pg_temp. Tipado/lint 11/11 y ocho focales puras pasan; se conservan tres casos semánticos y uno de escala pendientes. Hay 32 migraciones pendientes, ninguna aplicada en UAT; la aceptación nativa y el rendimiento siguen en comprobación.
 - CI general y runtime de 74425e15 están verdes; su PostgreSQL completo sigue ejecutándose. El corte 0325 previo termina migrated-schema con actor 3/3, MFP 104/104 y Escucha 95/95, sin omisiones; Study continúa. Se conserva la corrida mientras se mide el nuevo SQL en el laboratorio separado.
 
@@ -309,6 +315,8 @@ Recibo: separar Voyage/JEV por raíz de Claude por número de grupos y vueltas; 
 
 ## Sorpresas y descubrimientos
 
+- Activar el fence diferido expuso un paso omitido del fixture de recuperación inicial: aplicaba RAW/settlement y reservaba otras raíces manteniendo error_code=labeling_outcome_unknown. La ruta productiva hace finish y refresh después de drenar. El fixture reproduce ahora esa frontera pública; no borra el error mediante SQL ni cambia la protección 0308. El caso sin bytes conserva incertidumbre y reserva y rechaza otra admisión.
+
 - Corregir las dos lecturas base no estabilizó el plan del tercer join al caché raw. La nueva captura identifica esa arista final de forma independiente; el empeoramiento total no se atribuye al paralelismo sólo por comparar relojes. El fallo posterior del recolector CPU tampoco invalida los TAP y planes ya persistidos, pero impide presentar esa ejecución como workflow verde o inferir hotspots de CPU.
 
 - No finalizar durante 150 ms no prueba contención: puede reflejar scheduling o espera del pool. Las tres regresiones nuevas que necesitan probar bloqueo ahora identifican los backends holder/waiter y exigen pg_blocking_pids antes de liberar, con cleanup en finally. No se confunde el coste temporal del test con evidencia del protocolo.
@@ -449,6 +457,10 @@ Recibo: separar Voyage/JEV por raíz de Claude por número de grupos y vueltas; 
 - El promedio del piloto completo incluye una etapa editorial que no escala por raíz. Multiplicarlo linealmente daba USD 205.81/millón; mantener explícitamente los grupos y una vuelta de referencia produce USD 114.035250. Ambos cálculos parten del mismo recibo, cuyo uso histórico permanece USD 17.280463.
 
 ## Registro de decisiones
+
+- 2026-11-16: aplicar la equivalencia universal FULL materializado + descarte posterior de ambos lados sin pareja al selector UPDATE, manteniendo el tipo nominal completo y todos los demás controles. Confirmar el cast ENR con PostgreSQL real y ampliar el focal existente, sin inventar igualdad de IDs ni cambiar expected. Corregir aparte el fixture de recuperación y exigir sus dos escenarios antes de medir; no relajar el guard que detectó su secuencia incompleta.
+
+- 2026-11-16: mantener la fuente 0326 en el laboratorio separado mientras termina CI completo de 74425e15. Su aceptación funcional temprana no autoriza gasto ni despliegue. Para el siguiente selector, rechazar una sustitución FULL directa sin garantía universal de IDs; evaluar materialización seguida del filtro de parejas, que debe preservar también UPDATE SQL directo con owners mixtos, y medir antes de aceptar.
 
 - 2026-11-16: ejecutar los tres casos semánticos existentes también antes del mini remoto, con su propio TAP tests3/pass3/fail0/skipped0. La lectura de toda la cadena de fixtures confirma que esos callbacks usan SQL y artefactos sintéticos durables, sin ejecutar Python; la suite completa con Python y Study permanece obligatoria. Esto añade feedback temprano sin crear otro scope CI ni sustituir la validación completa.
 
@@ -602,6 +614,8 @@ Recibo: separar Voyage/JEV por raíz de Claude por número de grupos y vueltas; 
 - 2026-11-14: publicar una fórmula condicional con coeficientes medidos en R15 y costo editorial por grupos/vueltas; actualizar la proyección histórica sin cambiar sus recibos ni presentarla como costo medido de R16. Reconstrucción verificada con aritmética decimal exacta.
 
 ## Resultado y retrospectiva
+
+Estado vigente, 16 nov.: 0326 conserva el censo completo y pasa sus oráculos y escala remotos, con 25.078 s para 4,096 raíces; H1 sigue sin cumplir 1,000/s. Se integran localmente 0327 y la corrección de fixture, revisadas y con tipado/lint verdes, pero necesitan nativas nuevas. El CI completo previo de 0325 está verde; 744 necesita repetir el único caso fallido tras el arreglo, además de terminar Study. No hay aceptación ni ejecución pagada de R16, despliegue o migraciones reales en UAT. El paquete real, la comparación privada y el QA visual siguen pendientes. Los párrafos siguientes conservan resultados históricos.
 
 Corte vigente 01:02 UTC: fuente local a27af513 con 0323 y helper tipado; publicada 0d392fca. General/runtime/escala verdes y Study 23/23 en 0d, pero PostgreSQL completo falla sólo en el oracle42P08 ya corregido localmente. El focal nativo y la atribución interna del guard están en curso. H1 sigue sin aceptar; hay 29 migraciones pendientes y ninguna acción R16 en UAT. Los cortes siguientes son históricos.
 
