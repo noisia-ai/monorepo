@@ -63,6 +63,6 @@ test('large synthetic preimage is consumed by the real request digest contract',
  assert.equal(Object.keys(preimage.request.questions).length,18);
  assert.equal(preimage.request.questions.voice!.type,'choice');
  assert.equal(preimage.request.questions.promotion!.type,'noul');
- const input:SignalListeningInputV1={root_id:preimage.root_id,input_digest:preimage.input_digest,question_digests:preimage.question_digests,scope_basis:preimage.scope_basis,text:preimage.request.state,title:null,platform:null,content_type:null,author:null,published_at:'2026-01-01',language:'es',map_id:'00000000-0000-4000-8000-000000000300',question_keys:Object.keys(preimage.request.questions),configuration_digest:'sha256:'+'3'.repeat(64)};
+ const input:SignalListeningInputV1={root_id:preimage.root_id,input_digest:preimage.input_digest,question_digests:preimage.question_digests,scope_basis:preimage.scope_basis,text:String(preimage.request.state),title:null,platform:null,content_type:null,author:null,published_at:'2026-01-01',language:'es',map_id:'00000000-0000-4000-8000-000000000300',question_keys:Object.keys(preimage.request.questions),configuration_digest:'sha256:'+'3'.repeat(64)};
  assert.equal(signalListeningRequestDigestV1({id:preimage.run_id,entity_context_digest:preimage.entity_context_digest},input,preimage.request),signalWorkspaceEmbeddingDigestV1(preimage));
 });
