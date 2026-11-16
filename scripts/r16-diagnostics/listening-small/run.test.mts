@@ -5,7 +5,7 @@ import {EventEmitter} from 'node:events';
 import {readFile} from 'node:fs/promises';
 import {join} from 'node:path';
 import {pathToFileURL} from 'node:url';
-import {assertListeningSmallGuardV1,captureCalibrationObservationV1,runListeningSmallDiagnosticV1} from './run.mjs';
+import {assertCpuProfilerArgsV1,assertListeningSmallGuardV1,captureCalibrationObservationV1,cpuProfileMetadataV1,runListeningSmallDiagnosticV1} from './run.mjs';
 
 test('diagnostic CLI has no database side effect without explicit run flag',async()=>{
   assert.doesNotThrow(()=>assertListeningSmallGuardV1({},[]));
@@ -32,14 +32,33 @@ test('diagnostic run binds target and artifact to this workflow workspace',()=>{
     R16_DIAGNOSTIC_TARGET_ROOT:'/tmp/work/target',R16_DIAGNOSTIC_PROBE_ROOT:'/tmp/work/probe',
     R16_DIAGNOSTIC_TARGET_REF_REQUESTED:'a'.repeat(40),R16_DIAGNOSTIC_PROBE_REF_REQUESTED:'b'.repeat(40),
     R16_DIAGNOSTIC_ARTIFACT:'/tmp/work/evil/result.json',
+    R16_DIAGNOSTIC_TARGET_LABEL:'candidate',R16_DIAGNOSTIC_CPU_PROFILE_DIR:'/tmp/work/artifacts/r16-listening-small/cpu-profile-candidate',
     DATABASE_URL:'postgresql://postgres:pw@127.0.0.1:5432/noisia_mfp_ci',
     R16BENCH_REDIS_URL:'redis://127.0.0.1:6379'};
   assert.throws(()=>assertListeningSmallGuardV1(env,['--run']),/artifact_path_not_bound/u);
   env.R16_DIAGNOSTIC_TARGET_ROOT='/tmp/work/target';
   env.R16_DIAGNOSTIC_ARTIFACT='/tmp/work/artifacts/r16-listening-small/result.json';
   assert.doesNotThrow(()=>assertListeningSmallGuardV1(env,['--run']));
+  env.R16_DIAGNOSTIC_CPU_PROFILE_DIR='/tmp/work/elsewhere';
+  assert.throws(()=>assertListeningSmallGuardV1(env,['--run']),/cpu_profile_path_not_bound/u);
+  env.R16_DIAGNOSTIC_CPU_PROFILE_DIR='/tmp/work/artifacts/r16-listening-small/cpu-profile-candidate';
   env.R16_DIAGNOSTIC_TARGET_ROOT='/tmp/work/elsewhere';
   assert.throws(()=>assertListeningSmallGuardV1(env,['--run']),/target_root_outside_workspace/u);
+});
+
+test('CPU profile metadata is PID-scoped, bounded to CPU sampling, and records classification clocks',()=>{
+ const execArgs=['--cpu-prof','--cpu-prof-interval=1000','--cpu-prof-dir=/tmp/work/artifacts/r16-listening-small/cpu-profile-candidate','--import','tsx'];
+ assert.doesNotThrow(()=>assertCpuProfilerArgsV1(execArgs,'/tmp/work/artifacts/r16-listening-small/cpu-profile-candidate'));
+ assert.throws(()=>assertCpuProfilerArgsV1(execArgs.filter(arg=>arg!=='--cpu-prof'),'/tmp/work/artifacts/r16-listening-small/cpu-profile-candidate'),/cpu_profile_not_enabled/u);
+ assert.throws(()=>assertCpuProfilerArgsV1([...execArgs,'--heap-prof'],'/tmp/work/artifacts/r16-listening-small/cpu-profile-candidate'),/heap_profile_forbidden/u);
+ assert.deepEqual(cpuProfileMetadataV1({main_pid:12,sampler_pid:13,start_us:1000,end_us:2000,exec_args:execArgs,
+   profile_dir:'/tmp/work/artifacts/r16-listening-small/cpu-profile-candidate'}),{
+  enabled:true,profiler:'node_cpu_prof',interval_us:1000,main_process_pid:12,sampler_process_pid:13,
+  classification_start_hrtime_us:1000,classification_end_hrtime_us:2000,output:'pid_scoped_cpu_profiles_only',
+  heap_profile:false,source_text_embedded:false,overhead_measured:false,capacity_claim:false,
+ });
+ assert.throws(()=>cpuProfileMetadataV1({main_pid:12,sampler_pid:null,start_us:2000,end_us:1000,exec_args:execArgs,
+   profile_dir:'/tmp/work/artifacts/r16-listening-small/cpu-profile-candidate'}),/classification_clock_invalid/u);
 });
 
 test('calibration observations preserve native phase shapes from the query-engine contract',async()=>{
@@ -89,6 +108,7 @@ test('sampler refuses non-CI before starting any child and observer cleanup stop
  const {createListeningObserver}=await import('./observer.mjs');const observer=createListeningObserver();
  try{await assert.rejects(observer.startSampler({target:'/missing',url:'postgresql://localhost/x',database:'noisia_mfp_ci'}),/ci_only|target_invalid/u);}finally{await observer.close();}
  const before=observer.snapshot().events.length;await new Promise(resolve=>setTimeout(resolve,280));assert.equal(observer.snapshot().events.length,before);
+ assert.equal(observer.snapshot().sampler_process_pid,null);
 });
 
 test('child cleanup sends stop only to its owned child and waits for exit',async()=>{

@@ -500,7 +500,7 @@ export function createListeningObserver(){
   child.on('error',()=>{samplerStatus='failed';});child.on('exit',()=>{if(!closing)samplerStatus='exited_early';});child.send({kind:'init',...args,origin:String(origin),pids:[...pids]},()=>{});
  },
  setInnerPlanRootCount(value:number){if(!Number.isSafeInteger(value)||value<0)throw Error('observer_invalid_root_count');planRootCount=value;},
- snapshot(){return{contract_version:'r16-neutral-observer-v1',...events.snapshot(),sampler_status:samplerStatus,fixture_pids:[...pids],inner_plan_observations:[...planObservations],
+ snapshot(){return{contract_version:'r16-neutral-observer-v1',...events.snapshot(),sampler_status:samplerStatus,sampler_process_pid:child?.pid??null,fixture_pids:[...pids],inner_plan_observations:[...planObservations],
   dml_plan_observations:[...dmlPlanObservations],event_loop_delay_ms:{min:delay.count?delay.min/1e6:0,max:delay.max/1e6,mean:delay.count?delay.mean/1e6:0,p50:delay.percentile(50)/1e6,p99:delay.percentile(99)/1e6},diagnostic_only:true,h1_accepted:false};},
  async close(){closing=true;clearInterval(heartbeat);gc.disconnect();delay.disable();for(const remove of detach)remove();if(child)await closeOwnedChild(child);},
  };

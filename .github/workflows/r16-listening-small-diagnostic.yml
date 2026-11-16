@@ -87,6 +87,7 @@ jobs:
           scripts/r16/lab-up.sh
 
       - name: Apply migrations, focused oracle, and native diagnostic
+        id: native_diagnostic
         working-directory: target
         env:
           R16BENCH_RUN_ID: benchmark-pg17
@@ -105,6 +106,7 @@ jobs:
           R16_DIAGNOSTIC_TARGET_ROOT: ${{ github.workspace }}/target
           R16_DIAGNOSTIC_PROBE_ROOT: ${{ github.workspace }}/probe
           R16_DIAGNOSTIC_ARTIFACT: ${{ github.workspace }}/artifacts/r16-listening-small/result.json
+          R16_DIAGNOSTIC_CPU_PROFILE_DIR: ${{ github.workspace }}/artifacts/r16-listening-small/cpu-profile-${{ matrix.label }}
           R16_MONEY_ORACLE_TAP: ${{ github.workspace }}/artifacts/r16-listening-small/money-validator-oracle.tap
           R16_ACTOR_RUNTIME_TAP: ${{ github.workspace }}/artifacts/r16-listening-small/actor-query-runtime.tap
           R16_DIAGNOSTIC_TARGET_LABEL: ${{ matrix.label }}
@@ -177,7 +179,65 @@ jobs:
           process.stdout.write('actor query runtime: tests=3 pass=3 fail=0 skipped=0\n');
           NODE
           fi
-          timeout 10m corepack pnpm exec tsx ../probe/scripts/r16-diagnostics/listening-small/run.mts --run
+          mkdir -p "$R16_DIAGNOSTIC_CPU_PROFILE_DIR"
+          timeout 10m corepack pnpm exec node --cpu-prof --cpu-prof-interval=1000 \
+            --cpu-prof-dir="$R16_DIAGNOSTIC_CPU_PROFILE_DIR" --import tsx \
+            ../probe/scripts/r16-diagnostics/listening-small/run.mts --run
+          node - "$R16_DIAGNOSTIC_CPU_PROFILE_DIR" "$R16_DIAGNOSTIC_ARTIFACT" <<'NODE'
+          const fs = require('node:fs');
+          const path = require('node:path');
+          const dir = process.argv[2];
+          const artifact = JSON.parse(fs.readFileSync(process.argv[3], 'utf8'));
+          const entries = fs.readdirSync(dir);
+          const names = entries.filter((name) => name.endsWith('.cpuprofile'));
+          if (names.length !== entries.length) throw new Error('unexpected artifact type in CPU profile directory');
+          if (!names.length || names.some((name) => {
+            const parts = name.split('.');
+            return parts.length !== 7 || parts[0] !== 'CPU' || !/^\d{8}$/u.test(parts[1])
+              || !/^\d{6}$/u.test(parts[2]) || !/^\d+$/u.test(parts[3])
+              || !/^\d+$/u.test(parts[4]) || !/^\d+$/u.test(parts[5]) || parts[6] !== 'cpuprofile';
+          })) {
+            throw new Error('expected PID-scoped Node CPU profiles only');
+          }
+          let total = 0;
+          const profiles = names.map((name) => {
+            const full = path.join(dir, name);
+            const size = fs.statSync(full).size;
+            total += size;
+            if (size <= 0 || size > 32 * 1024 * 1024) throw new Error('CPU profile exceeds per-file size bound');
+            const profile = JSON.parse(fs.readFileSync(full, 'utf8'));
+            if (!Array.isArray(profile.nodes) || !Array.isArray(profile.samples) || !Array.isArray(profile.timeDeltas)) {
+              throw new Error('unexpected CPU profile format');
+            }
+            const pid = Number(name.split('.')[3]);
+            if (!Number.isSafeInteger(pid) || pid <= 0) throw new Error('CPU profile PID missing');
+            return {pid, size_bytes: size};
+          });
+          if (total > 64 * 1024 * 1024) throw new Error('CPU profile aggregate size bound exceeded');
+          const expected = [artifact.cpu_profile?.main_process_pid, artifact.cpu_profile?.sampler_process_pid]
+            .filter((pid) => Number.isSafeInteger(pid));
+          if (expected.length !== 2 || new Set(expected).size !== 2 || profiles.length !== expected.length) {
+            throw new Error('CPU profiles must match the runner and sampler processes only');
+          }
+          for (const pid of expected) if (!profiles.some((profile) => profile.pid === pid)) {
+            throw new Error('CPU profile missing expected runner process');
+          }
+          fs.writeFileSync(path.join(dir, 'manifest.json'), JSON.stringify({
+            diagnostic_only: true, h1_accepted: false, profiler: 'node_cpu_prof', interval_us: 1000,
+            capacity_claim: false, overhead_measured: false, max_file_bytes: 32 * 1024 * 1024,
+            max_total_bytes: 64 * 1024 * 1024, total_bytes: total, profiles,
+          }, null, 2) + '\n', {mode: 0o600});
+          process.stdout.write(`bounded CPU profiles: count=${profiles.length} total_bytes=${total}\n`);
+          NODE
+
+      - name: Upload CPU profiles
+        if: always() && steps.native_diagnostic.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: r16-listening-small-cpu-profile-${{ matrix.label }}-${{ github.run_id }}
+          path: artifacts/r16-listening-small/cpu-profile-${{ matrix.label }}/*
+          if-no-files-found: error
+          retention-days: 14
 
       - name: Ensure sanitized artifact exists
         if: always()

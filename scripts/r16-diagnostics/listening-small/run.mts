@@ -39,6 +39,27 @@ export function assertListeningSmallGuardV1(env:NodeJS.ProcessEnv,args:string[])
   assert.ok(['redis:','rediss:'].includes(redis.protocol)&&['127.0.0.1','localhost','[::1]'].includes(redis.hostname),'redis_must_be_loopback');
   const out=resolve(env.R16_DIAGNOSTIC_ARTIFACT??'');
   assert.equal(out,resolve(env.GITHUB_WORKSPACE??'','artifacts','r16-listening-small','result.json'),'artifact_path_not_bound');
+  const profileDir=resolve(env.R16_DIAGNOSTIC_CPU_PROFILE_DIR??'');
+  const label=env.R16_DIAGNOSTIC_TARGET_LABEL;
+  assert.ok(label==='baseline-32f'||label==='candidate','cpu_profile_target_label_invalid');
+  assert.equal(profileDir,resolve(env.GITHUB_WORKSPACE??'','artifacts','r16-listening-small',`cpu-profile-${label}`),'cpu_profile_path_not_bound');
+}
+
+export function assertCpuProfilerArgsV1(args:string[],profileDir:string){
+  assert.ok(args.includes('--cpu-prof'),'cpu_profile_not_enabled');
+  assert.ok(args.includes('--cpu-prof-interval=1000'),'cpu_profile_interval_invalid');
+  assert.ok(args.includes(`--cpu-prof-dir=${profileDir}`),'cpu_profile_directory_invalid');
+  assert.ok(!args.some(arg=>arg.startsWith('--heap')),'heap_profile_forbidden');
+}
+export function cpuProfileMetadataV1(args:{main_pid:number;sampler_pid:number|null;start_us:number;end_us:number;
+  exec_args:string[];profile_dir:string}){
+  assert.ok(Number.isSafeInteger(args.main_pid)&&args.main_pid>0,'cpu_profile_main_pid_invalid');
+  assert.ok(args.sampler_pid===null||(Number.isSafeInteger(args.sampler_pid)&&args.sampler_pid>0),'cpu_profile_sampler_pid_invalid');
+  assert.ok(Number.isSafeInteger(args.start_us)&&args.start_us>=0&&Number.isSafeInteger(args.end_us)&&args.end_us>=args.start_us,'classification_clock_invalid');
+  assertCpuProfilerArgsV1(args.exec_args,args.profile_dir);
+  return{enabled:true,profiler:'node_cpu_prof',interval_us:1000,main_process_pid:args.main_pid,sampler_process_pid:args.sampler_pid,
+    classification_start_hrtime_us:args.start_us,classification_end_hrtime_us:args.end_us,
+    output:'pid_scoped_cpu_profiles_only',heap_profile:false,source_text_embedded:false,overhead_measured:false,capacity_claim:false};
 }
 
 export function captureCalibrationObservationV1(event:{warmup:boolean;selected_roots:number;max_in_flight:number;shape_digests:string[]}){
@@ -69,6 +90,8 @@ export async function runListeningSmallDiagnosticV1(){
   assert.equal(targetHeadBefore,process.env.R16_DIAGNOSTIC_TARGET_REF_REQUESTED,'target_ref_checkout_mismatch');
   assert.equal(probeHeadBefore,process.env.R16_DIAGNOSTIC_PROBE_REF_REQUESTED,'probe_ref_checkout_mismatch');
   const started=performance.now();
+  assertCpuProfilerArgsV1(process.execArgv,resolve(process.env.R16_DIAGNOSTIC_CPU_PROFILE_DIR!));
+  const monotonicOrigin=process.hrtime.bigint(),monotonicUs=()=>Number((process.hrtime.bigint()-monotonicOrigin)/1000n);
   let stage='imports';
   let storageServer:any;
   const observer=createListeningObserver();
@@ -146,7 +169,8 @@ export async function runListeningSmallDiagnosticV1(){
         const store={...profiled,async apply(...args:any[]){await profiled.apply(...args);const roots=[...new Set(args[1].flatMap((row:any)=>row.results.map((x:any)=>x.root_id)))];
           for(let n=0;n<roots.length;n+=1024){const resolved=await census.readResolvedRootIds(roots.slice(n,n+1024));commits.push(resolved.length);}}};
         const rootSet=new Set<string>();
-        const startedProcessing=performance.now();let jobs=0;
+        const startedProcessing=performance.now(),classificationStartUs=monotonicUs();let classificationEndUs:number|undefined;
+        let classificationEndPerformanceMs:number|undefined,jobs=0;
         stage='native_jobs';
         while(jobs<100&&rootSet.size<ROOT_COUNT&&performance.now()-started<MAX_MS){
           const before=calibrations.length;
@@ -169,6 +193,7 @@ export async function runListeningSmallDiagnosticV1(){
         const serving=await servingModule.readSignalListeningQuestionsMetricsV1({...binding,question_keys:workload.question_keys});
         assert.equal(serving.length,workload.question_keys.length,'serving_metrics_missing');
         assert.ok(serving.every((item:any)=>item.counts.pending===0&&item.counts.awaiting_base===0),'serving_has_unresolved_work');
+        classificationEndPerformanceMs=performance.now();classificationEndUs=monotonicUs();
         const warmups=calibrations.filter((item:any)=>item.warmup);
         const phaseByShape=new Map<string,string>();
         for(const group of ['base','consumer_category'] as const){
@@ -194,6 +219,7 @@ export async function runListeningSmallDiagnosticV1(){
         assert.equal(targetHeadAfter,targetHeadBefore,'target_head_changed_during_run');
         assert.equal(probeHeadAfter,probeHeadBefore,'probe_head_changed_during_run');
         assert.deepEqual(probeHashesAfter,probeHashesBefore,'probe_files_changed_during_run');
+        const observerSnapshot=observer.snapshot();
         result={contract_version:'r16-listening-small-diagnostic-v1',diagnostic_only:true,h1_accepted:false,
           a_b_source_verified:false,
           target_label:process.env.R16_DIAGNOSTIC_TARGET_LABEL??'unspecified',
@@ -208,15 +234,20 @@ export async function runListeningSmallDiagnosticV1(){
           workload_digest:workload.configuration_digest,
           native:{status:runStatus.run?.status,resolved_roots:rootSet.size,reserved_micro_usd:runStatus.run?.reserved_micro_usd,
             unknown_micro_usd:runStatus.run?.unknown_micro_usd,job_count:jobs,call_count:counts.rows[0]?.job_count,
-            preparation_admission_wall_ms:startedProcessing-admissionStarted,classification_serving_wall_ms:performance.now()-startedProcessing,
+            preparation_admission_wall_ms:startedProcessing-admissionStarted,classification_serving_wall_ms:classificationEndPerformanceMs!-startedProcessing,
+            classification_start_performance_ms:startedProcessing,classification_end_performance_ms:classificationEndPerformanceMs,
+            classification_start_hrtime_us:classificationStartUs,classification_end_hrtime_us:classificationEndUs,
             warmups:warmups.length,warmup_phases:warmupPhases,calibrations,commit_batch_count:commits.length},
+          cpu_profile:cpuProfileMetadataV1({main_pid:process.pid,sampler_pid:observerSnapshot.sampler_process_pid,
+            start_us:classificationStartUs,end_us:classificationEndUs!,exec_args:process.execArgv,
+            profile_dir:resolve(process.env.R16_DIAGNOSTIC_CPU_PROFILE_DIR!)}),
           observed_http_latency:latencySummary,storage:storageServer.metrics(),sql_profile:profile.snapshot(),
           inner_plan_capture:{diagnostic_only:true,threshold_roots:1024,max_captures_per_query_hash:INNER_PLAN_CAPTURE_ORDINALS.length,capture_ordinals:INNER_PLAN_CAPTURE_ORDINALS,min_duration_ms:INNER_PLAN_MIN_DURATION_MS,
-            plans_below_min_duration_captured:false,observations:observer.snapshot().inner_plan_observations},
+            plans_below_min_duration_captured:false,observations:observerSnapshot.inner_plan_observations},
           dml_plan_capture:{diagnostic_only:true,opt_in_required:true,min_batch_size:DML_PLAN_MIN_BATCH,max_captures_per_query_hash:1,min_duration_ms:DML_PLAN_MIN_DURATION_MS,
             plans_below_min_duration_captured:false,max_plans_per_capture:DML_PLAN_MAX_PLANS,trigger_names_allowlisted:true,raw_query_or_values_recorded:false,
             analyze_timing_enabled:true,analyze_timing_overhead_measured:false,capacity_claim:false,
-            observations:observer.snapshot().dml_plan_observations},
+            observations:observerSnapshot.dml_plan_observations},
           root_census_sha256:sha([...rootSet].sort().join('\n')),
           serving_question_count:serving.length,total_wall_ms:performance.now()-started};
       }} });
@@ -229,7 +260,10 @@ export async function runListeningSmallDiagnosticV1(){
   }catch(error){
     const observerSnapshot=await finishListeningObserver(observer);
     const failure={contract_version:'r16-listening-small-diagnostic-v1',diagnostic_only:true,h1_accepted:false,
-      status:'failed',stage,code:safeError(error),total_wall_ms:performance.now()-started,observer:observerSnapshot,
+      status:'failed',stage,code:safeError(error),total_wall_ms:performance.now()-started,process_id:process.pid,
+      cpu_profile:{enabled:true,profiler:'node_cpu_prof',interval_us:1000,main_process_pid:process.pid,
+        sampler_process_pid:observerSnapshot.sampler_process_pid??null,output:'pid_scoped_cpu_profiles_only',heap_profile:false,
+        source_text_embedded:false,overhead_measured:false,capacity_claim:false},observer:observerSnapshot,
       inner_plan_capture:{diagnostic_only:true,threshold_roots:1024,max_captures_per_query_hash:INNER_PLAN_CAPTURE_ORDINALS.length,capture_ordinals:INNER_PLAN_CAPTURE_ORDINALS,min_duration_ms:INNER_PLAN_MIN_DURATION_MS,
         plans_below_min_duration_captured:false,observations:observerSnapshot.inner_plan_observations},
       dml_plan_capture:{diagnostic_only:true,opt_in_required:true,min_batch_size:DML_PLAN_MIN_BATCH,max_captures_per_query_hash:1,min_duration_ms:DML_PLAN_MIN_DURATION_MS,
