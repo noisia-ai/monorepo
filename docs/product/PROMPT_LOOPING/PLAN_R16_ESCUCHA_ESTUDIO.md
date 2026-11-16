@@ -12,6 +12,15 @@ No hay aprobaciones humanas intermedias en los procesos de análisis: Sonnet 4.6
 
 ## Progreso
 
+- Corte 16 nov. 00:04 UTC: el job numérico 132993209462 de 7d605789 terminó verde. Study completo 23/23, cero omisiones, incluidos cinco recibos inciertos y la carrera diaria; política 11/11, bounded 0321 3/3 y fuente/custodia 3/3 también pasan. No se canceló la corrida. La composición d092974d pasa tipado y lint 11/11 secuenciales y la identidad 0322 1/1. Incluye el preset de escala 81d8ec52 ya nativo y los dos negativos bb1f112a revisados; corresponde repetir CI/PostgreSQL sobre esta fuente antes de fusionar.
+
+- 0322/b965a07b integrada como d092974d tras revisión sin P0/P1/P2: sólo selected AS MATERIALIZED en el cuerpo exacto de 0318. Identidad 1/1 sin omisiones y DB tipado pasan. El oracle nuevo compara flags y agregados por call con ocho defectos y rollback real; su nativo sigue pendiente de CI. Mini remoto 43778111073 usa esa misma fuente con los cuatro instrumentos ya revisados. El conjunto tiene ahora 28 migraciones pendientes; paquetes privados anteriores quedan históricos, sin aplicación UAT.
+
+- DML original observado en 43777062910: mark de 1,024 llamadas tarda 3,095 ms; listening_statement_money_update ocupa 2,947.314 ms. Su validación repite el Aggregate de selected 1,024 veces (~2,378 ms de trabajo inclusivo). La población interna cuesta 128.151 ms y mantiene la corrección 0321. Se prepara 0322 para materializar sólo selected una vez por sentencia; aún sin aceptación nativa. INSERT de 860 respuestas tarda 373.740 ms, con guard de fila 342.152 ms/860; es un coste distinto, no se cambia sin evidencia adicional.
+
+- Corte 23:52 UTC: el prefijo híbrido completo 43773073124 pasó 15/15 sin omisiones; CI general/runtime de 7d605789 están verdes. PostgreSQL numérico pasó política 11/11 y equivalencia 0321 3/3; Study continúa y se conserva la corrida. El laboratorio separado 43774714973 pasó la escala 1/1 con el preset revisado 302852fe: 4,096 raíces, 16,384 filas y paridad exacta tras warmups y repeticiones. Su corrección de setup aún no se integra para no cancelar Study. Migrated-schema encontró dos negativos Listening preemptados por otros guards (policy_changed y policy_cap_exceeded); se investiga el escenario, sin aceptar errores distintos a ciegas.
+- Control 43773448203 terminado: ambas pasadas completaron 4,096 raíces/8,192 llamadas/cero pendientes. Baseline 84.703 s y candidato 81.428 s: H1 sigue rechazado. Las cuatro capturas confirman selected_items con una pasada y sin temporales; 51 intervalos DML disjuntos ocupan 49.899 s, 61.3% de la duración. Tracer 3b31a1b4 revisado sin P0/P1/P2 observa mark y answers originales una sola vez, con triggers; ensayo remoto 43777062910 en curso, sin capacidad acreditada.
+
 - Ensayo del fence híbrido 43772395521: la consulta de derechos completó en 5.817 ms, sin lecturas temporales; índice canónico, 340 probes de orígenes y una pasada de 664 memberships. El control posterior dependía del alias origin y PostgreSQL lo nombró origin_1. 389011e3 conserva la relación mentions, índice y límites sin exigir ese alias; revisión sin P0/P1/P2. La repetición completa del caso y su oracle siguen pendientes; no se presenta ese resultado parcial como CI verde.
 
 - Corrección híbrida 03164fc9/4bea683a revisada sin P0/P1/P2: materializa los orígenes solicitados antes de unir procedencias. Conserva UUID y texto exactos y filtra workspace antes de materializar; los cuatro propósitos siguen exigiendo una única procedencia completa. El oracle escalar cubre los 340 IDs y controles negativos, con límite de 20 s, índice canónico y trabajo por raíz. El ensayo independiente 43772395521 repite el prefijo completo con esa corrección y la captura anterior; resultado pendiente. No acredita capacidad.
@@ -260,6 +269,10 @@ Recibo: separar Voyage/JEV por raíz de Claude por número de grupos y vueltas; 
 
 ## Sorpresas y descubrimientos
 
+- Otra expansión cuadrática estaba dentro de la validación monetaria 0318: selected agregaba JSON por call y el optimizador lo recalculaba por cada expected. El nuevo tracer observa una sola escritura original y permite atribuir el 95.2% de su duración al trigger de statement. Los tiempos internos son inclusivos; no deben sumarse ni presentarse como capacidad del pipeline.
+
+- Resolver el plan bounded de lectura no basta: desaparecieron las relecturas temporales, pero ahora mark/answers/reserve dominan el tiempo. Las duraciones disjuntas y el muestreo backend justifican medir sus planes y triggers; no justifican suprimir validaciones ni cambiar índices sin evidencia. El coste de auto_explain ANALYZE/timing se declara no medido y sus artefactos no acreditan velocidad.
+
 - La continuidad expuso una intersección de selección cuadrática: la pausa era CPU de Node mientras conservaba una transacción de mark, y otras consultas heredaban esa espera. El índice de página elimina esa pausa; el siguiente trazado identifica además trabajo backend con lecturas temporales. Sin planes internos no se atribuye el derrame a un nodo concreto.
 - CREATE DATABASE con TABLESPACE explícito comprueba CREATE sobre ese tablespace en PostgreSQL 17; omitir la cláusula hereda el default del template. El ejecutor debe comprobar la herencia con OIDs antes/después, sin conceder permisos ni quitar aisladamente la guarda que protegía el SQL anterior.
 
@@ -376,6 +389,12 @@ Recibo: separar Voyage/JEV por raíz de Claude por número de grupos y vueltas; 
 - El promedio del piloto completo incluye una etapa editorial que no escala por raíz. Multiplicarlo linealmente daba USD 205.81/millón; mantener explícitamente los grupos y una vuelta de referencia produce USD 114.035250. Ambos cálculos parten del mismo recibo, cuyo uso histórico permanece USD 17.280463.
 
 ## Registro de decisiones
+
+- 2026-11-16 00:04 UTC: publicar la composición sólo después del resultado terminal de Study, preservando sus 23 casos completos. La carga H1 automática permanece cancelable mientras el mini no pruebe una corrección viable; la aceptación completa se repetirá íntegra sobre la fuente final, con el mismo umbral. CI funcional verde nunca sustituye capacidad ni UAT.
+
+- 2026-11-15, diagnóstico DML: limitar la siguiente migración 0322 a selected AS MATERIALIZED en la validación 0318, conservando los testigos y las dos comprobaciones de autoridad. Verificar igualdad viejo/nuevo y repetir el mismo mini con Aggregate loops=1. No agrupar todavía el guard de respuestas: primero medir el efecto de esta corrección y preservar validación de intentos ON CONFLICT.
+
+- 2026-11-15 23:52 UTC: capturar sólo las escrituras DML originales en el laboratorio CI propio con opt-in, sin EXPLAIN ANALYZE que las repita. SAVEPOINT y rollback pertenecen únicamente al setup y se liberan antes de la escritura; nunca se revierte un write exitoso para restaurar instrumentación. Timing se activa sólo en las dos capturas DML; los tiempos de trigger ausentes quedan desconocidos. Sin SQL 0322 hasta observar evidencia. Docker permanece cerrado.
 
 - 2026-11-15: ejecutar la aceptación de 4,096 raíces de 0321 en un laboratorio CI nombrado y acreditado propio; no habilitar esa prueba sobre el contenedor de servicios MFP ni reutilizar la base de H1/calibración. Los otros tres casos necesitan Study/H5 y usan el job numérico existente. Cada archivo completo conserva su conteo y cero omisiones. La captura de planes de 50 ms declara coste de ANALYZE no medido y se usa sólo para diagnóstico.
 
@@ -503,6 +522,8 @@ Recibo: separar Voyage/JEV por raíz de Claude por número de grupos y vueltas; 
 - 2026-11-14: publicar una fórmula condicional con coeficientes medidos en R15 y costo editorial por grupos/vueltas; actualizar la proyección histórica sin cambiar sus recibos ni presentarla como costo medido de R16. Reconstrucción verificada con aritmética decimal exacta.
 
 ## Resultado y retrospectiva
+
+Corte vigente 23:52 UTC: H0-H6 sigue abierto. La equivalencia 0321 y el acceso híbrido pasan nativamente; capacidad sigue rechazada, Study remoto aún no termina y quedan dos fixtures Listening por diagnosticar. No hubo migración, despliegue, aprovisionamiento ni gasto R16 en UAT. Los resultados siguientes son históricos.
 
 Corte e541e448: CI funcional/PostgreSQL verde, capacidad H1 rechazada a 19.00 raíces/s. H0–H6 continúa abierto; no hubo migraciones, despliegue ni gasto R16 en UAT. Se investiga la regresión de SQL antes de repetir el ensayo; no se presenta la integridad del resultado como aceptación de rendimiento.
 
