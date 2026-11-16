@@ -830,3 +830,20 @@ test('invalid or missing stream metadata never becomes a complete native stream 
   assert.throws(()=>observer.assertStreamObserved(),/unobserved_or_invalid/u);
  }finally{await observer.close();}
 });
+
+
+test('neutral mode also bypasses automatic SELECT plan capture for the real eligible metadata query',async()=>{
+ const target=process.env.R16_DIAGNOSTIC_TARGET_ROOT;assert.ok(target);
+ const source=await readFile(join(target,'infrastructure/db/signal-listening-runs.ts'),'utf8');
+ const template=source.match(/`(\/\* labeling_listening_input_metadata_v1 \*\/[\s\S]*?LIMIT \$6)`/u);
+ const scope=source.match(/const unresolvedScope="([^"]+)"/u),human=source.match(/const noHumanDecision=`([^`]+)`/u);
+ assert.ok(template&&scope&&human);
+ const sql=template[1]!.replace('${unresolvedScope}',scope[1]!).replace('${noHumanDecision}',human[1]!);
+ const {createListeningObserver,queryHash,innerPlanQueryLabel}=await import('./observer.mjs');
+ assert.equal(innerPlanQueryLabel(queryHash(sql)),'metadata');
+ const observer=createListeningObserver({neutral_only:true});let calls=0;
+ const client={processID:123,async query(actual:string){calls++;assert.equal(actual,sql);return{rows:[]};},on(){throw Error('SELECT plan listener forbidden');},off(){}};
+ try{observer.setInnerPlanRootCount(4096);const db=observer.wrapDatabase({async connect(){return client;},query:client.query});const c=await db.connect();await c.query(sql,[]);
+  assert.equal(calls,1);assert.equal(observer.snapshot().inner_plan_observations.length,0);
+ }finally{await observer.close();}
+});
