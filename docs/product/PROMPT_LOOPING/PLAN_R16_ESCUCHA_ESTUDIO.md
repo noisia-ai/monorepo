@@ -12,6 +12,9 @@ No hay aprobaciones humanas intermedias en los procesos de análisis: Sonnet 4.6
 
 ## Progreso
 
+- Primer mini de 0329 (43826483880) se detiene en el focal financiero antes del runner: no hay diecinueve casos aprobados ni métricas de candidato. El assert de precisión elegía la primera fila SQL, aunque sólo se había modificado la primera propuesta y sus UUID se generan al azar. 571ba64 corrige la prueba tras revisar fb84e687 y 4e1bb91f: ubica el probe por ID y fuerza orden descendente para comprobar que no está en primera posición. Número y microsegundos se verifican en la misma cadena SQL exacta; producto y gates no cambian. Tipos/lint 11/11 y seis focales puras pasan antes del commit. Debe repetirse la prueba nativa.
+- Smoke 43826498103 de 0329 completo verde: actor 3/3, entradas/lazy/segunda forma 4/4, hybrid 1/1, scoped 3/3 y escala 1/1. No sustituye el focal financiero fallido ni acredita capacidad. El baseline del mini también falla, pero por exportar CPU después de su runner; se conservan ambos fallos con causas distintas.
+
 - 0329 integrada localmente como c8598fd (068c9f38 del crítico) tras revisión sin P0/P1/P2. Cambia únicamente la proyección de expected, conservando ocho columnas, tres flags, validadores, orden de errores y autoridad. Tipos/lint globales 11/11 y seis focales puras pasan antes del commit. El oráculo financiero compara cinco validadores nativos, metadatos tipados y JSON SQL exacto, incluyendo precisión numérica y microsegundos. Confirmación PostgreSQL y rendimiento pendientes. Ahora hay 35 migraciones integradas pendientes, ninguna aplicada en UAT.
 
 - Se autoriza el candidato 0329: proyectar en expected sólo id, request, request_digest, i, selected_count, digests, basis y expected_request. Los tres resultados de validación consumen únicamente esos valores; id se conserva para el oráculo por llamada. La migración reemplazará sólo signal_listening_statement_money_v1, manteniendo literal el resto de 0328. Al autorizarlo había 34 migraciones integradas pendientes; el checkpoint posterior registra su integración y la confirmación PostgreSQL pendiente.
@@ -348,6 +351,8 @@ Recibo: separar Voyage/JEV por raíz de Claude por número de grupos y vueltas; 
 
 ## Sorpresas y descubrimientos
 
+- ORDER BY UUID en el oráculo no conserva el orden de las propuestas con IDs aleatorios. La aserción posicional fallida no prueba pérdida de precisión en JSONB. La regresión se vuelve determinista: el probe usa el UUID mayor, debe aparecer después de la primera fila y se compara por su identidad. No se relaja a buscar valores en cualquier fila.
+
 - El oráculo anterior convertía JSONB a objetos JS antes de comparar todos sus valores. La nueva comparación conserva JSON como texto SQL para no redondear números largos; el parseo JS sólo comprueba IDs y cardinalidad. Es un cambio de prueba, sin nueva admisión ni escritura de datos contrafactuales en tablas públicas.
 
 - La anchura estimada del productor expected (821) es mayor que las de sus lectores (100/192), pero el diagnóstico no registra Output. No se conoce la poda real de columnas ni se atribuye el spill a esa diferencia. Los tiempos de digest/JSON son inclusivos durante DML y todos sus triggers, no CPU ni expected aislado; no se suman con sus hijos.
@@ -509,6 +514,8 @@ Recibo: separar Voyage/JEV por raíz de Claude por número de grupos y vueltas; 
 - El promedio del piloto completo incluye una etapa editorial que no escala por raíz. Multiplicarlo linealmente daba USD 205.81/millón; mantener explícitamente los grupos y una vuelta de referencia produce USD 114.035250. Ambos cálculos parten del mismo recibo, cuyo uso histórico permanece USD 17.280463.
 
 ## Registro de decisiones
+
+- 2026-11-16: detener la medición cuando falle el primer focal y conservar como no ejecutados los otros dieciocho casos. Corregir la alineación del probe por ID con control de orden determinista, sin cambiar formato, validaciones o SQL productivo. Repetir los gates completos antes de interpretar rendimiento; no tratar este fallo de harness como parada de formato de un proveedor pagado.
 
 - 2026-11-16: integrar la proyección sólo después de revisión independiente y comprobaciones locales secuenciales; medirla en el laboratorio remoto existente con los oráculos ampliados. Mantener exactamente los cuatro instrumentos actuales y no generar otro paquete de migración UAT hasta estabilizar fuente y capacidad. La captura DML no depende del hash del SQL interno modificado: observa el DML exterior original, cuyo hash permanece igual.
 
@@ -685,7 +692,7 @@ Recibo: separar Voyage/JEV por raíz de Claude por número de grupos y vueltas; 
 
 ## Resultado y retrospectiva
 
-Estado vigente, 16 nov.: H1 sigue rechazado en ambos full (87.140 y 134.542 raíces/s). El checkpoint 9e tiene CI funcional completo verde, incluido Study 23/23. El prefiltro pasa su smoke y diecinueve oráculos; su mini de 21.424 s no demuestra mejora total. Se integra la proyección 0329 como c8598fd, revisada y con tipos/lint y focales puras verdes; su aceptación nativa y ahorro aún deben medirse. Hay 35 migraciones pendientes, ninguna aplicada realmente en UAT, sin despliegue ni llamadas pagadas R16. R16 H0–H6 permanece abierto. Los párrafos siguientes son historia.
+Estado vigente, 16 nov.: H1 sigue rechazado en ambos full. El checkpoint 9e tiene CI funcional completo verde. El prefiltro pasa su smoke y diecinueve oráculos, sin mejora total demostrada. La proyección 0329 pasa el smoke, pero su primer mini se detiene por un assert de orden del probe; no hay métricas del candidato ni aceptación financiera completa. Ese fixture queda corregido como 571ba64, revisado y con tipos/lint y focales puras verdes, pendiente de repetición remota. Hay 35 migraciones pendientes, ninguna aplicada en UAT, sin despliegue ni llamadas pagadas R16. H0–H6 permanece abierto. Los párrafos siguientes son historia.
 
 Estado vigente, 16 nov.: 0327 y la corrección de fixture pasan diecinueve oráculos y el smoke remoto; el censo queda completo, pero H1 sigue sin cumplir 1,000/s ni latencia en la última corrida. El CI completo previo de 0325 está verde y Study de 744 pasó 23/23; la fuente corregida debe repetir todo CI. Se investigan dos uniones de transiciones residuales sin cambiar permisos o presupuesto. No hay aceptación ni ejecución pagada de R16, despliegue o migraciones reales en UAT. El paquete real, la comparación privada y el QA visual siguen pendientes. Los párrafos siguientes conservan resultados históricos.
 
