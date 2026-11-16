@@ -16,7 +16,7 @@ export const INNER_PLAN_CAPTURE_ORDINALS=[1,2,3,4,5,6,7,8] as const;
 const PLAN_NUMBERS=['Plan Rows','Plan Width','Actual Rows','Actual Loops','Startup Cost','Total Cost','Actual Startup Time','Actual Total Time',
  'Shared Hit Blocks','Shared Read Blocks','Shared Dirtied Blocks','Shared Written Blocks','Temp Read Blocks','Temp Written Blocks'];
 const PLAN_NAMES=['Node Type','Relation Name','Alias','Index Name','Join Type'];
-const SAFE_CTE_NAMES=new Set(['allowed_roots','selected_items','items','prepared','qs']);
+const SAFE_CTE_NAMES=new Set(['allowed_roots','selected_items','items','prepared','qs','raw_lock_page']);
 const MAX_INNER_PLANS_PER_QUERY=32;
 export const INNER_PLAN_MIN_DURATION_MS=50;
 export const DML_PLAN_MIN_DURATION_MS=50;
@@ -33,6 +33,8 @@ const DML_PLAN_QUERY_SPECS=new Map<string,DmlPlanQuerySpecV1>([
  ['sha256:4ece6654c82e3d48416690d80208f849288cd5cfed5e16f0464dd3accfba33dd',
   {label:'reserve_calls_insert',batch_unit:'call_proposals',values_count:8,batch_value_index:5,batch_kind:'json_array',function_stats:'canonical'}],
  ['sha256:b8180180dfc8340b89511bb2ecf806c6f7bc811c7c257d2a7409915751ec5670',
+  {label:'raw_attach_call_lock',batch_unit:'raw_page_members',values_count:3,batch_value_index:-1,batch_kind:'raw_page_context',function_stats:'raw_pages',min_duration_ms:0}],
+ ['sha256:92e110090281de57fbeb89a78954883ea71ce54d36e0d871469c34692568e474',
   {label:'raw_attach_call_lock',batch_unit:'raw_page_members',values_count:3,batch_value_index:-1,batch_kind:'raw_page_context',function_stats:'raw_pages',min_duration_ms:0}],
  ['sha256:99746d65e4fad037daa0402f77a11a5677c191c74ef01741a1182cf05e201d20',
   {label:'raw_attach_call_update',batch_unit:'raw_page_members',values_count:3,batch_value_index:-1,batch_kind:'raw_page_context',function_stats:'raw_pages'}],

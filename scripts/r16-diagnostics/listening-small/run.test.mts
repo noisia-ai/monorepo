@@ -229,6 +229,35 @@ test('RAW attach acceptance runs only in its isolated job and main job consumes 
   'main resource guard must consume the isolated job outputs');
 });
 
+test('MFP RAW acceptance workflow selects and gates the fifth UUID-order case without accepting skips',async()=>{
+ const workflowPath=new URL('../../../.github/workflows/mfp-postgres.yml',import.meta.url);
+ const workflow=await readFile(workflowPath,'utf8');
+ const patternMatch=workflow.match(/--test-name-pattern='([^']+)'[\s\\\n]*--import tsx infrastructure\/db\/migrations\/signal-labeling-raw-page-locks\.postgres\.test\.ts/u);
+ assert.ok(patternMatch,'MFP raw-page acceptance must select the focused lock suite');
+ const selector=new RegExp(patternMatch[1]);
+ const start=workflow.indexOf('node - "$R16_RAW_PAGE_ACCEPTANCE_FAULT_TAP" "$test_status"');
+ assert.ok(start>=0,'MFP isolated fault TAP gate must exist');
+ const heredocStart=workflow.indexOf("<<'NODE'\n",start);assert.ok(heredocStart>=0);
+ const bodyStart=heredocStart+"<<'NODE'\n".length;const bodyEnd=workflow.indexOf('\n          NODE',bodyStart);assert.ok(bodyEnd>bodyStart);
+ const gate=workflow.slice(bodyStart,bodyEnd).split(/\r?\n/u).map(line=>line.startsWith('          ')?line.slice(10):line).join('\n');
+ const expectedMatch=gate.match(/const expected = \[([\s\S]*?)\];/u);assert.ok(expectedMatch);
+ const expected=[...expectedMatch[1].matchAll(/^\s*'([^']+)'[,]?\s*$/gmu)].map(match=>match[1]);
+ const orderTitle='RAW attachment locks UUID order before a blocked last member and leaves disjoint calls compatible';
+ assert.equal(expected.length,5);assert.ok(expected.includes(orderTitle));
+ assert.ok(expected.every(title=>selector.test(title)),'MFP name pattern must select all five titles');
+ const dir=await mkdtemp(join(tmpdir(),'r16-mfp-raw-gate-'));const tapPath=join(dir,'raw-page.tap');
+ const execute=async(tap:string,status=0)=>{await writeFile(tapPath,tap);return spawnSync(process.execPath,['-',tapPath,String(status)],{encoding:'utf8',input:gate});};
+ try{
+  const passing=[...expected.map((title,index)=>`ok ${index+1} - ${title}`),'# pass 5','# fail 0'].join('\n');
+  const pass=await execute(passing);assert.equal(pass.status,0,pass.stderr||pass.stdout);
+  const skipped=await execute(passing.replace(`ok 5 - ${orderTitle}`,`ok 5 - ${orderTitle} # SKIP unavailable`).replace('# pass 5','# pass 4'));
+  assert.notEqual(skipped.status,0,'MFP must reject a skipped UUID-order case');
+  const missing=await execute(passing.replace(`ok 5 - ${orderTitle}\n`,''));
+  assert.notEqual(missing.status,0,'MFP must reject a missing UUID-order case');
+  const failed=await execute(passing,1);assert.notEqual(failed.status,0,'MFP must reject a nonzero test process status');
+ }finally{await rm(dir,{recursive:true,force:true});}
+});
+
 test('resource profile guard rejects environment and effective tuple drift without allocating the profile budget',async()=>{
  const {getExecution,envFor}=await streamProfileDependencies();const env=envFor('baseline_512m');
  env.NOISIA_JEV_STREAM_MAX_IN_FLIGHT='2048';
@@ -714,11 +743,17 @@ test('DML plan specs match the complete source SQL, bind arity and batch-value p
 });
 
 test('SQL frontier uses zero duration only for the first RAW lock capture; other DML stay at 50ms and neutral bypasses it',async()=>withDmlPlanTestEnv(async()=>{
- const {captureDmlPlanQueryV1,createListeningObserver,queryHash}=await import('./observer.mjs');
+ const {captureDmlPlanQueryV1,createListeningObserver,queryHash,dmlPlanQuerySpec,safeAutoExplainNotice}=await import('./observer.mjs');
  const lockSql=`SELECT c.id FROM signal_labeling_calls c
         JOIN signal_labeling_raw_page_members m ON m.call_id=c.id AND m.workspace_id=c.workspace_id AND m.run_id=c.run_id
         WHERE m.page_id=$1 AND m.workspace_id=$2 AND m.run_id=$3 ORDER BY c.id FOR UPDATE OF c`;
  const lockHash=queryHash(lockSql);assert.equal(lockHash,'sha256:b8180180dfc8340b89511bb2ecf806c6f7bc811c7c257d2a7409915751ec5670');
+ const candidateLockHash='sha256:92e110090281de57fbeb89a78954883ea71ce54d36e0d871469c34692568e474';
+ for(const hash of [lockHash,candidateLockHash]){
+  const spec=dmlPlanQuerySpec(hash);assert.equal(spec?.label,'raw_attach_call_lock');assert.equal(spec?.min_duration_ms,0);
+ }
+ const sanitized=safeAutoExplainNotice({message:'duration: 1 ms plan: '+JSON.stringify({Plan:{'Node Type':'CTE Scan','CTE Name':'raw_lock_page','Subplan Name':'raw_lock_page','Actual Rows':1}})});
+ assert.equal(sanitized?.plan['CTE Name'],'raw_lock_page');assert.equal(sanitized?.plan['Subplan Name'],'raw_lock_page');
  const otherHashes=[
   'sha256:1e5b3d3837b8c7354d6c25d941461f0d36e55d5cc3d42cbd31c627ba0662859b',
   'sha256:7a86df2f02e720b156e7f9d7132eba342080fc9d169d7cf8e1cbdfa74de067a7',
@@ -733,11 +768,13 @@ test('SQL frontier uses zero duration only for the first RAW lock capture; other
   assert.ok(statements.includes('SET LOCAL auto_explain.log_min_duration = 50'),`${hash} retains the default duration`);
   assert.ok(!statements.includes('SET LOCAL auto_explain.log_min_duration = 0'),`${hash} does not use zero duration`);
  }
- const direct=fakeDmlPlanClient();
- await captureDmlPlanQueryV1({client:direct.client,query:async()=>({rowCount:256}),query_hash:lockHash,batch_size:256,
-  database:'noisia_mfp_ci',role:'postgres',env:process.env,sql_frontier_only:true});
- assert.ok(direct.statements.includes('SET LOCAL auto_explain.log_min_duration = 0'));
- assert.ok(!direct.statements.includes('SET LOCAL auto_explain.log_min_duration = 50'));
+ for(const hash of [lockHash,candidateLockHash]){
+  const direct=fakeDmlPlanClient();
+  await captureDmlPlanQueryV1({client:direct.client,query:async()=>({rowCount:256}),query_hash:hash,batch_size:256,
+   database:'noisia_mfp_ci',role:'postgres',env:process.env,sql_frontier_only:true});
+  assert.ok(direct.statements.includes('SET LOCAL auto_explain.log_min_duration = 0'));
+  assert.ok(!direct.statements.includes('SET LOCAL auto_explain.log_min_duration = 50'));
+ }
 
  const firstObserver=createListeningObserver({sql_frontier_only:true}),first=fakeDmlPlanClient();let lockQueries=0;
  const firstQuery=first.client.query.bind(first.client);
@@ -768,29 +805,38 @@ test('SQL frontier uses zero duration only for the first RAW lock capture; other
 }));
 
 test('RAW attach frontier requires bounded persistRawPage context and source-bound update SQL while retaining only counts',async()=>{
- const {queryHash,dmlPlanQuerySpec,rawPageDmlContextFromStoreArgsV1,rawPageDmlBatchSizeV1,SQL_FRONTIER_DML_BATCH_LIMIT}=await import('./observer.mjs');
+ const {queryHash,dmlPlanQuerySpec,rawPageDmlContextFromStoreArgsV1,rawPageDmlBatchSizeV1,SQL_FRONTIER_DML_BATCH_LIMIT,createListeningObserver}=await import('./observer.mjs');
  const target=process.env.R16_DIAGNOSTIC_TARGET_ROOT;assert.ok(target,'RAW attach source contract needs checked out public target root');
  const rawPageSource=await readFile(join(target,'infrastructure/db/signal-labeling-raw-page-store.ts'),'utf8');
  const attach=rawPageSource.match(/export const labelingRawPageAttachSqlV1=`([\s\S]*?)`;/u);
  const legacyUpdate=rawPageSource.match(/const changed=await c\.query\(`(UPDATE signal_labeling_calls c SET[\s\S]*?RETURNING c\.id)`\s*,\s*\[page\.id/u);
  const legacyHash='sha256:99746d65e4fad037daa0402f77a11a5677c191c74ef01741a1182cf05e201d20';
  const boundedHash='sha256:f3a9ed08bf4b11ed5ec2a22e8c26663fbf14b2424d0bae8f425036338025cd35';
+ const oldLockHash='sha256:b8180180dfc8340b89511bb2ecf806c6f7bc811c7c257d2a7409915751ec5670';
+ const newLockHash='sha256:92e110090281de57fbeb89a78954883ea71ce54d36e0d871469c34692568e474';
  assert.ok(attach||legacyUpdate,'RAW attach UPDATE must match a source-whitelisted implementation');
  const updateSql=attach?.[1]??legacyUpdate?.[1]!;
  const expectedUpdateHash=attach?boundedHash:legacyHash;
  assert.equal(queryHash(updateSql),expectedUpdateHash);
- const lockSql=`SELECT c.id FROM signal_labeling_calls c
-        JOIN signal_labeling_raw_page_members m ON m.call_id=c.id AND m.workspace_id=c.workspace_id AND m.run_id=c.run_id
-        WHERE m.page_id=$1 AND m.workspace_id=$2 AND m.run_id=$3 ORDER BY c.id FOR UPDATE OF c`;
- const lockHash=queryHash(lockSql),updateHash=queryHash(updateSql);
- assert.equal(lockHash,'sha256:b8180180dfc8340b89511bb2ecf806c6f7bc811c7c257d2a7409915751ec5670');
+ const newLock=rawPageSource.match(/export const labelingRawPageLockSqlV1=`([\s\S]*?)`;/u);
+ const oldLock=rawPageSource.match(/c\.query<\{id:string\}>\(`(SELECT c\.id FROM signal_labeling_calls c[\s\S]*?FOR UPDATE OF c)`\s*,\s*\[page\.id,\s*run\.workspace_id,\s*run\.id\]\)/u);
+ const lockSql=newLock?.[1]??oldLock?.[1];assert.ok(lockSql,'RAW lock source must expose the full allowlisted SQL');
+ const lockHash=queryHash(lockSql);
+ if(newLock){assert.equal(lockHash,newLockHash);assert.match(rawPageSource,/c\.query<\{id:string\}>\(labelingRawPageLockSqlV1,\s*\[page\.id,\s*run\.workspace_id,\s*run\.id\]\)/u);}
+ else assert.equal(lockHash,oldLockHash);
+ const updateHash=queryHash(updateSql);
  assert.equal(updateHash,expectedUpdateHash);
- assert.equal(dmlPlanQuerySpec(lockHash)?.label,'raw_attach_call_lock');assert.equal(dmlPlanQuerySpec(updateHash)?.label,'raw_attach_call_update');
+ for(const candidateLockHash of [oldLockHash,newLockHash]){
+  const spec=dmlPlanQuerySpec(candidateLockHash);assert.equal(spec?.label,'raw_attach_call_lock');
+  assert.equal(spec?.values_count,3);assert.equal(spec?.batch_kind,'raw_page_context');assert.equal(spec?.min_duration_ms,0);
+ }
+ assert.equal(dmlPlanQuerySpec(updateHash)?.label,'raw_attach_call_update');
  assert.equal(dmlPlanQuerySpec(legacyHash)?.label,'raw_attach_call_update');assert.equal(dmlPlanQuerySpec(boundedHash)?.label,'raw_attach_call_update');
  const rows=Array.from({length:256},(_,i)=>({call:{id:`00000000-0000-4000-8000-${String(i+1).padStart(12,'0')}`},sensitive:'must-not-be-retained'}));
  const run={id:'11111111-1111-4111-8111-111111111111',workspace_id:'22222222-2222-4222-8222-222222222222'};
  const context=rawPageDmlContextFromStoreArgsV1([run,rows]);assert.deepEqual(context,{operation:'persistRawPage',run_id:run.id,workspace_id:run.workspace_id,batch_size:256});
  assert.equal(JSON.stringify(context).includes('sensitive'),false);assert.equal(rawPageDmlBatchSizeV1(lockHash,[lockSql,['33333333-3333-4333-8333-333333333333',run.workspace_id,run.id]],context),256);
+ assert.equal(rawPageDmlBatchSizeV1(lockHash,[lockSql,['33333333-3333-4333-8333-333333333333',run.workspace_id,run.id]],{...context,run_id:'33333333-3333-4333-8333-333333333333'}),null);
  assert.equal(rawPageDmlBatchSizeV1(updateHash,[updateSql,['33333333-3333-4333-8333-333333333333',run.workspace_id,run.id]],context),256);
  assert.equal(rawPageDmlBatchSizeV1(lockHash,[lockSql,['33333333-3333-4333-8333-333333333333','44444444-4444-4444-8444-444444444444',run.id]],context),null);
  assert.equal(rawPageDmlBatchSizeV1(lockHash,[lockSql,['33333333-3333-4333-8333-333333333333',run.workspace_id,run.id]],{...context,batch_size:SQL_FRONTIER_DML_BATCH_LIMIT+1}),null);
@@ -798,6 +844,34 @@ test('RAW attach frontier requires bounded persistRawPage context and source-bou
  assert.equal(rawPageDmlContextFromStoreArgsV1([run,[...rows.slice(0,255),rows[0]]]),null);
  assert.equal(rawPageDmlContextFromStoreArgsV1([run,[{call:{id:'not-a-uuid'}}]]),null);
  assert.equal(rawPageDmlContextFromStoreArgsV1([run,Array(SQL_FRONTIER_DML_BATCH_LIMIT+1).fill(rows[0])]),null);
+ await withDmlPlanTestEnv(async()=>{
+  for(const neutralOnly of [false,true]){
+   const observer=createListeningObserver(neutralOnly?{neutral_only:true}:{sql_frontier_only:true});
+   const fixture=fakeDmlPlanClient();let originalLockCalls=0;
+   const originalQuery=fixture.client.query.bind(fixture.client);
+   fixture.client.query=async(sql:string,values?:unknown[])=>{if(sql===lockSql)originalLockCalls++;return originalQuery(sql,values);};
+   try{
+    const database=observer.wrapDatabase({async connect(){return fixture.client;},query:fixture.client.query});
+    const store=observer.wrapStore({async persistRawPage(){const owner=await database.connect();
+     await owner.query(lockSql,['33333333-3333-4333-8333-333333333333',run.workspace_id,run.id]);
+     await owner.query(lockSql,['33333333-3333-4333-8333-333333333333',run.workspace_id,run.id]);}});
+    await store.persistRawPage(run,rows);
+    const snapshot=observer.snapshot();assert.equal(originalLockCalls,2,'each source query must execute once');
+    if(neutralOnly){
+     assert.equal(snapshot.dml_plan_observations.length,0);assert.equal(snapshot.sql_frontier_capture.captures_started,0);
+     assert.equal(fixture.client.listenerCount('notice'),0);
+     assert.equal(fixture.statements.some(sql=>sql.startsWith('SHOW ')),false);
+     assert.equal(fixture.statements.some(sql=>sql.startsWith('SET LOCAL auto_explain.')),false);
+    }else{
+     assert.equal(snapshot.dml_plan_observations.length,1);
+     const observedLock=snapshot.dml_plan_observations[0] as {query_hash?:string;label?:string}|undefined;
+     assert.equal(observedLock?.query_hash,lockHash);assert.equal(observedLock?.label,'raw_attach_call_lock');
+     assert.equal(snapshot.sql_frontier_capture.captures_started,1);
+     assert.ok(fixture.statements.includes('SET LOCAL auto_explain.log_min_duration = 0'));
+    }
+   }finally{await observer.close();}
+  }
+ });
 });
 
 test('function-stat OID contract ignores the source functions’ real argument names',async()=>{
