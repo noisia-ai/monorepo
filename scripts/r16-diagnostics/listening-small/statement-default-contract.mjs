@@ -76,10 +76,16 @@ export function parseStatementDefaultTapV1(tap, expectedKind = 'C') {
   assert.equal(typeof tap, 'string', 'statement_default_tap_invalid');
   const receipts = [];
   for (const line of tap.split(/\r?\n/u)) {
-    const comment = line.trimStart().replace(/^(?:#\s*)+/u, '');
-    if (!comment.includes(PREFIX)) continue;
-    assert.ok(comment.startsWith(PREFIX), 'statement_default_tap_prefix_invalid');
-    const payload = JSON.parse(comment.slice(PREFIX.length));
+    const comment = line.trimStart();
+    const acceptedPrefixes = [PREFIX, `# # ${PREFIX}`, `# \\# ${PREFIX}`];
+    const matchedPrefix = acceptedPrefixes.find((prefix) => comment.startsWith(prefix));
+    if (!matchedPrefix) {
+      if (comment.includes(PREFIX) || comment.includes(`\\# ${PREFIX}`)) {
+        assert.fail('statement_default_tap_prefix_invalid');
+      }
+      continue;
+    }
+    const payload = JSON.parse(comment.slice(matchedPrefix.length));
     assert.ok(payload && typeof payload === 'object' && !Array.isArray(payload), 'statement_default_tap_payload_invalid');
     assert.deepEqual(Object.keys(payload).sort(), [...NATIVE_KEYS].sort(), 'statement_default_tap_fields_invalid');
     validateDefaultRuntimeV1(payload, expectedKind);
