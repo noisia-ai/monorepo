@@ -10,7 +10,8 @@ import {signalListeningBaseTemplateV1,buildSignalListeningJevRequestV1,signalLis
 import {runMassLabelingAcceptanceFixtureV1} from './signal-mass-labeling-acceptance.synthetic.fixture';
 import {saveSignalListeningConfigurationV1} from '../signal-listening-configuration';
 import {createSignalListeningStoreV1,requestSignalListeningV1} from '../signal-listening-runs';
-import type {LabelingRunV1} from '../signal-labeling-runs';
+import {readSignalLabelingRunExposureV1,type LabelingRunV1} from '../signal-labeling-runs';
+import {getSignalListeningStatusV1} from '../signal-listening-serving';
 import {jevUsageV1} from '../../../services/workers/src/workers/signal-jev-labeling-page';
 import {prepareSyntheticSiblingEditorialPolicyV1,loadSyntheticSiblingEditorialDeadlineV1} from './signal-mfp-mass-labeling-sibling.synthetic.fixture';
 import {seedSignalTopicEditorialRenewalSourceV1} from './signal-topic-editorial-renewal.synthetic.fixture';
@@ -498,12 +499,24 @@ for(const operation of ['insert','mark']as const)test('direct native child '+ope
 test('RAW-backed settlement recovery and unsent requeue preserve Listening money after the statement guard',{
  skip:!enabled,timeout:600000,
 },async()=>withMoneyFixture(1000000,async f=>{
- const calls=await f.store.reserve(f.run,proposals(f,1000));await f.store.markSubmitting(f.run,calls);
+ const access={database:f.database,workspace_id:f.run.workspace_id,actor_user_id:f.run.actor_user_id};
+ const statusMoney=async(expected:[string,string,string])=>{
+  const status=await getSignalListeningStatusV1(access);assert.equal(status.run?.id,f.run.id);assert.ok(status.run);
+  const amounts=[status.run.confirmed_micro_usd,status.run.reserved_micro_usd,status.run.unknown_micro_usd];assert.deepEqual(amounts,expected);
+  assert.ok(amounts.every(value=>typeof value==='string'&&/^\d+$/u.test(value)),'DTO amounts retain exact integer text');
+  const c=await f.database.connect();try{assert.equal(amounts.reduce((sum,value)=>sum+BigInt(value),0n).toString(),await readSignalLabelingRunExposureV1(c,f.run.id),'three disjoint monetary buckets reconcile to native run exposure');}finally{c.release();}
+  return status.run;
+ };
+ await statusMoney(['0','0','0']);
+ await assert.rejects(getSignalListeningStatusV1({...access,workspace_id:randomUUID()}),/listening_forbidden/);
+ const calls=await f.store.reserve(f.run,proposals(f,1000));await statusMoney(['0','3000','0']);await f.store.markSubmitting(f.run,calls);
  assert.ok(f.store.requeueUnsent);await f.store.requeueUnsent(f.run,[calls[2]!]);
  const exposure=async()=>BigInt((await f.database.query(`SELECT COALESCE(sum(CASE WHEN status IN('settled','failed')
   THEN COALESCE(settled_micro_usd,0)+terminal_exposure_micro_usd ELSE reserved_micro_usd END),0)::text n
   FROM signal_labeling_calls WHERE run_id=$1`,[f.run.id])).rows[0].n);
  assert.equal(await exposure(),3000n);
+ await f.store.markSubmitted(f.run,[calls[0]!],null);await f.store.markFailed(f.run,[calls[1]!],true);
+ await statusMoney(['0','2000','1000']);
  const responses=calls.slice(0,2).map(call=>{
   const input=call.inputs[0]!,request=buildSignalListeningJevRequestV1(input,f.configuration);
   const response={model:f.configuration.model,usage:{input_tokens:120,output_tokens:20},answers:Object.fromEntries(Object.entries(request.questions).map(([key,q])=>[key,q.type==='noul'
@@ -525,12 +538,16 @@ test('RAW-backed settlement recovery and unsent requeue preserve Listening money
  const settled=responses.map(row=>({call:row.call,usage:jevUsageV1({input_tokens:120,output_tokens:20}),settled_micro_usd:6}));
  await recovering.settlePage(f.run,settled).catch(error=>assert.match(String(error),/synthetic_settlement_commit_ack_lost/));
  assert.equal(lost,true);await f.store.settlePage(f.run,settled);await f.store.settlePage(f.run,settled);
+ await statusMoney(['12','1000','0']);
  await f.store.apply(f.run,responses.map(row=>({call:row.call,results:[row.result]})));
  await f.store.markSubmitting(f.run,[calls[2]!]);
- await f.database.query("UPDATE signal_labeling_calls SET status='unknown' WHERE id=$1",[calls[2]!.id]);
+ await f.store.markFailed(f.run,[calls[2]!],true);await statusMoney(['12','0','1000']);
  assert.equal(await exposure(),1012n,'two exact settlements plus the unknown reservation remain charged once');
  const held=(await f.database.query('SELECT status,settled_micro_usd::text,reserved_micro_usd::text FROM signal_labeling_calls WHERE id=$1',[calls[2]!.id])).rows[0];
  assert.equal(held.status,'unknown');assert.equal(held.settled_micro_usd,null);assert.equal(held.reserved_micro_usd,'1000');
+ await f.store.fail(f.run,'labeling_raw_receipt_invalid');const failed=await statusMoney(['1012','0','0']);assert.equal(failed.status,'failed');
+ assert.equal((await f.database.query('SELECT status,settled_micro_usd::text cost FROM signal_labeling_calls WHERE id=$1',[calls[2]!.id])).rows[0].cost,'1000','the real invalid-RAW failure retains its conservatively booked amount');
+ await f.store.fail(f.run,'labeling_raw_receipt_invalid');await statusMoney(['1012','0','0']);
  assert.equal((await f.database.query('SELECT count(*)::int n FROM signal_labeling_calls WHERE run_id=$1',[f.run.id])).rows[0].n,3);
 }));
 

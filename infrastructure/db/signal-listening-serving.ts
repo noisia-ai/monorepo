@@ -9,12 +9,15 @@ export async function getSignalListeningStatusV1(args:SignalListeningAccessV1){
   const configuration=await loadSignalListeningConfigurationWithClientV1(c,args.workspace_id);
   const map=(await c.query<{id:string;root_count:number;map_digest:string;entity_context_digest:string}>(`SELECT id,root_count,map_digest,entity_context_digest
    FROM signal_mass_labeling_maps WHERE workspace_id=$1 ORDER BY created_at DESC,id DESC LIMIT 1`,[args.workspace_id])).rows[0]??null;
+  // These three amount buckets sum to native run exposure without overlap.
+  // A failed outcome retains its booked settlement and terminal uncertainty.
   const run=(await c.query<{id:string;status:string;error_code:string|null;counts:Record<string,number>;configuration_id:string;
    cap_micro_usd:string;estimated_micro_usd:string;confirmed_micro_usd:string;reserved_micro_usd:string;unknown_micro_usd:string}>(`SELECT r.id,r.status,r.error_code,r.counts,o.configuration_id,
     r.cap_micro_usd::text,r.estimated_micro_usd::text,
-    COALESCE(sum(call.settled_micro_usd) FILTER(WHERE call.status='settled'),0)::text confirmed_micro_usd,
+    COALESCE(sum(call.settled_micro_usd) FILTER(WHERE call.status IN('settled','failed')),0)::text confirmed_micro_usd,
     COALESCE(sum(call.reserved_micro_usd) FILTER(WHERE call.status IN('reserved','submitting','submitted')),0)::text reserved_micro_usd,
-    COALESCE(sum(call.reserved_micro_usd) FILTER(WHERE call.status='unknown'),0)::text unknown_micro_usd
+    (COALESCE(sum(call.reserved_micro_usd) FILTER(WHERE call.status='unknown'),0)
+     +COALESCE(sum(call.terminal_exposure_micro_usd) FILTER(WHERE call.status IN('settled','failed')),0))::text unknown_micro_usd
    FROM signal_listening_runs o JOIN signal_labeling_runs r ON r.id=o.run_id AND r.workspace_id=o.workspace_id
    LEFT JOIN signal_labeling_calls call ON call.run_id=r.id
    WHERE o.workspace_id=$1 GROUP BY r.id,o.run_id ORDER BY r.created_at DESC,r.id DESC LIMIT 1`,[args.workspace_id])).rows[0]??null;
