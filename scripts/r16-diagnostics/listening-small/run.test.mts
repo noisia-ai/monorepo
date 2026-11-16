@@ -502,19 +502,79 @@ test('inner-plan guard is limited to the owned CI loopback database and role',as
  assert.equal(verifiedInnerPlanScopeV1({database:'noisia_mfp_ci',role:'postgres',isolation:'read committed',read_only:'off',superuser:true},'noisia_mfp_ci','postgres'),false);
 });
 
-test('capture scope matches the real bounded-labeling transaction path and not the unbounded path',async()=>{
+type BoundedInputSourcePathV1='private_projection'|'bounded_metadata';
+function assertBoundedInputCaptureScopeV1(labeling:string,listening:string,projection:string):BoundedInputSourcePathV1{
+ const fail=():never=>{throw Error('capture_scope_contract_invalid');};
+ const transaction=labeling.match(/async function tx<T>\([\s\S]*?\n\}/u)?.[0];
+ if(!transaction||!transaction.includes('const c = await db.connect()')||!transaction.includes('await c.query("BEGIN")')
+  ||transaction.indexOf('await c.query("BEGIN")')>transaction.indexOf('await fn(c)')
+  ||!transaction.includes('await c.query("COMMIT")')||!transaction.includes('c.release()'))return fail();
+ const method=labeling.match(/async inputs\(run:\s*LabelingRunV1,\s*bounds\?:\s*LabelingInputBoundsV1\)\s*\{([\s\S]*?)\n\s*async reserve\(/u)?.[1];
+ if(!method)return fail();
+ const branchStart=method.indexOf('if(bounds){'),fallback=method.indexOf('if (options.adapter) return options.adapter.inputs(db, run);');
+ if(branchStart<0||fallback<0||branchStart>=fallback)return fail();
+ const branch=method.slice(branchStart,fallback);
+ const validate=branch.indexOf('validateLabelingInputBoundsV1(bounds,pageSize)');
+ const unavailable=branch.indexOf("if(!options.adapter?.bounded_inputs)fail('labeling_bounded_inputs_unavailable',409)");
+ const txStart=branch.indexOf('return tx(db,async c=>{');
+ const readonly=branch.indexOf("await c.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY')");
+ const callback=branch.indexOf('options.adapter!.bounded_inputs!(c,run,read)');
+ if(validate<0||unavailable<0||txStart<0||readonly<0||callback<0
+  ||!(validate<unavailable&&unavailable<txStart&&txStart<readonly&&readonly<callback))return fail();
+ if(!/bounded_inputs:\(c,run,bounds\)=>inputs\(c,run,limit,bounds\)/u.test(listening))return fail();
+ const inputs=listening.match(/async function inputs\(c:[\s\S]*?\n\}\nasync function pendingAndAvailable/u)?.[0];
+ if(!inputs)return fail();
+ const privatePath=/if\(bounds\)\{\s*const metadata=await inputProjectionMetadata\(c,run,bounds\);\s*return hydrateListeningInputProjectionV1\(c,\{[\s\S]*?\},metadata\.rows,bounds\);\s*\}/u.test(inputs);
+ if(privatePath){
+  const metadataHelper=listening.match(/async function inputProjectionMetadata\(c:Pick<PoolClient,'query'>,run:LabelingRunV1,bounds:LabelingInputBoundsV1\)\{([\s\S]*?)\n\}\nasync function inputs/u)?.[1];
+  const hydrateHelper=projection.match(/export async function hydrateListeningInputProjectionV1\(c:Pick<PoolClient,'query'>,[\s\S]*?\n\}\s*$/u)?.[0];
+  if(!metadataHelper||!metadataHelper.includes('const limit=bounds.max_rows')||!metadataHelper.includes('owner(c,run,false)')
+   ||!metadataHelper.includes('c.query')||!metadataHelper.includes('return{o,rows}')||!hydrateHelper)return fail();
+  const selectIndex=hydrateHelper.indexOf('selectLabelingInputPrefixV1(rows,bounds)'),bodyQuery=hydrateHelper.indexOf('await c.query');
+  if(selectIndex<0||bodyQuery<0||selectIndex>=bodyQuery||!hydrateHelper.includes('[scope.workspace_id,scope.map_id,selected]'))return fail();
+  return 'private_projection';
+ }
+ const legacyMetadata=/const metadata=bounds\?await inputMetadata\(c,run,bounds\.max_rows\):null;\s*const selected=metadata\?selectLabelingInputPrefixV1\(metadata\.rows,bounds!\):null/u.test(inputs);
+ const selectedPopulation=/const hydratePopulation=selected\?`signal_listening_population_roots_v1\([^`]+`\s*:\s*population/u.test(inputs);
+ const sameClientHydration=/const rows=\(await c\.query[\s\S]{0,1800}FROM \$\{hydratePopulation\}[\s\S]{0,2600}bounds\?\.max_rows\?\?limit,[\s\S]{0,250}\.\.\.\(selected\?\[selected\]:\[\]\)/u.test(inputs);
+ if(!legacyMetadata||!selectedPopulation||!sameClientHydration)return fail();
+ return 'bounded_metadata';
+}
+
+test('capture scope follows the real bounded transaction and rejects unbounded or cross-snapshot variants',async()=>{
  const target=process.env.R16_DIAGNOSTIC_TARGET_ROOT;assert.ok(target,'scope contract test needs checked out public target root');
  const labeling=await readFile(join(target,'infrastructure/db/signal-labeling-runs.ts'),'utf8');
  const listening=await readFile(join(target,'infrastructure/db/signal-listening-runs.ts'),'utf8');
+ let projection='';try{projection=await readFile(join(target,'infrastructure/db/signal-listening-input-projection.ts'),'utf8');}catch(error){
+  if((error as NodeJS.ErrnoException).code!=='ENOENT')throw error;
+ }
  const beginMatch=labeling.match(/await c\.query\(["']BEGIN["']\)/u);
  const readOnlyMatch=labeling.match(/await c\.query\(["']SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY["']\)/u);
  assert.ok(beginMatch,'transaction helper must begin with its native BEGIN statement');
  assert.ok(readOnlyMatch,'bounded path must set its native RR/RO transaction before adapter work');
- const boundedPath=/if\(bounds\)[\s\S]{0,450}return tx\(db,async c=>\{await c\.query\(["']SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY["']\);\s*return options\.adapter!\.bounded_inputs!\(c,run,read\);\}\)/u;
- assert.match(labeling,boundedPath);
- assert.match(listening,/bounded_inputs:\(c,run,bounds\)=>inputs\(c,run,limit,bounds\)/u);
- assert.match(listening,/const metadata=bounds\?await inputMetadata\(c,run,bounds\.max_rows\):null/u);
- assert.match(listening,/const rows=\(await c\.query[\s\S]{0,700}FROM \$\{hydratePopulation\}/u);
+ const pathKind=assertBoundedInputCaptureScopeV1(labeling,listening,projection);
+ assert.ok(pathKind==='private_projection'||pathKind==='bounded_metadata');
+ const expectRejected=(label:string,changedLabeling=labeling,changedListening=listening,changedProjection=projection)=>{
+  assert.throws(()=>assertBoundedInputCaptureScopeV1(changedLabeling,changedListening,changedProjection),/capture_scope_contract_invalid/u,label);
+ };
+ const rr='SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY';
+ const unboundedListening=pathKind==='private_projection'
+  ?listening.replace('if(bounds){\n  const metadata=await inputProjectionMetadata(c,run,bounds);','if(false){\n  const metadata=await inputProjectionMetadata(c,run,bounds);')
+  :listening.replace('inputMetadata(c,run,bounds.max_rows)','inputMetadata(c,run,limit)');
+ expectRejected('unbounded projection fallback',labeling,unboundedListening);
+ expectRejected('READ COMMITTED cannot satisfy the capture snapshot',labeling.replace(rr,'SET TRANSACTION ISOLATION LEVEL READ COMMITTED'));
+ expectRejected('adapter must use the transaction client, not another connection',labeling.replace('options.adapter!.bounded_inputs!(c,run,read)','options.adapter!.bounded_inputs!(otherClient,run,read)'));
+ const guardAndBody=/await c\.query\('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY'\);\s*return options\.adapter!\.bounded_inputs!\(c,run,read\);/u;
+ const afterBody=labeling.replace(guardAndBody,`return options.adapter!.bounded_inputs!(c,run,read); await c.query('${rr}');`);
+ assert.notEqual(afterBody,labeling,'test mutation must move the isolation guard after input projection');
+ expectRejected('isolation guard after projection is unsafe',afterBody);
+ if(pathKind==='private_projection'){
+  expectRejected('private hydration must use the same snapshot client',labeling,
+   listening.replace('return hydrateListeningInputProjectionV1(c,{','return hydrateListeningInputProjectionV1(otherClient,{'));
+ }else{
+  expectRejected('legacy bounded metadata cannot drop its row limit',labeling,
+   listening.replace('inputMetadata(c,run,bounds.max_rows)','inputMetadata(c,run,limit)'));
+ }
  const begin='BEGIN',setReadOnly='SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY';
  const statements:string[]=[];let isolation='read committed',readOnly='off',inTransaction=false;
  const client={async query(sql:string){statements.push(sql);if(sql===begin){inTransaction=true;isolation='read committed';readOnly='off';}
