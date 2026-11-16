@@ -10,12 +10,12 @@ import {
  signalListeningCalibrationShapeV1,labelerDigestV1,signalWorkspaceEmbeddingDigestV1 as digest,
  type SignalStudyV1,type SignalStudyJevBindingV1,type SignalListeningCalibrationProfileV1,
 } from '@noisia/query-engine';
-import {buildLabelingRawPageV1,parseLabelingRawPageV1,type LabelingRunV1,type LabelingCallV1} from '@noisia/db';
+import {buildLabelingRawPageV1,parseLabelingRawPageV1,LABELING_INPUT_MAX_WORKING_BYTES_V1,type LabelingRunV1,type LabelingCallV1} from '@noisia/db';
 import {createCalibratedJevRuntimeProviderV2} from '../providers/jev-streaming-runtime';
 import {buildWorkspaceEngineStorageKeyV1,type WorkspaceEngineStorageV1} from './signal-workspace-engine-storage';
 import {createSignalStudyJevDriverV1,type StudyJevInputV1,type StudyJevResultV1,type StudyJevStoreV1,type StudyJevNativeAdapterV1} from './signal-study-jev';
 const sha=(text:string|Buffer)=>'sha256:'+createHash('sha256').update(text).digest('hex');
-function fixture(count=12,measured=true){
+function fixture(count=12,measured=true,streamBytes=8*1024*1024){
  const workspace_id=randomUUID(),execution_id=randomUUID(),run_id=randomUUID(),batch_id=randomUUID(),actor_user_id=randomUUID();
  const template={...structuredClone(SIGNAL_STUDY_TB_TEMPLATE_V1),version:'saved-driver-v2',instructions:'  Exact saved café ☕ instructions.  '};
  const snapshot=createSignalStudyTemplateSnapshotV1({template,roles:SIGNAL_STUDY_TB_ROLES_V1,provenance:'human',revision:2,human_locked:true});
@@ -64,7 +64,8 @@ function fixture(count=12,measured=true){
    if(query?.metadata_only)return selected.map(c=>({...c,request:{},inputs:[],raw_body:null,has_raw:Boolean(c.raw_page_id),request_size_bytes:Buffer.byteLength(JSON.stringify(c.request)),input_size_bytes:Buffer.byteLength(JSON.stringify(c.inputs))}));
    return Promise.all(selected.map(hydrate));
   },
-  inputs:async(_run:unknown,bounds:{max_rows:number;max_working_bytes:number})=>{authority();assert.ok(bounds&&bounds.max_rows>0&&bounds.max_working_bytes>0);readBounds.push(bounds);
+  inputs:async(_run:unknown,bounds:{max_rows:number;max_working_bytes:number})=>{authority();assert.ok(bounds&&bounds.max_rows>0&&bounds.max_working_bytes>0);
+   if(bounds.max_working_bytes>LABELING_INPUT_MAX_WORKING_BYTES_V1)throw Error('labeling_input_bounds_invalid');readBounds.push(bounds);
    const selected=inputs.filter(i=>!calls.some(c=>c.inputs[0]!.root_id===i.root_id));let bytes=0;return selected.slice(0,bounds.max_rows).filter(i=>{bytes+=Buffer.byteLength(JSON.stringify(i))*8+8192;return bytes<=bounds.max_working_bytes;});},
   reserve:async(_run:unknown,proposals:Array<Record<string,unknown>>)=>{authority();events.push('reserve');const rows=proposals.map(p=>({...p,id:randomUUID(),status:'reserved',raw_body:null,results_applied:false,provider_batch_id:null,retry_depth:0}))as typeof calls;calls.push(...rows);return rows;},
   markSubmitting:async(_run:unknown,rows:typeof calls)=>{authority();events.push('mark');for(const c of rows)c.status='submitting';},
@@ -87,7 +88,7 @@ function fixture(count=12,measured=true){
   deriveCalibration:async()=>{derived++;const valid=calls.filter(c=>c.status==='settled'&&c.results_applied);if(valid.length){const sizes=valid.map(c=>Buffer.byteLength(JSON.stringify(c.request)));profile=profileOf(valid.map(c=>c.id).slice(0,32),Math.min(...sizes),Math.max(...sizes));}}};
  const env={TYPESAFE_API_KEY:'synthetic',NOISIA_JEV_STREAMING_V2_ENABLED:'true',NOISIA_JEV_PROVIDER_ENABLED:'true',NOISIA_TYPESAFE_ACCOUNT_ID:'synthetic-study-account',NOISIA_TYPESAFE_ACCOUNT_RPS:'80',NOISIA_TYPESAFE_ACCOUNT_INPUT_TPS:'100000',NOISIA_JEV_TOKEN_CALIBRATIONS_JSON:'must-not-be-authority'};
  const redisKeys:string[]=[];
- const driver=createSignalStudyJevDriverV1({adapter,storage,env,execution:{max_in_flight:4,window_size:4,flush_size:4,max_flushes:2,max_buffered_bytes:8*1024*1024,flush_interval_ms:60000},
+ const driver=createSignalStudyJevDriverV1({adapter,storage,env,execution:{max_in_flight:4,window_size:4,flush_size:4,max_flushes:2,max_buffered_bytes:streamBytes,flush_interval_ms:60000},
   observe_stream:m=>memory.push(m.reserved_working_bytes),provider_factory:args=>createCalibratedJevRuntimeProviderV2({...args,
    evaluateRedis:async(_script,keys,values)=>{redisKeys.push(...keys);return['acquire','observe','throttle'].includes(values[0]!)?[1,0]:'0';},fetch:async(_url,init)=>{
     const body=String(init?.body);assert.ok(requests.some(r=>r.request_body===body));assert.ok(events.includes('storage-ready'));http.push(body);onHttp?.();active++;peak=Math.max(peak,active);
@@ -158,4 +159,17 @@ test('incomplete provider JSON is durable in the native page codec and never aut
  const p=f.pages[0]!,decoded=parseLabelingRawPageV1({workspace_id:f.binding.plan.workspace_id,run_id:f.binding.run_id,raw_text:p.raw_text,raw_sha256:p.raw_sha256,size_bytes:p.size_bytes,members:p.members});
  for(const wrapper of decoded.values())assert.equal(JSON.parse(wrapper).body,'{"model":"jev-1.13.0","usage":');
  await f.driver(f.args);assert.equal(f.http.length,paid);assert.equal(f.results.filter(r=>r.status==='labeled').length,0);
+});
+
+
+test('Study separates larger stream custody from native initial and feed read budgets without changing request bytes or raw settlement',async()=>{
+ const f=fixture(12,true,2*1024**3);await f.driver(f.args);
+ assert.equal(f.run.status,'completed');assert.equal(f.http.length,12);assert.equal(f.calls.length,12);assert.equal(f.results.length,12);
+ assert.deepEqual(f.http,f.requests.map(r=>r.request_body));assert.ok(f.calls.every(c=>c.status==='settled'&&c.results_applied&&c.raw_page_id));
+ const reads=f.readBounds as Array<{max_rows:number;max_working_bytes:number;on_oversize?:string}>;
+ assert.ok(reads.length>1);assert.equal(reads[0]!.max_rows,4);assert.equal(reads[0]!.max_working_bytes,LABELING_INPUT_MAX_WORKING_BYTES_V1);
+ assert.equal(reads[0]!.on_oversize,'error');assert.ok(reads.slice(1).some(r=>r.on_oversize==='empty'));
+ assert.ok(reads.every(r=>r.max_rows<=4&&r.max_working_bytes<=LABELING_INPUT_MAX_WORKING_BYTES_V1));
+ assert.ok(f.events.indexOf('durable-page')<f.events.indexOf('settle-page'));
+ assert.ok(f.events.indexOf('settle-page')<f.events.indexOf('apply-page'));
 });
