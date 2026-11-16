@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
 import test from 'node:test';
 import {buildSignalListeningJevRequestV1,signalListeningBaseTemplateV1,signalListeningCalibrationShapeV1,
+  compileSignalListeningSnapshotV1,signalListeningSnapshotWorkV1,buildSignalListeningCompiledRequestV1,
   signalWorkspaceEmbeddingDigestV1 as digest,validateSignalListeningConfigurationV1,type SignalListeningInputV1,type SignalListeningCalibrationProfileV1} from '@noisia/query-engine';
 import {createCalibratedJevRuntimeProviderV2} from '../providers/jev-streaming-runtime';
 import {planSignalListeningCalibrationV1,createSignalListeningCalibratedProviderV1} from './signal-listening-calibration';
@@ -193,4 +194,24 @@ test('prefetch propagates authority failures and rejects foreign or malformed le
  }
  const context=await make();await assert.rejects(context.runtime.prepareMeasuredRequestsWithProfiles([request],async()=>({...f.consumer,max_input_tokens_per_byte:1000})),/context_estimate_exceeded/);
  assert.equal(context.plan.profiles.has(f.consumer.scope.shape_digest),false);
+});
+
+
+test('calibration reuses an authenticated immutable snapshot without memoizing fresh profiles or custom request bytes',async()=>{
+ const f=fixture(),snapshot=compileSignalListeningSnapshotV1(f.configuration),before=signalListeningSnapshotWorkV1(snapshot);let loads=0,compiled=0;
+ const inputs=Array.from({length:96},()=>({...f.input,root_id:randomUUID()}));
+ const profile={...f.profile,sample_count:32,source_call_ids:Array.from({length:32},()=>randomUUID())};
+ const compiler=(input:SignalListeningInputV1)=>{compiled++;const request=buildSignalListeningJevRequestV1(input,f.configuration);return{...request,questions:Object.fromEntries(Object.entries(request.questions).map(([key,q])=>[key,{...q,instructions:{rules:'  Exact custom té ☕  ',question:'  Exact question  '}}]))};};
+ for(let i=0;i<2;i++){
+  const plan=await planSignalListeningCalibrationV1({...f,snapshot,inputs,execution,compile_request:compiler,loadProfile:async()=>{loads++;return profile;}});
+  assert.equal(plan.snapshot,snapshot);assert.equal(plan.selected_inputs.length,32,'custom wider bodies remain outside the old measured range and use ordinary warmup');
+ }
+ assert.equal(loads,2,'profile authority/evidence is loaded fresh per plan');assert.equal(compiled,inputs.length*2);assert.deepEqual(signalListeningSnapshotWorkV1(snapshot),before);
+ const plan=await planSignalListeningCalibrationV1({...f,snapshot,inputs:[f.input],execution,loadProfile:async()=>profile});
+ const wire=JSON.stringify(buildSignalListeningCompiledRequestV1(f.input,plan.snapshot));f.configuration.instructions='caller changed';
+ assert.equal(JSON.stringify(buildSignalListeningCompiledRequestV1(f.input,plan.snapshot)),wire);assert.ok(Object.isFrozen(plan.configuration));
+ assert.throws(()=>createSignalListeningCalibratedProviderV1({plan:{...plan,snapshot:{} as never}}),/compiled_snapshot_invalid/);
+ const changed=compileSignalListeningSnapshotV1(f.configuration);
+ await assert.rejects(planSignalListeningCalibrationV1({...f,snapshot:changed,inputs:[f.input],execution,loadProfile:async()=>profile}),/configuration_invalid/);
+ await assert.rejects(planSignalListeningCalibrationV1({...f,configuration_digest:digest(f.configuration),snapshot:{} as never,inputs:[],execution,loadProfile:async()=>null}),/compiled_snapshot_invalid/);
 });

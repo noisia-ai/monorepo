@@ -1,5 +1,6 @@
 import {
-  buildSignalListeningJevRequestV1,signalListeningCalibrationShapeV1,signalWorkspaceEmbeddingDigestV1 as digest,
+  signalListeningCalibrationShapeV1,signalWorkspaceEmbeddingDigestV1 as digest,
+  compileSignalListeningSnapshotV1,readSignalListeningSnapshotV1,buildSignalListeningCompiledRequestV1,createSignalListeningShapeCompilerV1,type SignalListeningCompiledSnapshotV1,
   type SignalListeningConfigurationV1,type SignalListeningInputV1,type SignalListeningCalibrationProfileV1,
 } from '@noisia/query-engine';
 import {createCalibratedJevRuntimeProviderV2} from '../providers/jev-streaming-runtime';
@@ -25,28 +26,31 @@ function validateProfile(profile:Profile,scope:Access,shape:ReturnType<typeof si
     fail('listening_calibration_profile_invalid');
 }
 export type SignalListeningCalibrationPlanV1={scope:Access;configuration:SignalListeningConfigurationV1;
-  selected_inputs:SignalListeningInputV1[];calibration_shapes:string[];
+  snapshot:SignalListeningCompiledSnapshotV1;selected_inputs:SignalListeningInputV1[];calibration_shapes:string[];
   profiles:Map<string,Profile|null>;execution:JevStreamingExecutionV2;warmup:boolean;response_bound_bytes:number};
 /** Only committed, verified receipt profiles can unlock full measured coverage. Missing or
  * out-of-coverage shapes use normal reusable labels in one bounded parallel warmup window. */
 export async function planSignalListeningCalibrationV1(args:Access&{configuration:SignalListeningConfigurationV1;
-  inputs:SignalListeningInputV1[];execution:JevStreamingExecutionV2;loadProfile:LoadProfile;compile_request?:(input:SignalListeningInputV1)=>JevRequestV1}):Promise<SignalListeningCalibrationPlanV1>{
+  inputs:SignalListeningInputV1[];execution:JevStreamingExecutionV2;loadProfile:LoadProfile;snapshot?:SignalListeningCompiledSnapshotV1;compile_request?:(input:SignalListeningInputV1)=>JevRequestV1}):Promise<SignalListeningCalibrationPlanV1>{
   if(args.compile_request!==undefined&&typeof args.compile_request!=='function')fail('listening_calibration_compiler_invalid');
   if(digest(args.configuration)!==args.configuration_digest||args.inputs.some(input=>input.configuration_digest!==args.configuration_digest))fail('listening_calibration_configuration_invalid');
-  const shapes=new Map(args.inputs.map(input=>{const shape=signalListeningCalibrationShapeV1(args.configuration,input);return[shape.shape_digest,shape];}));
+  const snapshot=args.snapshot??compileSignalListeningSnapshotV1(args.configuration),state=readSignalListeningSnapshotV1(snapshot);
+  if(args.snapshot&&state.configuration_digest!==args.configuration_digest)fail('listening_calibration_configuration_invalid');
+  const shapeCompiler=createSignalListeningShapeCompilerV1(snapshot);
+  const shapes=new Map(args.inputs.map(input=>{const shape=shapeCompiler.shape(input);return[shape.shape_digest,shape];}));
   const profiles=new Map<string,Profile|null>();
   await Promise.all([...shapes].map(async([id,shape])=>{const profile=await args.loadProfile(id);if(profile)validateProfile(profile,args,shape);profiles.set(id,profile);}));
   // A short finite phase may use its measured N. A newly expanded phase with
   // at least 32 pending roots finishes a full warmup window before concurrency.
   const pendingByShape=new Map<string,number>();
-  for(const input of args.inputs){const key=signalListeningCalibrationShapeV1(args.configuration,input).shape_digest;
+  for(const input of args.inputs){const key=shapeCompiler.shape(input).shape_digest;
     pendingByShape.set(key,(pendingByShape.get(key)??0)+1);}
   for(const [key,profile]of profiles)if(profile&&profile.sample_count<32&&profile.sample_count+(pendingByShape.get(key)??0)>=32)profiles.set(key,null);
   const rows=args.inputs.map((input,index)=>{
-    const request=(args.compile_request??(input=>buildSignalListeningJevRequestV1(input,args.configuration)))(input);
+    const request=(args.compile_request??(input=>buildSignalListeningCompiledRequestV1(input,snapshot)))(input);
     if(request.model!==args.configuration.model||request.state!==input.text||Object.keys(request.questions).sort().join(',')!==[...input.question_keys].sort().join(','))fail('listening_calibration_compiler_invalid');
     const bytes=assertSignalListeningRequestTransportV1(request);
-    const shape=signalListeningCalibrationShapeV1(args.configuration,input),profile=profiles.get(shape.shape_digest);
+    const shape=shapeCompiler.shape(input),profile=profiles.get(shape.shape_digest);
     if(profile)assertSignalListeningMeasuredContextV1(request,profile.max_input_tokens_per_byte);
     return{input,index,request,bytes,shape:shape.shape_digest,covered:Boolean(profile&&bytes>=profile.request_min_bytes&&bytes<=profile.request_max_bytes)};
   });
@@ -76,17 +80,21 @@ export async function planSignalListeningCalibrationV1(args:Access&{configuratio
     if(slots<1)fail('listening_selection_memory_bound');
     execution.max_in_flight=Math.min(execution.max_in_flight,slots);
   }
-  return{scope:{workspace_id:args.workspace_id,configuration_digest:args.configuration_digest},configuration:args.configuration,
+  const plan={scope:{workspace_id:args.workspace_id,configuration_digest:args.configuration_digest},configuration:state.configuration,snapshot,
     profiles,execution,warmup,selected_inputs,calibration_shapes,response_bound_bytes};
+  return plan;
 }
 /** Each factory receives an immutable env copy. Account quotas remain shared;
  * a profile's scope digest, not a new app tenant or key, identifies its TPS model. */
 export function createSignalListeningCalibratedProviderV1(args:{plan:SignalListeningCalibrationPlanV1;env?:NodeJS.ProcessEnv;
   factory?:typeof createCalibratedJevRuntimeProviderV2}){
   const {plan}=args,baseEnv=args.env??process.env,clients=new Map<string,JevProviderV1>(),clientsByScope=new Map<string,JevProviderV1>(),usedShapes=new Set<string>();
+  const state=readSignalListeningSnapshotV1(plan.snapshot);
+  if(state.configuration_digest!==digest(plan.configuration))fail('listening_request_plan_changed');
+  const shapeCompiler=createSignalListeningShapeCompilerV1(plan.snapshot);
   const active=new Set<Promise<unknown>>();let closing=false;
   function client(request:JevRequestV1){
-    const bytes=assertSignalListeningRequestTransportV1(request),shape=signalListeningCalibrationShapeV1(plan.configuration,{question_keys:Object.keys(request.questions)});
+    const bytes=assertSignalListeningRequestTransportV1(request),shape=shapeCompiler.shape({question_keys:Object.keys(request.questions)});
     if(request.model!==shape.model||signalListeningResponseBoundV1(request)>plan.response_bound_bytes)fail('listening_request_plan_changed');
     const profile=plan.profiles.get(shape.shape_digest);
     if(profile){validateProfile(profile,plan.scope,shape);assertSignalListeningMeasuredContextV1(request,profile.max_input_tokens_per_byte);}
@@ -128,7 +136,7 @@ export function createSignalListeningCalibratedProviderV1(args:{plan:SignalListe
     prepareMeasuredRequests:(requests:Iterable<JevRequestV1>)=>{
       if(plan.warmup)return false;
       for(const request of requests){
-        const bytes=assertSignalListeningRequestTransportV1(request),shape=signalListeningCalibrationShapeV1(plan.configuration,{question_keys:Object.keys(request.questions)});
+        const bytes=assertSignalListeningRequestTransportV1(request),shape=shapeCompiler.shape({question_keys:Object.keys(request.questions)});
         if(!coveredMeasuredRequest(request,shape,bytes,plan.profiles.get(shape.shape_digest)))return false;
       }
       return true;
@@ -140,7 +148,7 @@ export function createSignalListeningCalibratedProviderV1(args:{plan:SignalListe
       if(plan.warmup)return false;
       const additions=new Map<string,Profile>();
       for(const request of requests){
-        const bytes=assertSignalListeningRequestTransportV1(request),shape=signalListeningCalibrationShapeV1(plan.configuration,{question_keys:Object.keys(request.questions)});
+        const bytes=assertSignalListeningRequestTransportV1(request),shape=shapeCompiler.shape({question_keys:Object.keys(request.questions)});
         if(request.model!==shape.model||signalListeningResponseBoundV1(request)>plan.response_bound_bytes)return false;
         let profile=plan.profiles.get(shape.shape_digest)??additions.get(shape.shape_digest);
         if(!plan.profiles.has(shape.shape_digest)&&!additions.has(shape.shape_digest)){
