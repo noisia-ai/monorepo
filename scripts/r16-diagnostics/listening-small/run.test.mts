@@ -60,21 +60,24 @@ test('resource profile workflow Bash gate allows manual SQL frontier shared smok
  }
  const script=body.join('\n').trimEnd();assert.ok(script.includes('reserve_shared_smoke requires a manual neutral_only or sql_frontier_only run'));
  const sha='a'.repeat(40);
- const run=(mode:string,profile:string,smoke:boolean,event:string,targetRef=sha)=>spawnSync('/bin/bash',['-euo','pipefail','-c',script],{
+ const run=(mode:string,profile:string,smoke:boolean,event:string,targetRef=sha,selectedPass='0',acceptanceSha='')=>spawnSync('/bin/bash',['-euo','pipefail','-c',script],{
   encoding:'utf8',env:{PATH:process.env.PATH??'/usr/bin:/bin',MODE:mode,RESOURCE_PROFILE:profile,
-   RESERVE_SHARED_SMOKE:String(smoke),EVENT_NAME:event,TARGET_REF:targetRef}});
- const cases:[string,string,string,boolean,string,string,boolean][]=[
-  ['SQL frontier bounded profile with shared smoke','sql_frontier_only','bounded_2g',true,'workflow_dispatch',sha,true],
-  ['neutral bounded profile with shared smoke','neutral_only','bounded_2g',true,'workflow_dispatch','',true],
-  ['legacy shared smoke remains rejected','legacy','baseline_512m',true,'workflow_dispatch','',false],
-  ['SQL shared smoke remains manual-only','sql_frontier_only','baseline_512m',true,'pull_request',sha,false],
-  ['neutral shared smoke remains manual-only','neutral_only','baseline_512m',true,'pull_request','',false],
-  ['SQL mode rejects a missing explicit target','sql_frontier_only','baseline_512m',false,'workflow_dispatch','',false],
-  ['SQL mode rejects a malformed explicit target','sql_frontier_only','baseline_512m',false,'workflow_dispatch','A'.repeat(40),false],
-  ['legacy baseline without shared smoke remains unchanged','legacy','baseline_512m',false,'pull_request','',true],
+   RESERVE_SHARED_SMOKE:String(smoke),EVENT_NAME:event,TARGET_REF:targetRef,
+   RAW_ACCEPTANCE_SELECTED_PASS:selectedPass,RAW_ACCEPTANCE_TARGET_SHA:acceptanceSha}});
+ const cases:[string,string,string,boolean,string,string,string,string,boolean][]=[
+  ['SQL frontier bounded profile with exact RAW acceptance evidence','sql_frontier_only','bounded_2g',true,'workflow_dispatch',sha,'6',sha,true],
+  ['neutral bounded profile with exact RAW acceptance evidence','neutral_only','bounded_2g',true,'workflow_dispatch',sha,'6',sha,true],
+  ['smoke rejects missing RAW acceptance passes','sql_frontier_only','bounded_2g',true,'workflow_dispatch',sha,'0',sha,false],
+  ['smoke rejects RAW acceptance from a different target','neutral_only','baseline_512m',true,'workflow_dispatch',sha,'6','b'.repeat(40),false],
+  ['legacy shared smoke remains rejected','legacy','baseline_512m',true,'workflow_dispatch','', '0','',false],
+  ['SQL shared smoke remains manual-only','sql_frontier_only','baseline_512m',true,'pull_request',sha,'0','',false],
+  ['neutral shared smoke remains manual-only','neutral_only','baseline_512m',true,'pull_request',sha,'0','',false],
+  ['SQL mode rejects a missing explicit target','sql_frontier_only','baseline_512m',false,'workflow_dispatch','', '0','',false],
+  ['SQL mode rejects a malformed explicit target','sql_frontier_only','baseline_512m',false,'workflow_dispatch','A'.repeat(40),'0','',false],
+  ['legacy baseline without shared smoke remains unchanged','legacy','baseline_512m',false,'pull_request','', '0','',true],
  ];
- for(const [label,mode,profile,smoke,event,targetRef,expectedPass] of cases){
-  const result=run(mode,profile,smoke,event,targetRef);
+ for(const [label,mode,profile,smoke,event,targetRef,selectedPass,acceptanceSha,expectedPass] of cases){
+  const result=run(mode,profile,smoke,event,targetRef,selectedPass,acceptanceSha);
   assert.equal(result.status,expectedPass?0:1,`${label}: ${result.stderr||result.stdout}`);
  }
 });
