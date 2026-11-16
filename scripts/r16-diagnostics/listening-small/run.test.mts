@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
 import {spawnSync} from 'node:child_process';
 import {EventEmitter} from 'node:events';
-import {readFile} from 'node:fs/promises';
+import {mkdtemp,readFile,rm,writeFile} from 'node:fs/promises';
+import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {pathToFileURL} from 'node:url';
 import {assertCpuProfilerArgsV1,assertListeningSmallGuardV1,captureCalibrationObservationV1,classificationClockMetadataV1,
@@ -107,6 +108,50 @@ test('workflow shared smoke execution condition selects SQL and neutral runs onl
   assert.equal(result.status,0,`${label}: ${result.stderr||result.stdout}`);
   assert.equal(result.stdout.trim()==='smoke_selected',selected,label);
  }
+});
+
+test('workflow input-contract selector and inline TAP gate enforce five cases and the 31-case main census',async()=>{
+ const workflowPath=new URL('../../../.github/workflows/r16-listening-small-diagnostic.yml',import.meta.url);
+ const workflow=await readFile(workflowPath,'utf8');
+ const patternMatch=workflow.match(/--test-name-pattern='([^']+)'[\s\\\n]*--test-concurrency=1 --import tsx infrastructure\/db\/migrations\/signal-listening-input-bounds\.postgres\.test\.ts/u);
+ assert.ok(patternMatch,'workflow must keep the focused selector on the input-bounds test');
+ const selector=new RegExp(patternMatch[1]);
+ const gateStart=workflow.indexOf('node - "$R16_RESERVE_INPUT_CONTRACTS_TAP" "$reserve_input_status"');
+ assert.ok(gateStart>=0,'inline input-contract TAP gate must exist');
+ const heredocStart=workflow.indexOf("<<'NODE'\n",gateStart);assert.ok(heredocStart>=0,'input-contract gate must use its inline Node block');
+ const bodyStart=heredocStart+"<<'NODE'\n".length;const bodyEnd=workflow.indexOf('\n          NODE',bodyStart);
+ assert.ok(bodyEnd>bodyStart,'input-contract gate heredoc must terminate');
+ const gate=workflow.slice(bodyStart,bodyEnd).split(/\r?\n/u).map(line=>line.startsWith('          ')?line.slice(10):line).join('\n');
+ const expectedMatch=gate.match(/const expected = \[([\s\S]*?)\];/u);assert.ok(expectedMatch,'gate must enumerate exact titles');
+ const expected=[...expectedMatch[1].matchAll(/^\s*'([^']+)'[,]?\s*$/gmu)].map(match=>match[1]);
+ assert.equal(expected.length,5,'the input-contract gate must require the new fifth selected case');
+ assert.deepEqual(expected.filter(title=>selector.test(title)),expected,'the workflow name pattern must select each gated title');
+ assert.equal(selector.test('unrelated input-bounds test'),false,'the focused selector must exclude unlisted tests');
+ const added='bounded Listening projection preserves 256 native keys, Unicode wire bytes and source timestamp microseconds';
+ assert.ok(expected.includes(added),'the exact 256-key/Unicode/timestamp case must be gated');
+ assert.ok(workflow.includes('NOISIA_R16_INPUT_BOUNDS_PG: ${{ inputs.reserve_shared_smoke && \'true\' || \'false\' }}'),
+  'the existing opt-in must enable the real input-bounds fixture');
+
+ const dir=await mkdtemp(join(tmpdir(),'r16-input-gate-'));const tapPath=join(dir,'input-contract.tap');
+ const execute=async(tap:string,status=0)=>{await writeFile(tapPath,tap);return spawnSync(process.execPath,['-',tapPath,String(status)],{encoding:'utf8',input:gate});};
+ try{
+  const passing=[...expected.map((title,index)=>`ok ${index+1} - ${title}`),'1..5','# tests 5','# pass 5','# fail 0','# cancelled 0','# skipped 0','# todo 0'].join('\n');
+  const pass=await execute(passing);assert.equal(pass.status,0,pass.stderr||pass.stdout);
+  const skipped=passing.replace(`ok 2 - ${added}`,`ok 2 - ${added} # SKIP not available`)
+   .replace('# pass 5','# pass 4').replace('# skipped 0','# skipped 1');
+  const skipResult=await execute(skipped);assert.notEqual(skipResult.status,0,'a skipped selected title must fail the exact TAP gate');
+  const missing=passing.replace(`ok 2 - ${added}\n`,'').replace('1..5','1..4').replace('# tests 5','# tests 4').replace('# pass 5','# pass 4');
+  const missingResult=await execute(missing);assert.notEqual(missingResult.status,0,'an absent selected title must fail the exact TAP gate');
+  const failed=await execute(passing,1);assert.notEqual(failed.status,0,'nonzero test process status must fail the exact TAP gate');
+ }finally{await rm(dir,{recursive:true,force:true});}
+
+ // Existing workflow gates contribute 26 exact main-job passes; five focused input cases make 31.
+ const baselineCounts=[1,3,10,3,2,7];
+ assert.ok(workflow.includes('selected.length !== 1')&&workflow.includes('^# tests 3$')
+  &&workflow.includes('selected.length !== 10')&&workflow.includes('selected.length !== 2'),
+  'the existing oracle, runtime, fence, reader, recovery and reserve gates must remain in the workflow');
+ assert.equal(baselineCounts.reduce((sum,count)=>sum+count,0)+expected.length,31,
+  'main diagnostic selected-case census must be 31; isolated RAW acceptance contributes six for 37 overall');
 });
 
 test('RAW attach acceptance runs only in its isolated job and main job consumes exact evidence',async()=>{
