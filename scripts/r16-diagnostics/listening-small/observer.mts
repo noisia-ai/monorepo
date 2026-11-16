@@ -37,6 +37,7 @@ const SAFE_FUNCTION_STAT_SIGNATURES=[
  'public.signal_listening_answer_guard_v1()',
  'public.signal_listening_root_right_v1(uuid, uuid, text)',
  'public.signal_processing_lock_actor_v1(uuid, uuid, boolean)',
+ 'public.signal_processing_actor_v1(uuid, uuid)',
 ] as const;
 const DML_BASE_GUCS=['log_min_messages','client_min_messages','log_statement','log_parameter_max_length'];
 const DML_AUTO_EXPLAIN_GUCS=['auto_explain.log_parameter_max_length','auto_explain.log_level','auto_explain.log_min_duration','auto_explain.log_nested_statements',
@@ -129,16 +130,24 @@ type FunctionStatsDeltaV1={signature:string;status:'captured'|'function_absent'|
  baseline:'observed_before'|'transaction_local_row_absent_zero_before_dml'|null;calls:number|null;total_time_ms:number|null;self_time_ms:number|null};
 type FunctionStatsArtifactV1={status:'captured'|'setup_unavailable';read_before_ms:number|null;read_after_ms:number|null;
  total_time_inclusive:true;self_time_excludes_nested_calls:true;overhead_measured:false;capacity_claim:false;deltas:FunctionStatsDeltaV1[]};
+type ActorNestedPlanV1={query_text_sha256:string|null;planning_time_ms:number|null;execution_time_ms:number|null;plan:Record<string,unknown>};
+type ActorQueryPhaseV1={query_hash:string;explain_plan:{planning_time_ms:number|null;execution_time_ms:number|null;plan:Record<string,unknown>}|null;
+ nested_plans:ActorNestedPlanV1[];plan_notices_seen:number;plans_dropped:number;query_wall_ms:number};
+type ActorFunctionDiagnosticV1={status:'captured'|'scope_unavailable';reason?:'call_scope_unavailable'|'transaction_scope_unverified';
+ call_ids_count:number;calls_resolved_count:number;function_call:ActorQueryPhaseV1|null;equivalent_body:ActorQueryPhaseV1|null;
+ setup_ms:number;scope_lookup_ms:number;cleanup_ms:number;lock_timeout_ms:1000;statement_timeout_ms:15000;nested_plan_limit:8;
+ timing_on:true;query_wall_includes_nested:true;analyze_overhead_measured:false;capacity_claim:false};
 export type DmlPlanObservationV1=({query_hash:string;label:string;batch_size:number;batch_unit:DmlPlanUnitV1;status:'setup_unavailable';
  reason:'transaction_scope_unverified'|'auto_explain_load_unavailable'|'capture_setup_unavailable';plans:DmlPlanV1[];plan_notices_seen:number;plans_dropped:number;
  triggers_omitted_count:number;triggers_unknown_time_count:number;analyze_timing_enabled:false;function_stats?:FunctionStatsArtifactV1}&DmlPlanTimingV1)|({query_hash:string;label:string;batch_size:number;batch_unit:DmlPlanUnitV1;status:'captured'|'plan_notice_unavailable';
  plans:DmlPlanV1[];plan_notices_seen:number;plans_dropped:number;triggers_omitted_count:number;triggers_unknown_time_count:number;analyze_timing_enabled:true;
- function_stats?:FunctionStatsArtifactV1;analyze_timing_overhead_measured:false}&DmlPlanTimingV1);
+ function_stats?:FunctionStatsArtifactV1;actor_function_diagnostic?:ActorFunctionDiagnosticV1;analyze_timing_overhead_measured:false}&DmlPlanTimingV1);
 function dmlCaptureGucs(prior:Map<string,string>){
  return[
   ['auto_explain.log_min_duration','-1'],
   ...DML_AUTO_EXPLAIN_GUCS.filter(name=>name!=='auto_explain.log_min_duration').map(name=>[name,prior.get(name)!] as const),
   ...DML_BASE_GUCS.map(name=>[name,prior.get(name)!] as const),
+  ...(['lock_timeout','statement_timeout'] as const).filter(name=>prior.has(name)).map(name=>[name,prior.get(name)!] as const),
   ...(prior.has('track_functions')?[['track_functions',prior.get('track_functions')!] as const]:[]),
   ['auto_explain.log_min_duration',prior.get('auto_explain.log_min_duration')!],
  ] as const;
@@ -177,8 +186,105 @@ function functionStatsDeltaV1(before:Map<string,FunctionStatsRowV1>,after:Map<st
   return{signature,status:'captured',baseline:prior.stats_observed?'observed_before':'transaction_local_row_absent_zero_before_dml',
    calls:next.calls-base.calls,total_time_ms:next.total_time_ms-base.total_time_ms,self_time_ms:next.self_time_ms-base.self_time_ms};});
 }
+const ACTOR_FUNCTION_EXPLAIN_SQL='EXPLAIN (ANALYZE,BUFFERS,TIMING ON,FORMAT JSON) SELECT 1 WHERE public.signal_processing_actor_v1($1::uuid,$2::uuid)';
+const ACTOR_BODY_EXPLAIN_SQL=`EXPLAIN (ANALYZE,BUFFERS,TIMING ON,FORMAT JSON)
+SELECT EXISTS(SELECT 1 FROM public.signal_workspaces w
+ JOIN public.brands b ON b.id=w.brand_id AND b.organization_id=w.organization_id
+ JOIN public.organizations o ON o.id=w.organization_id
+ JOIN public.users u ON u.id=$2::uuid AND u.status='active'
+ WHERE w.id=$1::uuid AND w.status='active' AND b.status='active' AND o.status='active'
+  AND ((u.user_type='noisia_internal' AND u.primary_role='noisia_admin')
+   OR (u.user_type='client' AND u.organization_id=o.id AND u.primary_role='client_admin'
+    AND EXISTS(SELECT 1 FROM public.user_brand_access a WHERE a.brand_id=b.id AND a.user_id=u.id
+     AND a.revoked_at IS NULL AND a.access_level='admin'))))`;
+const ACTOR_NESTED_PLAN_LIMIT=8,ACTOR_CALL_IDS_LIMIT=8192;
+const UUID_PATTERN=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;
+function answerCallIdsV1(values:unknown):string[]|null{
+ if(!Array.isArray(values)||values.length!==4||typeof values[3]!=='string')return null;
+ try{const rows=JSON.parse(values[3]);if(!Array.isArray(rows)||rows.length<1||rows.length>ACTOR_CALL_IDS_LIMIT*2)return null;
+  const ids=new Set<string>();for(const row of rows){if(!row||typeof row.call_id!=='string'||!UUID_PATTERN.test(row.call_id))return null;ids.add(row.call_id);}
+  return ids.size>0&&ids.size<=ACTOR_CALL_IDS_LIMIT?[...ids]:null;
+ }catch{return null;}
+}
+function safeExplainPlanResult(result:any){
+ try{let raw=result?.rows?.[0]?.['QUERY PLAN']??result?.rows?.[0]?.query_plan;if(typeof raw==='string')raw=JSON.parse(raw);const first=Array.isArray(raw)?raw[0]:null;
+  const plan=safePlanNode(first?.Plan);if(!plan)return null;
+  return{planning_time_ms:typeof first['Planning Time']==='number'&&Number.isFinite(first['Planning Time'])?first['Planning Time']:null,
+   execution_time_ms:typeof first['Execution Time']==='number'&&Number.isFinite(first['Execution Time'])?first['Execution Time']:null,plan};
+ }catch{return null;}
+}
+function actorDiagnosticRestoreSettings(prior:Map<string,string>){
+ return[['auto_explain.log_min_duration','-1'] as const,
+  ...DML_AUTO_EXPLAIN_GUCS.filter(name=>name!=='auto_explain.log_min_duration').map(name=>[name,prior.get(name)!] as const),
+  ...DML_BASE_GUCS.map(name=>[name,prior.get(name)!] as const),
+  ['lock_timeout',prior.get('lock_timeout')!] as const,['statement_timeout',prior.get('statement_timeout')!] as const,
+  ['auto_explain.log_min_duration',prior.get('auto_explain.log_min_duration')!] as const];
+}
+async function captureActorFunctionDiagnosticV1(args:{client:any;callIds:string[];prior:Map<string,string>;database:string;role:string;env:NodeJS.ProcessEnv;clock:()=>number}):Promise<ActorFunctionDiagnosticV1>{
+ const {client,callIds,prior,database,role,env,clock}=args;
+ const base={call_ids_count:callIds.length,calls_resolved_count:0,function_call:null,equivalent_body:null,
+  setup_ms:0,scope_lookup_ms:0,cleanup_ms:0,lock_timeout_ms:1000 as const,statement_timeout_ms:15000 as const,nested_plan_limit:ACTOR_NESTED_PLAN_LIMIT as 8,
+  timing_on:true as const,query_wall_includes_nested:true as const,analyze_overhead_measured:false as const,capacity_claim:false as const};
+ if(!dmlPlanCaptureEnvironmentAllowed(env)||database!=='noisia_mfp_ci'||role!=='postgres')return{...base,status:'scope_unavailable',reason:'transaction_scope_unverified'};
+ const identity=await client.query(`SELECT current_database() AS database,current_user AS role,
+  current_setting('transaction_read_only') AS read_only,r.rolsuper AS superuser
+  FROM pg_roles r WHERE r.rolname=current_user`);
+ const scope=identity.rows?.[0];if(scope?.database!==database||scope?.role!==role||scope?.read_only!=='off'||scope?.superuser!==true)
+  return{...base,status:'scope_unavailable',reason:'transaction_scope_unverified'};
+ let primaryError:unknown,restoreError:unknown,lookupMs=0,setupMs=0,cleanupMs=0,context:{workspace_id:string;actor_user_id:string}|null=null;
+ let scopeUnavailable=false;
+ let functionCall:ActorQueryPhaseV1|null=null,equivalentBody:ActorQueryPhaseV1|null=null,listenerAttached=false;
+ const setupStarted=clock();
+ const diagnosticSettings:Array<[string,string]>=[
+  ['lock_timeout','1s'],['statement_timeout','15s'],['log_min_messages','WARNING'],['client_min_messages','NOTICE'],['log_statement','none'],
+  ['log_parameter_max_length','0'],['auto_explain.log_parameter_max_length','0'],['auto_explain.log_level','NOTICE'],['auto_explain.log_min_duration','0'],
+  ['auto_explain.log_nested_statements','on'],['auto_explain.log_analyze','on'],['auto_explain.log_buffers','on'],['auto_explain.log_timing','on'],
+  ['auto_explain.log_format','json'],['auto_explain.log_verbose','off'],['auto_explain.log_triggers','off'],
+ ];
+ let planNotices=0,droppedNotices=0;const nestedPlans:ActorNestedPlanV1[]=[];
+ const listener=(notice:unknown)=>{const plan=safeAutoExplainNotice(notice);if(!plan)return;planNotices++;
+  if(nestedPlans.length<ACTOR_NESTED_PLAN_LIMIT)nestedPlans.push(plan);else droppedNotices++;};
+ const runPhase=async(sql:string,values:string[]):Promise<ActorQueryPhaseV1>=>{
+  planNotices=0;droppedNotices=0;nestedPlans.length=0;client.on('notice',listener);listenerAttached=true;
+  const queryStarted=clock();let result:any;
+  try{result=await client.query(sql,values);}finally{client.off('notice',listener);listenerAttached=false;}
+  return{query_hash:queryHash(sql)!,explain_plan:safeExplainPlanResult(result),nested_plans:[...nestedPlans],
+   plan_notices_seen:planNotices,plans_dropped:droppedNotices,query_wall_ms:clock()-queryStarted};
+ };
+ try{
+  for(const [name,value] of diagnosticSettings)await client.query(`SET LOCAL ${name} = '${value}'`);
+  setupMs=clock()-setupStarted;
+  const lookupStarted=clock();const resolved=await client.query(`SELECT c.workspace_id::text AS workspace_id,r.actor_user_id::text AS actor_user_id
+   FROM signal_labeling_calls c JOIN signal_labeling_runs r ON r.run_id=c.run_id AND r.workspace_id=c.workspace_id
+   WHERE c.id=ANY($1::uuid[])
+   GROUP BY c.workspace_id,r.actor_user_id,c.run_id
+   HAVING count(DISTINCT c.id)=cardinality($1::uuid[]) AND count(DISTINCT c.workspace_id)=1
+    AND count(DISTINCT r.actor_user_id)=1 AND count(DISTINCT c.run_id)=1`,[callIds]);
+  lookupMs=clock()-lookupStarted;const owner=resolved.rows?.[0];
+  if(resolved.rows?.length!==1||!UUID_PATTERN.test(owner?.workspace_id??'')||!UUID_PATTERN.test(owner?.actor_user_id??'')){
+   context=null;
+  }else context={workspace_id:owner.workspace_id,actor_user_id:owner.actor_user_id};
+  if(!context){scopeUnavailable=true;}
+  else{
+   functionCall=await runPhase(ACTOR_FUNCTION_EXPLAIN_SQL,[context.workspace_id,context.actor_user_id]);
+   equivalentBody=await runPhase(ACTOR_BODY_EXPLAIN_SQL,[context.workspace_id,context.actor_user_id]);
+  }
+ }catch(error){primaryError=error;}
+ finally{
+  if(listenerAttached)client.off('notice',listener);
+  const cleanupStarted=clock();let firstRestoreError:unknown;
+  for(const [name,value] of actorDiagnosticRestoreSettings(prior)){try{await client.query('SELECT set_config($1,$2,true)',[name,value]);}catch(error){firstRestoreError??=error;}}
+  cleanupMs=clock()-cleanupStarted;restoreError=firstRestoreError;
+ }
+ const output={...base,calls_resolved_count:context?callIds.length:0,function_call:functionCall,equivalent_body:equivalentBody,
+  setup_ms:setupMs,scope_lookup_ms:lookupMs,cleanup_ms:cleanupMs};
+ if(primaryError&&restoreError)throw new AggregateError([primaryError,restoreError],'actor_function_diagnostic_and_restore_failed');
+ if(primaryError)throw primaryError;if(restoreError)throw restoreError;
+ if(!context||scopeUnavailable)return{...output,status:'scope_unavailable',reason:'call_scope_unavailable'};
+ return{...output,status:'captured'};
+}
 /** Instruments one already-issued write only after setup is complete. The setup savepoint is released before the original DML and is never rolled back afterward. */
-export async function captureDmlPlanQueryV1(args:{client:any;query:()=>Promise<any>;query_hash:string;batch_size:number;database:string;role:string;env:NodeJS.ProcessEnv;clock?:()=>number}):Promise<{result:any;observation:DmlPlanObservationV1|null}>{
+export async function captureDmlPlanQueryV1(args:{client:any;query:()=>Promise<any>;query_hash:string;batch_size:number;database:string;role:string;env:NodeJS.ProcessEnv;query_values?:unknown;clock?:()=>number}):Promise<{result:any;observation:DmlPlanObservationV1|null}>{
  const {client,query,query_hash,batch_size,database,role,env}=args,spec=dmlPlanQuerySpec(query_hash),clock=args.clock??(()=>performance.now());
  if(!spec||batch_size<DML_PLAN_MIN_BATCH||!dmlPlanCaptureEnvironmentAllowed(env)||database!=='noisia_mfp_ci'||role!=='postgres')
   return{result:await query(),observation:null};
@@ -212,7 +318,7 @@ export async function captureDmlPlanQueryV1(args:{client:any;query:()=>Promise<a
    setupStage='load_auto_explain';
    await client.query("LOAD 'auto_explain'");
    setupStage='read_prior_settings';
-   const captureGucNames=[...DML_BASE_GUCS,...DML_AUTO_EXPLAIN_GUCS,...(spec.function_stats?['track_functions']:[])];
+   const captureGucNames=[...DML_BASE_GUCS,...DML_AUTO_EXPLAIN_GUCS,...(spec.function_stats?['track_functions','lock_timeout','statement_timeout']:[])];
    const settings=await client.query(`SELECT name,current_setting(name,true) AS value
     FROM unnest($1::text[]) AS settings(name)`,[captureGucNames]);
    for(const setting of settings.rows??[]){if(typeof setting.name!=='string'||typeof setting.value!=='string')throw Error('dml_capture_settings_unavailable');prior.set(setting.name,setting.value);}
@@ -267,9 +373,18 @@ export async function captureDmlPlanQueryV1(args:{client:any;query:()=>Promise<a
   if(statsReadError&&restoreError)throw new AggregateError([statsReadError,restoreError],'function_stats_read_and_restore_failed');
   if(statsReadError)throw statsReadError;
   if(restoreError)throw restoreError;
+  let actorFunctionDiagnostic:ActorFunctionDiagnosticV1|undefined;
+  if(spec.function_stats&&functionStats&&args.query_values!==undefined){
+   const callIds=answerCallIdsV1(args.query_values);
+   actorFunctionDiagnostic=callIds?await captureActorFunctionDiagnosticV1({client,callIds,prior,database,role,env,clock}):{
+    status:'scope_unavailable',reason:'call_scope_unavailable',call_ids_count:0,calls_resolved_count:0,function_call:null,equivalent_body:null,
+    setup_ms:0,scope_lookup_ms:0,cleanup_ms:0,lock_timeout_ms:1000,statement_timeout_ms:15000,nested_plan_limit:8,
+    timing_on:true,query_wall_includes_nested:true,analyze_overhead_measured:false,capacity_claim:false};
+  }
   return{result,observation:{query_hash,label:spec.label,batch_size,batch_unit:spec.batch_unit,
    status:plans.length?'captured':'plan_notice_unavailable',plans,plan_notices_seen:planNoticesSeen,plans_dropped:plansDropped,triggers_omitted_count:triggersOmittedCount,
    triggers_unknown_time_count:triggersUnknownTimeCount,analyze_timing_enabled:true,...(functionStats?{function_stats:functionStats}:{}),
+   ...(actorFunctionDiagnostic?{actor_function_diagnostic:actorFunctionDiagnostic}:{}),
    setup_ms:setupMs,query_wall_ms:queryWallMs,cleanup_ms:cleanupMs,setup_cleanup_wall_ms:setupMs+cleanupMs,analyze_timing_overhead_measured:false}};
  }finally{
   try{if(savepoint&&!dmlStarted)await rollbackSetup();}finally{detach();}
@@ -364,7 +479,7 @@ export function createListeningObserver(){
   if(dmlSpec&&dmlBatch!==null&&dmlBatch>=DML_PLAN_MIN_BATCH&&(dmlPlanCounts.get(hash!)??0)<1
    &&dmlPlanCaptureEnvironmentAllowed(process.env)&&typeof owner.on==='function'&&typeof owner.off==='function'){
    dmlPlanCounts.set(hash!,1);
-   const captured=await captureDmlPlanQueryV1({client:owner,query:()=>owner.query(...args),query_hash:hash!,batch_size:dmlBatch,database:'noisia_mfp_ci',role:'postgres',env:process.env});
+   const captured=await captureDmlPlanQueryV1({client:owner,query:()=>owner.query(...args),query_hash:hash!,batch_size:dmlBatch,database:'noisia_mfp_ci',role:'postgres',env:process.env,query_values:args[1]});
    if(captured.observation)dmlPlanObservations.push(captured.observation);return captured.result;
   }
   if(label&&shouldCaptureInnerPlanOrdinalV1(queryOrdinal)&&typeof owner.on==='function'&&typeof owner.off==='function'){
