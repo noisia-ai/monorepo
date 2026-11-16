@@ -6,7 +6,7 @@ import {runMassLabelingAcceptanceFixtureV1} from './signal-mass-labeling-accepta
 import {requestSignalListeningV1,createSignalListeningStoreV1} from '../signal-listening-runs';
 import {saveSignalListeningConfigurationV1} from '../signal-listening-configuration';
 import {buildLabelingRawPageV1,parseLabelingRawPageV1} from '../signal-labeling-raw-pages';
-import {assertRawAttachOracleV1,assertRawAttachDeniedV1,rawAttachBeforeSqlV1,rawAttachPhaseV1,rawAttachSnapshotV1,type RawAttachPlanV1} from './signal-labeling-raw-attach.oracle';
+import {assertRawAttachOracleV1,assertRawAttachDeniedV1,rawAttachBeforeSqlV1,rawAttachPhaseV1,rawAttachSnapshotV1,explainRawAttachLockSelectV1,type RawAttachPlanV1} from './signal-labeling-raw-attach.oracle';
 
 // ROOT registers this large native oracle explicitly in the owned PG17 gate.
 // It is not a local acceptance and is never opened by the ordinary pure suite.
@@ -100,17 +100,22 @@ for(const count of [720,4096])test(`RAW attach layout${count} original and page 
      assert.equal('sha256:'+createHash('sha256').update(built.raw_text).digest('hex'),built.raw_sha256);
      assert.equal(parseLabelingRawPageV1({workspace_id:run.workspace_id,run_id:run.id,raw_text:built.raw_text,
       raw_sha256:built.raw_sha256,size_bytes:built.size_bytes,members:built.members}).size,count);
-     const locked=await c.query('SELECT id FROM signal_labeling_calls WHERE workspace_id=$1 AND run_id=$2 AND id=ANY($3::uuid[]) ORDER BY id FOR UPDATE',[run.workspace_id,run.id,ids]);
-     assert.deepEqual(locked.rows.map(row=>row.id),ids,'real call-id locks precede the page lock');
      const key=`private/${run.workspace_id}/${run.id}/${built.name}`;
      await c.query(`INSERT INTO signal_labeling_raw_pages(id,workspace_id,run_id,name,storage_key,sha256,size_bytes,member_count)
       VALUES($1,$2,$3,$4,$5,$6,$7,$8)`,[built.page_id,run.workspace_id,run.id,built.name,key,built.raw_sha256,built.size_bytes,count]);
-     await c.query('SELECT id FROM signal_labeling_raw_pages WHERE id=$1 FOR UPDATE',[built.page_id]);
+     // These private, uncommitted fixture rows need native INSERT guards/FKs.
+     // 0295's member guard takes KEY SHARE on calls, not UPDATE/FOR UPDATE.
+     // No direct call FOR UPDATE or explicit page FOR UPDATE happens until the
+     // literal SELECT diagnostic below has taken its first call row marks.
      await c.query(`INSERT INTO signal_labeling_raw_page_members(call_id,workspace_id,run_id,page_id,request_digest,raw_sha256,raw_size_bytes,byte_offset,byte_length)
       SELECT x.call_id,$1,$2,$3,x.request_digest,x.raw_sha256,x.raw_size_bytes,x.byte_offset,x.byte_length
       FROM jsonb_to_recordset($4::jsonb)x(call_id uuid,request_digest text,raw_sha256 text,raw_size_bytes bigint,byte_offset bigint,byte_length bigint)
       ORDER BY x.call_id`,[run.workspace_id,run.id,built.page_id,JSON.stringify(built.members)]);
      const args:[string,string,string]=[built.page_id,run.workspace_id,run.id];
+     phase='lock-select-first-for-update';await explainRawAttachLockSelectV1(c,args,count);
+     const locked=await c.query('SELECT id FROM signal_labeling_calls WHERE workspace_id=$1 AND run_id=$2 AND id=ANY($3::uuid[]) ORDER BY id FOR UPDATE',[run.workspace_id,run.id,ids]);
+     assert.deepEqual(locked.rows.map(row=>row.id),ids,'the literal SELECT and direct call-id locks precede the explicit page lock');
+     await c.query('SELECT id FROM signal_labeling_raw_pages WHERE id=$1 FOR UPDATE',[built.page_id]);
      phase='planned-denial';await assertRawAttachDeniedV1(c,args,run.id); // planned page cannot attach
      await c.query("UPDATE signal_labeling_raw_pages SET status='verified',verified_at=clock_timestamp() WHERE id=$1",[built.page_id]);
      phase='verified-scope-denials';for(const wrong of [[randomUUID(),run.workspace_id,run.id],[built.page_id,randomUUID(),run.id],[built.page_id,run.workspace_id,randomUUID()]]as [string,string,string][])

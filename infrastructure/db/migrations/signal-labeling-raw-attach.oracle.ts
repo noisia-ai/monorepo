@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import {createHash} from 'node:crypto';
 import type {PoolClient} from 'pg';
 import {labelingRawPageAttachSqlV1} from '../signal-labeling-raw-page-store';
 
@@ -12,6 +13,13 @@ export const rawAttachBeforeSqlV1=`UPDATE signal_labeling_calls c SET raw_sha256
           AND c.request_digest=m.request_digest AND p.status='verified'
           AND (c.raw_sha256 IS NULL OR c.raw_sha256=m.raw_sha256 AND c.raw_storage_key=p.storage_key AND c.raw_size_bytes=m.raw_size_bytes)
         RETURNING c.id`;
+
+// Verbatim attach lock SELECT from f0dca220002e057385b201fd14c5532aa58686f8.
+// This is a separate synthetic oracle, not instrumentation of a mini query.
+export const rawAttachLockSelectSqlV1=`SELECT c.id FROM signal_labeling_calls c
+        JOIN signal_labeling_raw_page_members m ON m.call_id=c.id AND m.workspace_id=c.workspace_id AND m.run_id=c.run_id
+        WHERE m.page_id=$1 AND m.workspace_id=$2 AND m.run_id=$3 ORDER BY c.id FOR UPDATE OF c`;
+const lockSelectSha256=()=>createHash('sha256').update(rawAttachLockSelectSqlV1.replace(/\s+/gu,' ').trim()).digest('hex');
 
 type Snapshot=Array<{id:string;stable:string;updated_at:string;fresh:boolean}>;
 export async function rawAttachSnapshotV1(c:PoolClient,run:string):Promise<Snapshot>{
@@ -35,6 +43,33 @@ function nodes(plan:Record<string,unknown>,out:Record<string,unknown>[]=[]){
   'Shared Read Blocks','Temp Read Blocks','Temp Written Blocks'];
  out.push(Object.fromEntries(keys.filter(k=>k in plan).map(k=>[k,plan[k]])));
  for(const child of (plan.Plans??[])as Record<string,unknown>[])nodes(child,out);return out;
+}
+export function rawAttachLockSelectEvidenceV1(actual:{Plan:Record<string,unknown>;[key:string]:unknown},members:number){
+ return{phase:'plan-captured',arm:'literal-f0-lock-select',members,actual_rows:actual.Plan['Actual Rows'],
+  sql_sha256:lockSelectSha256(),diagnostic_scope:'standalone synthetic oracle SELECT, not the mini/runtime query',
+  first_for_update_scope:'current RR/layout only; native reserve/mark committed before this transaction',
+  prior_call_locks:'KEY SHARE retained from native member/FK guards',
+  latency_scope:'includes KEY SHARE to FOR UPDATE upgrade; not production virgin locking latency',
+  execution_ms:actual['Execution Time'],planning_ms:actual['Planning Time'],selected_nodes:nodes(actual.Plan)};
+}
+/** The layout seed has only native KEY SHARE call locks. This exact SELECT is
+ * its first FOR UPDATE on calls; no page FOR UPDATE or direct ID lock precedes
+ * it. Its locks remain until the enclosing RR/layout rollback. */
+export async function explainRawAttachLockSelectV1(c:PoolClient,args:[string,string,string],members:number){
+ let phase='lock-select-provenance';
+ try{
+  assert.equal(lockSelectSha256(),'b8180180dfc8340b89511bb2ecf806c6f7bc811c7c257d2a7409915751ec5670','frozen f0 lock SELECT must remain literal');
+  phase='lock-select-explain';
+  const actual=(await c.query('EXPLAIN (ANALYZE,BUFFERS,TIMING,FORMAT JSON) '+rawAttachLockSelectSqlV1,args)).rows[0]['QUERY PLAN'][0];
+  const safe=rawAttachLockSelectEvidenceV1(actual,members);
+  // Distinct prefix, before all plan/count assertions. No full plan, SQL,
+  // IndexCond, Filter, binds, UUIDs or request/body values leave this helper.
+  console.log('# raw attach lock-select native plan '+JSON.stringify(safe));
+  phase='lock-select-row-count';assert.equal(safe.actual_rows,members);
+  assert.ok(safe.selected_nodes.some(n=>n['Node Type']==='LockRows'&&n['Actual Loops']===1&&n['Actual Rows']===members),
+   'the literal SELECT must execute its actual LockRows for exactly this page');
+  rawAttachPhaseV1('lock-select',safe.arm,members,'complete');
+ }catch(error){rawAttachPhaseV1(phase,'literal-f0-lock-select',members,'failed',error);throw error;}
 }
 /** Both DML arms execute under a savepoint against the exact same locked native
  * fixture. No trigger, GUC, planner switch or clock is replaced. */
