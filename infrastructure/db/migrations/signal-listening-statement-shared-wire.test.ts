@@ -1,6 +1,51 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import {sharedWireSourcesV1,sharedWireValidationV1,sharedWireCanonicalPartsV1} from './signal-listening-statement-shared-wire.oracle';
+import {sharedWireSourcesV1,sharedWireValidationV1,sharedWireCanonicalPartsV1,sharedWirePayloadBarrierSourceV1,restoreSharedWirePayloadSourceV1,sharedWireCanonicalProjectionV1,sharedWirePlanSummaryV1,sharedWireShaV1,sharedWireFunctionStatsV1,sharedWireFunctionDeltaV1} from './signal-listening-statement-shared-wire.oracle';
+test('payload C is test-only and reverses exactly to frozen0330 with its scalar CASE and authority intact',async()=>{
+ const [old,next]=await sharedWireSourcesV1();assert.ok(old&&next);
+ assert.equal(sharedWireShaV1(next),'94fb81156f9ba8aa8faf3dc3502195998e701dc76e12a636418d8ef0df502305');
+ const variant=sharedWirePayloadBarrierSourceV1(next);
+ assert.equal(restoreSharedWirePayloadSourceV1(variant),next);
+ assert.equal((variant.match(/WITH native AS MATERIALIZED\(/g)??[]).length,1);
+ const before=sharedWireCanonicalPartsV1(old,next),after=sharedWireCanonicalPartsV1(old,variant);
+ assert.equal(after.wires,before.wires);assert.equal(after.preimage,before.preimage);
+ assert.equal(after.canonical.match(/SELECT (CASE[\s\S]*\n      END) FROM native\)$/)?.[1],before.canonical.match(/^\(SELECT (CASE[\s\S]*\n      END) FROM \(SELECT /)?.[1]);
+ assert.throws(()=>sharedWirePayloadBarrierSourceV1(variant));
+ assert.throws(()=>sharedWirePayloadBarrierSourceV1(next+'\n'));
+ assert.throws(()=>restoreSharedWirePayloadSourceV1(variant.replace("'listening_request_invalid'","'changed_error'")));
+});
+test('all three byte oracles materialize serialized canonical while native validation remains separate',async()=>{
+ const [old,next]=await sharedWireSourcesV1();assert.ok(old&&next);
+ for(const arm of ['before','after','variant']as const){
+  const sql=sharedWireCanonicalProjectionV1(old,next,arm);
+  assert.ok(sql.includes('serialized AS MATERIALIZED(SELECT id,'));
+  assert.ok(sql.includes('FROM serialized e ORDER BY id'));
+  assert.ok(!sharedWireValidationV1(arm==='variant'?sharedWirePayloadBarrierSourceV1(next):arm==='before'?old:next).includes('serialized AS MATERIALIZED'));
+ }
+});
+test('payload plan summary retains scoped loops and expression hashes without leaking plan literals or identities',()=>{
+ const secret='https://private.invalid/00000000-0000-4000-8000-000000000123';
+ const summary=sharedWirePlanSummaryV1({Plan:{'Node Type':'Aggregate','Actual Rows':1,'Actual Loops':1,Output:["jsonb_build_object('state','"+secret+"')"],Plans:[{'Node Type':'Result','Subplan Name':'CTE native','Actual Rows':1,'Actual Loops':32,Output:['jsonb_build_object($1,$2)']},{'Node Type':'CTE Scan','CTE Name':'native','Actual Rows':1,'Actual Loops':32,Output:['native.payload']},{'Node Type':'Result','Subplan Name':'SubPlan 7','Actual Rows':0,'Actual Loops':0,Output:['native.payload']}]},'Execution Time':1.2});
+ const json=JSON.stringify(summary);assert.ok(!json.includes(secret)&&!json.includes('00000000-'));
+ assert.ok(summary.nodes.some(n=>n.role==='CTE native'&&n.actual_loops===32));
+ assert.ok(summary.nodes.some(n=>n.actual_loops===0));
+ assert.ok(summary.nodes.some(n=>n.native_payload_static_refs===1));
+ assert.ok(summary.nodes.every(n=>/^[0-9a-f]{64}$/.test(n.expression_sha256)));
+ assert.equal(sharedWirePlanSummaryV1({Plan:{'Node Type':'Result',Plans:Array.from({length:80},()=>({'Node Type':'CTE Scan','CTE Name':'native','Actual Rows':1,'Actual Loops':32,Output:['native.payload']}))}}).emitted_nodes,64);
+ const late=sharedWirePlanSummaryV1({Plan:{'Node Type':'Result',Plans:[...Array.from({length:80},()=>({'Node Type':'Result','Subplan Name':'SubPlan 1'})),{'Node Type':'Result','Subplan Name':'CTE native','Actual Rows':1,'Actual Loops':32,Output:['jsonb_build_object($1,$2)']}]}});
+ assert.equal(late.total_nodes,82);assert.equal(late.selection_count,64);assert.equal(late.omission_reason,'configured_focal_summary_limit64');assert.equal(late.native_focal_complete,true);
+ assert.ok(late.nodes.some(n=>n.role==='CTE native'));
+});
+test('optional function counters never enable tracking and refuse regressed deltas',async()=>{
+ const commands:string[]=[];
+ // Observe stats-reader requests only; no native function success is simulated.
+ const c={query:async(sql:string)=>{commands.push(sql);return{rows:[{tracking:'none'}]};}}as unknown as Parameters<typeof sharedWireFunctionStatsV1>[0];
+ const unavailable=await sharedWireFunctionStatsV1(c);assert.equal(unavailable.status,'unavailable_not_enabled');
+ assert.deepEqual(commands,["SELECT current_setting('track_functions') tracking"]);
+ assert.equal(sharedWireFunctionDeltaV1(unavailable,unavailable).status,'unavailable');
+ const observed={status:'observed' as const,tracking:'all',rows:[{name:'signal_labeling_json_v1',calls:3,total_ms:2,self_ms:1}]};
+ assert.equal(sharedWireFunctionDeltaV1(observed,{...observed,rows:[{...observed.rows[0]!,calls:2}]}).status,'unavailable_counter_regressed');
+});
 test('shared-wire transaction wrapper uses native READ COMMITTED DML and separate REPEATABLE READ read-only comparison',async()=>{
  const {withSharedWireTxV1}=await import('./signal-listening-statement-shared-wire.fixture');
  type Fixture=Parameters<typeof withSharedWireTxV1>[0];
