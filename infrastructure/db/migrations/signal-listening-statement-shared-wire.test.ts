@@ -1,6 +1,17 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import {sharedWireSourcesV1,sharedWireValidationV1,sharedWireCanonicalPartsV1,sharedWirePayloadBarrierSourceV1,restoreSharedWirePayloadSourceV1,sharedWireCanonicalProjectionV1,sharedWirePlanSummaryV1,sharedWireShaV1,sharedWireFunctionStatsV1,sharedWireFunctionDeltaV1,sharedWireDefaultContractV1,sharedWireDefaultContractFromSourcesV1,assertSharedWireDefaultRowV1} from './signal-listening-statement-shared-wire.oracle';
+import {sharedWireSourcesV1,sharedWireValidationV1,sharedWireCanonicalPartsV1,sharedWirePayloadBarrierSourceV1,restoreSharedWirePayloadSourceV1,sharedWireCanonicalProjectionV1,sharedWirePlanSummaryV1,sharedWireShaV1,sharedWireFunctionStatsV1,sharedWireFunctionDeltaV1,sharedWireDefaultContractV1,sharedWireDefaultContractFromSourcesV1,assertSharedWireDefaultRowV1,withSharedWireDefaultPostcheckV1} from './signal-listening-statement-shared-wire.oracle';
+test('DEFAULT postcheck preserves the primary body error and aggregates both failures without embedding source',async()=>{
+ const primary=new Error('private SQL body detail'),after=new Error('private postcheck SQL detail');let checked=0;
+ assert.equal(await withSharedWireDefaultPostcheckV1(async()=>7,async()=>{checked++;}),7);assert.equal(checked,1);
+ await assert.rejects(withSharedWireDefaultPostcheckV1(async()=>{throw primary;},async()=>{checked++;}),e=>e===primary);
+ await assert.rejects(withSharedWireDefaultPostcheckV1(async()=>7,async()=>{throw after;}),e=>e===after);
+ await assert.rejects(withSharedWireDefaultPostcheckV1(async()=>{throw primary;},async()=>{throw after;}),error=>{
+  assert.ok(error instanceof AggregateError);assert.deepEqual(error.errors,[primary,after]);assert.equal(error.cause,primary);
+  assert.ok(!error.message.includes(primary.message)&&!error.message.includes(after.message));return true;
+ });
+ assert.equal(checked,2);
+});
 test('0331 is the exact proved C source and reverses all bytes to frozen0330',async()=>{
  const {readFile}=await import('node:fs/promises');const [,next]=await sharedWireSourcesV1();assert.ok(next);
  const product=await readFile(new URL('./0331_signal_listening_statement_payload.sql',import.meta.url),'utf8');

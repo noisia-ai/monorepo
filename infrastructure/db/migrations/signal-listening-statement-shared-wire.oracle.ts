@@ -58,6 +58,16 @@ export async function assertSharedWireDefaultRuntimeV1(c:Pick<PoolClient,'query'
  assert.equal(rows.length,1);const checked=assertSharedWireDefaultRowV1(rows[0],expected);
  return{...checked,contract:'r16-statement-shared-wire-default-runtime-v1',target:'public.signal_listening_statement_money_v1()',runtime_kind:checked.default_arm,observed_via:'pg_proc',actual_prosrc_sha256:checked.prosrc_sha256,actual_pg_proc_checked:true};
 }
+export async function withSharedWireDefaultPostcheckV1<T>(body:()=>Promise<T>,postcheck:()=>Promise<void>):Promise<T>{
+ let bodyFailed=false,primary:unknown;
+ try{return await body();}catch(error){bodyFailed=true;primary=error;throw error;}
+ finally{
+  try{await postcheck();}catch(after){
+   if(bodyFailed)throw new AggregateError([primary,after],'shared_wire_default_body_and_postcheck_failed',{cause:primary});
+   throw after;
+  }
+ }
+}
 export function sharedWireCanonicalPartsV1(oldSource:string,newSource:string){
  const old=sharedWireValidationV1(oldSource),next=sharedWireValidationV1(newSource);
  const preimage=/signal_labeling_digest_v1\((jsonb_build_object\('request_version','listening-jev-v1',[\s\S]*?'request',expected_request\))\)/.exec(old)?.[1];assert.ok(preimage);

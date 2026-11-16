@@ -10,7 +10,7 @@ import {readSignalLabelingRunExposureV1} from '../signal-labeling-runs';
 import {r16ListeningWorkloadV2} from '../../../scripts/r16/listening-workload';
 import type {LabelingDatabaseV1} from '../signal-mention-facets';
 import {withSharedWireFixtureV1 as unverifiedSharedWireFixtureV1,withSharedWireTxV1,sharedWireProposalsV1,insertSharedWireCallsV1,prepareSharedWireRawV1,type SharedWireFixtureV1} from './signal-listening-statement-shared-wire.fixture';
-import {sharedWireSourcesV1,sharedWireValidationV1,compareSharedWireValidationV1,sharedWireRepresentationKernelV1,sharedWireShaV1,sharedWirePayloadBarrierSourceV1,sharedWireVariantsV1,sharedWirePlanSummaryV1,sharedWireFunctionStatsV1,sharedWireFunctionDeltaV1,assertSharedWireDefaultRuntimeV1} from './signal-listening-statement-shared-wire.oracle';
+import {sharedWireSourcesV1,sharedWireValidationV1,compareSharedWireValidationV1,sharedWireRepresentationKernelV1,sharedWireShaV1,sharedWirePayloadBarrierSourceV1,sharedWireVariantsV1,sharedWirePlanSummaryV1,sharedWireFunctionStatsV1,sharedWireFunctionDeltaV1,assertSharedWireDefaultRuntimeV1,withSharedWireDefaultPostcheckV1} from './signal-listening-statement-shared-wire.oracle';
 import {anchorListeningStatementOracleParametersV1} from './signal-listening-statement-validator.oracle';
 const enabled=process.env.NOISIA_R16_STATEMENT_SHARED_WIRE_PG==='true';
 let defaultFixtureSequence=0;
@@ -19,10 +19,10 @@ async function withSharedWireFixtureV1(...args:Parameters<typeof unverifiedShare
  await unverifiedSharedWireFixtureV1(async f=>{
   const before=await assertSharedWireDefaultRuntimeV1(f.database);
   console.log('# statement shared wire DEFAULT '+JSON.stringify({receipt_id:`shared-wire-default-${fixture_ordinal}-before`,fixture_ordinal,phase:'before',...before}));
-  try{await body(f);}finally{
+  await withSharedWireDefaultPostcheckV1(()=>body(f),async()=>{
    const after=await assertSharedWireDefaultRuntimeV1(f.database);assert.deepEqual(after,before,'all temporary oracle sources must roll back to the actual default');
    console.log('# statement shared wire DEFAULT '+JSON.stringify({receipt_id:`shared-wire-default-${fixture_ordinal}-after`,fixture_ordinal,phase:'after',...after}));
-  }
+  });
  },configuration,options);
 }
 const snapshot=async(c:PoolClient,f:SharedWireFixtureV1)=>(await c.query("SELECT jsonb_build_object('calls',(SELECT coalesce(jsonb_agg(to_jsonb(c) ORDER BY id),'[]') FROM signal_labeling_calls c WHERE run_id=$1),'links',(SELECT coalesce(jsonb_agg(to_jsonb(q) ORDER BY call_id,question_key),'[]') FROM signal_listening_call_questions q WHERE run_id=$1),'answers',(SELECT coalesce(jsonb_agg(to_jsonb(a) ORDER BY root_id,question_key),'[]') FROM signal_listening_answers a WHERE run_id=$1)) value",[f.run.id])).rows[0].value;
