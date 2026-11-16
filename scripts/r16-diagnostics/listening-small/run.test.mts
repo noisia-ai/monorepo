@@ -6,7 +6,8 @@ import {readFile} from 'node:fs/promises';
 import {join} from 'node:path';
 import {pathToFileURL} from 'node:url';
 import {assertCpuProfilerArgsV1,assertListeningSmallGuardV1,captureCalibrationObservationV1,classificationClockMetadataV1,
-  cpuProfileIdentityV1,cpuProfileMetadataV1,cpuProfileRangeV1,runListeningSmallDiagnosticV1} from './run.mjs';
+  cpuProfileIdentityV1,cpuProfileMetadataV1,cpuProfileRangeV1,createJevHttpTokenWitnessV1,
+  runListeningSmallDiagnosticV1,tokenCalibrationKindFromEnvV1} from './run.mjs';
 
 test('diagnostic CLI has no database side effect without explicit run flag',async()=>{
   assert.doesNotThrow(()=>assertListeningSmallGuardV1({},[]));
@@ -80,6 +81,54 @@ test('CPU profiles admit bounded worker threads only for the recorded PIDs and v
  assert.throws(()=>cpuProfileRangeV1({nodes:[],samples:[1],timeDeltas:[1000],startTime:5,endTime:5}),/time_range_invalid/u);
  assert.throws(()=>cpuProfileRangeV1({nodes:[],samples:[1,2],timeDeltas:[1000],startTime:1_000_000,endTime:1_002_000}),/delta_count_mismatch/u);
  assert.throws(()=>cpuProfileRangeV1({nodes:[],samples:[1,2],timeDeltas:[1_000_000,1_000_000],startTime:1_000_000,endTime:1_002_000}),/does_not_cover_samples/u);
+});
+
+test('synthetic HTTP witness correlates evaluate admission to fetches and keeps token evidence value-free',async()=>{
+ const configuredEnv={NOISIA_JEV_TOKEN_CALIBRATIONS_JSON:JSON.stringify({synthetic_digest:{kind:'measured',source:'private calibration source'}})};
+ assert.equal(tokenCalibrationKindFromEnvV1(configuredEnv),'measured');
+ assert.equal(tokenCalibrationKindFromEnvV1({NOISIA_JEV_TOKEN_CALIBRATIONS_JSON:'{}'}),null);
+ assert.equal(tokenCalibrationKindFromEnvV1({NOISIA_JEV_TOKEN_CALIBRATIONS_JSON:JSON.stringify({a:{kind:'measured'},b:{kind:'official_context_bound'}})}),null);
+ let fakeFetches=0;
+ const witness=createJevHttpTokenWitnessV1(()=>performance.now(),32);
+ const fakeFetch=witness.wrapFetch(async()=>{fakeFetches++;await new Promise(resolve=>setTimeout(resolve,8));
+  if(fakeFetches===3)throw Error('synthetic private error');return new Response('synthetic response');});
+ const raws=[
+  {body:'private body A',http_status:200,latency_ms:8,rate_reservation:{id:'private-reservation-a',estimated_input_tokens:302},rate_calibration:{labeler_digest:'private-digest-a',input_bytes:900,kind:'measured'}},
+  {body:'private body B',http_status:200,latency_ms:8,rate_reservation:{id:'private-reservation-b',estimated_input_tokens:250},rate_calibration:{labeler_digest:'private-digest-b',input_bytes:700,kind:'measured'}},
+ ];
+ const lifecycle:string[]=[];
+ const originalProvider={max_concurrency:64,max_response_bytes:16384,close:async()=>{lifecycle.push('close');},
+  observeUsage:async()=>{lifecycle.push('usage');},async evaluate(request:any){
+   if(request.fail){await fakeFetch('https://private.invalid',{body:'private fetch body'});throw Error('synthetic private error');}
+   await fakeFetch('https://private.invalid',{body:'private fetch body'});return raws[request.index];
+  }};
+ const measured=witness.wrapProvider(originalProvider,tokenCalibrationKindFromEnvV1(configuredEnv));
+ assert.equal(measured.max_concurrency,64);assert.equal(measured.max_response_bytes,16384);
+ const [resultA,resultB]=await Promise.all([measured.evaluate({index:0}),measured.evaluate({index:1})]);
+ assert.equal(resultA,raws[0]);assert.equal(resultB,raws[1]);
+ await measured.observeUsage?.(resultA as any,241);await measured.close?.();
+ const errorProvider=witness.wrapProvider({...originalProvider,async evaluate(){
+   await fakeFetch('https://private.invalid',{body:'private fetch body'});throw Error('synthetic private error');
+  }},null);
+ await assert.rejects(errorProvider.evaluate({fail:true}),/synthetic private error/u);
+ const snapshot=witness.snapshot(),serialized=JSON.stringify(snapshot);
+ assert.equal(fakeFetches,3);assert.equal(snapshot.evaluations_started,3);assert.equal(snapshot.evaluations_completed,2);
+ assert.equal(snapshot.evaluation_errors,1);assert.equal(snapshot.evaluations_without_fetch,0);
+ assert.equal(snapshot.fetches_started,3);assert.equal(snapshot.fetches_completed,2);
+ assert.equal(snapshot.fetch_errors,1);assert.equal(snapshot.active_fetches,0);assert.equal(snapshot.peak_active_fetches,2);
+ assert.equal(snapshot.max_fetch_starts_in_rolling_second,3);assert.equal(snapshot.pre_fetch_admission_ms.count,3);
+ assert.equal(snapshot.reservation_estimate.count,2);assert.equal(snapshot.reservation_estimate.missing,0);
+ assert.equal(snapshot.reservation_estimate.min,250);assert.equal(snapshot.reservation_estimate.max,302);assert.equal(snapshot.reservation_estimate.total,552);
+ assert.equal(snapshot.calibration_kind_counts.measured,2);assert.equal(snapshot.calibration_kind_missing,0);
+ assert.equal(snapshot.events.length,9);assert.equal(snapshot.events_dropped,0);assert.deepEqual(lifecycle,['usage','close']);
+ const evaluations=snapshot.events.filter(event=>event.event.startsWith('evaluate_')).sort((a,b)=>a.sequence-b.sequence);
+ assert.deepEqual(evaluations.map(event=>[event.sequence,event.event,event.estimated_input_tokens]),[
+  [1,'evaluate_complete',302],[2,'evaluate_complete',250],[3,'evaluate_error',null],
+ ]);
+ for(const secret of ['private.invalid','private fetch body','private body A','private-reservation-a','private-digest-a','private calibration source','synthetic private error'])
+  assert.ok(!serialized.includes(secret));
+ assert.ok(snapshot.events.every(event=>Object.keys(event).every(key=>['sequence','event','at_ms','active_fetches','pre_fetch_admission_ms','fetch_duration_ms',
+  'estimated_input_tokens','reservation_estimate_status','calibration_kind','calibration_kind_source'].includes(key))));
 });
 
 test('calibration observations preserve native phase shapes from the query-engine contract',async()=>{

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import {AsyncLocalStorage} from 'node:async_hooks';
 import {createHash} from 'node:crypto';
 import {execFileSync} from 'node:child_process';
 import {mkdir,open,readFile} from 'node:fs/promises';
@@ -18,6 +19,95 @@ const probeFiles=['.github/workflows/r16-listening-small-diagnostic.yml',
   'scripts/r16-diagnostics/listening-small/observer.mts'] as const;
 const sha=(value:string)=>`sha256:${createHash('sha256').update(value).digest('hex')}`;
 const percentile=(xs:number[],p:number)=>{if(!xs.length)return 0;const s=[...xs].sort((a,b)=>a-b);return s[Math.ceil(s.length*p)-1]!;};
+type CalibrationKindV1='measured'|'official_context_bound';
+type TokenWitnessContextV1={sequence:number;evaluate_start_ms:number;fetch_started:boolean};
+function emptyTimingSummaryV1(){return{count:0,min_ms:null as number|null,max_ms:null as number|null,total_ms:0};}
+function addTimingV1(summary:ReturnType<typeof emptyTimingSummaryV1>,value:number){
+  if(!Number.isFinite(value)||value<0)return;
+  summary.count++;summary.min_ms=summary.min_ms===null?value:Math.min(summary.min_ms,value);
+  summary.max_ms=summary.max_ms===null?value:Math.max(summary.max_ms,value);summary.total_ms+=value;
+}
+export function tokenCalibrationKindFromEnvV1(env:NodeJS.ProcessEnv):CalibrationKindV1|null{
+  try{
+    const parsed=JSON.parse(env.NOISIA_JEV_TOKEN_CALIBRATIONS_JSON??'null');
+    if(!parsed||typeof parsed!=='object'||Array.isArray(parsed))return null;
+    const values=Object.values(parsed);if(values.length!==1||!values[0]||typeof values[0]!=='object')return null;
+    const kind=(values[0] as {kind?:unknown}).kind??'measured';
+    return kind==='measured'||kind==='official_context_bound'?kind:null;
+  }catch{return null;}
+}
+type JevHttpWitnessEventV1={sequence:number;event:'fetch_start'|'fetch_end'|'evaluate_complete'|'evaluate_error';at_ms:number;active_fetches:number;
+  pre_fetch_admission_ms?:number;fetch_duration_ms?:number;estimated_input_tokens?:number|null;reservation_estimate_status?:'captured'|'missing'|'invalid'|'unavailable';
+  calibration_kind?:CalibrationKindV1|null;calibration_kind_source?:'response'|'config'|'missing'};
+export function createJevHttpTokenWitnessV1(clock=()=>performance.now(),eventLimit=30_000){
+  const context=new AsyncLocalStorage<TokenWitnessContextV1>(),events:JevHttpWitnessEventV1[]=[];
+  let sequence=0,active=0,peak=0,startsPerSecondPeak=0,eventsDropped=0,evaluationsCompleted=0,evaluationErrors=0,evaluationsWithoutFetch=0;
+  let fetchesStarted=0,fetchesCompleted=0,fetchErrors=0,fetchWithoutContext=0,reservationsMissing=0,calibrationKindsMissing=0,calibrationKindsMismatch=0;
+  const startTimes:number[]=[],preFetch=emptyTimingSummaryV1(),fetchTiming=emptyTimingSummaryV1();
+  let estimatedTokensCount=0,estimatedTokensMissing=0,estimatedTokensMin:number|null=null,estimatedTokensMax:number|null=null,estimatedTokensTotal=0;
+  const responseKinds:Record<CalibrationKindV1,number>={measured:0,official_context_bound:0};
+  const configuredKinds:Record<CalibrationKindV1,number>={measured:0,official_context_bound:0};
+  const push=(event:typeof events[number])=>{if(events.length<eventLimit)events.push(event);else eventsDropped++;};
+  const wrapFetch=(inner:typeof fetch):typeof fetch=>async(...args:any[])=>{
+    const invoke=inner as (...fetchArgs:any[])=>Promise<Response>;
+    const current=context.getStore();
+    if(!current){fetchWithoutContext++;return invoke(...args);}
+    const started=clock(),admissionMs=started-current.evaluate_start_ms;current.fetch_started=true;
+    fetchesStarted++;active++;peak=Math.max(peak,active);addTimingV1(preFetch,admissionMs);
+    startTimes.push(started);while(startTimes.length&&startTimes[0]!<started-1000)startTimes.shift();
+    if(startTimes.length>16_384)startTimes.splice(0,startTimes.length-16_384);
+    startsPerSecondPeak=Math.max(startsPerSecondPeak,startTimes.length);
+    push({sequence:current.sequence,event:'fetch_start',at_ms:started,active_fetches:active,pre_fetch_admission_ms:admissionMs});
+    try{const response=await invoke(...args);fetchesCompleted++;return response;}
+    catch(error){fetchErrors++;throw error;}
+    finally{const ended=clock(),duration=ended-started;active--;addTimingV1(fetchTiming,duration);
+      push({sequence:current.sequence,event:'fetch_end',at_ms:ended,active_fetches:active,fetch_duration_ms:duration});}
+  };
+  const wrapProvider=(provider:any,configuredKind:CalibrationKindV1|null)=>{
+    if(configuredKind)configuredKinds[configuredKind]++;
+    const wrapped={...provider,async evaluate(request:any,options:any){
+      const item:TokenWitnessContextV1={sequence:++sequence,evaluate_start_ms:clock(),fetch_started:false};
+      try{
+        const raw=await context.run(item,()=>provider.evaluate(request,options));evaluationsCompleted++;
+        if(!item.fetch_started)evaluationsWithoutFetch++;
+        const reservation=raw?.rate_reservation,estimate=reservation?.estimated_input_tokens;
+        let estimateStatus:JevHttpWitnessEventV1['reservation_estimate_status']='missing';
+        if(reservation&&typeof reservation==='object'){
+          if(Number.isSafeInteger(estimate)&&estimate>=0){estimatedTokensCount++;estimatedTokensTotal+=estimate;
+            estimatedTokensMin=estimatedTokensMin===null?estimate:Math.min(estimatedTokensMin,estimate);
+            estimatedTokensMax=estimatedTokensMax===null?estimate:Math.max(estimatedTokensMax,estimate);estimateStatus='captured';}
+          else{estimatedTokensMissing++;estimateStatus='invalid';}
+        }else reservationsMissing++;
+        const rawKind=(raw as any)?.rate_calibration?.kind;
+        const validRawKind:CalibrationKindV1|null=rawKind==='measured'||rawKind==='official_context_bound'?rawKind:null;
+        const kind:CalibrationKindV1|null=validRawKind??configuredKind;
+        if(kind!==null)responseKinds[kind]++;else calibrationKindsMissing++;
+        if(validRawKind!==null&&configuredKind!==null&&validRawKind!==configuredKind)calibrationKindsMismatch++;
+        push({sequence:item.sequence,event:'evaluate_complete',at_ms:clock(),active_fetches:active,
+          estimated_input_tokens:estimateStatus==='captured'?estimate:null,reservation_estimate_status:estimateStatus,
+          calibration_kind:kind,calibration_kind_source:validRawKind?'response':kind?'config':'missing'});
+        return raw;
+      }catch(error){evaluationErrors++;if(!item.fetch_started)evaluationsWithoutFetch++;
+        push({sequence:item.sequence,event:'evaluate_error',at_ms:clock(),active_fetches:active,
+          estimated_input_tokens:null,reservation_estimate_status:'unavailable',calibration_kind:configuredKind,
+          calibration_kind_source:configuredKind?'config':'missing'});throw error;}
+    }};
+    if(typeof provider.close==='function')wrapped.close=provider.close.bind(provider);
+    if(typeof provider.observeUsage==='function')wrapped.observeUsage=provider.observeUsage.bind(provider);
+    return wrapped;
+  };
+  return{wrapFetch,wrapProvider,snapshot(){return{contract_version:'r16-jev-http-token-witness-v1',diagnostic_only:true,h1_accepted:false,
+    status:sequence===0?'not_observed':evaluationErrors?'captured_with_errors':'captured',
+    configured_calibration_kind_counts:configuredKinds,evaluations_started:sequence,evaluations_completed:evaluationsCompleted,evaluation_errors:evaluationErrors,
+    evaluations_without_fetch:evaluationsWithoutFetch,
+    fetches_started:fetchesStarted,fetches_completed:fetchesCompleted,fetch_errors:fetchErrors,fetch_without_evaluate_context:fetchWithoutContext,
+    active_fetches:active,peak_active_fetches:peak,max_fetch_starts_in_rolling_second:startsPerSecondPeak,
+    pre_fetch_admission_ms:preFetch,fetch_duration_ms:fetchTiming,
+    reservation_estimate:{count:estimatedTokensCount,missing:estimatedTokensMissing,min:estimatedTokensMin,max:estimatedTokensMax,total:estimatedTokensTotal},
+    reservation_missing:reservationsMissing,calibration_kind_counts:responseKinds,calibration_kind_missing:calibrationKindsMissing,
+    calibration_kind_mismatch:calibrationKindsMismatch,events:[...events],events_dropped:eventsDropped,event_limit:eventLimit,
+    event_timing_overhead_measured:false,capacity_claim:false};}};
+}
 
 export function assertListeningSmallGuardV1(env:NodeJS.ProcessEnv,args:string[]){
   if(!args.includes('--run'))return;
@@ -127,6 +217,7 @@ export async function runListeningSmallDiagnosticV1(){
   const monotonicOrigin=process.hrtime.bigint();
   let stage='imports';
   let storageServer:any;
+  let httpTokenWitness:ReturnType<typeof createJevHttpTokenWitnessV1>|undefined;
   const observer=createListeningObserver();
   observer.setInnerPlanRootCount(ROOT_COUNT);
   try{
@@ -193,10 +284,14 @@ export async function runListeningSmallDiagnosticV1(){
         const latencies:number[]=[],calibrations:any[]=[],commits:number[]=[];
         const synthetic=syntheticModule.createSyntheticJevFetchV1({latencyForRequest:(i:number)=>125+((i*137+47)%351)});
         let requests=0;const countedFetch:typeof fetch=async(...args:any[])=>{requests++;const t=performance.now();try{return await synthetic(...args);}finally{latencies.push(performance.now()-t);}};
-        const providerFactory=(opts:any)=>providerModule.createCalibratedJevRuntimeProviderV2({...opts,
-          env:{...opts.env,TYPESAFE_API_KEY:'synthetic-local-only',NOISIA_TYPESAFE_ACCOUNT_ID:`r16-listening-small:${census.organization_id}`,
+        const tokenWitness=createJevHttpTokenWitnessV1();httpTokenWitness=tokenWitness;
+        const providerFactory=(opts:any)=>{
+          const env={...opts.env,TYPESAFE_API_KEY:'synthetic-local-only',NOISIA_TYPESAFE_ACCOUNT_ID:`r16-listening-small:${census.organization_id}`,
             NOISIA_TYPESAFE_ACCOUNT_REDIS_URL:process.env.R16BENCH_REDIS_URL!,NOISIA_TYPESAFE_ACCOUNT_RPS:'10000',
-            NOISIA_TYPESAFE_ACCOUNT_INPUT_TPS:'10000000'},fetch:countedFetch});
+            NOISIA_TYPESAFE_ACCOUNT_INPUT_TPS:'10000000'};
+          const runtime=providerModule.createCalibratedJevRuntimeProviderV2({...opts,env,fetch:tokenWitness.wrapFetch(countedFetch)});
+          return tokenWitness.wrapProvider(runtime,tokenCalibrationKindFromEnvV1(env));
+        };
         const unprofiled=jobModule.createSignalListeningRuntimeStoreV1(db,{execution,storage});
         const profiled=observer.wrapStore(profile.wrapStore(unprofiled));
         const store={...profiled,async apply(...args:any[]){await profiled.apply(...args);const roots=[...new Set(args[1].flatMap((row:any)=>row.results.map((x:any)=>x.root_id)))];
@@ -278,6 +373,7 @@ export async function runListeningSmallDiagnosticV1(){
             clock:classificationClock,exec_args:process.execArgv,
             profile_dir:resolve(process.env.R16_DIAGNOSTIC_CPU_PROFILE_DIR!)}),
           observed_http_latency:latencySummary,storage:storageServer.metrics(),sql_profile:profile.snapshot(),
+          token_budget_http_witness:httpTokenWitness.snapshot(),
           inner_plan_capture:{diagnostic_only:true,threshold_roots:1024,max_captures_per_query_hash:INNER_PLAN_CAPTURE_ORDINALS.length,capture_ordinals:INNER_PLAN_CAPTURE_ORDINALS,min_duration_ms:INNER_PLAN_MIN_DURATION_MS,
             plans_below_min_duration_captured:false,observations:observerSnapshot.inner_plan_observations},
           dml_plan_capture:{diagnostic_only:true,opt_in_required:true,min_batch_size:DML_PLAN_MIN_BATCH,max_captures_per_query_hash:1,min_duration_ms:DML_PLAN_MIN_DURATION_MS,
@@ -300,6 +396,8 @@ export async function runListeningSmallDiagnosticV1(){
       cpu_profile:{enabled:true,profiler:'node_cpu_prof',interval_us:1000,main_process_pid:process.pid,
         sampler_process_pid:observerSnapshot.sampler_process_pid??null,output:'pid_scoped_cpu_profiles_only',heap_profile:false,
         source_text_embedded:false,overhead_measured:false,capacity_claim:false},observer:observerSnapshot,
+      token_budget_http_witness:httpTokenWitness?.snapshot()??{contract_version:'r16-jev-http-token-witness-v1',diagnostic_only:true,
+        h1_accepted:false,status:'not_started',capacity_claim:false,event_timing_overhead_measured:false},
       inner_plan_capture:{diagnostic_only:true,threshold_roots:1024,max_captures_per_query_hash:INNER_PLAN_CAPTURE_ORDINALS.length,capture_ordinals:INNER_PLAN_CAPTURE_ORDINALS,min_duration_ms:INNER_PLAN_MIN_DURATION_MS,
         plans_below_min_duration_captured:false,observations:observerSnapshot.inner_plan_observations},
       dml_plan_capture:{diagnostic_only:true,opt_in_required:true,min_batch_size:DML_PLAN_MIN_BATCH,max_captures_per_query_hash:1,min_duration_ms:DML_PLAN_MIN_DURATION_MS,
