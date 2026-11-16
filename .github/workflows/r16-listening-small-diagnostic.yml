@@ -86,7 +86,7 @@ jobs:
           fi
           scripts/r16/lab-up.sh
 
-      - name: Apply target public migrations and run native diagnostic
+      - name: Apply migrations, focused oracle, and native diagnostic
         working-directory: target
         env:
           R16BENCH_RUN_ID: benchmark-pg17
@@ -105,6 +105,7 @@ jobs:
           R16_DIAGNOSTIC_TARGET_ROOT: ${{ github.workspace }}/target
           R16_DIAGNOSTIC_PROBE_ROOT: ${{ github.workspace }}/probe
           R16_DIAGNOSTIC_ARTIFACT: ${{ github.workspace }}/artifacts/r16-listening-small/result.json
+          R16_MONEY_ORACLE_TAP: ${{ github.workspace }}/artifacts/r16-listening-small/money-validator-oracle.tap
           R16_DIAGNOSTIC_TARGET_LABEL: ${{ matrix.label }}
           R16_DIAGNOSTIC_TARGET_REF_REQUESTED: ${{ matrix.target_ref }}
           R16_DIAGNOSTIC_PROBE_REF_REQUESTED: ${{ github.event.pull_request.head.sha || github.sha }}
@@ -126,6 +127,33 @@ jobs:
           set +a
           export DATABASE_SSL=false
           corepack pnpm --filter @noisia/db db:smoke:migrations
+          if [ "$R16_DIAGNOSTIC_TARGET_LABEL" = candidate ]; then
+            mkdir -p "$(dirname "$R16_MONEY_ORACLE_TAP")"
+            set +e
+            timeout 4m env NOISIA_R16_LISTENING_MONEY_BATCHES_PG=true corepack pnpm exec tsx --test \
+              --test-name-pattern='^materialized selected matches the old native validator and atomically rejects forged siblings$' \
+              --test-concurrency=1 infrastructure/db/migrations/signal-listening-money-batches.postgres.test.ts \
+              > "$R16_MONEY_ORACLE_TAP" 2>&1
+            oracle_status=$?
+            set -e
+            if [ "$oracle_status" -ne 0 ]; then
+              cat "$R16_MONEY_ORACLE_TAP"
+              exit "$oracle_status"
+            fi
+            node - "$R16_MONEY_ORACLE_TAP" <<'NODE'
+          const fs = require('node:fs');
+          const tap = fs.readFileSync(process.argv[2], 'utf8');
+          const title = 'materialized selected matches the old native validator and atomically rejects forged siblings';
+          const selected = tap.split(/\r?\n/u).filter((line) => /^ok \d+ - /.test(line) && line.endsWith(title));
+          if (selected.length !== 1 || /^ok \d+ - .*# SKIP/u.test(selected[0])) {
+            throw new Error('focused native oracle did not report exactly one executed passing test');
+          }
+          if (!/^# pass 1$/mu.test(tap) || !/^# fail 0$/mu.test(tap)) {
+            throw new Error('focused native oracle TAP must report pass 1 and fail 0');
+          }
+          process.stdout.write('focused native oracle: pass=1 fail=0 (other tests intentionally unselected)\n');
+          NODE
+          fi
           timeout 10m corepack pnpm exec tsx ../probe/scripts/r16-diagnostics/listening-small/run.mts --run
 
       - name: Ensure sanitized artifact exists
@@ -144,5 +172,24 @@ jobs:
         with:
           name: r16-listening-small-${{ matrix.label }}-${{ github.run_id }}
           path: artifacts/r16-listening-small/result.json
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Ensure focused validator TAP artifact exists
+        if: always() && matrix.label == 'candidate'
+        env:
+          R16_MONEY_ORACLE_TAP: ${{ github.workspace }}/artifacts/r16-listening-small/money-validator-oracle.tap
+        run: |
+          if [ ! -f "$R16_MONEY_ORACLE_TAP" ]; then
+            mkdir -p "$(dirname "$R16_MONEY_ORACLE_TAP")"
+            printf '%s\n' 'focused native oracle was not reached' > "$R16_MONEY_ORACLE_TAP"
+          fi
+
+      - name: Upload focused validator TAP
+        if: always() && matrix.label == 'candidate'
+        uses: actions/upload-artifact@v4
+        with:
+          name: r16-listening-small-money-validator-${{ github.run_id }}
+          path: artifacts/r16-listening-small/money-validator-oracle.tap
           if-no-files-found: error
           retention-days: 14
