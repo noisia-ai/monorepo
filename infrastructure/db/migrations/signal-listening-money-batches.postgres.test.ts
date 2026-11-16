@@ -23,6 +23,7 @@ import {activateSignalListeningServingSnapshotV1,lockSignalListeningDiscoveryPol
 
 import {anchorListeningStatementOracleParametersV1} from './signal-listening-statement-validator.oracle';
 import {listeningTransitionSetReferencesV1,assertListeningTransitionSetOracleV1} from './signal-listening-transition-set.oracle';
+import {ownerTargetSetReferencesV1,assertOwnerTargetSetOracleV1} from './signal-listening-owner-target-sets.oracle';
 
 const enabled=process.env.NOISIA_R16_LISTENING_MONEY_BATCHES_PG==='true';
 type NativeFixture={database:Parameters<typeof createSignalListeningStoreV1>[0]['database'];
@@ -218,7 +219,7 @@ test('selected materialization and full join match old validators and atomically
   assert.equal((await f.database.query('SELECT count(*)::int n FROM signal_labeling_calls WHERE run_id=$1',[f.run.id])).rows[0].n,0,'valid siblings roll back with '+defect);
   assert.equal((await f.database.query('SELECT count(*)::int n FROM signal_listening_call_questions WHERE run_id=$1',[f.run.id])).rows[0].n,0,'no question links survive '+defect);
  }
- const selectors=await listeningTransitionSetReferencesV1();let nativeIds:string[]=[];
+ const selectors=await listeningTransitionSetReferencesV1(),targetSelectors=await ownerTargetSetReferencesV1();let nativeIds:string[]=[];
  await transaction(f,async c=>{
   const calls=(await insert(c,f,1000)).rows;assert.equal(calls.length,3);nativeIds=calls.map(row=>row.id);
   const persisted=(await c.query('SELECT to_jsonb(call) value FROM signal_labeling_calls call WHERE run_id=$1 ORDER BY id',[f.run.id])).rows.map(r=>r.value as Record<string,unknown>);
@@ -228,17 +229,26 @@ test('selected materialization and full join match old validators and atomically
   const next=old.map(row=>({...row,status:'submitting'}));
   const valid=await assertListeningTransitionSetOracleV1(c,selectors,f.run.id,next,old);
   assert.equal(valid.length,3);assert.ok(valid.every(row=>String(row.created_at).includes('.123456')));
+  assert.deepEqual(await assertOwnerTargetSetOracleV1(c,targetSelectors.listening,next,old),[{array_agg:[f.run.id]}]);
+  assert.deepEqual(await assertOwnerTargetSetOracleV1(c,targetSelectors.scoped,next,old),[],'native Listening admission is not a historical scoped admission');
   const oldFirst=old[0]!,nextFirst=next[0]!;
   const variants:Array<[unknown[],unknown[]]>=[
    [[],[]],[next,[]],[[],old],
    [[{...nextFirst,id:randomUUID()},...next.slice(1)],old],
    [[{...nextFirst,run_id:randomUUID()},...next.slice(1)],old],
+   [[{...nextFirst,workspace_id:randomUUID()},...next.slice(1)],old],
+   [next.map(row=>({...row,workspace_id:randomUUID()})),old],
+   [next.map(row=>({...row,run_id:randomUUID()})),old],
    [[{...nextFirst,id:null},...next.slice(1)],[{...oldFirst,id:null},...old.slice(1)]],
    [[...next,nextFirst],[...old,oldFirst]],
    [next.map(row=>({...row,status:'settled'})),old],
    [next,old.map(row=>({...row,status:'submitted'}))],
   ];
-  for(const [n,o]of variants)await assertListeningTransitionSetOracleV1(c,selectors,f.run.id,n,o);
+  for(const [n,o]of variants){
+   await assertListeningTransitionSetOracleV1(c,selectors,f.run.id,n,o);
+   await assertOwnerTargetSetOracleV1(c,targetSelectors.listening,n,o);await assertOwnerTargetSetOracleV1(c,targetSelectors.scoped,n,o);
+  }
+  assert.deepEqual(await assertOwnerTargetSetOracleV1(c,targetSelectors.listening,[],old),[{array_agg:null}],'an empty target aggregate stays NULL, not an empty array');
  });
  const snapshot=async()=>({calls:(await f.database.query('SELECT to_jsonb(call) value FROM signal_labeling_calls call WHERE run_id=$1 ORDER BY id',[f.run.id])).rows,
   links:(await f.database.query('SELECT to_jsonb(link) value FROM signal_listening_call_questions link WHERE run_id=$1 ORDER BY call_id,question_key',[f.run.id])).rows});

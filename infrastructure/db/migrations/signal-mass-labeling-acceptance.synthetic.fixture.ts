@@ -687,6 +687,14 @@ export async function runMassLabelingAcceptanceFixtureV1(authorization:MassLabel
       await denied("UPDATE signal_labeling_calls SET status='submitting' WHERE id=$1",[calls[0]!.id],/extension_invalid/);
       await query("ROLLBACK TO SAVEPOINT revoked_before_send");await query("RELEASE SAVEPOINT revoked_before_send");
     }
+    if(authorization==="scoped"){
+      const {ownerTargetSetReferencesV1,assertOwnerTargetSetOracleV1}=await import('./signal-listening-owner-target-sets.oracle');
+      const references=await ownerTargetSetReferencesV1();
+      const old=(await query('SELECT to_jsonb(call) value FROM signal_labeling_calls call WHERE run_id=$1 ORDER BY id',[run.id])).rows.map(row=>row.value);
+      const next=old.map(row=>({...row,status:'submitting'}));
+      assert.deepEqual(await assertOwnerTargetSetOracleV1(scoped,references.scoped,next,old),[{run_id:run.id}],
+        'a genuine scoped admission exercises the old and new scoped target queries before the native mark');
+    }
     await store.markSubmitting(run, calls);
     if(authorization==="rotation")await assertLabelingRawPagesV1({database:database as Pool,query,run,calls});
     if(scopedMode){
