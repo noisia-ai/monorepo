@@ -1,6 +1,20 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {sharedWireSourcesV1,sharedWireValidationV1,sharedWireCanonicalPartsV1} from './signal-listening-statement-shared-wire.oracle';
+test('shared-wire transaction wrapper uses native READ COMMITTED DML and separate REPEATABLE READ read-only comparison',async()=>{
+ const {withSharedWireTxV1}=await import('./signal-listening-statement-shared-wire.fixture');
+ type Fixture=Parameters<typeof withSharedWireTxV1>[0];
+ // Observe wrapper commands only. This stub does not simulate PostgreSQL,
+ // admission/constraint success, a snapshot, or native oracle acceptance.
+ for(const readOnly of [false,true])for(const fail of [false,true]){
+  const steps:string[]=[],failure=new Error('synthetic body failure');
+  const fixture={database:{connect:async()=>({query:async(sql:string)=>{steps.push(sql);},release:()=>{steps.push('release');}})}} as unknown as Fixture;
+  const body=async()=>{steps.push('body');if(fail)throw failure;};
+  const result=readOnly?withSharedWireTxV1(fixture,body,true):withSharedWireTxV1(fixture,body);
+  if(fail)await assert.rejects(result,e=>e===failure);else await result;
+  assert.deepEqual(steps,[readOnly?'BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY':'BEGIN ISOLATION LEVEL READ COMMITTED READ WRITE','body','ROLLBACK','release']);
+ }
+});
 test('0330 changes only statement-local canonical wire bytes; complete0329 authority and both INSERT/Mark checks stay literal',async()=>{
  const [old,next]=await sharedWireSourcesV1();assert.ok(old&&next);const p=sharedWireCanonicalPartsV1(old,next);
  let body=next.slice(next.indexOf('CREATE OR REPLACE FUNCTION'));

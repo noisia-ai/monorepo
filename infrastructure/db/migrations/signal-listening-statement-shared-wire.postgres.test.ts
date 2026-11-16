@@ -65,7 +65,7 @@ test('0330 native reserve Mark bad-mixed rollback and deferred pre-owner forged 
 test('0330 native real prior unknown is true and target ownership never becomes a cached authority',{skip:!enabled,timeout:600000},async()=>withSharedWireFixtureV1(async f=>{
  const [old,next]=await sharedWireSourcesV1();assert.ok(old&&next);const calls=await f.store.reserve(f.run,sharedWireProposalsV1(f));await f.store.markSubmitting(f.run,calls);await f.store.markFailed(f.run,calls,true);
  await withSharedWireTxV1(f,async c=>{const rows=sharedWireProposalsV1(f),values=await params(c,f,rows,randomUUID());const result=await compareSharedWireValidationV1(c,old,next,values);assert.equal(result.flags.invalid_prior,true,'genuine native unknown transport from OTHERrun is not0');},true);
- await assert.rejects(requestSignalListeningV1({database:f.database,workspace_id:f.run.workspace_id,actor_user_id:f.run.actor_user_id,configuration_id:f.configuration_id,map_id:f.map_id,idempotency_key:randomUUID(),cap_micro_usd:1000000,provider_available:true}),/prior_outcome_unresolved|run_busy|already_running/);
+ await assert.rejects(requestSignalListeningV1({database:f.database,workspace_id:f.run.workspace_id,actor_user_id:f.run.actor_user_id,configuration_id:f.configuration_id,map_id:f.map_id,idempotency_key:randomUUID(),cap_micro_usd:1000000,provider_available:true}),/prior_outcome_unresolved|run_busy|already_running|labeling_already_active/);
 }));
 
 test('0330 preserves answer BEFORE attempts including conflict-suppressed bad tuples and native source bytes',{skip:!enabled,timeout:600000},async()=>withSharedWireFixtureV1(async f=>{
@@ -89,8 +89,9 @@ test('0330 native DML ABBA keeps full guards and fresh transactions and rejects 
  // first, then measure1000 consumer calls with actual nonempty scope_basis.
  await withSharedWireFixtureV1(async fixture=>{
   assert.equal(fixture.inputs.length,1002);const f={...fixture,inputs:fixture.inputs.slice(0,1000)},fixed=sharedWireProposalsV1(f,500);
-  const observations:Array<{arm:string;wall_ms:number;result_sha256:string;result_count:number}>=[];let baseline:string|undefined;
+  const observations:Array<{arm:string;wall_ms:number;result_sha256:string;result_count:number;transaction_isolation:string;transaction_read_only:boolean}>=[];let baseline:string|undefined;
   await withSharedWireTxV1(f,async c=>{
+   assert.deepEqual((await c.query("SELECT current_setting('transaction_isolation') isolation,current_setting('transaction_read_only') read_only")).rows[0],{isolation:'repeatable read',read_only:'on'});
    assert.equal(await readSignalLabelingRunExposureV1(c,f.run.id),'6012','1002 native base calls settled6 each; no reservation is hidden');
    const caps=(await c.query(`SELECT r.cap_micro_usd::text run_cap,a.execution_cap_micro_usd::text admission_cap,pa.max_execution_micro_usd::text action_cap
     FROM signal_labeling_runs r JOIN signal_processing_admissions a ON a.id=r.processing_admission_id
@@ -99,17 +100,21 @@ test('0330 native DML ABBA keeps full guards and fresh transactions and rejects 
    const result=await compareSharedWireValidationV1(c,old,next,await params(c,f,fixed));assert.deepEqual(result.flags,{invalid_questions:false,invalid_request:false,invalid_prior:false});
    assert.equal(result.canonical.length,1000);assert.ok(f.inputs.every(i=>Object.keys(i.scope_basis).length===2));
   },true);
+  // Fresh RC/RW transactions are required by native capacity admissions; the
+  // equal restored prestate is compared per arm, not claimed as one RR snapshot.
   for(const [arm,source]of [['before',old],['after',next],['after',next],['before',old]] as const){await withSharedWireTxV1(f,async c=>{
+   const transaction=(await c.query("SELECT current_setting('transaction_isolation') isolation,current_setting('transaction_read_only') read_only")).rows[0];
+   assert.deepEqual(transaction,{isolation:'read committed',read_only:'off'});
    const before=JSON.stringify(await snapshot(c,f));baseline??=before;assert.equal(before,baseline);await c.query(source);
    const started=process.hrtime.bigint();const inserted=await insertSharedWireCallsV1(c,f,fixed);assert.equal(inserted.rows.length,1000);
    await c.query("UPDATE signal_labeling_calls SET status='submitting' WHERE id=ANY($1::uuid[])",[fixed.map(r=>r.id)]);
    await c.query('SET CONSTRAINTS ALL IMMEDIATE');const wall_ms=Number(process.hrtime.bigint()-started)/1e6;
    const result=(await c.query('SELECT id,status,request_digest,reserved_micro_usd::text FROM signal_labeling_calls WHERE id=ANY($1::uuid[]) ORDER BY id',[fixed.map(row=>row.id)])).rows;
    assert.equal(result.length,1000);assert.ok(result.every(row=>row.status==='submitting'));assert.equal(await readSignalLabelingRunExposureV1(c,f.run.id),'506012');
-   observations.push({arm,wall_ms,result_count:result.length,result_sha256:sharedWireShaV1(JSON.stringify(result))});
+   observations.push({arm,wall_ms,result_count:result.length,result_sha256:sharedWireShaV1(JSON.stringify(result)),transaction_isolation:transaction.isolation,transaction_read_only:transaction.read_only==='on'});
   });}
   assert.equal(new Set(observations.map(o=>o.result_sha256)).size,1);
-  console.log('# statement shared wire native DML '+JSON.stringify({contract:'r16-statement-shared-wire-dml-pair-v2',population:1002,calls_per_arm:1000,reservation_per_call_micro_usd:500,existing_base_micro_usd:'6012',scope:'genuine consumer2 with native nonempty scope_basis',baseline_sha256:sharedWireShaV1(baseline!),arms:observations,committed:false,guard_checks:'native constraints forced immediate before rollback; not deferredCOMMIT timing',fresh_transactions:true,cpu_claim:false,h1_claim:false,gain_claim:false}));
+  console.log('# statement shared wire native DML '+JSON.stringify({contract:'r16-statement-shared-wire-dml-pair-v3',population:1002,calls_per_arm:1000,reservation_per_call_micro_usd:500,existing_base_micro_usd:'6012',scope:'genuine consumer2 with native nonempty scope_basis',baseline_sha256:sharedWireShaV1(baseline!),arms:observations,committed:false,guard_checks:'native constraints forced immediate before rollback; not deferredCOMMIT timing',fresh_transactions:true,dml_same_snapshot:false,select_comparison:{transaction_isolation:'repeatable read',transaction_read_only:true,same_snapshot:true},cpu_claim:false,h1_claim:false,gain_claim:false}));
  },r16ListeningWorkloadV2('defined_consumer_second_pass').configuration,{mode:'scaled_recovery',consumer_category:true});
  // Separate small3-root fixture: never allow the large SQL to consume the
  // lease before reaching the deliberately delayed native COMMIT.
