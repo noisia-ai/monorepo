@@ -936,6 +936,9 @@ jobs:
     outputs:
       selected_pass: ${{ steps.oracle.outputs.selected_pass || steps.noop.outputs.selected_pass || '0' }}
       source_sha: ${{ steps.seal.outputs.source_sha || '' }}
+      source_kind: ${{ steps.seal.outputs.source_kind || 'none' }}
+      default_runtime_kind: ${{ steps.oracle.outputs.default_runtime_kind || '' }}
+      default_receipt_count: ${{ steps.oracle.outputs.default_receipt_count || '0' }}
     env:
       R16BENCH_RUN_ID: benchmark-pg17
       R16BENCH_SERVICES: postgres,redis
@@ -962,7 +965,7 @@ jobs:
           done
           printf 'R16_STATEMENT_SHARED_WIRE_SOURCE_SHA=%s\n' "$source_sha" >> "$GITHUB_ENV"
           printf 'source_sha=%s\n' "$source_sha" >> "$GITHUB_OUTPUT"
-          shared_wire_files=(
+          shared_wire_base_files=(
             infrastructure/db/migrations/0330_signal_listening_statement_shared_wire.sql
             infrastructure/db/migrations/signal-listening-statement-shared-wire.oracle.ts
             infrastructure/db/migrations/signal-listening-statement-shared-wire.fixture.ts
@@ -970,17 +973,25 @@ jobs:
             infrastructure/db/migrations/signal-listening-statement-shared-wire.test.ts
           )
           shared_wire_present=0
-          for source_file in "${shared_wire_files[@]}"; do
+          for source_file in "${shared_wire_base_files[@]}"; do
             if [ -f "$source_file" ]; then
               shared_wire_present=$((shared_wire_present + 1))
             fi
           done
-          if [ "$shared_wire_present" -eq 0 ]; then
+          payload_migration=infrastructure/db/migrations/0331_signal_listening_statement_payload.sql
+          payload_present=false
+          if [ -f "$payload_migration" ]; then payload_present=true; fi
+          if [ "$shared_wire_present" -eq 0 ] && [ "$payload_present" = false ]; then
             printf 'source_present=false\n' >> "$GITHUB_OUTPUT"
-          elif [ "$shared_wire_present" -eq "${#shared_wire_files[@]}" ]; then
+            printf 'source_kind=none\n' >> "$GITHUB_OUTPUT"
+          elif [ "$shared_wire_present" -eq "${#shared_wire_base_files[@]}" ] && [ "$payload_present" = false ]; then
             printf 'source_present=true\n' >> "$GITHUB_OUTPUT"
+            printf 'source_kind=legacy-five\n' >> "$GITHUB_OUTPUT"
+          elif [ "$shared_wire_present" -eq "${#shared_wire_base_files[@]}" ] && [ "$payload_present" = true ]; then
+            printf 'source_present=true\n' >> "$GITHUB_OUTPUT"
+            printf 'source_kind=six\n' >> "$GITHUB_OUTPUT"
           else
-            echo '::error::statement shared-wire source files are incomplete; refusing a green no-op'
+            echo '::error::statement shared-wire base files and optional 0331 migration must be a complete five-file legacy set or all six current blobs'
             exit 1
           fi
       - uses: pnpm/action-setup@v4
@@ -1045,6 +1056,7 @@ jobs:
           NOISIA_JEV_PROVIDER_ENABLED: 'true'
           NOISIA_JEV_STREAMING_V2_ENABLED: 'true'
           R16_STATEMENT_SHARED_WIRE_TAP: ${{ runner.temp }}/r16-statement-shared-wire.tap
+          R16_STATEMENT_SHARED_WIRE_SOURCE_KIND: ${{ steps.seal.outputs.source_kind || 'none' }}
         run: |
           set -euo pipefail
           : > "$R16_STATEMENT_SHARED_WIRE_TAP"
@@ -1081,6 +1093,9 @@ jobs:
           }
           process.stdout.write('statement shared-wire oracle: 5 exact selected cases passed\n');
           NODE
+          if [ "$R16_STATEMENT_SHARED_WIRE_SOURCE_KIND" = six ]; then
+            node scripts/r16-diagnostics/listening-small/statement-default-contract.mjs verify-tap "$R16_STATEMENT_SHARED_WIRE_TAP" C
+          fi
           printf 'selected_pass=5\n' >> "$GITHUB_OUTPUT"
       - name: Ensure statement shared-wire TAP receipt exists
         if: always()
@@ -1097,7 +1112,7 @@ jobs:
           R16_STATEMENT_SHARED_WIRE_TAP: ${{ runner.temp }}/r16-statement-shared-wire.tap
         run: |
           printf 'selected_pass=0\n' >> "$GITHUB_OUTPUT"
-          printf '%s\n' '0330 statement shared-wire source is absent; no native cases selected' > "$R16_STATEMENT_SHARED_WIRE_TAP"
+          printf '%s\n' 'statement shared-wire source set is absent; no native cases selected' > "$R16_STATEMENT_SHARED_WIRE_TAP"
       - name: Verify statement shared-wire source remained unchanged
         if: always()
         run: |
