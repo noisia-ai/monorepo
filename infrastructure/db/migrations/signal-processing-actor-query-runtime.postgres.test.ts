@@ -10,8 +10,10 @@ const enabled=process.env.NOISIA_R16_ACTOR_QUERY_RUNTIME_PG==='true';
 let admin:Pool|undefined,isolated:Awaited<ReturnType<typeof createMassLabelingConcurrencyDatabaseV1>>|undefined;
 before(async()=>{
  if(!enabled)return;
- const {openDatabase}=await import(new URL('../../../scripts/dev-corpus/guard.mjs',import.meta.url).href);
- const parent:Pool=await openDatabase();admin=parent;isolated=await createMassLabelingConcurrencyDatabaseV1(parent);
+ const parent:Pool=process.env.NOISIA_R16_LOCAL_PG_LAB
+  ?await(await import('./signal-r16-local-pg.fixture')).openR16CiPostgresV1()
+  :await(await import(new URL('../../../scripts/dev-corpus/guard.mjs',import.meta.url).href)).openDatabase();
+ admin=parent;isolated=await createMassLabelingConcurrencyDatabaseV1(parent);
 },{timeout:180000});
 after(async()=>{try{await isolated?.cleanup();}finally{await admin?.end();}},{timeout:30000});
 type ActorFixture=Awaited<ReturnType<typeof createProcessingPolicyIdentitiesV1>>&{pool:Pool;raw:PoolClient};
