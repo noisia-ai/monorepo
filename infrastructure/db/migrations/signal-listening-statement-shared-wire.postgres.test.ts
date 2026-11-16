@@ -1,0 +1,112 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import {randomUUID,createHash} from 'node:crypto';
+import type {PoolClient} from 'pg';
+import {signalListeningBaseTemplateV1,buildSignalListeningJevRequestV1,signalListeningRequestDigestV1} from '@noisia/query-engine';
+import {requestSignalListeningV1,createSignalListeningStoreV1} from '../signal-listening-runs';
+import {saveSignalListeningConfigurationV1} from '../signal-listening-configuration';
+import type {LabelingRunV1} from '../signal-labeling-runs';
+import type {LabelingDatabaseV1} from '../signal-mention-facets';
+import {withSharedWireFixtureV1,withSharedWireTxV1,sharedWireProposalsV1,insertSharedWireCallsV1,prepareSharedWireRawV1,type SharedWireFixtureV1} from './signal-listening-statement-shared-wire.fixture';
+import {sharedWireSourcesV1,sharedWireValidationV1,compareSharedWireValidationV1,sharedWireRepresentationKernelV1,sharedWireShaV1} from './signal-listening-statement-shared-wire.oracle';
+const enabled=process.env.NOISIA_R16_STATEMENT_SHARED_WIRE_PG==='true';
+const snapshot=async(c:PoolClient,f:SharedWireFixtureV1)=>(await c.query("SELECT jsonb_build_object('calls',(SELECT coalesce(jsonb_agg(to_jsonb(c) ORDER BY id),'[]') FROM signal_labeling_calls c WHERE run_id=$1),'links',(SELECT coalesce(jsonb_agg(to_jsonb(q) ORDER BY call_id,question_key),'[]') FROM signal_listening_call_questions q WHERE run_id=$1),'answers',(SELECT coalesce(jsonb_agg(to_jsonb(a) ORDER BY root_id,question_key),'[]') FROM signal_listening_answers a WHERE run_id=$1)) value",[f.run.id])).rows[0].value;
+async function params(c:PoolClient,f:SharedWireFixtureV1,rows:unknown[],target=f.run.id){const owner=(await c.query('SELECT configuration_id,map_id,configuration_digest FROM signal_listening_runs WHERE run_id=$1',[f.run.id])).rows[0];return[target,f.run.workspace_id,owner.configuration_id,owner.map_id,f.run.entity_context_digest,f.inputs.map(i=>i.root_id),owner.configuration_digest,JSON.stringify(rows)];}
+const rich=()=>{const b=signalListeningBaseTemplateV1({category:'bicycles',lexicon_terms:['synthetic']});return{...b,instructions:b.instructions+' é é 😀 "quoted" \\ \n',questions:[...b.questions,...Array.from({length:254},(_,i)=>({key:'detail_'+String(i).padStart(3,'0'),type:'noul' as const,text:'Café 😀?',positive:'sí 漢字',negative:'no',scope:'all' as const,origin:'brand_os' as const,human_locked:false}))]};};
+test('0330 native same-snapshot validators preserve32shapes256keys UTF8 precision and mixed-wire fallback',{skip:!enabled,timeout:600000},async()=>withSharedWireFixtureV1(async f=>{
+ const [old,next]=await sharedWireSourcesV1();assert.ok(old&&next);
+ await withSharedWireTxV1(f,async c=>{
+  const rows=sharedWireProposalsV1(f);assert.equal(rows[0]!.inputs[0]!.question_keys.length,256);
+  assert.deepEqual((await compareSharedWireValidationV1(c,old,next,await params(c,f,rows))).flags,{invalid_questions:false,invalid_request:false,invalid_prior:false});
+  const shapes=Array.from({length:32},(_,mask)=>{const input=structuredClone(f.inputs[0]!);input.question_keys=input.question_keys.filter(k=>k==='voice'||k==='promotion'||Array.from({length:5},(_,i)=>'detail_'+String(i).padStart(3,'0')).some((k2,i)=>k2===k&&(mask&(1<<i))!==0));input.question_digests=Object.fromEntries(input.question_keys.map(k=>[k,input.question_digests[k]!]));const request=buildSignalListeningJevRequestV1(input,f.configuration),request_digest=signalListeningRequestDigestV1(f.run,input,request);return{id:randomUUID(),inputs:[input],request,request_digest};});
+  assert.deepEqual((await compareSharedWireValidationV1(c,old,next,await params(c,f,shapes))).flags,{invalid_questions:false,invalid_request:false,invalid_prior:false});
+  const cases=['{"same":{"n":1.23}}','{"same":{"n":1.2300}}','{"same":{"s":"é"}}','{"same":{"s":"é"}}','{}','{"null_wire":null}','{"escape":{"s":"\\n\\t\\\"\\\\😀"}}'];
+  // Same key with different numeric representations/configuration wires occurs
+  // IN THIS ONE statement; ambiguity must use complete original fallback.
+  const json='['+cases.map((q,i)=>'{"id":"'+randomUUID()+'","native_questions":'+q+',"i":{"root_id":"'+f.inputs[i%3]!.root_id+'","input_digest":"sha256:x"},"digests":'+(i%2?'null':'{"q":1234567890.1234567890123456789}')+',"basis":{},"expected_request":{"model":"jev-1.13.0","state":"é é 😀\\n","questions":'+q+'}}').join(',')+']';
+  const values=await params(c,f,[]);values[7]=json;const out=(await c.query(sharedWireRepresentationKernelV1(old,next),values)).rows;assert.equal(out.length,cases.length);assert.ok(out.every(r=>r.before_bytes===r.after_bytes));assert.ok(out.every(r=>!r.fragment_keys.includes('same')&&r.fragment_keys.includes('null_wire')&&r.fragment_keys.includes('escape')),'ambiguous same-key exact UTF8 patterns are excluded, while unambiguous wires really compile');
+  for(const altered of ['null','[]','{"model":"other","questions":null,"state":null}','{"model":"jev-1.13.0","questions":{},"state":"x","extra":1}']){
+   const kernel='[{"id":"'+randomUUID()+'","native_questions":{},"i":{},"digests":null,"basis":null,"expected_request":'+altered+'}]';values[7]=kernel;assert.ok((await c.query(sharedWireRepresentationKernelV1(old,next),values)).rows.every(r=>r.before_bytes===r.after_bytes));
+  }
+ },true);
+},rich()));
+
+test('0330 native reserve Mark bad-mixed rollback and deferred pre-owner forged hash stay enforced',{skip:!enabled,timeout:600000},async()=>withSharedWireFixtureV1(async f=>{
+ const [old,next]=await sharedWireSourcesV1();assert.ok(old&&next);
+ for(const source of [old,next])for(const defect of ['text','digest','question_digest','duplicate','input','map','configuration','basis','empty']){
+  const rows=sharedWireProposalsV1(f),bad=rows[1]!,i=bad.inputs[0]!;
+  if(defect==='text'){i.text+=' forged';bad.request={...bad.request,state:i.text};}if(defect==='question_digest')i.question_digests.voice='sha256:'+'f'.repeat(64);
+  if(defect==='duplicate')i.question_keys=['voice','voice'];if(defect==='input')i.input_digest='sha256:'+'0'.repeat(64);if(defect==='map')i.map_id=randomUUID();if(defect==='configuration')i.configuration_digest='sha256:'+'1'.repeat(64);if(defect==='basis')i.scope_basis={voice:'forged'};if(defect==='empty')i.question_keys=[];
+  bad.request_digest=signalListeningRequestDigestV1(f.run,i,bad.request);if(defect==='digest')bad.request_digest='sha256:'+'e'.repeat(64);bad.custom_id='listening_'+bad.request_digest.slice(7,67);
+  await assert.rejects(withSharedWireTxV1(f,async c=>{await c.query(source);await insertSharedWireCallsV1(c,f,rows);}),defect==='text'||defect==='digest'?/listening_request_invalid/:/listening_call_questions_invalid/);
+ }
+ assert.equal((await f.database.query('SELECT count(*)::int n FROM signal_labeling_calls WHERE run_id=$1',[f.run.id])).rows[0].n,0);
+ assert.equal((await f.database.query('SELECT count(*)::int n FROM signal_listening_call_questions WHERE run_id=$1',[f.run.id])).rows[0].n,0,'no valid sibling links survive any forged mixed statement');
+ // A direct native request inserts the run and its immutable owner in one TX.
+ // Interpose BEFORE that real owner INSERT, never delete/alter an owner or guard.
+ await f.store.release(f.run);assert.equal((await f.database.query("UPDATE signal_labeling_runs SET status='canceled' WHERE id=$1 AND NOT EXISTS(SELECT 1 FROM signal_labeling_calls WHERE run_id=$1) RETURNING id",[f.run.id])).rows.length,1);
+ let injected=false,runId='',callId='';
+ const database={query:f.database.query.bind(f.database),connect:async()=>{const c=await f.database.connect();return new Proxy(c,{get(target,key){if(key==='query')return async(sql:string,values?:unknown[])=>{
+  if(sql.startsWith('INSERT INTO signal_listening_runs(')&&!injected){injected=true;runId=String(values![0]);
+   const actual=(await target.query("UPDATE signal_labeling_runs SET status='running',lease_token=$2,lease_until=clock_timestamp()+interval '5 minutes' WHERE id=$1 AND status='queued' RETURNING processing_admission_id",[runId,randomUUID()])).rows[0];assert.ok(actual);
+   assert.equal((await target.query('SELECT count(*)::int n FROM signal_listening_runs WHERE run_id=$1',[runId])).rows[0].n,0);
+   const provisional={...f,run:{...f.run,id:runId,processing_admission_id:actual.processing_admission_id}};const rows=sharedWireProposalsV1(provisional).slice(0,1);rows[0]!.request_digest='sha256:'+'d'.repeat(64);rows[0]!.custom_id='listening_'+rows[0]!.request_digest.slice(7,67);callId=rows[0]!.id;
+   await insertSharedWireCallsV1(target,provisional,rows);
+  }return target.query(sql,values);
+ };const v=Reflect.get(target,key);return typeof v==='function'?v.bind(target):v;}});}} as LabelingDatabaseV1;
+ await requestSignalListeningV1({database,workspace_id:f.run.workspace_id,actor_user_id:f.run.actor_user_id,configuration_id:f.configuration_id,map_id:f.map_id,idempotency_key:randomUUID(),cap_micro_usd:1000000,provider_available:true});assert.equal(injected,true);
+ assert.equal((await f.database.query('SELECT status FROM signal_labeling_calls WHERE id=$1',[callId])).rows[0].status,'reserved');
+ for(const source of [old,next])await assert.rejects(withSharedWireTxV1(f,async c=>{await c.query(source);await c.query("UPDATE signal_labeling_calls SET status='submitting' WHERE id=$1",[callId]);}),/listening_request_invalid/);
+ assert.equal((await f.database.query('SELECT status FROM signal_labeling_calls WHERE id=$1',[callId])).rows[0].status,'reserved');
+}));
+
+test('0330 native real prior unknown is true and target ownership never becomes a cached authority',{skip:!enabled,timeout:600000},async()=>withSharedWireFixtureV1(async f=>{
+ const [old,next]=await sharedWireSourcesV1();assert.ok(old&&next);const calls=await f.store.reserve(f.run,sharedWireProposalsV1(f));await f.store.markSubmitting(f.run,calls);await f.store.markFailed(f.run,calls,true);
+ await withSharedWireTxV1(f,async c=>{const rows=sharedWireProposalsV1(f),values=await params(c,f,rows,randomUUID());const result=await compareSharedWireValidationV1(c,old,next,values);assert.equal(result.flags.invalid_prior,true,'genuine native unknown transport from OTHERrun is not0');},true);
+ await assert.rejects(requestSignalListeningV1({database:f.database,workspace_id:f.run.workspace_id,actor_user_id:f.run.actor_user_id,configuration_id:f.configuration_id,map_id:f.map_id,idempotency_key:randomUUID(),cap_micro_usd:1000000,provider_available:true}),/prior_outcome_unresolved|run_busy|already_running/);
+}));
+
+test('0330 preserves answer BEFORE attempts including conflict-suppressed bad tuples and native source bytes',{skip:!enabled,timeout:600000},async()=>withSharedWireFixtureV1(async f=>{
+ const outcomes=await prepareSharedWireRawV1(f),observer=await f.database.connect();let answer:Record<string,unknown>;
+ try{await observer.query('BEGIN ISOLATION LEVEL REPEATABLE READ');
+  assert.equal((await observer.query('SELECT count(*)::int n FROM signal_listening_answers WHERE run_id=$1',[f.run.id])).rows[0].n,0);
+  await f.store.apply(f.run,outcomes.map(o=>({call:o.call,results:[o.result]})));
+  answer=(await f.database.query('SELECT to_jsonb(a) value FROM signal_listening_answers a WHERE run_id=$1 ORDER BY root_id,question_key LIMIT 1',[f.run.id])).rows[0].value;
+  assert.equal((await observer.query('SELECT count(*)::int n FROM signal_listening_answers WHERE run_id=$1',[f.run.id])).rows[0].n,0,'conflicting committed rows are genuinely invisible to this pre-existing RR');
+  await assert.rejects(observer.query('INSERT INTO signal_listening_answers SELECT * FROM jsonb_populate_record(NULL::signal_listening_answers,$1::jsonb) ON CONFLICT DO NOTHING',[JSON.stringify({...answer,raw_sha256:'forged'})]),/listening_answer_receipt_invalid/);
+ }finally{await observer.query('ROLLBACK');observer.release();}
+ for(const patch of [{raw_sha256:'sha256:'+'f'.repeat(64)},{request_digest:'forged'},{input_digest:'stale'},{answer:{type:'noul',noul:2}}])await assert.rejects(withSharedWireTxV1(f,c=>c.query('INSERT INTO signal_listening_answers SELECT * FROM jsonb_populate_record(NULL::signal_listening_answers,$1::jsonb) ON CONFLICT DO NOTHING',[JSON.stringify({...answer,...patch})]).then(()=>{})),/listening_answer_receipt_invalid|listening_answer_invalid/);
+ await assert.rejects(withSharedWireTxV1(f,c=>c.query('UPDATE signal_listening_answers SET answer=answer WHERE run_id=$1',[f.run.id]).then(()=>{})),/listening_history_immutable/);
+ assert.equal((await f.database.query('SELECT count(*)::int n FROM signal_listening_answers WHERE run_id=$1',[f.run.id])).rows[0].n,6);
+
+}));
+
+test('0330 native DML ABBA keeps full guards and fresh transactions and rejects expiry with atomic rollback',{skip:!enabled,timeout:600000},async()=>withSharedWireFixtureV1(async f=>{
+ const [old,next]=await sharedWireSourcesV1();assert.ok(old&&next);const fixed=sharedWireProposalsV1(f),observations:Array<{arm:string;wall_ms:number;result_sha256:string}>=[];
+ let baseline:string|undefined;
+ for(const [arm,source]of [['before',old],['after',next],['after',next],['before',old]] as const){await withSharedWireTxV1(f,async c=>{
+  const before=JSON.stringify(await snapshot(c,f));baseline??=before;assert.equal(before,baseline);await c.query(source);
+  const started=process.hrtime.bigint();const inserted=await insertSharedWireCallsV1(c,f,fixed);assert.equal(inserted.rows.length,3);
+  await c.query("UPDATE signal_labeling_calls SET status='submitting' WHERE id=ANY($1::uuid[])",[fixed.map(r=>r.id)]);
+  await c.query('SET CONSTRAINTS ALL IMMEDIATE');const wall_ms=Number(process.hrtime.bigint()-started)/1e6;
+  const result=(await c.query('SELECT id,status,request_digest,reserved_micro_usd::text FROM signal_labeling_calls WHERE run_id=$1 ORDER BY id',[f.run.id])).rows;assert.equal(result.length,3);assert.ok(result.every(r=>r.status==='submitting'));
+  observations.push({arm,wall_ms,result_sha256:sharedWireShaV1(JSON.stringify(result))});
+ });}
+ assert.equal(new Set(observations.map(o=>o.result_sha256)).size,1);console.log('# statement shared wire native DML '+JSON.stringify({contract:'r16-statement-shared-wire-dml-pair-v1',arms:observations,committed:false,guard_checks:'native constraints forced immediate before rollback',cpu_claim:false,h1_claim:false,gain_claim:false}));
+ // Real deferred COMMIT coverage is separate from the IMMEDIATE comparison
+ // above. Original native page-fence insertion/constraint remains active.
+ const calls=await f.store.reserve(f.run,fixed);
+ for(const source of [old,next]){
+  await f.database.query("UPDATE signal_labeling_runs SET lease_until=clock_timestamp()+interval '1500 milliseconds' WHERE id=$1",[f.run.id]);let delayed=false;
+  const database={query:f.database.query.bind(f.database),connect:async()=>{const c=await f.database.connect();return new Proxy(c,{get(target,key){if(key==='query')return async(sql:string,values?:unknown[])=>{
+   if(sql==='COMMIT'){delayed=true;await new Promise(resolve=>setTimeout(resolve,1700));}
+   const result=await target.query(sql,values);if(sql==='BEGIN')await target.query(source);return result;
+  };const value=Reflect.get(target,key);return typeof value==='function'?value.bind(target):value;}});}} as LabelingDatabaseV1;
+  const store=createSignalListeningStoreV1({database,rawPages:f.rawPages,storeRaw:async()=>{throw Error('no provider');}});
+  await assert.rejects(store.markSubmitting(f.run,calls),/labeling_lease_lost/);assert.equal(delayed,true,'the real deferred constraint rejects actual COMMIT, not an earlier fence');
+  const c=await f.database.connect();try{const state=await snapshot(c,f);assert.ok(state.calls.every((row:{status:string})=>row.status==='reserved'));assert.equal(state.answers.length,0);
+   assert.equal((await c.query('SELECT count(*)::int n FROM signal_labeling_page_mutation_fences WHERE run_id=$1',[f.run.id])).rows[0].n,0);
+  }finally{c.release();}
+ }
+
+}));
