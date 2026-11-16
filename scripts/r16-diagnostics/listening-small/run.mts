@@ -51,14 +51,47 @@ export function assertCpuProfilerArgsV1(args:string[],profileDir:string){
   assert.ok(args.includes(`--cpu-prof-dir=${profileDir}`),'cpu_profile_directory_invalid');
   assert.ok(!args.some(arg=>arg.startsWith('--heap')),'heap_profile_forbidden');
 }
-export function cpuProfileMetadataV1(args:{main_pid:number;sampler_pid:number|null;start_us:number;end_us:number;
+export function cpuProfileIdentityV1(filename:string,mainPid:number,samplerPid:number){
+  const match=/^CPU\.(\d{8})\.(\d{6})\.(\d+)\.(\d+)\.(\d+)\.cpuprofile$/u.exec(filename);
+  assert.ok(match,'cpu_profile_filename_invalid');
+  const pid=Number(match[3]),tid=Number(match[4]),sequence=Number(match[5]);
+  assert.ok(Number.isSafeInteger(pid)&&Number.isSafeInteger(tid)&&Number.isSafeInteger(sequence),'cpu_profile_identity_invalid');
+  assert.ok(pid===mainPid||pid===samplerPid,'cpu_profile_foreign_process');
+  return{filename,pid,tid,sequence,role:pid===mainPid?(tid===0?'runner':'runner_worker_thread'):(tid===0?'sampler':'sampler_worker_thread')};
+}
+export function cpuProfileRangeV1(profile:any){
+  assert.ok(profile&&typeof profile==='object'&&Array.isArray(profile.nodes)&&Array.isArray(profile.samples)&&Array.isArray(profile.timeDeltas),'cpu_profile_format_invalid');
+  const start=profile.startTime,end=profile.endTime;
+  assert.ok(Number.isFinite(start)&&Number.isFinite(end)&&end>start,'cpu_profile_time_range_invalid');
+  assert.equal(profile.timeDeltas.length,profile.samples.length,'cpu_profile_sample_delta_count_mismatch');
+  const sampled=profile.timeDeltas.reduce((sum:number,delta:unknown)=>{
+    assert.ok(typeof delta==='number'&&Number.isFinite(delta)&&delta>=0,'cpu_profile_sample_delta_invalid');return sum+delta;
+  },0);
+  const duration=end-start,gap=duration-sampled;
+  assert.ok(gap>=-2000&&gap<=Math.max(1_000_000,duration*.05),'cpu_profile_time_range_does_not_cover_samples');
+  return{profile_start_time_us:start,profile_end_time_us:end,profile_duration_us:duration,sampled_time_delta_us:sampled,
+    profile_sample_coverage:'v8_range_validated'};
+}
+export function classificationClockMetadataV1(args:{hrtime_origin_ns:string;start_hrtime_ns:string;end_hrtime_ns:string;
+  performance_time_origin_ms:number;start_performance_ms:number;end_performance_ms:number}){
+  const safeNs=(value:string)=>/^\d{1,30}$/u.test(value)?BigInt(value):null;
+  const origin=safeNs(args.hrtime_origin_ns),start=safeNs(args.start_hrtime_ns),end=safeNs(args.end_hrtime_ns);
+  assert.ok(origin!==null&&start!==null&&end!==null&&start>=origin&&end>=start,'classification_clock_invalid');
+  assert.ok(Number.isFinite(args.performance_time_origin_ms)&&Number.isFinite(args.start_performance_ms)
+    &&Number.isFinite(args.end_performance_ms)&&args.end_performance_ms>=args.start_performance_ms,'classification_performance_clock_invalid');
+  return{clock_axis:'linux_runner_node_hrtime_monotonic_ns',runner_hrtime_origin_ns:args.hrtime_origin_ns,
+    classification_start_hrtime_ns:args.start_hrtime_ns,classification_end_hrtime_ns:args.end_hrtime_ns,
+    performance_time_origin_ms:args.performance_time_origin_ms,classification_start_performance_ms:args.start_performance_ms,
+    classification_end_performance_ms:args.end_performance_ms,v8_profile_clock_bridge:'unknown',
+    classification_profile_overlap:'unknown_no_cross_clock_truncation'};
+}
+export function cpuProfileMetadataV1(args:{main_pid:number;sampler_pid:number|null;clock:ReturnType<typeof classificationClockMetadataV1>;
   exec_args:string[];profile_dir:string}){
   assert.ok(Number.isSafeInteger(args.main_pid)&&args.main_pid>0,'cpu_profile_main_pid_invalid');
   assert.ok(args.sampler_pid===null||(Number.isSafeInteger(args.sampler_pid)&&args.sampler_pid>0),'cpu_profile_sampler_pid_invalid');
-  assert.ok(Number.isSafeInteger(args.start_us)&&args.start_us>=0&&Number.isSafeInteger(args.end_us)&&args.end_us>=args.start_us,'classification_clock_invalid');
   assertCpuProfilerArgsV1(args.exec_args,args.profile_dir);
   return{enabled:true,profiler:'node_cpu_prof',interval_us:1000,main_process_pid:args.main_pid,sampler_process_pid:args.sampler_pid,
-    classification_start_hrtime_us:args.start_us,classification_end_hrtime_us:args.end_us,
+    clock:args.clock,
     output:'pid_scoped_cpu_profiles_only',heap_profile:false,source_text_embedded:false,overhead_measured:false,capacity_claim:false};
 }
 
@@ -91,7 +124,7 @@ export async function runListeningSmallDiagnosticV1(){
   assert.equal(probeHeadBefore,process.env.R16_DIAGNOSTIC_PROBE_REF_REQUESTED,'probe_ref_checkout_mismatch');
   const started=performance.now();
   assertCpuProfilerArgsV1(process.execArgv,resolve(process.env.R16_DIAGNOSTIC_CPU_PROFILE_DIR!));
-  const monotonicOrigin=process.hrtime.bigint(),monotonicUs=()=>Number((process.hrtime.bigint()-monotonicOrigin)/1000n);
+  const monotonicOrigin=process.hrtime.bigint();
   let stage='imports';
   let storageServer:any;
   const observer=createListeningObserver();
@@ -169,7 +202,7 @@ export async function runListeningSmallDiagnosticV1(){
         const store={...profiled,async apply(...args:any[]){await profiled.apply(...args);const roots=[...new Set(args[1].flatMap((row:any)=>row.results.map((x:any)=>x.root_id)))];
           for(let n=0;n<roots.length;n+=1024){const resolved=await census.readResolvedRootIds(roots.slice(n,n+1024));commits.push(resolved.length);}}};
         const rootSet=new Set<string>();
-        const startedProcessing=performance.now(),classificationStartUs=monotonicUs();let classificationEndUs:number|undefined;
+        const startedProcessing=performance.now(),classificationStartHrtime=process.hrtime.bigint();let classificationEndHrtime:bigint|undefined;
         let classificationEndPerformanceMs:number|undefined,jobs=0;
         stage='native_jobs';
         while(jobs<100&&rootSet.size<ROOT_COUNT&&performance.now()-started<MAX_MS){
@@ -193,7 +226,7 @@ export async function runListeningSmallDiagnosticV1(){
         const serving=await servingModule.readSignalListeningQuestionsMetricsV1({...binding,question_keys:workload.question_keys});
         assert.equal(serving.length,workload.question_keys.length,'serving_metrics_missing');
         assert.ok(serving.every((item:any)=>item.counts.pending===0&&item.counts.awaiting_base===0),'serving_has_unresolved_work');
-        classificationEndPerformanceMs=performance.now();classificationEndUs=monotonicUs();
+        classificationEndPerformanceMs=performance.now();classificationEndHrtime=process.hrtime.bigint();
         const warmups=calibrations.filter((item:any)=>item.warmup);
         const phaseByShape=new Map<string,string>();
         for(const group of ['base','consumer_category'] as const){
@@ -220,6 +253,9 @@ export async function runListeningSmallDiagnosticV1(){
         assert.equal(probeHeadAfter,probeHeadBefore,'probe_head_changed_during_run');
         assert.deepEqual(probeHashesAfter,probeHashesBefore,'probe_files_changed_during_run');
         const observerSnapshot=observer.snapshot();
+        const classificationClock=classificationClockMetadataV1({hrtime_origin_ns:monotonicOrigin.toString(),
+          start_hrtime_ns:classificationStartHrtime.toString(),end_hrtime_ns:classificationEndHrtime!.toString(),
+          performance_time_origin_ms:performance.timeOrigin,start_performance_ms:startedProcessing,end_performance_ms:classificationEndPerformanceMs!});
         result={contract_version:'r16-listening-small-diagnostic-v1',diagnostic_only:true,h1_accepted:false,
           a_b_source_verified:false,
           target_label:process.env.R16_DIAGNOSTIC_TARGET_LABEL??'unspecified',
@@ -236,10 +272,10 @@ export async function runListeningSmallDiagnosticV1(){
             unknown_micro_usd:runStatus.run?.unknown_micro_usd,job_count:jobs,call_count:counts.rows[0]?.job_count,
             preparation_admission_wall_ms:startedProcessing-admissionStarted,classification_serving_wall_ms:classificationEndPerformanceMs!-startedProcessing,
             classification_start_performance_ms:startedProcessing,classification_end_performance_ms:classificationEndPerformanceMs,
-            classification_start_hrtime_us:classificationStartUs,classification_end_hrtime_us:classificationEndUs,
+            classification_start_hrtime_ns:classificationStartHrtime.toString(),classification_end_hrtime_ns:classificationEndHrtime!.toString(),
             warmups:warmups.length,warmup_phases:warmupPhases,calibrations,commit_batch_count:commits.length},
           cpu_profile:cpuProfileMetadataV1({main_pid:process.pid,sampler_pid:observerSnapshot.sampler_process_pid,
-            start_us:classificationStartUs,end_us:classificationEndUs!,exec_args:process.execArgv,
+            clock:classificationClock,exec_args:process.execArgv,
             profile_dir:resolve(process.env.R16_DIAGNOSTIC_CPU_PROFILE_DIR!)}),
           observed_http_latency:latencySummary,storage:storageServer.metrics(),sql_profile:profile.snapshot(),
           inner_plan_capture:{diagnostic_only:true,threshold_roots:1024,max_captures_per_query_hash:INNER_PLAN_CAPTURE_ORDINALS.length,capture_ordinals:INNER_PLAN_CAPTURE_ORDINALS,min_duration_ms:INNER_PLAN_MIN_DURATION_MS,

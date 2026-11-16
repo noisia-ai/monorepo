@@ -5,7 +5,8 @@ import {EventEmitter} from 'node:events';
 import {readFile} from 'node:fs/promises';
 import {join} from 'node:path';
 import {pathToFileURL} from 'node:url';
-import {assertCpuProfilerArgsV1,assertListeningSmallGuardV1,captureCalibrationObservationV1,cpuProfileMetadataV1,runListeningSmallDiagnosticV1} from './run.mjs';
+import {assertCpuProfilerArgsV1,assertListeningSmallGuardV1,captureCalibrationObservationV1,classificationClockMetadataV1,
+  cpuProfileIdentityV1,cpuProfileMetadataV1,cpuProfileRangeV1,runListeningSmallDiagnosticV1} from './run.mjs';
 
 test('diagnostic CLI has no database side effect without explicit run flag',async()=>{
   assert.doesNotThrow(()=>assertListeningSmallGuardV1({},[]));
@@ -51,14 +52,34 @@ test('CPU profile metadata is PID-scoped, bounded to CPU sampling, and records c
  assert.doesNotThrow(()=>assertCpuProfilerArgsV1(execArgs,'/tmp/work/artifacts/r16-listening-small/cpu-profile-candidate'));
  assert.throws(()=>assertCpuProfilerArgsV1(execArgs.filter(arg=>arg!=='--cpu-prof'),'/tmp/work/artifacts/r16-listening-small/cpu-profile-candidate'),/cpu_profile_not_enabled/u);
  assert.throws(()=>assertCpuProfilerArgsV1([...execArgs,'--heap-prof'],'/tmp/work/artifacts/r16-listening-small/cpu-profile-candidate'),/heap_profile_forbidden/u);
- assert.deepEqual(cpuProfileMetadataV1({main_pid:12,sampler_pid:13,start_us:1000,end_us:2000,exec_args:execArgs,
+ const clock=classificationClockMetadataV1({hrtime_origin_ns:'500000',start_hrtime_ns:'501000',end_hrtime_ns:'601000',
+   performance_time_origin_ms:1_700_000_000_000,start_performance_ms:1,end_performance_ms:101});
+ assert.deepEqual(clock,{clock_axis:'linux_runner_node_hrtime_monotonic_ns',runner_hrtime_origin_ns:'500000',
+   classification_start_hrtime_ns:'501000',classification_end_hrtime_ns:'601000',performance_time_origin_ms:1_700_000_000_000,
+   classification_start_performance_ms:1,classification_end_performance_ms:101,v8_profile_clock_bridge:'unknown',
+   classification_profile_overlap:'unknown_no_cross_clock_truncation'});
+ assert.deepEqual(cpuProfileMetadataV1({main_pid:12,sampler_pid:13,clock,exec_args:execArgs,
    profile_dir:'/tmp/work/artifacts/r16-listening-small/cpu-profile-candidate'}),{
   enabled:true,profiler:'node_cpu_prof',interval_us:1000,main_process_pid:12,sampler_process_pid:13,
-  classification_start_hrtime_us:1000,classification_end_hrtime_us:2000,output:'pid_scoped_cpu_profiles_only',
+  clock,output:'pid_scoped_cpu_profiles_only',
   heap_profile:false,source_text_embedded:false,overhead_measured:false,capacity_claim:false,
  });
- assert.throws(()=>cpuProfileMetadataV1({main_pid:12,sampler_pid:null,start_us:2000,end_us:1000,exec_args:execArgs,
-   profile_dir:'/tmp/work/artifacts/r16-listening-small/cpu-profile-candidate'}),/classification_clock_invalid/u);
+ assert.throws(()=>classificationClockMetadataV1({hrtime_origin_ns:'500000',start_hrtime_ns:'601000',end_hrtime_ns:'501000',
+   performance_time_origin_ms:1_700_000_000_000,start_performance_ms:101,end_performance_ms:1}),/classification_clock_invalid/u);
+});
+
+test('CPU profiles admit bounded worker threads only for the recorded PIDs and validate V8 time coverage',()=>{
+ assert.deepEqual(cpuProfileIdentityV1('CPU.20261115.123456.12.0.0.cpuprofile',12,13),
+   {filename:'CPU.20261115.123456.12.0.0.cpuprofile',pid:12,tid:0,sequence:0,role:'runner'});
+ assert.equal(cpuProfileIdentityV1('CPU.20261115.123456.12.2.0.cpuprofile',12,13).role,'runner_worker_thread');
+ assert.equal(cpuProfileIdentityV1('CPU.20261115.123456.13.1.0.cpuprofile',12,13).role,'sampler_worker_thread');
+ assert.throws(()=>cpuProfileIdentityV1('CPU.20261115.123456.99.0.0.cpuprofile',12,13),/foreign_process/u);
+ const range=cpuProfileRangeV1({nodes:[],samples:[1,2],timeDeltas:[1000,1000],startTime:1_000_000,endTime:1_002_000});
+ assert.deepEqual(range,{profile_start_time_us:1_000_000,profile_end_time_us:1_002_000,profile_duration_us:2000,
+   sampled_time_delta_us:2000,profile_sample_coverage:'v8_range_validated'});
+ assert.throws(()=>cpuProfileRangeV1({nodes:[],samples:[1],timeDeltas:[1000],startTime:5,endTime:5}),/time_range_invalid/u);
+ assert.throws(()=>cpuProfileRangeV1({nodes:[],samples:[1,2],timeDeltas:[1000],startTime:1_000_000,endTime:1_002_000}),/delta_count_mismatch/u);
+ assert.throws(()=>cpuProfileRangeV1({nodes:[],samples:[1,2],timeDeltas:[1_000_000,1_000_000],startTime:1_000_000,endTime:1_002_000}),/does_not_cover_samples/u);
 });
 
 test('calibration observations preserve native phase shapes from the query-engine contract',async()=>{
