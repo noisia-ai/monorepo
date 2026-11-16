@@ -12,6 +12,17 @@ No hay aprobaciones humanas intermedias en los procesos de análisis: Sonnet 4.6
 
 ## Progreso
 
+- Micro 43837275131 termina y conserva fuente y funciones públicas intactas. De 50 casos, 49 comparan bytes y digest exactos; deep-1024 queda censurado en el original (54001), así que no hay prueba universal. Se rechaza la alternativa flat: las 32 preimágenes consumer son más lentas por mediana (1.569–1.670×; mediana 1.626×); base 0.5609→0.9773 ms y batch 25.699→39.787 ms. Ningún cambio del canonicalizador se incorpora al producto. El informe privado conserva SHA y los límites de la medición.
+- Se publica el checkpoint actual de producto para repetir CI completo y el ensayo oficial de 32,768 raíces sin los instrumentos opcionales. El prefiltro y la proyección ya pasaron sus focales nativos, pero su efecto combinado a esa escala no se ha medido. Esto busca resolver el coste de escala y obtener evidencia de la fuente exacta; mantiene intactos 1,000 raíces/s, ventanas sostenidas, latencia observada y diez fallos. No se presenta como aceptación ni autoriza UAT.
+
+- Segundo micro 43835701793 identifica la causa exacta: schema-singleton, SQLSTATE 42P01, tabla signal_mention_text_digest_backfill_state. La migración 0169 la elimina después de crearla en 0167; no es una semilla extra ni un conteo incorrecto. Se corrige sólo la expectativa experimental del esquema final: cuatro tablas con semillas vigentes y ausencia obligatoria de la tabla retirada. No hubo DDL temporal, artefactos, equivalencia o tiempos; API de artefactos confirma lista vacía. La corrección requiere revisión y repetición nativa.
+
+- Contrafactual canónico publicado sólo en su rama experimental a9a91de4, revisada sin P0/P1/P2 y con ocho pruebas puras y tipos verdes. La CLI rechazó el cambio de workflow por scope; el conector actualizó la referencia con CAS y Root verificó el SHA antes de ejecutar. Run 43834281309 falla en la guarda de esquema fresco, después de aplicar las 310 migraciones y antes de DDL temporal o artefacto. La limpieza del laboratorio termina correctamente. No hay equivalencia ni tiempos de la candidata; se investiga el error primario oculto por el mensaje genérico, sin relajar la guarda.
+
+- Se autoriza implementar sólo un contrafactual aislado de JSON canónico: función candidata y fixtures en pg_temp, sin reemplazar la función pública ni añadir migración. Una rama experimental reutiliza el workflow registrado de PostgreSQL con nombre y scope explícitos; no se integra ese workflow en el producto. Comparará bytes UTF-8 y digest por ID, payloads sintéticos, NULL, Unicode, precisión y profundidad acotada; medirá A/B y B/A con resultados consumidos. Debe evitar el plegado de constantes IMMUTABLE y registrar errores/censura sin contarlos como equivalencia. Implementación y revisión pendientes; sólo Root publicará y ejecutará.
+
+- Reintento 43827619004 verifica el focal financiero determinista y los diecinueve escenarios nativos, sin omisiones; 4,096 raíces/8,192 llamadas completas y cero reserva/unknown. La proyección de expected pasa de anchura estimada 821 a 212; sus lectores conservan 100/192. El segundo lector reduce temporales de reserve en 480 bloques y de mark en 121; el productor conserva contadores inclusivos de sus otros conjuntos. Es una reducción concreta, sin mejora global acreditada: 30.277 s y HTTP máximo 508.444 ms, sin H1. Ambos jobs fallan después del runner al exportar CPU; siete ZIP verificados preservan la evidencia nativa, sin perfiles reconstruidos.
+
 - Primer mini de 0329 (43826483880) se detiene en el focal financiero antes del runner: no hay diecinueve casos aprobados ni métricas de candidato. El assert de precisión elegía la primera fila SQL, aunque sólo se había modificado la primera propuesta y sus UUID se generan al azar. 571ba64 corrige la prueba tras revisar fb84e687 y 4e1bb91f: ubica el probe por ID y fuerza orden descendente para comprobar que no está en primera posición. Número y microsegundos se verifican en la misma cadena SQL exacta; producto y gates no cambian. Tipos/lint 11/11 y seis focales puras pasan antes del commit. Debe repetirse la prueba nativa.
 - Smoke 43826498103 de 0329 completo verde: actor 3/3, entradas/lazy/segunda forma 4/4, hybrid 1/1, scoped 3/3 y escala 1/1. No sustituye el focal financiero fallido ni acredita capacidad. El baseline del mini también falla, pero por exportar CPU después de su runner; se conservan ambos fallos con causas distintas.
 
@@ -351,6 +362,14 @@ Recibo: separar Voyage/JEV por raíz de Claude por número de grupos y vueltas; 
 
 ## Sorpresas y descubrimientos
 
+- El CTE plano puede preservar bytes para entradas observadas y aun así ser peor: todos los payloads consumer del micro fueron más lentos. Sus planes raíz no muestran temporales, pero no se capturó memoria interna; no se atribuye la regresión a un spill inexistente ni se extrapola ese helper aislado al pipeline.
+
+- Leer la creación de una semilla sin seguir su retirada posterior produjo una expectativa histórica falsa del esquema actual. La guarda debe representar el resultado final de todas las migraciones, y la tabla retirada debe permanecer ausente. No se soluciona aceptando cualquier 42P01 ni ampliando excepciones.
+
+- La ruta previa a la atestación sustituye el assert concreto por un mensaje genérico. Impide saber qué comprobación del esquema falló aunque el laboratorio recién creado haya migrado correctamente. La corrección debe conservar la causa segura y la fase, sin imprimir SQL ni datos y sin crear artefactos antes de validar el destino.
+
+- La proyección estrecha reduce anchura y temporales, pero no elimina el coste del segundo Aggregate: 699 ms en reserve y 175 ms en mark en este ensayo. El tiempo global sube frente al mini anterior; no se atribuye causalidad a una sola modificación al comparar dos corridas. El JSON recursivo registra tiempo inclusivo de DML y todos los triggers, sin aislar CPU ni expected.
+
 - ORDER BY UUID en el oráculo no conserva el orden de las propuestas con IDs aleatorios. La aserción posicional fallida no prueba pérdida de precisión en JSONB. La regresión se vuelve determinista: el probe usa el UUID mayor, debe aparecer después de la primera fila y se compara por su identidad. No se relaja a buscar valores en cualquier fila.
 
 - El oráculo anterior convertía JSONB a objetos JS antes de comparar todos sus valores. La nueva comparación conserva JSON como texto SQL para no redondear números largos; el parseo JS sólo comprueba IDs y cardinalidad. Es un cambio de prueba, sin nueva admisión ni escritura de datos contrafactuales en tablas públicas.
@@ -514,6 +533,16 @@ Recibo: separar Voyage/JEV por raíz de Claude por número de grupos y vueltas; 
 - El promedio del piloto completo incluye una etapa editorial que no escala por raíz. Multiplicarlo linealmente daba USD 205.81/millón; mantener explícitamente los grupos y una vuelta de referencia produce USD 114.035250. Ambos cálculos parten del mismo recibo, cuyo uso histórico permanece USD 17.280463.
 
 ## Registro de decisiones
+
+- 2026-11-16: descartar la sustitución canónica por evidencia nativa de menor rendimiento y conservar la función pública. Pasar al ensayo completo de la fuente actual sin instrumentos opcionales: la mejora del prefiltro depende de cuántas raíces ya completadas existan a escala, y el mini no sustituye esa medición. No cambiar clocks, cuotas, workload o gates; conservar resultados terminales y corregir el siguiente cuello según el recibo real.
+
+- 2026-11-16: ajustar la lista de semillas con evidencia de DROP en 0169 y exigir ausencia de ese estado auxiliar. Mantener vacías todas las demás relaciones de datos y conservar la comparación de semillas vigentes. La reparación cambia sólo el instrumento; las 35 migraciones de producto permanecen intactas.
+
+- 2026-11-16: mantener detenido el contrafactual cuando falle la atestación y conservar la ausencia de resultados. Identificar la comprobación fallida con diagnóstico acotado y contrastar sus expectativas contra el bootstrap real; no agregar excepciones por conjetura ni borrar semillas. Repetir sólo después de revisión del arreglo, sin editar las funciones públicas.
+
+- 2026-11-16: aplazar el wrapper de derechos: unos 80 µs por llamada no prueban coste de planificación y su alcance incluye Estudio, exportación y descubrimiento. Medir primero la alternativa canónica pura en un laboratorio desechable. Menos llamadas recursivas no garantizan ahorro: el CTE añade rutas, subárboles y ordenación; descartar si cambia bytes o no aporta una mejora estable. No activar nada por conteo de funciones o por un tiempo SQL constante plegado durante planificación.
+
+- 2026-11-16: conservar la evidencia específica de proyección y el rechazo global. Antes de editar otra función, evaluar por separado dos hipótesis acotadas: caché de plan de la función actual de derechos y serialización canónica pura con bytes idénticos. Ambas siguen sólo en lectura; no se autoriza caché de permisos, reducción de validaciones o cambio de hashes históricos. Cualquier candidato requerirá contrafactual nativo y medición antes de activarse.
 
 - 2026-11-16: detener la medición cuando falle el primer focal y conservar como no ejecutados los otros dieciocho casos. Corregir la alineación del probe por ID con control de orden determinista, sin cambiar formato, validaciones o SQL productivo. Repetir los gates completos antes de interpretar rendimiento; no tratar este fallo de harness como parada de formato de un proveedor pagado.
 
@@ -692,7 +721,7 @@ Recibo: separar Voyage/JEV por raíz de Claude por número de grupos y vueltas; 
 
 ## Resultado y retrospectiva
 
-Estado vigente, 16 nov.: H1 sigue rechazado en ambos full. El checkpoint 9e tiene CI funcional completo verde. El prefiltro pasa su smoke y diecinueve oráculos, sin mejora total demostrada. La proyección 0329 pasa el smoke, pero su primer mini se detiene por un assert de orden del probe; no hay métricas del candidato ni aceptación financiera completa. Ese fixture queda corregido como 571ba64, revisado y con tipos/lint y focales puras verdes, pendiente de repetición remota. Hay 35 migraciones pendientes, ninguna aplicada en UAT, sin despliegue ni llamadas pagadas R16. H0–H6 permanece abierto. Los párrafos siguientes son historia.
+Estado vigente, 16 nov.: H1 permanece rechazado en los full históricos. El checkpoint 9e tiene CI funcional completo verde; la fuente posterior con 0329 pasa smoke y diecinueve oráculos nativos, sin mejora global acreditada en el mini. El contrafactual canónico terminó: 49 casos exactos y uno censurado, pero la alternativa es más lenta y se descarta sin modificar la función pública. La fuente actual debe repetir CI completo y capacidad oficial para medir el prefiltro y la proyección juntos a escala. Hay 35 migraciones pendientes, ninguna aplicada en UAT, sin despliegue ni llamadas pagadas R16. La aceptación completa, ejecución real, paquete privado y QA siguen pendientes. Los párrafos siguientes son historia.
 
 Estado vigente, 16 nov.: 0327 y la corrección de fixture pasan diecinueve oráculos y el smoke remoto; el censo queda completo, pero H1 sigue sin cumplir 1,000/s ni latencia en la última corrida. El CI completo previo de 0325 está verde y Study de 744 pasó 23/23; la fuente corregida debe repetir todo CI. Se investigan dos uniones de transiciones residuales sin cambiar permisos o presupuesto. No hay aceptación ni ejecución pagada de R16, despliegue o migraciones reales en UAT. El paquete real, la comparación privada y el QA visual siguen pendientes. Los párrafos siguientes conservan resultados históricos.
 
