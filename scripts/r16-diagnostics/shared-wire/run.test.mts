@@ -4,9 +4,10 @@ import {mkdtemp,readFile,stat,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {guard,artifactPath,observationError,verdict,writePrivateArtifact,assertCurrentSeedRelations,currentSeedCounts} from './run.mjs';
-import {fixtures,listeningPreimage,batchSql,batchSizes} from './candidate.mjs';
+import {fixtures,fixtureConfigurations,listeningPreimage,batchSql,batchSizes} from './candidate.mjs';
 import {signalWorkspaceEmbeddingDigestV1 as digest} from '../../../packages/query-engine/src/signal-workspace-embeddings-v1.js';
-import {signalListeningRequestDigestV1,type SignalListeningInputV1} from '../../../packages/query-engine/src/signal-listening-contracts.js';
+import {signalListeningRequestDigestV1,compileSignalListeningSnapshotV1,readSignalListeningSnapshotV1,
+ buildSignalListeningCompiledRequestV1,type SignalListeningInputV1} from '../../../packages/query-engine/src/signal-listening-contracts.js';
 
 const env={GITHUB_ACTIONS:'true',NOISIA_R16_SHARED_WIRE_READONLY:'true',NOISIA_R16_LOCAL_PG_LAB:'r16-benchmark-pg17',GITHUB_RUN_ID:'123',GITHUB_RUN_ATTEMPT:'1',DATABASE_URL:'postgresql://postgres:synthetic@127.0.0.1:51772/noisia_mfp_ci'};
 test('counterfactual cannot open a non-CI, remote, unowned or provider-authenticated target',()=>{
@@ -46,6 +47,23 @@ test('current compiler produces the actual workload base2 and consumer2 identiti
   const input={root_id:value.root_id,input_digest:value.input_digest,question_digests:value.question_digests,scope_basis:value.scope_basis}as SignalListeningInputV1;
   assert.equal(signalListeningRequestDigestV1({id:value.run_id,entity_context_digest:value.entity_context_digest},input,value.request),digest(value));
  }
+});
+test('serialized fixture configuration round-trips through the actual canonical snapshot without changing any wire or interior Unicode',()=>{
+ let questions=0;
+ for(const f of fixtureConfigurations().filter(x=>x.configuration_json!==null)){
+  const stored=JSON.parse(f.configuration_json!),snapshot=compileSignalListeningSnapshotV1(stored);
+  const canonical=readSignalListeningSnapshotV1(snapshot).configuration;
+  assert.deepEqual(stored,canonical,'SQL wire fixture must receive the exact canonical configuration consumed by the request compiler');
+  const rebuilt=buildSignalListeningCompiledRequestV1({text:'synthetic',question_keys:canonical.questions.map(q=>q.key)},snapshot);
+  assert.deepEqual(JSON.parse(f.json),rebuilt.questions);questions+=canonical.questions.length;
+  if(f.id==='unicode'){
+   assert.ok(stored.instructions.includes('é é 😀 "quoted" \\'));
+   assert.ok(stored.instructions.includes('\n')&&stored.instructions.includes('\t'));
+   assert.ok(stored.instructions.includes('\u2028\u2029 inside'));
+   assert.ok(canonical.questions.every(q=>q.text.includes('"á" 😀')));
+  }
+ }
+ assert.equal(questions,8,'the native strict check still covers all eight workload and Unicode wires');
 });
 test('native correctness cases include precision, duplicate-key collapse, fallbacks and heterogeneity without JS numeric parsing',()=>{
  const cases=fixtures();assert.equal(new Set(cases.map(x=>x.id)).size,cases.length);

@@ -1,5 +1,5 @@
 import {buildSignalListeningCompiledRequestV1,compileSignalListeningSnapshotV1,signalListeningQuestionDigestV1,
- SIGNAL_LISTENING_REQUEST_VERSION_V1,type SignalListeningConfigurationV1} from '../../../packages/query-engine/src/signal-listening-contracts.js';
+ validateSignalListeningConfigurationV1,SIGNAL_LISTENING_REQUEST_VERSION_V1,type SignalListeningConfigurationV1} from '../../../packages/query-engine/src/signal-listening-contracts.js';
 import {signalWorkspaceEmbeddingDigestV1 as digest} from '../../../packages/query-engine/src/signal-workspace-embeddings-v1.js';
 import {r16ListeningWorkloadV2} from '../../r16/listening-workload.js';
 
@@ -92,7 +92,9 @@ export function correctnessSql(arm:Arm):string{
 
 function configuration(unicode=false):SignalListeningConfigurationV1{
  const c=r16ListeningWorkloadV2('defined_consumer_second_pass').configuration;
- return unicode?{...c,instructions:c.instructions+' Unicode: é é 😀 "quoted" \\ newline\n tab\t \u2028\u2029',questions:c.questions.map(q=>({...q,text:q.text+' "á" 😀\n'}))}:c;
+ // Store the same canonical configuration the snapshot consumes. Its validator
+ // trims boundaries; Unicode/quotes/control characters inside values survive.
+ return unicode?validateSignalListeningConfigurationV1({...c,instructions:c.instructions+' Unicode: é é 😀 "quoted" \\ newline\n tab\t \u2028\u2029 inside \n',questions:c.questions.map(q=>({...q,text:q.text+' "á" 😀\n'}))}):c;
 }
 const compilers=new Map<boolean,ReturnType<typeof compileSignalListeningSnapshotV1>>();
 /** The current production request compiler and the benchmark's actual base2 /
