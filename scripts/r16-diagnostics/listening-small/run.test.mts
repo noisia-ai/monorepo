@@ -7,7 +7,7 @@ import {join} from 'node:path';
 import {pathToFileURL} from 'node:url';
 import {assertCpuProfilerArgsV1,assertListeningSmallGuardV1,captureCalibrationObservationV1,classificationClockMetadataV1,
   cpuProfileIdentityV1,cpuProfileMetadataV1,cpuProfileRangeV1,createJevHttpTokenWitnessV1,
-  runListeningSmallDiagnosticV1,tokenCalibrationKindFromEnvV1} from './run.mjs';
+  runListeningSmallDiagnosticV1,tokenCalibrationKindFromEnvV1,diagnosticModeV1,assertDiagnosticExecArgsV1} from './run.mjs';
 
 test('diagnostic CLI has no database side effect without explicit run flag',async()=>{
   assert.doesNotThrow(()=>assertListeningSmallGuardV1({},[]));
@@ -162,7 +162,7 @@ test('neutral observer retains hashes and operation timing without SQL, binds or
  assert.ok(serialized.includes(queryHash('SELECT private_value FROM synthetic WHERE credential=$1')!));
  for(const forbidden of ['private_value','credential','secret-bind','never record'])assert.ok(!serialized.includes(forbidden));
  const events=snapshot.events as any[];assert.equal(events.filter(x=>x.kind==='query').length,1);assert.equal(events.find(x=>x.kind==='query').operation,'inputs');
- assert.equal(events.find(x=>x.kind==='query').pid,null);assert.ok(events.every(x=>x.end_ms>=x.start_ms));
+ assert.equal(events.find(x=>x.kind==='query').pid,null);assert.ok(events.filter(x=>x.kind==='query'||x.kind==='store').every(x=>x.end_ms>=x.start_ms));
  const anchor=(snapshot as any).clock_anchor;assert.match(anchor.hrtime_origin_ns,/^\d+$/u);assert.equal(anchor.hrtime_origin_unit,'nanoseconds');
  assert.equal(anchor.event_offset_unit,'milliseconds');assert.ok(anchor.performance_after_ms>=anchor.performance_before_ms);
  assert.equal(anchor.uncertainty_ms,anchor.performance_after_ms-anchor.performance_before_ms);
@@ -765,3 +765,68 @@ test('invalid pre-write observed counters cannot become a transaction-zero basel
  const captured=await captureDmlPlanQueryV1({client,query:async()=>({rowCount:256}),query_hash:'sha256:1e5b3d3837b8c7354d6c25d941461f0d36e55d5cc3d42cbd31c627ba0662859b',batch_size:256,database:'noisia_mfp_ci',role:'postgres',env:process.env});
  assert.deepEqual(captured.observation?.function_stats?.deltas.find(row=>row.signature===signature),{signature,status:'counter_invalid',baseline:null,calls:null,total_time_ms:null,self_time_ms:null});
 }));
+
+
+test('neutral mode is explicit, rejects CPU flags and preserves legacy profiler requirement',()=>{
+ assert.equal(diagnosticModeV1({}),'legacy');assert.equal(diagnosticModeV1({R16_DIAGNOSTIC_MODE:'neutral_only'}),'neutral_only');
+ assert.throws(()=>diagnosticModeV1({R16_DIAGNOSTIC_MODE:'silently-disable'}),/mode_invalid/u);
+ assert.doesNotThrow(()=>assertDiagnosticExecArgsV1('neutral_only',['--import','tsx'],'/unused'));
+ assert.throws(()=>assertDiagnosticExecArgsV1('neutral_only',['--cpu-prof'],'/unused'),/profiler_forbidden/u);
+ assert.throws(()=>assertDiagnosticExecArgsV1('legacy',[],'/unused'),/not_enabled/u);
+});
+
+test('neutral frontier records exact batch/sequence/stream/connect correlation and redacts rows, identifiers and query text',async()=>{
+ const {createListeningObserver}=await import('./observer.mjs');const observer=createListeningObserver({neutral_only:true});
+ let physicalQueries=0,releases=0,resolveConnect:()=>void=()=>{};
+ const connected=new Promise<void>(r=>{resolveConnect=r;});
+ const client={processID:123,async query(){physicalQueries++;return{rows:[{secret:'private returned row'}]};},release(){releases++;},on(){throw Error('must not install auto_explain notice listener');},off(){}};
+ const db=observer.wrapDatabase({async connect(){await connected;return client;},async query(){physicalQueries++;return{rows:[]};}});
+ const store=observer.wrapStore({async markSubmitting(_run:unknown,_rows:unknown[]){const c=await db.connect();try{return await c.query('SELECT sensitive_col FROM secret WHERE id=$1',['private bind']);}finally{c.release();}}});
+ try{
+  observer.beginJob(1);assert.throws(()=>observer.assertStreamObserved(),/hook_unobserved/u);
+  const metrics={in_flight:3,reserved_working_bytes:4096,buffered_responses:2,active_flushes:1,client_id:'private client'};
+  observer.observeStream(metrics);metrics.in_flight=999;
+  const rows=[{id:'private call'},{id:'private call2'}],pending=store.markSubmitting({id:'private run'},rows);
+  resolveConnect();await pending;observer.assertStreamObserved();
+  const snapshot=observer.snapshot(),events=snapshot.events as any[],op=events.find(e=>e.kind==='store'),connect=events.find(e=>e.kind==='connect'),query=events.find(e=>e.kind==='query');
+  assert.equal(op.batch_size,2);assert.equal(op.batch_unit,'argument_rows');assert.equal(op.last_stream_before.in_flight,3);
+  assert.equal(op.sequence,query.store_sequence);assert.equal(op.sequence,connect.store_sequence);assert.equal(connect.pid,123);
+  assert.equal(connect.status,'acquired');assert.ok(connect.wait_ms>=0);assert.ok(connect.start_ms>=op.start_ms&&connect.end_ms<=op.end_ms);
+  assert.equal(physicalQueries,1);assert.equal(releases,1);assert.equal(snapshot.inner_plan_observations.length,0);assert.equal(snapshot.dml_plan_observations.length,0);
+  const wire=JSON.stringify(snapshot);for(const x of ['private','sensitive_col','secret WHERE','client_id'])assert.ok(!wire.includes(x));
+  observer.beginJob(2);assert.equal(observer.snapshot().last_stream,null);assert.throws(()=>observer.assertStreamObserved(),/hook_unobserved/u);
+  observer.observeStream({in_flight:0,reserved_working_bytes:0,buffered_responses:0,active_flushes:0});observer.assertStreamObserved();
+ }finally{await observer.close();}
+});
+
+test('frontier preserves original connect failure and records failure metadata without secrets',async()=>{
+ const {createListeningObserver}=await import('./observer.mjs');const observer=createListeningObserver({neutral_only:true});const primary=new Error('private failure');
+ try{const db=observer.wrapDatabase({async connect(){throw primary;},async query(){return{rows:[]};}});
+  const store=observer.wrapStore({async reserve(){return db.connect();}});await assert.rejects(store.reserve({},[{}]),e=>e===primary);
+  const events=observer.snapshot().events as any[];assert.equal(events.find(x=>x.kind==='connect').status,'failed');
+  assert.equal(events.find(x=>x.kind==='store').status,'failed');assert.ok(!JSON.stringify(events).includes('private failure'));
+ }finally{await observer.close();}
+});
+
+
+test('neutral mode runs a whitelisted mark DML exactly once without plan/stat/GUC instrumentation',async()=>{
+ const target=process.env.R16_DIAGNOSTIC_TARGET_ROOT;assert.ok(target);
+ const source=await readFile(join(target,'infrastructure/db/signal-labeling-runs.ts'),'utf8');
+ const match=source.match(/`(UPDATE signal_labeling_calls SET status='submitting',[\s\S]*?RETURNING id)`\s*,\s*\[run\.id,\s*calls\.map/u);assert.ok(match);
+ const {createListeningObserver,dmlPlanQuerySpec,queryHash}=await import('./observer.mjs');assert.ok(dmlPlanQuerySpec(queryHash(match[1])));
+ const observer=createListeningObserver({neutral_only:true});let calls=0;
+ const client={processID:123,async query(sql:string){calls++;assert.equal(sql,match[1]);return{rows:[]};},on(){throw Error('plan listener forbidden');},off(){}};
+ try{
+  observer.setInnerPlanRootCount(4096);const db=observer.wrapDatabase({async connect(){return client;},query:client.query});const c=await db.connect();
+  await c.query(match[1],['synthetic-run',Array.from({length:256},(_,i)=>`synthetic-${i}`)]);
+  assert.equal(calls,1);assert.equal(observer.snapshot().dml_plan_observations.length,0);assert.equal(observer.snapshot().inner_plan_observations.length,0);
+ }finally{await observer.close();}
+});
+
+test('invalid or missing stream metadata never becomes a complete native stream observation',async()=>{
+ const {createListeningObserver}=await import('./observer.mjs');const observer=createListeningObserver({neutral_only:true});
+ try{observer.beginJob(1);observer.observeStream({in_flight:'1',reserved_working_bytes:0,buffered_responses:0,active_flushes:0});
+  assert.equal(observer.snapshot().invalid_stream_observations,1);assert.equal(observer.snapshot().last_stream,null);
+  assert.throws(()=>observer.assertStreamObserved(),/unobserved_or_invalid/u);
+ }finally{await observer.close();}
+});

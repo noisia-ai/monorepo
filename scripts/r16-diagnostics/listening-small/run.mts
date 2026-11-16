@@ -109,10 +109,19 @@ export function createJevHttpTokenWitnessV1(clock=()=>performance.now(),eventLim
     event_timing_overhead_measured:false,capacity_claim:false};}};
 }
 
+export function diagnosticModeV1(env:NodeJS.ProcessEnv){
+ const mode=env.R16_DIAGNOSTIC_MODE??'legacy';
+ assert.ok(mode==='legacy'||mode==='neutral_only','diagnostic_mode_invalid');return mode;
+}
+export function assertDiagnosticExecArgsV1(mode:string,args:string[],profileDir:string){
+ if(mode==='neutral_only')assert.ok(!args.some(a=>a.startsWith('--cpu-prof')||a.startsWith('--heap')),'neutral_profiler_forbidden');
+ else assertCpuProfilerArgsV1(args,profileDir);
+}
 export function assertListeningSmallGuardV1(env:NodeJS.ProcessEnv,args:string[]){
   if(!args.includes('--run'))return;
   assert.equal(env.GITHUB_ACTIONS,'true','diagnostic_requires_github_actions');
   assert.equal(env.NOISIA_R16_SMALL_DIAGNOSTIC,'true','diagnostic_opt_in_required');
+  diagnosticModeV1(env);
   if(providerSecrets.some(key=>env[key]!==undefined)||Object.keys(env).some(key=>/(?:SONNET|VOYAGE)/u.test(key)&&/(?:API_KEY|TOKEN)/u.test(key)))
     throw Error('provider_credentials_forbidden');
   assert.ok(env.R16_DIAGNOSTIC_TARGET_ROOT,'target_root_required');
@@ -213,12 +222,13 @@ export async function runListeningSmallDiagnosticV1(){
   assert.equal(targetHeadBefore,process.env.R16_DIAGNOSTIC_TARGET_REF_REQUESTED,'target_ref_checkout_mismatch');
   assert.equal(probeHeadBefore,process.env.R16_DIAGNOSTIC_PROBE_REF_REQUESTED,'probe_ref_checkout_mismatch');
   const started=performance.now();
-  assertCpuProfilerArgsV1(process.execArgv,resolve(process.env.R16_DIAGNOSTIC_CPU_PROFILE_DIR!));
+  const neutralOnly=diagnosticModeV1(process.env)==='neutral_only';
+  assertDiagnosticExecArgsV1(neutralOnly?'neutral_only':'legacy',process.execArgv,resolve(process.env.R16_DIAGNOSTIC_CPU_PROFILE_DIR!));
   const monotonicOrigin=process.hrtime.bigint();
   let stage='imports';
   let storageServer:any;
   let httpTokenWitness:ReturnType<typeof createJevHttpTokenWitnessV1>|undefined;
-  const observer=createListeningObserver();
+  const observer=createListeningObserver({neutral_only:neutralOnly});
   observer.setInnerPlanRootCount(ROOT_COUNT);
   try{
     Object.assign(process.env,{NOISIA_R16_LOCAL_PG_LAB:'r16-benchmark-pg17',NOISIA_R16_NATIVE_FIXTURE_PG:'true',
@@ -301,14 +311,16 @@ export async function runListeningSmallDiagnosticV1(){
         let classificationEndPerformanceMs:number|undefined,jobs=0;
         stage='native_jobs';
         while(jobs<100&&rootSet.size<ROOT_COUNT&&performance.now()-started<MAX_MS){
-          const before=calibrations.length;
+          const before=calibrations.length;observer.beginJob(jobs+1);
           const outcome=await jobModule.signalListeningJevJobV1(prepared.run_id,{database:db,store,execution,storage,
             preflight:()=>preflightModule.assertR16ListeningSyntheticPreflightV1({storage,storage_url:storageServer.base_url,
               configuration:workload.configuration,configuration_digest:workload.configuration_digest,env:process.env}),
             calibrated_provider_factory:providerFactory,
+            ...(neutralOnly?{observe_stream:(metrics:unknown)=>observer.observeStream(metrics)}:{}),
             observe_calibration:(event:any)=>calibrations.push(captureCalibrationObservationV1(event))});
           jobs++;
           if(['failed','outcome_unknown','lease_lost'].includes(outcome.status))throw Error('native_job_failed');
+          if(neutralOnly)observer.assertStreamObserved();
           const resolved=await census.readResolvedRootIds();resolved.forEach((id:string)=>rootSet.add(id));
           if(performance.now()-started>MAX_MS)throw Error('diagnostic_timeout');
           if(calibrations.length===before&&outcome.status==='idle')throw Error('native_job_no_progress');
@@ -369,16 +381,17 @@ export async function runListeningSmallDiagnosticV1(){
             classification_start_performance_ms:startedProcessing,classification_end_performance_ms:classificationEndPerformanceMs,
             classification_start_hrtime_ns:classificationStartHrtime.toString(),classification_end_hrtime_ns:classificationEndHrtime!.toString(),
             warmups:warmups.length,warmup_phases:warmupPhases,calibrations,commit_batch_count:commits.length},
-          cpu_profile:cpuProfileMetadataV1({main_pid:process.pid,sampler_pid:observerSnapshot.sampler_process_pid,
+          diagnostic_mode:neutralOnly?'neutral_only':'legacy',
+          cpu_profile:neutralOnly?{enabled:false,reason:'neutral_only',classification_clock:classificationClock,capacity_claim:false}:cpuProfileMetadataV1({main_pid:process.pid,sampler_pid:observerSnapshot.sampler_process_pid,
             clock:classificationClock,exec_args:process.execArgv,
             profile_dir:resolve(process.env.R16_DIAGNOSTIC_CPU_PROFILE_DIR!)}),
           observed_http_latency:latencySummary,storage:storageServer.metrics(),sql_profile:profile.snapshot(),
           token_budget_http_witness:httpTokenWitness.snapshot(),
-          inner_plan_capture:{diagnostic_only:true,threshold_roots:1024,max_captures_per_query_hash:INNER_PLAN_CAPTURE_ORDINALS.length,capture_ordinals:INNER_PLAN_CAPTURE_ORDINALS,min_duration_ms:INNER_PLAN_MIN_DURATION_MS,
+          inner_plan_capture:{enabled:!neutralOnly,disabled_reason:neutralOnly?'neutral_only':null,diagnostic_only:true,threshold_roots:1024,max_captures_per_query_hash:INNER_PLAN_CAPTURE_ORDINALS.length,capture_ordinals:INNER_PLAN_CAPTURE_ORDINALS,min_duration_ms:INNER_PLAN_MIN_DURATION_MS,
             plans_below_min_duration_captured:false,observations:observerSnapshot.inner_plan_observations},
-          dml_plan_capture:{diagnostic_only:true,opt_in_required:true,min_batch_size:DML_PLAN_MIN_BATCH,max_captures_per_query_hash:1,min_duration_ms:DML_PLAN_MIN_DURATION_MS,
+          dml_plan_capture:{enabled:!neutralOnly,disabled_reason:neutralOnly?'neutral_only':null,diagnostic_only:true,opt_in_required:true,min_batch_size:DML_PLAN_MIN_BATCH,max_captures_per_query_hash:1,min_duration_ms:DML_PLAN_MIN_DURATION_MS,
             plans_below_min_duration_captured:false,max_plans_per_capture:DML_PLAN_MAX_PLANS,trigger_names_allowlisted:true,raw_query_or_values_recorded:false,
-            analyze_timing_enabled:true,analyze_timing_overhead_measured:false,capacity_claim:false,
+            analyze_timing_enabled:!neutralOnly,analyze_timing_overhead_measured:false,capacity_claim:false,
             observations:observerSnapshot.dml_plan_observations},
           root_census_sha256:sha([...rootSet].sort().join('\n')),
           serving_question_count:serving.length,total_wall_ms:performance.now()-started};
@@ -390,19 +403,21 @@ export async function runListeningSmallDiagnosticV1(){
     process.stdout.write(JSON.stringify({status:'complete',diagnostic_only:true,h1_accepted:false,artifact:'artifacts/r16-listening-small/result.json'})+'\n');
     return result;
   }catch(error){
-    const observerSnapshot=await finishListeningObserver(observer);
+    let observerSnapshot:any;
+    try{observerSnapshot=await finishListeningObserver(observer);}catch(cleanupError){observerSnapshot={...observer.snapshot(),cleanup_error:safeError(cleanupError)};}
     const failure={contract_version:'r16-listening-small-diagnostic-v1',diagnostic_only:true,h1_accepted:false,
       status:'failed',stage,code:safeError(error),total_wall_ms:performance.now()-started,process_id:process.pid,
-      cpu_profile:{enabled:true,profiler:'node_cpu_prof',interval_us:1000,main_process_pid:process.pid,
+      diagnostic_mode:neutralOnly?'neutral_only':'legacy',
+      cpu_profile:neutralOnly?{enabled:false,reason:'neutral_only',capacity_claim:false}:{enabled:true,profiler:'node_cpu_prof',interval_us:1000,main_process_pid:process.pid,
         sampler_process_pid:observerSnapshot.sampler_process_pid??null,output:'pid_scoped_cpu_profiles_only',heap_profile:false,
         source_text_embedded:false,overhead_measured:false,capacity_claim:false},observer:observerSnapshot,
       token_budget_http_witness:httpTokenWitness?.snapshot()??{contract_version:'r16-jev-http-token-witness-v1',diagnostic_only:true,
         h1_accepted:false,status:'not_started',capacity_claim:false,event_timing_overhead_measured:false},
-      inner_plan_capture:{diagnostic_only:true,threshold_roots:1024,max_captures_per_query_hash:INNER_PLAN_CAPTURE_ORDINALS.length,capture_ordinals:INNER_PLAN_CAPTURE_ORDINALS,min_duration_ms:INNER_PLAN_MIN_DURATION_MS,
+      inner_plan_capture:{enabled:!neutralOnly,disabled_reason:neutralOnly?'neutral_only':null,diagnostic_only:true,threshold_roots:1024,max_captures_per_query_hash:INNER_PLAN_CAPTURE_ORDINALS.length,capture_ordinals:INNER_PLAN_CAPTURE_ORDINALS,min_duration_ms:INNER_PLAN_MIN_DURATION_MS,
         plans_below_min_duration_captured:false,observations:observerSnapshot.inner_plan_observations},
-      dml_plan_capture:{diagnostic_only:true,opt_in_required:true,min_batch_size:DML_PLAN_MIN_BATCH,max_captures_per_query_hash:1,min_duration_ms:DML_PLAN_MIN_DURATION_MS,
+      dml_plan_capture:{enabled:!neutralOnly,disabled_reason:neutralOnly?'neutral_only':null,diagnostic_only:true,opt_in_required:true,min_batch_size:DML_PLAN_MIN_BATCH,max_captures_per_query_hash:1,min_duration_ms:DML_PLAN_MIN_DURATION_MS,
         plans_below_min_duration_captured:false,max_plans_per_capture:DML_PLAN_MAX_PLANS,trigger_names_allowlisted:true,raw_query_or_values_recorded:false,
-        analyze_timing_enabled:true,analyze_timing_overhead_measured:false,capacity_claim:false,
+        analyze_timing_enabled:!neutralOnly,analyze_timing_overhead_measured:false,capacity_claim:false,
         observations:observerSnapshot.dml_plan_observations}};
     await atomicJson(artifact,failure).catch(()=>undefined);
     await storageServer?.close().catch(()=>undefined);

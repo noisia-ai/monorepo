@@ -1,8 +1,18 @@
 name: R16 listening small diagnostic
-run-name: R16 diagnostic-only 4096 roots (${{ github.event_name }})
+run-name: R16 diagnostic-only 4096 roots (${{ inputs.mode || 'legacy' }})
 
 on:
   workflow_dispatch:
+    inputs:
+      mode:
+        type: choice
+        options: [legacy, neutral_only]
+        default: legacy
+        description: Neutral timing disables CPU and all auto_explain captures
+      target_ref:
+        type: string
+        required: false
+        description: Exact 40-character product commit with Listening stream hook (neutral mode)
   pull_request:
     paths:
       - '.github/workflows/r16-listening-small-diagnostic.yml'
@@ -23,18 +33,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - label: baseline-32f
-            target_ref: 32f40ec89a21da90235c3589a4820ae05dedf6fc
-          - label: candidate
-            # github.sha is the exact PR merge ref (or manual dispatch ref), recorded in each result.
-            # This diagnostic does not certify that the candidate contains the reviewed A/B source.
-            target_ref: ${{ github.sha }}
+        label: ${{ inputs.mode == 'neutral_only' && fromJSON('["candidate"]') || fromJSON('["baseline-32f","candidate"]') }}
     steps:
       - name: Checkout benchmark target
         uses: actions/checkout@v4
         with:
-          ref: ${{ matrix.target_ref }}
+          ref: ${{ matrix.label == 'candidate' && (inputs.target_ref || github.sha) || '32f40ec89a21da90235c3589a4820ae05dedf6fc' }}
           path: target
 
       - name: Checkout diagnostic harness only
@@ -69,6 +73,12 @@ jobs:
           R16_DIAGNOSTIC_TARGET_ROOT: ${{ github.workspace }}/target
         run: corepack pnpm exec tsx --test ../probe/scripts/r16-diagnostics/listening-small/run.test.mts
 
+      - name: Validate neutral target binding
+        if: inputs.mode == 'neutral_only'
+        env:
+          TARGET_REF: ${{ inputs.target_ref }}
+        run: test "${#TARGET_REF}" = 40 && [[ "$TARGET_REF" =~ ^[0-9a-f]{40}$ ]]
+
       - name: Allocate owned PG17 and Redis lab
         working-directory: target
         env:
@@ -94,7 +104,8 @@ jobs:
           NOISIA_R16_LOCAL_PG_LAB: r16-benchmark-pg17
           NOISIA_R16_NATIVE_FIXTURE_PG: 'true'
           NOISIA_R16_SMALL_DIAGNOSTIC: 'true'
-          NOISIA_R16_LISTENING_DML_PLAN_PG: 'true'
+          NOISIA_R16_LISTENING_DML_PLAN_PG: ${{ inputs.mode == 'neutral_only' && 'false' || 'true' }}
+          R16_DIAGNOSTIC_MODE: ${{ inputs.mode || 'legacy' }}
           NOISIA_DB_SMOKE_ALLOW_REMOTE: 'false'
           NOISIA_DB_SMOKE_RESET_SCHEMA: 'true'
           NOISIA_DB_SMOKE_EMULATE_SUPABASE_ROLES: 'true'
@@ -113,7 +124,7 @@ jobs:
           R16_READER_SEMANTICS_TAP: ${{ github.workspace }}/artifacts/r16-listening-small/listening-reader-semantics.tap
           R16_INITIAL_RECOVERY_TAP: ${{ github.workspace }}/artifacts/r16-listening-small/listening-initial-recovery.tap
           R16_DIAGNOSTIC_TARGET_LABEL: ${{ matrix.label }}
-          R16_DIAGNOSTIC_TARGET_REF_REQUESTED: ${{ matrix.target_ref }}
+          R16_DIAGNOSTIC_TARGET_REF_REQUESTED: ${{ matrix.label == 'candidate' && (inputs.target_ref || github.sha) || '32f40ec89a21da90235c3589a4820ae05dedf6fc' }}
           R16_DIAGNOSTIC_PROBE_REF_REQUESTED: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           set -euo pipefail
@@ -252,6 +263,10 @@ jobs:
           process.stdout.write('Listening initial recovery: pass=2 fail=0 (other tests intentionally unselected)\n');
           NODE
           fi
+          if [ "$R16_DIAGNOSTIC_MODE" = neutral_only ]; then
+            timeout 10m corepack pnpm exec node --import tsx \
+              ../probe/scripts/r16-diagnostics/listening-small/run.mts --run
+          else
           mkdir -p "$R16_DIAGNOSTIC_CPU_PROFILE_DIR"
           timeout 10m corepack pnpm exec node --cpu-prof --cpu-prof-interval=1000 \
             --cpu-prof-dir="$R16_DIAGNOSTIC_CPU_PROFILE_DIR" --import tsx \
@@ -302,9 +317,10 @@ jobs:
           }, null, 2) + '\n', {mode: 0o600});
           process.stdout.write(`bounded CPU profiles: count=${profiles.length} total_bytes=${total}\n`);
           NODE
+          fi
 
       - name: Upload CPU profiles
-        if: always() && steps.native_diagnostic.outcome == 'success'
+        if: always() && steps.native_diagnostic.outcome == 'success' && inputs.mode != 'neutral_only'
         uses: actions/upload-artifact@v4
         with:
           name: r16-listening-small-cpu-profile-${{ matrix.label }}-${{ github.run_id }}

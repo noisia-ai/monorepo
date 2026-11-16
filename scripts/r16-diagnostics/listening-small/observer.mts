@@ -490,9 +490,14 @@ export function projectObserverTimeToPerformanceRangeV1(anchor:{performance_befo
   end_performance_ms:anchor.performance_after_ms+eventOffsetMs,
   uncertainty_ms:anchor.performance_after_ms-anchor.performance_before_ms};
 }
-export function createListeningObserver(){
+export function createListeningObserver(options:{neutral_only?:boolean}={}){
  const performanceBefore=performance.now(),origin=process.hrtime.bigint(),performanceAfter=performance.now();
- const performanceOrigin=performanceBefore,now=()=>Number(process.hrtime.bigint()-origin)/1e6,events=boundedEvents(),scope=new AsyncLocalStorage<string>();
+ const performanceOrigin=performanceBefore,now=()=>Number(process.hrtime.bigint()-origin)/1e6,events=boundedEvents(),scope=new AsyncLocalStorage<{operation:string;sequence:number;job:number}>();
+ let storeSequence=0,querySequence=0,streamSequence=0,jobSequence=0,jobStreamStart=0,invalidStream=0;
+ type StreamState={sequence:number;at_ms:number;job:number;in_flight:number;reserved_working_bytes:number;buffered_responses:number;active_flushes:number};
+ let lastStream:StreamState|null=null;
+ const activeStores=new Map<string,number>();
+ const streamSnapshot=()=>lastStream?{...lastStream}:null;
  const clockAnchor={hrtime_origin_ns:origin.toString(),hrtime_origin_unit:'nanoseconds',event_offset_unit:'milliseconds',
   performance_axis:'performance.now milliseconds since runner process start',performance_time_origin_unix_ms:performance.timeOrigin,
   performance_before_ms:performanceBefore,performance_after_ms:performanceAfter,
@@ -504,25 +509,51 @@ export function createListeningObserver(){
  let planRootCount=0;const planQueryOrdinals=new Map<string,number>(),planObservations:unknown[]=[];
  const dmlPlanCounts=new Map<string,number>(),dmlPlanObservations:unknown[]=[];
  function pid(value:any){if(Number.isSafeInteger(value?.processID)&&value.processID>0&&!pids.has(value.processID)){pids.add(value.processID);if(child?.connected)child.send({kind:'pids',pids:[...pids]},()=>{});}}
- function query(owner:any){return async(...args:any[])=>{pid(owner);const start=now(),op=scope.getStore()??'unlabeled',hash=queryHash(args[0]);
+ function query(owner:any){return async(...args:any[])=>{pid(owner);const start=now(),context=scope.getStore(),op=context?.operation??'unlabeled',job=context?.job??jobSequence,sequence=++querySequence,hash=queryHash(args[0]);
   const label=innerPlanQueryLabel(hash),queryOrdinal=nextInnerPlanQueryOrdinalV1(hash,label!==null&&planRootCount>=1024,planQueryOrdinals);try{
   const dmlSpec=dmlPlanQuerySpec(hash),dmlBatch=dmlSpec?dmlPlanBatchSize(hash,args):null;
-  if(dmlSpec&&dmlBatch!==null&&dmlBatch>=DML_PLAN_MIN_BATCH&&(dmlPlanCounts.get(hash!)??0)<1
+  if(!options.neutral_only&&dmlSpec&&dmlBatch!==null&&dmlBatch>=DML_PLAN_MIN_BATCH&&(dmlPlanCounts.get(hash!)??0)<1
    &&dmlPlanCaptureEnvironmentAllowed(process.env)&&typeof owner.on==='function'&&typeof owner.off==='function'){
    dmlPlanCounts.set(hash!,1);
    const captured=await captureDmlPlanQueryV1({client:owner,query:()=>owner.query(...args),query_hash:hash!,batch_size:dmlBatch,database:'noisia_mfp_ci',role:'postgres',env:process.env,query_values:args[1]});
    if(captured.observation)dmlPlanObservations.push(captured.observation);return captured.result;
   }
-  if(label&&shouldCaptureInnerPlanOrdinalV1(queryOrdinal)&&typeof owner.on==='function'&&typeof owner.off==='function'){
+  if(!options.neutral_only&&label&&shouldCaptureInnerPlanOrdinalV1(queryOrdinal)&&typeof owner.on==='function'&&typeof owner.off==='function'){
    const captured=await captureInnerPlanQueryV1({client:owner,query:()=>owner.query(...args),query_hash:hash!,query_ordinal:queryOrdinal!,root_count:planRootCount,database:'noisia_mfp_ci',role:'postgres'});
    if(captured.observation)planObservations.push(captured.observation);return captured.result;
   }
   return await owner.query(...args);
- }finally{events.push({kind:'query',operation:op,hash,pid:Number.isSafeInteger(owner.processID)?owner.processID:null,
+ }finally{events.push({kind:'query',operation:op,sequence,store_sequence:context?.sequence??null,job,hash,pid:Number.isSafeInteger(owner.processID)?owner.processID:null,
   ...(queryOrdinal===null?{}:{query_ordinal:queryOrdinal}),start_ms:start,end_ms:now()});}};}
  return{
- wrapDatabase(database:any){database.on?.('acquire',pid);detach.push(()=>database.off?.('acquire',pid));return new Proxy(database,{get(target,key){if(key==='query')return query(target);if(key==='connect')return async()=>{const c=await target.connect();pid(c);return new Proxy(c,{get(t,k){if(k==='query')return query(t);const v=Reflect.get(t,k);return typeof v==='function'?v.bind(t):v;}});};const v=Reflect.get(target,key);return typeof v==='function'?v.bind(target):v;}});},
- wrapStore(store:any){return new Proxy(store,{get(t,k){const value=Reflect.get(t,k);if(typeof k!=='string'||!STORE_OPERATIONS.has(k)||typeof value!=='function')return typeof value==='function'?value.bind(t):value;return async(...args:any[])=>{const operation=k==='calls'&&Array.isArray(args[1]?.call_ids)?'hydrate':k;const start=now();try{return await scope.run(operation,()=>value.apply(t,args));}finally{events.push({kind:'store',operation,start_ms:start,end_ms:now()});}};}});},
+ wrapDatabase(database:any){database.on?.('acquire',pid);detach.push(()=>database.off?.('acquire',pid));return new Proxy(database,{get(target,key){if(key==='query')return query(target);if(key==='connect')return async()=>{
+ const start=now(),context=scope.getStore(),job=context?.job??jobSequence;let c:any,status='failed';
+ try{c=await target.connect();pid(c);status='acquired';return new Proxy(c,{get(t,k){if(k==='query')return query(t);const v=Reflect.get(t,k);return typeof v==='function'?v.bind(t):v;}});}
+ finally{const end=now();events.push({kind:'connect',operation:context?.operation??'unlabeled',store_sequence:context?.sequence??null,job,start_ms:start,end_ms:end,wait_ms:end-start,wait_scope:'connect_promise_wall_including_connection_setup',status,pid:Number.isSafeInteger(c?.processID)?c.processID:null});}
+ };const v=Reflect.get(target,key);return typeof v==='function'?v.bind(target):v;}});},
+ wrapStore(store:any){return new Proxy(store,{get(t,k){const value=Reflect.get(t,k);if(typeof k!=='string'||!STORE_OPERATIONS.has(k)||typeof value!=='function')return typeof value==='function'?value.bind(t):value;return async(...args:any[])=>{
+ const operation=k==='calls'&&Array.isArray(args[1]?.call_ids)?'hydrate':k,sequence=++storeSequence,job=jobSequence,start=now(),streamBefore=streamSnapshot();
+ const active=(activeStores.get(operation)??0)+1;activeStores.set(operation,active);
+ let result:unknown,status='failed';
+ const suppliedBatch=Array.isArray(args[1])?args[1].length:null;
+ events.push({kind:'store_start',operation,sequence,job,start_ms:start,batch_size:suppliedBatch,active_same_operation:active,last_stream:streamBefore});
+ try{result=await scope.run({operation,sequence,job},()=>value.apply(t,args));status='complete';return result;}
+ finally{
+  activeStores.set(operation,(activeStores.get(operation)??1)-1);
+  const returnedBatch=(operation==='inputs'||operation==='calls'||operation==='hydrate')&&Array.isArray(result)?result.length:null;
+  events.push({kind:'store',operation,sequence,job,start_ms:start,end_ms:now(),status,batch_size:returnedBatch??suppliedBatch,
+   batch_unit:returnedBatch!==null?'returned_rows':suppliedBatch!==null?'argument_rows':'unavailable',active_same_operation_at_start:active,last_stream_before:streamBefore,last_stream_after:streamSnapshot()});
+ }
+ };}});},
+ beginJob(sequence:number){if(!Number.isSafeInteger(sequence)||sequence<1)throw Error('observer_job_sequence_invalid');jobSequence=sequence;jobStreamStart=streamSequence;lastStream=null;},
+ observeStream(metrics:unknown){
+  const m=metrics as Record<string,unknown>|null,keys=['in_flight','reserved_working_bytes','buffered_responses','active_flushes'] as const;
+  if(!m||keys.some(k=>!Number.isSafeInteger(m[k])||Number(m[k])<0)){invalidStream++;return;}
+  lastStream={sequence:++streamSequence,at_ms:now(),job:jobSequence,in_flight:Number(m.in_flight),reserved_working_bytes:Number(m.reserved_working_bytes),buffered_responses:Number(m.buffered_responses),active_flushes:Number(m.active_flushes)};
+  events.push({kind:'stream',...lastStream});
+ },
+ assertStreamObserved(){if(streamSequence<=jobStreamStart||invalidStream)throw Error('listening_stream_hook_unobserved_or_invalid');},
+
  async startSampler(args:{target:string;url:string;database:string}){
   if(process.env.GITHUB_ACTIONS!=='true'||process.env.NOISIA_R16_SMALL_DIAGNOSTIC!=='true')throw Error('observer_sampler_ci_only');
   const url=new URL(args.url);if(url.hostname!=='127.0.0.1'||url.protocol!=='postgresql:'||!/^noisia_[a-z0-9_]+$/u.test(args.database))throw Error('observer_sampler_target_invalid');
@@ -531,7 +562,7 @@ export function createListeningObserver(){
   child.on('error',()=>{samplerStatus='failed';});child.on('exit',()=>{if(!closing)samplerStatus='exited_early';});child.send({kind:'init',...args,origin:String(origin),pids:[...pids]},()=>{});
  },
  setInnerPlanRootCount(value:number){if(!Number.isSafeInteger(value)||value<0)throw Error('observer_invalid_root_count');planRootCount=value;},
- snapshot(){return{contract_version:'r16-neutral-observer-v1',...events.snapshot(),clock_anchor:clockAnchor,sampler_status:samplerStatus,sampler_process_pid:child?.pid??null,fixture_pids:[...pids],inner_plan_observations:[...planObservations],
+ snapshot(){return{contract_version:'r16-neutral-observer-v1',...events.snapshot(),clock_anchor:clockAnchor,sampler_status:samplerStatus,sampler_process_pid:child?.pid??null,fixture_pids:[...pids],neutral_only:options.neutral_only===true,connection_observation_scope:'explicit database.connect only; Pool.query internal checkout unobserved',stream_metrics_source:'native observe_stream; working bytes are reservation, not RSS',stream_observations:streamSequence,invalid_stream_observations:invalidStream,last_stream:streamSnapshot(),inner_plan_observations:[...planObservations],
   dml_plan_observations:[...dmlPlanObservations],event_loop_delay_ms:{min:delay.count?delay.min/1e6:0,max:delay.max/1e6,mean:delay.count?delay.mean/1e6:0,p50:delay.percentile(50)/1e6,p99:delay.percentile(99)/1e6},diagnostic_only:true,h1_accepted:false};},
  async close(){closing=true;clearInterval(heartbeat);gc.disconnect();delay.disable();for(const remove of detach)remove();if(child)await closeOwnedChild(child);},
  };
