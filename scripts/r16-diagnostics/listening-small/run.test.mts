@@ -155,7 +155,7 @@ test('calibration observations preserve native phase shapes from the query-engin
 });
 
 test('neutral observer retains hashes and operation timing without SQL, binds or returned rows',async()=>{
- const {createListeningObserver,queryHash}=await import('./observer.mjs');const observer=createListeningObserver();
+ const {createListeningObserver,projectObserverTimeToPerformanceRangeV1,queryHash}=await import('./observer.mjs');const observer=createListeningObserver();
  try{const db=observer.wrapDatabase({async query(){return{rows:[{secret:'never record'}]};}});
  const store=observer.wrapStore({async inputs(){return db.query('SELECT private_value FROM synthetic WHERE credential=$1',['secret-bind']);}});
  await store.inputs();const snapshot=observer.snapshot(),serialized=JSON.stringify(snapshot);
@@ -163,7 +163,22 @@ test('neutral observer retains hashes and operation timing without SQL, binds or
  for(const forbidden of ['private_value','credential','secret-bind','never record'])assert.ok(!serialized.includes(forbidden));
  const events=snapshot.events as any[];assert.equal(events.filter(x=>x.kind==='query').length,1);assert.equal(events.find(x=>x.kind==='query').operation,'inputs');
  assert.equal(events.find(x=>x.kind==='query').pid,null);assert.ok(events.every(x=>x.end_ms>=x.start_ms));
+ const anchor=(snapshot as any).clock_anchor;assert.match(anchor.hrtime_origin_ns,/^\d+$/u);assert.equal(anchor.hrtime_origin_unit,'nanoseconds');
+ assert.equal(anchor.event_offset_unit,'milliseconds');assert.ok(anchor.performance_after_ms>=anchor.performance_before_ms);
+ assert.equal(anchor.uncertainty_ms,anchor.performance_after_ms-anchor.performance_before_ms);
+ assert.equal(anchor.projection,'[performance_before_ms + event_offset_ms, performance_after_ms + event_offset_ms]');
+ const event=events.find(x=>x.kind==='query'),projected=projectObserverTimeToPerformanceRangeV1(anchor,event.start_ms);
+ assert.ok(projected.end_performance_ms>=projected.start_performance_ms);
+ assert.equal(projected.uncertainty_ms,anchor.uncertainty_ms);
  }finally{await observer.close();}
+});
+
+test('observer clock projection preserves a bounded interval without fabricating an offset',async()=>{
+ const {projectObserverTimeToPerformanceRangeV1}=await import('./observer.mjs');
+ assert.deepEqual(projectObserverTimeToPerformanceRangeV1({performance_before_ms:100.25,performance_after_ms:100.5},25),
+  {start_performance_ms:125.25,end_performance_ms:125.5,uncertainty_ms:.25});
+ assert.throws(()=>projectObserverTimeToPerformanceRangeV1({performance_before_ms:100.5,performance_after_ms:100.25},25),/anchor_invalid/u);
+ assert.throws(()=>projectObserverTimeToPerformanceRangeV1({performance_before_ms:100,performance_after_ms:101},-1),/anchor_invalid/u);
 });
 
 test('neutral events are bounded and wait rows expose only allowed metadata',async()=>{

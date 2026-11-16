@@ -464,8 +464,21 @@ export async function closeOwnedChild(child:ChildProcess){
  if(child.connected)child.send({kind:'stop'},()=>{});else child.kill('SIGTERM');});
 }
 export async function finishListeningObserver<T>(observer:{close():Promise<void>;snapshot():T}){await observer.close();return observer.snapshot();}
+export function projectObserverTimeToPerformanceRangeV1(anchor:{performance_before_ms:number;performance_after_ms:number},eventOffsetMs:number){
+ if(!Number.isFinite(anchor.performance_before_ms)||!Number.isFinite(anchor.performance_after_ms)
+  ||anchor.performance_after_ms<anchor.performance_before_ms||!Number.isFinite(eventOffsetMs)||eventOffsetMs<0)
+  throw Error('observer_clock_anchor_invalid');
+ return{start_performance_ms:anchor.performance_before_ms+eventOffsetMs,
+  end_performance_ms:anchor.performance_after_ms+eventOffsetMs,
+  uncertainty_ms:anchor.performance_after_ms-anchor.performance_before_ms};
+}
 export function createListeningObserver(){
- const performanceOrigin=performance.now(),origin=process.hrtime.bigint(),now=()=>Number(process.hrtime.bigint()-origin)/1e6,events=boundedEvents(),scope=new AsyncLocalStorage<string>();
+ const performanceBefore=performance.now(),origin=process.hrtime.bigint(),performanceAfter=performance.now();
+ const performanceOrigin=performanceBefore,now=()=>Number(process.hrtime.bigint()-origin)/1e6,events=boundedEvents(),scope=new AsyncLocalStorage<string>();
+ const clockAnchor={hrtime_origin_ns:origin.toString(),hrtime_origin_unit:'nanoseconds',event_offset_unit:'milliseconds',
+  performance_axis:'performance.now milliseconds since runner process start',performance_time_origin_unix_ms:performance.timeOrigin,
+  performance_before_ms:performanceBefore,performance_after_ms:performanceAfter,
+  uncertainty_ms:performanceAfter-performanceBefore,projection:'[performance_before_ms + event_offset_ms, performance_after_ms + event_offset_ms]'};
  const delay=monitorEventLoopDelay({resolution:20});delay.enable();
  let previous=now();const heartbeat=setInterval(()=>{const at=now();events.push({kind:'heartbeat',at_ms:at,gap_ms:at-previous,heap:process.memoryUsage(),resource:process.resourceUsage()});previous=at;},250);
  const gc=new PerformanceObserver(list=>{for(const entry of list.getEntries())events.push({kind:'gc',at_ms:now(),start_ms:entry.startTime-performanceOrigin,end_ms:entry.startTime-performanceOrigin+entry.duration,duration_ms:entry.duration,gc_kind:(entry as any).detail?.kind??null});});gc.observe({entryTypes:['gc']});
@@ -500,7 +513,7 @@ export function createListeningObserver(){
   child.on('error',()=>{samplerStatus='failed';});child.on('exit',()=>{if(!closing)samplerStatus='exited_early';});child.send({kind:'init',...args,origin:String(origin),pids:[...pids]},()=>{});
  },
  setInnerPlanRootCount(value:number){if(!Number.isSafeInteger(value)||value<0)throw Error('observer_invalid_root_count');planRootCount=value;},
- snapshot(){return{contract_version:'r16-neutral-observer-v1',...events.snapshot(),sampler_status:samplerStatus,sampler_process_pid:child?.pid??null,fixture_pids:[...pids],inner_plan_observations:[...planObservations],
+ snapshot(){return{contract_version:'r16-neutral-observer-v1',...events.snapshot(),clock_anchor:clockAnchor,sampler_status:samplerStatus,sampler_process_pid:child?.pid??null,fixture_pids:[...pids],inner_plan_observations:[...planObservations],
   dml_plan_observations:[...dmlPlanObservations],event_loop_delay_ms:{min:delay.count?delay.min/1e6:0,max:delay.max/1e6,mean:delay.count?delay.mean/1e6:0,p50:delay.percentile(50)/1e6,p99:delay.percentile(99)/1e6},diagnostic_only:true,h1_accepted:false};},
  async close(){closing=true;clearInterval(heartbeat);gc.disconnect();delay.disable();for(const remove of detach)remove();if(child)await closeOwnedChild(child);},
  };
