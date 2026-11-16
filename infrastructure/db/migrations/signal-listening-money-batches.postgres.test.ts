@@ -515,7 +515,7 @@ test('RAW-backed settlement recovery and unsent requeue preserve Listening money
   THEN COALESCE(settled_micro_usd,0)+terminal_exposure_micro_usd ELSE reserved_micro_usd END),0)::text n
   FROM signal_labeling_calls WHERE run_id=$1`,[f.run.id])).rows[0].n);
  assert.equal(await exposure(),3000n);
- await f.store.markSubmitted(f.run,[calls[0]!],null);await f.store.markFailed(f.run,[calls[1]!],true);
+ await f.store.markFailed(f.run,[calls[1]!],true);
  await statusMoney(['0','2000','1000']);
  const responses=calls.slice(0,2).map(call=>{
   const input=call.inputs[0]!,request=buildSignalListeningJevRequestV1(input,f.configuration);
@@ -526,6 +526,8 @@ test('RAW-backed settlement recovery and unsent requeue preserve Listening money
    result:mapSignalListeningJevResponseV1(input,f.run.context,f.configuration,response)};
  });
  await f.store.persistRawPage(f.run,responses);
+ // Page membership is admitted from submitting/unknown, before submitted.
+ await f.store.markSubmitted(f.run,[calls[0]!],null);await statusMoney(['0','2000','1000']);
  let lost=false;
  // settlePage is one native autocommit UPDATE, so its real acknowledgement
  // boundary is database.query completion rather than an explicit COMMIT call.
