@@ -962,10 +962,26 @@ jobs:
           done
           printf 'R16_STATEMENT_SHARED_WIRE_SOURCE_SHA=%s\n' "$source_sha" >> "$GITHUB_ENV"
           printf 'source_sha=%s\n' "$source_sha" >> "$GITHUB_OUTPUT"
-          if [ -f infrastructure/db/migrations/signal-listening-statement-shared-wire.postgres.test.ts ]; then
+          shared_wire_files=(
+            infrastructure/db/migrations/0330_signal_listening_statement_shared_wire.sql
+            infrastructure/db/migrations/signal-listening-statement-shared-wire.oracle.ts
+            infrastructure/db/migrations/signal-listening-statement-shared-wire.fixture.ts
+            infrastructure/db/migrations/signal-listening-statement-shared-wire.postgres.test.ts
+            infrastructure/db/migrations/signal-listening-statement-shared-wire.test.ts
+          )
+          shared_wire_present=0
+          for source_file in "${shared_wire_files[@]}"; do
+            if [ -f "$source_file" ]; then
+              shared_wire_present=$((shared_wire_present + 1))
+            fi
+          done
+          if [ "$shared_wire_present" -eq 0 ]; then
+            printf 'source_present=false\n' >> "$GITHUB_OUTPUT"
+          elif [ "$shared_wire_present" -eq "${#shared_wire_files[@]}" ]; then
             printf 'source_present=true\n' >> "$GITHUB_OUTPUT"
           else
-            printf 'source_present=false\n' >> "$GITHUB_OUTPUT"
+            echo '::error::statement shared-wire source files are incomplete; refusing a green no-op'
+            exit 1
           fi
       - uses: pnpm/action-setup@v4
         if: ${{ steps.seal.outputs.source_present == 'true' }}
