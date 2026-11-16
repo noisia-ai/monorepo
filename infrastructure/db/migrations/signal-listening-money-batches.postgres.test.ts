@@ -21,6 +21,8 @@ import {withDiscoveryAdvanceFixtureV1} from './signal-listening-discovery-advanc
 import {createSignalListeningDiscoveryAdvanceStoreV1} from '../signal-listening-discovery-advance';
 import {activateSignalListeningServingSnapshotV1,lockSignalListeningDiscoveryPolicyWithClientV1,type ListeningDiscoveryRoundV1} from '../signal-listening-discovery-money';
 
+import {anchorListeningStatementOracleParametersV1} from './signal-listening-statement-validator.oracle';
+
 const enabled=process.env.NOISIA_R16_LISTENING_MONEY_BATCHES_PG==='true';
 type NativeFixture={database:Parameters<typeof createSignalListeningStoreV1>[0]['database'];
  run:LabelingRunV1;inputs:SignalListeningInputV1[];configuration:ReturnType<typeof signalListeningBaseTemplateV1>;
@@ -178,9 +180,9 @@ test('selected materialization and full join match old validators and atomically
    f.inputs.map(i=>i.root_id),owner.configuration_digest,JSON.stringify(rows)];
   const outputs=[];
   for(const sql of validators){
-   const flags=(await c.query(sql,params)).rows[0];
+   const flags=(await c.query(anchorListeningStatementOracleParametersV1(sql),params)).rows[0];
    const end=sql.indexOf('\n   SELECT COALESCE(');assert.ok(end>0);
-   const perCall=(await c.query(sql.slice(0,end)+"\nSELECT COALESCE(jsonb_agg(to_jsonb(e) ORDER BY e.id),'[]'::jsonb) expected FROM expected e WHERE $1::uuid IS NOT NULL AND $7::text IS NOT NULL",params)).rows[0].expected;
+   const perCall=(await c.query(anchorListeningStatementOracleParametersV1(sql.slice(0,end)+"\nSELECT COALESCE(jsonb_agg(to_jsonb(e) ORDER BY e.id),'[]'::jsonb) expected FROM expected e WHERE $1::uuid IS NOT NULL AND $7::text IS NOT NULL"),params)).rows[0].expected;
    assert.equal(perCall.length,rows.length);
    assert.deepEqual(perCall.map((row:{id:string})=>row.id).sort(),rows.map(row=>row.id).sort(),'FULL never adds an unmatched-right ID or drops a batch call');
    if(missingSelectedId){const missing=perCall.find((row:{id:string})=>row.id===missingSelectedId);assert.ok(missing);assert.equal(missing.selected_count,null,'a call with no selected question survives the join');}
