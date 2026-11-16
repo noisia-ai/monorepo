@@ -191,13 +191,24 @@ for(const durableRaw of [false,true])test('initial unknown '+(durableRaw?'with d
  const db=f.database,{result,intent}=await f.request();assert.ok(intent);assert.ok(result.run_id);const call=await f.unknown(result.run_id,durableRaw);
  const parked=await startSignalListeningDiscoveryInitialV1({database:db,intent_id:intent.id});assert.equal(parked?.intent.status,'waiting_recovery');assert.equal(parked?.execution,null);
  assert.equal((await pendingSignalListeningDiscoveryInitialV1({database:db})).length,0,'an unresolved parked run does not spin in the initializer');
- const recorded=(await db.query('SELECT status,reserved_micro_usd::text reserved,settled_micro_usd FROM signal_labeling_calls WHERE id=$1',[call.id])).rows[0];assert.equal(recorded.status,'unknown');assert.equal(recorded.reserved,'6');assert.equal(recorded.settled_micro_usd,null);
+ const recorded=(await db.query('SELECT status,reserved_micro_usd::text reserved,settled_micro_usd,raw_sha256,raw_storage_key,raw_size_bytes,request_digest FROM signal_labeling_calls WHERE id=$1',[call.id])).rows[0];assert.equal(recorded.status,'unknown');assert.equal(recorded.reserved,'6');assert.equal(recorded.settled_micro_usd,null);
  if(durableRaw){
-  await f.classify(result.run_id);assert.equal((await pendingSignalListeningDiscoveryInitialV1({database:db}))[0]?.intent_id,intent.id);
+  assert.ok(recorded.raw_sha256&&recorded.raw_storage_key&&Number(recorded.raw_size_bytes)>0,'recovery starts from an authenticated durable receipt');
+  await f.classify(result.run_id);
+  const recovered=(await db.query('SELECT status,reserved_micro_usd::text reserved,settled_micro_usd::text settled,raw_sha256,raw_storage_key,raw_size_bytes,request_digest,usage FROM signal_labeling_calls WHERE id=$1',[call.id])).rows[0];
+  assert.equal(recovered.status,'settled');assert.equal(recovered.reserved,'6');assert.equal(recovered.settled,'6');
+  for(const key of ['raw_sha256','raw_storage_key','raw_size_bytes','request_digest'])assert.equal(recovered[key],recorded[key],'recovery preserves original receipt identity: '+key);
+  assert.equal(recovered.usage.input_tokens,120);assert.equal(recovered.usage.output_tokens,20);
+  assert.equal((await db.query('SELECT error_code FROM signal_labeling_runs WHERE id=$1',[result.run_id])).rows[0].error_code,null);
+  assert.equal((await pendingSignalListeningDiscoveryInitialV1({database:db}))[0]?.intent_id,intent.id);
   const done=await startSignalListeningDiscoveryInitialV1({database:db,intent_id:intent.id});assert.equal(done?.intent.status,'started');assert.equal(done?.intent.error_code,null);assert.ok(done?.execution);
   assert.equal((await db.query('SELECT count(*)::int n FROM signal_labeling_calls WHERE run_id=$1',[result.run_id])).rows[0].n,3,'recovered root is never classified twice');
   assert.equal((await db.query('SELECT count(*)::int n FROM signal_processing_admissions WHERE target_id=$1',[result.run_id])).rows[0].n,1);
  }else{
+  await assert.rejects(f.classify(result.run_id),/unknown_without_receipt_is_not_a_retry/);
+  const blocked=(await db.query('SELECT status,reserved_micro_usd::text reserved,settled_micro_usd,raw_sha256,raw_storage_key,raw_size_bytes,request_digest FROM signal_labeling_calls WHERE id=$1',[call.id])).rows[0];
+  assert.deepEqual(blocked,recorded,'missing bytes preserve the original unknown reservation and receipt absence');
+  assert.equal((await db.query('SELECT error_code FROM signal_labeling_runs WHERE id=$1',[result.run_id])).rows[0].error_code,'labeling_outcome_unknown');
   await assert.rejects(f.request(),/prior_outcome_unresolved/);
   assert.equal((await db.query('SELECT count(*)::int n FROM signal_listening_discovery_initial_intents WHERE workspace_id=$1',[f.workspace_id])).rows[0].n,1);
   assert.equal((await startSignalListeningDiscoveryInitialV1({database:db,intent_id:intent.id}))?.intent.status,'waiting_recovery');
