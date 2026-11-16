@@ -109,6 +109,40 @@ test('workflow shared smoke execution condition selects SQL and neutral runs onl
  }
 });
 
+test('RAW attach acceptance runs only in its isolated job and main job consumes exact evidence',async()=>{
+ const workflowPath=new URL('../../../.github/workflows/r16-listening-small-diagnostic.yml',import.meta.url);
+ const workflow=await readFile(workflowPath,'utf8');
+ const rawStart=workflow.indexOf('\n  raw-acceptance:\n');assert.ok(rawStart>=0,'isolated RAW acceptance job must exist');
+ const mainStart=workflow.indexOf('\n  listening-small:\n',rawStart);assert.ok(mainStart>rawStart,'main listening diagnostic job must follow RAW acceptance');
+ const rawJob=workflow.slice(rawStart,mainStart);
+ const mainJob=workflow.slice(mainStart);
+ for(const forbidden of ['signal-labeling-raw-attach.postgres.test.ts','NOISIA_R16_RAW_ATTACH_ORACLE_PG',
+  'R16_RESERVE_RAW_ATTACH_ORACLE_TAP','reserve-shared-raw-attach-oracle.tap'])
+  assert.ok(!mainJob.includes(forbidden),`main diagnostic must not run or publish isolated RAW attach oracle: ${forbidden}`);
+ assert.ok(rawJob.includes('signal-labeling-raw-attach.postgres.test.ts'),'isolated job must run the real RAW attach fixture');
+ assert.ok(rawJob.includes("NOISIA_R16_RAW_ATTACH_ORACLE_PG: 'true'"),'isolated attach oracle flag must be enabled');
+ assert.ok(rawJob.includes("NOISIA_R16_RAW_PAGE_LOCKS_PG: 'true'"),'isolated fault cases must enable the RAW page lock fixture');
+ for(const title of [
+  'raw rollback recovery preserves exact bytes and existing budget',
+  'raw commit_ack recovery preserves exact bytes and existing budget',
+  'RAW page rejects a digest conflict without mutating a valid sibling',
+  'RAW page rejects a raw conflict without mutating a valid sibling',
+  'RAW attach layout720 original and page map preserve native rows among 4128 calls',
+  'RAW attach layout4096 original and page map preserve native rows among 4128 calls',
+ ]) assert.ok(rawJob.includes(title),`isolated job must gate the exact selected case: ${title}`);
+ assert.ok(rawJob.includes("/^# pass 4$/mu.test(tap)")&&rawJob.includes("/^# fail 0$/mu.test(tap)"),
+  'four RAW fault cases must have a passing TAP gate');
+ assert.ok(rawJob.includes("/^# tests 2$/mu.test(tap)")&&rawJob.includes("/^# pass 2$/mu.test(tap)")
+  &&rawJob.includes("/^# fail 0$/mu.test(tap)")&&rawJob.includes("/^# skipped 0$/mu.test(tap)"),
+  'two RAW attach cases must have an exact no-skip TAP gate');
+ assert.ok(mainJob.includes('needs: raw-acceptance'),'main job must wait for isolated acceptance');
+ assert.ok(mainJob.includes("if: ${{ always() && needs.raw-acceptance.result == 'success' }}"),
+  'main job must fail closed when acceptance job fails');
+ assert.ok(mainJob.includes("RAW_ACCEPTANCE_SELECTED_PASS: ${{ needs.raw-acceptance.outputs.selected_pass || '0' }}")
+  &&mainJob.includes("RAW_ACCEPTANCE_TARGET_SHA: ${{ needs.raw-acceptance.outputs.target_sha || '' }}"),
+  'main resource guard must consume the isolated job outputs');
+});
+
 test('resource profile guard rejects environment and effective tuple drift without allocating the profile budget',async()=>{
  const {getExecution,envFor}=await streamProfileDependencies();const env=envFor('baseline_512m');
  env.NOISIA_JEV_STREAM_MAX_IN_FLIGHT='2048';
