@@ -33,7 +33,7 @@ test('lazy native selector matches full oracle across empty slices, base reclass
  const comparisons={unbounded:0},readerDatabase=withListeningReaderSliceOracleV1(ctx.database,comparisons);
  const database={query:readerDatabase.query.bind(readerDatabase),connect:async()=>{const c=await readerDatabase.connect();return new Proxy(c,{get(target,key){if(key==='query')return async(sql:string,params?:unknown[])=>{
   const result=await target.query(sql,params);
-  if(sql.includes('labeling_listening_root_page_v1')){assert.ok(result.rows.length<=4096);assert.deepEqual(Object.keys(result.rows[0]??{root_id:null}),['root_id']);pages.push({ids:result.rows.map(r=>r.root_id),cursor:params?.[3] as string??null});}
+  if(sql.includes('labeling_listening_root_page_v1')){assert.ok(result.rows.length<=4096);assert.deepEqual(Object.keys(result.rows[0]??{root_id:null}),['root_id']);assert.equal(params?.[3],cfg.id);assert.equal(typeof params?.[4],'string');assert.ok(params?.length===5||params?.length===6);pages.push({ids:result.rows.map(r=>r.root_id),cursor:params?.[5] as string??null});}
   if(sql.includes('labeling_listening_input_metadata_v1')){assert.ok(sql.includes('signal_listening_population_roots_v1('),'metadata never projects the unbounded population');assert.ok(Array.isArray(params?.[7]));assert.ok((params![7] as string[]).length<=4096);assert.ok(result.rows.every(r=>Object.keys(r).sort().join(',')==='root_id,working_bytes'));metadata.push(result.rows);}
   if(sql.includes('labeling_listening_pending_available_v1'))finishRows.push(result.rows[0]);
   return result;
@@ -73,7 +73,7 @@ test('lazy native selector matches full oracle across empty slices, base reclass
   const calls=await store.reserve(run,proposals(run,all.slice(0,64)));assert.equal(calls.length,64);
   pages=[];metadata=[];const expected=await oracle();assert.equal(expected.length,6);
   const selected=await store.inputs(run,bounds);assert.deepEqual(selected,expected.slice(0,3));
-  assert.equal(pages.length,2,'a completely reserved first slice must not report exhaustion');assert.equal(metadata[0]!.length,0);assert.equal(metadata[1]!.length,3);assert.equal(pages[1]!.cursor,all[63]!.root_id);
+  assert.equal(pages.length,2,'a base-only-reserved prefix still has an unlinked consumer and cannot be pruned');assert.equal(metadata[0]!.length,0);assert.equal(metadata[1]!.length,3);assert.equal(pages[1]!.cursor,all[63]!.root_id);
   assert.deepEqual((await ctx.database.query('SELECT root_id,question_digest FROM signal_listening_call_questions WHERE run_id=$1 ORDER BY root_id,question_digest',[prior.id])).rows,historyLinks.rows,'reading a new run preserves the historical run links');
   assert.deepEqual((await ctx.database.query('SELECT id,status FROM signal_labeling_runs WHERE workspace_id=$1 AND id NOT IN($2,$3,$4) ORDER BY id',[ctx.workspace_id,ctx.run_id,prior.id,run.id])).rows,otherRunsBefore,'no other run lifecycle changes');
   const before=finishRows.length;assert.equal(await store.finish(run),'running');assert.equal(finishRows.length-before,1);assert.deepEqual(finishRows.at(-1),{pending:70,available:true},'pending retains reserved-but-unanswered roots exactly');
@@ -86,6 +86,16 @@ test('lazy native selector matches full oracle across empty slices, base reclass
   await store.persistRawPage(run,outcomes);await store.settlePage(run,outcomes.map(o=>({call:o.call,usage:jevUsageV1({input_tokens:120,output_tokens:20}),settled_micro_usd:8})));await store.apply(run,outcomes.map(o=>({call:o.call,results:[o.result]})));
   assert.equal((await ctx.database.query("SELECT count(*)::int n FROM signal_labeling_calls WHERE run_id=$1 AND status='unknown'",[run.id])).rows[0].n,0,'the durable native RAW/settlement path resolves the uncertain receipt');
   pages=[];const afterBase=await oracle(),after=await store.inputs(run,bounds);assert.deepEqual(after,afterBase.slice(0,3));assert.ok(after.some(i=>i.question_keys.includes('consumer_usage')),'base application enables the consumer question');assert.ok(after.some(i=>i.root_id<all[63]!.root_id),'earlier UUIDs become selectable in a NEW transaction');assert.equal(pages[0]!.cursor,null,'no scan cursor survives the previous RR snapshot');
+  // Native reservations now cover every configured digest in the early
+  // prefix. Skipping those IDs is safe; base-only prefix above was not skipped.
+  const prefix=new Set(all.slice(0,64).map(i=>i.root_id)),consumers=afterBase.filter(i=>prefix.has(i.root_id)&&i.question_keys.includes('consumer_usage'));
+  assert.equal(consumers.length,64);const consumerCalls=await store.reserve(run,proposals(run,consumers));assert.equal(consumerCalls.length,64);
+  const remaining=await oracle();assert.equal(remaining.length,6);
+  pages=[];metadata=[];const filtered=await store.inputs(run,bounds);assert.deepEqual(filtered,remaining.slice(0,3));
+  assert.equal(pages.length,1,'all-question-linked prefix is eliminated before the ID page limit');assert.equal(metadata.length,1,'the same pending roots require one native metadata probe instead of two');
+  assert.deepEqual(pages[0]!.ids,remaining.map(i=>i.root_id));assert.equal(pages[0]!.cursor,null,'even after pruning, each new RR scan restarts without a persisted cursor');
+  const remainingCosts=metadata[0]!;assert.equal(remainingCosts.length,3);
+  assert.deepEqual(await store.inputs(run,{...bounds,max_working_bytes:Number(remainingCosts[0]!.working_bytes)+Number(remainingCosts[1]!.working_bytes)-1}),remaining.slice(0,1),'pruning preserves the exact non-fitting root byte prefix');
   await assert.rejects(store.inputs({...run,workspace_id:randomUUID()},bounds),/listening_run_unavailable/);
   await ctx.database.query("UPDATE data_sources SET status='archived' WHERE workspace_id=$1",[ctx.workspace_id]);
   const outcome=async(bounded:boolean)=>{try{return{rows:await store.inputs(run,bounded?bounds:undefined)}}catch(e){return{error:(e as Error).message}}};
