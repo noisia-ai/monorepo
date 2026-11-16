@@ -17,6 +17,34 @@ const sameMembers=(a:LabelingRawPageMemberV1[],b:LabelingRawPageMemberV1[])=>a.l
     &&x.raw_size_bytes===Number(y.raw_size_bytes)&&x.byte_offset===Number(y.byte_offset)&&x.byte_length===Number(y.byte_length);
 });
 
+/** One statement-local row per verified page. Scalar subqueries are deliberately
+ * uncorrelated: their InitPlans retain IDs/map/scalars independently of the
+ * target-call scan, instead of rescanning page members for every run call.
+ * UUID map keys and bigint values stay native to PostgreSQL throughout. */
+export const labelingRawPageAttachSqlV1=`/* labeling_raw_page_attach_v1 */
+      WITH raw_attach_page AS MATERIALIZED(
+        SELECT array_agg(m.call_id ORDER BY m.call_id) call_ids,
+          jsonb_object_agg(m.call_id::text,jsonb_build_object('request_digest',m.request_digest,
+            'raw_sha256',m.raw_sha256,'raw_size_bytes',m.raw_size_bytes)) member_by_call,
+          p.storage_key,p.verified_at
+        FROM signal_labeling_raw_page_members m JOIN signal_labeling_raw_pages p ON p.id=m.page_id
+        WHERE m.page_id=$1 AND m.workspace_id=$2 AND m.run_id=$3 AND p.status='verified'
+        GROUP BY p.id,p.storage_key,p.verified_at
+      )
+      UPDATE signal_labeling_calls c SET
+        raw_sha256=((SELECT member_by_call FROM raw_attach_page)->c.id::text)->>'raw_sha256',
+        raw_storage_key=(SELECT storage_key FROM raw_attach_page),
+        raw_size_bytes=(((SELECT member_by_call FROM raw_attach_page)->c.id::text)->>'raw_size_bytes')::bigint,
+        raw_storage_verified_at=COALESCE(c.raw_storage_verified_at,(SELECT verified_at FROM raw_attach_page)),
+        raw_storage_verified_key=(SELECT storage_key FROM raw_attach_page),
+        updated_at=CASE WHEN c.raw_sha256 IS NULL THEN clock_timestamp() ELSE c.updated_at END
+      WHERE c.id=ANY((SELECT call_ids FROM raw_attach_page)::uuid[]) AND c.workspace_id=$2 AND c.run_id=$3
+        AND c.request_digest=((SELECT member_by_call FROM raw_attach_page)->c.id::text)->>'request_digest'
+        AND (c.raw_sha256 IS NULL OR c.raw_sha256=((SELECT member_by_call FROM raw_attach_page)->c.id::text)->>'raw_sha256'
+          AND c.raw_storage_key=(SELECT storage_key FROM raw_attach_page)
+          AND c.raw_size_bytes=(((SELECT member_by_call FROM raw_attach_page)->c.id::text)->>'raw_size_bytes')::bigint)
+      RETURNING c.id`;
+
 /** References are planned under a shared fence on the existing run lease before uploading. No
  * provider retry permission is created by planning, loading or attaching a page. */
 export function createLabelingRawPageStoreV1(options:{database:LabelingDatabaseV1;storage:LabelingRawPageStorageV1;
@@ -42,14 +70,7 @@ export function createLabelingRawPageStoreV1(options:{database:LabelingDatabaseV
         [page.id,run.workspace_id,run.id])).rows[0];
       if(!row||row.sha256!==page.sha256||row.storage_key!==page.storage_key||Number(row.size_bytes)!==Number(page.size_bytes))invalid();
       await c.query(`UPDATE signal_labeling_raw_pages SET status='verified',verified_at=clock_timestamp() WHERE id=$1 AND status='planned'`,[page.id]);
-      const changed=await c.query(`UPDATE signal_labeling_calls c SET raw_sha256=m.raw_sha256,raw_storage_key=p.storage_key,
-        raw_size_bytes=m.raw_size_bytes,raw_storage_verified_at=COALESCE(c.raw_storage_verified_at,p.verified_at),
-        raw_storage_verified_key=p.storage_key,updated_at=CASE WHEN c.raw_sha256 IS NULL THEN clock_timestamp() ELSE c.updated_at END
-        FROM signal_labeling_raw_page_members m JOIN signal_labeling_raw_pages p ON p.id=m.page_id
-        WHERE m.page_id=$1 AND m.workspace_id=$2 AND m.run_id=$3 AND c.id=m.call_id AND c.workspace_id=m.workspace_id AND c.run_id=m.run_id
-          AND c.request_digest=m.request_digest AND p.status='verified'
-          AND (c.raw_sha256 IS NULL OR c.raw_sha256=m.raw_sha256 AND c.raw_storage_key=p.storage_key AND c.raw_size_bytes=m.raw_size_bytes)
-        RETURNING c.id`,[page.id,run.workspace_id,run.id]);
+      const changed=await c.query(labelingRawPageAttachSqlV1,[page.id,run.workspace_id,run.id]);
       if(changed.rows.length!==page.member_count)invalid();
     });
   }

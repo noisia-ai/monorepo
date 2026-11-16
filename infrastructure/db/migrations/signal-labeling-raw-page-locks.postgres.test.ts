@@ -75,13 +75,26 @@ test('a raw fence checks physical lease expiry after waiting for a run writer',{
 });
 for(const fault of ['rollback','commit_ack'] as const)test(`raw ${fault} recovery preserves exact bytes and existing budget`,{skip:!enabled,timeout:120000},async()=>{
  await fixture(async({context,store,run,calls,intercept,writes})=>{
-  let attaching=false,failed=false;intercept.after=async sql=>{if(/UPDATE signal_labeling_calls c SET raw_sha256=m.raw_sha256/u.test(sql)){
+  let attaching=false,failed=false;intercept.after=async sql=>{if(sql.includes('/* labeling_raw_page_attach_v1 */')){
    attaching=true;if(fault==='rollback'&&!failed){failed=true;throw Error('synthetic attach rollback');}}
    if(sql==='COMMIT'&&attaching&&!failed){failed=true;throw Error('synthetic committed ACK lost');}};
   const raw='untouched physical wrapper – café';await assert.rejects(store.persistRawPage(run,[{call:calls[0]!,raw}]),/synthetic/);intercept.after=undefined;
   const loaded=await store.calls(run);assert.equal(loaded.find(c=>c.id===calls[0]!.id)?.raw_body,raw);assert.equal(writes(),1,'receipt recovery reads storage instead of rewriting or calling a provider');
   assert.equal((await context.database.query("SELECT status FROM signal_labeling_raw_pages WHERE run_id=$1",[run.id])).rows[0].status,'verified');
   const call=(await context.database.query('SELECT status,reserved_micro_usd::text,settled_micro_usd,usage FROM signal_labeling_calls WHERE id=$1',[calls[0]!.id])).rows[0];assert.deepEqual(call,{status:'submitting',reserved_micro_usd:'1000',settled_micro_usd:null,usage:null});
+ });
+});
+for(const defect of ['digest','raw']as const)test(`RAW page rejects a ${defect} conflict without mutating a valid sibling`,{skip:!enabled,timeout:120000},async()=>{
+ await fixture(async({context,store,run,calls})=>{
+  if(defect==='raw')await store.persistRawPage(run,[{call:calls[0]!,raw:'original exact wrapper'}]);
+  const snapshot=async()=>({
+   calls:(await context.database.query('SELECT to_jsonb(c)::text value FROM signal_labeling_calls c WHERE run_id=$1 ORDER BY id',[run.id])).rows,
+   pages:(await context.database.query('SELECT to_jsonb(p)::text value FROM signal_labeling_raw_pages p WHERE run_id=$1 ORDER BY id',[run.id])).rows,
+   members:(await context.database.query('SELECT to_jsonb(m)::text value FROM signal_labeling_raw_page_members m WHERE run_id=$1 ORDER BY call_id',[run.id])).rows,
+  });
+  const before=await snapshot(),bad={...calls[0]!,...(defect==='digest'?{request_digest:'sha256:'+'e'.repeat(64)}:{})};
+  await assert.rejects(store.persistRawPage(run,[{call:bad,raw:'conflicting exact wrapper'},{call:calls[1]!,raw:'valid sibling receipt'}]),/labeling_raw_receipt_invalid/);
+  assert.deepEqual(await snapshot(),before,'the failed native transaction cannot leave a changed sibling, page or membership');
  });
 });
 test('expiry between upload and attach leaves a recoverable page for a new lease',{skip:!enabled,timeout:120000},async()=>{
