@@ -76,6 +76,42 @@ export function signalListeningJevIdentityV1(value:SignalListeningConfigurationV
     params:{request_version:SIGNAL_LISTENING_REQUEST_VERSION_V1,configuration:config,configuration_digest:digest(config),
       input_usd_per_mtok:.042,defined_universal_limit:8,defined_candidates:4,discovered_candidates:4}};
 }
+/** Explicit trusted compilation boundary. Raw public helpers do not memoize
+ * caller objects. Handles are authenticated by identity, never by JSON fields. */
+declare const snapshotBrand:unique symbol;
+export type SignalListeningCompiledSnapshotV1={readonly [snapshotBrand]:true};
+type SnapshotState={configuration:SignalListeningConfigurationV1;configuration_digest:string;
+ identity:LabelerIdentity;identity_digest:string;wires:Map<string,JevQuestionV1>;work:{validations:number;digests:number;wires:number}};
+const snapshots=new WeakMap<SignalListeningCompiledSnapshotV1,SnapshotState>();
+function frozen<T>(value:T):T{if(value&&typeof value==='object'){for(const child of Object.values(value))frozen(child);Object.freeze(value);}return value;}
+function snapshotState(snapshot:SignalListeningCompiledSnapshotV1){const state=snapshots.get(snapshot);if(!state)throw Error('listening_compiled_snapshot_invalid');return state;}
+export function compileSignalListeningSnapshotV1(value:unknown):SignalListeningCompiledSnapshotV1{
+ const configuration=frozen(validateSignalListeningConfigurationV1(value)),work={validations:1,digests:0,wires:configuration.questions.length};
+ const hash=(value:unknown)=>{work.digests++;return digest(value);};
+ const configuration_digest=hash(configuration);
+ const identity:LabelerIdentity=frozen({kind:'mass_labeling',provider:'typesafe',model:configuration.model,prompt_digest:configuration_digest,
+  schema_digest:hash({version:SIGNAL_LISTENING_REQUEST_VERSION_V1,answers:'question-digest-cache-v1'}),
+  params:{request_version:SIGNAL_LISTENING_REQUEST_VERSION_V1,configuration,configuration_digest,
+   input_usd_per_mtok:.042,defined_universal_limit:8,defined_candidates:4,discovered_candidates:4}});
+ const snapshot=Object.freeze({}) as SignalListeningCompiledSnapshotV1;
+ snapshots.set(snapshot,{configuration,configuration_digest,identity,identity_digest:hash(identity),
+  wires:new Map(configuration.questions.map(q=>[q.key,frozen(wire(configuration,q))])),work});return snapshot;
+}
+export function readSignalListeningSnapshotV1(snapshot:SignalListeningCompiledSnapshotV1){
+ const {configuration,configuration_digest,identity,identity_digest}=snapshotState(snapshot);
+ return Object.freeze({configuration,configuration_digest,identity,identity_digest});
+}
+/** Read-only work counters make the compilation boundary auditable without
+ * changing the canonical digest implementation or exposing cached mutable data. */
+export function signalListeningSnapshotWorkV1(snapshot:SignalListeningCompiledSnapshotV1){return{...snapshotState(snapshot).work};}
+export function buildSignalListeningCompiledRequestV1(input:Pick<SignalListeningInputV1,'text'|'question_keys'>&Partial<SignalListeningInputV1>,snapshot:SignalListeningCompiledSnapshotV1):JevRequestV1{
+ const {configuration:c,wires}=snapshotState(snapshot);
+ if(!input.text.trim()||!input.question_keys.length||input.question_keys.length>256
+  ||new Set(input.question_keys).size!==input.question_keys.length||input.question_keys.some(k=>!wires.has(k)))throw Error('listening_input_invalid');
+ // Each caller owns its wire: mutating one request cannot poison the snapshot
+ // or a sibling. structuredClone preserves the original property order/bytes.
+ return{model:c.model,state:input.text,questions:Object.fromEntries([...input.question_keys].sort().map(k=>[k,structuredClone(wires.get(k)!)]))};
+}
 export function selectSignalListeningQuestionsV1(c:SignalListeningConfigurationV1,candidates:Array<{key:string;similarity:number}>):SignalListeningQuestionV1[]{
   const ranked=new Map([...candidates].filter(x=>Number.isFinite(x.similarity)&&x.similarity>=-1&&x.similarity<=1)
     .sort((a,b)=>b.similarity-a.similarity||a.key.localeCompare(b.key)).map((x,i)=>[x.key,i]));
@@ -103,7 +139,12 @@ export function buildSignalListeningJevRequestV1(input:Pick<SignalListeningInput
 }
 export function mapSignalListeningJevResponseV1(input:SignalListeningInputV1,context:EntityContextV1,
   configuration:SignalListeningConfigurationV1,response:JevResponseV1):SignalListeningResultV1{
-  const request=buildSignalListeningJevRequestV1(input,configuration);
+  return mapListeningResponse(input,context,buildSignalListeningJevRequestV1(input,configuration),response);
+}
+export function mapSignalListeningCompiledResponseV1(input:SignalListeningInputV1,context:EntityContextV1,snapshot:SignalListeningCompiledSnapshotV1,response:JevResponseV1):SignalListeningResultV1{
+ return mapListeningResponse(input,context,buildSignalListeningCompiledRequestV1(input,snapshot),response);
+}
+function mapListeningResponse(input:SignalListeningInputV1,context:EntityContextV1,request:JevRequestV1,response:JevResponseV1):SignalListeningResultV1{
   if(response.model!==request.model||Object.keys(response.answers).sort().join(',')!==Object.keys(request.questions).sort().join(','))throw new Error('listening_response_invalid');
   for(const [key,answer] of Object.entries(response.answers)){
     const q=request.questions[key]!;

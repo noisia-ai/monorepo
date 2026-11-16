@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
 import test from 'node:test';
 import {buildSignalListeningJevRequestV1,signalListeningRequestDigestV1,signalListeningBaseTemplateV1,signalListeningJevIdentityV1,signalListeningQuestionDigestV1,
-  signalListeningCalibrationShapeV1,signalListeningConsumerCutV1,validateSignalListeningConfigurationV1,labelerDigestV1,entityContextDigestV1,signalWorkspaceEmbeddingDigestV1 as digest,
+  signalListeningCalibrationShapeV1,signalListeningConsumerCutV1,validateSignalListeningConfigurationV1,compileSignalListeningSnapshotV1,labelerDigestV1,entityContextDigestV1,signalWorkspaceEmbeddingDigestV1 as digest,
   type SignalListeningCalibrationProfileV1,type SignalListeningConfigurationV1,type SignalListeningInputV1,type SignalListeningResultV1} from '@noisia/query-engine';
 import type {LabelingRunV1,LabelingCallV1} from '@noisia/db';
 import type {JevProviderV1,JevRequestV1} from '../providers/typesafe-jev';
@@ -331,4 +331,28 @@ test('a4096-root continuation hashes selection once and each singleton once, the
  assert.equal(hashes,8192,'N page keys + N supplied keys; never N*(N+1)');
  const next=selection.slice().reverse();assert.deepEqual(index.select([selection[0]!],next,4096),[selection[0]!]);assert.equal(hashes,12289);
  index.invalidate();assert.deepEqual(index.select([selection[0]!],next,4096),[selection[0]!]);assert.equal(hashes,16386);
+});
+
+
+test('compiled run binding rejects another generation and forged or foreign snapshots before money or HTTP',async()=>{
+ const c=signalListeningBaseTemplateV1({category:'tea',lexicon_terms:['tea']}),f=fixture(c,[['voice','promotion']]);
+ f.run.entity_context_version_no=1;const original=f.store.inputs.bind(f.store);f.store.inputs=async(...args)=>{const inputs=await original(...args);f.run.entity_context_version_no++;return inputs;};
+ await assert.rejects(processSignalListeningJevV1({run_id:f.run.id,store:f.store,provider:f.provider,execution}),/listening_identity_invalid/);
+ assert.equal(f.calls.length,0);assert.equal(f.requests.length,0);
+ for(const snapshot of [{} as never,compileSignalListeningSnapshotV1({...c,instructions:'Another snapshot'})]){
+  const next=fixture(c,[['voice','promotion']]);
+  await assert.rejects(processSignalListeningJevV1({run_id:next.run.id,store:next.store,provider:next.provider,execution,compiled_snapshot:()=>snapshot}),/compiled_snapshot_invalid|identity_invalid/);
+  assert.equal(next.calls.length,0);assert.equal(next.requests.length,0);
+ }
+});
+
+test('a new claimed run/config compiles fresh bytes and raw invalid JSON still fails at the boundary',async()=>{
+ const first=signalListeningBaseTemplateV1({category:'tea',lexicon_terms:['tea']}),second={...first,instructions:'Different stored generation rules'};
+ const a=fixture(first,[['voice','promotion']]),b=fixture(second,[['voice','promotion']]);
+ await processSignalListeningJevV1({run_id:a.run.id,store:a.store,provider:a.provider,execution});
+ await processSignalListeningJevV1({run_id:b.run.id,store:b.store,provider:b.provider,execution});
+ assert.notEqual(JSON.stringify(a.requests[0]!.questions),JSON.stringify(b.requests[0]!.questions));
+ const bad=fixture(first,[['voice','promotion']]);bad.run.identity.params.configuration={untrusted:true};
+ await assert.rejects(processSignalListeningJevV1({run_id:bad.run.id,store:bad.store,provider:bad.provider,execution}),/configuration_invalid/);
+ assert.equal(bad.requests.length,0);
 });
