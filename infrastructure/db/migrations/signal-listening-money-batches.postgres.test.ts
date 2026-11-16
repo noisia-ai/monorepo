@@ -21,6 +21,8 @@ import {withDiscoveryAdvanceFixtureV1} from './signal-listening-discovery-advanc
 import {createSignalListeningDiscoveryAdvanceStoreV1} from '../signal-listening-discovery-advance';
 import {activateSignalListeningServingSnapshotV1,lockSignalListeningDiscoveryPolicyWithClientV1,type ListeningDiscoveryRoundV1} from '../signal-listening-discovery-money';
 
+import {anchorListeningStatementOracleParametersV1} from './signal-listening-statement-validator.oracle';
+
 const enabled=process.env.NOISIA_R16_LISTENING_MONEY_BATCHES_PG==='true';
 type NativeFixture={database:Parameters<typeof createSignalListeningStoreV1>[0]['database'];
  run:LabelingRunV1;inputs:SignalListeningInputV1[];configuration:ReturnType<typeof signalListeningBaseTemplateV1>;
@@ -158,10 +160,10 @@ for(const defect of ['text','digest','question_digest','duplicate_question']as c
  assert.equal((await f.database.query('SELECT count(*)::int n FROM signal_listening_call_questions WHERE run_id=$1',[f.run.id])).rows[0].n,0);
 }));
 
-test('materialized selected matches the old native validator and atomically rejects forged siblings',{
+test('selected materialization and full join match old validators and atomically reject forged siblings',{
  skip:!enabled,timeout:600000,
 },async()=>withMoneyFixture(1000000,async f=>{
- const sources=await Promise.all(['0318_signal_listening_statement_population.sql','0322_signal_listening_statement_selected_materialization.sql']
+ const sources=await Promise.all(['0318_signal_listening_statement_population.sql','0322_signal_listening_statement_selected_materialization.sql','0323_signal_listening_statement_selected_full_join.sql']
   .map(name=>readFile(new URL('./'+name,import.meta.url),'utf8')));
  // The exact native validation statements run against the same native owner,
  // population and typed batch. No public trigger is replaced for the oracle.
@@ -173,24 +175,27 @@ test('materialized selected matches the old native validator and atomically reje
  const owner=(await f.database.query(`SELECT o.configuration_id,o.map_id,c.configuration_digest FROM signal_listening_runs o
   JOIN signal_listening_configurations c ON c.id=o.configuration_id AND c.workspace_id=o.workspace_id
   WHERE o.run_id=$1 AND o.workspace_id=$2`,[f.run.id,f.run.workspace_id])).rows[0];assert.ok(owner);
- async function oracle(c:PoolClient,rows:ReturnType<typeof proposals>){
+ async function oracle(c:PoolClient,rows:ReturnType<typeof proposals>,missingSelectedId?:string){
   const params=[f.run.id,f.run.workspace_id,owner.configuration_id,owner.map_id,f.run.entity_context_digest,
    f.inputs.map(i=>i.root_id),owner.configuration_digest,JSON.stringify(rows)];
   const outputs=[];
   for(const sql of validators){
-   const flags=(await c.query(sql,params)).rows[0];
+   const flags=(await c.query(anchorListeningStatementOracleParametersV1(sql),params)).rows[0];
    const end=sql.indexOf('\n   SELECT COALESCE(');assert.ok(end>0);
-   const perCall=(await c.query(sql.slice(0,end)+"\nSELECT COALESCE(jsonb_agg(to_jsonb(e) ORDER BY e.id),'[]'::jsonb) expected FROM expected e WHERE $1::uuid IS NOT NULL AND $7::text IS NOT NULL",params)).rows[0].expected;
-   assert.equal(perCall.length,rows.length);outputs.push({flags,perCall});
+   const perCall=(await c.query(anchorListeningStatementOracleParametersV1(sql.slice(0,end)+"\nSELECT COALESCE(jsonb_agg(to_jsonb(e) ORDER BY e.id),'[]'::jsonb) expected FROM expected e WHERE $1::uuid IS NOT NULL AND $7::text IS NOT NULL"),params)).rows[0].expected;
+   assert.equal(perCall.length,rows.length);
+   assert.deepEqual(perCall.map((row:{id:string})=>row.id).sort(),rows.map(row=>row.id).sort(),'FULL never adds an unmatched-right ID or drops a batch call');
+   if(missingSelectedId){const missing=perCall.find((row:{id:string})=>row.id===missingSelectedId);assert.ok(missing);assert.equal(missing.selected_count,null,'a call with no selected question survives the join');}
+   outputs.push({flags,perCall});
   }
-  assert.deepEqual(outputs[1],outputs[0],'materialization preserves all three flags and exact per-call request/digest/basis aggregates');
-  return outputs[1]!.flags;
+  for(const output of outputs.slice(1))assert.deepEqual(output,outputs[0],'materialization and FULL preserve all three flags and exact per-call request/digest/basis aggregates');
+  return outputs.at(-1)!.flags;
  }
  await transaction(f,async c=>{
   const flags=await oracle(c,structuredClone(proposals(f,1000)));
   assert.deepEqual(flags,{invalid_questions:false,invalid_request:false,invalid_prior:false});
  });
- for(const defect of ['text','request_digest','question_digest','duplicate_question','input_digest','map_id','configuration_digest','scope_basis']as const){
+ for(const defect of ['text','request_digest','question_digest','duplicate_question','input_digest','map_id','configuration_digest','scope_basis','empty_questions']as const){
   const rows=structuredClone(proposals(f,1000)),bad=rows[1]!,input=bad.inputs[0]!;
   if(defect==='text'){input.text+=' forged text';bad.request={...bad.request,state:input.text};}
   if(defect==='question_digest')input.question_digests={...input.question_digests,voice:'sha256:'+'f'.repeat(64)};
@@ -199,11 +204,12 @@ test('materialized selected matches the old native validator and atomically reje
   if(defect==='map_id')input.map_id=randomUUID();
   if(defect==='configuration_digest')input.configuration_digest='sha256:'+'1'.repeat(64);
   if(defect==='scope_basis')input.scope_basis={voice:'sha256:'+'2'.repeat(64)};
+  if(defect==='empty_questions'){input.question_keys=[];input.question_digests={};input.scope_basis={};bad.request={...bad.request,questions:{}};}
   bad.request_digest=signalListeningRequestDigestV1(f.run,input,bad.request);
   if(defect==='request_digest')bad.request_digest='sha256:'+'e'.repeat(64);
   bad.custom_id='listening_'+bad.request_digest.slice(7,67);
   await transaction(f,async c=>{
-   const flags=await oracle(c,rows);assert.equal(flags.invalid_prior,false);
+   const flags=await oracle(c,rows,defect==='empty_questions'?bad.id:undefined);assert.equal(flags.invalid_prior,false);
    assert.equal(defect==='text'||defect==='request_digest'?flags.invalid_request:flags.invalid_questions,true,defect);
   });
   await assert.rejects(transaction(f,c=>insertPrepared(c,f,rows).then(()=>{})),
