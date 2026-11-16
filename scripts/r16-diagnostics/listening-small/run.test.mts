@@ -414,7 +414,7 @@ test('capture scope matches the real bounded-labeling transaction path and not t
 });
 
 test('auto_explain notice parser keeps only safe plan node fields',async()=>{
- const {safeAutoExplainNotice}=await import('./observer.mjs');
+ const {safeAutoExplainNotice,classifyAutoExplainNoticeV1}=await import('./observer.mjs');
  const plan=safeAutoExplainNotice({message:'duration: 1.2 ms  plan:\n'+JSON.stringify({'Query Text':"SELECT COALESCE(jsonb_agg(x), '{}'::jsonb) FROM (SELECT '{}'::jsonb AS shape) x",'Planning Time':.1,'Execution Time':1.2,Plan:{'Node Type':'Index Scan','Relation Name':'mentions','Alias':'m','Index Name':'mentions_root_idx','Plan Rows':12,'Actual Rows':7,'Actual Loops':2,'Index Cond':"(root_id = 'private-uuid')",Output:['private_value'],Plans:[{'Node Type':'Seq Scan','Relation Name':'mentions','CTE Name':'allowed_roots','Subplan Name':'private_cte','Filter':"credential = 'private'",'Actual Rows':1}]}})});
  const serialized=JSON.stringify(plan);
  assert.deepEqual(plan,{query_text_sha256:`sha256:${createHash('sha256').update("SELECT COALESCE(jsonb_agg(x), '{}'::jsonb) FROM (SELECT '{}'::jsonb AS shape) x").digest('hex')}`,
@@ -422,6 +422,14 @@ test('auto_explain notice parser keeps only safe plan node fields',async()=>{
  for(const forbidden of ['private-uuid','private_value','credential','Filter','Output','Index Cond','Query Text','jsonb_agg'])assert.ok(!serialized.includes(forbidden));
  assert.equal(safeAutoExplainNotice({message:'ERROR: private SQL and params'}),null);
  assert.equal(safeAutoExplainNotice({message:'x'.repeat(1_000_001)}),null);
+ assert.deepEqual(classifyAutoExplainNoticeV1(null),{status:'rejected',reason:'message_missing'});
+ assert.deepEqual(classifyAutoExplainNoticeV1({message:'x'.repeat(1_000_001)}),{status:'rejected',reason:'message_too_large'});
+ assert.deepEqual(classifyAutoExplainNoticeV1({message:'ERROR: redacted'}),{status:'rejected',reason:'payload_missing'});
+ assert.deepEqual(classifyAutoExplainNoticeV1({message:'plan: {not-json'}),{status:'rejected',reason:'invalid_json'});
+ assert.deepEqual(classifyAutoExplainNoticeV1({message:'plan: {}'}),{status:'rejected',reason:'plan_invalid'});
+ const selected=classifyAutoExplainNoticeV1({message:'duration: 1 ms plan: '+JSON.stringify({'Query Text':'SELECT private_value FROM private_table',Plan:{'Node Type':'LockRows','Actual Rows':1}})});
+ assert.equal(selected.status,'accepted');if(selected.status==='accepted')assert.equal(selected.plan['Node Type'],'LockRows');
+ assert.ok(!JSON.stringify(selected).includes('private_value')&&!JSON.stringify(selected).includes('private_table'));
 });
 
 test('inner-plan setup failure rolls back its savepoint then runs the original query once without retaining the error',async()=>{
@@ -547,7 +555,7 @@ const FUNCTION_STATS_AFTER=[
  {signature:'public.signal_processing_actor_v1(uuid, uuid)',function_present:true,stats_observed:true,calls:9,total_time_ms:5,self_time_ms:3},
 ];
 function fakeDmlPlanClient(options:{readOnly?:string;failLoad?:boolean;failRestore?:boolean;failStatsBefore?:boolean;failStatsAfter?:boolean;
- absentSignatures?:string[];unobservedSignatures?:string[];unobservedBeforeSignatures?:string[];missingSignatures?:string[];
+ absentSignatures?:string[];unobservedSignatures?:string[];unobservedBeforeSignatures?:string[];missingSignatures?:string[];invalidShownGuc?:string;failShownGuc?:string;
  counterRegressionSignatures?:string[];invalidBeforeSignatures?:string[];restoreFailsAfterStatsError?:boolean;failActorExplain?:boolean;restoreFailsAfterActorError?:boolean}={}){
  const client=new EventEmitter() as any,statements:string[]=[],events:string[]=[],restores:Array<{name:string;value:string;local:boolean}>=[],functionStatLookups:string[][]=[];
  let statsReads=0,transactionAborted=false;
@@ -555,7 +563,7 @@ function fakeDmlPlanClient(options:{readOnly?:string;failLoad?:boolean;failResto
   'auto_explain.log_parameter_max_length':'0','auto_explain.log_level':'notice','auto_explain.log_min_duration':'-1',
   'auto_explain.log_nested_statements':'off','auto_explain.log_analyze':'off','auto_explain.log_buffers':'off',
   'auto_explain.log_timing':'on','auto_explain.log_format':'text','auto_explain.log_verbose':'off','auto_explain.log_triggers':'off',track_functions:'none',
-  lock_timeout:'0',statement_timeout:'0'};
+  'auto_explain.sample_rate':'1',lock_timeout:'0',statement_timeout:'0'};
  client.query=async(sql:string,values?:unknown[])=>{
   statements.push(sql);
   if(sql.startsWith('SAVEPOINT')){events.push('savepoint');return{rows:[]};}
@@ -570,6 +578,12 @@ function fakeDmlPlanClient(options:{readOnly?:string;failLoad?:boolean;failResto
      ?{signature:row.signature,function_present:true,stats_observed:false,calls:null,total_time_ms:null,self_time_ms:null}:row);
    return{rows:rows.map(row=>statsReads===1&&options.invalidBeforeSignatures?.includes(row.signature)?{...row,calls:-1}:statsReads===2&&options.counterRegressionSignatures?.includes(row.signature)?{...row,calls:0}:row)};}
   if(sql.startsWith('SELECT name,current_setting'))return{rows:(values?.[0] as string[]).map(name=>({name,value:oldValues[name]}))};
+  if(sql.startsWith('SHOW ')){const name=sql.slice(5);if(name===options.failShownGuc)throw Error('synthetic private readback failure');
+   const configured:Record<string,string>={client_min_messages:'notice',log_statement:'none',log_parameter_max_length:'0','auto_explain.log_parameter_max_length':'0',
+    'auto_explain.log_level':'notice','auto_explain.log_min_duration':'0','auto_explain.log_nested_statements':'on',
+    'auto_explain.log_analyze':'on','auto_explain.log_buffers':'on','auto_explain.log_timing':'on','auto_explain.log_format':'json',
+    'auto_explain.log_verbose':'off','auto_explain.log_triggers':'on','auto_explain.sample_rate':'1'};
+   return{rows:[{[name]:name===options.invalidShownGuc?'secret raw value':configured[name]??oldValues[name]??'0'}]};}
   if(sql.includes('FROM signal_labeling_calls c JOIN signal_labeling_runs r'))return{rows:[{workspace_id:'11111111-1111-4111-8111-111111111111',actor_user_id:'22222222-2222-4222-8222-222222222222'}]};
   if(sql.startsWith('EXPLAIN (ANALYZE,BUFFERS,TIMING ON,FORMAT JSON)')){
    if(options.failActorExplain){if(options.restoreFailsAfterActorError)transactionAborted=true;throw Error('synthetic_actor_explain_error');}
@@ -763,6 +777,8 @@ test('DML savepoint releases before the original write, captures once and keeps 
  assert.equal(captured.observation.plans.length,DML_PLAN_MAX_PLANS);assert.equal(captured.observation.plans_dropped,2);
  assert.equal(captured.observation.triggers_omitted_count,10);assert.equal(captured.observation.plans[0]?.triggers[0]?.calls,256);
  assert.equal(captured.observation.analyze_timing_overhead_measured,false);assert.equal(client.listenerCount('notice'),0);
+ assert.equal('guc_readback' in captured.observation,false);assert.equal('raw_notice_count_by_phase' in captured.observation,false);
+ assert.equal(statements.some(sql=>sql.startsWith('SHOW ')),false);assert.equal(statements.includes('SET LOCAL auto_explain.sample_rate = 1'),false);
  assert.ok(events.indexOf('release')<events.indexOf('write'));assert.equal(events.filter(x=>x==='rollback').length,0);
  assert.ok(events.lastIndexOf('restore')>events.indexOf('write'));
  assert.equal(restores.length,18);assert.ok(restores.every(row=>row.local));
@@ -792,6 +808,30 @@ test('SQL frontier capture preserves the outer plan after nested notices, bounds
  assert.equal(captured.observation?.plans_dropped,2);assert.ok(captured.observation&&!('actor_function_diagnostic' in captured.observation));
  assert.ok(captured.observation?.plans.at(-1)?.frontier_role==='outer');
  const artifact=JSON.stringify(captured.observation);assert.ok(!artifact.includes('UPDATE synthetic_table')&&!artifact.includes('private')&&!artifact.includes('query_values'));
+}));
+
+test('DML notice diagnostics separate delayed exact-outer notices, rejected shapes, GUC readback and cleanup',async()=>withDmlPlanTestEnv(async()=>{
+ const {captureDmlPlanQueryV1,queryHash}=await import('./observer.mjs');const {client,statements}=fakeDmlPlanClient({invalidShownGuc:'auto_explain.log_format',failShownGuc:'auto_explain.sample_rate'});
+ const outerSql='SELECT c.id FROM signal_labeling_calls c WHERE c.id=$1 FOR UPDATE';let calls=0;
+ const notice=(sql:string)=>({message:'duration: 1 ms plan: '+JSON.stringify({'Query Text':sql,'Execution Time':1,Plan:{'Node Type':'LockRows','Actual Rows':1,'Actual Loops':1}})});
+ const captured=await captureDmlPlanQueryV1({client,query:async()=>{calls++;
+  setImmediate(()=>{client.emit('notice',notice(outerSql));client.emit('notice',notice('SELECT private_cleanup_probe'));
+   client.emit('notice',{message:'ERROR: private diagnostic text'});client.emit('notice',{message:'x'.repeat(1_000_001)});});
+  return{rowCount:1};},query_hash:'sha256:1e5b3d3837b8c7354d6c25d941461f0d36e55d5cc3d42cbd31c627ba0662859b',batch_size:256,
+  database:'noisia_mfp_ci',role:'postgres',env:process.env,sql_frontier_only:true,outer_query_text:outerSql});
+ const observation=captured.observation!;assert.equal(calls,1);assert.equal(observation.status,'captured');
+ assert.ok(observation.guc_readback&&observation.raw_notice_count_by_phase&&observation.rejected_notice_count_by_phase&&observation.accepted_outer_count_by_phase&&observation.accepted_unattributed_count_by_phase);
+ assert.equal(observation.raw_notice_count_by_phase.after_query,4);assert.equal(observation.rejected_notice_count_by_phase.after_query?.payload_missing,1);
+ assert.equal(observation.rejected_notice_count_by_phase.after_query?.message_too_large,1);
+ assert.equal(observation.accepted_outer_count_by_phase.after_query,1);assert.equal(observation.accepted_unattributed_count_by_phase.after_query,1);
+ assert.equal(observation.plans.length,1);assert.equal(observation.plans[0]?.frontier_role,'outer');
+ assert.equal(observation.plans[0]?.query_text_sha256,queryHash(outerSql));assert.equal(observation.guc_readback.status,'unknown');
+ assert.equal(observation.guc_readback.settings['auto_explain.log_format'],null);
+ assert.equal(observation.guc_readback.settings['auto_explain.log_min_duration'],'0');
+ assert.equal(observation.guc_readback.settings['auto_explain.sample_rate'],null);
+ assert.ok(statements.includes('ROLLBACK TO SAVEPOINT r16_dml_guc_readback_v1'));
+ assert.ok(statements.includes('SHOW auto_explain.sample_rate'));assert.ok(statements.includes('SHOW auto_explain.log_format'));
+ const artifact=JSON.stringify(observation);for(const forbidden of ['private_cleanup_probe','private diagnostic text','secret raw value',outerSql])assert.ok(!artifact.includes(forbidden));
 }));
 
 test('DML setup fallback rolls back before exactly one write and leaves it in the outer transaction ledger',async()=>withDmlPlanTestEnv(async()=>{

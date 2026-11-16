@@ -133,19 +133,28 @@ function safePlanNode(value:any):any{
  if(Array.isArray(value.Plans))result.Plans=value.Plans.map(safePlanNode).filter(Boolean);
  return result;
 }
+export type AutoExplainNoticeRejectReasonV1='message_missing'|'message_too_large'|'payload_missing'|'invalid_json'|'plan_invalid';
+export type AutoExplainNoticeParseV1={status:'accepted';query_text_sha256:string|null;planning_time_ms:number|null;execution_time_ms:number|null;plan:Record<string,unknown>}|{status:'rejected';reason:AutoExplainNoticeRejectReasonV1};
 /** Parses the NOTICE only in memory. Raw PostgreSQL messages and text fields are never retained. */
-export function safeAutoExplainNotice(notice:unknown){
+export function classifyAutoExplainNoticeV1(notice:unknown):AutoExplainNoticeParseV1{
  const message=(notice as {message?:unknown}|null)?.message;
- if(typeof message!=='string'||message.length>1_000_000)return null;
- const start=message.indexOf('{');if(start<0)return null;
+ if(typeof message!=='string')return{status:'rejected',reason:'message_missing'};
+ if(message.length>1_000_000)return{status:'rejected',reason:'message_too_large'};
+ const start=message.indexOf('{');if(start<0)return{status:'rejected',reason:'payload_missing'};
+ let parsed:unknown;
  try{
-  const parsed=JSON.parse(message.slice(start));
-  const plan=safePlanNode(parsed?.Plan);if(!plan)return null;
-  const queryText=typeof parsed['Query Text']==='string'?parsed['Query Text']:null;
-  return{query_text_sha256:queryText?`sha256:${createHash('sha256').update(queryText,'utf8').digest('hex')}`:null,
-    planning_time_ms:typeof parsed['Planning Time']==='number'&&Number.isFinite(parsed['Planning Time'])?parsed['Planning Time']:null,
-    execution_time_ms:typeof parsed['Execution Time']==='number'&&Number.isFinite(parsed['Execution Time'])?parsed['Execution Time']:null,plan};
- }catch{return null;}
+  parsed=JSON.parse(message.slice(start));
+ }catch{return{status:'rejected',reason:'invalid_json'};}
+ if(!parsed||typeof parsed!=='object'||Array.isArray(parsed))return{status:'rejected',reason:'plan_invalid'};
+ const payload=parsed as Record<string,unknown>,plan=safePlanNode(payload.Plan);if(!plan)return{status:'rejected',reason:'plan_invalid'};
+ const queryText=typeof payload['Query Text']==='string'?payload['Query Text']:null;
+ return{status:'accepted',query_text_sha256:queryText?`sha256:${createHash('sha256').update(queryText,'utf8').digest('hex')}`:null,
+  planning_time_ms:typeof payload['Planning Time']==='number'&&Number.isFinite(payload['Planning Time'])?payload['Planning Time']:null,
+  execution_time_ms:typeof payload['Execution Time']==='number'&&Number.isFinite(payload['Execution Time'])?payload['Execution Time']:null,plan};
+}
+export function safeAutoExplainNotice(notice:unknown){
+ const classified=classifyAutoExplainNoticeV1(notice);if(classified.status==='rejected')return null;
+ return{query_text_sha256:classified.query_text_sha256,planning_time_ms:classified.planning_time_ms,execution_time_ms:classified.execution_time_ms,plan:classified.plan};
 }
 function autoExplainPayload(notice:unknown){
  const message=(notice as {message?:unknown}|null)?.message;if(typeof message!=='string'||message.length>1_000_000)return null;
@@ -199,9 +208,29 @@ type ActorFunctionDiagnosticV1={status:'captured'|'scope_unavailable';reason?:'c
  timing_on:true;query_wall_includes_nested:true;analyze_overhead_measured:false;capacity_claim:false};
 export type DmlPlanObservationV1=({query_hash:string;label:string;batch_size:number;batch_unit:DmlPlanUnitV1;status:'setup_unavailable';
  reason:'transaction_scope_unverified'|'auto_explain_load_unavailable'|'capture_setup_unavailable';plans:DmlPlanV1[];plan_notices_seen:number;plans_dropped:number;
- triggers_omitted_count:number;triggers_unknown_time_count:number;analyze_timing_enabled:false;function_stats?:FunctionStatsArtifactV1;outer_plan_status?:'captured'|'unknown';nested_plan_limit?:8}&DmlPlanTimingV1)|({query_hash:string;label:string;batch_size:number;batch_unit:DmlPlanUnitV1;status:'captured'|'plan_notice_unavailable';
+ triggers_omitted_count:number;triggers_unknown_time_count:number;analyze_timing_enabled:false;function_stats?:FunctionStatsArtifactV1;outer_plan_status?:'captured'|'unknown';nested_plan_limit?:8}&DmlPlanTimingV1&Partial<DmlNoticeDiagnosticsV1>)|({query_hash:string;label:string;batch_size:number;batch_unit:DmlPlanUnitV1;status:'captured'|'plan_notice_unavailable';
  plans:DmlPlanV1[];plan_notices_seen:number;plans_dropped:number;triggers_omitted_count:number;triggers_unknown_time_count:number;analyze_timing_enabled:true;
- function_stats?:FunctionStatsArtifactV1;actor_function_diagnostic?:ActorFunctionDiagnosticV1;outer_plan_status?:'captured'|'unknown';nested_plan_limit?:8;analyze_timing_overhead_measured:false}&DmlPlanTimingV1);
+ function_stats?:FunctionStatsArtifactV1;actor_function_diagnostic?:ActorFunctionDiagnosticV1;outer_plan_status?:'captured'|'unknown';nested_plan_limit?:8;analyze_timing_overhead_measured:false}&DmlPlanTimingV1&Partial<DmlNoticeDiagnosticsV1>);
+type NoticePhaseV1='setup'|'original_query'|'after_query'|'cleanup';
+type DmlNoticeDiagnosticsV1={raw_notice_count_by_phase:Record<NoticePhaseV1,number>;rejected_notice_count_by_phase:Record<NoticePhaseV1,Partial<Record<AutoExplainNoticeRejectReasonV1,number>>>;
+ accepted_outer_count_by_phase:Record<NoticePhaseV1,number>;accepted_nested_count_by_phase:Record<NoticePhaseV1,number>;accepted_unattributed_count_by_phase:Record<NoticePhaseV1,number>;
+ capped_notice_count_by_phase:Record<NoticePhaseV1,number>;after_query_drain_ms:number;guc_readback:{status:'captured'|'unknown';settings:Record<string,string|null>}};
+const DML_NOTICE_READBACK_GUCS=['client_min_messages','log_statement','log_parameter_max_length','auto_explain.log_parameter_max_length','auto_explain.log_level',
+ 'auto_explain.log_min_duration','auto_explain.log_nested_statements','auto_explain.log_analyze','auto_explain.log_buffers','auto_explain.log_timing',
+ 'auto_explain.log_format','auto_explain.log_verbose','auto_explain.log_triggers','auto_explain.sample_rate'] as const;
+function safeGucReadbackValue(name:string,value:unknown):string|null{
+ if(typeof value!=='string')return null;
+ const lower=value.toLowerCase();
+ if(name.endsWith('log_level')||name==='client_min_messages')return /^(debug5|debug4|debug3|debug2|debug1|log|notice|warning|error|fatal|panic)$/u.test(lower)?lower:null;
+ if(name.endsWith('log_format'))return /^(text|xml|json|yaml)$/u.test(lower)?lower:null;
+ if(name.endsWith('log_statement'))return /^(none|ddl|mod|all)$/u.test(lower)?lower:null;
+ if(name.endsWith('log_nested_statements')||name.endsWith('log_analyze')||name.endsWith('log_buffers')||name.endsWith('log_timing')
+  ||name.endsWith('log_verbose')||name.endsWith('log_triggers'))return /^(on|off|true|false|1|0)$/u.test(lower)?lower:null;
+ if(name.endsWith('sample_rate')){const n=Number(value);return Number.isFinite(n)&&n>=0&&n<=1?String(n):null;}
+ if(name.endsWith('log_min_duration'))return /^-?\d+(?:\.\d+)?(?:ms|s|min|h|d)?$/u.test(lower)?lower:null;
+ if(name.endsWith('log_parameter_max_length'))return /^-?\d+$/u.test(lower)?lower:null;
+ return null;
+}
 function dmlCaptureGucs(prior:Map<string,string>){
  return[
   ['auto_explain.log_min_duration','-1'],
@@ -355,15 +384,33 @@ export async function captureDmlPlanQueryV1(args:{client:any;query:()=>Promise<a
   return{result:await query(),observation:null};
  const minDurationMs=spec.min_duration_ms??DML_PLAN_MIN_DURATION_MS;
  const plans:DmlPlanV1[]=[];let planNoticesSeen=0,plansDropped=0,triggersOmittedCount=0,triggersUnknownTimeCount=0,nestedPlansStored=0,outerPlanCaptured=false;
+ let noticePhase:NoticePhaseV1='setup',afterQueryDrainMs=0;const phases:NoticePhaseV1[]=['setup','original_query','after_query','cleanup'];
+ const rawNoticeCountByPhase=Object.fromEntries(phases.map(phase=>[phase,0])) as Record<NoticePhaseV1,number>;
+ const rejectedNoticeCountByPhase=Object.fromEntries(phases.map(phase=>[phase,{}])) as DmlNoticeDiagnosticsV1['rejected_notice_count_by_phase'];
+ const acceptedOuterCountByPhase=Object.fromEntries(phases.map(phase=>[phase,0])) as Record<NoticePhaseV1,number>;
+ const acceptedNestedCountByPhase=Object.fromEntries(phases.map(phase=>[phase,0])) as Record<NoticePhaseV1,number>;
+ const acceptedUnattributedCountByPhase=Object.fromEntries(phases.map(phase=>[phase,0])) as Record<NoticePhaseV1,number>;
+ const cappedNoticeCountByPhase=Object.fromEntries(phases.map(phase=>[phase,0])) as Record<NoticePhaseV1,number>;
+ const gucReadback:{status:'captured'|'unknown';settings:Record<string,string|null>}={status:'unknown',settings:Object.fromEntries(DML_NOTICE_READBACK_GUCS.map(name=>[name,null]))};
+ const noticeDiagnostics=():DmlNoticeDiagnosticsV1=>({raw_notice_count_by_phase:{...rawNoticeCountByPhase},rejected_notice_count_by_phase:Object.fromEntries(phases.map(phase=>[phase,{...rejectedNoticeCountByPhase[phase]}])) as DmlNoticeDiagnosticsV1['rejected_notice_count_by_phase'],
+  accepted_outer_count_by_phase:{...acceptedOuterCountByPhase},accepted_nested_count_by_phase:{...acceptedNestedCountByPhase},accepted_unattributed_count_by_phase:{...acceptedUnattributedCountByPhase},
+  capped_notice_count_by_phase:{...cappedNoticeCountByPhase},after_query_drain_ms:afterQueryDrainMs,guc_readback:{status:gucReadback.status,settings:{...gucReadback.settings}}});
  const outerQueryTextHash=args.sql_frontier_only&&args.outer_query_text?`sha256:${createHash('sha256').update(args.outer_query_text,'utf8').digest('hex')}`:null;
  let savepoint=false,dmlStarted=false,setupStage='savepoint',setupMs=0,queryWallMs=0,cleanupMs=0,prior=new Map<string,string>(),detached=false;
  let functionStatsBefore:Map<string,FunctionStatsRowV1>|null=null,functionStatsReadBeforeMs:number|null=null,functionStatsReadAfterMs:number|null=null;
- const onNotice=(notice:unknown)=>{const plan=safeDmlAutoExplainNotice(notice);if(!plan)return;planNoticesSeen++;
-  triggersOmittedCount+=plan.triggers_omitted;triggersUnknownTimeCount+=plan.triggers_unknown_time;
+ const onNotice=(notice:unknown)=>{const phase=noticePhase;rawNoticeCountByPhase[phase]++;
+  const parsed=classifyAutoExplainNoticeV1(notice);if(parsed.status==='rejected'){
+   const counts=rejectedNoticeCountByPhase[phase];counts[parsed.reason]=(counts[parsed.reason]??0)+1;return;}
+  const plan=safeDmlAutoExplainNotice(notice);if(!plan){const counts=rejectedNoticeCountByPhase[phase];counts.plan_invalid=(counts.plan_invalid??0)+1;return;}
+  planNoticesSeen++;triggersOmittedCount+=plan.triggers_omitted;triggersUnknownTimeCount+=plan.triggers_unknown_time;
   const isOuter=outerQueryTextHash!==null&&plan.query_text_sha256===outerQueryTextHash;
-  if(isOuter){if(outerPlanCaptured){plansDropped++;return;}outerPlanCaptured=true;plans.push({sequence:planNoticesSeen,...plan,frontier_role:'outer'});return;}
-  if(args.sql_frontier_only){if(nestedPlansStored< DML_PLAN_MAX_PLANS){nestedPlansStored++;plans.push({sequence:planNoticesSeen,...plan,frontier_role:'nested'});}else plansDropped++;return;}
-  if(plans.length<DML_PLAN_MAX_PLANS)plans.push({sequence:planNoticesSeen,...plan});else plansDropped++;};
+  if(phase==='after_query'&&isOuter){acceptedOuterCountByPhase[phase]++;if(outerPlanCaptured){plansDropped++;cappedNoticeCountByPhase[phase]++;return;}
+   outerPlanCaptured=true;plans.push({sequence:planNoticesSeen,...plan,frontier_role:'outer'});return;}
+  if(phase!=='original_query'){acceptedUnattributedCountByPhase[phase]++;return;}
+  if(isOuter){acceptedOuterCountByPhase[phase]++;if(outerPlanCaptured){plansDropped++;cappedNoticeCountByPhase[phase]++;return;}
+   outerPlanCaptured=true;plans.push({sequence:planNoticesSeen,...plan,frontier_role:'outer'});return;}
+  if(args.sql_frontier_only){acceptedNestedCountByPhase[phase]++;if(nestedPlansStored<DML_PLAN_MAX_PLANS){nestedPlansStored++;plans.push({sequence:planNoticesSeen,...plan,frontier_role:'nested'});}else{plansDropped++;cappedNoticeCountByPhase[phase]++;}return;}
+  acceptedUnattributedCountByPhase[phase]++;if(plans.length<DML_PLAN_MAX_PLANS)plans.push({sequence:planNoticesSeen,...plan});else{plansDropped++;cappedNoticeCountByPhase[phase]++;}};
  const detach=()=>{if(!detached){detached=true;client.off('notice',onNotice);}};
  const rollbackSetup=async()=>{if(savepoint){const cleanupStarted=clock();try{
    await client.query('ROLLBACK TO SAVEPOINT r16_dml_plan_capture_v1');await client.query('RELEASE SAVEPOINT r16_dml_plan_capture_v1');savepoint=false;
@@ -388,7 +435,7 @@ export async function captureDmlPlanQueryV1(args:{client:any;query:()=>Promise<a
    setupStage='load_auto_explain';
    await client.query("LOAD 'auto_explain'");
    setupStage='read_prior_settings';
-   const captureGucNames=[...DML_BASE_GUCS,...DML_AUTO_EXPLAIN_GUCS,...(spec.function_stats?['track_functions','lock_timeout','statement_timeout']:[])];
+   const captureGucNames=[...DML_BASE_GUCS,...DML_AUTO_EXPLAIN_GUCS,...(args.sql_frontier_only?['auto_explain.sample_rate']:[]),...(spec.function_stats?['track_functions','lock_timeout','statement_timeout']:[])];
    const settings=await client.query(`SELECT name,current_setting(name,true) AS value
     FROM unnest($1::text[]) AS settings(name)`,[captureGucNames]);
    for(const setting of settings.rows??[]){if(typeof setting.name!=='string'||typeof setting.value!=='string')throw Error('dml_capture_settings_unavailable');prior.set(setting.name,setting.value);}
@@ -416,6 +463,14 @@ export async function captureDmlPlanQueryV1(args:{client:any;query:()=>Promise<a
     await client.query(`SET LOCAL auto_explain.log_min_duration = ${minDurationMs}`);
    }
    await client.query('RELEASE SAVEPOINT r16_dml_plan_capture_v1');savepoint=false;
+   if(args.sql_frontier_only)try{
+    await client.query('SAVEPOINT r16_dml_guc_readback_v1');
+    const settings:Record<string,string|null>={};
+    for(const name of DML_NOTICE_READBACK_GUCS){const shown=await client.query(`SHOW ${name}`);const row=shown.rows?.[0];
+     const value=row&&typeof row==='object'?Object.values(row)[0]:null;settings[name]=safeGucReadbackValue(name,value);gucReadback.settings[name]=settings[name]!;}
+    await client.query('RELEASE SAVEPOINT r16_dml_guc_readback_v1');
+    gucReadback.settings=settings;gucReadback.status=Object.values(settings).every(value=>value!==null)?'captured':'unknown';
+   }catch{gucReadback.status='unknown';try{await client.query('ROLLBACK TO SAVEPOINT r16_dml_guc_readback_v1');await client.query('RELEASE SAVEPOINT r16_dml_guc_readback_v1');}catch{}}
   }catch{
    setupMs=clock()-setupStarted;
    await rollbackSetup();detach();
@@ -428,18 +483,23 @@ export async function captureDmlPlanQueryV1(args:{client:any;query:()=>Promise<a
     ...(args.sql_frontier_only?{outer_plan_status:'unknown' as const,nested_plan_limit:DML_PLAN_MAX_PLANS as 8}:{}),
     ...(spec.function_stats?{function_stats:{...FUNCTION_STATS_SCOPE,status:'setup_unavailable' as const,read_before_ms:functionStatsReadBeforeMs,read_after_ms:null,
      total_time_inclusive:true as const,self_time_excludes_nested_calls:true as const,overhead_measured:false as const,capacity_claim:false as const,deltas:[]}}:{}),
-    setup_ms:setupMs,query_wall_ms:queryWallMs,cleanup_ms:cleanupMs,setup_cleanup_wall_ms:setupMs+cleanupMs,analyze_timing_overhead_measured:false}};
+   setup_ms:setupMs,query_wall_ms:queryWallMs,cleanup_ms:cleanupMs,setup_cleanup_wall_ms:setupMs+cleanupMs,analyze_timing_overhead_measured:false,...(args.sql_frontier_only?noticeDiagnostics():{})}};
   }
   setupMs=clock()-setupStarted;dmlStarted=true;
-  const queryStarted=clock();const result=await query();queryWallMs=clock()-queryStarted;
-  detach();let functionStats:FunctionStatsArtifactV1|undefined,statsReadError:unknown;
+  noticePhase='original_query';const queryStarted=clock();let result:any;
+  try{result=await query();}finally{queryWallMs=clock()-queryStarted;noticePhase=args.sql_frontier_only?'after_query':'cleanup';}
+  if(args.sql_frontier_only){const noticeDrainStarted=clock();await new Promise<void>(resolve=>setImmediate(resolve));afterQueryDrainMs=clock()-noticeDrainStarted;}
+  else detach();
+  let functionStats:FunctionStatsArtifactV1|undefined,statsReadError:unknown;
   if(spec.function_stats){
+   noticePhase='cleanup';
    const statsStarted=clock();
    try{const after=await readFunctionStatsV1(client,spec.function_stats);functionStats={...FUNCTION_STATS_SCOPE,status:'captured',read_before_ms:functionStatsReadBeforeMs,read_after_ms:null,
     total_time_inclusive:true,self_time_excludes_nested_calls:true,overhead_measured:false,capacity_claim:false,deltas:functionStatsDeltaV1(functionStatsBefore!,after,spec.function_stats)};}
    catch(error){statsReadError=error;}
    finally{functionStatsReadAfterMs=clock()-statsStarted;if(functionStats)functionStats.read_after_ms=functionStatsReadAfterMs;}
   }
+  noticePhase='cleanup';detach();
   let restoreError:unknown;try{await restoreSettings();}catch(error){restoreError=error;}
   if(statsReadError&&restoreError)throw new AggregateError([statsReadError,restoreError],'function_stats_read_and_restore_failed');
   if(statsReadError)throw statsReadError;
@@ -457,7 +517,7 @@ export async function captureDmlPlanQueryV1(args:{client:any;query:()=>Promise<a
    triggers_unknown_time_count:triggersUnknownTimeCount,analyze_timing_enabled:true,...(functionStats?{function_stats:functionStats}:{}),
    ...(actorFunctionDiagnostic?{actor_function_diagnostic:actorFunctionDiagnostic}:{}),
    ...(args.sql_frontier_only?{outer_plan_status:outerPlanCaptured?'captured' as const:'unknown' as const,nested_plan_limit:DML_PLAN_MAX_PLANS as 8}:{}),
-   setup_ms:setupMs,query_wall_ms:queryWallMs,cleanup_ms:cleanupMs,setup_cleanup_wall_ms:setupMs+cleanupMs,analyze_timing_overhead_measured:false}};
+   setup_ms:setupMs,query_wall_ms:queryWallMs,cleanup_ms:cleanupMs,setup_cleanup_wall_ms:setupMs+cleanupMs,analyze_timing_overhead_measured:false,...(args.sql_frontier_only?noticeDiagnostics():{})}};
  }finally{
   try{if(savepoint&&!dmlStarted)await rollbackSetup();}finally{detach();}
  }
