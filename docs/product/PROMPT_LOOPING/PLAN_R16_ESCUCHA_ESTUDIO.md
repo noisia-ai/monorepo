@@ -12,6 +12,12 @@ No hay aprobaciones humanas intermedias en los procesos de análisis: Sonnet 4.6
 
 ## Progreso
 
+- 0326 integrada localmente como 40b05056 tras revisión sin P0/P1/P2: amplía el slice a todos los digests y reutiliza el conjunto en el join final, con el mismo ON de cinco claves y sin otras cláusulas cambiadas. El modelo contempla digests repetidos sin asumir UNIQUE; el oracle añade 0325 raw/effective en pg_temp. Tipado/lint 11/11 y ocho focales puras pasan; se conservan tres casos semánticos y uno de escala pendientes. Hay 32 migraciones pendientes, ninguna aplicada en UAT; la aceptación nativa y el rendimiento siguen en comprobación.
+- CI general y runtime de 74425e15 están verdes; su PostgreSQL completo sigue ejecutándose. El corte 0325 previo termina migrated-schema con actor 3/3, MFP 104/104 y Escucha 95/95, sin omisiones; Study continúa. Se conserva la corrida mientras se mide el nuevo SQL en el laboratorio separado.
+
+- Mini 43806608164: los diez casos de páginas de Escucha, tres del actor y oracle financiero pasan sin omisiones. El FOR UPDATE de apply desaparece y su operación más larga baja a 522 ms. Resultado nativo: 4,096 raíces/8,192 llamadas, 50.602 s; HTTP máximo 500.098 ms, sin H1. El job falla después del runner al exportar CPU por sample_delta_invalid; se conservan cinco ZIP verificados y los tres TAP, sin perfil CPU válido ni claim de job verde.
+- Nueva lectura lenta: metadata8 tarda 8.780 s; el join final raw alias a usa answers_question con 1,325 filas × 14,192 loops y 21.61 millones de hits. Las barreras de base y sent siguen en una pasada. Se prepara 0326 para reutilizar esas barreras con todas las preguntas y consumir también el join final como conjunto, conservando las llaves completas y sin tocar el overlay humano.
+
 - Opt-in integrado como 26dfc461/a17335f9 tras revisión sin P0/P1/P2: sólo una opción de adaptador y diez casos nativos en el archivo financiero existente, sin SQL nuevo. Las pruebas de solapamiento y fallback verifican bloqueos entre PIDs reales antes de liberar el holder. Tipado/lint 11/11 y seis focales puras pasan; las diez nativas aún deben ejecutarse. El diagnóstico exige su TAP separado con diez seleccionadas aprobadas antes de medir, además del oracle financiero y los tres casos del actor.
 
 - b20c2456 cierra CI/PostgreSQL completo verde: Study 23/23, política 11/11, equivalencia 3/3, fuente 3/3 y cero omisiones; migrated-schema ya acredita actor 3/3, MFP 104/104 y Escucha 95/95. Esto acredita el snapshot compilado compartido con Study, no la capacidad H1 ni las correcciones posteriores. La corrida 0325 y el nuevo opt-in deben conservar su propia aceptación.
@@ -303,6 +309,8 @@ Recibo: separar Voyage/JEV por raíz de Claude por número de grupos y vueltas; 
 
 ## Sorpresas y descubrimientos
 
+- Corregir las dos lecturas base no estabilizó el plan del tercer join al caché raw. La nueva captura identifica esa arista final de forma independiente; el empeoramiento total no se atribuye al paralelismo sólo por comparar relojes. El fallo posterior del recolector CPU tampoco invalida los TAP y planes ya persistidos, pero impide presentar esa ejecución como workflow verde o inferir hotspots de CPU.
+
 - No finalizar durante 150 ms no prueba contención: puede reflejar scheduling o espera del pool. Las tres regresiones nuevas que necesitan probar bloqueo ahora identifican los backends holder/waiter y exigen pg_blocking_pids antes de liberar, con cleanup en finally. No se confunde el coste temporal del test con evidencia del protocolo.
 
 - La mejora del lector no elimina el coste de las escrituras. La captura real de mark muestra tres agregaciones separadas sobre la misma unión de transition tables, cada una con 1,024 × 1,024 visitas; no son el conjunto expected. Se conserva como hallazgo posterior, sin modificar SQL todavía. El perfil de beforeSubmit conserva validaciones por llamada, pero su coste inclusivo observado es sólo 556 ms en todo el proceso y no explica por sí solo el pico HTTP.
@@ -441,6 +449,8 @@ Recibo: separar Voyage/JEV por raíz de Claude por número de grupos y vueltas; 
 - El promedio del piloto completo incluye una etapa editorial que no escala por raíz. Multiplicarlo linealmente daba USD 205.81/millón; mantener explícitamente los grupos y una vuelta de referencia produce USD 114.035250. Ambos cálculos parten del mismo recibo, cuyo uso histórico permanece USD 17.280463.
 
 ## Registro de decisiones
+
+- 2026-11-16: ejecutar los tres casos semánticos existentes también antes del mini remoto, con su propio TAP tests3/pass3/fail0/skipped0. La lectura de toda la cadena de fixtures confirma que esos callbacks usan SQL y artefactos sintéticos durables, sin ejecutar Python; la suite completa con Python y Study permanece obligatoria. Esto añade feedback temprano sin crear otro scope CI ni sustituir la validación completa.
 
 - 2026-11-16 04:43 UTC: priorizar la conexión del protocolo existente de páginas paralelas en Escucha porque el bloqueo exclusivo del run está demostrado. No cambiar la autoridad financiera ni expected; exigir pruebas de progreso disjunto, replay, pérdida de lease, COMMIT retrasado y fallback sin Storage por página. Mantener las 31 migraciones actuales, sin otra migración por esta corrección.
 
