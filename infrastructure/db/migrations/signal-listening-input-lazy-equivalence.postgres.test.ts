@@ -30,7 +30,8 @@ test('lazy native selector matches full oracle across empty slices, base reclass
   {key:'consumer_usage',type:'noul',text:'Does this describe using the category?',positive:'Use by an individual consumer',negative:'Unrelated',scope:'consumer_category',origin:'brand_os',human_locked:false,topic_source:'defined',domain:'category'}]}});
  const admitted=await requestSignalListeningV1({...access,configuration_id:cfg.id,map_id:ctx.map_id,cap_micro_usd:1000000,idempotency_key:randomUUID(),provider_available:true});
  let pages:Array<{ids:string[];cursor:string|null}>=[],metadata:Array<Array<{root_id:string;working_bytes:string}>>=[],finishRows:Array<{pending:number;available:boolean}>=[];
- const database={query:ctx.database.query.bind(ctx.database),connect:async()=>{const c=await withListeningReaderSliceOracleV1(ctx.database).connect();return new Proxy(c,{get(target,key){if(key==='query')return async(sql:string,params?:unknown[])=>{
+ const comparisons={unbounded:0},readerDatabase=withListeningReaderSliceOracleV1(ctx.database,comparisons);
+ const database={query:readerDatabase.query.bind(readerDatabase),connect:async()=>{const c=await readerDatabase.connect();return new Proxy(c,{get(target,key){if(key==='query')return async(sql:string,params?:unknown[])=>{
   const result=await target.query(sql,params);
   if(sql.includes('labeling_listening_root_page_v1')){assert.ok(result.rows.length<=4096);assert.deepEqual(Object.keys(result.rows[0]??{root_id:null}),['root_id']);pages.push({ids:result.rows.map(r=>r.root_id),cursor:params?.[3] as string??null});}
   if(sql.includes('labeling_listening_input_metadata_v1')){assert.ok(sql.includes('signal_listening_population_roots_v1('),'metadata never projects the unbounded population');assert.ok(Array.isArray(params?.[7]));assert.ok((params![7] as string[]).length<=4096);assert.ok(result.rows.every(r=>Object.keys(r).sort().join(',')==='root_id,working_bytes'));metadata.push(result.rows);}
@@ -62,7 +63,7 @@ test('lazy native selector matches full oracle across empty slices, base reclass
   // Both reader paths are checked against frozen pre-0325 SQL on the same
   // native IDs/snapshot, including metadata, hydration and timestamp precision.
   const oracle=()=>store.inputs(run);
-  const all=await oracle();assert.equal(all.length,70);assert.ok(all.every(i=>!i.question_keys.includes('consumer_usage')));
+  const beforeUnbounded=comparisons.unbounded,all=await oracle();assert.equal(comparisons.unbounded,beforeUnbounded+1,'the direct unbounded hydration query must compare old/new in its own RR snapshot');assert.equal(all.length,70);assert.ok(all.every(i=>!i.question_keys.includes('consumer_usage')));
   assert.deepEqual(await store.inputs(run,bounds),all.slice(0,3));
   const initialCosts=metadata.at(-1)!;assert.equal(initialCosts.length,3);
   assert.deepEqual((await store.inputs(run,{...bounds,max_working_bytes:Number(initialCosts[0]!.working_bytes)+Number(initialCosts[1]!.working_bytes)-1})).map(i=>i.root_id),[all[0]!.root_id]);
@@ -106,9 +107,11 @@ test('lazy native selector preserves frozen human topic decisions and cached sou
   assert.equal(labels[0]!.human_belongs,false);
   const max=(await f.database.query("SELECT a.max_execution_micro_usd FROM signal_processing_policy_actions a JOIN signal_processing_policy_versions p ON p.id=a.policy_version_id JOIN signal_workspaces w ON w.organization_id=p.organization_id WHERE w.id=$1 AND p.status='active' AND a.action='mass_labeling_jev'",[f.workspace_id])).rows[0]!.max_execution_micro_usd;
   const admitted=await requestSignalListeningV1({...access,configuration_id:removed.configuration_id,map_id:f.map_id,idempotency_key:randomUUID(),cap_micro_usd:max===null?1000000:Math.min(1000000,Number(max)),provider_available:true});
-  const store=createSignalListeningStoreV1({database:withListeningReaderSliceOracleV1(f.database),page_size:4096,storeRaw:async()=>{throw Error('no providers or raw writes');}}),run=await store.claim(admitted.run_id);assert.ok(run);
+  const comparisons={unbounded:0};
+  const store=createSignalListeningStoreV1({database:withListeningReaderSliceOracleV1(f.database,comparisons),page_size:4096,storeRaw:async()=>{throw Error('no providers or raw writes');}}),run=await store.claim(admitted.run_id);assert.ok(run);
   try{
-   const all=await store.inputs(run),bounded=await store.inputs(run,bounds);assert.deepEqual(bounded,all.slice(0,3));
+   const all=await store.inputs(run);assert.equal(comparisons.unbounded,1,'H5 unbounded hydration has its own completed oracle comparison');
+   const bounded=await store.inputs(run,bounds);assert.equal(comparisons.unbounded,1,'bounded comparisons cannot satisfy the unbounded counter');assert.deepEqual(bounded,all.slice(0,3));
    assert.ok(!all.some(i=>i.root_id===root&&i.question_keys.includes(key)),'human-corrected semantic question is never sent again');
    assert.ok(bounded.every(i=>i.author===null&&i.title===null&&i.language===null&&i.content_type===null));
    const decision=labels[0]!;

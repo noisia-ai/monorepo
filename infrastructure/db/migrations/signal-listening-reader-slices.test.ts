@@ -47,3 +47,24 @@ test('pending barriers preserve projection/budgets and do not add status or cont
  const start=source.indexOf('async function pendingAndAvailable('),end=source.indexOf('\nexport async function requestSignalListeningV1',start);
  assert.equal(createHash('sha256').update(source.slice(start,end)).digest('hex'),'4e7dc457faa63e16942a71202cfc37c89ae2589d5bec3388d8d1f45dc71e6daa','finish count/availability is outside this change');
 });
+
+for(const divergent of [false,true])test('unbounded oracle '+(divergent?'rolls back divergent results':'compares on an owned read-only snapshot')+' before releasing its client (orchestration only)',async()=>{
+ const {withListeningReaderSliceOracleV1}=await import('./signal-listening-reader-slices.oracle');
+ const queries:string[]=[],counts={unbounded:0};let released=0,delegated=0;
+ const client={query:async(sql:string)=>{
+  queries.push(sql);
+  if(sql.startsWith('SELECT to_regprocedure'))return{rows:[{present:null}]};
+  if(sql.includes("current_setting('transaction_isolation')"))return{rows:[{isolation:'repeatable read',readonly:'on'}]};
+  if(divergent&&sql.startsWith('WITH pending AS MATERIALIZED('))return{rows:[{unexpected:true}]};
+  return{rows:[]};
+ },release(){released++;}};
+ const db={query:async()=>{delegated++;return{rows:[]};},connect:async()=>client}as unknown as Parameters<typeof withListeningReaderSliceOracleV1>[0];
+ const wrapped=withListeningReaderSliceOracleV1(db,counts),query='/* labeling_listening_inputs_v1 */ WITH candidates AS MATERIALIZED(SELECT 1) SELECT * FROM candidates';
+ const params=['00000000-0000-4000-8000-000000000001','00000000-0000-4000-8000-000000000002','00000000-0000-4000-8000-000000000003','sha256:'+'0'.repeat(64),'00000000-0000-4000-8000-000000000004',3];
+ if(divergent)await assert.rejects(wrapped.query(query,params),/reader fields/);else await wrapped.query(query,params);
+ assert.equal(delegated,0,'the marked hydration SELECT must not bypass comparison through pool.query');assert.equal(released,1);
+ assert.equal(counts.unbounded,divergent?0:1,'only a completed direct unbounded comparison increments this counter');
+ const install=queries.findIndex(sql=>sql.startsWith('CREATE OR REPLACE FUNCTION pg_temp.')),begin=queries.indexOf('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
+ assert.ok(install>=0&&install<begin,'the old temporary function is installed before READ ONLY begins');
+ assert.ok(queries.includes(divergent?'ROLLBACK':'COMMIT'));assert.equal(queries.includes(divergent?'COMMIT':'ROLLBACK'),false);
+});

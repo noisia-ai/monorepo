@@ -36,23 +36,36 @@ async function install(c:PoolClient){
    'CREATE OR REPLACE FUNCTION pg_temp.r16_reader_population_before_0325('));
  }
 }
-export function withListeningReaderSliceOracleV1(database:LabelingDatabaseV1):LabelingDatabaseV1{
- return {query:database.query.bind(database),connect:async()=>{
+async function compare(c:PoolClient,sql:string,params:unknown[]|undefined,result:QueryResult){
+ const metadata=sql.startsWith('/* labeling_listening_input_metadata_v1 */'),hydrate=sql.startsWith('/* labeling_listening_inputs_v1 */');
+ if(!metadata&&!hydrate)return;
+ assert.ok(params);const previous=metadata?oldListeningMetadataSqlV1():oldListeningHydrateSqlV1(params.length===7);
+ const before=await c.query(previous,params);assert.deepEqual(result.rows,before.rows,'reader fields, byte prefixes and root/question order match frozen pre-0325 SQL');
+ // Keep timestamp serialization in PostgreSQL; node-pg Date truncates micros.
+ const json=(text:string)=>`SELECT to_jsonb(r) value FROM (${text}) r`;
+ const oldJson=await c.query(json(previous),params),newJson=await c.query(json(sql),params);
+ assert.deepEqual(newJson.rows,oldJson.rows,'metadata/hydrate SQL retains exact timestamp precision and all values');
+}
+export function withListeningReaderSliceOracleV1(database:LabelingDatabaseV1,counters={unbounded:0}):LabelingDatabaseV1{
+ return {query:async(sql:string,params?:unknown[])=>{
+  if(typeof sql!=='string'||!sql.startsWith('/* labeling_listening_inputs_v1 */'))return database.query(sql,params);
+  // The unbounded adapter uses pool.query, not connect. Give only this marked
+  // SELECT an owned client/snapshot for comparison; production is unchanged.
+  assert.equal(params?.length,6);const c=await database.connect();let inTx=false;
+  try{
+   await install(c); // CREATE FUNCTION must precede the read-only transaction.
+   await c.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');inTx=true;
+   const mode=(await c.query("SELECT current_setting('transaction_isolation') isolation,current_setting('transaction_read_only') readonly")).rows[0];
+   assert.deepEqual(mode,{isolation:'repeatable read',readonly:'on'});
+   const result=await c.query(sql,params);await compare(c,sql,params,result);
+   await c.query('COMMIT');inTx=false;counters.unbounded++;return result;
+  }catch(error){if(inTx)await c.query('ROLLBACK').catch(()=>{});throw error;}
+  finally{c.release();}
+ },connect:async()=>{
   const c=await database.connect();try{await install(c);}catch(error){c.release();throw error;}
   return new Proxy(c,{get(target,key){
    if(key==='query')return async(sql:string,params?:unknown[])=>{
-    const result:QueryResult=await target.query(sql,params);
-    const metadata=typeof sql==='string'&&sql.startsWith('/* labeling_listening_input_metadata_v1 */');
-    const hydrate=typeof sql==='string'&&sql.startsWith('/* labeling_listening_inputs_v1 */');
-    if(metadata||hydrate){
-     assert.ok(params);const previous=metadata?oldListeningMetadataSqlV1():oldListeningHydrateSqlV1(params.length===7);
-     const before=await target.query(previous,params);assert.deepEqual(result.rows,before.rows,'reader fields, byte prefixes and root/question order match frozen pre-0325 SQL');
-     // Keep timestamp serialization in PostgreSQL; node-pg Date truncates micros.
-     const json=(text:string)=>`SELECT to_jsonb(r) value FROM (${text}) r`;
-     const oldJson=await target.query(json(previous),params),newJson=await target.query(json(sql),params);
-     assert.deepEqual(newJson.rows,oldJson.rows,'metadata/hydrate SQL retains exact timestamp precision and all values');
-    }
-    return result;
+    const result:QueryResult=await target.query(sql,params);if(typeof sql==='string')await compare(target,sql,params,result);return result;
    };
    const value=Reflect.get(target,key);return typeof value==='function'?value.bind(target):value;
   }});
