@@ -12,6 +12,17 @@ No hay aprobaciones humanas intermedias en los procesos de análisis: Sonnet 4.6
 
 ## Progreso
 
+- 0329 integrada localmente como c8598fd (068c9f38 del crítico) tras revisión sin P0/P1/P2. Cambia únicamente la proyección de expected, conservando ocho columnas, tres flags, validadores, orden de errores y autoridad. Tipos/lint globales 11/11 y seis focales puras pasan antes del commit. El oráculo financiero compara cinco validadores nativos, metadatos tipados y JSON SQL exacto, incluyendo precisión numérica y microsegundos. Confirmación PostgreSQL y rendimiento pendientes. Ahora hay 35 migraciones integradas pendientes, ninguna aplicada en UAT.
+
+- Se autoriza el candidato 0329: proyectar en expected sólo id, request, request_digest, i, selected_count, digests, basis y expected_request. Los tres resultados de validación consumen únicamente esos valores; id se conserva para el oráculo por llamada. La migración reemplazará sólo signal_listening_statement_money_v1, manteniendo literal el resto de 0328. Al autorizarlo había 34 migraciones integradas pendientes; el checkpoint posterior registra su integración y la confirmación PostgreSQL pendiente.
+
+- El informe privado del mini conserva ocho ZIP verificados y ocho nodos de escritura. Reserve: DML 1,702 ms, expected 921.800 ms y segundo Aggregate 532.342 ms; mark: DML 332 ms, expected 247.239 ms y segundo Aggregate 134.156 ms. Los Aggregate tienen una pasada y cero shared hits; no hay evidencia de otro recorrido cuadrático. Se estudia sólo una proyección más pequeña del conjunto materializado, con prueba de columnas/tipos y sin mover validaciones o cambiar el orden de errores; todavía no hay cambio autorizado.
+
+- Mini 43823075692 verifica diecinueve oráculos sin omisiones y 4,096 raíces/8,192 llamadas, sin reserva ni exposición unknown. Candidato: 21.424 s frente a 20.479 s previo, HTTP máximo 489.642 ms. Metadatos pasa de trece a once consultas y de 2.773 a 2.408 s acumulados; inputs permanece 4.359 frente a 4.368 s. El nuevo filtro cuesta 87.641 ms acumulados de página de IDs, frente a 35.897 ms antes. No hay mejora total demostrada ni H1; se analiza la escritura siguiente sin repetir un full todavía.
+
+- Smoke 43823096899 del candidato f4a12a86 pasa completo: actor 3/3, entradas/calibración 4/4 (incluidos los dos lazy ampliados), hybrid 1/1, scoped 3/3 y escala 1/1. Los títulos y conteos nativos se conservan; sin omisiones seleccionadas. Se confirma la selección con base pendiente y consumidor anterior, más el prefijo con todas las preguntas vinculadas y equivalencia de bytes. Mini 43823075692 termina baseline verde y candidato rojo sólo al exportar CPU después del runner; se verifican sus ocho ZIP sin reconstruir un perfil ausente.
+- PostgreSQL completo de 9e (43818031790) termina verde, incluido Study 23/23, política 11/11 y lectores/fuente 3/3; MFP 104/104 y Escucha 105/105, sin omisiones. General y runtime también están verdes. Esto valida ese checkpoint funcional y no sustituye ni la capacidad rechazada ni CI completo sobre cambios posteriores.
+
 - Prefiltro integrado localmente como f69a91db (46f52330 del crítico), con limpieza de pruebas ea2b8a7b (25c94960), después de ambas revisiones sin P0/P1/P2. Cambia sólo SQL y parámetros de la página de IDs; metadatos e hidratación permanecen intactos. Tipos y lint globales 11/11 y diez focales puras de semántica, bytes y calibración pasan sin omisiones. Los dos focales nativos existentes conservan sus títulos y añaden reservas reales de consumidor y comparación contra el oráculo completo y los límites de bytes. Confirmación PostgreSQL y rendimiento pendientes; no se añade migración ni se publica en UAT.
 
 - Recibo del workflow 43818031831: matriz diez de diez sin reenvíos, 32,768 raíces resueltas y 65,536 requests; 243.552 s, 134.542 raíces/s, HTTP máximo 575.477 ms. Rechaza los mismos tres gates de capacidad; la variación frente a d64 no prueba una mejora de runtime, que no cambió deliberadamente. Procedencia verificada: checkout 31766a25 es el merge sintético de pull_request, con padres develop e12f81d7 y head 9e2834b2. Ambos commits tienen exactamente el mismo árbol Git 9575e23aa8bdf870c1a626cd83ab09e790a71ba1; la comparación devuelve cero archivos distintos. Se conserva el SHA de checkout y el rechazo original.
@@ -337,6 +348,14 @@ Recibo: separar Voyage/JEV por raíz de Claude por número de grupos y vueltas; 
 
 ## Sorpresas y descubrimientos
 
+- El oráculo anterior convertía JSONB a objetos JS antes de comparar todos sus valores. La nueva comparación conserva JSON como texto SQL para no redondear números largos; el parseo JS sólo comprueba IDs y cardinalidad. Es un cambio de prueba, sin nueva admisión ni escritura de datos contrafactuales en tablas públicas.
+
+- La anchura estimada del productor expected (821) es mayor que las de sus lectores (100/192), pero el diagnóstico no registra Output. No se conoce la poda real de columnas ni se atribuye el spill a esa diferencia. Los tiempos de digest/JSON son inclusivos durante DML y todos sus triggers, no CPU ni expected aislado; no se suman con sus hijos.
+
+- Quitar dos probes de metadatos no reduce por sí solo el reloj del mini. Las cohortes y los tamaños observados también cambian: el plan de metadatos nuevo usa 3,446 IDs y el anterior 3,326. No se atribuye una diferencia por probe al código ni se inventa el plan del filtro de IDs, que no fue capturado.
+
+- El diagnóstico del nuevo selector vuelve a fallar únicamente al exportar CPU después del runner. Se conserva el estado rojo y se separan los TAP y recibos nativos que sí llegaron a disco. El perfil ausente no se reconstruye ni se interpreta como CPU cero.
+
 - El prefiltro es sólo necesario: raíces sin respuestas, con base reservada pero consumidor pendiente, o cubiertas por caché de otra ejecución pueden seguir entrando y resultar vacías después. No se promete eliminar todas las lecturas repetidas. Los links de otro run o workspace no cuentan; digests duplicados se tratan por existencia, igual que el predicado original.
 
 - El checkout del workflow con head 9e informa el merge sintético de pull_request, no el head. Se verifican padres y árbol completo idéntico, no sólo archivos seleccionados. La procedencia conserva ambos SHAs y el resultado rechazado; un SHA de workflow por sí solo no sustituye esa comprobación.
@@ -490,6 +509,12 @@ Recibo: separar Voyage/JEV por raíz de Claude por número de grupos y vueltas; 
 - El promedio del piloto completo incluye una etapa editorial que no escala por raíz. Multiplicarlo linealmente daba USD 205.81/millón; mantener explícitamente los grupos y una vuelta de referencia produce USD 114.035250. Ambos cálculos parten del mismo recibo, cuyo uso histórico permanece USD 17.280463.
 
 ## Registro de decisiones
+
+- 2026-11-16: integrar la proyección sólo después de revisión independiente y comprobaciones locales secuenciales; medirla en el laboratorio remoto existente con los oráculos ampliados. Mantener exactamente los cuatro instrumentos actuales y no generar otro paquete de migración UAT hasta estabilizar fuente y capacidad. La captura DML no depende del hash del SQL interno modificado: observa el DML exterior original, cuyo hash permanece igual.
+
+- 2026-11-16: probar primero la proyección estrecha de expected, cuya equivalencia se deriva de sus consumidores actuales, sin fusionar agregados ni adelantar el digest. Comparar ocho columnas tipadas y los tres flags con 0328 en el focal financiero existente, incluidos defectos, NULL y multiplicidad. Sólo una medición posterior decidirá si PostgreSQL ya podaba esos valores y si existe ahorro real.
+
+- 2026-11-16: conservar el prefiltro porque mantiene equivalencia nativa y evita una clase de proyecciones innecesarias, sin presentar el mini como mejora de velocidad. Antes de otro full, identificar un coste concreto de escritura en los planes actuales; no inferir CPU ni locks desde tiempos agregados, y no eliminar validaciones suponiendo inmutabilidad no demostrada.
 
 - 2026-11-16: integrar el prefiltro revisado sin migración y validarlo primero con los focales nativos y el diagnóstico remoto existente. Mantener la suite Study de 9e hasta su resultado y evitar otro full de capacidad sin evidencia nueva del candidato. Sustituir el test que fija bytes del código por el modelo semántico y los oráculos nativos; la exactitud del diff queda en la revisión, sin imponer mantenimiento de hashes de implementación.
 
@@ -660,7 +685,7 @@ Recibo: separar Voyage/JEV por raíz de Claude por número de grupos y vueltas; 
 
 ## Resultado y retrospectiva
 
-Estado vigente, 16 nov.: ambos full d64/9e completan censo y matriz de recuperación, pero rechazan capacidad (87.140 y 134.542 raíces/s respectivamente). El árbol completo del merge sintético confirma fuente 9e exacta. CI general, runtime, migrated-schema y escala de 9e están verdes; Study sigue en marcha. El prefiltro revisado f69a91db pasa tipos/lint globales; sus oráculos PostgreSQL y rendimiento aún deben medirse. Hay 34 migraciones pendientes, ninguna aplicada realmente en UAT; no hay nuevas llamadas pagadas. R16 H0–H6 sigue abierto. Los párrafos siguientes son historia.
+Estado vigente, 16 nov.: H1 sigue rechazado en ambos full (87.140 y 134.542 raíces/s). El checkpoint 9e tiene CI funcional completo verde, incluido Study 23/23. El prefiltro pasa su smoke y diecinueve oráculos; su mini de 21.424 s no demuestra mejora total. Se integra la proyección 0329 como c8598fd, revisada y con tipos/lint y focales puras verdes; su aceptación nativa y ahorro aún deben medirse. Hay 35 migraciones pendientes, ninguna aplicada realmente en UAT, sin despliegue ni llamadas pagadas R16. R16 H0–H6 permanece abierto. Los párrafos siguientes son historia.
 
 Estado vigente, 16 nov.: 0327 y la corrección de fixture pasan diecinueve oráculos y el smoke remoto; el censo queda completo, pero H1 sigue sin cumplir 1,000/s ni latencia en la última corrida. El CI completo previo de 0325 está verde y Study de 744 pasó 23/23; la fuente corregida debe repetir todo CI. Se investigan dos uniones de transiciones residuales sin cambiar permisos o presupuesto. No hay aceptación ni ejecución pagada de R16, despliegue o migraciones reales en UAT. El paquete real, la comparación privada y el QA visual siguen pendientes. Los párrafos siguientes conservan resultados históricos.
 
