@@ -313,7 +313,7 @@ jobs:
             mkdir -p "$(dirname "$R16_RESERVE_MONEY_TAP")" "$(dirname "$R16_RESERVE_RAW_PAGE_TAP")" \
               "$(dirname "$R16_RESERVE_INPUT_CONTRACTS_TAP")"
             set +e
-            timeout 12m corepack pnpm exec node --test --test-name-pattern='^(native Listening (reserve |concurrent reserve |without RAW pages retains the default reservation cursor)|generic mass labeling with RAW pages retains its default reservation cursor)$' \
+            timeout 12m corepack pnpm exec node --test --test-name-pattern='^(?:native Listening reserve commits while disjoint (?:raw|apply) retains its real run SHARE fence|native Listening concurrent reserve cap one call (?:replays the same identity once|rejects a different identity atomically)|native Listening reserve replay preserves unknown custody and prior uncertainty blocks a new run|native Listening without RAW pages retains the default reservation cursor and exclusive run fence)$' \
               --test-concurrency=1 --import tsx infrastructure/db/migrations/signal-listening-money-batches.postgres.test.ts \
               > "$R16_RESERVE_MONEY_TAP" 2>&1
             reserve_money_status=$?
