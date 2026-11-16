@@ -532,6 +532,56 @@ jobs:
             echo '::error::R16 bounded custom-plan scale test failed or was skipped'
             exit 1
           fi
+      - name: Run exact native RAW attach layout oracles
+        env:
+          NOISIA_R16_RAW_ATTACH_ORACLE_PG: 'true'
+          NOISIA_R16_NATIVE_FIXTURE_PG: 'true'
+          NOISIA_MASS_LABELING_ENABLED: 'true'
+          NOISIA_SIGNAL_LISTENING_ENABLED: 'true'
+          NOISIA_JEV_PROVIDER_ENABLED: 'true'
+          NOISIA_JEV_STREAMING_V2_ENABLED: 'true'
+        run: |
+          set -euo pipefail
+          tap=r16-listening-raw-attach-oracle.tap
+          : > "$tap"
+          connection_file=.data/piloto-masivo/r16/labs/benchmark-pg17/connection.env
+          test -f "$connection_file"
+          set -a
+          source "$connection_file"
+          set +a
+          export DATABASE_SSL=false
+          export NOISIA_R16_LOCAL_PG_LAB=r16-benchmark-pg17
+          set +e
+          pnpm exec node --test --test-concurrency=1 \
+            --test-name-pattern='^(?:RAW attach layout720 original and page map preserve native rows among 4128 calls|RAW attach layout4096 original and page map preserve native rows among 4128 calls)$' \
+            --import tsx infrastructure/db/migrations/signal-labeling-raw-attach.postgres.test.ts | tee "$tap"
+          test_status=${PIPESTATUS[0]}
+          set -e
+          node - "$tap" "$test_status" <<'NODE'
+          const fs = require('node:fs');
+          const tap = fs.readFileSync(process.argv[2], 'utf8');
+          const status = Number(process.argv[3]);
+          const expected = [
+            'RAW attach layout720 original and page map preserve native rows among 4128 calls',
+            'RAW attach layout4096 original and page map preserve native rows among 4128 calls',
+          ];
+          const lines = tap.split(/\r?\n/u);
+          const selected = expected.map((title) => lines.filter((line) => /^ok \d+ - /u.test(line) && line.endsWith(` - ${title}`)));
+          if (status !== 0 || selected.some((rows) => rows.length !== 1)
+              || !/^# tests 2$/mu.test(tap) || !/^# pass 2$/mu.test(tap)
+              || !/^# fail 0$/mu.test(tap) || !/^# skipped 0$/mu.test(tap)) {
+            throw new Error('native RAW attach oracle TAP must report both exact titles once, pass=2, fail=0, skipped=0');
+          }
+          process.stdout.write('native RAW attach oracles: 2 exact selected cases passed\n');
+          NODE
+      - name: Upload native RAW attach oracle receipt
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: r16-listening-raw-attach-oracle-${{ github.run_id }}
+          path: r16-listening-raw-attach-oracle.tap
+          if-no-files-found: warn
+          retention-days: 14
       - name: Stop and remove only the owned R16 lab
         if: ${{ always() && env.R16_BOUNDED_PLAN_LAB_OWNED == 'true' }}
         run: |
