@@ -133,6 +133,17 @@ for(const mode of ['incomplete','utf8','nul','overcap','revoked','concurrent_rev
    }
    const applied=await applySignalListeningDiscoveryReviewV1({...access,round_id:round.id});assert.equal(applied.status,'classifying');
    if(mode==='child_policy_race'){
+    const custody=async()=> (await db.query(`SELECT
+     (SELECT jsonb_agg(to_jsonb(f) ORDER BY f.id) FROM signal_listening_preparations f WHERE workspace_id=$1) preparations,
+     (SELECT jsonb_agg(to_jsonb(r) ORDER BY r.id) FROM signal_labeling_runs r WHERE workspace_id=$1) runs,
+     (SELECT jsonb_agg(to_jsonb(a) ORDER BY a.id) FROM signal_processing_admissions a WHERE workspace_id=$1) admissions,
+     (SELECT jsonb_agg(to_jsonb(o) ORDER BY o.kind,o.owner_id) FROM signal_listening_study_policy_owners o WHERE workspace_id=$1) owners,
+     (SELECT jsonb_agg(to_jsonb(c) ORDER BY c.id) FROM signal_labeling_calls c WHERE workspace_id=$1) labeling_calls,
+     (SELECT jsonb_agg(to_jsonb(c) ORDER BY c.id) FROM signal_workspace_embedding_calls c WHERE workspace_id=$1) embedding_calls,
+     (SELECT jsonb_agg(to_jsonb(e) ORDER BY e.id) FROM engine_cost_events e WHERE workspace_id=$1) costs,
+     (SELECT signal_listening_study_policy_exposure_v1(scope_id)::text FROM signal_listening_study_policy_bindings WHERE policy_id=$2) scope_exposure,
+     signal_listening_discovery_exposure_v1($3)::text parent_exposure`,[ctx.workspace_id,policy.id,round.execution_id])).rows[0];
+    const beforeRevocation=await custody();
     let preflight=false,changed=false;const database={query:db.query.bind(db),connect:async()=>{const c=await db.connect();return new Proxy(c,{get(target,key){if(key==='query')return async(sql:string,...values:unknown[])=>{
      const value=await(target.query as(...a:unknown[])=>Promise<unknown>)(sql,...values);
      if(sql.startsWith('SELECT max_execution_micro_usd::text FROM signal_processing_policy_actions'))preflight=true;
@@ -140,7 +151,9 @@ for(const mode of ['incomplete','utf8','nul','overcap','revoked','concurrent_rev
       await d.query("UPDATE signal_processing_policy_versions SET status='revoked' WHERE id=$1",[policy.id]);await d.query('COMMIT');
      }catch(e){await d.query('ROLLBACK');throw e;}finally{d.release();}}
      return value;};const value=Reflect.get(target,key);return typeof value==='function'?value.bind(target):value;}});}} as typeof db;
-    await assert.rejects(prepareSignalListeningDiscoveryChildV1({...access,database,round_id:round.id,provider_available:true}),/child_authority_changed|listening_policy_unavailable/);assert.equal(changed,true);
+    // Revocation is committed after preflight, before preparation's fresh policy read.
+    await assert.rejects(prepareSignalListeningDiscoveryChildV1({...access,database,round_id:round.id,provider_available:true}),{message:'listening_policy_changed'});assert.equal(changed,true);
+    assert.deepEqual(await custody(),beforeRevocation,'revocation creates no preparation, admission, owner, provider call, cost or exposure');
     assert.equal((await db.query('SELECT count(*)::int n FROM signal_listening_preparations WHERE idempotency_key=$1',['listening-discovery-child:'+round.id])).rows[0].n,0,'a policy revocation in the await gap creates no child');return;
    }
    await assert.rejects(prepareSignalListeningDiscoveryChildV1({...access,round_id:round.id,provider_available:false}),/provider_unavailable/);assert.equal((await db.query("SELECT count(*)::int n FROM signal_listening_preparations WHERE idempotency_key=$1",['listening-discovery-child:'+round.id])).rows[0].n,0);

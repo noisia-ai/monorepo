@@ -11,7 +11,7 @@ const enabled=process.env.NOISIA_R16_LISTENING_BOUNDED_CUSTOM_PLAN_PG==='true';
 // in CI. No provider transport is used; fixture preparation is synthetic.
 test('bounded dispatch survives 32-root warmups, repeated4096 roots and a return to small/full queries',{
  skip:!enabled,timeout:600000,
-},async()=>runMassLabelingAcceptanceFixtureV1('product-recovery',{benchmark:{root_count:4096,execution_cap_micro_usd:1000000,import_batch_size:256,beforeProcessing:async f=>{
+},async()=>runMassLabelingAcceptanceFixtureV1('product-recovery',{benchmark:{root_count:4096,execution_cap_micro_usd:1000000,import_batch_size:256,preparation_page_size:100,embedding_page_limit:264,beforeProcessing:async f=>{
  const cfg=await saveSignalListeningConfigurationV1({database:f.database,workspace_id:f.workspace_id,actor_user_id:f.actor_user_id,
   expected_revision:0,provenance:'human',configuration:r16ListeningWorkloadV1('defined_consumer_second_pass').configuration});
  const context=(await f.database.query('SELECT entity_context_digest FROM signal_mass_labeling_maps WHERE id=$1',[f.map_id])).rows[0].entity_context_digest;
