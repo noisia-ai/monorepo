@@ -12,6 +12,12 @@ No hay aprobaciones humanas intermedias en los procesos de análisis: Sonnet 4.6
 
 ## Progreso
 
+- CI focal 43804135527 verde sobre runtime 8f1db5aa: actor 3/3; input bounds, lazy equivalence (dos casos) y segunda forma 4/4; híbrido 1/1; escala 4,096 raíces 1/1, todos sin omisiones. Mini 43804132374 conserva 4,096 raíces/8,192 solicitudes y baja clasificación/serving a 46.272 s (unas 88.5 raíces/s), sin aceptar H1. HTTP observado 124.50–479.86 ms. Tres casos semánticos y suite completa de esa fuente se ejecutan en 43804353558. Guía QA preparada en R16_UAT_QA_GUIDE.md, aún sin verificación visual en UAT.
+
+- 0325 integrada como 2e98ac85/cf76557a/8f1db5aa tras revisión independiente sin P0/P1/P2. Consume respuestas base y reservas como conjuntos locales a la sentencia, con las mismas identidades, permisos, catorce campos y precedencia humana. El oráculo compara metadata e hidratación acotada y completa contra las consultas anteriores; la ruta completa tiene snapshot RR de sólo lectura y contador propio. Tipado 11/11 verde. Faltan seis casos nativos y mini remoto; las 31 migraciones pendientes no están aplicadas en UAT.
+
+- Checkpoint b20c2456: migrated-schema termina verde con actor 3/3, MFP 104/104 y Listening 95/95, cero fallos u omisiones. General, runtime y escala también verdes; Study completo sigue ejecutándose. El único fallo anterior del oracle tipado queda cerrado nativamente. La revisión del próximo lector detectó que la comparación sin bounds escapaba del helper; se añade esa cobertura antes de aceptar 0325.
+
 - Snapshot compilado 5b97af47/2ca5104d integrado localmente tras revisión sin P0/P1/P2: mantiene APIs raw validadas, handle opaco/clonado/congelado y binding por run/config/lease, sin caché de autorización o resultados. 48 focales sin omisiones, tipos/lint 11/11. Mini 43798518805 pasa money1 y actor3; conserva 4,096 raíces/8,192 llamadas/cero pendientes. Validator inclusivo baja de 4.579 a 0.152 s y event loop máximo a 371 ms; HTTP máximo 497 ms. Tiempo total de clasificación 57.721 s: H1 sigue sin aceptar.
 - El anclaje explícito muestra 46.942 s sin HTTP y 45.588 s de éstos con alguna query pendiente (uniones temporales, no sumas). Metadata4/6 e hydrate4 concentran 24.595 s: dos scans de answers con 3,289 loops y unas 956 filas por loop, y un bitmap sent repetido 6,516 veces. Se prepara una corrección de lectura por conjuntos con llaves exactas y paridad; no hay cambio de índices, cuotas ni permisos.
 
@@ -290,6 +296,10 @@ Recibo: separar Voyage/JEV por raíz de Claude por número de grupos y vueltas; 
 
 ## Sorpresas y descubrimientos
 
+- Las consultas nuevas de 0325 cambian sus hashes. El diagnóstico anterior no capturó planes internos del nuevo lector, porque su whitelist sólo reconocía las consultas anteriores. Los tiempos y censos observados siguen siendo válidos, pero no prueban que desaparezcan los loops o temporales. Se conservan los hashes anteriores y se añaden únicamente los dos hashes nuevos observados para medir ese punto antes de otro cambio productivo.
+
+- El helper de pruebas interceptaba las consultas con conexión explícita, pero la hidratación completa utilizaba pool.query y escapaba de la comparación. Se corrigió sólo el helper: conexión propia para su SELECT marcado, funciones temporales instaladas antes de BEGIN RR READ ONLY y comparación exacta de filas y microsegundos. Los contadores independientes impiden que las consultas acotadas acrediten por error esa cobertura.
+
 - El witness físico descarta el supuesto techo heredado de tokens: 64 requests oficiales de 65,536 tokens y 8,128 medidos de 302/250, sin faltantes ni discordancias; pico HTTP real 1,024. La repetición de configuración sí causaba CPU/latencia, pero quitarla expuso que las consultas de answers/sent seguían haciendo trabajo cuadrático.
 
 - La atribución directa al actor y su plan muestran que un helper pequeño puede costar más al invocarse desde el guard que al ejecutar su SELECT con los mismos valores. La diferencia observada justifica probar otro motor de preparación, conservando literalmente la lógica. No prueba por sí sola una espera de locks ni autoriza cachear decisiones de acceso.
@@ -420,6 +430,8 @@ Recibo: separar Voyage/JEV por raíz de Claude por número de grupos y vueltas; 
 - El promedio del piloto completo incluye una etapa editorial que no escala por raíz. Multiplicarlo linealmente daba USD 205.81/millón; mantener explícitamente los grupos y una vuelta de referencia produce USD 114.035250. Ambos cálculos parten del mismo recibo, cuyo uso histórico permanece USD 17.280463.
 
 ## Registro de decisiones
+
+- 2026-11-16: probar 0325 en el laboratorio remoto existente y conservar la corrida completa de Study sobre b20c2456 hasta resultado terminal. El diagnóstico usa exactamente el runtime integrado más los cuatro instrumentos revisados; no sustituye las seis pruebas nativas ni el ensayo completo H1 sobre la fuente final. Mantener Docker cerrado y no ejecutar PostgreSQL local.
 
 - 2026-11-16 03:49 UTC: publicar el checkpoint Node para CI completo aunque H1 aún no cumpla: cambió el compilador compartido de calibración con Study y merece la validación nativa larga mientras se corrige el lector. El mini ya pasó los cuatro oráculos y las llamadas completas. Cancelar únicamente la carga H1 automática hasta una corrección viable; el benchmark final y todo CI deben repetirse sobre la fuente final.
 
