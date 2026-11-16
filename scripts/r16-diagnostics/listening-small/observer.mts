@@ -17,7 +17,7 @@ const PLAN_NUMBERS=['Plan Rows','Plan Width','Actual Rows','Actual Loops','Start
  'Shared Hit Blocks','Shared Read Blocks','Shared Dirtied Blocks','Shared Written Blocks','Temp Read Blocks','Temp Written Blocks'];
 const PLAN_NAMES=['Node Type','Relation Name','Alias','Index Name','Join Type'];
 const SAFE_CTE_NAMES=new Set(['allowed_roots','selected_items','items','prepared','qs','raw_lock_page']);
-const PROJECTION_SAFE_CTE_NAMES=new Set(['candidates','sent','reservation_matches','pending','root_metadata','prefix','fitting','projections']);
+const PROJECTION_SAFE_CTE_NAMES=new Set(['candidates','sent','reservation_matches','pending','root_metadata','prefix','fitting','fit_matches','projections','projection_rows']);
 const MAX_INNER_PLANS_PER_QUERY=32;
 export const INNER_PLAN_MIN_DURATION_MS=50;
 export const DML_PLAN_MIN_DURATION_MS=50;
@@ -300,11 +300,13 @@ SELECT EXISTS(SELECT 1 FROM public.signal_workspaces w
 const ACTOR_NESTED_PLAN_LIMIT=8,ACTOR_CALL_IDS_LIMIT=8192;
 const UUID_PATTERN=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;
 export const PROJECTION_METADATA_QUERY_HASH_V1='sha256:623ea62b8c7f51acab4551632bfd2518d58ed70cce110afce59914d175981bd3';
+export const PROJECTION_LINEAR_METADATA_QUERY_HASH_V1='sha256:e2a1d2ae7cc6917e1b58de56e7d3a2ad108e902feeb46d5d1dd1559644421f42';
 export const PROJECTION_METADATA_MIN_BATCH_V1=1024;
 export const PROJECTION_METADATA_MAX_BATCH_V1=4096;
 /** Read only the shape of the real nine-bind input projection query; never retain its binds. */
-export function projectionMetadataBatchSizeV1(hash:string|null,args:unknown[]){
- if(hash!==PROJECTION_METADATA_QUERY_HASH_V1||args.length!==2||queryHash(args[0])!==hash||!Array.isArray(args[1]))return null;
+export function projectionMetadataBatchSizeV1(hash:string|null,args:unknown[],allowLinear=false){
+ if((hash!==PROJECTION_METADATA_QUERY_HASH_V1&&(!allowLinear||hash!==PROJECTION_LINEAR_METADATA_QUERY_HASH_V1))
+  ||args.length!==2||queryHash(args[0])!==hash||!Array.isArray(args[1]))return null;
  const values=args[1] as unknown[];
  if(values.length!==9||![0,1,2,4].every(index=>typeof values[index]==='string'&&UUID_PATTERN.test(values[index] as string))
   ||typeof values[3]!=='string'||values[3].length<1||values[3].length>256
@@ -631,7 +633,10 @@ export async function captureReadonlyProjectionPlanV1(args:{client:any;query:()=
  database:string;role:string;env:NodeJS.ProcessEnv;clock?:()=>number}):Promise<{result:any;observation:ProjectionPlanObservationV1|null}>{
  const {client,query,query_hash,batch_size,outer_query_text,database,role,env}=args,clock=args.clock??(()=>performance.now());
  const targetRef=env.R16_DIAGNOSTIC_TARGET_REF_REQUESTED??'';
- if(query_hash!==PROJECTION_METADATA_QUERY_HASH_V1||batch_size<PROJECTION_METADATA_MIN_BATCH_V1||batch_size>PROJECTION_METADATA_MAX_BATCH_V1
+ const linearEvidence=env.R16_DIAGNOSTIC_PROJECTION_LINEAR_ORACLE==='true'&&env.LINEAR_ACCEPTANCE_SELECTED_PASS==='3'
+  &&/^[0-9a-f]{40}$/u.test(targetRef)&&env.LINEAR_ACCEPTANCE_TARGET_SHA===targetRef;
+ if((query_hash!==PROJECTION_METADATA_QUERY_HASH_V1&&!(query_hash===PROJECTION_LINEAR_METADATA_QUERY_HASH_V1&&linearEvidence))
+  ||batch_size<PROJECTION_METADATA_MIN_BATCH_V1||batch_size>PROJECTION_METADATA_MAX_BATCH_V1
   ||!dmlPlanCaptureEnvironmentAllowed(env)||database!=='noisia_mfp_ci'||role!=='postgres'
   ||env.R16_DIAGNOSTIC_MODE!=='sql_frontier_only'||env.R16_DIAGNOSTIC_CAPTURE_PROJECTION_PLAN!=='true'
   ||env.GITHUB_EVENT_NAME!=='workflow_dispatch'||env.R16_DIAGNOSTIC_TARGET_LABEL!=='candidate'||env.RESERVE_SHARED_SMOKE!=='true'
@@ -753,7 +758,7 @@ export function projectObserverTimeToPerformanceRangeV1(anchor:{performance_befo
   uncertainty_ms:anchor.performance_after_ms-anchor.performance_before_ms};
 }
 type ListeningObserverScopeV1={operation:string;sequence:number;job:number;raw_page?:RawPageDmlContextV1|null};
-export function createListeningObserver(options:{neutral_only?:boolean;sql_frontier_only?:boolean;projection_plan_only?:boolean}={}){
+export function createListeningObserver(options:{neutral_only?:boolean;sql_frontier_only?:boolean;projection_plan_only?:boolean;projection_linear_oracle?:boolean}={}){
  const performanceBefore=performance.now(),origin=process.hrtime.bigint(),performanceAfter=performance.now();
  const performanceOrigin=performanceBefore,now=()=>Number(process.hrtime.bigint()-origin)/1e6,events=boundedEvents(),scope=new AsyncLocalStorage<ListeningObserverScopeV1>();
  let storeSequence=0,querySequence=0,streamSequence=0,jobSequence=0,jobStreamStart=0,invalidStream=0;
@@ -776,7 +781,7 @@ export function createListeningObserver(options:{neutral_only?:boolean;sql_front
  function query(owner:any){return async(...args:any[])=>{pid(owner);const start=now(),context=scope.getStore(),op=context?.operation??'unlabeled',job=context?.job??jobSequence,sequence=++querySequence,hash=queryHash(args[0]);
   const label=innerPlanQueryLabel(hash),queryOrdinal=options.neutral_only||options.sql_frontier_only?null:
    nextInnerPlanQueryOrdinalV1(hash,label!==null&&planRootCount>=1024,planQueryOrdinals);try{
-  const projectionBatch=options.sql_frontier_only&&options.projection_plan_only?projectionMetadataBatchSizeV1(hash,args):null;
+  const projectionBatch=options.sql_frontier_only&&options.projection_plan_only?projectionMetadataBatchSizeV1(hash,args,options.projection_linear_oracle===true):null;
   if(projectionBatch!==null&&projectionCaptureCount<1&&dmlPlanCaptureEnvironmentAllowed(process.env)
    &&typeof owner.on==='function'&&typeof owner.off==='function'){
    projectionCaptureCount++;

@@ -22,6 +22,10 @@ on:
         type: boolean
         default: false
         description: Capture one bounded read-only input projection plan (requires SQL frontier mode and shared smoke)
+      projection_linear_oracle:
+        type: boolean
+        default: false
+        description: Run three exact native PostgreSQL projection linearity oracles in an isolated lab
       target_ref:
         type: string
         required: false
@@ -61,6 +65,7 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
           TARGET_REF: ${{ inputs.target_ref }}
           CAPTURE_PROJECTION_PLAN: ${{ inputs.capture_projection_plan || false }}
+          PROJECTION_LINEAR_ORACLE: ${{ inputs.projection_linear_oracle || false }}
         run: |
           set -euo pipefail
           if [ "$EVENT_NAME" != workflow_dispatch ] \
@@ -72,6 +77,13 @@ jobs:
           if [ "$CAPTURE_PROJECTION_PLAN" = true ] \
               && { [ "$MODE" != sql_frontier_only ] || [ "$RESERVE_SHARED_SMOKE" != true ]; }; then
             echo '::error::projection plan capture requires a manual SQL frontier run with reserve_shared_smoke'
+            exit 1
+          fi
+          if [ "$PROJECTION_LINEAR_ORACLE" = true ] \
+              && { { [ "$MODE" != neutral_only ] && [ "$MODE" != sql_frontier_only ]; } \
+                || [ "$RESERVE_SHARED_SMOKE" != true ] || [ -z "$TARGET_REF" ] \
+                || [ "${#TARGET_REF}" -ne 40 ] || [[ ! "$TARGET_REF" =~ ^[0-9a-f]{40}$ ]]; }; then
+            echo '::error::projection linearity oracle requires a manual neutral or SQL diagnostic, shared smoke and exact target SHA'
             exit 1
           fi
           case "$RESOURCE_PROFILE" in
@@ -323,10 +335,249 @@ jobs:
             exit 1
           fi
 
+  projection-linear-acceptance:
+    name: R16 projection linear-joins acceptance (fresh isolated lab)
+    if: ${{ inputs.projection_linear_oracle == true && github.event_name == 'workflow_dispatch' && inputs.reserve_shared_smoke == true && (inputs.mode == 'neutral_only' || inputs.mode == 'sql_frontier_only') }}
+    needs: raw-acceptance
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      selected_pass: ${{ steps.publish.outputs.selected_pass || '0' }}
+      target_sha: ${{ steps.publish.outputs.target_sha || '' }}
+    env:
+      R16BENCH_RUN_ID: benchmark-pg17
+      R16BENCH_SERVICES: postgres,redis
+      NOISIA_R16_LOCAL_PG_LAB: r16-benchmark-pg17
+      DATABASE_SSL: 'false'
+    steps:
+      - name: Validate projection linear-joins evidence request
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          MODE: ${{ inputs.mode }}
+          RESERVE_SHARED_SMOKE: ${{ inputs.reserve_shared_smoke || false }}
+          TARGET_REF: ${{ inputs.target_ref }}
+          RAW_ACCEPTANCE_SELECTED_PASS: ${{ needs.raw-acceptance.outputs.selected_pass || '0' }}
+          RAW_ACCEPTANCE_TARGET_SHA: ${{ needs.raw-acceptance.outputs.target_sha || '' }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" != workflow_dispatch ] \
+              || { [ "$MODE" != neutral_only ] && [ "$MODE" != sql_frontier_only ]; } \
+              || [ "$RESERVE_SHARED_SMOKE" != true ] || [ -z "$TARGET_REF" ] \
+              || [ "${#TARGET_REF}" -ne 40 ] || [[ ! "$TARGET_REF" =~ ^[0-9a-f]{40}$ ]]; then
+            echo '::error::projection linear-joins acceptance requires manual neutral/SQL mode, shared smoke and exact target SHA'
+            exit 1
+          fi
+          if [ "$RAW_ACCEPTANCE_SELECTED_PASS" != 6 ] || [ "$RAW_ACCEPTANCE_TARGET_SHA" != "$TARGET_REF" ]; then
+            echo '::error::projection linear-joins acceptance requires six RAW passes from the exact target SHA'
+            exit 1
+          fi
+          for name in $(compgen -e); do
+            case "$name" in
+              *ANTHROPIC*API_KEY*|*ANTHROPIC*TOKEN*|*SONNET*API_KEY*|*SONNET*TOKEN*|*VOYAGE*API_KEY*|*VOYAGE*TOKEN*)
+                echo '::error::provider credentials are forbidden in projection linear-joins acceptance'
+                exit 1
+                ;;
+            esac
+          done
+      - name: Checkout the exact projection linear-joins target
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.target_ref }}
+          path: target
+      - name: Seal the checked out target source
+        working-directory: target
+        env:
+          TARGET_REF: ${{ inputs.target_ref }}
+        run: |
+          set -euo pipefail
+          source_sha=$(git rev-parse HEAD)
+          test "$source_sha" = "$TARGET_REF"
+          if [ -n "$(git status --porcelain --untracked-files=all)" ]; then
+            echo '::error::projection linear-joins target checkout is not clean'
+            exit 1
+          fi
+          printf 'R16_PROJECTION_LINEAR_TARGET_SHA=%s\n' "$source_sha" >> "$GITHUB_ENV"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: target/services/workers/requirements-workspace-engine.txt
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: target/pnpm-lock.yaml
+      - name: Install frozen target dependencies
+        working-directory: target
+        run: corepack pnpm install --frozen-lockfile
+      - name: Install the offline workspace numerical runtime
+        working-directory: target
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install --no-deps -r services/workers/requirements-workspace-engine.txt
+          python -m pip install pytest==8.3.5
+      - name: Require the owned projection linear-joins container and volume to be absent
+        working-directory: target
+        run: |
+          set -euo pipefail
+          if docker inspect r16-benchmark-pg17 >/dev/null 2>&1; then
+            echo '::error::The named projection linear-joins PostgreSQL container already exists'
+            exit 1
+          fi
+          if docker volume inspect r16bench-benchmark-pg17_postgres-data >/dev/null 2>&1; then
+            echo '::error::The named projection linear-joins PostgreSQL volume already exists'
+            exit 1
+          fi
+          lab_dir=.data/piloto-masivo/r16/labs/benchmark-pg17
+          if [[ -e "$lab_dir/private.env" || -e "$lab_dir/connection.env" ]]; then
+            echo '::error::Private files for the projection linear-joins lab already exist'
+            exit 1
+          fi
+      - name: Start the owned PostgreSQL 17 and Redis lab
+        working-directory: target
+        run: |
+          set -euo pipefail
+          printf '%s\n' 'R16_PROJECTION_LINEAR_LAB_OWNED=true' >> "$GITHUB_ENV"
+          scripts/r16/lab-up.sh
+      - name: Apply migrations to the fresh projection linear-joins lab
+        working-directory: target
+        env:
+          NOISIA_DB_SMOKE_RESET_SCHEMA: 'true'
+          NOISIA_DB_SMOKE_EMULATE_SUPABASE_ROLES: 'true'
+          NOISIA_MFP_PG_CI: 'true'
+        run: |
+          set -euo pipefail
+          connection_file=.data/piloto-masivo/r16/labs/benchmark-pg17/connection.env
+          test -f "$connection_file"
+          set -a
+          source "$connection_file"
+          set +a
+          export DATABASE_SSL=false
+          export NOISIA_R16_LOCAL_PG_LAB=r16-benchmark-pg17
+          corepack pnpm --filter @noisia/db db:smoke:migrations
+      - name: Run the exact projection linear-joins oracle cases
+        id: oracle
+        working-directory: target
+        env:
+          NOISIA_R16_PROJECTION_LINEAR_JOINS_PG: 'true'
+          NOISIA_R16_NATIVE_FIXTURE_PG: 'true'
+          NOISIA_MASS_LABELING_ENABLED: 'true'
+          NOISIA_SIGNAL_LISTENING_ENABLED: 'true'
+          NOISIA_JEV_PROVIDER_ENABLED: 'true'
+          NOISIA_JEV_STREAMING_V2_ENABLED: 'true'
+          NOISIA_WORKSPACE_ENGINE_MODULE_ROOT: ${{ github.workspace }}/target/tools/signal-semantic-lab/src
+          HF_HUB_OFFLINE: '1'
+          TRANSFORMERS_OFFLINE: '1'
+          NUMBA_NUM_THREADS: '1'
+          OMP_NUM_THREADS: '1'
+          OPENBLAS_NUM_THREADS: '1'
+          MKL_NUM_THREADS: '1'
+          R16_PROJECTION_LINEAR_TAP: ${{ runner.temp }}/r16-projection-linear-joins.tap
+        run: |
+          set -euo pipefail
+          export NOISIA_WORKSPACE_ENGINE_PYTHON="$(command -v python)"
+          : > "$R16_PROJECTION_LINEAR_TAP"
+          connection_file=.data/piloto-masivo/r16/labs/benchmark-pg17/connection.env
+          test -f "$connection_file"
+          set -a
+          source "$connection_file"
+          set +a
+          export DATABASE_SSL=false
+          export NOISIA_R16_LOCAL_PG_LAB=r16-benchmark-pg17
+          set +e
+          corepack pnpm exec node --test --test-concurrency=1 \
+            --test-name-pattern='^(?:projection linear joins native preserves256keys, Unicode microseconds, byte sentinels, reservations and rights|projection linear joins native preserves awaiting/excluded, H5 precedence and a global byte prefix across pages|projection linear joins native4096 paired RRRO preserves rows and removes both materialized CTE rescans)$' \
+            --import tsx infrastructure/db/migrations/signal-listening-projection-linear-joins.postgres.test.ts | tee "$R16_PROJECTION_LINEAR_TAP"
+          test_status=${PIPESTATUS[0]}
+          set -e
+          node - "$R16_PROJECTION_LINEAR_TAP" "$test_status" <<'NODE'
+          const fs = require('node:fs');
+          const tap = fs.readFileSync(process.argv[2], 'utf8');
+          const status = Number(process.argv[3]);
+          const expected = [
+            'projection linear joins native preserves256keys, Unicode microseconds, byte sentinels, reservations and rights',
+            'projection linear joins native preserves awaiting/excluded, H5 precedence and a global byte prefix across pages',
+            'projection linear joins native4096 paired RRRO preserves rows and removes both materialized CTE rescans',
+          ];
+          const lines = tap.split(/\r?\n/u);
+          const selected = expected.map(title => lines.filter(line => /^ok \d+ - /u.test(line) && line.endsWith(` - ${title}`)));
+          if (status !== 0 || selected.some(rows => rows.length !== 1)
+              || !/^# tests 3$/mu.test(tap) || !/^# pass 3$/mu.test(tap)
+              || !/^# fail 0$/mu.test(tap) || !/^# skipped 0$/mu.test(tap)) {
+            throw new Error('projection linear-joins TAP must report three exact selected titles, pass=3, fail=0, skipped=0');
+          }
+          process.stdout.write('projection linear-joins oracle: 3 exact selected cases passed\n');
+          NODE
+      - name: Ensure projection linear-joins TAP receipt exists
+        if: always()
+        env:
+          R16_PROJECTION_LINEAR_TAP: ${{ runner.temp }}/r16-projection-linear-joins.tap
+        run: |
+          if [ ! -f "$R16_PROJECTION_LINEAR_TAP" ]; then
+            printf '%s\n' 'projection linear-joins oracle gate was not reached' > "$R16_PROJECTION_LINEAR_TAP"
+          fi
+      - name: Verify projection linear-joins source is unchanged
+        id: source_end
+        if: always()
+        working-directory: target
+        env:
+          TARGET_REF: ${{ inputs.target_ref }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$R16_PROJECTION_LINEAR_TARGET_SHA"
+          test "$(git rev-parse HEAD)" = "$TARGET_REF"
+          if [ -n "$(git status --porcelain --untracked-files=all)" ]; then
+            echo '::error::projection linear-joins oracle changed the checked out target source tree'
+            exit 1
+          fi
+      - name: Publish exact projection linear-joins evidence
+        id: publish
+        if: ${{ success() && steps.oracle.outcome == 'success' && steps.source_end.outcome == 'success' }}
+        env:
+          TARGET_REF: ${{ inputs.target_ref }}
+        run: |
+          set -euo pipefail
+          printf 'selected_pass=3\n' >> "$GITHUB_OUTPUT"
+          printf 'target_sha=%s\n' "$TARGET_REF" >> "$GITHUB_OUTPUT"
+      - name: Ensure projection linear-joins receipt exists
+        if: always()
+        env:
+          R16_PROJECTION_LINEAR_TAP: ${{ runner.temp }}/r16-projection-linear-joins.tap
+        run: |
+          if [ ! -f "$R16_PROJECTION_LINEAR_TAP" ]; then
+            printf '%s\n' 'projection linear-joins acceptance was not reached' > "$R16_PROJECTION_LINEAR_TAP"
+          fi
+      - name: Upload projection linear-joins receipt
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: r16-projection-linear-joins-${{ github.run_id }}
+          path: ${{ runner.temp }}/r16-projection-linear-joins.tap
+          if-no-files-found: error
+          retention-days: 14
+      - name: Stop and remove only the owned projection linear-joins lab
+        if: ${{ always() && env.R16_PROJECTION_LINEAR_LAB_OWNED == 'true' }}
+        working-directory: target
+        run: |
+          set -euo pipefail
+          lab_dir=.data/piloto-masivo/r16/labs/benchmark-pg17
+          if [[ -f "$lab_dir/private.env" ]]; then scripts/r16/lab-down.sh; fi
+          if docker inspect r16-benchmark-pg17 >/dev/null 2>&1; then
+            echo '::error::Owned projection linear-joins PostgreSQL container survived cleanup'
+            exit 1
+          fi
+          if docker volume inspect r16bench-benchmark-pg17_postgres-data >/dev/null 2>&1; then
+            echo '::error::Owned projection linear-joins PostgreSQL volume survived cleanup'
+            exit 1
+          fi
+
   listening-small:
     name: listening-small-${{ matrix.label }}
-    needs: raw-acceptance
-    if: ${{ always() && needs.raw-acceptance.result == 'success' }}
+    needs: [raw-acceptance, projection-linear-acceptance]
+    if: ${{ always() && needs.raw-acceptance.result == 'success' && (inputs.projection_linear_oracle != true || needs.projection-linear-acceptance.result == 'success' || needs.projection-linear-acceptance.result == 'skipped') }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
@@ -385,10 +636,13 @@ jobs:
           RESOURCE_PROFILE: ${{ inputs.resource_profile || 'baseline_512m' }}
           RESERVE_SHARED_SMOKE: ${{ inputs.reserve_shared_smoke || false }}
           CAPTURE_PROJECTION_PLAN: ${{ inputs.capture_projection_plan || false }}
+          PROJECTION_LINEAR_ORACLE: ${{ inputs.projection_linear_oracle || false }}
           EVENT_NAME: ${{ github.event_name }}
           TARGET_REF: ${{ inputs.target_ref }}
           RAW_ACCEPTANCE_SELECTED_PASS: ${{ needs.raw-acceptance.outputs.selected_pass || '0' }}
           RAW_ACCEPTANCE_TARGET_SHA: ${{ needs.raw-acceptance.outputs.target_sha || '' }}
+          LINEAR_ACCEPTANCE_SELECTED_PASS: ${{ needs.projection-linear-acceptance.outputs.selected_pass || '0' }}
+          LINEAR_ACCEPTANCE_TARGET_SHA: ${{ needs.projection-linear-acceptance.outputs.target_sha || '' }}
         run: |
           set -euo pipefail
           case "$RESOURCE_PROFILE" in
@@ -411,6 +665,19 @@ jobs:
                 || [ "${#TARGET_REF}" -ne 40 ] || [[ ! "$TARGET_REF" =~ ^[0-9a-f]{40}$ ]]; }; then
             echo '::error::projection plan capture requires manual SQL frontier mode, exact target SHA and reserve_shared_smoke'
             exit 1
+          fi
+          if [ "$PROJECTION_LINEAR_ORACLE" = true ]; then
+            if { [ "$MODE" != neutral_only ] && [ "$MODE" != sql_frontier_only ]; } \
+                || [ "$EVENT_NAME" != workflow_dispatch ] || [ "$RESERVE_SHARED_SMOKE" != true ] \
+                || [ -z "$TARGET_REF" ] || [ "${#TARGET_REF}" -ne 40 ] \
+                || [[ ! "$TARGET_REF" =~ ^[0-9a-f]{40}$ ]]; then
+              echo '::error::projection linearity oracle requires a manual neutral or SQL diagnostic, shared smoke and exact target SHA'
+              exit 1
+            fi
+            if [ "$LINEAR_ACCEPTANCE_SELECTED_PASS" != 3 ] || [ "$LINEAR_ACCEPTANCE_TARGET_SHA" != "$TARGET_REF" ]; then
+              echo '::error::projection linearity oracle requires three passing cases from the exact target SHA'
+              exit 1
+            fi
           fi
           if [ "$RESERVE_SHARED_SMOKE" = true ]; then
             if { [ "$MODE" != neutral_only ] && [ "$MODE" != sql_frontier_only ]; } || [ "$EVENT_NAME" != workflow_dispatch ]; then
@@ -453,9 +720,12 @@ jobs:
           NOISIA_R16_LISTENING_DML_PLAN_PG: ${{ inputs.mode == 'neutral_only' && 'false' || 'true' }}
           R16_DIAGNOSTIC_MODE: ${{ inputs.mode || 'legacy' }}
           R16_DIAGNOSTIC_CAPTURE_PROJECTION_PLAN: ${{ inputs.capture_projection_plan && 'true' || 'false' }}
+          R16_DIAGNOSTIC_PROJECTION_LINEAR_ORACLE: ${{ inputs.projection_linear_oracle && 'true' || 'false' }}
           RESERVE_SHARED_SMOKE: ${{ inputs.reserve_shared_smoke || false }}
           RAW_ACCEPTANCE_SELECTED_PASS: ${{ needs.raw-acceptance.outputs.selected_pass || '0' }}
           RAW_ACCEPTANCE_TARGET_SHA: ${{ needs.raw-acceptance.outputs.target_sha || '' }}
+          LINEAR_ACCEPTANCE_SELECTED_PASS: ${{ needs.projection-linear-acceptance.outputs.selected_pass || '0' }}
+          LINEAR_ACCEPTANCE_TARGET_SHA: ${{ needs.projection-linear-acceptance.outputs.target_sha || '' }}
           NOISIA_DB_SMOKE_ALLOW_REMOTE: 'false'
           NOISIA_DB_SMOKE_RESET_SCHEMA: 'true'
           NOISIA_DB_SMOKE_EMULATE_SUPABASE_ROLES: 'true'

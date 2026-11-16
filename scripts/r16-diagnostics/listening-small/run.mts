@@ -159,6 +159,19 @@ export function assertListeningSmallGuardV1(env:NodeJS.ProcessEnv,args:string[])
     assert.ok(/^[0-9a-f]{40}$/u.test(env.R16_DIAGNOSTIC_TARGET_REF_REQUESTED??''),'projection_plan_target_ref_required');
     assert.equal(env.RAW_ACCEPTANCE_TARGET_SHA,env.R16_DIAGNOSTIC_TARGET_REF_REQUESTED,'projection_plan_raw_target_mismatch');
   }
+  const projectionLinearOracle=env.R16_DIAGNOSTIC_PROJECTION_LINEAR_ORACLE??'false';
+  assert.ok(projectionLinearOracle==='true'||projectionLinearOracle==='false','projection_linear_oracle_flag_invalid');
+  if(projectionLinearOracle==='true'){
+    assert.ok(mode==='neutral_only'||mode==='sql_frontier_only','projection_linear_oracle_mode_invalid');
+    assert.equal(env.GITHUB_EVENT_NAME,'workflow_dispatch','projection_linear_oracle_requires_manual_dispatch');
+    assert.equal(env.R16_DIAGNOSTIC_TARGET_LABEL,'candidate','projection_linear_oracle_requires_candidate');
+    assert.equal(env.RESERVE_SHARED_SMOKE,'true','projection_linear_oracle_requires_shared_smoke');
+    assert.equal(env.RAW_ACCEPTANCE_SELECTED_PASS,'6','projection_linear_oracle_requires_raw_acceptance');
+    assert.equal(env.LINEAR_ACCEPTANCE_SELECTED_PASS,'3','projection_linear_oracle_requires_linear_acceptance');
+    assert.ok(/^[0-9a-f]{40}$/u.test(env.R16_DIAGNOSTIC_TARGET_REF_REQUESTED??''),'projection_linear_oracle_target_ref_required');
+    assert.equal(env.RAW_ACCEPTANCE_TARGET_SHA,env.R16_DIAGNOSTIC_TARGET_REF_REQUESTED,'projection_linear_oracle_raw_target_mismatch');
+    assert.equal(env.LINEAR_ACCEPTANCE_TARGET_SHA,env.R16_DIAGNOSTIC_TARGET_REF_REQUESTED,'projection_linear_oracle_target_mismatch');
+  }
   if(mode==='sql_frontier_only'){
     assert.equal(env.GITHUB_EVENT_NAME,'workflow_dispatch','sql_frontier_requires_manual_dispatch');
     assert.equal(env.R16_DIAGNOSTIC_TARGET_LABEL,'candidate','sql_frontier_requires_candidate_target');
@@ -268,6 +281,7 @@ export async function runListeningSmallDiagnosticV1(){
   const neutralOnly=mode==='neutral_only';
   const sqlFrontierOnly=mode==='sql_frontier_only';
   const projectionPlanOnly=process.env.R16_DIAGNOSTIC_CAPTURE_PROJECTION_PLAN==='true';
+  const projectionLinearOracle=process.env.R16_DIAGNOSTIC_PROJECTION_LINEAR_ORACLE==='true';
   const profilerDisabled=mode!=='legacy';
   let resourceProfile:ListeningResourceProfileV1|undefined;
   let effectiveExecution:ListeningExecutionV1|undefined;
@@ -277,7 +291,8 @@ export async function runListeningSmallDiagnosticV1(){
   let stage='imports';
   let storageServer:any;
   let httpTokenWitness:ReturnType<typeof createJevHttpTokenWitnessV1>|undefined;
-  const observer=createListeningObserver({neutral_only:neutralOnly,sql_frontier_only:sqlFrontierOnly,projection_plan_only:projectionPlanOnly});
+  const observer=createListeningObserver({neutral_only:neutralOnly,sql_frontier_only:sqlFrontierOnly,projection_plan_only:projectionPlanOnly,
+    projection_linear_oracle:projectionLinearOracle});
   observer.setInnerPlanRootCount(ROOT_COUNT);
   try{
     Object.assign(process.env,{NOISIA_R16_LOCAL_PG_LAB:'r16-benchmark-pg17',NOISIA_R16_NATIVE_FIXTURE_PG:'true',

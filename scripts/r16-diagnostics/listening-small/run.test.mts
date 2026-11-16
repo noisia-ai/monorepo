@@ -32,7 +32,7 @@ async function projectionMetadataSource(target:string){
     assert.ok(literal);sql=sql.replaceAll('${'+name+'}',literal[1]??literal[2]!);}}
   return{source,helper:null,sql};}
  const helper=source.slice(start,end);
- const query=helper.match(/`(\/\* labeling_listening_input_metadata_v1 \*\/[\s\S]*?ORDER BY prefix\.root_id)`\s*,\s*\[run\.workspace_id,o\.configuration_id,o\.map_id,run\.entity_context_digest,run\.id,limit-rows\.length,fixed,ids,remaining\.toString\(\)\]\)/u);
+ const query=helper.match(/`(\/\* labeling_listening_input_metadata_v1 \*\/[\s\S]*?ORDER BY (?:prefix\.root_id|root_id))`\s*,\s*\[run\.workspace_id,o\.configuration_id,o\.map_id,run\.entity_context_digest,run\.id,limit-rows\.length,fixed,ids,remaining\.toString\(\)\]\)/u);
  assert.ok(query,'projection helper must use the full nine-bind metadata query and exact bind order');
  const refs=[...new Set([...query[1]!.matchAll(/\$\{([A-Za-z_]+)\}/gu)].map(match=>match[1]!))].sort();
  assert.deepEqual(refs,['noHumanDecision','unresolvedScope'],'projection SQL may interpolate only the two scoped source predicates');
@@ -90,10 +90,12 @@ test('resource profile workflow Bash gate allows manual SQL frontier shared smok
  }
  const script=body.join('\n').trimEnd();assert.ok(script.includes('reserve_shared_smoke requires a manual neutral_only or sql_frontier_only run'));
  const sha='a'.repeat(40);
- const run=(mode:string,profile:string,smoke:boolean,event:string,targetRef=sha,selectedPass='0',acceptanceSha='',capture=false)=>spawnSync('/bin/bash',['-euo','pipefail','-c',script],{
+ const run=(mode:string,profile:string,smoke:boolean,event:string,targetRef=sha,selectedPass='0',acceptanceSha='',capture=false,
+  projectionLinear=false,linearPass='0',linearSha='')=>spawnSync('/bin/bash',['-euo','pipefail','-c',script],{
   encoding:'utf8',env:{PATH:process.env.PATH??'/usr/bin:/bin',MODE:mode,RESOURCE_PROFILE:profile,
    RESERVE_SHARED_SMOKE:String(smoke),EVENT_NAME:event,TARGET_REF:targetRef,
-   RAW_ACCEPTANCE_SELECTED_PASS:selectedPass,RAW_ACCEPTANCE_TARGET_SHA:acceptanceSha,CAPTURE_PROJECTION_PLAN:String(capture)}});
+   RAW_ACCEPTANCE_SELECTED_PASS:selectedPass,RAW_ACCEPTANCE_TARGET_SHA:acceptanceSha,CAPTURE_PROJECTION_PLAN:String(capture),
+   PROJECTION_LINEAR_ORACLE:String(projectionLinear),LINEAR_ACCEPTANCE_SELECTED_PASS:linearPass,LINEAR_ACCEPTANCE_TARGET_SHA:linearSha}});
  const cases:[string,string,string,boolean,string,string,string,string,boolean,boolean][]=[
   ['SQL frontier bounded profile with exact RAW acceptance evidence','sql_frontier_only','bounded_2g',true,'workflow_dispatch',sha,'6',sha,true,false],
   ['neutral bounded profile with exact RAW acceptance evidence','neutral_only','bounded_2g',true,'workflow_dispatch',sha,'6',sha,true,false],
@@ -113,6 +115,21 @@ test('resource profile workflow Bash gate allows manual SQL frontier shared smok
  ];
  for(const [label,mode,profile,smoke,event,targetRef,selectedPass,acceptanceSha,expectedPass,capture] of cases){
   const result=run(mode,profile,smoke,event,targetRef,selectedPass,acceptanceSha,capture);
+  assert.equal(result.status,expectedPass?0:1,`${label}: ${result.stderr||result.stdout}`);
+ }
+ const linearCases:[string,string,boolean,string,string,string,string,boolean][]=[
+  ['neutral manual projection oracle with exact RAW/linear evidence','neutral_only',true,'workflow_dispatch',sha,'6',sha,true],
+  ['SQL manual projection oracle with exact RAW/linear evidence','sql_frontier_only',true,'workflow_dispatch',sha,'6',sha,true],
+  ['projection oracle rejects legacy mode','legacy',true,'workflow_dispatch',sha,'6',sha,false],
+  ['projection oracle rejects missing shared smoke','neutral_only',false,'workflow_dispatch',sha,'0','',false],
+  ['projection oracle rejects non-manual mode','neutral_only',true,'pull_request',sha,'6',sha,false],
+  ['projection oracle rejects missing target SHA','sql_frontier_only',true,'workflow_dispatch','', '6',sha,false],
+  ['projection oracle rejects missing three-case evidence','neutral_only',true,'workflow_dispatch',sha,'6',sha,false],
+  ['projection oracle rejects target mismatch','neutral_only',true,'workflow_dispatch',sha,'6',sha,false],
+ ];
+ for(const [label,mode,smoke,event,targetRef,rawPass,rawSha,expectedPass] of linearCases){
+  const linearPass=label.includes('missing three-case')?'2':'3',linearSha=label.includes('target mismatch')?'b'.repeat(40):sha;
+  const result=run(mode,'baseline_512m',smoke,event,targetRef,rawPass,rawSha,false,true,linearPass,linearSha);
   assert.equal(result.status,expectedPass?0:1,`${label}: ${result.stderr||result.stdout}`);
  }
 });
@@ -255,12 +272,46 @@ test('RAW attach acceptance runs only in its isolated job and main job consumes 
  assert.ok(rawJob.includes("/^# tests 2$/mu.test(tap)")&&rawJob.includes("/^# pass 2$/mu.test(tap)")
   &&rawJob.includes("/^# fail 0$/mu.test(tap)")&&rawJob.includes("/^# skipped 0$/mu.test(tap)"),
   'two RAW attach cases must have an exact no-skip TAP gate');
- assert.ok(mainJob.includes('needs: raw-acceptance'),'main job must wait for isolated acceptance');
- assert.ok(mainJob.includes("if: ${{ always() && needs.raw-acceptance.result == 'success' }}"),
-  'main job must fail closed when acceptance job fails');
+ assert.ok(mainJob.includes('needs: [raw-acceptance, projection-linear-acceptance]'),'main job must wait for both isolated evidence jobs');
+ assert.ok(mainJob.includes("needs.raw-acceptance.result == 'success'")&&mainJob.includes("needs.projection-linear-acceptance.result == 'success'"),
+  'main job must fail closed when either requested acceptance job fails');
  assert.ok(mainJob.includes("RAW_ACCEPTANCE_SELECTED_PASS: ${{ needs.raw-acceptance.outputs.selected_pass || '0' }}")
   &&mainJob.includes("RAW_ACCEPTANCE_TARGET_SHA: ${{ needs.raw-acceptance.outputs.target_sha || '' }}"),
   'main resource guard must consume the isolated job outputs');
+});
+
+test('projection linear-joins acceptance is opt-in, isolated, source-sealed and gates the 41-case total',async()=>{
+ const workflowPath=new URL('../../../.github/workflows/r16-listening-small-diagnostic.yml',import.meta.url);
+ const workflow=await readFile(workflowPath,'utf8');
+ assert.match(workflow,/projection_linear_oracle:\r?\n\s+type: boolean\r?\n\s+default: false/u);
+ const rawStart=workflow.indexOf('\n  raw-acceptance:\n'),linearStart=workflow.indexOf('\n  projection-linear-acceptance:\n'),mainStart=workflow.indexOf('\n  listening-small:\n',linearStart);
+ assert.ok(rawStart>=0&&linearStart>rawStart&&mainStart>linearStart,'linear oracle job must follow RAW acceptance and precede main diagnostic');
+ const linearJob=workflow.slice(linearStart,mainStart),mainJob=workflow.slice(mainStart);
+ assert.match(linearJob,/needs: raw-acceptance/u);
+ assert.match(linearJob,/inputs\.projection_linear_oracle == true[\s\S]*?github\.event_name == 'workflow_dispatch'[\s\S]*?inputs\.reserve_shared_smoke == true[\s\S]*?inputs\.mode == 'neutral_only'[\s\S]*?inputs\.mode == 'sql_frontier_only'/u);
+ assert.match(linearJob,/TARGET_REF[\s\S]*?\^\[0-9a-f\]\{40\}\$/u);
+ assert.ok(linearJob.includes('[ "$RAW_ACCEPTANCE_SELECTED_PASS" != 6 ]'));
+ assert.match(linearJob,/selected_pass: \$\{\{ steps\.publish\.outputs\.selected_pass \|\| '0' \}\}[\s\S]*?target_sha: \$\{\{ steps\.publish\.outputs\.target_sha \|\| '' \}\}/u);
+ assert.match(linearJob,/steps\.oracle\.outcome == 'success'[\s\S]*?steps\.source_end\.outcome == 'success'[\s\S]*?selected_pass=3[\s\S]*?target_sha=%s/u);
+ assert.match(mainJob,/needs: \[raw-acceptance, projection-linear-acceptance\]/u);
+ assert.match(mainJob,/LINEAR_ACCEPTANCE_SELECTED_PASS: \$\{\{ needs\.projection-linear-acceptance\.outputs\.selected_pass \|\| '0' \}\}/u);
+ assert.match(mainJob,/LINEAR_ACCEPTANCE_TARGET_SHA: \$\{\{ needs\.projection-linear-acceptance\.outputs\.target_sha \|\| '' \}\}/u);
+ assert.ok(mainJob.includes('[ "$LINEAR_ACCEPTANCE_SELECTED_PASS" != 3 ]')
+  &&mainJob.includes('[ "$LINEAR_ACCEPTANCE_TARGET_SHA" != "$TARGET_REF" ]'));
+ for(const forbidden of ['signal-listening-projection-linear-joins.postgres.test.ts','NOISIA_R16_PROJECTION_LINEAR_JOINS_PG','R16_PROJECTION_LINEAR_TAP'])
+  assert.equal(mainJob.includes(forbidden),false,`main job must consume only evidence, not rerun the isolated oracle: ${forbidden}`);
+ const patternMatch=linearJob.match(/--test-name-pattern='([^']+)'[\s\\\n]*--import tsx infrastructure\/db\/migrations\/signal-listening-projection-linear-joins\.postgres\.test\.ts/u);
+ assert.ok(patternMatch);const selector=new RegExp(patternMatch[1]);
+ const tapStart=linearJob.indexOf('node - "$R16_PROJECTION_LINEAR_TAP" "$test_status"');assert.ok(tapStart>=0);
+ const heredocStart=linearJob.indexOf("<<'NODE'\n",tapStart),bodyStart=heredocStart+"<<'NODE'\n".length,bodyEnd=linearJob.indexOf('\n          NODE',bodyStart);
+ assert.ok(heredocStart>=0&&bodyEnd>bodyStart);const gate=linearJob.slice(bodyStart,bodyEnd).split(/\r?\n/u).map(line=>line.startsWith('          ')?line.slice(10):line).join('\n');
+ const expectedMatch=gate.match(/const expected = \[([\s\S]*?)\];/u);assert.ok(expectedMatch);
+ const expected=[...expectedMatch[1].matchAll(/^\s*'([^']+)'[,]?\s*$/gmu)].map(match=>match[1]);
+ assert.equal(expected.length,3);assert.ok(expected.every(title=>selector.test(title)));
+ assert.match(linearJob,/\^# tests 3\$[\s\S]*?\^# pass 3\$[\s\S]*?\^# fail 0\$[\s\S]*?\^# skipped 0\$/u);
+ const priorMain=1+3+10+3+2+8+5;assert.equal(priorMain,32);
+ assert.equal(priorMain+6+expected.length,41,'opt-in run must select 32 main + six RAW + three projection cases');
+ assert.equal(32+6,38,'default remains the prior 32 main + six RAW cases');
 });
 
 test('MFP RAW acceptance workflow selects and gates the fifth UUID-order case without accepting skips',async()=>{
@@ -289,6 +340,43 @@ test('MFP RAW acceptance workflow selects and gates the fifth UUID-order case wi
   const missing=await execute(passing.replace(`ok 5 - ${orderTitle}\n`,''));
   assert.notEqual(missing.status,0,'MFP must reject a missing UUID-order case');
   const failed=await execute(passing,1);assert.notEqual(failed.status,0,'MFP must reject a nonzero test process status');
+ }finally{await rm(dir,{recursive:true,force:true});}
+});
+
+test('MFP projection linear-joins oracle uses an isolated offline-runtime lab and exact three-case TAP gate',async()=>{
+ const workflowPath=new URL('../../../.github/workflows/mfp-postgres.yml',import.meta.url);
+ const workflow=await readFile(workflowPath,'utf8');
+ const start=workflow.indexOf('\n  projection-linear-joins:\n');assert.ok(start>=0,'dedicated projection linear-joins job must exist');
+ const job=workflow.slice(start);
+ assert.match(job,/needs: raw-page-acceptance/u);assert.match(job,/if: \$\{\{ github\.event_name != 'workflow_dispatch' \|\| inputs\.scope == 'full' \|\| inputs\.scope == 'listening-smoke' \}\}/u);
+ assert.match(job,/actions\/setup-python@v5[\s\S]*?python-version: '3\.12'[\s\S]*?requirements-workspace-engine\.txt/u);
+ assert.match(job,/Install the offline workspace numerical runtime[\s\S]*?pip install --no-deps -r services\/workers\/requirements-workspace-engine\.txt[\s\S]*?pytest==8\.3\.5/u);
+ assert.match(job,/HF_HUB_OFFLINE: '1'[\s\S]*?TRANSFORMERS_OFFLINE: '1'[\s\S]*?NUMBA_NUM_THREADS: '1'[\s\S]*?OPENBLAS_NUM_THREADS: '1'[\s\S]*?MKL_NUM_THREADS: '1'/u);
+ assert.match(job,/R16_PROJECTION_LINEAR_SOURCE_SHA/u);assert.match(job,/git status --porcelain --untracked-files=all/u);
+ assert.match(job,/NOISIA_R16_PROJECTION_LINEAR_JOINS_PG: 'true'/u);assert.match(job,/signal-listening-projection-linear-joins\.postgres\.test\.ts/u);
+ assert.match(job,/Start the owned PostgreSQL 17 and Redis lab[\s\S]*?Apply migrations to the fresh projection linear-joins lab[\s\S]*?Run the exact projection linear-joins oracle cases/u);
+ assert.match(job,/Stop and remove only the owned projection linear-joins lab/u);
+ const patternMatch=job.match(/--test-name-pattern='([^']+)'[\s\\\n]*--import tsx infrastructure\/db\/migrations\/signal-listening-projection-linear-joins\.postgres\.test\.ts/u);
+ assert.ok(patternMatch,'MFP job must select the exact source-native projection oracle tests');const selector=new RegExp(patternMatch[1]);
+ const gateStart=job.indexOf('node - "$R16_PROJECTION_LINEAR_TAP" "$test_status"');assert.ok(gateStart>=0);
+ const heredocStart=job.indexOf("<<'NODE'\n",gateStart),bodyStart=heredocStart+"<<'NODE'\n".length,bodyEnd=job.indexOf('\n          NODE',bodyStart);
+ assert.ok(heredocStart>=0&&bodyEnd>bodyStart);const gate=job.slice(bodyStart,bodyEnd).split(/\r?\n/u).map(line=>line.startsWith('          ')?line.slice(10):line).join('\n');
+ const expectedMatch=gate.match(/const expected = \[([\s\S]*?)\];/u);assert.ok(expectedMatch);
+ const expected=[...expectedMatch[1].matchAll(/^\s*'([^']+)'[,]?\s*$/gmu)].map(match=>match[1]);
+ assert.deepEqual(expected,[
+  'projection linear joins native preserves256keys, Unicode microseconds, byte sentinels, reservations and rights',
+  'projection linear joins native preserves awaiting/excluded, H5 precedence and a global byte prefix across pages',
+  'projection linear joins native4096 paired RRRO preserves rows and removes both materialized CTE rescans',
+ ]);
+ assert.ok(expected.every(title=>selector.test(title)));assert.equal(selector.test('unselected projection test'),false);
+ const dir=await mkdtemp(join(tmpdir(),'r16-mfp-projection-linear-'));const tapPath=join(dir,'linear.tap');
+ const execute=async(tap:string,status=0)=>{await writeFile(tapPath,tap);return spawnSync(process.execPath,['-',tapPath,String(status)],{encoding:'utf8',input:gate});};
+ try{
+  const passing=[...expected.map((title,index)=>`ok ${index+1} - ${title}`),'# tests 3','# pass 3','# fail 0','# skipped 0'].join('\n');
+  assert.equal((await execute(passing)).status,0);
+  assert.notEqual((await execute(passing.replace(`ok 3 - ${expected[2]}`,`ok 3 - ${expected[2]} # SKIP unavailable`).replace('# pass 3','# pass 2').replace('# skipped 0','# skipped 1'))).status,0);
+  assert.notEqual((await execute(passing.replace(`ok 2 - ${expected[1]}\n`,''))).status,0);
+  assert.notEqual((await execute(passing,1)).status,0);
  }finally{await rm(dir,{recursive:true,force:true});}
 });
 
@@ -377,6 +465,15 @@ test('SQL frontier mode is manual candidate-only with an explicit immutable targ
  assert.throws(()=>assertListeningSmallGuardV1({...projectionEnv,RAW_ACCEPTANCE_SELECTED_PASS:'5'},['--run']),/projection_plan_requires_raw_acceptance/u);
  assert.throws(()=>assertListeningSmallGuardV1({...projectionEnv,RAW_ACCEPTANCE_TARGET_SHA:'d'.repeat(40)},['--run']),/projection_plan_raw_target_mismatch/u);
  assert.throws(()=>assertListeningSmallGuardV1({...env,R16_DIAGNOSTIC_CAPTURE_PROJECTION_PLAN:'yes'},['--run']),/projection_plan_flag_invalid/u);
+ const linearEnv={...env,RESERVE_SHARED_SMOKE:'true',RAW_ACCEPTANCE_SELECTED_PASS:'6',RAW_ACCEPTANCE_TARGET_SHA:'c'.repeat(40),
+  R16_DIAGNOSTIC_PROJECTION_LINEAR_ORACLE:'true',LINEAR_ACCEPTANCE_SELECTED_PASS:'3',LINEAR_ACCEPTANCE_TARGET_SHA:'c'.repeat(40)};
+ assert.doesNotThrow(()=>assertListeningSmallGuardV1(linearEnv,['--run']));
+ assert.doesNotThrow(()=>assertListeningSmallGuardV1({...linearEnv,R16_DIAGNOSTIC_MODE:'neutral_only'},['--run']));
+ assert.throws(()=>assertListeningSmallGuardV1({...linearEnv,R16_DIAGNOSTIC_MODE:'legacy'},['--run']),/projection_linear_oracle_mode_invalid/u);
+ assert.throws(()=>assertListeningSmallGuardV1({...linearEnv,LINEAR_ACCEPTANCE_SELECTED_PASS:'2'},['--run']),/projection_linear_oracle_requires_linear_acceptance/u);
+ assert.throws(()=>assertListeningSmallGuardV1({...linearEnv,LINEAR_ACCEPTANCE_TARGET_SHA:'d'.repeat(40)},['--run']),/projection_linear_oracle_target_mismatch/u);
+ assert.throws(()=>assertListeningSmallGuardV1({...linearEnv,RESERVE_SHARED_SMOKE:'false'},['--run']),/projection_linear_oracle_requires_shared_smoke/u);
+ assert.throws(()=>assertListeningSmallGuardV1({...linearEnv,R16_DIAGNOSTIC_PROJECTION_LINEAR_ORACLE:'on'},['--run']),/projection_linear_oracle_flag_invalid/u);
  assert.throws(()=>assertListeningSmallGuardV1({...env,GITHUB_EVENT_NAME:'pull_request'},['--run']),/sql_frontier_requires_manual_dispatch/u);
  assert.throws(()=>assertListeningSmallGuardV1({...env,R16_DIAGNOSTIC_TARGET_LABEL:'baseline-32f'},['--run']),/sql_frontier_requires_candidate_target/u);
  assert.throws(()=>assertListeningSmallGuardV1({...env,R16_DIAGNOSTIC_TARGET_REF_REQUESTED:''},['--run']),/target_ref_required/u);
@@ -771,6 +868,7 @@ async function withDmlPlanTestEnv<T>(action:()=>Promise<T>){
 async function withProjectionPlanTestEnv<T>(action:()=>Promise<T>){
  const env={...DML_PLAN_TEST_ENV,GITHUB_EVENT_NAME:'workflow_dispatch',R16_DIAGNOSTIC_MODE:'sql_frontier_only',
   R16_DIAGNOSTIC_CAPTURE_PROJECTION_PLAN:'true',R16_DIAGNOSTIC_TARGET_LABEL:'candidate',R16_DIAGNOSTIC_TARGET_REF_REQUESTED:'a'.repeat(40),
+  R16_DIAGNOSTIC_PROJECTION_LINEAR_ORACLE:'true',LINEAR_ACCEPTANCE_SELECTED_PASS:'3',LINEAR_ACCEPTANCE_TARGET_SHA:'a'.repeat(40),
   RESERVE_SHARED_SMOKE:'true',RAW_ACCEPTANCE_SELECTED_PASS:'6',RAW_ACCEPTANCE_TARGET_SHA:'a'.repeat(40)};
  const keys=Object.keys(env) as Array<keyof typeof env>,prior=Object.fromEntries(keys.map(key=>[key,process.env[key]]));
  Object.assign(process.env,env);
@@ -867,7 +965,7 @@ function fakeDmlPlanClient(options:{readOnly?:string;failLoad?:boolean;failResto
 test('projection capture binds only the exact bounded metadata SQL; legacy metadata stays outside the capture',async()=>{
  const target=process.env.R16_DIAGNOSTIC_TARGET_ROOT;assert.ok(target,'projection source contract needs the checked out target');
  const {source,helper,sql}=await projectionMetadataSource(target);
- const {queryHash,projectionMetadataBatchSizeV1,PROJECTION_METADATA_QUERY_HASH_V1}=await import('./observer.mjs');
+ const {queryHash,projectionMetadataBatchSizeV1,PROJECTION_METADATA_QUERY_HASH_V1,PROJECTION_LINEAR_METADATA_QUERY_HASH_V1}=await import('./observer.mjs');
  if(!helper||!sql){
   const historical=source.match(/`(\/\* labeling_listening_input_metadata_v1 \*\/[\s\S]*?LIMIT \$6)`/u);
   assert.ok(historical,'legacy target must expose its separate, unbounded metadata SQL for compatibility checking');
@@ -876,42 +974,66 @@ test('projection capture binds only the exact bounded metadata SQL; legacy metad
   assert.ok(JSON.stringify(refs)==='["noHumanDecision","unresolvedScope"]'||JSON.stringify(refs)==='["pendingScope","population"]');
   for(const name of refs){const literal=source.match(new RegExp('const '+name+'=(?:`([^`]+)`|"([^"]+)");','u'));
    assert.ok(literal);legacySql=legacySql.replaceAll('${'+name+'}',literal[1]??literal[2]!);}
-  assert.notEqual(queryHash(legacySql),PROJECTION_METADATA_QUERY_HASH_V1);
+  assert.ok(![PROJECTION_METADATA_QUERY_HASH_V1,PROJECTION_LINEAR_METADATA_QUERY_HASH_V1].includes(queryHash(legacySql)??''));
   const legacyValues=['11111111-1111-4111-8111-111111111111','22222222-2222-4222-8222-222222222222',
    '33333333-3333-4333-8333-333333333333','e'.repeat(64),'44444444-4444-4444-8444-444444444444',4096,2048,
    Array.from({length:1024},(_,i)=>`00000000-0000-4000-8000-${String(i+1).padStart(12,'0')}`),'1000000'];
   assert.equal(projectionMetadataBatchSizeV1(PROJECTION_METADATA_QUERY_HASH_V1,[legacySql,legacyValues]),null);
+  assert.equal(projectionMetadataBatchSizeV1(PROJECTION_LINEAR_METADATA_QUERY_HASH_V1,[legacySql,legacyValues],true),null);
   return;
  }
- assert.equal(queryHash(sql),PROJECTION_METADATA_QUERY_HASH_V1);
+ const sourceHash=queryHash(sql);assert.ok(sourceHash===PROJECTION_METADATA_QUERY_HASH_V1||sourceHash===PROJECTION_LINEAR_METADATA_QUERY_HASH_V1,
+  'only the two reviewed bounded projection query variants are accepted');
+ const isLinear=sourceHash===PROJECTION_LINEAR_METADATA_QUERY_HASH_V1;
  assert.equal(PROJECTION_METADATA_QUERY_HASH_V1,'sha256:623ea62b8c7f51acab4551632bfd2518d58ed70cce110afce59914d175981bd3');
+ assert.equal(PROJECTION_LINEAR_METADATA_QUERY_HASH_V1,'sha256:e2a1d2ae7cc6917e1b58de56e7d3a2ad108e902feeb46d5d1dd1559644421f42');
  assert.deepEqual([...new Set([...sql.matchAll(/\$(\d+)/gu)].map(match=>Number(match[1])))].sort((a,b)=>a-b),[1,2,3,4,5,6,7,8,9]);
  assert.match(helper,/const sliceSize=Math\.min\(4096,Math\.max\(64,limit\)\)/u);
  assert.match(helper,/const ids:string\[\]=\(await c\.query[\s\S]*?\)\.rows\.map\(row=>row\.root_id\)/u);
+ if(isLinear){
+  assert.match(helper,/fit_matches AS MATERIALIZED[\s\S]*?FULL JOIN fitting/u);
+  assert.match(helper,/projection_rows AS MATERIALIZED[\s\S]*?FULL JOIN projections[\s\S]*?FROM projection_rows WHERE root_id IS NOT NULL ORDER BY root_id/u);
+ }else assert.match(helper,/FROM prefix LEFT JOIN projections ON projections\.root_id=prefix\.root_id ORDER BY prefix\.root_id/u);
  assert.match(source,/inputProjectionMetadata\(c,run,bounds\)/u);
  assert.match(source,/bounded_inputs:\(c,run,bounds\)=>inputs\(c,run,limit,bounds\)/u);
  const ids=(count:number)=>Array.from({length:count},(_,index)=>`00000000-0000-4000-8000-${String(index+1).padStart(12,'0')}`);
  const args=(idRows:unknown[],limit=4096,fixed=2048,budget='1000000')=>[sql,['11111111-1111-4111-8111-111111111111',
   '22222222-2222-4222-8222-222222222222','33333333-3333-4333-8333-333333333333','e'.repeat(64),
   '44444444-4444-4444-8444-444444444444',limit,fixed,idRows,budget]];
- assert.equal(projectionMetadataBatchSizeV1(PROJECTION_METADATA_QUERY_HASH_V1,args(ids(1024))),1024);
- assert.equal(projectionMetadataBatchSizeV1(PROJECTION_METADATA_QUERY_HASH_V1,args(ids(4096))),4096);
- assert.equal(projectionMetadataBatchSizeV1(PROJECTION_METADATA_QUERY_HASH_V1,args(ids(1023))),null);
- assert.equal(projectionMetadataBatchSizeV1(PROJECTION_METADATA_QUERY_HASH_V1,args(ids(4097))),null);
- assert.equal(projectionMetadataBatchSizeV1('sha256:'+('0'.repeat(64)),args(ids(1024))),null);
- assert.equal(projectionMetadataBatchSizeV1(PROJECTION_METADATA_QUERY_HASH_V1,[sql,[...args(ids(1024))[1].slice(0,8)]]),null);
+ assert.equal(projectionMetadataBatchSizeV1(sourceHash,args(ids(1024)),isLinear),1024);
+ assert.equal(projectionMetadataBatchSizeV1(sourceHash,args(ids(4096)),isLinear),4096);
+ assert.equal(projectionMetadataBatchSizeV1(sourceHash,args(ids(1023)),isLinear),null);
+ assert.equal(projectionMetadataBatchSizeV1(sourceHash,args(ids(4097)),isLinear),null);
+ assert.equal(projectionMetadataBatchSizeV1('sha256:'+('0'.repeat(64)),args(ids(1024)),isLinear),null);
+ assert.equal(projectionMetadataBatchSizeV1(sourceHash,[sql,[...args(ids(1024))[1].slice(0,8)]],isLinear),null);
+ assert.equal(projectionMetadataBatchSizeV1(PROJECTION_LINEAR_METADATA_QUERY_HASH_V1,args(ids(1024)),false),null,
+  'the new query hash stays closed unless separate three-case evidence enables it');
  const duplicate=ids(1024);duplicate[1023]=duplicate[0]!;
- assert.equal(projectionMetadataBatchSizeV1(PROJECTION_METADATA_QUERY_HASH_V1,args(duplicate)),null);
- assert.equal(projectionMetadataBatchSizeV1(PROJECTION_METADATA_QUERY_HASH_V1,args(ids(1024),4097)),null);
+ assert.equal(projectionMetadataBatchSizeV1(sourceHash,args(duplicate),isLinear),null);
+ assert.equal(projectionMetadataBatchSizeV1(sourceHash,args(ids(1024),4097),isLinear),null);
  const invalid=args(ids(1024));(invalid[1] as unknown[])[8]='private malformed';
- assert.equal(projectionMetadataBatchSizeV1(PROJECTION_METADATA_QUERY_HASH_V1,invalid),null);
+ assert.equal(projectionMetadataBatchSizeV1(sourceHash,invalid,isLinear),null);
+ if(isLinear){
+  const fake=fakeReadonlyProjectionClient();let originalCalls=0;
+  const denied=await (await import('./observer.mjs')).captureReadonlyProjectionPlanV1({client:fake.client,query:async()=>{originalCalls++;return{rows:[]};},
+   query_hash:sourceHash,batch_size:1024,outer_query_text:sql,database:'noisia_mfp_ci',role:'postgres',env:{...DML_PLAN_TEST_ENV,
+    GITHUB_EVENT_NAME:'workflow_dispatch',R16_DIAGNOSTIC_MODE:'sql_frontier_only',R16_DIAGNOSTIC_CAPTURE_PROJECTION_PLAN:'true',
+    R16_DIAGNOSTIC_PROJECTION_LINEAR_ORACLE:'false',R16_DIAGNOSTIC_TARGET_LABEL:'candidate',R16_DIAGNOSTIC_TARGET_REF_REQUESTED:'a'.repeat(40),
+    RESERVE_SHARED_SMOKE:'true',RAW_ACCEPTANCE_SELECTED_PASS:'6',RAW_ACCEPTANCE_TARGET_SHA:'a'.repeat(40)}});
+  assert.equal(originalCalls,1);assert.equal(denied.observation,null);
+  assert.equal(fake.statements.some(statement=>statement.startsWith('SAVEPOINT')||statement.startsWith('SHOW ')),false,
+   'a target with the new query hash but without three-case evidence must take the untouched single-query path');
+ }
 });
 
 test('read-only projection capture is one RR/RO source query with bounded delayed outer and nested plans',async()=>withProjectionPlanTestEnv(async()=>{
- const {captureReadonlyProjectionPlanV1,projectionMetadataBatchSizeV1,PROJECTION_METADATA_QUERY_HASH_V1,createListeningObserver}=await import('./observer.mjs');
+ const {captureReadonlyProjectionPlanV1,projectionMetadataBatchSizeV1,PROJECTION_METADATA_QUERY_HASH_V1,PROJECTION_LINEAR_METADATA_QUERY_HASH_V1,
+  queryHash,createListeningObserver}=await import('./observer.mjs');
  const target=process.env.R16_DIAGNOSTIC_TARGET_ROOT;assert.ok(target);
  const {helper,sql}=await projectionMetadataSource(target);assert.ok(sql,'target metadata SQL should be source-extractable');
- if(!helper){const fake=fakeReadonlyProjectionClient(),observer=createListeningObserver({sql_frontier_only:true,projection_plan_only:true});
+ const sourceHash=queryHash(sql)!;assert.ok(sourceHash===PROJECTION_METADATA_QUERY_HASH_V1||sourceHash===PROJECTION_LINEAR_METADATA_QUERY_HASH_V1);
+ const isLinear=sourceHash===PROJECTION_LINEAR_METADATA_QUERY_HASH_V1;
+ if(!helper){const fake=fakeReadonlyProjectionClient(),observer=createListeningObserver({sql_frontier_only:true,projection_plan_only:true,projection_linear_oracle:isLinear});
   try{const db=observer.wrapDatabase({async connect(){return fake.client;},async query(){return{rows:[]};}});
    const client=await db.connect();await client.query(sql,[]);const snapshot=observer.snapshot();
    assert.equal(fake.statements.filter(statement=>statement===sql).length,1);
@@ -922,7 +1044,7 @@ test('read-only projection capture is one RR/RO source query with bounded delaye
  const ids=Array.from({length:1024},(_,index)=>`00000000-0000-4000-8000-${String(index+1).padStart(12,'0')}`);
  const values=['11111111-1111-4111-8111-111111111111','22222222-2222-4222-8222-222222222222','33333333-3333-4333-8333-333333333333',
   'e'.repeat(64),'44444444-4444-4444-8444-444444444444',4096,2048,ids,'1000000'];
- assert.equal(projectionMetadataBatchSizeV1(PROJECTION_METADATA_QUERY_HASH_V1,[sql,values]),1024);
+ assert.equal(projectionMetadataBatchSizeV1(sourceHash,[sql,values],isLinear),1024);
  const fake=fakeReadonlyProjectionClient();let originalCalls=0;
  const notice=(queryText:string,plan:Record<string,unknown>)=>({message:'duration: 1 ms plan: '+JSON.stringify({'Query Text':queryText,'Planning Time':.1,'Execution Time':1,Plan:plan})});
  const deepPlan:any={'Node Type':'Result'};let cursor=deepPlan;for(let i=0;i<130;i++){cursor.Plans=[{'Node Type':'Result'}];cursor=cursor.Plans[0];}
@@ -934,7 +1056,7 @@ test('read-only projection capture is one RR/RO source query with bounded delaye
     Plans:[{'Node Type':'CTE Scan','CTE Name':'projections','Relation Name':'signal_mass_labeling_items','Actual Rows':4096,'Actual Loops':1}]}));
    fake.client.emit('notice',{message:'ERROR: private after-query text'});fake.client.emit('notice',deep);
    fake.client.emit('notice',notice('SELECT unrelated private_cleanup',{'Node Type':'Result','Actual Rows':1,'Actual Loops':1}));});return{rows:[{private:'not retained'}]};},
-  query_hash:PROJECTION_METADATA_QUERY_HASH_V1,batch_size:1024,outer_query_text:sql,database:'noisia_mfp_ci',role:'postgres',env:process.env});
+  query_hash:sourceHash,batch_size:1024,outer_query_text:sql,database:'noisia_mfp_ci',role:'postgres',env:process.env});
  const observation=capture.observation!;
  assert.equal(originalCalls,1);assert.equal(capture.result.rows[0].private,'not retained');assert.equal(observation.status,'captured');
  assert.equal(observation.guc_readback.status,'captured');assert.equal(observation.raw_notice_count_by_phase.original_query,9);
@@ -956,7 +1078,7 @@ test('read-only projection capture is one RR/RO source query with bounded delaye
 
  const labeling=await readFile(join(target,'infrastructure/db/signal-labeling-runs.ts'),'utf8');
  const mark=labeling.match(new RegExp('`(UPDATE signal_labeling_calls SET status=\'submitting\',[\\s\\S]*?RETURNING id)`\\s*,\\s*\\[run\\.id,\\s*calls\\.map','u'));assert.ok(mark);
- const observer=createListeningObserver({sql_frontier_only:true,projection_plan_only:true});
+ const observer=createListeningObserver({sql_frontier_only:true,projection_plan_only:true,projection_linear_oracle:isLinear});
  try{const db=observer.wrapDatabase({async connect(){return fake.client;},async query(){return{rows:[]};}});
   const c=await db.connect();await c.query(mark[1],['44444444-4444-4444-8444-444444444444',ids.slice(0,256)]);
   const projected=await c.query(sql,values);
@@ -971,13 +1093,15 @@ test('read-only projection capture is one RR/RO source query with bounded delaye
 }));
 
 test('projection capture accepts only the exact outer notice during savepoint cleanup',async()=>withProjectionPlanTestEnv(async()=>{
- const {captureReadonlyProjectionPlanV1,projectionMetadataBatchSizeV1,PROJECTION_METADATA_QUERY_HASH_V1}=await import('./observer.mjs');
+ const {captureReadonlyProjectionPlanV1,projectionMetadataBatchSizeV1,PROJECTION_METADATA_QUERY_HASH_V1,PROJECTION_LINEAR_METADATA_QUERY_HASH_V1,queryHash}=await import('./observer.mjs');
  const target=process.env.R16_DIAGNOSTIC_TARGET_ROOT;assert.ok(target);
  const {helper,sql}=await projectionMetadataSource(target);assert.ok(helper&&sql);
+ const sourceHash=queryHash(sql)!;assert.ok(sourceHash===PROJECTION_METADATA_QUERY_HASH_V1||sourceHash===PROJECTION_LINEAR_METADATA_QUERY_HASH_V1);
+ const isLinear=sourceHash===PROJECTION_LINEAR_METADATA_QUERY_HASH_V1;
  const ids=Array.from({length:1024},(_,index)=>`00000000-0000-4000-8000-${String(index+1).padStart(12,'0')}`);
  const values=['11111111-1111-4111-8111-111111111111','22222222-2222-4222-8222-222222222222','33333333-3333-4333-8333-333333333333',
   'e'.repeat(64),'44444444-4444-4444-8444-444444444444',4096,2048,ids,'1000000'];
- assert.equal(projectionMetadataBatchSizeV1(PROJECTION_METADATA_QUERY_HASH_V1,[sql,values]),1024);
+ assert.equal(projectionMetadataBatchSizeV1(sourceHash,[sql,values],isLinear),1024);
  const notice=(queryText:string,plan:Record<string,unknown>)=>({message:'duration: 1 ms plan: '+JSON.stringify({'Query Text':queryText,'Planning Time':.1,'Execution Time':1,Plan:plan})});
  const fake=fakeReadonlyProjectionClient();let originalCalls=0,cleanupNoticesEmitted=false;
  const originalClientQuery=fake.client.query.bind(fake.client);
@@ -992,7 +1116,7 @@ test('projection capture accepts only the exact outer notice during savepoint cl
  };
  const capture=await captureReadonlyProjectionPlanV1({client:fake.client,query:async()=>{originalCalls++;
   for(let index=0;index<7;index++)fake.client.emit('notice',notice(`SELECT nested_${index}`,{'Node Type':'Index Scan','Relation Name':'signal_mass_labeling_items','Actual Rows':1024,'Actual Loops':1}));
-  return{rows:[]};},query_hash:PROJECTION_METADATA_QUERY_HASH_V1,batch_size:1024,outer_query_text:sql,database:'noisia_mfp_ci',role:'postgres',env:process.env});
+  return{rows:[]};},query_hash:sourceHash,batch_size:1024,outer_query_text:sql,database:'noisia_mfp_ci',role:'postgres',env:process.env});
  const observation=capture.observation!;
  assert.equal(originalCalls,1);assert.equal(observation.status,'captured');assert.equal(observation.plans.length,8);
  assert.equal(observation.accepted_nested_count_by_phase.original_query,7);assert.equal(observation.accepted_nested_count_by_phase.cleanup,0);
@@ -1011,7 +1135,7 @@ test('projection capture accepts only the exact outer notice during savepoint cl
    negative.client.emit('notice',notice('SELECT private_nested_cleanup_only',{'Node Type':'Index Scan','Actual Rows':1,'Actual Loops':1}));}
   return result;};
  const unknown=await captureReadonlyProjectionPlanV1({client:negative.client,query:async()=>{negativeCalls++;return{rows:[]};},
-  query_hash:PROJECTION_METADATA_QUERY_HASH_V1,batch_size:1024,outer_query_text:sql,database:'noisia_mfp_ci',role:'postgres',env:process.env});
+  query_hash:sourceHash,batch_size:1024,outer_query_text:sql,database:'noisia_mfp_ci',role:'postgres',env:process.env});
  assert.equal(negativeCalls,1);assert.equal(unknown.observation?.status,'capture_unknown');assert.equal(unknown.observation?.reason,'outer_plan_unobserved');
  assert.equal(unknown.observation?.accepted_outer_count_by_phase.cleanup,0);assert.equal(unknown.observation?.accepted_nested_count_by_phase.cleanup,0);
  assert.equal(unknown.observation?.accepted_unattributed_count_by_phase.cleanup,2);assert.equal(negative.client.listenerCount('notice'),0);
