@@ -6,8 +6,48 @@ import {readFile} from 'node:fs/promises';
 import {join} from 'node:path';
 import {pathToFileURL} from 'node:url';
 import {assertCpuProfilerArgsV1,assertListeningSmallGuardV1,captureCalibrationObservationV1,classificationClockMetadataV1,
-  cpuProfileIdentityV1,cpuProfileMetadataV1,cpuProfileRangeV1,createJevHttpTokenWitnessV1,
+  assertListeningResourceProfileV1,listeningResourceProfileV1,cpuProfileIdentityV1,cpuProfileMetadataV1,cpuProfileRangeV1,createJevHttpTokenWitnessV1,
   runListeningSmallDiagnosticV1,tokenCalibrationKindFromEnvV1,diagnosticModeV1,assertDiagnosticExecArgsV1} from './run.mjs';
+
+async function streamProfileDependencies(){
+ const target=process.env.R16_DIAGNOSTIC_TARGET_ROOT;assert.ok(target,'resource profile contract needs checked out public target root');
+ const runtime=await import(pathToFileURL(join(target,'services/workers/src/providers/jev-streaming-runtime.ts')).href) as any;
+ const envFor=(profile:'baseline_512m'|'bounded_2g'):NodeJS.ProcessEnv=>({NOISIA_JEV_STREAMING_V2_ENABLED:'true',
+  NOISIA_JEV_STREAM_MAX_IN_FLIGHT:profile==='baseline_512m'?'1024':'4096',
+  NOISIA_JEV_STREAM_BUFFER_BYTES:profile==='baseline_512m'?'536870912':'2147483648',
+  NOISIA_JEV_STREAM_FLUSH_SIZE:profile==='baseline_512m'?'1024':'4096',NOISIA_JEV_STREAM_MAX_FLUSHES:'2',
+  NOISIA_JEV_STREAM_FLUSH_INTERVAL_MS:profile==='baseline_512m'?'250':'1000',NOISIA_JEV_STREAM_WINDOW_SIZE:'4096'});
+ return{getExecution:runtime.jevStreamingExecutionFromEnvV2,envFor};
+}
+
+test('default resource profile resolves through the product getter to the baseline tuple',async()=>{
+ const {getExecution,envFor}=await streamProfileDependencies();
+ assert.equal(listeningResourceProfileV1({},'legacy'),'baseline_512m');
+ const env=envFor('baseline_512m');
+ assert.deepEqual(assertListeningResourceProfileV1('baseline_512m','legacy',env,getExecution),
+  {max_in_flight:1024,max_buffered_bytes:536870912,flush_size:1024,max_flushes:2,flush_interval_ms:250,window_size:4096});
+});
+
+test('bounded resource profile resolves through the product getter only for neutral mode',async()=>{
+ const {getExecution,envFor}=await streamProfileDependencies();
+ const env={...envFor('bounded_2g'),R16_DIAGNOSTIC_RESOURCE_PROFILE:'bounded_2g'};
+ assert.equal(listeningResourceProfileV1(env,'neutral_only'),'bounded_2g');
+ assert.deepEqual(assertListeningResourceProfileV1('bounded_2g','neutral_only',env,getExecution),
+  {max_in_flight:4096,max_buffered_bytes:2147483648,flush_size:4096,max_flushes:2,flush_interval_ms:1000,window_size:4096});
+});
+
+test('resource profile selection rejects unknown names and bounded mode outside neutral runs',()=>{
+ assert.throws(()=>listeningResourceProfileV1({R16_DIAGNOSTIC_RESOURCE_PROFILE:'surprise'},'neutral_only'),/resource_profile_invalid/u);
+ assert.throws(()=>listeningResourceProfileV1({R16_DIAGNOSTIC_RESOURCE_PROFILE:'bounded_2g'},'legacy'),/resource_profile_requires_neutral_only/u);
+});
+
+test('resource profile guard rejects environment and effective tuple drift without allocating the profile budget',async()=>{
+ const {getExecution,envFor}=await streamProfileDependencies();const env=envFor('baseline_512m');
+ env.NOISIA_JEV_STREAM_MAX_IN_FLIGHT='2048';
+ assert.throws(()=>assertListeningResourceProfileV1('baseline_512m','legacy',env,getExecution),/stream_environment_profile_mismatch/u);
+ const correct=envFor('baseline_512m');
+ assert.throws(()=>assertListeningResourceProfileV1('baseline_512m','legacy',correct,current=>({...getExecution(current),max_in_flight:2048})),/stream_execution_profile_mismatch/u);
+});
 
 test('diagnostic CLI has no database side effect without explicit run flag',async()=>{
   assert.doesNotThrow(()=>assertListeningSmallGuardV1({},[]));

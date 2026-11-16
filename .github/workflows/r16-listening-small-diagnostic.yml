@@ -1,5 +1,5 @@
 name: R16 listening small diagnostic
-run-name: R16 diagnostic-only 4096 roots (${{ inputs.mode || 'legacy' }})
+run-name: R16 diagnostic-only 4096 roots (${{ inputs.mode || 'legacy' }}, ${{ inputs.resource_profile || 'baseline_512m' }})
 
 on:
   workflow_dispatch:
@@ -9,6 +9,11 @@ on:
         options: [legacy, neutral_only]
         default: legacy
         description: Neutral timing disables CPU and all auto_explain captures
+      resource_profile:
+        type: choice
+        options: [baseline_512m, bounded_2g]
+        default: baseline_512m
+        description: bounded_2g is available only for a manual neutral_only run
       target_ref:
         type: string
         required: false
@@ -79,6 +84,22 @@ jobs:
           TARGET_REF: ${{ inputs.target_ref }}
         run: test "${#TARGET_REF}" = 40 && [[ "$TARGET_REF" =~ ^[0-9a-f]{40}$ ]]
 
+      - name: Validate resource profile selection
+        env:
+          MODE: ${{ inputs.mode || 'legacy' }}
+          RESOURCE_PROFILE: ${{ inputs.resource_profile || 'baseline_512m' }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          case "$RESOURCE_PROFILE" in
+            baseline_512m) ;;
+            bounded_2g)
+              test "$MODE" = neutral_only
+              test "$EVENT_NAME" = workflow_dispatch
+              ;;
+            *) echo '::error::unknown diagnostic resource profile'; exit 1 ;;
+          esac
+
       - name: Allocate owned PG17 and Redis lab
         working-directory: target
         env:
@@ -112,7 +133,13 @@ jobs:
           NOISIA_SIGNAL_LISTENING_ENABLED: 'true'
           NOISIA_JEV_PROVIDER_ENABLED: 'true'
           NOISIA_JEV_STREAMING_V2_ENABLED: 'true'
-          NOISIA_JEV_STREAM_BUFFER_BYTES: '536870912'
+          NOISIA_JEV_STREAM_MAX_IN_FLIGHT: ${{ inputs.resource_profile == 'bounded_2g' && inputs.mode == 'neutral_only' && '4096' || '1024' }}
+          NOISIA_JEV_STREAM_BUFFER_BYTES: ${{ inputs.resource_profile == 'bounded_2g' && inputs.mode == 'neutral_only' && '2147483648' || '536870912' }}
+          NOISIA_JEV_STREAM_FLUSH_SIZE: ${{ inputs.resource_profile == 'bounded_2g' && inputs.mode == 'neutral_only' && '4096' || '1024' }}
+          NOISIA_JEV_STREAM_MAX_FLUSHES: '2'
+          NOISIA_JEV_STREAM_FLUSH_INTERVAL_MS: ${{ inputs.resource_profile == 'bounded_2g' && inputs.mode == 'neutral_only' && '1000' || '250' }}
+          NOISIA_JEV_STREAM_WINDOW_SIZE: '4096'
+          R16_DIAGNOSTIC_RESOURCE_PROFILE: ${{ inputs.resource_profile || 'baseline_512m' }}
           NOISIA_MASS_LABELING_ENABLED: 'true'
           R16_DIAGNOSTIC_TARGET_ROOT: ${{ github.workspace }}/target
           R16_DIAGNOSTIC_PROBE_ROOT: ${{ github.workspace }}/probe

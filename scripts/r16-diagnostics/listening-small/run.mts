@@ -12,6 +12,12 @@ import {createListeningObserver,DML_PLAN_MAX_PLANS,DML_PLAN_MIN_BATCH,DML_PLAN_M
 const ROOT_COUNT=4096;
 const MAX_MS=9*60*1000;
 const NOOP={diagnostic_only:true,h1_accepted:false,status:'no_database_action'} as const;
+type ListeningResourceProfileV1='baseline_512m'|'bounded_2g';
+type ListeningExecutionV1={max_in_flight:number;max_buffered_bytes:number;flush_size:number;max_flushes:number;flush_interval_ms:number;window_size:number};
+const listeningResourceProfilesV1:Record<ListeningResourceProfileV1,ListeningExecutionV1>={
+ baseline_512m:{max_in_flight:1024,max_buffered_bytes:512*1024*1024,flush_size:1024,max_flushes:2,flush_interval_ms:250,window_size:4096},
+ bounded_2g:{max_in_flight:4096,max_buffered_bytes:2*1024*1024*1024,flush_size:4096,max_flushes:2,flush_interval_ms:1000,window_size:4096},
+};
 const providerSecrets=['ANTHROPIC_API_KEY','ANTHROPIC_AUTH_TOKEN','OPENAI_API_KEY','TYPESAFE_API_KEY',
   'NOISIA_TYPESAFE_API_KEY','VOYAGE_API_KEY','VOYAGEAI_API_KEY','SONNET_API_KEY'];
 const probeFiles=['.github/workflows/r16-listening-small-diagnostic.yml',
@@ -113,6 +119,25 @@ export function diagnosticModeV1(env:NodeJS.ProcessEnv){
  const mode=env.R16_DIAGNOSTIC_MODE??'legacy';
  assert.ok(mode==='legacy'||mode==='neutral_only','diagnostic_mode_invalid');return mode;
 }
+export function listeningResourceProfileV1(env:NodeJS.ProcessEnv,mode:string):ListeningResourceProfileV1{
+ const requested=env.R16_DIAGNOSTIC_RESOURCE_PROFILE??'baseline_512m';
+ assert.ok(requested==='baseline_512m'||requested==='bounded_2g','resource_profile_invalid');
+ assert.ok(requested!=='bounded_2g'||mode==='neutral_only','resource_profile_requires_neutral_only');
+ return requested;
+}
+export function assertListeningResourceProfileV1(profile:ListeningResourceProfileV1,mode:string,env:NodeJS.ProcessEnv,
+ executionFromEnv:(env:NodeJS.ProcessEnv)=>ListeningExecutionV1|undefined):ListeningExecutionV1{
+ listeningResourceProfileV1({R16_DIAGNOSTIC_RESOURCE_PROFILE:profile},mode);
+ const expected=listeningResourceProfilesV1[profile];
+ const streamEnv={NOISIA_JEV_STREAM_MAX_IN_FLIGHT:expected.max_in_flight,NOISIA_JEV_STREAM_BUFFER_BYTES:expected.max_buffered_bytes,
+  NOISIA_JEV_STREAM_FLUSH_SIZE:expected.flush_size,NOISIA_JEV_STREAM_MAX_FLUSHES:expected.max_flushes,
+  NOISIA_JEV_STREAM_FLUSH_INTERVAL_MS:expected.flush_interval_ms,NOISIA_JEV_STREAM_WINDOW_SIZE:expected.window_size};
+ for(const [key,value] of Object.entries(streamEnv))assert.equal(env[key],String(value),'stream_environment_profile_mismatch');
+ const effective=executionFromEnv(env);
+ assert.ok(effective,'stream_execution_profile_missing');
+ assert.deepEqual(effective,expected,'stream_execution_profile_mismatch');
+ return effective;
+}
 export function assertDiagnosticExecArgsV1(mode:string,args:string[],profileDir:string){
  if(mode==='neutral_only')assert.ok(!args.some(a=>a.startsWith('--cpu-prof')||a.startsWith('--heap')),'neutral_profiler_forbidden');
  else assertCpuProfilerArgsV1(args,profileDir);
@@ -121,7 +146,8 @@ export function assertListeningSmallGuardV1(env:NodeJS.ProcessEnv,args:string[])
   if(!args.includes('--run'))return;
   assert.equal(env.GITHUB_ACTIONS,'true','diagnostic_requires_github_actions');
   assert.equal(env.NOISIA_R16_SMALL_DIAGNOSTIC,'true','diagnostic_opt_in_required');
-  diagnosticModeV1(env);
+  const mode=diagnosticModeV1(env);
+  listeningResourceProfileV1(env,mode);
   if(providerSecrets.some(key=>env[key]!==undefined)||Object.keys(env).some(key=>/(?:SONNET|VOYAGE)/u.test(key)&&/(?:API_KEY|TOKEN)/u.test(key)))
     throw Error('provider_credentials_forbidden');
   assert.ok(env.R16_DIAGNOSTIC_TARGET_ROOT,'target_root_required');
@@ -222,7 +248,11 @@ export async function runListeningSmallDiagnosticV1(){
   assert.equal(targetHeadBefore,process.env.R16_DIAGNOSTIC_TARGET_REF_REQUESTED,'target_ref_checkout_mismatch');
   assert.equal(probeHeadBefore,process.env.R16_DIAGNOSTIC_PROBE_REF_REQUESTED,'probe_ref_checkout_mismatch');
   const started=performance.now();
-  const neutralOnly=diagnosticModeV1(process.env)==='neutral_only';
+  const mode=diagnosticModeV1(process.env);
+  const neutralOnly=mode==='neutral_only';
+  let resourceProfile:ListeningResourceProfileV1|undefined;
+  let effectiveExecution:ListeningExecutionV1|undefined;
+  resourceProfile=listeningResourceProfileV1(process.env,mode);
   assertDiagnosticExecArgsV1(neutralOnly?'neutral_only':'legacy',process.execArgv,resolve(process.env.R16_DIAGNOSTIC_CPU_PROFILE_DIR!));
   const monotonicOrigin=process.hrtime.bigint();
   let stage='imports';
@@ -233,7 +263,7 @@ export async function runListeningSmallDiagnosticV1(){
   try{
     Object.assign(process.env,{NOISIA_R16_LOCAL_PG_LAB:'r16-benchmark-pg17',NOISIA_R16_NATIVE_FIXTURE_PG:'true',
       NOISIA_SIGNAL_LISTENING_ENABLED:'true',NOISIA_JEV_PROVIDER_ENABLED:'true',NOISIA_JEV_STREAMING_V2_ENABLED:'true',
-      NOISIA_JEV_STREAM_BUFFER_BYTES:String(512*1024*1024),NOISIA_MASS_LABELING_ENABLED:'true'});
+      NOISIA_MASS_LABELING_ENABLED:'true'});
     const [fixture,localPg,workloadModule,configurationModule,preparationModule,censusModule,servingModule,
       jobModule,providerModule,storageModule,syntheticModule,filesystemModule,profilerModule,provenanceModule,preflightModule,queryModule]
       =await Promise.all([
@@ -254,6 +284,8 @@ export async function runListeningSmallDiagnosticV1(){
         moduleAt<any>(target,'scripts/r16/listening-preflight.ts'),
         moduleAt<any>(target,'packages/query-engine/src/index.ts'),
       ]);
+    stage='resource_profile';
+    effectiveExecution={...assertListeningResourceProfileV1(resourceProfile,mode,process.env,providerModule.jevStreamingExecutionFromEnvV2)};
     const source=await provenanceModule.captureR16SourceProvenanceV1(target);
     assert.equal(source.tree_status_sha256,'sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855','target_tree_must_be_clean');
     const workload=workloadModule.r16ListeningWorkloadV2('defined_consumer_second_pass');
@@ -290,7 +322,7 @@ export async function runListeningSmallDiagnosticV1(){
         stage='census';
         const census=await censusModule.loadR16ListeningNativeCensusV1({...binding,run_id:prepared.run_id},ROOT_COUNT);
         const expected=new Set(census.root_ids);assert.equal(expected.size,ROOT_COUNT);
-        const execution=providerModule.jevStreamingExecutionFromEnvV2(process.env)!;
+        const execution={...effectiveExecution!};
         const latencies:number[]=[],calibrations:any[]=[],commits:number[]=[];
         const synthetic=syntheticModule.createSyntheticJevFetchV1({latencyForRequest:(i:number)=>125+((i*137+47)%351)});
         let requests=0;const countedFetch:typeof fetch=async(...args:any[])=>{requests++;const t=performance.now();try{return await synthetic(...args);}finally{latencies.push(performance.now()-t);}};
@@ -382,6 +414,7 @@ export async function runListeningSmallDiagnosticV1(){
             classification_start_hrtime_ns:classificationStartHrtime.toString(),classification_end_hrtime_ns:classificationEndHrtime!.toString(),
             warmups:warmups.length,warmup_phases:warmupPhases,calibrations,commit_batch_count:commits.length},
           diagnostic_mode:neutralOnly?'neutral_only':'legacy',
+          resource_profile:{requested_profile:resourceProfile,execution:effectiveExecution},
           cpu_profile:neutralOnly?{enabled:false,reason:'neutral_only',classification_clock:classificationClock,capacity_claim:false}:cpuProfileMetadataV1({main_pid:process.pid,sampler_pid:observerSnapshot.sampler_process_pid,
             clock:classificationClock,exec_args:process.execArgv,
             profile_dir:resolve(process.env.R16_DIAGNOSTIC_CPU_PROFILE_DIR!)}),
@@ -408,6 +441,7 @@ export async function runListeningSmallDiagnosticV1(){
     const failure={contract_version:'r16-listening-small-diagnostic-v1',diagnostic_only:true,h1_accepted:false,
       status:'failed',stage,code:safeError(error),total_wall_ms:performance.now()-started,process_id:process.pid,
       diagnostic_mode:neutralOnly?'neutral_only':'legacy',
+      resource_profile:{requested_profile:resourceProfile??process.env.R16_DIAGNOSTIC_RESOURCE_PROFILE??'baseline_512m',execution:effectiveExecution??null},
       cpu_profile:neutralOnly?{enabled:false,reason:'neutral_only',capacity_claim:false}:{enabled:true,profiler:'node_cpu_prof',interval_us:1000,main_process_pid:process.pid,
         sampler_process_pid:observerSnapshot.sampler_process_pid??null,output:'pid_scoped_cpu_profiles_only',heap_profile:false,
         source_text_embedded:false,overhead_measured:false,capacity_claim:false},observer:observerSnapshot,
