@@ -264,6 +264,24 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - name: Apply every numbered migration to disposable PostgreSQL 17
         run: pnpm --filter @noisia/db db:smoke:migrations
+      - name: Verify native actor query runtime on isolated fixture
+        env:
+          NOISIA_R16_ACTOR_QUERY_RUNTIME_PG: 'true'
+        run: |
+          set -o pipefail
+          set +e
+          pnpm exec node --test --test-concurrency=1 --import tsx \
+            infrastructure/db/migrations/signal-processing-actor-query-runtime.postgres.test.ts | tee r16-actor-query-runtime-pg.tap
+          test_status=${PIPESTATUS[0]}
+          set -e
+          if [[ "$test_status" -ne 0 ]] \
+            || ! grep -qx '# tests 3' r16-actor-query-runtime-pg.tap \
+            || ! grep -qx '# pass 3' r16-actor-query-runtime-pg.tap \
+            || ! grep -qx '# fail 0' r16-actor-query-runtime-pg.tap \
+            || ! grep -qx '# skipped 0' r16-actor-query-runtime-pg.tap; then
+            echo '::error::R16 actor query runtime test contract failed or was skipped'
+            exit 1
+          fi
       - name: Run MFP integration tests on migrated schema
         if: ${{ github.event_name != 'workflow_dispatch' || inputs.scope != 'listening-smoke' }}
         run: |
