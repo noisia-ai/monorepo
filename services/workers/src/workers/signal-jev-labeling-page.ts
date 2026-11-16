@@ -38,6 +38,8 @@ export async function processJevLabelingPageV1<Input extends FacetInput,Result>(
     /** Only native adapters whose inputs exclude reserved identities opt in. */
     continuous_windows?(run:LabelingRunV1):boolean;
     prepare_next?(run:LabelingRunV1,inputs:Input[]):Promise<boolean>;
+    /** Server-native Listening only; empty eligibility can advance after apply. */
+    revisit_empty_after_apply?:boolean;
     max_in_flight?(run:LabelingRunV1):number|undefined;
   };
   observe_stream?(metrics:JevStreamingMetricsV2):void;
@@ -107,13 +109,14 @@ export async function processJevLabelingPageV1<Input extends FacetInput,Result>(
         // reserve commits. Never prefetch through pending recovery or unknown.
         let fedWindows=1;
         const feed=continuous&&!pending.length&&!recoveryOnly&&!run.error_code&&(maxWindows??Infinity)>windows+1
-          ?async(available:number,maxCalls:number,admissionSignal:AbortSignal)=>{
+          ?async(available:number,maxCalls:number,admissionSignal:AbortSignal):Promise<LabelingCallV1<Input>[]|{closed:true}>=>{
             if(renewal)await renewal;if(leaseError)throw leaseError;
-            if(admissionSignal.aborted||cancellation.signal.aborted||windows+fedWindows>=(maxWindows??Infinity))return[];
+            if(admissionSignal.aborted||cancellation.signal.aborted||windows+fedWindows>=(maxWindows??Infinity))return{closed:true};
             const inputs=(await(args.read_next_inputs?args.read_next_inputs(run,{max_rows:maxCalls,max_working_bytes:available}):store.inputs(run,{max_rows:maxCalls,max_working_bytes:available,on_oversize:'empty'}))).slice(0,maxCalls);
-            if(!inputs.length||admissionSignal.aborted||cancellation.signal.aborted)return[];
-            if(hooks.prepare_next&&!await hooks.prepare_next(run,inputs))return[];
-            if(admissionSignal.aborted||cancellation.signal.aborted)return[];
+            if(admissionSignal.aborted||cancellation.signal.aborted)return{closed:true};
+            if(!inputs.length)return[];
+            if(hooks.prepare_next&&!await hooks.prepare_next(run,inputs))return{closed:true};
+            if(admissionSignal.aborted||cancellation.signal.aborted)return{closed:true};
             // Compile incrementally: never retain a second full request page
             // merely to discover that its copied bodies exceed free memory.
             const bounded:LabelingCallProposalV1<Input>[]=[];let bytes=0;
@@ -122,11 +125,11 @@ export async function processJevLabelingPageV1<Input extends FacetInput,Result>(
               if(bytes+cost>available||bounded.length>=maxCalls)break outer;
               bytes+=cost;bounded.push(proposal);
             }
-            if(!bounded.length||admissionSignal.aborted||cancellation.signal.aborted)return[];
+            if(!bounded.length||admissionSignal.aborted||cancellation.signal.aborted)return{closed:true};
             const next=await store.reserve(run,bounded);fedWindows++;
-            return next;
+            return next.length?next:{closed:true};
           }:undefined;
-        const outcome = await processJevStreamingWindowV2({run,calls,send_calls:reserved,store,provider,execution:execution,price,cancellation,hooks,observe_stream:args.observe_stream,feed_next:feed});
+        const outcome = await processJevStreamingWindowV2({run,calls,send_calls:reserved,store,provider,execution:execution,price,cancellation,hooks,observe_stream:args.observe_stream,feed_next:feed,revisit_empty_after_apply:Boolean(feed)&&hooks.revisit_empty_after_apply===true});
         aggregate = { ...outcome, roots:(aggregate?.roots??0)+outcome.roots,
           labeled:(aggregate?.labeled??0)+outcome.labeled,
           settled_micro_usd:(aggregate?.settled_micro_usd??0)+outcome.settled_micro_usd,

@@ -97,7 +97,7 @@ export function processSignalListeningJevV1(args:{run_id:string;store:Store;prov
     // retained initial calibration selection.
     read_next_inputs:(run,bounds)=>args.read_next_inputs?args.read_next_inputs(run,readBounds(bounds)):args.store.inputs(run,readBounds({...bounds,on_oversize:'empty' as const})),
     prepare:args.prepare?async run=>{compiledRun=undefined;try{const prepared=await args.prepare!(run);preparedExecution=prepared.execution;preparedProvider=prepared.provider;windowSize=prepared.execution.window_size;return prepared;}finally{selectionIndex.invalidate();}}:undefined,hooks:{
-    price:run=>contextOf(run).price,prepare_next:args.prepare_next?async(run,inputs)=>{try{return await args.prepare_next!(run,inputs);}finally{selectionIndex.invalidate();}}:undefined,
+    revisit_empty_after_apply:true,price:run=>contextOf(run).price,prepare_next:args.prepare_next?async(run,inputs)=>{try{return await args.prepare_next!(run,inputs);}finally{selectionIndex.invalidate();}}:undefined,
     propose:(run,inputs)=>select(inputs).map(input=>{
       const request=buildSignalListeningCompiledRequestV1(input,contextOf(run).snapshot);
       const request_digest=signalListeningRequestDigestV1(run,input,request);

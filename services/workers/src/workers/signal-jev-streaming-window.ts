@@ -36,7 +36,9 @@ export async function processJevStreamingWindowV2<I extends FacetInput, R>(args:
   observe_stream?(metrics: JevStreamingMetricsV2): void;
   /** First-party adapters only: inputs exclude every already reserved identity.
    * Returns at most one window, already budgeted before money reservation. */
-  feed_next?(available_bytes:number,max_calls:number,admission_signal:AbortSignal):Promise<LabelingCallV1<I>[]>;
+  feed_next?(available_bytes:number,max_calls:number,admission_signal:AbortSignal):Promise<LabelingCallV1<I>[] | { closed:true }>;
+  /** Listening native pending eligibility can advance only after durable apply. */
+  revisit_empty_after_apply?:boolean;
   hooks: { map(run: LabelingRunV1, call: LabelingCallV1<I>, raw: JevResponseV1): R[];
     error(run: LabelingRunV1, call: LabelingCallV1<I>, code: string, unknown: boolean): R[];
     labeled(result: R): boolean; invalidUsage?(failure: JevProviderErrorV1): JevResponseV1['usage'] | undefined;
@@ -52,6 +54,7 @@ export async function processJevStreamingWindowV2<I extends FacetInput, R>(args:
     inFlight = 0, fatal: unknown;
   const admission=new AbortController();
   let totalRoots=calls.length,feedClosed=!args.feed_next,feeding:Promise<void>|undefined;
+  let durableEpoch=0,emptyAtEpoch:number|undefined;
   const roster=new Map(calls.map(call=>[call.id,call])),initialIds=new Set(calls.map(call=>call.id));
   const initialMetadata=calls.reduce((n,call)=>n+jevCallWorkingBytesV2(call),0);
   let recentIdentities=new Set(calls.map(call=>call.request_digest));
@@ -108,6 +111,7 @@ export async function processJevStreamingWindowV2<I extends FacetInput, R>(args:
         const batch=results.slice(offset,offset+2000);
         for(const row of batch)row.call.raw_body=null;
         await store.apply(run,batch);for(const row of batch)applied.add(row.call.id);
+        if(args.revisit_empty_after_apply){durableEpoch++;wake();}
       }
       totalCost += settled.reduce((n, s) => n + s.settled_micro_usd, 0);
       labeled += results.filter(row => row.results.some(hooks.labeled)).length;
@@ -168,6 +172,8 @@ export async function processJevStreamingWindowV2<I extends FacetInput, R>(args:
   const reserved=(args.send_calls??calls.filter(call=>call.status==='reserved')).filter(call=>!call.raw_body);
   function prefetch(){
     if(feedClosed||feeding||fatal||admission.signal.aborted||cancellation.signal.aborted||reserved.length>workers||reserved.length>=e.window_size)return;
+    // One fresh read per acknowledged apply epoch; never poll an empty SQL frontier.
+    if(emptyAtEpoch!==undefined&&durableEpoch===emptyAtEpoch)return;
     // Do not read another full input page while paid responses own all memory.
     const free=e.max_buffered_bytes-memory;if(free<8192+reservationBytes)return;
     const available=Math.min(free,Math.max(e.window_size*16384,initialMetadata*2));
@@ -176,8 +182,19 @@ export async function processJevStreamingWindowV2<I extends FacetInput, R>(args:
     memory+=available;observe();let retained=0;
     feeding=(async()=>{
       const maxCalls=e.window_size-reserved.length;
-      const rows=await args.feed_next!(available,maxCalls,admission.signal);
-      if(!rows.length){feedClosed=true;return;}
+      const readEpoch=durableEpoch;
+      const next=await args.feed_next!(available,maxCalls,admission.signal);
+      if(!Array.isArray(next)){feedClosed=true;return;}
+      const rows=next;
+      if(!rows.length){
+        // A repeatable-read snapshot may finish after the apply that unlocks
+        // consumers. Keep its starting epoch, not the epoch at query return.
+        const future=reserved.length||markingUnsent.length||inFlight||buffered.length||active.size;
+        if(args.revisit_empty_after_apply&&(future||durableEpoch!==readEpoch))emptyAtEpoch=readEpoch;
+        else feedClosed=true;
+        return;
+      }
+      emptyAtEpoch=undefined;
       if(rows.length>maxCalls)throw Error('jev_stream_feed_window_invalid');
       const identities=new Set<string>(),ids=new Set<string>();
       for(const call of rows){
@@ -251,7 +268,12 @@ export async function processJevStreamingWindowV2<I extends FacetInput, R>(args:
         if(feeding){await feeding;continue;}
         if(feedClosed)break;
         // No budget for a next page: drain one bounded frontier, then retry.
-        if(activeSends.size||active.size||buffered.length){flush(true);await wait();continue;}
+        if(activeSends.size||active.size||buffered.length){
+          // An empty Listening frontier is not buffer pressure: retain ordinary
+          // size/deadline batching while siblings can still produce responses.
+          if(!args.revisit_empty_after_apply||!inFlight)flush(true);
+          await wait();continue;
+        }
         feedClosed=true;break;
       }
       const slots=Math.min(workers-inFlight,Math.floor((e.max_buffered_bytes-memory)/reservationBytes),reserved.length);

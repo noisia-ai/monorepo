@@ -195,3 +195,89 @@ test('external signal cannot silently opt a legacy non-streaming consumer into c
  let claims=0;const store={claim:async()=>{claims++;return null;}}as unknown as Parameters<typeof processJevLabelingPageV1>[0]['store'];
  await assert.rejects(processJevLabelingPageV1({run_id:'legacy',store,provider:{}as never,hooks:{}as never,signal:new AbortController().signal}),/external_signal_requires_streaming/);assert.equal(claims,0);
 });
+
+function deferredFrontier(){let resolve!:()=>void;const promise=new Promise<void>(done=>{resolve=done;});return{promise,resolve};}
+/** Two phases on one root: native eligibility excludes reserved identities and
+ * consumer becomes visible only after the base result is durably applied. */
+async function exerciseEmptyFrontier(mode:'before_mark'|'pending_apply'|'during_read'|'legacy'|'unsupported'|'no_proposals'|'no_reservation'|'permanent'){
+ type Args=Parameters<typeof processJevLabelingPageV1<FacetInput,string>>[0];
+ const run={id:'empty-frontier',lease_token:'one-lease',error_code:null,status:'running'}as LabelingRunV1;
+ const calls:LabelingCallV1<FacetInput>[]=[],events:string[]=[];
+ const emptySeen=deferredFrontier(),applyStarted=deferredFrontier(),applyReturned=deferredFrontier();
+ let baseApplied=false,consumerApplied=false,feedReads=0,initialReads=0,prepareCalls=0,claims=0;
+ const input=(phase:string)=>({root_id:phase,text:phase})as FacetInput;
+ const store={claim:async()=>{claims++;return run;},renew:async()=>{},release:async()=>{events.push('release');},calls:async()=>[],
+  inputs:async()=>{initialReads++;return mode==='permanent'?[]:[input('base')];},
+  reserve:async(_run:unknown,proposals:unknown[])=>{if(mode==='no_reservation'&&calls.length)return[];const rows=proposals.map((p,i)=>({...p as object,id:`call-${calls.length+i}`,status:'reserved',raw_body:null,results_applied:false}))as LabelingCallV1<FacetInput>[];calls.push(...rows);return rows;},
+  markSubmitting:async(_run:unknown,rows:LabelingCallV1<FacetInput>[])=>{
+   if(rows[0]?.inputs[0]?.text==='base'&&(mode==='before_mark'||mode==='legacy'))await emptySeen.promise;
+   for(const row of rows){row.status='submitting';events.push(`mark:${row.inputs[0]!.text}`);}
+  },
+  persistRawPage:async(_run:unknown,rows:Array<{call:LabelingCallV1<FacetInput>;raw:string}>)=>{for(const row of rows){row.call.raw_body=row.raw;events.push(`raw:${row.call.inputs[0]!.text}`);}},
+  settlePage:async(_run:unknown,rows:Array<{call:LabelingCallV1<FacetInput>}>)=>{for(const row of rows){assert.ok(row.call.raw_body);row.call.status='settled';events.push(`settle:${row.call.inputs[0]!.text}`);}},
+  apply:async(_run:unknown,rows:Array<{call:LabelingCallV1<FacetInput>}>)=>{
+   for(const row of rows){const phase=row.call.inputs[0]!.text;assert.equal(row.call.status,'settled');
+    if(phase==='base'){applyStarted.resolve();if(mode==='pending_apply')await emptySeen.promise;baseApplied=true;applyReturned.resolve();}else consumerApplied=true;
+    row.call.results_applied=true;events.push(`apply:${phase}`);
+   }
+  },
+  finish:async()=>consumerApplied||mode==='permanent'?'completed':'running',
+  fail:async()=>{throw Error('unexpected fail');},markFailed:async()=>{throw Error('unexpected unknown');},
+ }as unknown as Args['store'];
+ const provider:Args['provider']={max_concurrency:2,max_response_bytes:4096,async evaluate(request){events.push(`http:${request.state}`);return{http_status:200,latency_ms:1,
+  body:JSON.stringify({model:request.model,usage:{input_tokens:1,output_tokens:0},answers:{q:{type:'noul',noul:.8}}})};}};
+ const result=await processJevLabelingPageV1({run_id:run.id,store,provider,
+  execution:{...execution,max_in_flight:2,window_size:2,flush_size:mode==='pending_apply'||mode==='during_read'?1:32,flush_interval_ms:60000},
+  read_next_inputs:async()=>{
+   feedReads++;assert.ok(feedReads<=4,'at most one fresh read per apply epoch and one lookahead per nonempty page');
+   if(feedReads===1){
+    if(mode==='pending_apply')await applyStarted.promise;
+    if(mode==='during_read'){await applyReturned.promise;await new Promise<void>(resolve=>setImmediate(resolve));assert.ok(baseApplied);}
+    emptySeen.resolve();return[];
+   }
+   assert.ok(baseApplied,'fresh read only after durable application');
+   if(consumerApplied||calls.some(row=>row.inputs[0]!.text==='consumer'))return[];
+   return[input('consumer')];
+  },hooks:{continuous_windows:()=>true,revisit_empty_after_apply:mode!=='legacy',price:()=>llmPriceV1('typesafe','jev-1.13.0','sync',.042),
+   prepare_next:async()=>{prepareCalls++;return mode!=='unsupported';},
+   propose:(_run,inputs)=>mode==='no_proposals'&&inputs[0]?.text==='consumer'?[]:inputs.map(row=>({request:{model:'jev-1.13.0',state:row.text,questions:{q:{type:'noul',instructions:'configured'}}},request_digest:row.text,custom_id:row.text,inputs:[row],reserved_micro_usd:100})),
+   map:(_run,call)=>[call.inputs[0]!.text],error:()=>[],labeled:()=>true,fail_on_error:true,
+  }});
+ return{result,calls,events,baseApplied,consumerApplied,feedReads,initialReads,prepareCalls,claims};
+}
+for(const mode of ['before_mark','pending_apply','during_read']as const)test(`Listening empty frontier ${mode} rechecks after durable progress in the same invocation`,async()=>{
+ const x=await exerciseEmptyFrontier(mode);assert.equal(x.result.status,'completed');assert.equal(x.claims,1);assert.equal(x.initialReads,1);
+ assert.equal(x.calls.length,2);assert.equal(x.baseApplied,true);assert.equal(x.consumerApplied,true);assert.equal(x.feedReads,4);assert.equal(x.prepareCalls,1);
+ for(const phase of ['base','consumer']){for(const stage of ['http','raw','settle','apply'])assert.equal(x.events.filter(e=>e===`${stage}:${phase}`).length,1);
+  assert.ok(x.events.indexOf(`http:${phase}`)<x.events.indexOf(`raw:${phase}`));assert.ok(x.events.indexOf(`raw:${phase}`)<x.events.indexOf(`settle:${phase}`));assert.ok(x.events.indexOf(`settle:${phase}`)<x.events.indexOf(`apply:${phase}`));}
+ assert.ok(x.events.indexOf('apply:base')<x.events.indexOf('http:consumer'));
+});
+test('legacy empty frontier still closes immediately despite later application',async()=>{
+ const x=await exerciseEmptyFrontier('legacy');assert.equal(x.calls.length,1);assert.equal(x.feedReads,1);assert.equal(x.consumerApplied,false);
+});
+test('permanent empty native frontier closes without polling or requests',async()=>{
+ const x=await exerciseEmptyFrontier('permanent');assert.equal(x.feedReads,1);assert.equal(x.calls.length,0);assert.equal(x.result.status,'completed');
+});
+for(const mode of ['unsupported','no_proposals','no_reservation']as const)test(`Listening ${mode} yields without retrying the empty frontier`,async()=>{
+ const x=await exerciseEmptyFrontier(mode);assert.equal(x.calls.length,1);assert.equal(x.feedReads,2);assert.equal(x.prepareCalls,1);assert.equal(x.consumerApplied,false);assert.equal(x.result.status,'running');
+});
+
+test('Listening waiting at an empty frontier preserves batching while HTTP siblings remain active',async()=>{
+ const {processJevStreamingWindowV2}=await import('./signal-jev-streaming-window');
+ const calls=Array.from({length:2},(_,i)=>({id:`batch-${i}`,request_digest:`batch-${i}`,status:'reserved',raw_body:null,
+  request:{model:'jev-1.13.0',state:String(i),questions:{q:{type:'noul',instructions:'configured'}}},inputs:[{root_id:String(i),text:String(i)}]}))as unknown as LabelingCallV1<FacetInput>[];
+ const firstBuffered=deferredFrontier();let rawPages=0,reads=0,attempts=0;
+ type Store=Parameters<typeof processJevLabelingPageV1<FacetInput,string>>[0]['store'];
+ const store={markSubmitting:async()=>{},persistRawPage:async(_run:unknown,rows:unknown[])=>{rawPages++;assert.equal(rows.length,2,'empty frontier must not flush the first response alone');},
+  settlePage:async()=>{},apply:async()=>{},finish:async()=> 'completed',markFailed:async()=>{throw Error('unexpected failure');}}as unknown as Store;
+ const result=await processJevStreamingWindowV2({run:{}as LabelingRunV1,calls,store,price:llmPriceV1('typesafe','jev-1.13.0','sync',.042),
+  cancellation:new AbortController(),revisit_empty_after_apply:true,
+  feed_next:async()=>{reads++;assert.ok(reads<=2);return[];},
+  observe_stream:metrics=>{if(metrics.buffered_responses===1)firstBuffered.resolve();},
+  provider:{max_concurrency:3,max_response_bytes:4096,async evaluate(request){attempts++;
+   if(request.state==='1'){await firstBuffered.promise;await new Promise<void>(resolve=>setImmediate(resolve));assert.equal(rawPages,0);}
+   return{http_status:200,latency_ms:1,body:JSON.stringify({model:request.model,usage:{input_tokens:1,output_tokens:0},answers:{q:{type:'noul',noul:.8}}})};}},
+  execution:{...execution,max_in_flight:3,window_size:3,flush_size:32,flush_interval_ms:60000},
+  hooks:{map:(_run,call)=>[call.id],error:()=>[],labeled:()=>true}});
+ assert.equal(result.labeled,2);assert.equal(attempts,2);assert.equal(rawPages,1);assert.equal(reads,2);
+});
