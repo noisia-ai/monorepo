@@ -366,6 +366,16 @@ async function withDmlPlanTestEnv<T>(action:()=>Promise<T>){
  Object.assign(process.env,DML_PLAN_TEST_ENV);
  try{return await action();}finally{for(const key of keys){const value=prior[key];if(value===undefined)delete process.env[key];else process.env[key]=value;}}
 }
+const CANONICAL_STATS_BEFORE=[
+ {signature:'public.signal_labeling_digest_v1(jsonb)',function_present:true,stats_observed:false,calls:null,total_time_ms:null,self_time_ms:null},
+ {signature:'public.signal_labeling_json_v1(jsonb)',function_present:true,stats_observed:false,calls:null,total_time_ms:null,self_time_ms:null},
+ {signature:'public.signal_listening_statement_roots_v1(uuid[])',function_present:true,stats_observed:true,calls:5,total_time_ms:1,self_time_ms:.5},
+];
+const CANONICAL_STATS_AFTER=[
+ CANONICAL_STATS_BEFORE[0]!,
+ {signature:'public.signal_labeling_json_v1(jsonb)',function_present:true,stats_observed:true,calls:30,total_time_ms:10,self_time_ms:4},
+ {signature:'public.signal_listening_statement_roots_v1(uuid[])',function_present:true,stats_observed:true,calls:6,total_time_ms:1.2,self_time_ms:.6},
+];
 const FUNCTION_STATS_BEFORE=[
  {signature:'public.signal_listening_answer_guard_v1()',function_present:true,stats_observed:true,calls:10,total_time_ms:2,self_time_ms:1},
  {signature:'public.signal_listening_root_right_v1(uuid, uuid, text)',function_present:true,stats_observed:true,calls:40,total_time_ms:12,self_time_ms:10},
@@ -380,7 +390,7 @@ const FUNCTION_STATS_AFTER=[
 ];
 function fakeDmlPlanClient(options:{readOnly?:string;failLoad?:boolean;failRestore?:boolean;failStatsBefore?:boolean;failStatsAfter?:boolean;
  absentSignatures?:string[];unobservedSignatures?:string[];unobservedBeforeSignatures?:string[];missingSignatures?:string[];
- restoreFailsAfterStatsError?:boolean;failActorExplain?:boolean;restoreFailsAfterActorError?:boolean}={}){
+ counterRegressionSignatures?:string[];invalidBeforeSignatures?:string[];restoreFailsAfterStatsError?:boolean;failActorExplain?:boolean;restoreFailsAfterActorError?:boolean}={}){
  const client=new EventEmitter() as any,statements:string[]=[],events:string[]=[],restores:Array<{name:string;value:string;local:boolean}>=[],functionStatLookups:string[][]=[];
  let statsReads=0,transactionAborted=false;
  const oldValues:Record<string,string>={log_min_messages:'warning',client_min_messages:'notice',log_statement:'none',log_parameter_max_length:'0',
@@ -393,14 +403,14 @@ function fakeDmlPlanClient(options:{readOnly?:string;failLoad?:boolean;failResto
   if(sql.startsWith('SAVEPOINT')){events.push('savepoint');return{rows:[]};}
   if(sql.startsWith('SELECT current_database'))return{rows:[{database:'noisia_mfp_ci',role:'postgres',read_only:options.readOnly??'off',superuser:true}]};
   if(sql.startsWith("LOAD 'auto_explain'")){events.push('load');if(options.failLoad)throw Error('private extension failure');return{rows:[]};}
-  if(sql.includes('pg_stat_xact_user_functions')){statsReads++;functionStatLookups.push((values?.[0] as string[]|undefined)??[]);
+  if(sql.includes('pg_stat_xact_user_functions')){statsReads++;events.push(statsReads===1?'stats-before':'stats-after');functionStatLookups.push((values?.[0] as string[]|undefined)??[]);
    if((statsReads===1&&options.failStatsBefore)||(statsReads===2&&options.failStatsAfter)){if(statsReads===2&&options.restoreFailsAfterStatsError)transactionAborted=true;throw Error('synthetic_function_stats_error');}
-   const source=statsReads===1?FUNCTION_STATS_BEFORE:FUNCTION_STATS_AFTER;
+   const source=statsReads===1?[...FUNCTION_STATS_BEFORE,...CANONICAL_STATS_BEFORE]:[...FUNCTION_STATS_AFTER,...CANONICAL_STATS_AFTER];
    const rows=source.filter(row=>!options.missingSignatures?.includes(row.signature)).map(row=>options.absentSignatures?.includes(row.signature)
     ?{signature:row.signature,function_present:false,stats_observed:false,calls:null,total_time_ms:null,self_time_ms:null}
     :options.unobservedSignatures?.includes(row.signature)||(statsReads===1&&options.unobservedBeforeSignatures?.includes(row.signature))
      ?{signature:row.signature,function_present:true,stats_observed:false,calls:null,total_time_ms:null,self_time_ms:null}:row);
-   return{rows};}
+   return{rows:rows.map(row=>statsReads===1&&options.invalidBeforeSignatures?.includes(row.signature)?{...row,calls:-1}:statsReads===2&&options.counterRegressionSignatures?.includes(row.signature)?{...row,calls:0}:row)};}
   if(sql.startsWith('SELECT name,current_setting'))return{rows:(values?.[0] as string[]).map(name=>({name,value:oldValues[name]}))};
   if(sql.includes('FROM signal_labeling_calls c JOIN signal_labeling_runs r'))return{rows:[{workspace_id:'11111111-1111-4111-8111-111111111111',actor_user_id:'22222222-2222-4222-8222-222222222222'}]};
   if(sql.startsWith('EXPLAIN (ANALYZE,BUFFERS,TIMING ON,FORMAT JSON)')){
@@ -432,9 +442,9 @@ test('DML plan specs match the complete source SQL, bind arity and batch-value p
  assert.equal(markHash,'sha256:1e5b3d3837b8c7354d6c25d941461f0d36e55d5cc3d42cbd31c627ba0662859b');
  assert.equal(answersHash,'sha256:7a86df2f02e720b156e7f9d7132eba342080fc9d169d7cf8e1cbdfa74de067a7');
  assert.equal(reserveHash,'sha256:4ece6654c82e3d48416690d80208f849288cd5cfed5e16f0464dd3accfba33dd');
- assert.deepEqual(dmlPlanQuerySpec(markHash),{label:'mark_submitting',batch_unit:'call_ids',values_count:2,batch_value_index:1,batch_kind:'array'});
- assert.deepEqual(dmlPlanQuerySpec(answersHash),{label:'listening_answers_insert',batch_unit:'answer_rows',values_count:4,batch_value_index:3,batch_kind:'json_array',function_stats:true});
- assert.deepEqual(dmlPlanQuerySpec(reserveHash),{label:'reserve_calls_insert',batch_unit:'call_proposals',values_count:8,batch_value_index:5,batch_kind:'json_array'});
+ assert.deepEqual(dmlPlanQuerySpec(markHash),{label:'mark_submitting',batch_unit:'call_ids',values_count:2,batch_value_index:1,batch_kind:'array',function_stats:'canonical'});
+ assert.deepEqual(dmlPlanQuerySpec(answersHash),{label:'listening_answers_insert',batch_unit:'answer_rows',values_count:4,batch_value_index:3,batch_kind:'json_array',function_stats:'answers'});
+ assert.deepEqual(dmlPlanQuerySpec(reserveHash),{label:'reserve_calls_insert',batch_unit:'call_proposals',values_count:8,batch_value_index:5,batch_kind:'json_array',function_stats:'canonical'});
  assert.equal(dmlPlanBatchSize(markHash,['UPDATE', ['run',Array(256).fill('synthetic-id')]]),256);
  assert.equal(dmlPlanBatchSize(markHash,['UPDATE', ['run',Array(255).fill('synthetic-id')]]),255);
  assert.equal(dmlPlanBatchSize(markHash,['UPDATE', ['run']]),null);
@@ -510,7 +520,7 @@ test('DML savepoint releases before the original write, captures once and keeps 
  assert.equal(captured.observation.analyze_timing_overhead_measured,false);assert.equal(client.listenerCount('notice'),0);
  assert.ok(events.indexOf('release')<events.indexOf('write'));assert.equal(events.filter(x=>x==='rollback').length,0);
  assert.ok(events.lastIndexOf('restore')>events.indexOf('write'));
- assert.equal(restores.length,15);assert.ok(restores.every(row=>row.local));
+ assert.equal(restores.length,18);assert.ok(restores.every(row=>row.local));
  assert.deepEqual(restores[0],{name:'auto_explain.log_min_duration',value:'-1',local:true});
  assert.deepEqual(restores.at(-1),{name:'auto_explain.log_min_duration',value:oldValues['auto_explain.log_min_duration'],local:true});
  for(const {name,value} of restores.slice(1,-1))assert.equal(value,oldValues[name]);
@@ -704,4 +714,54 @@ test('DML read-only scope mismatch falls back before write, while DML and cleanu
  await assert.rejects(captureDmlPlanQueryV1({client:cleanupError.client,query:async()=>{cleanupWrites++;cleanupError.events.push('write');return{rowCount:256};},
   query_hash:hash,batch_size:256,database:'noisia_mfp_ci',role:'postgres',env:process.env}),/synthetic restore failure/u);
  assert.equal(cleanupWrites,1);assert.equal(cleanupError.client.listenerCount('notice'),0);assert.equal(cleanupError.events.includes('rollback'),false);
+}));
+
+const CANONICAL_SIGNATURES=['public.signal_labeling_digest_v1(jsonb)','public.signal_labeling_json_v1(jsonb)','public.signal_listening_statement_roots_v1(uuid[])'];
+for(const queryHash of ['sha256:1e5b3d3837b8c7354d6c25d941461f0d36e55d5cc3d42cbd31c627ba0662859b','sha256:4ece6654c82e3d48416690d80208f849288cd5cfed5e16f0464dd3accfba33dd']){
+ test('canonical DML stats are transaction-local, bounded by exact signatures and never launch actor diagnostics: '+queryHash,async()=>withDmlPlanTestEnv(async()=>{
+  const {captureDmlPlanQueryV1}=await import('./observer.mjs');const {client,events,statements,functionStatLookups,restores,oldValues}=fakeDmlPlanClient();let writes=0;
+  const captured=await captureDmlPlanQueryV1({client,query:async()=>{writes++;events.push('write');return{rowCount:256};},query_hash:queryHash,batch_size:256,
+   query_values:['not-an-answer-bind',JSON.stringify([{call_id:'11111111-1111-4111-8111-111111111111'}])],database:'noisia_mfp_ci',role:'postgres',env:process.env});
+  assert.equal(writes,1);assert.deepEqual(functionStatLookups,[CANONICAL_SIGNATURES,CANONICAL_SIGNATURES]);
+  assert.ok(events.indexOf('stats-before')<events.indexOf('release'));assert.ok(events.indexOf('release')<events.indexOf('write'));assert.ok(events.indexOf('write')<events.indexOf('stats-after'));
+  assert.ok(!statements.some(sql=>sql.includes('LEFT JOIN pg_stat_user_functions')||sql.startsWith('EXPLAIN ')||sql.includes('reset')||sql.includes('clear_snapshot')));
+  const stats=captured.observation?.function_stats;assert.ok(stats);assert.equal(stats.view,'pg_stat_xact_user_functions');assert.equal(stats.scope,'same_backend_current_transaction_delta');
+  assert.equal(stats.measured_work,'original_dml_and_all_triggers');assert.equal(stats.cpu_time,false);assert.equal(stats.recursive_calls_are_mentions,false);
+  assert.ok(captured.observation&&captured.observation.status!=='setup_unavailable');
+  assert.equal(captured.observation.actor_function_diagnostic,undefined);assert.equal(client.listenerCount('notice'),0);
+  assert.deepEqual(stats.deltas.map(row=>row.signature),CANONICAL_SIGNATURES);
+  assert.deepEqual(stats.deltas[0],{signature:CANONICAL_SIGNATURES[0],status:'stats_unobserved',baseline:null,calls:null,total_time_ms:null,self_time_ms:null},'an inline SQL digest may remain unobserved, not zero');
+  assert.deepEqual(stats.deltas[1],{signature:CANONICAL_SIGNATURES[1],status:'captured',baseline:'transaction_local_row_absent_zero_before_dml',calls:30,total_time_ms:10,self_time_ms:4});
+  assert.equal(stats.deltas[2]?.calls,1);assert.equal(stats.deltas[2]?.baseline,'observed_before');
+  assert.equal(restores.at(-2)?.name,'track_functions');assert.equal(restores.at(-2)?.value,oldValues.track_functions);
+ }));
+ test('canonical DML stats fallback and post-write failure never replay the original: '+queryHash,async()=>withDmlPlanTestEnv(async()=>{
+  const {captureDmlPlanQueryV1}=await import('./observer.mjs');
+  for(const failStatsAfter of [false,true]){const {client,events}=fakeDmlPlanClient(failStatsAfter?{failStatsAfter:true}:{failStatsBefore:true});let writes=0;
+   const capture=()=>captureDmlPlanQueryV1({client,query:async()=>{writes++;events.push('write');return{rowCount:256};},query_hash:queryHash,batch_size:256,database:'noisia_mfp_ci',role:'postgres',env:process.env});
+   if(failStatsAfter)await assert.rejects(capture,/synthetic_function_stats_error/);else{const result=await capture();assert.equal(result.observation?.function_stats?.status,'setup_unavailable');assert.ok(events.indexOf('rollback')<events.indexOf('write'));}
+   assert.equal(writes,1);assert.equal(client.listenerCount('notice'),0);
+  }
+ }));
+}
+test('canonical counters keep absent lookups and after-unobserved data unknown and reject a backwards counter',async()=>withDmlPlanTestEnv(async()=>{
+ const {captureDmlPlanQueryV1}=await import('./observer.mjs');const {client}=fakeDmlPlanClient({missingSignatures:[CANONICAL_SIGNATURES[0]!],unobservedSignatures:[CANONICAL_SIGNATURES[1]!],counterRegressionSignatures:[CANONICAL_SIGNATURES[2]!]});
+ const captured=await captureDmlPlanQueryV1({client,query:async()=>({rowCount:256}),query_hash:'sha256:1e5b3d3837b8c7354d6c25d941461f0d36e55d5cc3d42cbd31c627ba0662859b',batch_size:256,database:'noisia_mfp_ci',role:'postgres',env:process.env});
+ assert.deepEqual(captured.observation?.function_stats?.deltas.map(row=>[row.status,row.calls,row.total_time_ms,row.self_time_ms]),[['lookup_unobserved',null,null,null],['stats_unobserved',null,null,null],['counter_invalid',null,null,null]]);
+}));
+
+test('canonical statistic signatures resolve source helpers, including the real JSON canonicalizer',async()=>{
+ const target=process.env.R16_DIAGNOSTIC_TARGET_ROOT;assert.ok(target);
+ const source=await readFile(join(target,'infrastructure/db/migrations/0223_signal_mention_facets.sql'),'utf8');
+ const roots=await readFile(join(target,'infrastructure/db/migrations/0318_signal_listening_statement_population.sql'),'utf8');
+ assert.match(source,/CREATE FUNCTION signal_labeling_json_v1\(value jsonb\) RETURNS text LANGUAGE plpgsql IMMUTABLE STRICT/u);
+ assert.match(source,/CREATE FUNCTION signal_labeling_digest_v1\(value jsonb\) RETURNS text LANGUAGE sql IMMUTABLE STRICT/u);
+ assert.match(roots,/CREATE FUNCTION signal_listening_statement_roots_v1\(ids uuid\[\]\) RETURNS uuid\[\]/u);
+ assert.ok(!source.includes('signal_labeling_canonical_json_v1'));
+});
+
+test('invalid pre-write observed counters cannot become a transaction-zero baseline',async()=>withDmlPlanTestEnv(async()=>{
+ const {captureDmlPlanQueryV1}=await import('./observer.mjs');const signature=CANONICAL_SIGNATURES[2]!;const {client}=fakeDmlPlanClient({invalidBeforeSignatures:[signature]});
+ const captured=await captureDmlPlanQueryV1({client,query:async()=>({rowCount:256}),query_hash:'sha256:1e5b3d3837b8c7354d6c25d941461f0d36e55d5cc3d42cbd31c627ba0662859b',batch_size:256,database:'noisia_mfp_ci',role:'postgres',env:process.env});
+ assert.deepEqual(captured.observation?.function_stats?.deltas.find(row=>row.signature===signature),{signature,status:'counter_invalid',baseline:null,calls:null,total_time_ms:null,self_time_ms:null});
 }));
