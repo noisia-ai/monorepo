@@ -10,7 +10,7 @@ const INNER_PLAN_QUERY_LABELS=new Map([
  ['sha256:d0ecbbfdca3d93e069a3ca03367439fa25ce54164efaf3135c80b27c91ed2680','metadata'],
  ['sha256:82fa4fc106842d6422046aefb067a0a7dbaf5bb28de04c0b9147854091410c04','hydrate'],
 ]);
-export const INNER_PLAN_CAPTURE_ORDINALS=[1,2,6,8] as const;
+export const INNER_PLAN_CAPTURE_ORDINALS=[1,2,3,4,5,6,7,8] as const;
 const PLAN_NUMBERS=['Plan Rows','Plan Width','Actual Rows','Actual Loops','Startup Cost','Total Cost','Actual Startup Time','Actual Total Time',
  'Shared Hit Blocks','Shared Read Blocks','Shared Dirtied Blocks','Shared Written Blocks','Temp Read Blocks','Temp Written Blocks'];
 const PLAN_NAMES=['Node Type','Relation Name','Alias','Index Name','Join Type'];
