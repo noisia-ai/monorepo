@@ -836,11 +836,24 @@ test('neutral mode also bypasses automatic SELECT plan capture for the real elig
  const target=process.env.R16_DIAGNOSTIC_TARGET_ROOT;assert.ok(target);
  const source=await readFile(join(target,'infrastructure/db/signal-listening-runs.ts'),'utf8');
  const template=source.match(/`(\/\* labeling_listening_input_metadata_v1 \*\/[\s\S]*?LIMIT \$6)`/u);
- const scope=source.match(/const unresolvedScope="([^"]+)"/u),human=source.match(/const noHumanDecision=`([^`]+)`/u);
- assert.ok(template&&scope&&human);
- const sql=template[1]!.replace('${unresolvedScope}',scope[1]!).replace('${noHumanDecision}',human[1]!);
+ assert.ok(template);
+ const refs=[...new Set([...template[1]!.matchAll(/\$\{([A-Za-z_]+)\}/gu)].map(m=>m[1]!))].sort();
+ assert.ok(JSON.stringify(refs)===JSON.stringify(['noHumanDecision','unresolvedScope'])
+  ||JSON.stringify(refs)===JSON.stringify(['pendingScope','population']),'unknown metadata template format');
+ let sql=template[1]!;
+ for(const name of refs){
+  // Only the two known source formats; literal interpolation, never eval or a copied query.
+  const value=source.match(new RegExp('const '+name+'=(?:`([^`]+)`|"([^\"]+)");','u'));
+  assert.ok(value,'metadata literal missing');const literal=value[1]??value[2];assert.ok(literal&&!literal.includes('${'));
+  sql=sql.replaceAll('${'+name+'}',literal);
+ }
+ assert.ok(!sql.includes('${'),'unresolved metadata interpolation');
  const {createListeningObserver,queryHash,innerPlanQueryLabel}=await import('./observer.mjs');
- assert.equal(innerPlanQueryLabel(queryHash(sql)),'metadata');
+ if(refs[0]==='noHumanDecision')assert.equal(innerPlanQueryLabel(queryHash(sql)),'metadata');
+ else{
+  assert.equal(queryHash(sql),'sha256:1c6942d84ff9c1edf7f35f28e0ba14d854fac1c51a64b2bbbdd51c1f5abc6d5f');
+  assert.equal(innerPlanQueryLabel(queryHash(sql)),null,'historical metadata is not in the current capture allowlist');
+ }
  const observer=createListeningObserver({neutral_only:true});let calls=0;
  const client={processID:123,async query(actual:string){calls++;assert.equal(actual,sql);return{rows:[]};},on(){throw Error('SELECT plan listener forbidden');},off(){}};
  try{observer.setInnerPlanRootCount(4096);const db=observer.wrapDatabase({async connect(){return client;},query:client.query});const c=await db.connect();await c.query(sql,[]);
