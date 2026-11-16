@@ -970,6 +970,54 @@ test('read-only projection capture is one RR/RO source query with bounded delaye
  }finally{await observer.close();}
 }));
 
+test('projection capture accepts only the exact outer notice during savepoint cleanup',async()=>withProjectionPlanTestEnv(async()=>{
+ const {captureReadonlyProjectionPlanV1,projectionMetadataBatchSizeV1,PROJECTION_METADATA_QUERY_HASH_V1}=await import('./observer.mjs');
+ const target=process.env.R16_DIAGNOSTIC_TARGET_ROOT;assert.ok(target);
+ const {helper,sql}=await projectionMetadataSource(target);assert.ok(helper&&sql);
+ const ids=Array.from({length:1024},(_,index)=>`00000000-0000-4000-8000-${String(index+1).padStart(12,'0')}`);
+ const values=['11111111-1111-4111-8111-111111111111','22222222-2222-4222-8222-222222222222','33333333-3333-4333-8333-333333333333',
+  'e'.repeat(64),'44444444-4444-4444-8444-444444444444',4096,2048,ids,'1000000'];
+ assert.equal(projectionMetadataBatchSizeV1(PROJECTION_METADATA_QUERY_HASH_V1,[sql,values]),1024);
+ const notice=(queryText:string,plan:Record<string,unknown>)=>({message:'duration: 1 ms plan: '+JSON.stringify({'Query Text':queryText,'Planning Time':.1,'Execution Time':1,Plan:plan})});
+ const fake=fakeReadonlyProjectionClient();let originalCalls=0,cleanupNoticesEmitted=false;
+ const originalClientQuery=fake.client.query.bind(fake.client);
+ fake.client.query=async(statement:string,...args:unknown[])=>{
+  const result=await originalClientQuery(statement,...args);
+  if(statement==='ROLLBACK TO SAVEPOINT r16_projection_plan_capture_v1'&&!cleanupNoticesEmitted){cleanupNoticesEmitted=true;
+   fake.client.emit('notice',notice(sql,{'Node Type':'Result','Actual Rows':1024,'Actual Loops':1}));
+   fake.client.emit('notice',notice('SELECT private_unrelated_outer',{'Node Type':'Result','Actual Rows':1,'Actual Loops':1}));
+   fake.client.emit('notice',notice('SELECT private_nested_cleanup',{'Node Type':'Index Scan','Actual Rows':1,'Actual Loops':1}));
+  }
+  return result;
+ };
+ const capture=await captureReadonlyProjectionPlanV1({client:fake.client,query:async()=>{originalCalls++;
+  for(let index=0;index<7;index++)fake.client.emit('notice',notice(`SELECT nested_${index}`,{'Node Type':'Index Scan','Relation Name':'signal_mass_labeling_items','Actual Rows':1024,'Actual Loops':1}));
+  return{rows:[]};},query_hash:PROJECTION_METADATA_QUERY_HASH_V1,batch_size:1024,outer_query_text:sql,database:'noisia_mfp_ci',role:'postgres',env:process.env});
+ const observation=capture.observation!;
+ assert.equal(originalCalls,1);assert.equal(observation.status,'captured');assert.equal(observation.plans.length,8);
+ assert.equal(observation.accepted_nested_count_by_phase.original_query,7);assert.equal(observation.accepted_nested_count_by_phase.cleanup,0);
+ assert.equal(observation.accepted_outer_count_by_phase.cleanup,1);assert.equal(observation.accepted_unattributed_count_by_phase.cleanup,2);
+ assert.equal(observation.raw_notice_count_by_phase.cleanup,3);assert.equal(observation.plans.filter(plan=>plan.frontier_role==='outer').length,1);
+ assert.equal(observation.plans.at(-1)?.frontier_role,'outer');assert.equal(observation.plans_dropped,0);
+ assert.ok(fake.events.includes('ROLLBACK TO SAVEPOINT r16_projection_plan_capture_v1'));
+ assert.ok(fake.events.includes('RELEASE SAVEPOINT r16_projection_plan_capture_v1'));assert.equal(fake.client.listenerCount('notice'),0);
+ for(const forbidden of ['private_unrelated_outer','private_nested_cleanup','SELECT nested_'])assert.ok(!JSON.stringify(observation).includes(forbidden));
+
+ const negative=fakeReadonlyProjectionClient();let negativeCalls=0;
+ const negativeQuery=negative.client.query.bind(negative.client);let emitted=false;
+ negative.client.query=async(statement:string,...args:unknown[])=>{const result=await negativeQuery(statement,...args);
+  if(statement==='ROLLBACK TO SAVEPOINT r16_projection_plan_capture_v1'&&!emitted){emitted=true;
+   negative.client.emit('notice',notice('SELECT private_wrong_outer_hash',{'Node Type':'Result','Actual Rows':1,'Actual Loops':1}));
+   negative.client.emit('notice',notice('SELECT private_nested_cleanup_only',{'Node Type':'Index Scan','Actual Rows':1,'Actual Loops':1}));}
+  return result;};
+ const unknown=await captureReadonlyProjectionPlanV1({client:negative.client,query:async()=>{negativeCalls++;return{rows:[]};},
+  query_hash:PROJECTION_METADATA_QUERY_HASH_V1,batch_size:1024,outer_query_text:sql,database:'noisia_mfp_ci',role:'postgres',env:process.env});
+ assert.equal(negativeCalls,1);assert.equal(unknown.observation?.status,'capture_unknown');assert.equal(unknown.observation?.reason,'outer_plan_unobserved');
+ assert.equal(unknown.observation?.accepted_outer_count_by_phase.cleanup,0);assert.equal(unknown.observation?.accepted_nested_count_by_phase.cleanup,0);
+ assert.equal(unknown.observation?.accepted_unattributed_count_by_phase.cleanup,2);assert.equal(negative.client.listenerCount('notice'),0);
+ for(const forbidden of ['private_wrong_outer_hash','private_nested_cleanup_only'])assert.ok(!JSON.stringify(unknown.observation).includes(forbidden));
+}));
+
 test('projection capture fails closed on scope, extension or GUC readback problems and restores after query errors',async()=>withProjectionPlanTestEnv(async()=>{
  const {captureReadonlyProjectionPlanV1,PROJECTION_METADATA_QUERY_HASH_V1}=await import('./observer.mjs');
  const outerSql='SELECT synthetic bounded projection';

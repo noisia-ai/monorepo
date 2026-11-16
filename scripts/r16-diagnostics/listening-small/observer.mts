@@ -655,7 +655,10 @@ export async function captureReadonlyProjectionPlanV1(args:{client:any;query:()=
   if(classified.status==='rejected'){const counts=rejected[phase];counts[classified.reason]=(counts[classified.reason]??0)+1;return;}
   accepted++;const isOuter=classified.query_text_sha256===outerTextHash;
   if(phase==='after_query'&&!isOuter){unattributed[phase]++;return;}
-  if(phase!=='original_query'&&phase!=='after_query'){unattributed[phase]++;return;}
+  // PostgreSQL 17 §53.2.3: https://www.postgresql.org/docs/17/protocol-flow.html#PROTOCOL-FLOW-EXT-QUERY
+  // Sync does not close the unnamed portal, so the outer plan may arrive during rollback.
+  if(phase==='cleanup'&&!isOuter){unattributed[phase]++;return;}
+  if(phase!=='original_query'&&phase!=='after_query'&&phase!=='cleanup'){unattributed[phase]++;return;}
   if(isOuter){outer[phase]++;if(plans.some(plan=>plan.frontier_role==='outer')||plans.length>=8){dropped++;capped[phase]++;return;}
    plans.push({sequence:accepted,...classified,frontier_role:'outer'});return;}
   if(phase==='original_query'&&classified.query_text_sha256!==null){nested[phase]++;if(plans.filter(plan=>plan.frontier_role==='nested').length<7&&plans.length<8)
@@ -715,8 +718,9 @@ export async function captureReadonlyProjectionPlanV1(args:{client:any;query:()=
   phase='original_query';const queryStart=clock();let result:any;
   try{result=await query();}catch(error){queryError=error;}finally{queryWallMs=clock()-queryStart;phase='after_query';}
   const drainStart=clock();await new Promise<void>(resolve=>setImmediate(resolve));afterQueryDrainMs=clock()-drainStart;
-  phase='cleanup';detach();
+  phase='cleanup';
   if(savepoint){try{await rollback('r16_projection_plan_capture_v1');savepoint=false;}catch(error){cleanupError=error;}}
+  detach();
   if(queryError&&cleanupError)throw new AggregateError([queryError,cleanupError],'projection_query_and_restore_failed');
   if(queryError)throw queryError;if(cleanupError)throw cleanupError;
   const reason=gucReadback.status!=='captured'?'guc_readback_unavailable':!plans.some(plan=>plan.frontier_role==='outer')?'outer_plan_unobserved':undefined;
