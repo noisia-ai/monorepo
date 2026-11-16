@@ -259,17 +259,29 @@ async function withDmlPlanTestEnv<T>(action:()=>Promise<T>){
  Object.assign(process.env,DML_PLAN_TEST_ENV);
  try{return await action();}finally{for(const key of keys){const value=prior[key];if(value===undefined)delete process.env[key];else process.env[key]=value;}}
 }
-function fakeDmlPlanClient(options:{readOnly?:string;failLoad?:boolean;failRestore?:boolean}={}){
+const FUNCTION_STATS_BEFORE=[
+ {schema_name:'public',function_name:'signal_listening_answer_guard_v1',identity_arguments:'',calls:10,total_time_ms:2,self_time_ms:1},
+ {schema_name:'public',function_name:'signal_listening_root_right_v1',identity_arguments:'uuid, uuid, text',calls:40,total_time_ms:12,self_time_ms:10},
+ {schema_name:'public',function_name:'signal_processing_lock_actor_v1',identity_arguments:'uuid, uuid, boolean',calls:5,total_time_ms:8,self_time_ms:6},
+];
+const FUNCTION_STATS_AFTER=[
+ {schema_name:'public',function_name:'signal_listening_answer_guard_v1',identity_arguments:'',calls:11,total_time_ms:2.5,self_time_ms:1.3},
+ {schema_name:'public',function_name:'signal_listening_root_right_v1',identity_arguments:'uuid, uuid, text',calls:42,total_time_ms:13,self_time_ms:11},
+ {schema_name:'public',function_name:'signal_processing_lock_actor_v1',identity_arguments:'uuid, uuid, boolean',calls:6,total_time_ms:9,self_time_ms:7},
+];
+function fakeDmlPlanClient(options:{readOnly?:string;failLoad?:boolean;failRestore?:boolean;failStatsBefore?:boolean;failStatsAfter?:boolean}={}){
  const client=new EventEmitter() as any,statements:string[]=[],events:string[]=[],restores:Array<{name:string;value:string;local:boolean}>=[];
+ let statsReads=0;
  const oldValues:Record<string,string>={log_min_messages:'warning',client_min_messages:'notice',log_statement:'none',log_parameter_max_length:'0',
   'auto_explain.log_parameter_max_length':'0','auto_explain.log_level':'notice','auto_explain.log_min_duration':'-1',
   'auto_explain.log_nested_statements':'off','auto_explain.log_analyze':'off','auto_explain.log_buffers':'off',
-  'auto_explain.log_timing':'on','auto_explain.log_format':'text','auto_explain.log_verbose':'off','auto_explain.log_triggers':'off'};
+  'auto_explain.log_timing':'on','auto_explain.log_format':'text','auto_explain.log_verbose':'off','auto_explain.log_triggers':'off',track_functions:'none'};
  client.query=async(sql:string,values?:unknown[])=>{
   statements.push(sql);
   if(sql.startsWith('SAVEPOINT')){events.push('savepoint');return{rows:[]};}
   if(sql.startsWith('SELECT current_database'))return{rows:[{database:'noisia_mfp_ci',role:'postgres',read_only:options.readOnly??'off',superuser:true}]};
   if(sql.startsWith("LOAD 'auto_explain'")){events.push('load');if(options.failLoad)throw Error('private extension failure');return{rows:[]};}
+  if(sql.includes('pg_stat_xact_user_functions')){statsReads++;if((statsReads===1&&options.failStatsBefore)||(statsReads===2&&options.failStatsAfter))throw Error('synthetic_function_stats_error');return{rows:statsReads===1?FUNCTION_STATS_BEFORE:FUNCTION_STATS_AFTER};}
   if(sql.startsWith('SELECT name,current_setting'))return{rows:(values?.[0] as string[]).map(name=>({name,value:oldValues[name]}))};
   if(sql.startsWith('RELEASE SAVEPOINT')){events.push('release');return{rows:[]};}
   if(sql.startsWith('ROLLBACK TO SAVEPOINT')){events.push('rollback');return{rows:[]};}
@@ -294,7 +306,7 @@ test('DML plan specs match the complete source SQL, bind arity and batch-value p
  assert.equal(answersHash,'sha256:7a86df2f02e720b156e7f9d7132eba342080fc9d169d7cf8e1cbdfa74de067a7');
  assert.equal(reserveHash,'sha256:4ece6654c82e3d48416690d80208f849288cd5cfed5e16f0464dd3accfba33dd');
  assert.deepEqual(dmlPlanQuerySpec(markHash),{label:'mark_submitting',batch_unit:'call_ids',values_count:2,batch_value_index:1,batch_kind:'array'});
- assert.deepEqual(dmlPlanQuerySpec(answersHash),{label:'listening_answers_insert',batch_unit:'answer_rows',values_count:4,batch_value_index:3,batch_kind:'json_array'});
+ assert.deepEqual(dmlPlanQuerySpec(answersHash),{label:'listening_answers_insert',batch_unit:'answer_rows',values_count:4,batch_value_index:3,batch_kind:'json_array',function_stats:true});
  assert.deepEqual(dmlPlanQuerySpec(reserveHash),{label:'reserve_calls_insert',batch_unit:'call_proposals',values_count:8,batch_value_index:5,batch_kind:'json_array'});
  assert.equal(dmlPlanBatchSize(markHash,['UPDATE', ['run',Array(256).fill('synthetic-id')]]),256);
  assert.equal(dmlPlanBatchSize(markHash,['UPDATE', ['run',Array(255).fill('synthetic-id')]]),255);
@@ -370,6 +382,52 @@ test('DML setup fallback rolls back before exactly one write and leaves it in th
  assert.equal(captured.observation.cleanup_ms,1);assert.equal(captured.observation.setup_cleanup_wall_ms,captured.observation.setup_ms+captured.observation.cleanup_ms);
  assert.equal(captured.observation.analyze_timing_enabled,false);
  assert.equal(events.filter(x=>x==='write').length,1);
+}));
+
+test('answers INSERT reports allowlisted inclusive same-transaction function-stat deltas separately from DML time',async()=>withDmlPlanTestEnv(async()=>{
+ const {captureDmlPlanQueryV1}=await import('./observer.mjs');const {client,statements,events,restores,oldValues}=fakeDmlPlanClient();let writes=0,clockTick=0;
+ const captured=await captureDmlPlanQueryV1({client,query:async()=>{
+  writes++;events.push('write');client.emit('notice',{message:'duration: 62 ms plan: '+JSON.stringify({'Query Text':'INSERT INTO signal_listening_answers ...',
+   'Execution Time':62,Plan:{'Node Type':'ModifyTable','Relation Name':'signal_listening_answers','Actual Rows':256,'Actual Loops':1},
+   Triggers:[{'Trigger Name':'signal_listening_answer_guard',Relation:'signal_listening_answers',Time:48.2,Calls:256}]})});return{rowCount:256};},
+  query_hash:'sha256:7a86df2f02e720b156e7f9d7132eba342080fc9d169d7cf8e1cbdfa74de067a7',batch_size:256,
+  database:'noisia_mfp_ci',role:'postgres',env:process.env,clock:()=>++clockTick});
+ assert.equal(writes,1);assert.ok(captured.observation?.status==='captured');
+ const stats=captured.observation.function_stats;assert.equal(stats?.status,'captured');assert.equal(stats?.total_time_inclusive,true);assert.equal(stats?.self_time_excludes_nested_calls,true);
+ assert.equal(stats?.overhead_measured,false);assert.equal(stats?.capacity_claim,false);
+ assert.deepEqual(stats?.deltas.map(({signature,calls})=>({signature,calls})),[
+  {signature:'public.signal_listening_answer_guard_v1()',calls:1},
+  {signature:'public.signal_listening_root_right_v1(uuid, uuid, text)',calls:2},
+  {signature:'public.signal_processing_lock_actor_v1(uuid, uuid, boolean)',calls:1},
+ ]);
+ assert.ok(Math.abs(stats!.deltas[0]!.total_time_ms-.5)<1e-9);assert.ok(Math.abs(stats!.deltas[0]!.self_time_ms-.3)<1e-9);
+ assert.deepEqual(stats?.deltas.slice(1).map(row=>[row.total_time_ms,row.self_time_ms]),[[1,1],[1,1]]);
+ assert.equal(stats?.read_before_ms,1);assert.equal(stats?.read_after_ms,1);
+ assert.equal(captured.observation.query_wall_ms,1);
+ assert.ok(events.indexOf('release')<events.indexOf('write'));assert.equal(events.includes('rollback'),false);
+ assert.ok(statements.includes("SET LOCAL track_functions = 'all'"));
+ assert.equal(restores.at(-2)?.name,'track_functions');assert.equal(restores.at(-2)?.value,oldValues.track_functions);
+ assert.equal(client.listenerCount('notice'),0);
+ const serialized=JSON.stringify(captured);for(const forbidden of ['INSERT INTO','...','workspace_id','private','run_id'])assert.ok(!serialized.includes(forbidden));
+}));
+
+test('function-stat setup failure falls back before the original answers write exactly once',async()=>withDmlPlanTestEnv(async()=>{
+ const {captureDmlPlanQueryV1}=await import('./observer.mjs');const {client,events}=fakeDmlPlanClient({failStatsBefore:true});let writes=0;
+ const captured=await captureDmlPlanQueryV1({client,query:async()=>{writes++;events.push('write');return{rowCount:256};},
+  query_hash:'sha256:7a86df2f02e720b156e7f9d7132eba342080fc9d169d7cf8e1cbdfa74de067a7',batch_size:256,
+  database:'noisia_mfp_ci',role:'postgres',env:process.env});
+ assert.equal(writes,1);assert.ok(captured.observation?.status==='setup_unavailable');assert.equal(captured.observation.function_stats?.status,'setup_unavailable');
+ assert.equal(captured.observation.function_stats?.read_after_ms,null);assert.ok(events.indexOf('rollback')<events.indexOf('write'));
+ assert.equal(events.filter(x=>x==='write').length,1);assert.equal(client.listenerCount('notice'),0);
+}));
+
+test('post-write function-stat failure propagates without replay or rollback',async()=>withDmlPlanTestEnv(async()=>{
+ const {captureDmlPlanQueryV1}=await import('./observer.mjs');const {client,events,restores,oldValues}=fakeDmlPlanClient({failStatsAfter:true});let writes=0;
+ await assert.rejects(captureDmlPlanQueryV1({client,query:async()=>{writes++;events.push('write');return{rowCount:256};},
+  query_hash:'sha256:7a86df2f02e720b156e7f9d7132eba342080fc9d169d7cf8e1cbdfa74de067a7',batch_size:256,
+  database:'noisia_mfp_ci',role:'postgres',env:process.env}),/synthetic_function_stats_error/u);
+ assert.equal(writes,1);assert.equal(events.includes('rollback'),false);assert.equal(client.listenerCount('notice'),0);
+ assert.equal(restores.at(-2)?.name,'track_functions');assert.equal(restores.at(-2)?.value,oldValues.track_functions);
 }));
 
 test('reserve INSERT capture labels proposal batches distinctly from answer rows',async()=>withDmlPlanTestEnv(async()=>{
