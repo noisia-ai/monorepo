@@ -110,6 +110,7 @@ jobs:
           R16_MONEY_ORACLE_TAP: ${{ github.workspace }}/artifacts/r16-listening-small/money-validator-oracle.tap
           R16_ACTOR_RUNTIME_TAP: ${{ github.workspace }}/artifacts/r16-listening-small/actor-query-runtime.tap
           R16_PAGE_FENCES_TAP: ${{ github.workspace }}/artifacts/r16-listening-small/listening-page-fences.tap
+          R16_READER_SEMANTICS_TAP: ${{ github.workspace }}/artifacts/r16-listening-small/listening-reader-semantics.tap
           R16_DIAGNOSTIC_TARGET_LABEL: ${{ matrix.label }}
           R16_DIAGNOSTIC_TARGET_REF_REQUESTED: ${{ matrix.target_ref }}
           R16_DIAGNOSTIC_PROBE_REF_REQUESTED: ${{ github.event.pull_request.head.sha || github.sha }}
@@ -202,6 +203,28 @@ jobs:
             throw new Error('Listening page fence TAP must report exactly ten executed passing selected cases');
           }
           process.stdout.write('Listening page fences: pass=10 fail=0 (other tests intentionally unselected)\n');
+          NODE
+          fi
+          if [ "$R16_DIAGNOSTIC_TARGET_LABEL" = candidate ]; then
+            mkdir -p "$(dirname "$R16_READER_SEMANTICS_TAP")"
+            set +e
+            timeout 4m env NOISIA_R16_LISTENING_BOUNDED_CUSTOM_PLAN_PG=true corepack pnpm exec tsx --test --test-concurrency=1 \
+              infrastructure/db/migrations/signal-listening-bounded-custom-plan.postgres.test.ts \
+              > "$R16_READER_SEMANTICS_TAP" 2>&1
+            reader_status=$?
+            set -e
+            if [ "$reader_status" -ne 0 ]; then
+              cat "$R16_READER_SEMANTICS_TAP"
+              exit "$reader_status"
+            fi
+            node - "$R16_READER_SEMANTICS_TAP" <<'NODE'
+          const fs = require('node:fs');
+          const tap = fs.readFileSync(process.argv[2], 'utf8');
+          if (!/^# tests 3$/mu.test(tap) || !/^# pass 3$/mu.test(tap)
+              || !/^# fail 0$/mu.test(tap) || !/^# skipped 0$/mu.test(tap)) {
+            throw new Error('Listening reader semantics TAP must report tests=3 pass=3 fail=0 skipped=0');
+          }
+          process.stdout.write('Listening reader semantics: tests=3 pass=3 fail=0 skipped=0\n');
           NODE
           fi
           mkdir -p "$R16_DIAGNOSTIC_CPU_PROFILE_DIR"
@@ -337,5 +360,24 @@ jobs:
         with:
           name: r16-listening-small-page-fences-${{ github.run_id }}
           path: artifacts/r16-listening-small/listening-page-fences.tap
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Ensure Listening reader semantics TAP artifact exists
+        if: always() && matrix.label == 'candidate'
+        env:
+          R16_READER_SEMANTICS_TAP: ${{ github.workspace }}/artifacts/r16-listening-small/listening-reader-semantics.tap
+        run: |
+          if [ ! -f "$R16_READER_SEMANTICS_TAP" ]; then
+            mkdir -p "$(dirname "$R16_READER_SEMANTICS_TAP")"
+            printf '%s\n' 'Listening reader semantics suite was not reached' > "$R16_READER_SEMANTICS_TAP"
+          fi
+
+      - name: Upload Listening reader semantics TAP
+        if: always() && matrix.label == 'candidate'
+        uses: actions/upload-artifact@v4
+        with:
+          name: r16-listening-small-reader-semantics-${{ github.run_id }}
+          path: artifacts/r16-listening-small/listening-reader-semantics.tap
           if-no-files-found: error
           retention-days: 14
