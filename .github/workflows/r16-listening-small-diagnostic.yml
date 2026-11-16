@@ -111,6 +111,7 @@ jobs:
           R16_ACTOR_RUNTIME_TAP: ${{ github.workspace }}/artifacts/r16-listening-small/actor-query-runtime.tap
           R16_PAGE_FENCES_TAP: ${{ github.workspace }}/artifacts/r16-listening-small/listening-page-fences.tap
           R16_READER_SEMANTICS_TAP: ${{ github.workspace }}/artifacts/r16-listening-small/listening-reader-semantics.tap
+          R16_INITIAL_RECOVERY_TAP: ${{ github.workspace }}/artifacts/r16-listening-small/listening-initial-recovery.tap
           R16_DIAGNOSTIC_TARGET_LABEL: ${{ matrix.label }}
           R16_DIAGNOSTIC_TARGET_REF_REQUESTED: ${{ matrix.target_ref }}
           R16_DIAGNOSTIC_PROBE_REF_REQUESTED: ${{ github.event.pull_request.head.sha || github.sha }}
@@ -225,6 +226,30 @@ jobs:
             throw new Error('Listening reader semantics TAP must report tests=3 pass=3 fail=0 skipped=0');
           }
           process.stdout.write('Listening reader semantics: tests=3 pass=3 fail=0 skipped=0\n');
+          NODE
+          fi
+          if [ "$R16_DIAGNOSTIC_TARGET_LABEL" = candidate ]; then
+            mkdir -p "$(dirname "$R16_INITIAL_RECOVERY_TAP")"
+            set +e
+            timeout 4m env NOISIA_R16_DISCOVERY_INITIAL_PG=true corepack pnpm exec tsx --test \
+              --test-name-pattern='^initial unknown ' --test-concurrency=1 \
+              infrastructure/db/migrations/signal-listening-discovery-initial.postgres.test.ts \
+              > "$R16_INITIAL_RECOVERY_TAP" 2>&1
+            recovery_status=$?
+            set -e
+            if [ "$recovery_status" -ne 0 ]; then
+              cat "$R16_INITIAL_RECOVERY_TAP"
+              exit "$recovery_status"
+            fi
+            node - "$R16_INITIAL_RECOVERY_TAP" <<'NODE'
+          const fs = require('node:fs');
+          const tap = fs.readFileSync(process.argv[2], 'utf8');
+          const selected = tap.split(/\r?\n/u).filter((line) => /^ok \d+ - initial unknown /u.test(line));
+          if (selected.length !== 2 || selected.some((line) => /# SKIP/u.test(line))
+              || !/^# pass 2$/mu.test(tap) || !/^# fail 0$/mu.test(tap)) {
+            throw new Error('Listening initial recovery TAP must report exactly two executed passing selected cases');
+          }
+          process.stdout.write('Listening initial recovery: pass=2 fail=0 (other tests intentionally unselected)\n');
           NODE
           fi
           mkdir -p "$R16_DIAGNOSTIC_CPU_PROFILE_DIR"
@@ -379,5 +404,24 @@ jobs:
         with:
           name: r16-listening-small-reader-semantics-${{ github.run_id }}
           path: artifacts/r16-listening-small/listening-reader-semantics.tap
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Ensure Listening initial recovery TAP artifact exists
+        if: always() && matrix.label == 'candidate'
+        env:
+          R16_INITIAL_RECOVERY_TAP: ${{ github.workspace }}/artifacts/r16-listening-small/listening-initial-recovery.tap
+        run: |
+          if [ ! -f "$R16_INITIAL_RECOVERY_TAP" ]; then
+            mkdir -p "$(dirname "$R16_INITIAL_RECOVERY_TAP")"
+            printf '%s\n' 'Listening initial recovery suite was not reached' > "$R16_INITIAL_RECOVERY_TAP"
+          fi
+
+      - name: Upload Listening initial recovery TAP
+        if: always() && matrix.label == 'candidate'
+        uses: actions/upload-artifact@v4
+        with:
+          name: r16-listening-small-initial-recovery-${{ github.run_id }}
+          path: artifacts/r16-listening-small/listening-initial-recovery.tap
           if-no-files-found: error
           retention-days: 14
