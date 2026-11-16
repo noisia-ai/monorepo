@@ -397,6 +397,45 @@ jobs:
             exit 1
           fi
           exit "$test_status"
+      - name: Verify genuine scoped money owners on native PostgreSQL
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.scope == 'listening-smoke' }}
+        timeout-minutes: 15
+        env:
+          NOISIA_MFP_PG_CI: 'true'
+        run: |
+          set +e
+          pnpm exec node --test --test-concurrency=1 --import tsx \
+            --test-name-pattern='^mass labeling seals full population, bills once, and serves probability pages with live tenant/rights fences \(scoped(?:-scale|-funding)?\)$' \
+            infrastructure/db/migrations/signal-mfp-mass-labeling.integration.test.ts \
+            > r16-listening-scoped-money-smoke.tap 2>&1
+          scoped_status=$?
+          set -e
+          if [ "$scoped_status" -ne 0 ]; then
+            cat r16-listening-scoped-money-smoke.tap
+            exit "$scoped_status"
+          fi
+          node - r16-listening-scoped-money-smoke.tap <<'NODE'
+          const fs = require('node:fs');
+          const tap = fs.readFileSync(process.argv[2], 'utf8');
+          const prefix = 'mass labeling seals full population, bills once, and serves probability pages with live tenant/rights fences ';
+          const expected = new Set(['(scoped)', '(scoped-scale)', '(scoped-funding)'].map(suffix => prefix + suffix));
+          const selected = tap.split(/\r?\n/u).filter(line => /^ok \d+ - /u.test(line)
+            && expected.has(line.replace(/^ok \d+ - /u, '').replace(/\s+#.*$/u, '')));
+          const names = new Set(selected.map(line => line.replace(/^ok \d+ - /u, '').replace(/\s+#.*$/u, '')));
+          if (selected.length !== 3 || names.size !== 3 || selected.some(line => /# SKIP/u.test(line))
+              || !/^# pass 3$/mu.test(tap) || !/^# fail 0$/mu.test(tap)) {
+            throw new Error('scoped money TAP must report exactly three executed passing selected cases');
+          }
+          process.stdout.write('scoped money owners: pass=3 fail=0 (other tests intentionally unselected)\n');
+          NODE
+      - name: Persist scoped money smoke TAP
+        if: ${{ always() && github.event_name == 'workflow_dispatch' && inputs.scope == 'listening-smoke' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: r16-scoped-money-smoke-${{ github.run_id }}-${{ github.run_attempt }}
+          path: r16-listening-scoped-money-smoke.tap
+          if-no-files-found: ignore
+          retention-days: 14
       - name: Persist synthetic second-shape component proof
         if: always()
         uses: actions/upload-artifact@v4
