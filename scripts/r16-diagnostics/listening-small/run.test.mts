@@ -185,10 +185,10 @@ test('inner-plan setup failure rolls back its savepoint then runs the original q
 test('inner-plan ordinals count every eligible query and select the fixed bounded schedule',async()=>{
  const {innerPlanQueryLabel,nextInnerPlanQueryOrdinalV1,shouldCaptureInnerPlanOrdinalV1,INNER_PLAN_CAPTURE_ORDINALS}=await import('./observer.mjs');
  const hash='sha256:d0ecbbfdca3d93e069a3ca03367439fa25ce54164efaf3135c80b27c91ed2680',counts=new Map<string,number>();
- assert.equal(innerPlanQueryLabel(hash),'metadata');assert.deepEqual(INNER_PLAN_CAPTURE_ORDINALS,[1,2,6,8]);
+ assert.equal(innerPlanQueryLabel(hash),'metadata');assert.deepEqual(INNER_PLAN_CAPTURE_ORDINALS,[1,2,3,4,5,6,7,8]);
  const ordinals=Array.from({length:10},()=>nextInnerPlanQueryOrdinalV1(hash,true,counts));
  assert.deepEqual(ordinals,Array.from({length:10},(_,i)=>i+1));
- assert.deepEqual(ordinals.filter(shouldCaptureInnerPlanOrdinalV1),[1,2,6,8]);
+ assert.deepEqual(ordinals.filter(shouldCaptureInnerPlanOrdinalV1),[1,2,3,4,5,6,7,8]);
  assert.equal(nextInnerPlanQueryOrdinalV1(hash,false,counts),null);assert.equal(counts.get(hash),10);
  assert.equal(nextInnerPlanQueryOrdinalV1('sha256:unknown',true,counts),null);
 });
