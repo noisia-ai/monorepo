@@ -748,3 +748,155 @@ jobs:
             echo '::error::Owned R16 RAW page acceptance volume survived cleanup'
             exit 1
           fi
+
+  projection-linear-joins:
+    name: R16 projection linear-joins acceptance (fresh isolated lab)
+    needs: raw-page-acceptance
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.scope == 'full' || inputs.scope == 'listening-smoke' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      R16BENCH_RUN_ID: benchmark-pg17
+      R16BENCH_SERVICES: postgres,redis
+      NOISIA_R16_LOCAL_PG_LAB: r16-benchmark-pg17
+      DATABASE_SSL: 'false'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Seal the checked out source revision
+        run: |
+          set -euo pipefail
+          source_sha=$(git rev-parse HEAD)
+          if [ -n "$(git status --porcelain --untracked-files=all)" ]; then
+            echo '::error::projection linear-joins acceptance source checkout is not clean'
+            exit 1
+          fi
+          printf 'R16_PROJECTION_LINEAR_SOURCE_SHA=%s\n' "$source_sha" >> "$GITHUB_ENV"
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+      - name: Install frozen Node workspace dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Require the owned projection linear-joins container and volume to be absent
+        run: |
+          set -euo pipefail
+          if docker inspect r16-benchmark-pg17 >/dev/null 2>&1; then
+            echo '::error::The named R16 projection linear-joins PostgreSQL container already exists'
+            exit 1
+          fi
+          if docker volume inspect r16bench-benchmark-pg17_postgres-data >/dev/null 2>&1; then
+            echo '::error::The named R16 projection linear-joins PostgreSQL volume already exists'
+            exit 1
+          fi
+          lab_dir=.data/piloto-masivo/r16/labs/benchmark-pg17
+          if [[ -e "$lab_dir/private.env" || -e "$lab_dir/connection.env" ]]; then
+            echo '::error::Private files for the named R16 projection linear-joins lab already exist'
+            exit 1
+          fi
+      - name: Start the owned PostgreSQL 17 and Redis lab
+        run: |
+          set -euo pipefail
+          printf '%s\n' 'R16_PROJECTION_LINEAR_LAB_OWNED=true' >> "$GITHUB_ENV"
+          scripts/r16/lab-up.sh
+      - name: Apply migrations to the fresh projection linear-joins lab
+        env:
+          NOISIA_DB_SMOKE_RESET_SCHEMA: 'true'
+          NOISIA_DB_SMOKE_EMULATE_SUPABASE_ROLES: 'true'
+          NOISIA_MFP_PG_CI: 'true'
+        run: |
+          set -euo pipefail
+          connection_file=.data/piloto-masivo/r16/labs/benchmark-pg17/connection.env
+          test -f "$connection_file"
+          set -a
+          source "$connection_file"
+          set +a
+          export DATABASE_SSL=false
+          export NOISIA_R16_LOCAL_PG_LAB=r16-benchmark-pg17
+          pnpm --filter @noisia/db db:smoke:migrations
+      - name: Run the exact projection linear-joins oracle cases
+        env:
+          NOISIA_R16_PROJECTION_LINEAR_JOINS_PG: 'true'
+          NOISIA_R16_NATIVE_FIXTURE_PG: 'true'
+          NOISIA_MASS_LABELING_ENABLED: 'true'
+          NOISIA_SIGNAL_LISTENING_ENABLED: 'true'
+          NOISIA_JEV_PROVIDER_ENABLED: 'true'
+          NOISIA_JEV_STREAMING_V2_ENABLED: 'true'
+          R16_PROJECTION_LINEAR_TAP: ${{ runner.temp }}/r16-projection-linear-joins.tap
+        run: |
+          set -euo pipefail
+          : > "$R16_PROJECTION_LINEAR_TAP"
+          connection_file=.data/piloto-masivo/r16/labs/benchmark-pg17/connection.env
+          test -f "$connection_file"
+          set -a
+          source "$connection_file"
+          set +a
+          export DATABASE_SSL=false
+          export NOISIA_R16_LOCAL_PG_LAB=r16-benchmark-pg17
+          set +e
+          pnpm exec node --test --test-concurrency=1 \
+            --test-name-pattern='^(?:projection linear joins native preserves256keys, Unicode microseconds, byte sentinels, reservations and rights|projection linear joins native preserves awaiting/excluded, H5 precedence and a global byte prefix across pages|projection linear joins native4096 paired RRRO preserves rows and removes both materialized CTE rescans)$' \
+            --import tsx infrastructure/db/migrations/signal-listening-projection-linear-joins.postgres.test.ts | tee "$R16_PROJECTION_LINEAR_TAP"
+          test_status=${PIPESTATUS[0]}
+          set -e
+          node - "$R16_PROJECTION_LINEAR_TAP" "$test_status" <<'NODE'
+          const fs = require('node:fs');
+          const tap = fs.readFileSync(process.argv[2], 'utf8');
+          const status = Number(process.argv[3]);
+          const expected = [
+            'projection linear joins native preserves256keys, Unicode microseconds, byte sentinels, reservations and rights',
+            'projection linear joins native preserves awaiting/excluded, H5 precedence and a global byte prefix across pages',
+            'projection linear joins native4096 paired RRRO preserves rows and removes both materialized CTE rescans',
+          ];
+          const lines = tap.split(/\r?\n/u);
+          const selected = expected.map(title => lines.filter(line => /^ok \d+ - /u.test(line) && line.endsWith(` - ${title}`)));
+          if (status !== 0 || selected.some(rows => rows.length !== 1)
+              || !/^# tests 3$/mu.test(tap) || !/^# pass 3$/mu.test(tap)
+              || !/^# fail 0$/mu.test(tap) || !/^# skipped 0$/mu.test(tap)) {
+            throw new Error('projection linear-joins TAP must report three exact selected titles, pass=3, fail=0, skipped=0');
+          }
+          process.stdout.write('projection linear-joins oracle: 3 exact selected cases passed\n');
+          NODE
+      - name: Ensure projection linear-joins TAP receipt exists
+        if: always()
+        env:
+          R16_PROJECTION_LINEAR_TAP: ${{ runner.temp }}/r16-projection-linear-joins.tap
+        run: |
+          if [ ! -f "$R16_PROJECTION_LINEAR_TAP" ]; then
+            printf '%s\n' 'projection linear-joins oracle gate was not reached' > "$R16_PROJECTION_LINEAR_TAP"
+          fi
+      - name: Verify projection linear-joins source remained unchanged
+        if: always()
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$R16_PROJECTION_LINEAR_SOURCE_SHA"
+          if [ -n "$(git status --porcelain --untracked-files=all)" ]; then
+            echo '::error::projection linear-joins oracle changed the checked out source tree'
+            exit 1
+          fi
+      - name: Upload projection linear-joins TAP receipt
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: r16-projection-linear-joins-${{ github.run_id }}
+          path: ${{ runner.temp }}/r16-projection-linear-joins.tap
+          if-no-files-found: error
+          retention-days: 14
+      - name: Stop and remove only the owned projection linear-joins lab
+        if: ${{ always() && env.R16_PROJECTION_LINEAR_LAB_OWNED == 'true' }}
+        run: |
+          set -euo pipefail
+          lab_dir=.data/piloto-masivo/r16/labs/benchmark-pg17
+          if [[ -f "$lab_dir/private.env" ]]; then
+            scripts/r16/lab-down.sh
+          fi
+          if docker inspect r16-benchmark-pg17 >/dev/null 2>&1; then
+            echo '::error::Owned R16 projection linear-joins PostgreSQL container survived cleanup'
+            exit 1
+          fi
+          if docker volume inspect r16bench-benchmark-pg17_postgres-data >/dev/null 2>&1; then
+            echo '::error::Owned R16 projection linear-joins PostgreSQL volume survived cleanup'
+            exit 1
+          fi
