@@ -926,3 +926,192 @@ jobs:
             echo '::error::Owned R16 projection linear-joins PostgreSQL volume survived cleanup'
             exit 1
           fi
+
+  statement-shared-wire:
+    name: R16 statement shared-wire acceptance (fresh isolated lab)
+    needs: projection-linear-joins
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.scope == 'full' || inputs.scope == 'listening-smoke' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    outputs:
+      selected_pass: ${{ steps.oracle.outputs.selected_pass || steps.noop.outputs.selected_pass || '0' }}
+      source_sha: ${{ steps.seal.outputs.source_sha || '' }}
+    env:
+      R16BENCH_RUN_ID: benchmark-pg17
+      R16BENCH_SERVICES: postgres,redis
+      NOISIA_R16_LOCAL_PG_LAB: r16-benchmark-pg17
+      DATABASE_SSL: 'false'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Seal the checked out source revision
+        id: seal
+        run: |
+          set -euo pipefail
+          source_sha=$(git rev-parse HEAD)
+          if [ -n "$(git status --porcelain --untracked-files=all)" ]; then
+            echo '::error::statement shared-wire source checkout is not clean'
+            exit 1
+          fi
+          for name in $(compgen -e); do
+            case "$name" in
+              *ANTHROPIC*API_KEY*|*ANTHROPIC*TOKEN*|*SONNET*API_KEY*|*SONNET*TOKEN*|*VOYAGE*API_KEY*|*VOYAGE*TOKEN*)
+                echo '::error::provider credentials are forbidden in statement shared-wire acceptance'
+                exit 1
+                ;;
+            esac
+          done
+          printf 'R16_STATEMENT_SHARED_WIRE_SOURCE_SHA=%s\n' "$source_sha" >> "$GITHUB_ENV"
+          printf 'source_sha=%s\n' "$source_sha" >> "$GITHUB_OUTPUT"
+          if [ -f infrastructure/db/migrations/signal-listening-statement-shared-wire.postgres.test.ts ]; then
+            printf 'source_present=true\n' >> "$GITHUB_OUTPUT"
+          else
+            printf 'source_present=false\n' >> "$GITHUB_OUTPUT"
+          fi
+      - uses: pnpm/action-setup@v4
+        if: ${{ steps.seal.outputs.source_present == 'true' }}
+        with:
+          version: 10.33.2
+      - uses: actions/setup-node@v4
+        if: ${{ steps.seal.outputs.source_present == 'true' }}
+        with:
+          node-version: 20
+          cache: pnpm
+      - name: Install frozen Node workspace dependencies
+        if: ${{ steps.seal.outputs.source_present == 'true' }}
+        run: pnpm install --frozen-lockfile
+      - name: Require the owned statement shared-wire container and volume to be absent
+        if: ${{ steps.seal.outputs.source_present == 'true' }}
+        run: |
+          set -euo pipefail
+          if docker inspect r16-benchmark-pg17 >/dev/null 2>&1; then
+            echo '::error::The named R16 statement shared-wire PostgreSQL container already exists'
+            exit 1
+          fi
+          if docker volume inspect r16bench-benchmark-pg17_postgres-data >/dev/null 2>&1; then
+            echo '::error::The named R16 statement shared-wire PostgreSQL volume already exists'
+            exit 1
+          fi
+          lab_dir=.data/piloto-masivo/r16/labs/benchmark-pg17
+          if [[ -e "$lab_dir/private.env" || -e "$lab_dir/connection.env" ]]; then
+            echo '::error::Private files for the named R16 statement shared-wire lab already exist'
+            exit 1
+          fi
+      - name: Start the named official PostgreSQL 17 and Redis lab
+        if: ${{ steps.seal.outputs.source_present == 'true' }}
+        run: |
+          set -euo pipefail
+          printf '%s\n' 'R16_STATEMENT_SHARED_WIRE_LAB_OWNED=true' >> "$GITHUB_ENV"
+          scripts/r16/lab-up.sh
+      - name: Apply migrations to the fresh statement shared-wire lab
+        if: ${{ steps.seal.outputs.source_present == 'true' }}
+        env:
+          NOISIA_DB_SMOKE_RESET_SCHEMA: 'true'
+          NOISIA_DB_SMOKE_EMULATE_SUPABASE_ROLES: 'true'
+          NOISIA_MFP_PG_CI: 'true'
+        run: |
+          set -euo pipefail
+          connection_file=.data/piloto-masivo/r16/labs/benchmark-pg17/connection.env
+          test -f "$connection_file"
+          set -a
+          source "$connection_file"
+          set +a
+          export DATABASE_SSL=false
+          export NOISIA_R16_LOCAL_PG_LAB=r16-benchmark-pg17
+          pnpm --filter @noisia/db db:smoke:migrations
+      - name: Run the exact statement shared-wire oracle cases
+        id: oracle
+        if: ${{ steps.seal.outputs.source_present == 'true' }}
+        env:
+          NOISIA_R16_STATEMENT_SHARED_WIRE_PG: 'true'
+          NOISIA_R16_NATIVE_FIXTURE_PG: 'true'
+          NOISIA_MASS_LABELING_ENABLED: 'true'
+          NOISIA_SIGNAL_LISTENING_ENABLED: 'true'
+          NOISIA_JEV_PROVIDER_ENABLED: 'true'
+          NOISIA_JEV_STREAMING_V2_ENABLED: 'true'
+          R16_STATEMENT_SHARED_WIRE_TAP: ${{ runner.temp }}/r16-statement-shared-wire.tap
+        run: |
+          set -euo pipefail
+          : > "$R16_STATEMENT_SHARED_WIRE_TAP"
+          connection_file=.data/piloto-masivo/r16/labs/benchmark-pg17/connection.env
+          test -f "$connection_file"
+          set -a
+          source "$connection_file"
+          set +a
+          export DATABASE_SSL=false
+          export NOISIA_R16_LOCAL_PG_LAB=r16-benchmark-pg17
+          set +e
+          pnpm exec node --test --test-concurrency=1 \
+            --test-name-pattern='^(?:0330 native same-snapshot validators preserve32shapes256keys UTF8 precision and mixed-wire fallback|0330 native reserve Mark bad-mixed rollback and deferred pre-owner forged hash stay enforced|0330 native real prior unknown is true and target ownership never becomes a cached authority|0330 preserves answer BEFORE attempts including conflict-suppressed bad tuples and native source bytes|0330 native DML ABBA keeps full guards and fresh transactions and rejects expiry with atomic rollback)$' \
+            --import tsx infrastructure/db/migrations/signal-listening-statement-shared-wire.postgres.test.ts | tee "$R16_STATEMENT_SHARED_WIRE_TAP"
+          test_status=${PIPESTATUS[0]}
+          set -e
+          node - "$R16_STATEMENT_SHARED_WIRE_TAP" "$test_status" <<'NODE'
+          const fs = require('node:fs');
+          const tap = fs.readFileSync(process.argv[2], 'utf8');
+          const status = Number(process.argv[3]);
+          const expected = [
+            '0330 native same-snapshot validators preserve32shapes256keys UTF8 precision and mixed-wire fallback',
+            '0330 native reserve Mark bad-mixed rollback and deferred pre-owner forged hash stay enforced',
+            '0330 native real prior unknown is true and target ownership never becomes a cached authority',
+            '0330 preserves answer BEFORE attempts including conflict-suppressed bad tuples and native source bytes',
+            '0330 native DML ABBA keeps full guards and fresh transactions and rejects expiry with atomic rollback',
+          ];
+          const lines = tap.split(/\r?\n/u);
+          const selected = expected.map(title => lines.filter(line => /^ok \d+ - /u.test(line) && line.endsWith(` - ${title}`)));
+          if (status !== 0 || selected.some(rows => rows.length !== 1)
+              || !/^# tests 5$/mu.test(tap) || !/^# pass 5$/mu.test(tap)
+              || !/^# fail 0$/mu.test(tap) || !/^# skipped 0$/mu.test(tap)) {
+            throw new Error('statement shared-wire TAP must report five exact selected titles, pass=5, fail=0, skipped=0');
+          }
+          process.stdout.write('statement shared-wire oracle: 5 exact selected cases passed\n');
+          NODE
+          printf 'selected_pass=5\n' >> "$GITHUB_OUTPUT"
+      - name: Ensure statement shared-wire TAP receipt exists
+        if: always()
+        env:
+          R16_STATEMENT_SHARED_WIRE_TAP: ${{ runner.temp }}/r16-statement-shared-wire.tap
+        run: |
+          if [ ! -f "$R16_STATEMENT_SHARED_WIRE_TAP" ]; then
+            printf '%s\n' 'statement shared-wire oracle gate was not reached' > "$R16_STATEMENT_SHARED_WIRE_TAP"
+          fi
+      - name: Publish empty selection when the source lacks 0330
+        id: noop
+        if: ${{ always() && steps.seal.outputs.source_present == 'false' }}
+        env:
+          R16_STATEMENT_SHARED_WIRE_TAP: ${{ runner.temp }}/r16-statement-shared-wire.tap
+        run: |
+          printf 'selected_pass=0\n' >> "$GITHUB_OUTPUT"
+          printf '%s\n' '0330 statement shared-wire source is absent; no native cases selected' > "$R16_STATEMENT_SHARED_WIRE_TAP"
+      - name: Verify statement shared-wire source remained unchanged
+        if: always()
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$R16_STATEMENT_SHARED_WIRE_SOURCE_SHA"
+          if [ -n "$(git status --porcelain --untracked-files=all)" ]; then
+            echo '::error::statement shared-wire oracle changed the checked out source tree'
+            exit 1
+          fi
+      - name: Upload statement shared-wire TAP receipt
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: r16-statement-shared-wire-${{ github.run_id }}
+          path: ${{ runner.temp }}/r16-statement-shared-wire.tap
+          if-no-files-found: error
+          retention-days: 14
+      - name: Stop and remove only the owned statement shared-wire lab
+        if: ${{ always() && env.R16_STATEMENT_SHARED_WIRE_LAB_OWNED == 'true' }}
+        run: |
+          set -euo pipefail
+          lab_dir=.data/piloto-masivo/r16/labs/benchmark-pg17
+          if [[ -f "$lab_dir/private.env" ]]; then
+            scripts/r16/lab-down.sh
+          fi
+          if docker inspect r16-benchmark-pg17 >/dev/null 2>&1; then
+            echo '::error::Owned R16 statement shared-wire PostgreSQL container survived cleanup'
+            exit 1
+          fi
+          if docker volume inspect r16bench-benchmark-pg17_postgres-data >/dev/null 2>&1; then
+            echo '::error::Owned R16 statement shared-wire PostgreSQL volume survived cleanup'
+            exit 1
+          fi
