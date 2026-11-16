@@ -122,7 +122,8 @@ export function dmlPlanCaptureEnvironmentAllowed(env:NodeJS.ProcessEnv){
    &&url.username==='postgres'&&!!url.port&&!url.search&&!url.hash;}catch{return false;}
 }
 function safeName(value:unknown){return typeof value==='string'&&/^[A-Za-z_][A-Za-z0-9_$]{0,127}$/u.test(value)?value:'redacted';}
-function safePlanNode(value:any):any{
+function safePlanNode(value:any,depth=0):any{
+ if(depth>128)return null;
  if(!value||typeof value!=='object'||Array.isArray(value))return null;
  const result:Record<string,unknown>={};
  for(const key of PLAN_NAMES)if(value[key]!==undefined)result[key]=key==='Node Type'
@@ -130,7 +131,7 @@ function safePlanNode(value:any):any{
  for(const key of ['CTE Name','Subplan Name'])if(typeof value[key]==='string'&&SAFE_CTE_NAMES.has(value[key]))result[key]=value[key];
  for(const key of PLAN_NUMBERS)if(typeof value[key]==='number'&&Number.isFinite(value[key]))result[key]=value[key];
  for(const key of ['Parallel Aware','Async Capable'])if(typeof value[key]==='boolean')result[key]=value[key];
- if(Array.isArray(value.Plans))result.Plans=value.Plans.map(safePlanNode).filter(Boolean);
+ if(Array.isArray(value.Plans)){const children=value.Plans.map((child:any)=>safePlanNode(child,depth+1));if(children.some((child:any)=>!child))return null;result.Plans=children;}
  return result;
 }
 export type AutoExplainNoticeRejectReasonV1='message_missing'|'message_too_large'|'payload_missing'|'invalid_json'|'plan_invalid';
@@ -145,12 +146,14 @@ export function classifyAutoExplainNoticeV1(notice:unknown):AutoExplainNoticePar
  try{
   parsed=JSON.parse(message.slice(start));
  }catch{return{status:'rejected',reason:'invalid_json'};}
- if(!parsed||typeof parsed!=='object'||Array.isArray(parsed))return{status:'rejected',reason:'plan_invalid'};
- const payload=parsed as Record<string,unknown>,plan=safePlanNode(payload.Plan);if(!plan)return{status:'rejected',reason:'plan_invalid'};
- const queryText=typeof payload['Query Text']==='string'?payload['Query Text']:null;
- return{status:'accepted',query_text_sha256:queryText?`sha256:${createHash('sha256').update(queryText,'utf8').digest('hex')}`:null,
-  planning_time_ms:typeof payload['Planning Time']==='number'&&Number.isFinite(payload['Planning Time'])?payload['Planning Time']:null,
-  execution_time_ms:typeof payload['Execution Time']==='number'&&Number.isFinite(payload['Execution Time'])?payload['Execution Time']:null,plan};
+ try{
+  if(!parsed||typeof parsed!=='object'||Array.isArray(parsed))return{status:'rejected',reason:'plan_invalid'};
+  const payload=parsed as Record<string,unknown>,plan=safePlanNode(payload.Plan);if(!plan)return{status:'rejected',reason:'plan_invalid'};
+  const queryText=typeof payload['Query Text']==='string'?payload['Query Text']:null;
+  return{status:'accepted',query_text_sha256:queryText?`sha256:${createHash('sha256').update(queryText,'utf8').digest('hex')}`:null,
+   planning_time_ms:typeof payload['Planning Time']==='number'&&Number.isFinite(payload['Planning Time'])?payload['Planning Time']:null,
+   execution_time_ms:typeof payload['Execution Time']==='number'&&Number.isFinite(payload['Execution Time'])?payload['Execution Time']:null,plan};
+ }catch{return{status:'rejected',reason:'plan_invalid'};}
 }
 export function safeAutoExplainNotice(notice:unknown){
  const classified=classifyAutoExplainNoticeV1(notice);if(classified.status==='rejected')return null;

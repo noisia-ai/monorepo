@@ -834,6 +834,20 @@ test('DML notice diagnostics separate delayed exact-outer notices, rejected shap
  const artifact=JSON.stringify(observation);for(const forbidden of ['private_cleanup_probe','private diagnostic text','secret raw value',outerSql])assert.ok(!artifact.includes(forbidden));
 }));
 
+test('deep auto_explain plan is rejected safely and never interrupts or replays the original query',async()=>withDmlPlanTestEnv(async()=>{
+ const {captureDmlPlanQueryV1,classifyAutoExplainNoticeV1}=await import('./observer.mjs');const {client}=fakeDmlPlanClient();
+ const deepJson='{"Query Text":"SELECT private_deep_value","Plan":'+'{"Node Type":"LockRows","Plans":['.repeat(512)+'{"Node Type":"LockRows"}'+']}'.repeat(512)+'}';
+ const deepNotice={message:'duration: 1 ms plan: '+deepJson};
+ assert.deepEqual(classifyAutoExplainNoticeV1(deepNotice),{status:'rejected',reason:'plan_invalid'});
+ let originalCalls=0;const captured=await captureDmlPlanQueryV1({client,query:async()=>{originalCalls++;client.emit('notice',deepNotice);return{rowCount:1};},
+  query_hash:'sha256:1e5b3d3837b8c7354d6c25d941461f0d36e55d5cc3d42cbd31c627ba0662859b',batch_size:256,database:'noisia_mfp_ci',role:'postgres',env:process.env,
+  sql_frontier_only:true,outer_query_text:'SELECT synthetic_outer_for_deep_test'});
+ assert.equal(originalCalls,1);assert.equal(captured.result.rowCount,1);assert.equal(captured.observation?.status,'plan_notice_unavailable');
+ assert.equal(captured.observation?.outer_plan_status,'unknown');assert.equal(captured.observation?.raw_notice_count_by_phase?.original_query,1);
+ assert.equal(captured.observation?.rejected_notice_count_by_phase?.original_query?.plan_invalid,1);
+ assert.ok(!JSON.stringify(captured.observation).includes('private_deep_value'));
+}));
+
 test('DML setup fallback rolls back before exactly one write and leaves it in the outer transaction ledger',async()=>withDmlPlanTestEnv(async()=>{
  const {captureDmlPlanQueryV1}=await import('./observer.mjs');const {client,events}=fakeDmlPlanClient({failLoad:true});let writes=0;
  let clockTick=0;
