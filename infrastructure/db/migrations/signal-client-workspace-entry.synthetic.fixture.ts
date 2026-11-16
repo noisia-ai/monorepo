@@ -22,8 +22,9 @@ export type SyntheticTransactionV1={database:Pool;scoped:PoolClient;query:Worksp
 /** Accepted import only: no preparation, embeddings, execution or provider receipt.
  * The caller must own an approved synthetic-only transaction and its rollback. */
 export async function syntheticImportedWorkspaceFixtureV1(tx:SyntheticTransactionV1,
- identity?:{organization_id:string;brand_id:string;actor_user_id:string;workspace_id:string},options:{root_count?:number;long_text?:boolean;batch_size?:number;study_vector_groups?:boolean;study_author_metadata?:boolean;study_text_length?:number}={}){
+ identity?:{organization_id:string;brand_id:string;actor_user_id:string;workspace_id:string},options:{root_count?:number;seed_published_at?:string;long_text?:boolean;batch_size?:number;study_vector_groups?:boolean;study_author_metadata?:boolean;study_text_length?:number}={}){
  const {database,query}=tx;
+ if(options.seed_published_at!==undefined)assert.match(options.seed_published_at,/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/u,'synthetic source timestamp must retain six fractional digits');
  const roots:string[]=[];
  const texts: string[]=options.root_count===undefined?[...NOI19_SYNTHETIC_TEXTS]:
   Array.from({length:options.root_count},(_,index)=>`Synthetic fixture root ${index.toString().padStart(4,'0')}.`);
@@ -96,6 +97,10 @@ export async function syntheticImportedWorkspaceFixtureV1(tx:SyntheticTransactio
  await query(`INSERT INTO signal_provenance_policy_bindings(workspace_id,data_source_id,binding_version,status,quality_policy_id,
  retention_policy_id,licensing_policy_id,definition_hash,created_by_user_id,activated_by_user_id,activated_at,creation_idempotency_key)
  VALUES($1,$2,1,'active',$3,$4,$5,$6,$7,$7,now(),$8)`,[workspace_id,source,quality,retention,license,signalProvenancePolicyBindingDefinitionHashV1(b),actor_user_id,fixtureSha('synthetic binding')]);
+ // Source-only seed override: finish before the caller admits corpus preparation.
+ // Defaults execute no extra statement and retain the original import literals.
+ if(options.seed_published_at!==undefined)await query(`UPDATE mentions SET published_at=$3::timestamptz
+  WHERE workspace_id=$1 AND data_source_id=$2 AND source_file_id=$4`,[workspace_id,source,options.seed_published_at,batch]);
  return {database,query,workspace_id,actor_user_id,organization_id:org,brand_id:brand,source_id:source,
   batch_id:batch,quality_id:quality,retention_id:retention,license_id:license,roots,access:{database,workspace_id,actor_user_id}};
 }
@@ -106,6 +111,7 @@ export async function syntheticImportedWorkspaceFixtureV1(tx:SyntheticTransactio
 export async function syntheticClientWorkspaceFixtureV1(tx:SyntheticTransactionV1,options:{
  identity?:{organization_id:string;brand_id:string;actor_user_id:string;workspace_id:string};
  root_count?:number;
+ seed_published_at?:string;
  study_vector_groups?:boolean;
  study_author_metadata?:boolean;study_text_length?:number;
  long_text?:boolean;
@@ -116,7 +122,7 @@ export async function syntheticClientWorkspaceFixtureV1(tx:SyntheticTransactionV
  projection?:Parameters<typeof workspaceProjectionFixtureBodyV1>[1];
 }={}){
  const {database,query,scoped}=tx;
- const {workspace_id,actor_user_id}=await syntheticImportedWorkspaceFixtureV1(tx,options.identity,{root_count:options.root_count,long_text:options.long_text,batch_size:options.import_batch_size,study_vector_groups:options.study_vector_groups,study_author_metadata:options.study_author_metadata,study_text_length:options.study_text_length});
+ const {workspace_id,actor_user_id}=await syntheticImportedWorkspaceFixtureV1(tx,options.identity,{root_count:options.root_count,seed_published_at:options.seed_published_at,long_text:options.long_text,batch_size:options.import_batch_size,study_vector_groups:options.study_vector_groups,study_author_metadata:options.study_author_metadata,study_text_length:options.study_text_length});
  const access={database,workspace_id,actor_user_id};
  const prep=await requestSignalWorkspaceCorpusPreparationStoreV1({...access,idempotency_key:randomUUID()});
  const prepJob=(await query('SELECT worker_job_id FROM signal_corpus_preparation_runs WHERE id=$1',[prep.run_id])).rows[0]!.worker_job_id;

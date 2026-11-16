@@ -62,10 +62,9 @@ test('native Listening reader bounds questions and text before hydrating an inpu
 
 test('bounded Listening projection preserves 256 native keys, Unicode wire bytes and source timestamp microseconds',{
  skip:process.env.NOISIA_R16_INPUT_BOUNDS_PG!=='true',timeout:600000,
-},async()=>runMassLabelingAcceptanceFixtureV1('product',{beforeProcessing:async ctx=>{
+},async()=>runMassLabelingAcceptanceFixtureV1('product',{seed_published_at:'2026-01-01T00:00:00.123456Z',beforeProcessing:async ctx=>{
  const access={database:ctx.database,workspace_id:ctx.workspace_id,actor_user_id:ctx.actor_user_id};
  const canceled=await ctx.database.query("UPDATE signal_labeling_runs SET status='canceled' WHERE id=$1 AND status='queued' AND NOT EXISTS(SELECT 1 FROM signal_labeling_calls WHERE run_id=$1) RETURNING id",[ctx.run_id]);assert.equal(canceled.rows.length,1);
- await ctx.database.query("UPDATE mentions SET published_at='2026-01-01T00:00:00.123456Z'::timestamptz WHERE workspace_id=$1",[ctx.workspace_id]);
  const base=signalListeningBaseTemplateV1({category:'bicycles',lexicon_terms:['bicycle']});
  const cfg=await saveSignalListeningConfigurationV1({...access,expected_revision:0,provenance:'human',configuration:{...base,instructions:'Café 😀 漢字 \\ "evidence"\n',questions:[...base.questions,
   ...Array.from({length:254},(_,i)=>({key:'detail_'+String(i).padStart(3,'0'),type:'noul' as const,text:'Café 😀?',positive:'sí 漢字',negative:'no',scope:'all' as const,origin:'brand_os' as const,human_locked:false}))]}});
