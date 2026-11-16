@@ -382,6 +382,46 @@ jobs:
             echo '::error::R16 Listening smoke tests were skipped'
             exit 1
           fi
+      - name: Verify Listening money settlement recovery on native PostgreSQL
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.scope == 'listening-smoke' }}
+        env:
+          NOISIA_R16_LISTENING_MONEY_BATCHES_PG: 'true'
+          NOISIA_DB_SMOKE_RESET_SCHEMA: 'true'
+          NOISIA_DB_SMOKE_EMULATE_SUPABASE_ROLES: 'true'
+          NOISIA_MFP_PG_CI: 'true'
+        run: |
+          set +e
+          pnpm exec node --test --test-concurrency=1 --import tsx \
+            --test-name-pattern='^RAW-backed settlement recovery and unsent requeue preserve Listening money after the statement guard$' \
+            infrastructure/db/migrations/signal-listening-money-batches.postgres.test.ts \
+            | tee r16-listening-money-recovery-smoke.tap
+          test_status=${PIPESTATUS[0]}
+          set -e
+          if [[ "$test_status" -ne 0 ]]; then
+            echo '::error::R16 Listening money recovery PostgreSQL case failed'
+            exit "$test_status"
+          fi
+          node - r16-listening-money-recovery-smoke.tap <<'NODE'
+          const fs = require('node:fs');
+          const tap = fs.readFileSync(process.argv[2], 'utf8');
+          const title = 'RAW-backed settlement recovery and unsent requeue preserve Listening money after the statement guard';
+          const lines = tap.split(/\r?\n/u);
+          const selected = lines.filter(line => /^ok \d+ - /u.test(line)
+            && line.replace(/^ok \d+ - /u, '').replace(/\s+#.*$/u, '') === title);
+          if (selected.length !== 1 || /# SKIP/u.test(selected[0])
+              || !/^# pass 1$/mu.test(tap) || !/^# fail 0$/mu.test(tap)) {
+            throw new Error('Listening money recovery TAP must show the exact selected case passing once, with zero failures');
+          }
+          process.stdout.write('Listening money recovery case: pass=1 fail=0 (other cases intentionally unselected)\n');
+          NODE
+      - name: Persist Listening money recovery smoke TAP
+        if: ${{ always() && github.event_name == 'workflow_dispatch' && inputs.scope == 'listening-smoke' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: r16-listening-money-recovery-smoke-${{ github.run_id }}-${{ github.run_attempt }}
+          path: r16-listening-money-recovery-smoke.tap
+          if-no-files-found: ignore
+          retention-days: 14
       - name: Diagnose hybrid provider-rights plan on native PostgreSQL
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.scope == 'listening-smoke' }}
         env:
