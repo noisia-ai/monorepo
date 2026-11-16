@@ -24,7 +24,7 @@ export const DML_PLAN_MIN_BATCH=256;
 export const DML_PLAN_MAX_PLANS=8;
 type FunctionStatsGroupV1='answers'|'canonical'|'raw_pages';
 type DmlPlanUnitV1='call_ids'|'answer_rows'|'call_proposals'|'raw_page_members';
-type DmlPlanQuerySpecV1={label:string;batch_unit:DmlPlanUnitV1;values_count:number;batch_value_index:number;batch_kind:'array'|'json_array'|'raw_page_context';function_stats?:FunctionStatsGroupV1};
+type DmlPlanQuerySpecV1={label:string;batch_unit:DmlPlanUnitV1;values_count:number;batch_value_index:number;batch_kind:'array'|'json_array'|'raw_page_context';function_stats?:FunctionStatsGroupV1;min_duration_ms?:0|50};
 const DML_PLAN_QUERY_SPECS=new Map<string,DmlPlanQuerySpecV1>([
  ['sha256:1e5b3d3837b8c7354d6c25d941461f0d36e55d5cc3d42cbd31c627ba0662859b',
   {label:'mark_submitting',batch_unit:'call_ids',values_count:2,batch_value_index:1,batch_kind:'array',function_stats:'canonical'}],
@@ -33,7 +33,7 @@ const DML_PLAN_QUERY_SPECS=new Map<string,DmlPlanQuerySpecV1>([
  ['sha256:4ece6654c82e3d48416690d80208f849288cd5cfed5e16f0464dd3accfba33dd',
   {label:'reserve_calls_insert',batch_unit:'call_proposals',values_count:8,batch_value_index:5,batch_kind:'json_array',function_stats:'canonical'}],
  ['sha256:b8180180dfc8340b89511bb2ecf806c6f7bc811c7c257d2a7409915751ec5670',
-  {label:'raw_attach_call_lock',batch_unit:'raw_page_members',values_count:3,batch_value_index:-1,batch_kind:'raw_page_context',function_stats:'raw_pages'}],
+  {label:'raw_attach_call_lock',batch_unit:'raw_page_members',values_count:3,batch_value_index:-1,batch_kind:'raw_page_context',function_stats:'raw_pages',min_duration_ms:0}],
  ['sha256:99746d65e4fad037daa0402f77a11a5677c191c74ef01741a1182cf05e201d20',
   {label:'raw_attach_call_update',batch_unit:'raw_page_members',values_count:3,batch_value_index:-1,batch_kind:'raw_page_context',function_stats:'raw_pages'}],
  ['sha256:f3a9ed08bf4b11ed5ec2a22e8c26663fbf14b2424d0bae8f425036338025cd35',
@@ -353,6 +353,7 @@ export async function captureDmlPlanQueryV1(args:{client:any;query:()=>Promise<a
  const {client,query,query_hash,batch_size,database,role,env}=args,spec=dmlPlanQuerySpec(query_hash),clock=args.clock??(()=>performance.now());
  if(!spec||batch_size<DML_PLAN_MIN_BATCH||!dmlPlanCaptureEnvironmentAllowed(env)||database!=='noisia_mfp_ci'||role!=='postgres')
   return{result:await query(),observation:null};
+ const minDurationMs=spec.min_duration_ms??DML_PLAN_MIN_DURATION_MS;
  const plans:DmlPlanV1[]=[];let planNoticesSeen=0,plansDropped=0,triggersOmittedCount=0,triggersUnknownTimeCount=0,nestedPlansStored=0,outerPlanCaptured=false;
  const outerQueryTextHash=args.sql_frontier_only&&args.outer_query_text?`sha256:${createHash('sha256').update(args.outer_query_text,'utf8').digest('hex')}`:null;
  let savepoint=false,dmlStarted=false,setupStage='savepoint',setupMs=0,queryWallMs=0,cleanupMs=0,prior=new Map<string,string>(),detached=false;
@@ -399,7 +400,7 @@ export async function captureDmlPlanQueryV1(args:{client:any;query:()=>Promise<a
    await client.query('SET LOCAL log_parameter_max_length = 0');
    await client.query('SET LOCAL auto_explain.log_parameter_max_length = 0');
    await client.query("SET LOCAL auto_explain.log_level = 'NOTICE'");
-   await client.query(`SET LOCAL auto_explain.log_min_duration = ${DML_PLAN_MIN_DURATION_MS}`);
+   await client.query(`SET LOCAL auto_explain.log_min_duration = ${minDurationMs}`);
    await client.query('SET LOCAL auto_explain.log_nested_statements = on');
    await client.query('SET LOCAL auto_explain.log_analyze = on');
    await client.query('SET LOCAL auto_explain.log_buffers = on');
@@ -412,7 +413,7 @@ export async function captureDmlPlanQueryV1(args:{client:any;query:()=>Promise<a
     await client.query('SET LOCAL auto_explain.log_min_duration = -1');
     setupStage='read_function_stats_before';const statsStarted=clock();
     try{functionStatsBefore=await readFunctionStatsV1(client,spec.function_stats);}finally{functionStatsReadBeforeMs=clock()-statsStarted;}
-    await client.query(`SET LOCAL auto_explain.log_min_duration = ${DML_PLAN_MIN_DURATION_MS}`);
+    await client.query(`SET LOCAL auto_explain.log_min_duration = ${minDurationMs}`);
    }
    await client.query('RELEASE SAVEPOINT r16_dml_plan_capture_v1');savepoint=false;
   }catch{

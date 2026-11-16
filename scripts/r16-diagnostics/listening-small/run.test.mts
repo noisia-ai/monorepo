@@ -613,6 +613,60 @@ test('DML plan specs match the complete source SQL, bind arity and batch-value p
  assert.equal(dmlPlanBatchSize(reserveHash,['INSERT', ['run','workspace','provider','model','transport','not-json','date','UTC']]),null);
 });
 
+test('SQL frontier uses zero duration only for the first RAW lock capture; other DML stay at 50ms and neutral bypasses it',async()=>withDmlPlanTestEnv(async()=>{
+ const {captureDmlPlanQueryV1,createListeningObserver,queryHash}=await import('./observer.mjs');
+ const lockSql=`SELECT c.id FROM signal_labeling_calls c
+        JOIN signal_labeling_raw_page_members m ON m.call_id=c.id AND m.workspace_id=c.workspace_id AND m.run_id=c.run_id
+        WHERE m.page_id=$1 AND m.workspace_id=$2 AND m.run_id=$3 ORDER BY c.id FOR UPDATE OF c`;
+ const lockHash=queryHash(lockSql);assert.equal(lockHash,'sha256:b8180180dfc8340b89511bb2ecf806c6f7bc811c7c257d2a7409915751ec5670');
+ const otherHashes=[
+  'sha256:1e5b3d3837b8c7354d6c25d941461f0d36e55d5cc3d42cbd31c627ba0662859b',
+  'sha256:7a86df2f02e720b156e7f9d7132eba342080fc9d169d7cf8e1cbdfa74de067a7',
+  'sha256:4ece6654c82e3d48416690d80208f849288cd5cfed5e16f0464dd3accfba33dd',
+  'sha256:99746d65e4fad037daa0402f77a11a5677c191c74ef01741a1182cf05e201d20',
+  'sha256:f3a9ed08bf4b11ed5ec2a22e8c26663fbf14b2424d0bae8f425036338025cd35',
+ ];
+ for(const hash of otherHashes){
+  const {client,statements}=fakeDmlPlanClient();
+  await captureDmlPlanQueryV1({client,query:async()=>({rowCount:256}),query_hash:hash,batch_size:256,
+   database:'noisia_mfp_ci',role:'postgres',env:process.env,sql_frontier_only:true});
+  assert.ok(statements.includes('SET LOCAL auto_explain.log_min_duration = 50'),`${hash} retains the default duration`);
+  assert.ok(!statements.includes('SET LOCAL auto_explain.log_min_duration = 0'),`${hash} does not use zero duration`);
+ }
+ const direct=fakeDmlPlanClient();
+ await captureDmlPlanQueryV1({client:direct.client,query:async()=>({rowCount:256}),query_hash:lockHash,batch_size:256,
+  database:'noisia_mfp_ci',role:'postgres',env:process.env,sql_frontier_only:true});
+ assert.ok(direct.statements.includes('SET LOCAL auto_explain.log_min_duration = 0'));
+ assert.ok(!direct.statements.includes('SET LOCAL auto_explain.log_min_duration = 50'));
+
+ const firstObserver=createListeningObserver({sql_frontier_only:true}),first=fakeDmlPlanClient();let lockQueries=0;
+ const firstQuery=first.client.query.bind(first.client);
+ first.client.query=async(sql:string,values?:unknown[])=>{if(sql===lockSql)lockQueries++;return firstQuery(sql,values);};
+ const db=firstObserver.wrapDatabase({async connect(){return first.client;},query:first.client.query});
+ const rows=Array.from({length:256},(_,i)=>({call:{id:`00000000-0000-4000-8000-${String(i+1).padStart(12,'0')}`}}));
+ const run={id:'11111111-1111-4111-8111-111111111111',workspace_id:'22222222-2222-4222-8222-222222222222'};
+ try{
+  const store=firstObserver.wrapStore({async persistRawPage(){const owner=await db.connect();
+   await owner.query(lockSql,['33333333-3333-4333-8333-333333333333',run.workspace_id,run.id]);
+   await owner.query(lockSql,['33333333-3333-4333-8333-333333333333',run.workspace_id,run.id]);}});
+  await store.persistRawPage(run,rows);
+  const snapshot=firstObserver.snapshot();
+  assert.equal(lockQueries,2);assert.equal(snapshot.dml_plan_observations.length,1);
+  assert.equal(snapshot.sql_frontier_capture.captures_started,1);
+  assert.ok(first.statements.includes('SET LOCAL auto_explain.log_min_duration = 0'));
+ }finally{await firstObserver.close();}
+
+ const neutral=createListeningObserver({neutral_only:true}),plain=fakeDmlPlanClient();
+ try{
+  const neutralDb=neutral.wrapDatabase({async connect(){return plain.client;},query:plain.client.query});
+  const owner=await neutralDb.connect();await owner.query(lockSql,['33333333-3333-4333-8333-333333333333',run.workspace_id,run.id]);
+  assert.equal(neutral.snapshot().dml_plan_observations.length,0);
+  assert.equal(plain.client.listenerCount('notice'),0);
+  assert.equal(plain.statements.some(sql=>sql.startsWith('SAVEPOINT r16_dml_plan_capture_v1')),false);
+  assert.equal(plain.statements.some(sql=>sql.startsWith('SET LOCAL auto_explain.')),false);
+ }finally{await neutral.close();}
+}));
+
 test('RAW attach frontier requires bounded persistRawPage context and source-bound update SQL while retaining only counts',async()=>{
  const {queryHash,dmlPlanQuerySpec,rawPageDmlContextFromStoreArgsV1,rawPageDmlBatchSizeV1,SQL_FRONTIER_DML_BATCH_LIMIT}=await import('./observer.mjs');
  const target=process.env.R16_DIAGNOSTIC_TARGET_ROOT;assert.ok(target,'RAW attach source contract needs checked out public target root');
