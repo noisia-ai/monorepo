@@ -258,6 +258,25 @@ test('MFP RAW acceptance workflow selects and gates the fifth UUID-order case wi
  }finally{await rm(dir,{recursive:true,force:true});}
 });
 
+test('probe sparse checkout materializes the MFP workflow used by the source-contract gate',async()=>{
+ const workflowPath=new URL('../../../.github/workflows/r16-listening-small-diagnostic.yml',import.meta.url);
+ const workflow=await readFile(workflowPath,'utf8');
+ const checkoutName='      - name: Checkout diagnostic harness only\n';
+ const checkoutStart=workflow.indexOf(checkoutName);assert.ok(checkoutStart>=0,'diagnostic harness checkout must exist');
+ const nextStep=workflow.indexOf('\n      - name: ',checkoutStart+checkoutName.length);
+ const checkout=workflow.slice(checkoutStart,nextStep<0?undefined:nextStep);
+ assert.match(checkout,/uses: actions\/checkout@v4/u);
+ assert.match(checkout,/path: probe\s*$/mu,'the harness checkout must remain rooted at probe');
+ const sparse=checkout.match(/\n          sparse-checkout: \|\n((?:            [^\n]*\n)+)/u);
+ assert.ok(sparse,'the probe checkout must declare its sparse paths');
+ const paths=sparse[1].split(/\r?\n/u).map(line=>line.trim()).filter(Boolean);
+ const assertMfpWorkflowMaterialized=(entries:string[])=>assert.ok(entries.includes('.github/workflows/mfp-postgres.yml'),
+  'the probe checkout must include the MFP workflow read by its acceptance test');
+ assertMfpWorkflowMaterialized(paths);
+ assert.throws(()=>assertMfpWorkflowMaterialized(paths.filter(path=>path!=='.github/workflows/mfp-postgres.yml')),
+  /probe checkout must include the MFP workflow/u,'the previous sparse checkout must fail this regression assertion');
+});
+
 test('resource profile guard rejects environment and effective tuple drift without allocating the profile budget',async()=>{
  const {getExecution,envFor}=await streamProfileDependencies();const env=envFor('baseline_512m');
  env.NOISIA_JEV_STREAM_MAX_IN_FLIGHT='2048';

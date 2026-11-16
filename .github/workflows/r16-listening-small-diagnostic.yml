@@ -336,6 +336,7 @@ jobs:
           path: probe
           sparse-checkout: |
             .github/workflows/r16-listening-small-diagnostic.yml
+            .github/workflows/mfp-postgres.yml
             scripts/r16-diagnostics/listening-small
           sparse-checkout-cone-mode: false
 
