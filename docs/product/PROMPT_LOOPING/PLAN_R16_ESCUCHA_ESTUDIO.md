@@ -12,6 +12,14 @@ No hay aprobaciones humanas intermedias en los procesos de análisis: Sonnet 4.6
 
 ## Progreso
 
+- Prefiltro integrado localmente como f69a91db (46f52330 del crítico), con limpieza de pruebas ea2b8a7b (25c94960), después de ambas revisiones sin P0/P1/P2. Cambia sólo SQL y parámetros de la página de IDs; metadatos e hidratación permanecen intactos. Tipos y lint globales 11/11 y diez focales puras de semántica, bytes y calibración pasan sin omisiones. Los dos focales nativos existentes conservan sus títulos y añaden reservas reales de consumidor y comparación contra el oráculo completo y los límites de bytes. Confirmación PostgreSQL y rendimiento pendientes; no se añade migración ni se publica en UAT.
+
+- Recibo del workflow 43818031831: matriz diez de diez sin reenvíos, 32,768 raíces resueltas y 65,536 requests; 243.552 s, 134.542 raíces/s, HTTP máximo 575.477 ms. Rechaza los mismos tres gates de capacidad; la variación frente a d64 no prueba una mejora de runtime, que no cambió deliberadamente. Procedencia verificada: checkout 31766a25 es el merge sintético de pull_request, con padres develop e12f81d7 y head 9e2834b2. Ambos commits tienen exactamente el mismo árbol Git 9575e23aa8bdf870c1a626cd83ab09e790a71ba1; la comparación devuelve cero archivos distintos. Se conserva el SHA de checkout y el rechazo original.
+- Se autoriza implementar y revisar un prefiltro necesario sobre la página de IDs: omitir únicamente raíces cuyos digests de todas las preguntas configuradas ya tengan link en el mismo run y workspace. El cursor sigue reiniciándose por RR; metadatos, hidratación, derechos, bytes, ámbito y autoridad permanecen intactos. Consumidores habilitados después de base deben seguir visibles. No se afirma ahorro hasta medirlo remotamente; no añade migración.
+
+- Ensayo completo d64 43815503975 termina rechazado por capacidad: 32,768 raíces distintas resueltas, 65,536 requests y cero pendientes; diez escenarios completos (seis recuperados, tres unknown contenidos y uno receipt_pending), sin reenvíos. Wall 376.038 s, 87.140 raíces/s; clasificación 358.095 s y cola de verificación 17.943 s. Fallan throughput, ventanas sostenidas y latencia observada (máximo 836.319 ms). Censo completo y serving no sustituyen esos gates. Artefacto sintético 14203813080 verificado por tamaño y SHA; el perfil se analiza antes del siguiente cambio.
+- Fuente 9e2834b2: calibración nativa corregida verde, igual que CI general, runtime, migrated-schema y escala. Study sigue ejecutándose. Benchmark 43818031831 termina con fallo; su recibo exacto se verifica antes de atribuir la causa o compararlo con d64. No hay aceptación H1, migración o despliegue real R16 en UAT ni gasto de proveedor. Docker local permanece cerrado.
+
 - Checkpoint cbd96385 termina CI/PostgreSQL full verde: MFP 104/104, Escucha 105/105, Study 23/23 y suites de política/lectores/fuente, sin omisiones. El fallo inicial de recuperación queda cerrado también dentro de la suite completa. Esto no sustituye la aceptación de capacidad ni el CI de cambios posteriores.
 - 086b1a7d corrige sólo el extractor de calibración tras revisión sin P0/P1/P2: lee prosrc real SQL/static/EXECUTE tagged, valida tags case-sensitive y los seis USING, rechaza formatos desconocidos. Siete focales puras y tipos/lint 11/11 pasan; las comprobaciones nativas de índices, filas, latest32, recibos y precios permanecen intactas. Se repetirá el ensayo oficial sobre esta fuente; el benchmark d64 ya en marcha se conserva para obtener su resultado.
 
@@ -329,6 +337,12 @@ Recibo: separar Voyage/JEV por raíz de Claude por número de grupos y vueltas; 
 
 ## Sorpresas y descubrimientos
 
+- El prefiltro es sólo necesario: raíces sin respuestas, con base reservada pero consumidor pendiente, o cubiertas por caché de otra ejecución pueden seguir entrando y resultar vacías después. No se promete eliminar todas las lecturas repetidas. Los links de otro run o workspace no cuentan; digests duplicados se tratan por existencia, igual que el predicado original.
+
+- El checkout del workflow con head 9e informa el merge sintético de pull_request, no el head. Se verifican padres y árbol completo idéntico, no sólo archivos seleccionados. La procedencia conserva ambos SHAs y el resultado rechazado; un SHA de workflow por sí solo no sustituye esa comprobación.
+
+- El ensayo completo sin instrumentos opcionales conserva censo y recuperación íntegros, pero su velocidad de 87.140 raíces/s y HTTP máximo 836.319 ms rechazan H1. El tiempo de preparación y la clasificación no se deducen de las líneas de copia de base; sólo los relojes y gates del recibo terminal permiten distinguirlos. El resultado no se reinterpreta como éxito por completar todas las raíces.
+
 - El diagnóstico atribuyó inicialmente el hash 99746 a INSERT de members. La comparación exacta de source confirma que es UPDATE attach de signal_labeling_calls; INSERT members tiene otro hash. Se corrige la atribución en el recibo y no se deduce un trigger o plan no capturado.
 - El test separado de calibración no se había actualizado al pasar la rama bounded a EXECUTE parametrizado. La función real migra y funciona; es el extractor de la consulta para EXPLAIN el que incorpora el wrapper PL/pgSQL. Debe leer la consulta desplegada, reconocer su delimitador y los seis argumentos de USING, y fallar ante una forma desconocida.
 
@@ -476,6 +490,12 @@ Recibo: separar Voyage/JEV por raíz de Claude por número de grupos y vueltas; 
 - El promedio del piloto completo incluye una etapa editorial que no escala por raíz. Multiplicarlo linealmente daba USD 205.81/millón; mantener explícitamente los grupos y una vuelta de referencia produce USD 114.035250. Ambos cálculos parten del mismo recibo, cuyo uso histórico permanece USD 17.280463.
 
 ## Registro de decisiones
+
+- 2026-11-16: integrar el prefiltro revisado sin migración y validarlo primero con los focales nativos y el diagnóstico remoto existente. Mantener la suite Study de 9e hasta su resultado y evitar otro full de capacidad sin evidencia nueva del candidato. Sustituir el test que fija bytes del código por el modelo semántico y los oráculos nativos; la exactitud del diff queda en la revisión, sin imponer mantenimiento de hashes de implementación.
+
+- 2026-11-16: filtrar IDs antes de la proyección cara sólo mediante una condición necesaria demostrable del predicado pendiente original. No conservar progreso de cursor entre transacciones ni deducir agotamiento por base, caché o estado de llamada. Exigir pruebas de consumidor anterior, base pendiente, digests duplicados y links ajenos, revisión independiente y medición nativa antes de aceptar el cambio.
+
+- 2026-11-16 06:59 UTC: conservar el rechazo completo d64 y analizar sus métricas SQL antes de proponer otra optimización. Mantener vivo el ensayo exacto 9e y sus pruebas PostgreSQL; no reiniciar por duración ni relajar los umbrales. La matriz completa de diez fallos aporta evidencia de integridad, pero no autoriza por sí sola integración, gasto o activación UAT.
 
 - 2026-11-16: después de eliminar las aristas cuadráticas medidas y pasar los diecinueve oráculos y tres scoped, ejecutar una vez el workload completo sin los instrumentos opcionales. El mini y su variabilidad no prueban la capacidad a escala ni el coste fijo de preparación; el ensayo oficial debe resolverlo. Esto sustituye la espera autoimpuesta de un mini cercano a la meta, pero mantiene íntegros 1,000/s, latencia observada, duración sostenida y matriz de fallos. Su calibración fallida se corrige y debe repetirse sobre la fuente final; el benchmark vivo se conserva.
 
@@ -639,6 +659,8 @@ Recibo: separar Voyage/JEV por raíz de Claude por número de grupos y vueltas; 
 - 2026-11-14: publicar una fórmula condicional con coeficientes medidos en R15 y costo editorial por grupos/vueltas; actualizar la proyección histórica sin cambiar sus recibos ni presentarla como costo medido de R16. Reconstrucción verificada con aritmética decimal exacta.
 
 ## Resultado y retrospectiva
+
+Estado vigente, 16 nov.: ambos full d64/9e completan censo y matriz de recuperación, pero rechazan capacidad (87.140 y 134.542 raíces/s respectivamente). El árbol completo del merge sintético confirma fuente 9e exacta. CI general, runtime, migrated-schema y escala de 9e están verdes; Study sigue en marcha. El prefiltro revisado f69a91db pasa tipos/lint globales; sus oráculos PostgreSQL y rendimiento aún deben medirse. Hay 34 migraciones pendientes, ninguna aplicada realmente en UAT; no hay nuevas llamadas pagadas. R16 H0–H6 sigue abierto. Los párrafos siguientes son historia.
 
 Estado vigente, 16 nov.: 0327 y la corrección de fixture pasan diecinueve oráculos y el smoke remoto; el censo queda completo, pero H1 sigue sin cumplir 1,000/s ni latencia en la última corrida. El CI completo previo de 0325 está verde y Study de 744 pasó 23/23; la fuente corregida debe repetir todo CI. Se investigan dos uniones de transiciones residuales sin cambiar permisos o presupuesto. No hay aceptación ni ejecución pagada de R16, despliegue o migraciones reales en UAT. El paquete real, la comparación privada y el QA visual siguen pendientes. Los párrafos siguientes conservan resultados históricos.
 
