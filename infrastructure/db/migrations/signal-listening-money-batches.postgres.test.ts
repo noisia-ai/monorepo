@@ -698,3 +698,115 @@ test('native Listening page fence without raw pages retains exclusive run serial
  }finally{release.resolve();await Promise.all([firstOutcome,second]);}
  assert.equal(await firstOutcome,null);assert.ok(second);assert.equal(await second,null);assert.equal((await listeningPageSnapshot(f)).fences.length,0);
 },false));
+
+type ListeningReserveFixture=NativeFixture&{intercept:ListeningPageFixture['intercept']};
+/** Real transactions and real authority. Only pause AFTER the selected SQL has
+ * executed; finite PostgreSQL timeouts also bound failures before cleanup. */
+async function withListeningReserveFixture(cap:number,body:(f:ListeningReserveFixture)=>Promise<void>,rawPages=true){
+ await withMoneyFixture(cap,async f=>{
+  const intercept:ListeningPageFixture['intercept']={};
+  const database={query:f.database.query.bind(f.database),connect:async()=>{
+   const c=await f.database.connect();return new Proxy(c,{get(target,key){
+    if(key==='query')return async(sql:string,values?:unknown[])=>{
+     await intercept.before?.(sql,target);const result=await target.query(sql,values);
+     if(sql==='BEGIN')await target.query("SET LOCAL statement_timeout='15s'; SET LOCAL lock_timeout='5s'");
+     await intercept.after?.(sql,target);return result;
+    };
+    const value=Reflect.get(target,key);return typeof value==='function'?value.bind(target):value;
+   }});
+  }} as NativeFixture['database'];
+  const store=createSignalListeningStoreV1({database,...(rawPages?{rawPages:f.rawPages}:{}),
+   storeRaw:async()=>{throw Error('no individual raw/provider in reserve acceptance');}});
+  await body({...f,store,intercept});
+ });
+}
+async function reserveGate<T>(promise:Promise<T>):Promise<T>{
+ let timer:ReturnType<typeof setTimeout>|undefined;
+ try{return await Promise.race([promise,new Promise<never>((_,reject)=>{timer=setTimeout(()=>reject(Error('native reserve barrier not reached')),15000);})]);}
+ finally{if(timer)clearTimeout(timer);}
+}
+const reservePolicyLock=(sql:string)=>sql.includes("pg_advisory_xact_lock(hashtextextended('signal-processing-policy:'");
+for(const operation of ['raw','apply']as const)test('native Listening reserve commits while disjoint '+operation+' retains its real run SHARE fence',{
+ skip:!enabled,timeout:600000,
+},async()=>withListeningReserveFixture(1000000,async f=>{
+ const calls=await f.store.reserve(f.run,proposals({...f,inputs:[f.inputs[0]!]},1000));assert.equal(calls.length,1);
+ const pageFixture={...f,calls};
+ const page=operation==='apply'?await listeningPageReady(pageFixture):null;
+ if(operation==='raw')await f.store.markSubmitting(f.run,calls);
+ const held=pageDeferred(),release=pageDeferred();let caught=false,share=false;
+ f.intercept.after=async sql=>{if(!caught&&/WITH raw_run_fence|SELECT id FROM signal_labeling_runs/u.test(sql)){
+  caught=true;share=sql.includes('FOR SHARE');held.resolve();await release.promise;
+ }};
+ const first=(operation==='raw'?f.store.persistRawPage(f.run,[{call:calls[0]!,raw:'native reserve disjoint RAW bytes'}]):f.store.apply(f.run,[page!]))
+  .then(()=>null,error=>error);
+ let reserved:Awaited<ReturnType<NativeFixture['store']['reserve']>>|undefined;
+ try{
+  await reserveGate(held.promise);assert.equal(share,true,'the retained fence must be the actual shared native fence');
+  // Completion, including COMMIT, is required while the first TX is paused.
+  // An exclusive reserve fails via PostgreSQL lock_timeout, not a timing race.
+  reserved=await f.store.reserve(f.run,proposals({...f,inputs:[f.inputs[1]!]},1000));
+  assert.equal(reserved.length,1);assert.notEqual(reserved[0]!.id,calls[0]!.id);
+ }finally{release.resolve();await first;}
+ assert.equal(await first,null);assert.ok(reserved);
+ assert.equal((await f.database.query('SELECT count(*)::int n FROM signal_labeling_calls WHERE run_id=$1',[f.run.id])).rows[0].n,2);
+ assert.equal(f.run.cursor_root_id,null);
+ assert.equal((await f.database.query('SELECT cursor_root_id FROM signal_labeling_runs WHERE id=$1',[f.run.id])).rows[0].cursor_root_id,null);
+}));
+
+for(const same of [true,false])test('native Listening concurrent reserve cap one call '+(same?'replays the same identity once':'rejects a different identity atomically'),{
+ skip:!enabled,timeout:600000,
+},async()=>withListeningReserveFixture(1000,async f=>{
+ const held=pageDeferred(),attempted=pageDeferred(),release=pageDeferred();let caught=false,holder=0,waiter=0;
+ const custody:{client?:PoolClient}={};
+ f.intercept.after=async(sql,c)=>{if(!caught&&sql==='SELECT * FROM signal_labeling_calls WHERE custom_id=ANY($1::text[])'){
+  caught=true;custody.client=c;holder=Number((await c.query('SELECT pg_backend_pid() pid')).rows[0].pid);held.resolve();await release.promise;
+ }};
+ f.intercept.before=async(sql,c)=>{if(holder&&!waiter&&reservePolicyLock(sql)){
+  waiter=Number((await c.query('SELECT pg_backend_pid() pid')).rows[0].pid);attempted.resolve();
+ }};
+ const row=proposals({...f,inputs:[f.inputs[0]!]},1000);
+ const first=f.store.reserve(f.run,row).then(value=>({value,error:null}),error=>({value:null,error}));
+ let second:typeof first|undefined;
+ try{
+  await reserveGate(held.promise);
+  second=f.store.reserve(f.run,same?row:proposals({...f,inputs:[f.inputs[1]!]},1000))
+   .then(value=>({value,error:null}),error=>({value:null,error}));
+  await reserveGate(attempted.promise);assert.ok(custody.client);
+  await requireListeningPageBlock(custody.client,holder,waiter);
+ }finally{release.resolve();await Promise.all([first,second]);}
+ const a=await first;assert.equal(a.error,null);assert.ok(a.value);assert.ok(second);const b=await second;
+ if(same){assert.equal(b.error,null);assert.deepEqual(b.value?.map(c=>c.id),a.value.map(c=>c.id));}
+ else{assert.match(String(b.error),/labeling_cap_exhausted/);assert.equal(b.value,null);}
+ const ledger=(await f.database.query('SELECT count(*)::int n,sum(reserved_micro_usd)::text reserved FROM signal_labeling_calls WHERE run_id=$1',[f.run.id])).rows[0];
+ assert.deepEqual(ledger,{n:1,reserved:'1000'});
+ await transaction(f,async c=>{assert.equal(await readSignalLabelingRunExposureV1(c,f.run.id),'1000');});
+ assert.equal((await f.database.query('SELECT count(*)::int n FROM signal_listening_call_questions WHERE run_id=$1',[f.run.id])).rows[0].n,f.inputs[0]!.question_keys.length);
+}));
+
+test('native Listening reserve replay preserves unknown custody and prior uncertainty blocks a new run',{
+ skip:!enabled,timeout:600000,
+},async()=>withListeningReserveFixture(1000,async f=>{
+ const row=proposals({...f,inputs:[f.inputs[0]!]},1000),calls=await f.store.reserve(f.run,row);
+ await f.store.markSubmitting(f.run,calls);await f.store.markFailed(f.run,calls,true);
+ const before=(await f.database.query('SELECT to_jsonb(c) value FROM signal_labeling_calls c WHERE run_id=$1',[f.run.id])).rows;
+ const replay=await f.store.reserve(f.run,row);assert.equal(replay[0]!.id,calls[0]!.id);assert.equal(replay[0]!.status,'unknown');
+ assert.deepEqual((await f.database.query('SELECT to_jsonb(c) value FROM signal_labeling_calls c WHERE run_id=$1',[f.run.id])).rows,before);
+ await transaction(f,async c=>{assert.equal(await readSignalLabelingRunExposureV1(c,f.run.id),'1000');});
+ assert.equal(await f.store.finish(f.run),'failed');await f.store.release(f.run);
+ const configuration_id=(await f.database.query('SELECT configuration_id FROM signal_listening_runs WHERE run_id=$1',[f.run.id])).rows[0].configuration_id;
+ const map_id=(await f.database.query('SELECT map_id FROM signal_listening_runs WHERE run_id=$1',[f.run.id])).rows[0].map_id;
+ await assert.rejects(requestSignalListeningV1({database:f.database,workspace_id:f.run.workspace_id,actor_user_id:f.run.actor_user_id,
+  configuration_id,map_id,idempotency_key:randomUUID(),cap_micro_usd:1000,provider_available:true}),/listening_prior_outcome_unresolved/);
+}));
+
+test('native Listening without RAW pages retains the default reservation cursor and exclusive run fence',{
+ skip:!enabled,timeout:600000,
+},async()=>withListeningReserveFixture(1000000,async f=>{
+ const statements:string[]=[];f.intercept.after=async sql=>{statements.push(sql);};
+ const calls=await f.store.reserve(f.run,proposals(f,1000));assert.equal(calls.length,3);
+ const last=f.inputs.map(i=>i.root_id).sort().at(-1)!;
+ assert.equal(f.run.cursor_root_id,last);
+ assert.equal((await f.database.query('SELECT cursor_root_id FROM signal_labeling_runs WHERE id=$1',[f.run.id])).rows[0].cursor_root_id,last);
+ assert.ok(statements.some(sql=>sql.includes('SELECT id FROM signal_labeling_runs')&&sql.includes('FOR UPDATE')));
+ assert.ok(!statements.some(sql=>sql.includes('WITH raw_run_fence')));
+},false));

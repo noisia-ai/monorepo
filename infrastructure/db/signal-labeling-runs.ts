@@ -543,6 +543,10 @@ export function createSignalLabelingStoreV1<
     /** Native page adapters only: mutations touch disjoint calls/results and
      * never update the run lifecycle. Requires durable page custody. */
     parallel_native_pages?: boolean;
+    /** Server-owned Listening adapter only: selection derives from native
+     * question receipts, never the generic run cursor. Requires parallel
+     * native pages AND durable RAW page custody; not an identity/JSON flag. */
+    reserve_selection?: 'native_listening_pending';
     bounded_inputs?:(client:PoolClient,run:LabelingRunV1,bounds:LabelingInputBoundsV1)=>Promise<Input[]>;
     has_inputs?:(client:PoolClient,run:LabelingRunV1)=>Promise<boolean>;
     inputs: (
@@ -611,6 +615,8 @@ export function createSignalLabelingStoreV1<
   }
   const rawPages=options.rawPages?createLabelingRawPageStoreV1({database:db,storage:options.rawPages,
     withRunReadFence:(run,fn)=>tx(db,async c=>{await rawRunReadFence(c,run);return fn(c);})}):null;
+  const nativePendingReserve=options.adapter?.reserve_selection==='native_listening_pending'
+    &&options.adapter.parallel_native_pages===true&&rawPages!==null;
   async function pageMutationFence(c:PoolClient,run:LabelingRunV1){
     if(options.adapter?.parallel_native_pages===true&&rawPages)await rawRunReadFence(c,run);
     else await lock(c,run);
@@ -852,7 +858,14 @@ export function createSignalLabelingStoreV1<
       advanceCursor = true,
     ): Promise<LabelingCallV1<Input>[]> {
       return tx(db, async (c) => {
-        await lock(c, run);
+        if(nativePendingReserve){
+          await rawRunReadFence(c,run);
+          // Serialize the existence snapshot with the SAME policy/day/actor
+          // authority used below. Zero only reads exposure; it reserves no
+          // money. A concurrent replay must observe the committed first call
+          // before computing fresh cost, avoiding a false cap rejection.
+          await authority(c,run,0);
+        }else await lock(c, run);
         const existing = (
           await c.query<LabelingCallV1<Input>>(
             "SELECT * FROM signal_labeling_calls WHERE custom_id=ANY($1::text[])",
@@ -880,7 +893,7 @@ export function createSignalLabelingStoreV1<
               policy.budget_timezone,
             ],
           );
-        if (advanceCursor) {
+        if (advanceCursor && !nativePendingReserve) {
           const ids = proposals
             .flatMap((p) => p.inputs.map((i) => i.root_id))
             .sort();

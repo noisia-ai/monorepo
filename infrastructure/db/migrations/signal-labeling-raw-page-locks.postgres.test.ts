@@ -34,6 +34,13 @@ async function fixture(fn:(x:{context:Context;store:ReturnType<typeof createMass
   }finally{await rm(files,{recursive:true,force:true});}
  }});
 }
+test('generic mass labeling with RAW pages retains its default reservation cursor',{skip:!enabled,timeout:120000},async()=>{
+ await fixture(async({context,run,calls})=>{
+  const last=calls.flatMap(c=>c.inputs.map(i=>i.root_id)).sort().at(-1)!;
+  assert.equal(run.cursor_root_id,last);
+  assert.equal((await context.database.query('SELECT cursor_root_id FROM signal_labeling_runs WHERE id=$1',[run.id])).rows[0].cursor_root_id,last);
+ });
+});
 for(const phase of ['plan','attach'] as const)test(`disjoint raw pages progress concurrently while ${phase} holds its run fence`,{skip:!enabled,timeout:120000},async()=>{
  await fixture(async({context,store,run,calls,intercept})=>{
   if(phase==='plan'&&process.env.NOISIA_R16_LOCK_AUDIT_PATH){
