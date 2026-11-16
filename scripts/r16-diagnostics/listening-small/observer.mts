@@ -255,7 +255,7 @@ async function captureActorFunctionDiagnosticV1(args:{client:any;callIds:string[
   for(const [name,value] of diagnosticSettings)await client.query(`SET LOCAL ${name} = '${value}'`);
   setupMs=clock()-setupStarted;
   const lookupStarted=clock();const resolved=await client.query(`SELECT c.workspace_id::text AS workspace_id,r.actor_user_id::text AS actor_user_id
-   FROM signal_labeling_calls c JOIN signal_labeling_runs r ON r.run_id=c.run_id AND r.workspace_id=c.workspace_id
+   FROM signal_labeling_calls c JOIN signal_labeling_runs r ON r.id=c.run_id AND r.workspace_id=c.workspace_id
    WHERE c.id=ANY($1::uuid[])
    GROUP BY c.workspace_id,r.actor_user_id,c.run_id
    HAVING count(DISTINCT c.id)=cardinality($1::uuid[]) AND count(DISTINCT c.workspace_id)=1

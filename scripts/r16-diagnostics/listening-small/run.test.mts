@@ -485,6 +485,10 @@ test('a missing pre-write transaction counter row is declared before using its t
 
 test('post-write actor diagnostic resolves call ownership and records bounded safe EXPLAIN plans on the same backend',async()=>withDmlPlanTestEnv(async()=>{
  const {captureDmlPlanQueryV1}=await import('./observer.mjs');const {client,statements,events,restores,oldValues}=fakeDmlPlanClient();
+ const target=process.env.R16_DIAGNOSTIC_TARGET_ROOT;assert.ok(target,'actor owner lookup contract needs checked out public target root');
+ const labelingSchema=await readFile(join(target,'infrastructure/db/migrations/0221_signal_labeling_core.sql'),'utf8');
+ assert.match(labelingSchema,/CREATE TABLE signal_labeling_runs\s*\(\s*id uuid PRIMARY KEY/u);
+ assert.match(labelingSchema,/FOREIGN KEY\(workspace_id,run_id\) REFERENCES signal_labeling_runs\(workspace_id,id\)/u);
  const callIds=['33333333-3333-4333-8333-333333333333','44444444-4444-4444-8444-444444444444'];
  const queryValues=['synthetic-workspace','synthetic-context','synthetic-run',JSON.stringify(callIds.map(call_id=>({call_id})))];let writes=0;
  const captured=await captureDmlPlanQueryV1({client,query:async()=>{writes++;events.push('write');return{rowCount:256};},
@@ -501,6 +505,9 @@ test('post-write actor diagnostic resolves call ownership and records bounded sa
  assert.equal(statements.filter(sql=>sql.startsWith('EXPLAIN (ANALYZE,BUFFERS,TIMING ON,FORMAT JSON)')).length,2);
  assert.ok(statements.some(sql=>sql.includes('public.signal_processing_actor_v1($1::uuid,$2::uuid)')));
  assert.ok(statements.some(sql=>sql.includes('FROM public.user_brand_access a')));assert.ok(statements.every(sql=>!sql.includes('signal_processing_lock_actor_v1')));
+ const ownerLookup=statements.find(sql=>sql.includes('FROM signal_labeling_calls c JOIN signal_labeling_runs r'))??'';
+ assert.match(ownerLookup,/JOIN signal_labeling_runs r ON r\.id=c\.run_id AND r\.workspace_id=c\.workspace_id/u);
+ assert.doesNotMatch(ownerLookup,/r\.run_id\s*=\s*c\.run_id/u);
  assert.ok(statements.includes("SET LOCAL lock_timeout = '1s'"));assert.ok(statements.includes("SET LOCAL statement_timeout = '15s'"));
  assert.ok(statements.filter(sql=>sql.includes('pg_stat_xact_user_functions')).length===2);
  const statReads=statements.map((sql,index)=>sql.includes('pg_stat_xact_user_functions')?index:-1).filter(index=>index>=0);
