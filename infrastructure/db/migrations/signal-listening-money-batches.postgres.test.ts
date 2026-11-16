@@ -544,16 +544,31 @@ test('native Listening page fence exact and partial replay retain original answe
  assert.equal(after.calls.filter(c=>c.results_applied).length,2);
 }));
 
+async function requireListeningPageGate(gate:Promise<void>){
+ await Promise.race([gate,pageDelay(3000).then(()=>{throw Error('native Listening page lock was not reached');})]);
+}
+async function requireListeningPageBlock(c:Pick<PoolClient,'query'>,holder:number,waiter:number){
+ assert.ok(holder>0&&waiter>0&&holder!==waiter,'holder and waiter are distinct native backends');
+ let blocked=false;const deadline=Date.now()+3000;
+ do{blocked=Boolean((await c.query('SELECT $1::int=ANY(pg_blocking_pids($2::int)) blocked',[holder,waiter])).rows[0].blocked);if(!blocked)await pageDelay(20);}while(!blocked&&Date.now()<deadline);
+ assert.equal(blocked,true,'the second native backend must be blocked by this exact holder before release');
+}
 for(const divergent of [false,true])test('native Listening page fence overlapping reverse-order apply serializes exact calls (divergent '+divergent+')',{
  skip:!enabled,timeout:600000,
 },async()=>withListeningPageFixture(async f=>{
- const a=await listeningPageReady(f),b=await listeningPageReady(f,1),held=pageDeferred(),release=pageDeferred();let caught=false;
- f.intercept.after=async sql=>{if(!caught&&(/WHERE workspace_id=\$1 AND run_id=\$2 AND id=ANY\(\$3::uuid\[\]\) ORDER BY id FOR UPDATE|SELECT id FROM signal_labeling_runs/u.test(sql))){caught=true;held.resolve();await release.promise;}};
- const first=f.store.apply(f.run,[a,b]);await held.promise;
- const copy=structuredClone(a);if(divergent)copy.results[0]!.answers[Object.keys(copy.results[0]!.answers)[0]!]={type:'noul',noul:.987};
- const second=f.store.apply(f.run,[b,copy]),outcome=second.then(()=>({ok:true}),error=>({ok:false,error}));let premature=false;
- try{premature=await Promise.race([outcome.then(()=>true),pageDelay(150).then(()=>false)]);}finally{release.resolve();await first;}
- assert.equal(premature,false,'overlapping call UUIDs still serialize even though disjoint pages share the run fence');
+ const a=await listeningPageReady(f),b=await listeningPageReady(f,1),held=pageDeferred(),attempted=pageDeferred(),release=pageDeferred();let caught=false,holder=0,waiter=0;const custody:{client?:PoolClient}={};
+ const locks=(sql:string)=>/WHERE workspace_id=\$1 AND run_id=\$2 AND id=ANY\(\$3::uuid\[\]\) ORDER BY id FOR UPDATE|SELECT id FROM signal_labeling_runs/u.test(sql);
+ f.intercept.before=async(sql,c)=>{if(holder&&!waiter&&locks(sql)){waiter=Number((await c.query('SELECT pg_backend_pid() pid')).rows[0].pid);attempted.resolve();}};
+ f.intercept.after=async(sql,c)=>{if(!caught&&locks(sql)){caught=true;custody.client=c;holder=Number((await c.query('SELECT pg_backend_pid() pid')).rows[0].pid);held.resolve();await release.promise;}};
+ const first=f.store.apply(f.run,[a,b]),firstOutcome=first.then(()=>null,error=>error);
+ let outcome:Promise<{ok:boolean;error?:unknown}>|undefined;
+ try{
+  await requireListeningPageGate(held.promise);
+  const copy=structuredClone(a);if(divergent)copy.results[0]!.answers[Object.keys(copy.results[0]!.answers)[0]!]={type:'noul',noul:.987};
+  outcome=f.store.apply(f.run,[b,copy]).then(()=>({ok:true}),error=>({ok:false,error}));
+  await requireListeningPageGate(attempted.promise);assert.ok(custody.client);await requireListeningPageBlock(custody.client,holder,waiter);
+ }finally{release.resolve();await Promise.all([firstOutcome,outcome]);}
+ assert.equal(await firstOutcome,null);assert.ok(outcome);
  const result=await outcome;assert.equal(result.ok,!divergent);if('error'in result)assert.match(String(result.error),/labeling_result_replay_conflict/);
  const snapshot=await listeningPageSnapshot(f);assert.equal(snapshot.calls.filter(c=>c.results_applied).length,2);
  assert.deepEqual(snapshot.answers.filter(row=>row.call_id===a.call.id).map(row=>[row.question_key,row.answer]),Object.entries(a.results[0]!.answers).sort(([a],[b])=>a.localeCompare(b)));
@@ -593,10 +608,14 @@ for(const operation of ['mark','apply']as const)test('native Listening page fenc
 test('native Listening page fence without raw pages retains exclusive run serialization',{
  skip:!enabled,timeout:600000,
 },async()=>withListeningPageFixture(async f=>{
- const held=pageDeferred(),release=pageDeferred();let caught=false;
- f.intercept.after=async sql=>{if(!caught&&sql.includes('SELECT id FROM signal_labeling_runs')){caught=true;held.resolve();await release.promise;}};
- const first=f.store.markSubmitting(f.run,[f.calls[0]!]);await held.promise;
- const second=f.store.markSubmitting(f.run,[f.calls[1]!]);let premature=false;
- try{premature=await Promise.race([second.then(()=>true),pageDelay(150).then(()=>false)]);}finally{release.resolve();await Promise.all([first,second]);}
- assert.equal(premature,false);assert.equal((await listeningPageSnapshot(f)).fences.length,0);
+ const held=pageDeferred(),attempted=pageDeferred(),release=pageDeferred();let caught=false,holder=0,waiter=0;const custody:{client?:PoolClient}={};
+ const locks=(sql:string)=>sql.includes('SELECT id FROM signal_labeling_runs');
+ f.intercept.before=async(sql,c)=>{if(holder&&!waiter&&locks(sql)){waiter=Number((await c.query('SELECT pg_backend_pid() pid')).rows[0].pid);attempted.resolve();}};
+ f.intercept.after=async(sql,c)=>{if(!caught&&locks(sql)){caught=true;custody.client=c;holder=Number((await c.query('SELECT pg_backend_pid() pid')).rows[0].pid);held.resolve();await release.promise;}};
+ const first=f.store.markSubmitting(f.run,[f.calls[0]!]),firstOutcome=first.then(()=>null,error=>error);let second:Promise<unknown>|undefined;
+ try{
+  await requireListeningPageGate(held.promise);second=f.store.markSubmitting(f.run,[f.calls[1]!]).then(()=>null,error=>error);
+  await requireListeningPageGate(attempted.promise);assert.ok(custody.client);await requireListeningPageBlock(custody.client,holder,waiter);
+ }finally{release.resolve();await Promise.all([firstOutcome,second]);}
+ assert.equal(await firstOutcome,null);assert.ok(second);assert.equal(await second,null);assert.equal((await listeningPageSnapshot(f)).fences.length,0);
 },false));
