@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
+import {spawnSync} from 'node:child_process';
 import {EventEmitter} from 'node:events';
 import {readFile} from 'node:fs/promises';
 import {join} from 'node:path';
@@ -42,6 +43,40 @@ test('bounded resource profile resolves through the product getter only for neut
 test('resource profile selection rejects unknown names and bounded mode outside neutral runs',()=>{
  assert.throws(()=>listeningResourceProfileV1({R16_DIAGNOSTIC_RESOURCE_PROFILE:'surprise'},'neutral_only'),/resource_profile_invalid/u);
  assert.throws(()=>listeningResourceProfileV1({R16_DIAGNOSTIC_RESOURCE_PROFILE:'bounded_2g'},'legacy'),/resource_profile_requires_neutral_mode/u);
+});
+
+test('resource profile workflow Bash gate allows manual SQL frontier shared smoke and preserves other mode gates',async()=>{
+ const workflowPath=new URL('../../../.github/workflows/r16-listening-small-diagnostic.yml',import.meta.url);
+ const workflow=await readFile(workflowPath,'utf8');
+ const stepStart=workflow.indexOf('      - name: Validate resource profile selection');assert.ok(stepStart>=0,'resource profile validation step must exist');
+ const nextStep=workflow.indexOf('      - name: ',stepStart+'      - name: Validate resource profile selection'.length);
+ const step=workflow.slice(stepStart,nextStep<0?undefined:nextStep).split(/\r?\n/u);
+ const runLine=step.findIndex(line=>line==='        run: |');assert.ok(runLine>=0,'resource profile validation must remain an inline Bash step');
+ const body:string[]=[];
+ for(const line of step.slice(runLine+1)){
+  if(line===''){body.push('');continue;}
+  if(!line.startsWith('          '))break;
+  body.push(line.slice(10));
+ }
+ const script=body.join('\n').trimEnd();assert.ok(script.includes('reserve_shared_smoke requires a manual neutral_only or sql_frontier_only run'));
+ const sha='a'.repeat(40);
+ const run=(mode:string,profile:string,smoke:boolean,event:string,targetRef=sha)=>spawnSync('/bin/bash',['-euo','pipefail','-c',script],{
+  encoding:'utf8',env:{PATH:process.env.PATH??'/usr/bin:/bin',MODE:mode,RESOURCE_PROFILE:profile,
+   RESERVE_SHARED_SMOKE:String(smoke),EVENT_NAME:event,TARGET_REF:targetRef}});
+ const cases:[string,string,string,boolean,string,string,boolean][]=[
+  ['SQL frontier bounded profile with shared smoke','sql_frontier_only','bounded_2g',true,'workflow_dispatch',sha,true],
+  ['neutral bounded profile with shared smoke','neutral_only','bounded_2g',true,'workflow_dispatch','',true],
+  ['legacy shared smoke remains rejected','legacy','baseline_512m',true,'workflow_dispatch','',false],
+  ['SQL shared smoke remains manual-only','sql_frontier_only','baseline_512m',true,'pull_request',sha,false],
+  ['neutral shared smoke remains manual-only','neutral_only','baseline_512m',true,'pull_request','',false],
+  ['SQL mode rejects a missing explicit target','sql_frontier_only','baseline_512m',false,'workflow_dispatch','',false],
+  ['SQL mode rejects a malformed explicit target','sql_frontier_only','baseline_512m',false,'workflow_dispatch','A'.repeat(40),false],
+  ['legacy baseline without shared smoke remains unchanged','legacy','baseline_512m',false,'pull_request','',true],
+ ];
+ for(const [label,mode,profile,smoke,event,targetRef,expectedPass] of cases){
+  const result=run(mode,profile,smoke,event,targetRef);
+  assert.equal(result.status,expectedPass?0:1,`${label}: ${result.stderr||result.stdout}`);
+ }
 });
 
 test('resource profile guard rejects environment and effective tuple drift without allocating the profile budget',async()=>{
