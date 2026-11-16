@@ -39,9 +39,12 @@ async function inputMetadata(c:Pick<PoolClient,'query'>,run:LabelingRunV1,limit:
  const sliceSize=Math.min(4096,Math.max(64,limit));
  while(rows.length<limit){
   const ids:string[]=(await c.query<{root_id:string}>(`/* labeling_listening_root_page_v1 */
-   SELECT root_id FROM signal_mass_labeling_items WHERE workspace_id=$1 AND map_id=$2
-    ${cursor?'AND root_id>$4::uuid':''} ORDER BY root_id LIMIT $3`,
-   [run.workspace_id,o.map_id,sliceSize,...(cursor?[cursor]:[])])).rows.map(row=>row.root_id);
+   SELECT i.root_id FROM signal_mass_labeling_items i WHERE i.workspace_id=$1 AND i.map_id=$2
+    AND EXISTS(SELECT 1 FROM signal_listening_questions q WHERE q.configuration_id=$4::uuid
+     AND NOT EXISTS(SELECT 1 FROM signal_listening_call_questions sent
+      WHERE sent.workspace_id=$1 AND sent.run_id=$5::uuid AND sent.root_id=i.root_id AND sent.question_digest=q.question_digest))
+    ${cursor?'AND i.root_id>$6::uuid':''} ORDER BY i.root_id LIMIT $3`,
+   [run.workspace_id,o.map_id,sliceSize,o.configuration_id,run.id,...(cursor?[cursor]:[])])).rows.map(row=>row.root_id);
   if(!ids.length)break;
   const page=(await c.query<{root_id:string;working_bytes:string}>(`/* labeling_listening_input_metadata_v1 */ WITH candidates AS MATERIALIZED(
    SELECT p.root_id,p.input_digest,p.question_key,p.question_digest,octet_length(p.body)::bigint text_bytes,octet_length(p.wire::text)::bigint wire_bytes,

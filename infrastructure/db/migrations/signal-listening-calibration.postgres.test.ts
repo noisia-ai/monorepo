@@ -10,6 +10,7 @@ import {requestSignalListeningV1,createSignalListeningStoreV1} from '../signal-l
 import {deriveSignalListeningCalibrationV1,loadSignalListeningCalibrationV1} from '../signal-listening-calibration';
 import {signalListeningBaseTemplateV1,buildSignalListeningJevRequestV1,signalListeningRequestDigestV1,
  signalListeningCalibrationShapeV1,mapSignalListeningJevResponseV1,type SignalListeningInputV1} from '@noisia/query-engine';
+import {extractSignalListeningCalibrationQueryV1} from './signal-listening-calibration-query';
 import {jevUsageV1} from '../../../services/workers/src/workers/signal-jev-labeling-page';
 const sha=(s:string)=>'sha256:'+createHash('sha256').update(s).digest('hex');
 test('calibration uses the latest32 verified normal receipts and preserves earlier measured profiles',{
@@ -27,14 +28,7 @@ test('calibration uses the latest32 verified normal receipts and preserves earli
   assert.deepEqual(bounded,full.filter(r=>roots.includes(r.root_id)));
   const reader=(await database.query(`SELECT p.prosrc,l.lanname FROM pg_proc p JOIN pg_language l ON l.oid=p.prolang
    WHERE p.oid='signal_listening_population_roots_v1(uuid,uuid,uuid,text,uuid[],text)'::regprocedure`)).rows[0] as {prosrc:string;lanname:string};
-  let source=reader.prosrc;
-  if(reader.lanname==='plpgsql'){
-   // Observe the actual deployed bounded query, not a separately maintained
-   // imitation. The full-population EXECUTE branch must not enter this proof.
-   const boundedBody=source.match(/\bELSE\s+RETURN QUERY\s+([\s\S]+?);\s*END IF;\s*END\s*$/iu);
-   assert.ok(boundedBody,'the native population reader must expose its static bounded query');
-   source=boundedBody[1]!;
-  }else assert.equal(reader.lanname,'sql','unsupported native population planner');
+  let source=extractSignalListeningCalibrationQueryV1(reader);
   for(const [name,value] of Object.entries({w:'$1::uuid',cid:'$2::uuid',mid:'$3::uuid',ctx:'$4::text',roots:'$5::uuid[]',purpose:'$6::text'}))source=source.replace(new RegExp('\\b'+name+'\\b','g'),value);
   // EXPLAIN is a utility statement: unlike the native function invocation,
   // it does not inherit the six declared argument types for a leading IS NULL.
