@@ -60,9 +60,12 @@ test('private evidence is mode 0600 and never overwrites an earlier receipt',asy
 test('large synthetic preimage is consumed by the real request digest contract',()=>{
  const preimage=listeningPreimage(4);
  assert.equal(preimage.request_version,SIGNAL_LISTENING_REQUEST_VERSION_V1);
- assert.equal(Object.keys(preimage.request.questions).length,18);
- assert.equal(preimage.request.questions.voice!.type,'choice');
- assert.equal(preimage.request.questions.promotion!.type,'noul');
+ assert.deepEqual(Object.keys(preimage.request.questions).sort(),Array.from({length:16},(_,q)=>`topic_${q}`).sort());
+ assert.deepEqual(Object.keys(preimage.question_digests).sort(),Object.keys(preimage.request.questions).sort());
+ const base=listeningPreimage(4,'base');
+ assert.deepEqual(Object.keys(base.request.questions).sort(),['promotion','voice']);
+ assert.equal(base.request.questions.voice!.type,'choice');assert.equal(base.request.questions.promotion!.type,'noul');
+ assert.deepEqual(Object.keys(base.question_digests).sort(),['promotion','voice']);assert.deepEqual(base.scope_basis,{});
  assert.deepEqual(Object.keys(preimage.scope_basis).sort(),Array.from({length:16},(_,q)=>`topic_${q}`).sort());
  assert.ok(!('voice' in preimage.scope_basis)&&!('promotion' in preimage.scope_basis));
  const basis=signalWorkspaceEmbeddingDigestV1({voice:'00000000-0000-4000-8000-000000000100',promotion:'00000000-0000-4000-8000-000000000101'});

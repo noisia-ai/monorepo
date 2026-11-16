@@ -41,6 +41,7 @@ export function fixtures():Array<{id:string;json:string|null;deep:boolean}>{
   {id:'unicode-escapes',json:JSON.stringify({'é':'\\\n\t"','z':[], '😀':{},'a':'\u0001','é':null})},
   {id:'nested',json:'{"z":[null,true,false,{},[],{"b":2,"a":1}],"a":"x"}'},
   {id:'input-preimage',json:JSON.stringify({contract_version:'signal-listening-input-v1',root_id:'00000000-0000-4000-8000-000000000001',source_fingerprint:'synthetic',text:'cerveza sintética'})},
+  {id:'base-request-preimage',json:JSON.stringify(listeningPreimage(0,'base'))},
   {id:'scope-preimage',json:'{"voice":"00000000-0000-4000-8000-000000000001","promotion":null}'},
  ];
  for(let i=0;i<32;i++)result.push({id:`warmup-large-${i}`,json:JSON.stringify(listeningPreimage(i))});
@@ -53,15 +54,16 @@ export function timedSql(arm:'old'|'candidate',single:boolean):string{
 }
 
 /** Actual request compiler and version; synthetic input/context only. */
-export function listeningPreimage(i:number){
+export function listeningPreimage(i:number,phase:'base'|'consumer'='consumer'){
  const base=signalListeningBaseTemplateV1({category:'cerveza',lexicon_terms:['cerveza','cerveja']});
  const config=validateSignalListeningConfigurationV1({...base,questions:[...base.questions,
   ...Array.from({length:16},(_,q)=>({key:`topic_${q}`,type:'noul' as const,text:`¿Se menciona el tema sintético ${q}?`,
    positive:`Tema sintético ${q}`,negative:'Otros temas',scope:'consumer_category' as const,origin:'brand_os' as const,human_locked:false}))]});
+ const selected=config.questions.filter(q=>phase==='base'?q.scope==='all':q.scope==='consumer_category');
  const root_id=`00000000-0000-4000-8000-${String(i+1).padStart(12,'0')}`;
  const input={root_id,input_digest:'sha256:'+'1'.repeat(64),text:`Texto sintético ${i} de cerveza. `.repeat(256),
-  question_keys:config.questions.map(q=>q.key),question_digests:Object.fromEntries(config.questions.map(q=>[q.key,signalListeningQuestionDigestV1(config,q)])),
-  scope_basis:Object.fromEntries(config.questions.filter(q=>q.scope==='consumer_category').map(q=>[q.key,digest({voice:'00000000-0000-4000-8000-000000000100',promotion:'00000000-0000-4000-8000-000000000101'})]))};
+  question_keys:selected.map(q=>q.key),question_digests:Object.fromEntries(selected.map(q=>[q.key,signalListeningQuestionDigestV1(config,q)])),
+  scope_basis:Object.fromEntries(selected.filter(q=>q.scope==='consumer_category').map(q=>[q.key,digest({voice:'00000000-0000-4000-8000-000000000100',promotion:'00000000-0000-4000-8000-000000000101'})]))};
  const request=buildSignalListeningJevRequestV1(input,config);
  return {request_version:SIGNAL_LISTENING_REQUEST_VERSION_V1,run_id:'00000000-0000-4000-8000-000000000200',
   root_id,input_digest:input.input_digest,entity_context_digest:'sha256:'+'2'.repeat(64),question_digests:input.question_digests,
