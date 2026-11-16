@@ -5,7 +5,8 @@ import {mkdir,open,readFile} from 'node:fs/promises';
 import {join,resolve,sep} from 'node:path';
 import {fileURLToPath,pathToFileURL} from 'node:url';
 import {performance} from 'node:perf_hooks';
-import {createListeningObserver,DML_PLAN_MAX_PLANS,DML_PLAN_MIN_BATCH,DML_PLAN_MIN_DURATION_MS,finishListeningObserver,INNER_PLAN_MIN_DURATION_MS} from './observer.mjs';
+import {createListeningObserver,DML_PLAN_MAX_PLANS,DML_PLAN_MIN_BATCH,DML_PLAN_MIN_DURATION_MS,finishListeningObserver,
+ INNER_PLAN_CAPTURE_ORDINALS,INNER_PLAN_MIN_DURATION_MS} from './observer.mjs';
 
 const ROOT_COUNT=4096;
 const MAX_MS=9*60*1000;
@@ -210,7 +211,7 @@ export async function runListeningSmallDiagnosticV1(){
             preparation_admission_wall_ms:startedProcessing-admissionStarted,classification_serving_wall_ms:performance.now()-startedProcessing,
             warmups:warmups.length,warmup_phases:warmupPhases,calibrations,commit_batch_count:commits.length},
           observed_http_latency:latencySummary,storage:storageServer.metrics(),sql_profile:profile.snapshot(),
-          inner_plan_capture:{diagnostic_only:true,threshold_roots:1024,max_captures_per_query_hash:2,min_duration_ms:INNER_PLAN_MIN_DURATION_MS,
+          inner_plan_capture:{diagnostic_only:true,threshold_roots:1024,max_captures_per_query_hash:INNER_PLAN_CAPTURE_ORDINALS.length,capture_ordinals:INNER_PLAN_CAPTURE_ORDINALS,min_duration_ms:INNER_PLAN_MIN_DURATION_MS,
             plans_below_min_duration_captured:false,observations:observer.snapshot().inner_plan_observations},
           dml_plan_capture:{diagnostic_only:true,opt_in_required:true,min_batch_size:DML_PLAN_MIN_BATCH,max_captures_per_query_hash:1,min_duration_ms:DML_PLAN_MIN_DURATION_MS,
             plans_below_min_duration_captured:false,max_plans_per_capture:DML_PLAN_MAX_PLANS,trigger_names_allowlisted:true,raw_query_or_values_recorded:false,
@@ -229,7 +230,7 @@ export async function runListeningSmallDiagnosticV1(){
     const observerSnapshot=await finishListeningObserver(observer);
     const failure={contract_version:'r16-listening-small-diagnostic-v1',diagnostic_only:true,h1_accepted:false,
       status:'failed',stage,code:safeError(error),total_wall_ms:performance.now()-started,observer:observerSnapshot,
-      inner_plan_capture:{diagnostic_only:true,threshold_roots:1024,max_captures_per_query_hash:2,min_duration_ms:INNER_PLAN_MIN_DURATION_MS,
+      inner_plan_capture:{diagnostic_only:true,threshold_roots:1024,max_captures_per_query_hash:INNER_PLAN_CAPTURE_ORDINALS.length,capture_ordinals:INNER_PLAN_CAPTURE_ORDINALS,min_duration_ms:INNER_PLAN_MIN_DURATION_MS,
         plans_below_min_duration_captured:false,observations:observerSnapshot.inner_plan_observations},
       dml_plan_capture:{diagnostic_only:true,opt_in_required:true,min_batch_size:DML_PLAN_MIN_BATCH,max_captures_per_query_hash:1,min_duration_ms:DML_PLAN_MIN_DURATION_MS,
         plans_below_min_duration_captured:false,max_plans_per_capture:DML_PLAN_MAX_PLANS,trigger_names_allowlisted:true,raw_query_or_values_recorded:false,

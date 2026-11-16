@@ -169,9 +169,10 @@ test('inner-plan setup failure rolls back its savepoint then runs the original q
    if(sql.startsWith('SELECT current_database'))return{rows:[{database:'noisia_mfp_ci',role:'postgres',isolation:'repeatable read',read_only:'on',superuser:true}]};
    if(sql.startsWith('LOAD'))throw Error('extension unavailable with private text');return{rows:[]};};
   const captured=await captureInnerPlanQueryV1({client,query:async()=>{originalCalls++;return{rows:[{ok:true}]}},
-   query_hash:'sha256:d0ecbbfdca3d93e069a3ca03367439fa25ce54164efaf3135c80b27c91ed2680',root_count:4096,database:'noisia_mfp_ci',role:'postgres'});
+   query_hash:'sha256:d0ecbbfdca3d93e069a3ca03367439fa25ce54164efaf3135c80b27c91ed2680',query_ordinal:2,root_count:4096,database:'noisia_mfp_ci',role:'postgres'});
   assert.deepEqual(captured.result,{rows:[{ok:true}]});assert.equal(originalCalls,1);assert.equal(client.listenerCount('notice'),0);
   assert.ok(captured.observation?.status==='inner_plan_unavailable');assert.equal(captured.observation.reason,'auto_explain_load_unavailable');
+  assert.equal(captured.observation.query_ordinal,2);
   for(const statement of ['SAVEPOINT r16_inner_plan_capture_v1','ROLLBACK TO SAVEPOINT r16_inner_plan_capture_v1','RELEASE SAVEPOINT r16_inner_plan_capture_v1'])assert.ok(statements.includes(statement));
   assert.ok(statements.includes("SET LOCAL log_min_messages = 'WARNING'"));assert.ok(statements.includes("SET LOCAL client_min_messages = 'NOTICE'"));
   assert.ok(statements.includes('LOAD \'auto_explain\''));
@@ -179,6 +180,17 @@ test('inner-plan setup failure rolls back its savepoint then runs the original q
  }finally{
   for(const key of ['GITHUB_ACTIONS','NOISIA_R16_SMALL_DIAGNOSTIC','DATABASE_URL'] as const){const value=prior[key];if(value===undefined)delete process.env[key];else process.env[key]=value;}
  }
+});
+
+test('inner-plan ordinals count every eligible query and select the fixed bounded schedule',async()=>{
+ const {innerPlanQueryLabel,nextInnerPlanQueryOrdinalV1,shouldCaptureInnerPlanOrdinalV1,INNER_PLAN_CAPTURE_ORDINALS}=await import('./observer.mjs');
+ const hash='sha256:d0ecbbfdca3d93e069a3ca03367439fa25ce54164efaf3135c80b27c91ed2680',counts=new Map<string,number>();
+ assert.equal(innerPlanQueryLabel(hash),'metadata');assert.deepEqual(INNER_PLAN_CAPTURE_ORDINALS,[1,2,6,8]);
+ const ordinals=Array.from({length:10},()=>nextInnerPlanQueryOrdinalV1(hash,true,counts));
+ assert.deepEqual(ordinals,Array.from({length:10},(_,i)=>i+1));
+ assert.deepEqual(ordinals.filter(shouldCaptureInnerPlanOrdinalV1),[1,2,6,8]);
+ assert.equal(nextInnerPlanQueryOrdinalV1(hash,false,counts),null);assert.equal(counts.get(hash),10);
+ assert.equal(nextInnerPlanQueryOrdinalV1('sha256:unknown',true,counts),null);
 });
 
 test('inner-plan capture retains bounded ordered plans with query-text hashes and removes its handler',async()=>{
@@ -190,8 +202,9 @@ test('inner-plan capture retains bounded ordered plans with query-text hashes an
   const client=new EventEmitter() as any,statements:string[]=[];let originalCalls=0;
   client.query=async(sql:string)=>{statements.push(sql);if(sql.startsWith('SELECT current_database'))return{rows:[{database:'noisia_mfp_ci',role:'postgres',isolation:'repeatable read',read_only:'on',superuser:true}]};return{rows:[]};};
   const captured=await captureInnerPlanQueryV1({client,query:async()=>{originalCalls++;for(let i=0;i<35;i++)client.emit('notice',{message:'duration: 4 ms plan: '+JSON.stringify({'Query Text':`SELECT synthetic_nested_${i}('{}'::jsonb)`,Plan:{'Node Type':'Index Scan','Relation Name':'mentions','Actual Rows':64+i,'Actual Loops':3}})});return{rows:[{ok:true}]}},
-   query_hash:'sha256:d0ecbbfdca3d93e069a3ca03367439fa25ce54164efaf3135c80b27c91ed2680',root_count:4096,database:'noisia_mfp_ci',role:'postgres'});
+   query_hash:'sha256:d0ecbbfdca3d93e069a3ca03367439fa25ce54164efaf3135c80b27c91ed2680',query_ordinal:1,root_count:4096,database:'noisia_mfp_ci',role:'postgres'});
   assert.equal(originalCalls,1);assert.ok(captured.observation?.status==='captured');
+  assert.equal(captured.observation.query_ordinal,1);
   assert.equal(captured.observation.plans.length,32);assert.equal(captured.observation.plans_dropped,3);assert.equal(captured.observation.plan_notices_seen,35);
   assert.deepEqual(captured.observation.plans.map(plan=>plan.sequence),Array.from({length:32},(_,i)=>i+1));
   assert.equal(captured.observation.plans[0]?.plan['Actual Rows'],64);assert.match(captured.observation.plans[0]?.query_text_sha256??'/',/^sha256:[0-9a-f]{64}$/u);
@@ -213,8 +226,10 @@ test('inner-plan query failure clears the listener and rolls back without swallo
  try{
   const client=new EventEmitter() as any,statements:string[]=[];
   client.query=async(sql:string)=>{statements.push(sql);if(sql.startsWith('SELECT current_database'))return{rows:[{database:'noisia_mfp_ci',role:'postgres',isolation:'repeatable read',read_only:'on',superuser:true}]};return{rows:[]};};
-  await assert.rejects(captureInnerPlanQueryV1({client,query:async()=>{throw Error('original query failure')},
-   query_hash:'sha256:82fa4fc106842d6422046aefb067a0a7dbaf5bb28de04c0b9147854091410c04',root_count:4096,database:'noisia_mfp_ci',role:'postgres'}),/original query failure/u);
+  let originalCalls=0;
+  await assert.rejects(captureInnerPlanQueryV1({client,query:async()=>{originalCalls++;throw Error('original query failure')},
+   query_hash:'sha256:82fa4fc106842d6422046aefb067a0a7dbaf5bb28de04c0b9147854091410c04',query_ordinal:6,root_count:4096,database:'noisia_mfp_ci',role:'postgres'}),/original query failure/u);
+  assert.equal(originalCalls,1);
   assert.equal(client.listenerCount('notice'),0);assert.ok(statements.includes('ROLLBACK TO SAVEPOINT r16_inner_plan_capture_v1'));
  }finally{
   for(const key of ['GITHUB_ACTIONS','NOISIA_R16_SMALL_DIAGNOSTIC','DATABASE_URL'] as const){const value=prior[key];if(value===undefined)delete process.env[key];else process.env[key]=value;}
@@ -230,7 +245,7 @@ test('inner-plan rollback failure propagates, never replays the query, and still
   client.query=async(sql:string)=>{if(sql.startsWith('SELECT current_database'))return{rows:[{database:'noisia_mfp_ci',role:'postgres',isolation:'repeatable read',read_only:'on',superuser:true}]};
    if(sql.startsWith('ROLLBACK TO')){rollbackCalls++;throw Error('rollback cleanup failed');}return{rows:[]};};
   await assert.rejects(captureInnerPlanQueryV1({client,query:async()=>{originalCalls++;return{rows:[]}},
-   query_hash:'sha256:82fa4fc106842d6422046aefb067a0a7dbaf5bb28de04c0b9147854091410c04',root_count:4096,database:'noisia_mfp_ci',role:'postgres'}),/rollback cleanup failed/u);
+   query_hash:'sha256:82fa4fc106842d6422046aefb067a0a7dbaf5bb28de04c0b9147854091410c04',query_ordinal:8,root_count:4096,database:'noisia_mfp_ci',role:'postgres'}),/rollback cleanup failed/u);
   assert.equal(originalCalls,1);assert.ok(rollbackCalls>=1);assert.equal(client.listenerCount('notice'),0);
  }finally{
   for(const key of ['GITHUB_ACTIONS','NOISIA_R16_SMALL_DIAGNOSTIC','DATABASE_URL'] as const){const value=prior[key];if(value===undefined)delete process.env[key];else process.env[key]=value;}
@@ -270,18 +285,25 @@ test('DML plan specs match the complete source SQL, bind arity and batch-value p
  const listening=await readFile(join(target,'infrastructure/db/signal-listening-runs.ts'),'utf8');
  const mark=labeling.match(/`(UPDATE signal_labeling_calls SET status='submitting',[\s\S]*?RETURNING id)`\s*,\s*\[run\.id,\s*calls\.map/u);
  const answers=listening.match(/`(INSERT INTO signal_listening_answers\([\s\S]*?DO NOTHING)`\s*,\s*\[run\.workspace_id,\s*run\.entity_context_digest,\s*run\.id,\s*JSON\.stringify\(rows\)\]/u);
+ const reserve=labeling.match(/`(INSERT INTO signal_labeling_calls\([\s\S]*?ON CONFLICT\(custom_id\) DO NOTHING)`\s*,\s*\[\s*run\.id,[\s\S]*?JSON\.stringify\(fresh\),/u);
  assert.ok(mark,'markSubmitting SQL and run.id/calls batch position must match');assert.ok(answers,'answers INSERT SQL and $4 row batch position must match');
+ assert.ok(reserve,'reserve INSERT SQL and $6 fresh-proposal batch position must match');
  const {queryHash,dmlPlanQuerySpec,dmlPlanBatchSize}=await import('./observer.mjs');
- const markHash=queryHash(mark[1]),answersHash=queryHash(answers[1]);
+ const markHash=queryHash(mark[1]),answersHash=queryHash(answers[1]),reserveHash=queryHash(reserve[1]);
  assert.equal(markHash,'sha256:1e5b3d3837b8c7354d6c25d941461f0d36e55d5cc3d42cbd31c627ba0662859b');
  assert.equal(answersHash,'sha256:7a86df2f02e720b156e7f9d7132eba342080fc9d169d7cf8e1cbdfa74de067a7');
+ assert.equal(reserveHash,'sha256:4ece6654c82e3d48416690d80208f849288cd5cfed5e16f0464dd3accfba33dd');
  assert.deepEqual(dmlPlanQuerySpec(markHash),{label:'mark_submitting',values_count:2,batch_value_index:1,batch_kind:'array'});
  assert.deepEqual(dmlPlanQuerySpec(answersHash),{label:'listening_answers_insert',values_count:4,batch_value_index:3,batch_kind:'json_array'});
+ assert.deepEqual(dmlPlanQuerySpec(reserveHash),{label:'reserve_calls_insert',values_count:8,batch_value_index:5,batch_kind:'json_array'});
  assert.equal(dmlPlanBatchSize(markHash,['UPDATE', ['run',Array(256).fill('synthetic-id')]]),256);
  assert.equal(dmlPlanBatchSize(markHash,['UPDATE', ['run',Array(255).fill('synthetic-id')]]),255);
  assert.equal(dmlPlanBatchSize(markHash,['UPDATE', ['run']]),null);
  assert.equal(dmlPlanBatchSize(answersHash,['INSERT', ['workspace','context','run',JSON.stringify(Array(256).fill({synthetic:true}))]]),256);
  assert.equal(dmlPlanBatchSize(answersHash,['INSERT', ['workspace','context','run','not-json']]),null);
+ assert.equal(dmlPlanBatchSize(reserveHash,['INSERT', ['run','workspace','provider','model','transport',JSON.stringify(Array(256).fill({synthetic:true})),'date','UTC']]),256);
+ assert.equal(dmlPlanBatchSize(reserveHash,['INSERT', ['run','workspace','provider','model','transport',JSON.stringify(Array(255).fill({synthetic:true})),'date','UTC']]),255);
+ assert.equal(dmlPlanBatchSize(reserveHash,['INSERT', ['run','workspace','provider','model','transport','not-json','date','UTC']]),null);
 });
 
 test('DML capture guard requires the explicit owned CI loopback lab opt-in',async()=>{
@@ -299,11 +321,13 @@ test('DML plan notice exposes allowlisted trigger metrics and omits query text, 
  const note=safeDmlAutoExplainNotice({message:'duration: 62 ms plan: '+JSON.stringify({'Query Text':queryText,'Execution Time':62,
   Plan:{'Node Type':'ModifyTable','Relation Name':'signal_listening_answers','Actual Rows':256,'Actual Loops':1},
   Triggers:[{'Trigger Name':'signal_listening_answer_guard',Relation:'signal_listening_answers',Time:48.2,Calls:256},
+   {'Trigger Name':'mass_labeling_call_root',Relation:'signal_labeling_calls',Time:8.5,Calls:256},
    {'Trigger Name':'signal_listening_answer_guard',Relation:'signal_listening_answers',Calls:0},
    {'Trigger Name':'private_dynamic_trigger',Relation:'private_table',Time:9,Calls:1}]})});
  assert.deepEqual(note?.triggers,[{name:'signal_listening_answer_guard',relation:'signal_listening_answers',time_ms:48.2,calls:256},
+  {name:'mass_labeling_call_root',relation:'signal_labeling_calls',time_ms:8.5,calls:256},
   {name:'signal_listening_answer_guard',relation:'signal_listening_answers',time_ms:null,calls:0}]);
- assert.equal(note?.triggers_seen,3);assert.equal(note?.triggers_omitted,1);assert.equal(note?.triggers_unknown_time,1);
+ assert.equal(note?.triggers_seen,4);assert.equal(note?.triggers_omitted,1);assert.equal(note?.triggers_unknown_time,1);
  assert.match(note?.query_text_sha256??'/',/^sha256:[0-9a-f]{64}$/u);
  const serialized=JSON.stringify(note);
  for(const forbidden of ['private-id','private_dynamic_trigger','private_table','Query Text','INSERT INTO','{}'])assert.ok(!serialized.includes(forbidden));

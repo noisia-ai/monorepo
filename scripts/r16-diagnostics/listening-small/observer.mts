@@ -10,6 +10,7 @@ const INNER_PLAN_QUERY_LABELS=new Map([
  ['sha256:d0ecbbfdca3d93e069a3ca03367439fa25ce54164efaf3135c80b27c91ed2680','metadata'],
  ['sha256:82fa4fc106842d6422046aefb067a0a7dbaf5bb28de04c0b9147854091410c04','hydrate'],
 ]);
+export const INNER_PLAN_CAPTURE_ORDINALS=[1,2,6,8] as const;
 const PLAN_NUMBERS=['Plan Rows','Plan Width','Actual Rows','Actual Loops','Startup Cost','Total Cost','Actual Startup Time','Actual Total Time',
  'Shared Hit Blocks','Shared Read Blocks','Shared Dirtied Blocks','Shared Written Blocks','Temp Read Blocks','Temp Written Blocks'];
 const PLAN_NAMES=['Node Type','Relation Name','Alias','Index Name','Join Type'];
@@ -24,9 +25,12 @@ const DML_PLAN_QUERY_SPECS=new Map([
   {label:'mark_submitting',values_count:2,batch_value_index:1,batch_kind:'array'}],
  ['sha256:7a86df2f02e720b156e7f9d7132eba342080fc9d169d7cf8e1cbdfa74de067a7',
   {label:'listening_answers_insert',values_count:4,batch_value_index:3,batch_kind:'json_array'}],
+ ['sha256:4ece6654c82e3d48416690d80208f849288cd5cfed5e16f0464dd3accfba33dd',
+  {label:'reserve_calls_insert',values_count:8,batch_value_index:5,batch_kind:'json_array'}],
 ]);
-const SAFE_DML_TRIGGER_NAMES=new Set(['aac_signal_study_call_guard','listening_statement_money_update','mass_labeling_scoped_money',
- 'mass_labeling_scoped_update_total','signal_listening_answer_guard','signal_listening_call_guard','z_listening_discovery_child_capacity']);
+const SAFE_DML_TRIGGER_NAMES=new Set(['aac_signal_study_call_guard','listening_human_new_call_guard','listening_statement_money_insert','listening_statement_money_update',
+ 'mass_labeling_call_root','mass_labeling_scoped_insert_total','mass_labeling_scoped_money','mass_labeling_scoped_update_total','signal_listening_answer_guard',
+ 'signal_listening_call_guard','signal_listening_link_call','signal_study_jev_link','z_listening_discovery_child_capacity']);
 const DML_BASE_GUCS=['log_min_messages','client_min_messages','log_statement','log_parameter_max_length'];
 const DML_AUTO_EXPLAIN_GUCS=['auto_explain.log_parameter_max_length','auto_explain.log_level','auto_explain.log_min_duration','auto_explain.log_nested_statements',
  'auto_explain.log_analyze','auto_explain.log_buffers','auto_explain.log_timing','auto_explain.log_format','auto_explain.log_verbose','auto_explain.log_triggers'];
@@ -92,6 +96,11 @@ export function safeDmlAutoExplainNotice(notice:unknown){
  return{...base,triggers,triggers_seen:source.length,triggers_omitted:omitted,triggers_unknown_time:unknownTime};
 }
 export function innerPlanQueryLabel(hash:string|null){return hash?INNER_PLAN_QUERY_LABELS.get(hash)??null:null;}
+export function nextInnerPlanQueryOrdinalV1(hash:string|null,eligible:boolean,ordinals:Map<string,number>){
+ if(!eligible||!hash||!innerPlanQueryLabel(hash))return null;
+ const next=(ordinals.get(hash)??0)+1;ordinals.set(hash,next);return next;
+}
+export function shouldCaptureInnerPlanOrdinalV1(ordinal:number|null){return ordinal!==null&&(INNER_PLAN_CAPTURE_ORDINALS as readonly number[]).includes(ordinal);}
 export function assertInnerPlanCaptureGuard(env:NodeJS.ProcessEnv,database:string,role:string){
  if(env.GITHUB_ACTIONS!=='true'||env.NOISIA_R16_SMALL_DIAGNOSTIC!=='true'||database!=='noisia_mfp_ci'||role!=='postgres')
   throw Error('observer_inner_plan_capture_denied');
@@ -104,8 +113,8 @@ export function verifiedInnerPlanScopeV1(identity:any,database:string,role:strin
 }
 type InnerPlanTimingV1={capture_wall_ms:number;setup_ms:number;query_wall_ms:number;cleanup_ms:number;setup_cleanup_wall_ms:number;analyze_overhead_measured:false};
 export type InnerPlanObservationV1=
- |({query_hash:string;label:string;status:'inner_plan_unavailable';reason:'transaction_scope_unverified'|'auto_explain_load_unavailable'|'capture_setup_unavailable'}&InnerPlanTimingV1)
- |({query_hash:string;label:string;status:'captured'|'plan_notice_unavailable';plans:Array<{sequence:number;query_text_sha256:string|null;planning_time_ms:number|null;execution_time_ms:number|null;plan:Record<string,unknown>}>;plan_notices_seen:number;plans_dropped:number}&InnerPlanTimingV1);
+ |({query_hash:string;label:string;query_ordinal:number;status:'inner_plan_unavailable';reason:'transaction_scope_unverified'|'auto_explain_load_unavailable'|'capture_setup_unavailable'}&InnerPlanTimingV1)
+ |({query_hash:string;label:string;query_ordinal:number;status:'captured'|'plan_notice_unavailable';plans:Array<{sequence:number;query_text_sha256:string|null;planning_time_ms:number|null;execution_time_ms:number|null;plan:Record<string,unknown>}>;plan_notices_seen:number;plans_dropped:number}&InnerPlanTimingV1);
 type DmlPlanV1={sequence:number;query_text_sha256:string|null;planning_time_ms:number|null;execution_time_ms:number|null;
  plan:Record<string,unknown>;triggers:Array<{name:string;relation:string|null;time_ms:number|null;calls:number}>;triggers_seen:number;triggers_omitted:number;triggers_unknown_time:number};
 type DmlPlanTimingV1={setup_ms:number;query_wall_ms:number;cleanup_ms:number;setup_cleanup_wall_ms:number;analyze_timing_overhead_measured:false};
@@ -196,8 +205,8 @@ export async function captureDmlPlanQueryV1(args:{client:any;query:()=>Promise<a
  }
 }
 /** Capture a single original SELECT inside a verified RR/RO transaction. Setup failures roll back to the owned savepoint and do not retry setup. */
-export async function captureInnerPlanQueryV1(args:{client:any;query:()=>Promise<any>;query_hash:string;root_count:number;database:string;role:string}):Promise<{result:any;observation:InnerPlanObservationV1|null}>{
- const {client,query,query_hash,root_count,database,role}=args;
+export async function captureInnerPlanQueryV1(args:{client:any;query:()=>Promise<any>;query_hash:string;query_ordinal:number;root_count:number;database:string;role:string}):Promise<{result:any;observation:InnerPlanObservationV1|null}>{
+ const {client,query,query_hash,query_ordinal,root_count,database,role}=args;
  const label=innerPlanQueryLabel(query_hash);
  if(!label||root_count<1024)return{result:await query(),observation:null};
  assertInnerPlanCaptureGuard(process.env,database,role);
@@ -242,7 +251,7 @@ export async function captureInnerPlanQueryV1(args:{client:any;query:()=>Promise
    const captureWall=performance.now()-started;
    const reason=setupStage==='verify_transaction_scope'?'transaction_scope_unverified':setupStage==='load_auto_explain'
     ?'auto_explain_load_unavailable':'capture_setup_unavailable';
-   return{result:original,observation:{query_hash,label,status:'inner_plan_unavailable',reason,capture_wall_ms:captureWall,setup_ms:setupMs,query_wall_ms:queryWallMs,
+   return{result:original,observation:{query_hash,label,query_ordinal,status:'inner_plan_unavailable',reason,capture_wall_ms:captureWall,setup_ms:setupMs,query_wall_ms:queryWallMs,
     cleanup_ms:cleanupMs,setup_cleanup_wall_ms:setupMs+cleanupMs,analyze_overhead_measured:false}};
   }
   setupMs=performance.now()-setupStarted;
@@ -250,7 +259,7 @@ export async function captureInnerPlanQueryV1(args:{client:any;query:()=>Promise
   await rollback();
   if(queryError)throw queryError;
   const captureWall=performance.now()-started;
-  return{result,observation:{query_hash,label,status:plans.length?'captured':'plan_notice_unavailable',plans,plan_notices_seen:planNoticesSeen,plans_dropped:plansDropped,
+  return{result,observation:{query_hash,label,query_ordinal,status:plans.length?'captured':'plan_notice_unavailable',plans,plan_notices_seen:planNoticesSeen,plans_dropped:plansDropped,
     capture_wall_ms:captureWall,setup_ms:setupMs,query_wall_ms:queryWallMs,cleanup_ms:cleanupMs,setup_cleanup_wall_ms:setupMs+cleanupMs,analyze_overhead_measured:false}};
  }finally{
   try{if(savepoint)await rollback();}finally{client.off('notice',onNotice);}
@@ -275,10 +284,11 @@ export function createListeningObserver(){
  let previous=now();const heartbeat=setInterval(()=>{const at=now();events.push({kind:'heartbeat',at_ms:at,gap_ms:at-previous,heap:process.memoryUsage(),resource:process.resourceUsage()});previous=at;},250);
  const gc=new PerformanceObserver(list=>{for(const entry of list.getEntries())events.push({kind:'gc',at_ms:now(),start_ms:entry.startTime-performanceOrigin,end_ms:entry.startTime-performanceOrigin+entry.duration,duration_ms:entry.duration,gc_kind:(entry as any).detail?.kind??null});});gc.observe({entryTypes:['gc']});
  let closing=false;const detach:Array<()=>void>=[];let child:ChildProcess|undefined;const pids=new Set<number>();let samplerStatus='not_started';
- let planRootCount=0;const planCounts=new Map<string,number>(),planObservations:unknown[]=[];
+ let planRootCount=0;const planQueryOrdinals=new Map<string,number>(),planObservations:unknown[]=[];
  const dmlPlanCounts=new Map<string,number>(),dmlPlanObservations:unknown[]=[];
  function pid(value:any){if(Number.isSafeInteger(value?.processID)&&value.processID>0&&!pids.has(value.processID)){pids.add(value.processID);if(child?.connected)child.send({kind:'pids',pids:[...pids]},()=>{});}}
- function query(owner:any){return async(...args:any[])=>{pid(owner);const start=now(),op=scope.getStore()??'unlabeled',hash=queryHash(args[0]);try{
+ function query(owner:any){return async(...args:any[])=>{pid(owner);const start=now(),op=scope.getStore()??'unlabeled',hash=queryHash(args[0]);
+  const label=innerPlanQueryLabel(hash),queryOrdinal=nextInnerPlanQueryOrdinalV1(hash,label!==null&&planRootCount>=1024,planQueryOrdinals);try{
   const dmlSpec=dmlPlanQuerySpec(hash),dmlBatch=dmlSpec?dmlPlanBatchSize(hash,args):null;
   if(dmlSpec&&dmlBatch!==null&&dmlBatch>=DML_PLAN_MIN_BATCH&&(dmlPlanCounts.get(hash!)??0)<1
    &&dmlPlanCaptureEnvironmentAllowed(process.env)&&typeof owner.on==='function'&&typeof owner.off==='function'){
@@ -286,14 +296,13 @@ export function createListeningObserver(){
    const captured=await captureDmlPlanQueryV1({client:owner,query:()=>owner.query(...args),query_hash:hash!,batch_size:dmlBatch,database:'noisia_mfp_ci',role:'postgres',env:process.env});
    if(captured.observation)dmlPlanObservations.push(captured.observation);return captured.result;
   }
-  const label=innerPlanQueryLabel(hash),count=label?(planCounts.get(hash!)??0):0;
-  if(label&&planRootCount>=1024&&count<2&&typeof owner.on==='function'&&typeof owner.off==='function'){
-   planCounts.set(hash!,count+1);
-   const captured=await captureInnerPlanQueryV1({client:owner,query:()=>owner.query(...args),query_hash:hash!,root_count:planRootCount,database:'noisia_mfp_ci',role:'postgres'});
+  if(label&&shouldCaptureInnerPlanOrdinalV1(queryOrdinal)&&typeof owner.on==='function'&&typeof owner.off==='function'){
+   const captured=await captureInnerPlanQueryV1({client:owner,query:()=>owner.query(...args),query_hash:hash!,query_ordinal:queryOrdinal!,root_count:planRootCount,database:'noisia_mfp_ci',role:'postgres'});
    if(captured.observation)planObservations.push(captured.observation);return captured.result;
   }
   return await owner.query(...args);
- }finally{events.push({kind:'query',operation:op,hash,pid:Number.isSafeInteger(owner.processID)?owner.processID:null,start_ms:start,end_ms:now()});}};}
+ }finally{events.push({kind:'query',operation:op,hash,pid:Number.isSafeInteger(owner.processID)?owner.processID:null,
+  ...(queryOrdinal===null?{}:{query_ordinal:queryOrdinal}),start_ms:start,end_ms:now()});}};}
  return{
  wrapDatabase(database:any){database.on?.('acquire',pid);detach.push(()=>database.off?.('acquire',pid));return new Proxy(database,{get(target,key){if(key==='query')return query(target);if(key==='connect')return async()=>{const c=await target.connect();pid(c);return new Proxy(c,{get(t,k){if(k==='query')return query(t);const v=Reflect.get(t,k);return typeof v==='function'?v.bind(t):v;}});};const v=Reflect.get(target,key);return typeof v==='function'?v.bind(target):v;}});},
  wrapStore(store:any){return new Proxy(store,{get(t,k){const value=Reflect.get(t,k);if(typeof k!=='string'||!STORE_OPERATIONS.has(k)||typeof value!=='function')return typeof value==='function'?value.bind(t):value;return async(...args:any[])=>{const operation=k==='calls'&&Array.isArray(args[1]?.call_ids)?'hydrate':k;const start=now();try{return await scope.run(operation,()=>value.apply(t,args));}finally{events.push({kind:'store',operation,start_ms:start,end_ms:now()});}};}});},
