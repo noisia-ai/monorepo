@@ -315,7 +315,8 @@ jobs:
           process.stdout.write('Listening initial recovery: pass=2 fail=0 (other tests intentionally unselected)\n');
           NODE
           fi
-          if [ "$R16_DIAGNOSTIC_MODE" = neutral_only ] && [ "$GITHUB_EVENT_NAME" = workflow_dispatch ] \
+          if { [ "$R16_DIAGNOSTIC_MODE" = neutral_only ] || [ "$R16_DIAGNOSTIC_MODE" = sql_frontier_only ]; } \
+              && [ "$GITHUB_EVENT_NAME" = workflow_dispatch ] \
               && [ "${{ inputs.reserve_shared_smoke }}" = true ]; then
             mkdir -p "$(dirname "$R16_RESERVE_MONEY_TAP")" "$(dirname "$R16_RESERVE_RAW_PAGE_TAP")" \
               "$(dirname "$R16_RESERVE_INPUT_CONTRACTS_TAP")"

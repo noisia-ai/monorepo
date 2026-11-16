@@ -79,6 +79,33 @@ test('resource profile workflow Bash gate allows manual SQL frontier shared smok
  }
 });
 
+test('workflow shared smoke execution condition selects SQL and neutral runs only for manual opt-in',async()=>{
+ const workflowPath=new URL('../../../.github/workflows/r16-listening-small-diagnostic.yml',import.meta.url);
+ const workflow=await readFile(workflowPath,'utf8');
+ const start=workflow.indexOf('          if { [ "$R16_DIAGNOSTIC_MODE" = neutral_only ]');
+ assert.ok(start>=0,'native shared smoke execution condition must exist');
+ const then=workflow.indexOf(' then',start);assert.ok(then>=0,'native shared smoke execution condition must terminate with then');
+ const condition=workflow.slice(start,then+' then'.length);
+ const runnable=condition.replace(/\$\{\{\s*inputs\.reserve_shared_smoke\s*\}\}/u,'$RESERVE_SHARED_SMOKE');
+ assert.notEqual(runnable,condition,'GitHub input must be parameterized for the isolated Bash check');
+ const script=`set -euo pipefail\n${runnable}\n  printf 'smoke_selected\\n'\nfi\n`;
+ const cases:[string,string,boolean,string,boolean][]=[
+  ['SQL manual opt-in selects the PostgreSQL smoke block','sql_frontier_only',true,'workflow_dispatch',true],
+  ['neutral manual opt-in selects the PostgreSQL smoke block','neutral_only',true,'workflow_dispatch',true],
+  ['legacy is excluded from shared smoke','legacy',true,'workflow_dispatch',false],
+  ['SQL without opt-in is excluded','sql_frontier_only',false,'workflow_dispatch',false],
+  ['neutral without opt-in is excluded','neutral_only',false,'workflow_dispatch',false],
+  ['SQL pull request is excluded','sql_frontier_only',true,'pull_request',false],
+  ['neutral pull request is excluded','neutral_only',true,'pull_request',false],
+ ];
+ for(const [label,mode,smoke,event,selected] of cases){
+  const result=spawnSync('/bin/bash',['-euo','pipefail','-c',script],{encoding:'utf8',env:{PATH:process.env.PATH??'/usr/bin:/bin',
+   R16_DIAGNOSTIC_MODE:mode,RESERVE_SHARED_SMOKE:String(smoke),GITHUB_EVENT_NAME:event}});
+  assert.equal(result.status,0,`${label}: ${result.stderr||result.stdout}`);
+  assert.equal(result.stdout.trim()==='smoke_selected',selected,label);
+ }
+});
+
 test('resource profile guard rejects environment and effective tuple drift without allocating the profile budget',async()=>{
  const {getExecution,envFor}=await streamProfileDependencies();const env=envFor('baseline_512m');
  env.NOISIA_JEV_STREAM_MAX_IN_FLIGHT='2048';
