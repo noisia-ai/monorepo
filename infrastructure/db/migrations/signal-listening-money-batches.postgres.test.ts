@@ -22,6 +22,7 @@ import {createSignalListeningDiscoveryAdvanceStoreV1} from '../signal-listening-
 import {activateSignalListeningServingSnapshotV1,lockSignalListeningDiscoveryPolicyWithClientV1,type ListeningDiscoveryRoundV1} from '../signal-listening-discovery-money';
 
 import {anchorListeningStatementOracleParametersV1} from './signal-listening-statement-validator.oracle';
+import {listeningTransitionSetReferencesV1,assertListeningTransitionSetOracleV1} from './signal-listening-transition-set.oracle';
 
 const enabled=process.env.NOISIA_R16_LISTENING_MONEY_BATCHES_PG==='true';
 type NativeFixture={database:Parameters<typeof createSignalListeningStoreV1>[0]['database'];
@@ -217,9 +218,39 @@ test('selected materialization and full join match old validators and atomically
   assert.equal((await f.database.query('SELECT count(*)::int n FROM signal_labeling_calls WHERE run_id=$1',[f.run.id])).rows[0].n,0,'valid siblings roll back with '+defect);
   assert.equal((await f.database.query('SELECT count(*)::int n FROM signal_listening_call_questions WHERE run_id=$1',[f.run.id])).rows[0].n,0,'no question links survive '+defect);
  }
+ const selectors=await listeningTransitionSetReferencesV1();let nativeIds:string[]=[];
  await transaction(f,async c=>{
-  const calls=(await insert(c,f,1000)).rows;assert.equal(calls.length,3);
-  const marked=await c.query("UPDATE signal_labeling_calls SET status='submitting' WHERE id=ANY($1::uuid[]) AND status='reserved' RETURNING id",[calls.map(row=>row.id)]);
+  const calls=(await insert(c,f,1000)).rows;assert.equal(calls.length,3);nativeIds=calls.map(row=>row.id);
+  const persisted=(await c.query('SELECT to_jsonb(call) value FROM signal_labeling_calls call WHERE run_id=$1 ORDER BY id',[f.run.id])).rows.map(r=>r.value as Record<string,unknown>);
+  // Counterfactual transition relations only: no forged call or admission is
+  // written. Actual table records supply the complete named row descriptor.
+  const old=persisted.map(row=>({...row,created_at:'2026-01-01T00:00:00.123456Z'}));
+  const next=old.map(row=>({...row,status:'submitting'}));
+  const valid=await assertListeningTransitionSetOracleV1(c,selectors,f.run.id,next,old);
+  assert.equal(valid.length,3);assert.ok(valid.every(row=>String(row.created_at).includes('.123456')));
+  const oldFirst=old[0]!,nextFirst=next[0]!;
+  const variants:Array<[unknown[],unknown[]]>=[
+   [[],[]],[next,[]],[[],old],
+   [[{...nextFirst,id:randomUUID()},...next.slice(1)],old],
+   [[{...nextFirst,run_id:randomUUID()},...next.slice(1)],old],
+   [[{...nextFirst,id:null},...next.slice(1)],[{...oldFirst,id:null},...old.slice(1)]],
+   [[...next,nextFirst],[...old,oldFirst]],
+   [next.map(row=>({...row,status:'settled'})),old],
+   [next,old.map(row=>({...row,status:'submitted'}))],
+  ];
+  for(const [n,o]of variants)await assertListeningTransitionSetOracleV1(c,selectors,f.run.id,n,o);
+ });
+ const snapshot=async()=>({calls:(await f.database.query('SELECT to_jsonb(call) value FROM signal_labeling_calls call WHERE run_id=$1 ORDER BY id',[f.run.id])).rows,
+  links:(await f.database.query('SELECT to_jsonb(link) value FROM signal_listening_call_questions link WHERE run_id=$1 ORDER BY call_id,question_key',[f.run.id])).rows});
+ const beforeChangedId=await snapshot(),changedId=randomUUID();
+ await assert.rejects(transaction(f,async c=>{
+  await c.query("UPDATE signal_labeling_calls SET id=CASE WHEN id=$2::uuid THEN $3::uuid ELSE id END,status='submitting' WHERE id=ANY($1::uuid[])",
+   [nativeIds.slice(0,2),nativeIds[1],changedId]);
+ }),error=>typeof error==='object'&&error!==null&&'code'in error&&error.code==='P0001'&&'message'in error&&String(error.message)==='listening_call_immutable',
+ 'the existing native BEFORE guard rejects changed ID with a valid sibling, without changing its authority');
+ assert.deepEqual(await snapshot(),beforeChangedId,'the rejected native UPDATE leaves every call and question link unchanged');
+ await transaction(f,async c=>{
+  const marked=await c.query("UPDATE signal_labeling_calls SET status='submitting' WHERE id=ANY($1::uuid[]) AND status='reserved' RETURNING id",[nativeIds]);
   assert.equal(marked.rows.length,3,'the new guard still admits genuine native insert and mark statements');
  });
 }));
