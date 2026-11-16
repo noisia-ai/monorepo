@@ -6,6 +6,8 @@ import {signalListeningBaseTemplateV1,buildSignalListeningJevRequestV1,signalLis
 import {requestSignalListeningV1,createSignalListeningStoreV1} from '../signal-listening-runs';
 import {saveSignalListeningConfigurationV1} from '../signal-listening-configuration';
 import type {LabelingRunV1} from '../signal-labeling-runs';
+import {readSignalLabelingRunExposureV1} from '../signal-labeling-runs';
+import {r16ListeningWorkloadV2} from '../../../scripts/r16/listening-workload';
 import type {LabelingDatabaseV1} from '../signal-mention-facets';
 import {withSharedWireFixtureV1,withSharedWireTxV1,sharedWireProposalsV1,insertSharedWireCallsV1,prepareSharedWireRawV1,type SharedWireFixtureV1} from './signal-listening-statement-shared-wire.fixture';
 import {sharedWireSourcesV1,sharedWireValidationV1,compareSharedWireValidationV1,sharedWireRepresentationKernelV1,sharedWireShaV1} from './signal-listening-statement-shared-wire.oracle';
@@ -81,32 +83,49 @@ test('0330 preserves answer BEFORE attempts including conflict-suppressed bad tu
 
 }));
 
-test('0330 native DML ABBA keeps full guards and fresh transactions and rejects expiry with atomic rollback',{skip:!enabled,timeout:600000},async()=>withSharedWireFixtureV1(async f=>{
- const [old,next]=await sharedWireSourcesV1();assert.ok(old&&next);const fixed=sharedWireProposalsV1(f),observations:Array<{arm:string;wall_ms:number;result_sha256:string}>=[];
- let baseline:string|undefined;
- for(const [arm,source]of [['before',old],['after',next],['after',next],['before',old]] as const){await withSharedWireTxV1(f,async c=>{
-  const before=JSON.stringify(await snapshot(c,f));baseline??=before;assert.equal(before,baseline);await c.query(source);
-  const started=process.hrtime.bigint();const inserted=await insertSharedWireCallsV1(c,f,fixed);assert.equal(inserted.rows.length,3);
-  await c.query("UPDATE signal_labeling_calls SET status='submitting' WHERE id=ANY($1::uuid[])",[fixed.map(r=>r.id)]);
-  await c.query('SET CONSTRAINTS ALL IMMEDIATE');const wall_ms=Number(process.hrtime.bigint()-started)/1e6;
-  const result=(await c.query('SELECT id,status,request_digest,reserved_micro_usd::text FROM signal_labeling_calls WHERE run_id=$1 ORDER BY id',[f.run.id])).rows;assert.equal(result.length,3);assert.ok(result.every(r=>r.status==='submitting'));
-  observations.push({arm,wall_ms,result_sha256:sharedWireShaV1(JSON.stringify(result))});
- });}
- assert.equal(new Set(observations.map(o=>o.result_sha256)).size,1);console.log('# statement shared wire native DML '+JSON.stringify({contract:'r16-statement-shared-wire-dml-pair-v1',arms:observations,committed:false,guard_checks:'native constraints forced immediate before rollback',cpu_claim:false,h1_claim:false,gain_claim:false}));
- // Real deferred COMMIT coverage is separate from the IMMEDIATE comparison
- // above. Original native page-fence insertion/constraint remains active.
- const calls=await f.store.reserve(f.run,fixed);
- for(const source of [old,next]){
-  await f.database.query("UPDATE signal_labeling_runs SET lease_until=clock_timestamp()+interval '1500 milliseconds' WHERE id=$1",[f.run.id]);let delayed=false;
-  const database={query:f.database.query.bind(f.database),connect:async()=>{const c=await f.database.connect();return new Proxy(c,{get(target,key){if(key==='query')return async(sql:string,values?:unknown[])=>{
-   if(sql==='COMMIT'){delayed=true;await new Promise(resolve=>setTimeout(resolve,1700));}
-   const result=await target.query(sql,values);if(sql==='BEGIN')await target.query(source);return result;
-  };const value=Reflect.get(target,key);return typeof value==='function'?value.bind(target):value;}});}} as LabelingDatabaseV1;
-  const store=createSignalListeningStoreV1({database,rawPages:f.rawPages,storeRaw:async()=>{throw Error('no provider');}});
-  await assert.rejects(store.markSubmitting(f.run,calls),/labeling_lease_lost/);assert.equal(delayed,true,'the real deferred constraint rejects actual COMMIT, not an earlier fence');
-  const c=await f.database.connect();try{const state=await snapshot(c,f);assert.ok(state.calls.every((row:{status:string})=>row.status==='reserved'));assert.equal(state.answers.length,0);
-   assert.equal((await c.query('SELECT count(*)::int n FROM signal_labeling_page_mutation_fences WHERE run_id=$1',[f.run.id])).rows[0].n,0);
-  }finally{c.release();}
- }
-
-}));
+test('0330 native DML ABBA keeps full guards and fresh transactions and rejects expiry with atomic rollback',{skip:!enabled,timeout:600000},async()=>{
+ const [old,next]=await sharedWireSourcesV1();assert.ok(old&&next);
+ // Native 1002-root clone, never the global benchmark Pool. Complete real base
+ // first, then measure1000 consumer calls with actual nonempty scope_basis.
+ await withSharedWireFixtureV1(async fixture=>{
+  assert.equal(fixture.inputs.length,1002);const f={...fixture,inputs:fixture.inputs.slice(0,1000)},fixed=sharedWireProposalsV1(f,500);
+  const observations:Array<{arm:string;wall_ms:number;result_sha256:string;result_count:number}>=[];let baseline:string|undefined;
+  await withSharedWireTxV1(f,async c=>{
+   assert.equal(await readSignalLabelingRunExposureV1(c,f.run.id),'6012','1002 native base calls settled6 each; no reservation is hidden');
+   const caps=(await c.query(`SELECT r.cap_micro_usd::text run_cap,a.execution_cap_micro_usd::text admission_cap,pa.max_execution_micro_usd::text action_cap
+    FROM signal_labeling_runs r JOIN signal_processing_admissions a ON a.id=r.processing_admission_id
+    JOIN signal_processing_policy_actions pa ON pa.policy_version_id=a.policy_version_id AND pa.action=a.action WHERE r.id=$1`,[f.run.id])).rows[0];
+   for(const cap of [caps.run_cap,caps.admission_cap,caps.action_cap])assert.ok(cap===null||BigInt(cap)>=506012n,'500000consumer reservation+6012existing cost fits the unchanged native caps');
+   const result=await compareSharedWireValidationV1(c,old,next,await params(c,f,fixed));assert.deepEqual(result.flags,{invalid_questions:false,invalid_request:false,invalid_prior:false});
+   assert.equal(result.canonical.length,1000);assert.ok(f.inputs.every(i=>Object.keys(i.scope_basis).length===2));
+  },true);
+  for(const [arm,source]of [['before',old],['after',next],['after',next],['before',old]] as const){await withSharedWireTxV1(f,async c=>{
+   const before=JSON.stringify(await snapshot(c,f));baseline??=before;assert.equal(before,baseline);await c.query(source);
+   const started=process.hrtime.bigint();const inserted=await insertSharedWireCallsV1(c,f,fixed);assert.equal(inserted.rows.length,1000);
+   await c.query("UPDATE signal_labeling_calls SET status='submitting' WHERE id=ANY($1::uuid[])",[fixed.map(r=>r.id)]);
+   await c.query('SET CONSTRAINTS ALL IMMEDIATE');const wall_ms=Number(process.hrtime.bigint()-started)/1e6;
+   const result=(await c.query('SELECT id,status,request_digest,reserved_micro_usd::text FROM signal_labeling_calls WHERE id=ANY($1::uuid[]) ORDER BY id',[fixed.map(row=>row.id)])).rows;
+   assert.equal(result.length,1000);assert.ok(result.every(row=>row.status==='submitting'));assert.equal(await readSignalLabelingRunExposureV1(c,f.run.id),'506012');
+   observations.push({arm,wall_ms,result_count:result.length,result_sha256:sharedWireShaV1(JSON.stringify(result))});
+  });}
+  assert.equal(new Set(observations.map(o=>o.result_sha256)).size,1);
+  console.log('# statement shared wire native DML '+JSON.stringify({contract:'r16-statement-shared-wire-dml-pair-v2',population:1002,calls_per_arm:1000,reservation_per_call_micro_usd:500,existing_base_micro_usd:'6012',scope:'genuine consumer2 with native nonempty scope_basis',baseline_sha256:sharedWireShaV1(baseline!),arms:observations,committed:false,guard_checks:'native constraints forced immediate before rollback; not deferredCOMMIT timing',fresh_transactions:true,cpu_claim:false,h1_claim:false,gain_claim:false}));
+ },r16ListeningWorkloadV2('defined_consumer_second_pass').configuration,{mode:'scaled_recovery',consumer_category:true});
+ // Separate small3-root fixture: never allow the large SQL to consume the
+ // lease before reaching the deliberately delayed native COMMIT.
+ await withSharedWireFixtureV1(async f=>{
+  assert.equal(f.inputs.length,3);const calls=await f.store.reserve(f.run,sharedWireProposalsV1(f));
+  for(const source of [old,next]){
+   await f.database.query("UPDATE signal_labeling_runs SET lease_until=clock_timestamp()+interval '1500 milliseconds' WHERE id=$1",[f.run.id]);let delayed=false;
+   const database={query:f.database.query.bind(f.database),connect:async()=>{const c=await f.database.connect();return new Proxy(c,{get(target,key){if(key==='query')return async(sql:string,values?:unknown[])=>{
+    if(sql==='COMMIT'){delayed=true;await new Promise(resolve=>setTimeout(resolve,1700));}
+    const result=await target.query(sql,values);if(sql==='BEGIN')await target.query(source);return result;
+   };const value=Reflect.get(target,key);return typeof value==='function'?value.bind(target):value;}});}} as LabelingDatabaseV1;
+   const store=createSignalListeningStoreV1({database,rawPages:f.rawPages,storeRaw:async()=>{throw Error('no provider');}});
+   await assert.rejects(store.markSubmitting(f.run,calls),/labeling_lease_lost/);assert.equal(delayed,true,'real deferred constraint rejects actualCOMMIT, not an earlier fence');
+   const c=await f.database.connect();try{const state=await snapshot(c,f);assert.ok(state.calls.every((row:{status:string})=>row.status==='reserved'));assert.equal(state.answers.length,0);
+    assert.equal((await c.query('SELECT count(*)::int n FROM signal_labeling_page_mutation_fences WHERE run_id=$1',[f.run.id])).rows[0].n,0);
+   }finally{c.release();}
+  }
+ });
+});

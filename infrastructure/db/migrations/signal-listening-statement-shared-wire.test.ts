@@ -21,3 +21,18 @@ test('wire identity distinguishes exact UTF8 numeric scale, Unicode normalizatio
  const unique=new Set([identity('q','1.23'),identity('q','1.2300'),identity('r','{}'),identity('r','{}')]);assert.equal(unique.size,3);
  assert.equal([...unique].filter(v=>v.startsWith('q\0')).length,2,'ambiguous key must have no reusable fragment');
 });
+
+test('scaled DML oracle uses existing isolated recovery route and genuine applied-base consumer scope',async()=>{
+ const {readFile}=await import('node:fs/promises');
+ const fixture=await readFile(new URL('./signal-listening-statement-shared-wire.fixture.ts',import.meta.url),'utf8');
+ const pg=await readFile(new URL('./signal-listening-statement-shared-wire.postgres.test.ts',import.meta.url),'utf8');
+ assert.ok(fixture.includes("mode=options.mode==='scaled_recovery'?'product-recovery':'product'"));
+ assert.ok(fixture.includes('runMassLabelingAcceptanceFixtureV1(mode,{seed_published_at:'));
+ assert.ok(!/benchmark\s*:|DATABASE_URL\s*=|assertR16LocalPostgresPool/.test(fixture),'no global benchmark, URL override or false pool accreditation');
+ assert.ok(fixture.includes('prepareSharedWireRawV1(fixture,500);await store.apply'));
+ assert.ok(fixture.includes('fixture.inputs=await store.inputs(run)'));
+ assert.ok(pg.includes("{mode:'scaled_recovery',consumer_category:true}"));
+ assert.ok(pg.includes('fixture.inputs.slice(0,1000)'));
+ assert.ok(pg.includes("readSignalLabelingRunExposureV1(c,f.run.id),'506012'"));
+ assert.ok(pg.includes("assert.equal(delayed,true,'real deferred constraint rejects actualCOMMIT"));
+});
