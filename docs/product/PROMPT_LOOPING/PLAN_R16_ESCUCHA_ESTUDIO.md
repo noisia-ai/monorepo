@@ -12,6 +12,13 @@ No hay aprobaciones humanas intermedias en los procesos de análisis: Sonnet 4.6
 
 ## Progreso
 
+- Opt-in integrado como 26dfc461/a17335f9 tras revisión sin P0/P1/P2: sólo una opción de adaptador y diez casos nativos en el archivo financiero existente, sin SQL nuevo. Las pruebas de solapamiento y fallback verifican bloqueos entre PIDs reales antes de liberar el holder. Tipado/lint 11/11 y seis focales puras pasan; las diez nativas aún deben ejecutarse. El diagnóstico exige su TAP separado con diez seleccionadas aprobadas antes de medir, además del oracle financiero y los tres casos del actor.
+
+- b20c2456 cierra CI/PostgreSQL completo verde: Study 23/23, política 11/11, equivalencia 3/3, fuente 3/3 y cero omisiones; migrated-schema ya acredita actor 3/3, MFP 104/104 y Escucha 95/95. Esto acredita el snapshot compilado compartido con Study, no la capacidad H1 ni las correcciones posteriores. La corrida 0325 y el nuevo opt-in deben conservar su propia aceptación.
+
+- Mini con planes 43804696340 sobre el mismo producto 0325: 4,096 raíces/8,192 solicitudes, 43.670 s, sin aceptación H1. Catorce capturas confirman answers_pkey 6,886 filas × una pasada y sent 10,838 × una, frente a los rescaneos amplios anteriores. HTTP máximo 589.496 ms y event loop 696 ms: también incumple latencia observada. El paso semántico 3/3 de 0325 ya está verde en 43804353558; el job completo continúa.
+- Se identificó una omisión independiente: el adaptador de Escucha no activaba parallel_native_pages y apply mantenía FOR UPDATE sobre el run, con esperas tuple/transactionid observadas. Se prepara sólo el opt-in existente con rawPages, manteniendo el fallback exclusivo, locks por llamada, relectura de replay y fence diferido 0308. Diez regresiones nativas específicas de Escucha deben pasar antes del siguiente diagnóstico; aún no se declara corregido nativamente.
+
 - CI focal 43804135527 verde sobre runtime 8f1db5aa: actor 3/3; input bounds, lazy equivalence (dos casos) y segunda forma 4/4; híbrido 1/1; escala 4,096 raíces 1/1, todos sin omisiones. Mini 43804132374 conserva 4,096 raíces/8,192 solicitudes y baja clasificación/serving a 46.272 s (unas 88.5 raíces/s), sin aceptar H1. HTTP observado 124.50–479.86 ms. Tres casos semánticos y suite completa de esa fuente se ejecutan en 43804353558. Guía QA preparada en R16_UAT_QA_GUIDE.md, aún sin verificación visual en UAT.
 
 - 0325 integrada como 2e98ac85/cf76557a/8f1db5aa tras revisión independiente sin P0/P1/P2. Consume respuestas base y reservas como conjuntos locales a la sentencia, con las mismas identidades, permisos, catorce campos y precedencia humana. El oráculo compara metadata e hidratación acotada y completa contra las consultas anteriores; la ruta completa tiene snapshot RR de sólo lectura y contador propio. Tipado 11/11 verde. Faltan seis casos nativos y mini remoto; las 31 migraciones pendientes no están aplicadas en UAT.
@@ -296,6 +303,10 @@ Recibo: separar Voyage/JEV por raíz de Claude por número de grupos y vueltas; 
 
 ## Sorpresas y descubrimientos
 
+- No finalizar durante 150 ms no prueba contención: puede reflejar scheduling o espera del pool. Las tres regresiones nuevas que necesitan probar bloqueo ahora identifican los backends holder/waiter y exigen pg_blocking_pids antes de liberar, con cleanup en finally. No se confunde el coste temporal del test con evidencia del protocolo.
+
+- La mejora del lector no elimina el coste de las escrituras. La captura real de mark muestra tres agregaciones separadas sobre la misma unión de transition tables, cada una con 1,024 × 1,024 visitas; no son el conjunto expected. Se conserva como hallazgo posterior, sin modificar SQL todavía. El perfil de beforeSubmit conserva validaciones por llamada, pero su coste inclusivo observado es sólo 556 ms en todo el proceso y no explica por sí solo el pico HTTP.
+
 - Las consultas nuevas de 0325 cambian sus hashes. El diagnóstico anterior no capturó planes internos del nuevo lector, porque su whitelist sólo reconocía las consultas anteriores. Los tiempos y censos observados siguen siendo válidos, pero no prueban que desaparezcan los loops o temporales. Se conservan los hashes anteriores y se añaden únicamente los dos hashes nuevos observados para medir ese punto antes de otro cambio productivo.
 
 - El helper de pruebas interceptaba las consultas con conexión explícita, pero la hidratación completa utilizaba pool.query y escapaba de la comparación. Se corrigió sólo el helper: conexión propia para su SELECT marcado, funciones temporales instaladas antes de BEGIN RR READ ONLY y comparación exacta de filas y microsegundos. Los contadores independientes impiden que las consultas acotadas acrediten por error esa cobertura.
@@ -430,6 +441,8 @@ Recibo: separar Voyage/JEV por raíz de Claude por número de grupos y vueltas; 
 - El promedio del piloto completo incluye una etapa editorial que no escala por raíz. Multiplicarlo linealmente daba USD 205.81/millón; mantener explícitamente los grupos y una vuelta de referencia produce USD 114.035250. Ambos cálculos parten del mismo recibo, cuyo uso histórico permanece USD 17.280463.
 
 ## Registro de decisiones
+
+- 2026-11-16 04:43 UTC: priorizar la conexión del protocolo existente de páginas paralelas en Escucha porque el bloqueo exclusivo del run está demostrado. No cambiar la autoridad financiera ni expected; exigir pruebas de progreso disjunto, replay, pérdida de lease, COMMIT retrasado y fallback sin Storage por página. Mantener las 31 migraciones actuales, sin otra migración por esta corrección.
 
 - 2026-11-16: probar 0325 en el laboratorio remoto existente y conservar la corrida completa de Study sobre b20c2456 hasta resultado terminal. El diagnóstico usa exactamente el runtime integrado más los cuatro instrumentos revisados; no sustituye las seis pruebas nativas ni el ensayo completo H1 sobre la fuente final. Mantener Docker cerrado y no ejecutar PostgreSQL local.
 
