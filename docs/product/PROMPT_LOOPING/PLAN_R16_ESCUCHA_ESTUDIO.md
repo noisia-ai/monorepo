@@ -12,6 +12,10 @@ No hay aprobaciones humanas intermedias en los procesos de análisis: Sonnet 4.6
 
 ## Progreso
 
+- 0327 y recuperación inicial verificados en 43810977852: candidato verde con diecinueve oráculos sin omisiones, incluido UPDATE real y los dos escenarios iniciales. La nueva unión de transiciones procesa 1,024 filas en una pasada (4.478 ms); desaparecen los tres recorridos anteriores. Smoke 43810981475 completo verde. El run global queda rojo por exportación CPU del baseline, posterior al runner; no se presenta como CI verde. Candidato: 42.229 s/4,096 raíces, HTTP máximo 534.125 ms, sin H1. El baseline también subió de 80.402 a 119.252 s; el reloj entre corridas no permite atribuir el cambio total sólo a 0327.
+- PostgreSQL numérico de 74425e15 termina Study 23/23, política 11/11 y ambas suites de tres casos, cero omisiones; queda únicamente el fallo de fixture inicial ya corregido y repetido nativamente. Se publica el checkpoint funcional para repetir CI completo mientras se mide capacidad en una rama separada.
+- Las otras dos uniones 1,024 × 1,024 quedan identificadas por hash: targets de Listening y targets del guard scoped histórico 0278, no la consulta del padre. Se prepara 0328 con barreras escalares equivalentes, sin modificar sus controles de dinero. La atribución del coste restante de digest requiere medir la función real signal_labeling_json_v1 durante el DML original, mediante estadísticas de la misma transacción, sin reejecutarlo.
+
 - 0327 integrada localmente como ef56b355 tras revisión sin P0/P1/P2: cambia sólo batch_sql del UPDATE por parejas materializadas, cast al tipo compuesto nominal y filtro posterior de ambos IDs. El resto del trigger queda literal, incluido expected, orden de errores y locks. El focal financiero existente añade comparación contra 0323 de tipos/columnas/microsegundos, nueve relaciones contrafactuales y UPDATE nativo válido tras rechazo atómico de identidad alterada. Hay 33 migraciones pendientes; confirmación SQL nativa y rendimiento todavía pendientes.
 - CI completo de 0325 (43804353558) termina todo verde, incluido Study 23/23. En 74425e15, migrated-schema pasa MFP 104/104 y Escucha 104/105: falla sólo initial unknown con RAW por el fixture que omitía finish/refresh antes de nuevas llamadas. El runtime sí ejecuta esa frontera y conserva bloqueados los unknown sin bytes. 9297cd7a corrige sólo fixture/test tras revisión sin P0/P1/P2, sin tocar runtime, 0308 o lease. Tipado/lint 11/11, diez focales de integración y treinta del propietario pasan; los dos casos nativos se añaden como gate antes del mini.
 
@@ -315,6 +319,8 @@ Recibo: separar Voyage/JEV por raíz de Claude por número de grupos y vueltas; 
 
 ## Sorpresas y descubrimientos
 
+- El guard scoped histórico sigue activo para UPDATE aunque una Escucha admitida quede fuera de su resultado. Su selector paga el join de transiciones antes de filtrar admissions; no debe confundirse con la comprobación del padre. El próximo cambio preserva también owners mixtos y la rama scoped auténtica, cuya aceptación completa exige las pruebas MFP.
+
 - Activar el fence diferido expuso un paso omitido del fixture de recuperación inicial: aplicaba RAW/settlement y reservaba otras raíces manteniendo error_code=labeling_outcome_unknown. La ruta productiva hace finish y refresh después de drenar. El fixture reproduce ahora esa frontera pública; no borra el error mediante SQL ni cambia la protección 0308. El caso sin bytes conserva incertidumbre y reserva y rechaza otra admisión.
 
 - Corregir las dos lecturas base no estabilizó el plan del tercer join al caché raw. La nueva captura identifica esa arista final de forma independiente; el empeoramiento total no se atribuye al paralelismo sólo por comparar relojes. El fallo posterior del recolector CPU tampoco invalida los TAP y planes ya persistidos, pero impide presentar esa ejecución como workflow verde o inferir hotspots de CPU.
@@ -457,6 +463,8 @@ Recibo: separar Voyage/JEV por raíz de Claude por número de grupos y vueltas; 
 - El promedio del piloto completo incluye una etapa editorial que no escala por raíz. Multiplicarlo linealmente daba USD 205.81/millón; mantener explícitamente los grupos y una vuelta de referencia produce USD 114.035250. Ambos cálculos parten del mismo recibo, cuyo uso histórico permanece USD 17.280463.
 
 ## Registro de decisiones
+
+- 2026-11-16: publicar el checkpoint funcional 0327/recuperación sólo después de terminar el Study completo anterior y repetir los diecinueve casos focales. Mantener cancelado el H1 automático hasta una corrección viable, sin reutilizar un diagnóstico como aceptación. Medir funciones reales con before/after del mismo backend y transacción; la ausencia de una función SQL inlineada se registra desconocida, no cero, y no se atribuye ese total sólo a expected.
 
 - 2026-11-16: aplicar la equivalencia universal FULL materializado + descarte posterior de ambos lados sin pareja al selector UPDATE, manteniendo el tipo nominal completo y todos los demás controles. Confirmar el cast ENR con PostgreSQL real y ampliar el focal existente, sin inventar igualdad de IDs ni cambiar expected. Corregir aparte el fixture de recuperación y exigir sus dos escenarios antes de medir; no relajar el guard que detectó su secuencia incompleta.
 
@@ -615,7 +623,7 @@ Recibo: separar Voyage/JEV por raíz de Claude por número de grupos y vueltas; 
 
 ## Resultado y retrospectiva
 
-Estado vigente, 16 nov.: 0326 conserva el censo completo y pasa sus oráculos y escala remotos, con 25.078 s para 4,096 raíces; H1 sigue sin cumplir 1,000/s. Se integran localmente 0327 y la corrección de fixture, revisadas y con tipado/lint verdes, pero necesitan nativas nuevas. El CI completo previo de 0325 está verde; 744 necesita repetir el único caso fallido tras el arreglo, además de terminar Study. No hay aceptación ni ejecución pagada de R16, despliegue o migraciones reales en UAT. El paquete real, la comparación privada y el QA visual siguen pendientes. Los párrafos siguientes conservan resultados históricos.
+Estado vigente, 16 nov.: 0327 y la corrección de fixture pasan diecinueve oráculos y el smoke remoto; el censo queda completo, pero H1 sigue sin cumplir 1,000/s ni latencia en la última corrida. El CI completo previo de 0325 está verde y Study de 744 pasó 23/23; la fuente corregida debe repetir todo CI. Se investigan dos uniones de transiciones residuales sin cambiar permisos o presupuesto. No hay aceptación ni ejecución pagada de R16, despliegue o migraciones reales en UAT. El paquete real, la comparación privada y el QA visual siguen pendientes. Los párrafos siguientes conservan resultados históricos.
 
 Corte vigente 01:02 UTC: fuente local a27af513 con 0323 y helper tipado; publicada 0d392fca. General/runtime/escala verdes y Study 23/23 en 0d, pero PostgreSQL completo falla sólo en el oracle42P08 ya corregido localmente. El focal nativo y la atribución interna del guard están en curso. H1 sigue sin aceptar; hay 29 migraciones pendientes y ninguna acción R16 en UAT. Los cortes siguientes son históricos.
 
