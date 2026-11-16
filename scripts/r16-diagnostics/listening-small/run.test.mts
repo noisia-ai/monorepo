@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
 import {spawnSync} from 'node:child_process';
 import {EventEmitter} from 'node:events';
-import {mkdtemp,readFile,rm,writeFile} from 'node:fs/promises';
+import {chmod,mkdir,mkdtemp,readFile,rm,writeFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {pathToFileURL} from 'node:url';
@@ -95,7 +95,8 @@ test('resource profile workflow Bash gate allows manual SQL frontier shared smok
   encoding:'utf8',env:{PATH:process.env.PATH??'/usr/bin:/bin',MODE:mode,RESOURCE_PROFILE:profile,
    RESERVE_SHARED_SMOKE:String(smoke),EVENT_NAME:event,TARGET_REF:targetRef,
    RAW_ACCEPTANCE_SELECTED_PASS:selectedPass,RAW_ACCEPTANCE_TARGET_SHA:acceptanceSha,CAPTURE_PROJECTION_PLAN:String(capture),
-   PROJECTION_LINEAR_ORACLE:String(projectionLinear),LINEAR_ACCEPTANCE_SELECTED_PASS:linearPass,LINEAR_ACCEPTANCE_TARGET_SHA:linearSha}});
+   PROJECTION_LINEAR_ORACLE:String(projectionLinear),LINEAR_ACCEPTANCE_SELECTED_PASS:linearPass,LINEAR_ACCEPTANCE_TARGET_SHA:linearSha,
+   STATEMENT_SHARED_WIRE_ORACLE:'false',STATEMENT_SHARED_WIRE_SELECTED_PASS:'0',STATEMENT_SHARED_WIRE_TARGET_SHA:'',TARGET_ROOT:'/nonexistent/r16-shared-wire-target'}});
  const cases:[string,string,string,boolean,string,string,string,string,boolean,boolean][]=[
   ['SQL frontier bounded profile with exact RAW acceptance evidence','sql_frontier_only','bounded_2g',true,'workflow_dispatch',sha,'6',sha,true,false],
   ['neutral bounded profile with exact RAW acceptance evidence','neutral_only','bounded_2g',true,'workflow_dispatch',sha,'6',sha,true,false],
@@ -132,6 +133,184 @@ test('resource profile workflow Bash gate allows manual SQL frontier shared smok
   const result=run(mode,'baseline_512m',smoke,event,targetRef,rawPass,rawSha,false,true,linearPass,linearSha);
   assert.equal(result.status,expectedPass?0:1,`${label}: ${result.stderr||result.stdout}`);
  }
+});
+
+test('0330 source and statement shared-wire evidence are enforced by the actual workflow Bash gate',async()=>{
+ const workflowPath=new URL('../../../.github/workflows/r16-listening-small-diagnostic.yml',import.meta.url);
+ const workflow=await readFile(workflowPath,'utf8');
+ assert.match(workflow,/statement_shared_wire_oracle:\r?\n\s+type: boolean\r?\n\s+default: false/u);
+ const stepStart=workflow.indexOf('      - name: Validate resource profile selection');assert.ok(stepStart>=0);
+ const nextStep=workflow.indexOf('      - name: ',stepStart+'      - name: Validate resource profile selection'.length);
+ const step=workflow.slice(stepStart,nextStep<0?undefined:nextStep).split(/\r?\n/u);
+ const runLine=step.findIndex(line=>line==='        run: |');assert.ok(runLine>=0);
+ const body:string[]=[];
+ for(const line of step.slice(runLine+1)){
+  if(line===''){body.push('');continue;}
+  if(!line.startsWith('          '))break;
+  body.push(line.slice(10));
+ }
+ const script=body.join('\n').trimEnd();
+ assert.ok(script.includes('0330 source requires five statement shared-wire passes plus RAW and projection gates on the exact target SHA'));
+ for(const file of ['0330_signal_listening_statement_shared_wire.sql','signal-listening-statement-shared-wire.oracle.ts',
+  'signal-listening-statement-shared-wire.fixture.ts','signal-listening-statement-shared-wire.postgres.test.ts',
+  'signal-listening-statement-shared-wire.test.ts'])assert.ok(script.includes(`$TARGET_ROOT/infrastructure/db/migrations/${file}`),`workflow guard requires ${file}`);
+ assert.ok(script.includes('[ "$statement_source_count" -ne "${#statement_sources[@]}" ]'),'the real Bash guard fails closed when any source file is absent');
+ const sha='a'.repeat(40),dir=await mkdtemp(join(tmpdir(),'r16-shared-wire-gate-'));
+ const target=join(dir,'target'),migrationDir=join(target,'infrastructure/db/migrations');
+ const sourceFiles=['0330_signal_listening_statement_shared_wire.sql','signal-listening-statement-shared-wire.oracle.ts',
+  'signal-listening-statement-shared-wire.fixture.ts','signal-listening-statement-shared-wire.postgres.test.ts',
+  'signal-listening-statement-shared-wire.test.ts'];
+ await mkdir(migrationDir,{recursive:true});
+ for(const file of sourceFiles)await writeFile(join(migrationDir,file),file.endsWith('.postgres.test.ts')?"test('0330 native suite source fixture');\n":"// synthetic presence-only source fixture\n");
+ const base={PATH:process.env.PATH??'/usr/bin:/bin',MODE:'neutral_only',RESOURCE_PROFILE:'bounded_2g',RESERVE_SHARED_SMOKE:'true',
+  CAPTURE_PROJECTION_PLAN:'false',PROJECTION_LINEAR_ORACLE:'true',STATEMENT_SHARED_WIRE_ORACLE:'true',EVENT_NAME:'workflow_dispatch',
+  TARGET_REF:sha,TARGET_ROOT:target,RAW_ACCEPTANCE_SELECTED_PASS:'6',RAW_ACCEPTANCE_TARGET_SHA:sha,
+  LINEAR_ACCEPTANCE_SELECTED_PASS:'3',LINEAR_ACCEPTANCE_TARGET_SHA:sha,STATEMENT_SHARED_WIRE_SELECTED_PASS:'5',STATEMENT_SHARED_WIRE_TARGET_SHA:sha};
+ const run=(env:Record<string,string>)=>spawnSync('/bin/bash',['-euo','pipefail','-c',script],{encoding:'utf8',env:{...base,...env}});
+ try{
+  const accepted=run({});assert.equal(accepted.status,0,accepted.stderr||accepted.stdout);
+  for(const [label,env] of [
+   ['new source cannot omit the dedicated oracle',{STATEMENT_SHARED_WIRE_ORACLE:'false'}],
+   ['legacy mode cannot claim the opt-in',{MODE:'legacy'}],
+   ['pull requests cannot request this manual oracle',{EVENT_NAME:'pull_request'}],
+   ['missing selected case evidence fails closed',{STATEMENT_SHARED_WIRE_SELECTED_PASS:'4'}],
+   ['a different target SHA fails closed',{STATEMENT_SHARED_WIRE_TARGET_SHA:'b'.repeat(40)}],
+   ['missing exact target SHA fails closed',{TARGET_REF:''}],
+   ['missing linear evidence fails closed',{LINEAR_ACCEPTANCE_SELECTED_PASS:'2'}],
+   ['missing RAW evidence fails closed',{RAW_ACCEPTANCE_SELECTED_PASS:'5'}],
+   ['malformed boolean fails closed',{STATEMENT_SHARED_WIRE_ORACLE:'yes'}],
+  ] as const){const result=run(env);assert.notEqual(result.status,0,`${label}: ${result.stderr||result.stdout}`);}
+  for(const file of sourceFiles)await rm(join(migrationDir,file),{force:true});
+  assert.notEqual(run({}).status,0,'an explicit opt-in fails if the target source lacks the 0330 oracle file');
+  await writeFile(join(migrationDir,sourceFiles[0]!),"-- synthetic SQL source\n");
+  const partial=run({STATEMENT_SHARED_WIRE_ORACLE:'false'});assert.notEqual(partial.status,0,'an 0330 SQL-only target cannot no-op');
+  await rm(join(migrationDir,sourceFiles[0]!),{force:true});
+  const oldTarget=run({MODE:'legacy',RESOURCE_PROFILE:'baseline_512m',RESERVE_SHARED_SMOKE:'false',PROJECTION_LINEAR_ORACLE:'false',
+   STATEMENT_SHARED_WIRE_ORACLE:'false',EVENT_NAME:'pull_request',TARGET_REF:'',RAW_ACCEPTANCE_SELECTED_PASS:'0',RAW_ACCEPTANCE_TARGET_SHA:'',
+   LINEAR_ACCEPTANCE_SELECTED_PASS:'0',LINEAR_ACCEPTANCE_TARGET_SHA:'',STATEMENT_SHARED_WIRE_SELECTED_PASS:'0',STATEMENT_SHARED_WIRE_TARGET_SHA:''});
+  assert.equal(oldTarget.status,0,`pre-0330 legacy baseline remains unchanged: ${oldTarget.stderr||oldTarget.stdout}`);
+ }finally{await rm(dir,{recursive:true,force:true});}
+});
+
+test('statement shared-wire probe and MFP jobs gate five exact cases on isolated labs and sealed source',async()=>{
+ const probePath=new URL('../../../.github/workflows/r16-listening-small-diagnostic.yml',import.meta.url);
+ const mfpPath=new URL('../../../.github/workflows/mfp-postgres.yml',import.meta.url);
+ const [probe,mfp]=await Promise.all([readFile(probePath,'utf8'),readFile(mfpPath,'utf8')]);
+ const jobStart=probe.indexOf('  statement-shared-wire-acceptance:');assert.ok(jobStart>=0);
+ const mainStart=probe.indexOf('  listening-small:',jobStart);assert.ok(mainStart>jobStart);
+ const job=probe.slice(jobStart,mainStart);
+ assert.ok(job.includes("if: ${{ always() && inputs.statement_shared_wire_oracle == true }}"));
+ assert.ok(job.includes('needs: [raw-acceptance, projection-linear-acceptance]'));
+ assert.ok(job.includes('RAW_ACCEPTANCE_SELECTED_PASS')&&job.includes('LINEAR_ACCEPTANCE_SELECTED_PASS'));
+ assert.ok(job.includes('source_sha=$(git rev-parse HEAD)')&&job.includes('test "$source_sha" = "$TARGET_REF"'));
+ assert.ok(job.includes('test "$(git rev-parse HEAD)" = "$R16_STATEMENT_SHARED_WIRE_SOURCE_SHA"'));
+ assert.ok(job.includes("NOISIA_R16_STATEMENT_SHARED_WIRE_PG: 'true'")&&job.includes('R16_STATEMENT_SHARED_WIRE_LAB_OWNED'));
+ assert.ok(probe.includes('statement-shared-wire-acceptance.result == \'success\''),'main job must wait for selected evidence when the input is true');
+ assert.ok(probe.includes('STATEMENT_SHARED_WIRE_SELECTED_PASS: ${{ needs.statement-shared-wire-acceptance.outputs.selected_pass || \'0\' }}'));
+ const expected=[
+  '0330 native same-snapshot validators preserve32shapes256keys UTF8 precision and mixed-wire fallback',
+  '0330 native reserve Mark bad-mixed rollback and deferred pre-owner forged hash stay enforced',
+  '0330 native real prior unknown is true and target ownership never becomes a cached authority',
+  '0330 preserves answer BEFORE attempts including conflict-suppressed bad tuples and native source bytes',
+  '0330 native DML ABBA keeps full guards and fresh transactions and rejects expiry with atomic rollback',
+ ];
+ const selectorMatch=job.match(/--test-name-pattern='([^']+)'[\s\\\n]*--import tsx infrastructure\/db\/migrations\/signal-listening-statement-shared-wire\.postgres\.test\.ts/u);
+ assert.ok(selectorMatch,'probe must run the native statement shared-wire file with a focused selector');
+ const selector=new RegExp(selectorMatch[1]!);
+ for(const title of expected)assert.equal(selector.test(title),true,`selector includes exact title: ${title}`);
+ assert.equal(selector.test('0330 unrelated control'),false,'selector rejects unlisted native cases');
+ const gateStart=job.indexOf('node - "$R16_STATEMENT_SHARED_WIRE_TAP" "$test_status"');assert.ok(gateStart>=0);
+ const heredocStart=job.indexOf("<<'NODE'\n",gateStart);assert.ok(heredocStart>=0);
+ const bodyStart=heredocStart+"<<'NODE'\n".length,bodyEnd=job.indexOf('\n          NODE',bodyStart);assert.ok(bodyEnd>bodyStart);
+ const gate=job.slice(bodyStart,bodyEnd).split(/\r?\n/u).map(line=>line.startsWith('          ')?line.slice(10):line).join('\n');
+ const dir=await mkdtemp(join(tmpdir(),'r16-shared-wire-tap-')),tapPath=join(dir,'tap');
+ const execute=async(tap:string,status=0)=>{await writeFile(tapPath,tap);return spawnSync(process.execPath,['-',tapPath,String(status)],{encoding:'utf8',input:gate});};
+ try{
+  const passing=[...expected.map((title,index)=>`ok ${index+1} - ${title}`),'1..5','# tests 5','# pass 5','# fail 0','# cancelled 0','# skipped 0','# todo 0'].join('\n');
+  const pass=await execute(passing);assert.equal(pass.status,0,pass.stderr||pass.stdout);
+  const skipped=passing.replace(`ok 1 - ${expected[0]}`,`ok 1 - ${expected[0]} # SKIP unavailable`).replace('# pass 5','# pass 4').replace('# skipped 0','# skipped 1');
+  assert.notEqual((await execute(skipped)).status,0,'selected skip is rejected');
+  assert.notEqual((await execute(passing,1)).status,0,'nonzero test process status is rejected');
+ }finally{await rm(dir,{recursive:true,force:true});}
+ const mfpStart=mfp.indexOf('  statement-shared-wire:');assert.ok(mfpStart>=0);
+ const mfpJob=mfp.slice(mfpStart);
+ assert.ok(mfpJob.includes('name: R16 statement shared-wire acceptance (fresh isolated lab)'));
+ assert.ok(mfpJob.includes('needs: projection-linear-joins'));
+ assert.ok(mfpJob.includes('source_present=true')&&mfpJob.includes('source_present=false'));
+ assert.ok(mfpJob.includes('0330_signal_listening_statement_shared_wire.sql'),'MFP no-op detection includes the authoritative 0330 SQL source');
+ assert.ok(mfpJob.includes('if: ${{ steps.seal.outputs.source_present == \'true\' }}'));
+ assert.ok(mfpJob.includes('NOISIA_R16_STATEMENT_SHARED_WIRE_PG: \'true\''));
+ assert.ok(mfpJob.includes('^# tests 5$')&&mfpJob.includes('^# pass 5$')&&mfpJob.includes('^# skipped 0$'));
+ assert.ok(mfpJob.includes('Upload statement shared-wire TAP receipt')&&mfpJob.includes('Stop and remove only the owned statement shared-wire lab'));
+});
+
+test('target 0330 source exposes the five exact native cases through its existing isolated fixture',async()=>{
+ const target=process.env.R16_DIAGNOSTIC_TARGET_ROOT;assert.ok(target,'statement source contract needs the exact checked out product target');
+ const testPath=join(target,'infrastructure/db/migrations/signal-listening-statement-shared-wire.postgres.test.ts');
+ let source='';try{source=await readFile(testPath,'utf8');}catch(error){
+  if((error as NodeJS.ErrnoException).code!=='ENOENT')throw error;
+ }
+ if(!source){
+  assert.ok(!source,'pre-0330 target has no statement shared-wire native suite');
+  return;
+ }
+ const expected=[
+  '0330 native same-snapshot validators preserve32shapes256keys UTF8 precision and mixed-wire fallback',
+  '0330 native reserve Mark bad-mixed rollback and deferred pre-owner forged hash stay enforced',
+  '0330 native real prior unknown is true and target ownership never becomes a cached authority',
+  '0330 preserves answer BEFORE attempts including conflict-suppressed bad tuples and native source bytes',
+  '0330 native DML ABBA keeps full guards and fresh transactions and rejects expiry with atomic rollback',
+ ];
+ for(const title of expected){
+  const occurrences=source.split(`test('${title}'`).length-1;
+  assert.equal(occurrences,1,`target source has exactly one executable native case: ${title}`);
+ }
+ assert.ok(source.includes("process.env.NOISIA_R16_STATEMENT_SHARED_WIRE_PG==='true'"),'the native suite is behind its dedicated opt-in flag');
+ assert.ok(source.includes("from './signal-listening-statement-shared-wire.fixture'"),'the suite uses its fixture module');
+ assert.ok(source.includes('withSharedWireFixtureV1'),'the suite uses the established isolated acceptance fixture');
+ const fixture=await readFile(join(target,'infrastructure/db/migrations/signal-listening-statement-shared-wire.fixture.ts'),'utf8');
+ assert.ok(fixture.includes('runMassLabelingAcceptanceFixtureV1(mode,'),'the fixture delegates isolation to the established native fixture factory');
+ assert.ok(fixture.includes("options.mode==='scaled_recovery'?'product-recovery':'product'"),'the 1002-root case uses product-recovery');
+ assert.ok(!fixture.includes('benchmark:')&&!fixture.includes('benchmark_'),'the shared-wire fixture does not allocate the global benchmark fixture');
+});
+
+test('MFP source detector runs only for a complete 0330 source set and rejects incomplete pairs',async()=>{
+ const workflow=await readFile(new URL('../../../.github/workflows/mfp-postgres.yml',import.meta.url),'utf8');
+ const jobStart=workflow.indexOf('  statement-shared-wire:');assert.ok(jobStart>=0);
+ const sealStart=workflow.indexOf('      - name: Seal the checked out source revision',jobStart);assert.ok(sealStart>jobStart);
+ const nextStep=workflow.indexOf('      - name: ',sealStart+'      - name: Seal the checked out source revision'.length);
+ const step=workflow.slice(sealStart,nextStep<0?undefined:nextStep).split(/\r?\n/u);
+ const runLine=step.findIndex(line=>line==='        run: |');assert.ok(runLine>=0);
+ const body:string[]=[];for(const line of step.slice(runLine+1)){if(line===''){body.push('');continue;}if(!line.startsWith('          '))break;body.push(line.slice(10));}
+ const script=body.join('\n').trimEnd();
+ for(const path of [
+  '0330_signal_listening_statement_shared_wire.sql',
+  'signal-listening-statement-shared-wire.oracle.ts',
+  'signal-listening-statement-shared-wire.fixture.ts',
+  'signal-listening-statement-shared-wire.postgres.test.ts',
+  'signal-listening-statement-shared-wire.test.ts',
+ ])assert.ok(script.includes(path),`source detector covers ${path}`);
+ const dir=await mkdtemp(join(tmpdir(),'r16-shared-wire-source-detect-'));
+ const target=join(dir,'target'),bin=join(dir,'bin'),migration=join(target,'infrastructure/db/migrations');
+ await mkdir(bin,{recursive:true});await mkdir(migration,{recursive:true});
+ const fakeGit=join(bin,'git');await writeFile(fakeGit,'#!/bin/sh\ncase "$1" in\n rev-parse) printf "%s\\n" "$TARGET_REF" ;;\n status) exit 0 ;;\n *) exit 2 ;;\nesac\n');await chmod(fakeGit,0o755);
+ const files=['0330_signal_listening_statement_shared_wire.sql','signal-listening-statement-shared-wire.oracle.ts',
+  'signal-listening-statement-shared-wire.fixture.ts','signal-listening-statement-shared-wire.postgres.test.ts',
+  'signal-listening-statement-shared-wire.test.ts'];
+ const run=async(present:string[])=>{
+  for(const file of files){const path=join(migration,file);await rm(path,{force:true});if(present.includes(file))await writeFile(path,'// synthetic presence-only fixture\n');}
+  const output=join(dir,'output'),environment=join(dir,'environment');await writeFile(output,'');await writeFile(environment,'');
+  const result=spawnSync('/bin/bash',['-euo','pipefail','-c',script],{cwd:target,encoding:'utf8',env:{PATH:`${bin}:/usr/bin:/bin`,TARGET_REF:'a'.repeat(40),GITHUB_ENV:environment,GITHUB_OUTPUT:output}});
+  const emitted=await readFile(output,'utf8');return{result,emitted};
+ };
+ try{
+  const absent=await run([]);assert.equal(absent.result.status,0,absent.result.stderr||absent.result.stdout);assert.match(absent.emitted,/source_present=false/u);
+  const complete=await run(files);assert.equal(complete.result.status,0,complete.result.stderr||complete.result.stdout);assert.match(complete.emitted,/source_present=true/u);
+  for(const partial of [[files[0]!],[files[2]!],[files[0]!,files[1]!,files[3]!]]){
+   const result=await run(partial);assert.notEqual(result.result.status,0,'a partial SQL/fixture/test source set must fail closed');
+   assert.match(`${result.result.stderr}${result.result.stdout}`,/statement shared-wire source files are incomplete/u);
+  }
+ }finally{await rm(dir,{recursive:true,force:true});}
 });
 
 test('workflow shared smoke execution condition selects SQL and neutral runs only for manual opt-in',async()=>{
@@ -272,7 +451,7 @@ test('RAW attach acceptance runs only in its isolated job and main job consumes 
  assert.ok(rawJob.includes("/^# tests 2$/mu.test(tap)")&&rawJob.includes("/^# pass 2$/mu.test(tap)")
   &&rawJob.includes("/^# fail 0$/mu.test(tap)")&&rawJob.includes("/^# skipped 0$/mu.test(tap)"),
   'two RAW attach cases must have an exact no-skip TAP gate');
- assert.ok(mainJob.includes('needs: [raw-acceptance, projection-linear-acceptance]'),'main job must wait for both isolated evidence jobs');
+ assert.ok(mainJob.includes('needs: [raw-acceptance, projection-linear-acceptance, statement-shared-wire-acceptance]'),'main job must wait for all isolated evidence jobs');
  assert.ok(mainJob.includes("needs.raw-acceptance.result == 'success'")&&mainJob.includes("needs.projection-linear-acceptance.result == 'success'"),
   'main job must fail closed when either requested acceptance job fails');
  assert.ok(mainJob.includes("RAW_ACCEPTANCE_SELECTED_PASS: ${{ needs.raw-acceptance.outputs.selected_pass || '0' }}")
@@ -293,7 +472,7 @@ test('projection linear-joins acceptance is opt-in, isolated, source-sealed and 
  assert.ok(linearJob.includes('[ "$RAW_ACCEPTANCE_SELECTED_PASS" != 6 ]'));
  assert.match(linearJob,/selected_pass: \$\{\{ steps\.publish\.outputs\.selected_pass \|\| '0' \}\}[\s\S]*?target_sha: \$\{\{ steps\.publish\.outputs\.target_sha \|\| '' \}\}/u);
  assert.match(linearJob,/steps\.oracle\.outcome == 'success'[\s\S]*?steps\.source_end\.outcome == 'success'[\s\S]*?selected_pass=3[\s\S]*?target_sha=%s/u);
- assert.match(mainJob,/needs: \[raw-acceptance, projection-linear-acceptance\]/u);
+ assert.match(mainJob,/needs: \[raw-acceptance, projection-linear-acceptance, statement-shared-wire-acceptance\]/u);
  assert.match(mainJob,/LINEAR_ACCEPTANCE_SELECTED_PASS: \$\{\{ needs\.projection-linear-acceptance\.outputs\.selected_pass \|\| '0' \}\}/u);
  assert.match(mainJob,/LINEAR_ACCEPTANCE_TARGET_SHA: \$\{\{ needs\.projection-linear-acceptance\.outputs\.target_sha \|\| '' \}\}/u);
  assert.ok(mainJob.includes('[ "$LINEAR_ACCEPTANCE_SELECTED_PASS" != 3 ]')
@@ -474,6 +653,14 @@ test('SQL frontier mode is manual candidate-only with an explicit immutable targ
  assert.throws(()=>assertListeningSmallGuardV1({...linearEnv,LINEAR_ACCEPTANCE_TARGET_SHA:'d'.repeat(40)},['--run']),/projection_linear_oracle_target_mismatch/u);
  assert.throws(()=>assertListeningSmallGuardV1({...linearEnv,RESERVE_SHARED_SMOKE:'false'},['--run']),/projection_linear_oracle_requires_shared_smoke/u);
  assert.throws(()=>assertListeningSmallGuardV1({...linearEnv,R16_DIAGNOSTIC_PROJECTION_LINEAR_ORACLE:'on'},['--run']),/projection_linear_oracle_flag_invalid/u);
+ const sharedWireEnv={...linearEnv,R16_DIAGNOSTIC_STATEMENT_SHARED_WIRE_ORACLE:'true',STATEMENT_SHARED_WIRE_SELECTED_PASS:'5',STATEMENT_SHARED_WIRE_TARGET_SHA:'c'.repeat(40)};
+ assert.doesNotThrow(()=>assertListeningSmallGuardV1(sharedWireEnv,['--run']));
+ assert.doesNotThrow(()=>assertListeningSmallGuardV1({...sharedWireEnv,R16_DIAGNOSTIC_MODE:'neutral_only'},['--run']));
+ assert.throws(()=>assertListeningSmallGuardV1({...sharedWireEnv,R16_DIAGNOSTIC_MODE:'legacy',R16_DIAGNOSTIC_PROJECTION_LINEAR_ORACLE:'false'},['--run']),/statement_shared_wire_oracle_mode_invalid/u);
+ assert.throws(()=>assertListeningSmallGuardV1({...sharedWireEnv,STATEMENT_SHARED_WIRE_SELECTED_PASS:'4'},['--run']),/statement_shared_wire_oracle_requires_five_cases/u);
+ assert.throws(()=>assertListeningSmallGuardV1({...sharedWireEnv,STATEMENT_SHARED_WIRE_TARGET_SHA:'d'.repeat(40)},['--run']),/statement_shared_wire_oracle_target_mismatch/u);
+ assert.throws(()=>assertListeningSmallGuardV1({...sharedWireEnv,R16_DIAGNOSTIC_PROJECTION_LINEAR_ORACLE:'false'},['--run']),/statement_shared_wire_oracle_requires_projection_linear_oracle/u);
+ assert.throws(()=>assertListeningSmallGuardV1({...sharedWireEnv,R16_DIAGNOSTIC_STATEMENT_SHARED_WIRE_ORACLE:'on'},['--run']),/statement_shared_wire_oracle_flag_invalid/u);
  assert.throws(()=>assertListeningSmallGuardV1({...env,GITHUB_EVENT_NAME:'pull_request'},['--run']),/sql_frontier_requires_manual_dispatch/u);
  assert.throws(()=>assertListeningSmallGuardV1({...env,R16_DIAGNOSTIC_TARGET_LABEL:'baseline-32f'},['--run']),/sql_frontier_requires_candidate_target/u);
  assert.throws(()=>assertListeningSmallGuardV1({...env,R16_DIAGNOSTIC_TARGET_REF_REQUESTED:''},['--run']),/target_ref_required/u);

@@ -172,6 +172,22 @@ export function assertListeningSmallGuardV1(env:NodeJS.ProcessEnv,args:string[])
     assert.equal(env.RAW_ACCEPTANCE_TARGET_SHA,env.R16_DIAGNOSTIC_TARGET_REF_REQUESTED,'projection_linear_oracle_raw_target_mismatch');
     assert.equal(env.LINEAR_ACCEPTANCE_TARGET_SHA,env.R16_DIAGNOSTIC_TARGET_REF_REQUESTED,'projection_linear_oracle_target_mismatch');
   }
+  const statementSharedWireOracle=env.R16_DIAGNOSTIC_STATEMENT_SHARED_WIRE_ORACLE??'false';
+  assert.ok(statementSharedWireOracle==='true'||statementSharedWireOracle==='false','statement_shared_wire_oracle_flag_invalid');
+  if(statementSharedWireOracle==='true'){
+    assert.ok(mode==='neutral_only'||mode==='sql_frontier_only','statement_shared_wire_oracle_mode_invalid');
+    assert.equal(env.GITHUB_EVENT_NAME,'workflow_dispatch','statement_shared_wire_oracle_requires_manual_dispatch');
+    assert.equal(env.R16_DIAGNOSTIC_TARGET_LABEL,'candidate','statement_shared_wire_oracle_requires_candidate');
+    assert.equal(env.RESERVE_SHARED_SMOKE,'true','statement_shared_wire_oracle_requires_shared_smoke');
+    assert.equal(projectionLinearOracle,'true','statement_shared_wire_oracle_requires_projection_linear_oracle');
+    assert.equal(env.RAW_ACCEPTANCE_SELECTED_PASS,'6','statement_shared_wire_oracle_requires_raw_acceptance');
+    assert.equal(env.LINEAR_ACCEPTANCE_SELECTED_PASS,'3','statement_shared_wire_oracle_requires_linear_acceptance');
+    assert.equal(env.STATEMENT_SHARED_WIRE_SELECTED_PASS,'5','statement_shared_wire_oracle_requires_five_cases');
+    assert.ok(/^[0-9a-f]{40}$/u.test(env.R16_DIAGNOSTIC_TARGET_REF_REQUESTED??''),'statement_shared_wire_oracle_target_ref_required');
+    assert.equal(env.RAW_ACCEPTANCE_TARGET_SHA,env.R16_DIAGNOSTIC_TARGET_REF_REQUESTED,'statement_shared_wire_oracle_raw_target_mismatch');
+    assert.equal(env.LINEAR_ACCEPTANCE_TARGET_SHA,env.R16_DIAGNOSTIC_TARGET_REF_REQUESTED,'statement_shared_wire_oracle_linear_target_mismatch');
+    assert.equal(env.STATEMENT_SHARED_WIRE_TARGET_SHA,env.R16_DIAGNOSTIC_TARGET_REF_REQUESTED,'statement_shared_wire_oracle_target_mismatch');
+  }
   if(mode==='sql_frontier_only'){
     assert.equal(env.GITHUB_EVENT_NAME,'workflow_dispatch','sql_frontier_requires_manual_dispatch');
     assert.equal(env.R16_DIAGNOSTIC_TARGET_LABEL,'candidate','sql_frontier_requires_candidate_target');
