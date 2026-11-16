@@ -1,257 +1,16 @@
-name: MFP PostgreSQL
-run-name: MFP PostgreSQL (${{ inputs.scope || 'full' }})
-
+name: R16 SHARED WIRE pg_temp counterfactual
+run-name: SHARED WIRE synthetic helper diagnostic; not H1 acceptance
 on:
-  pull_request:
-    branches: [develop, feat/mfp-ws1-pg-ci]
-  push:
-    branches: [develop]
   workflow_dispatch:
-    inputs:
-      scope:
-        description: Run the full suite or a focused R16 policy or listening smoke
-        type: choice
-        options:
-          - full
-          - policy-smoke
-          - listening-smoke
-        default: full
-        required: true
-
 permissions:
   contents: read
-
 concurrency:
-  group: mfp-postgres-${{ github.ref }}${{ github.event_name == 'workflow_dispatch' && inputs.scope == 'policy-smoke' && '-policy-smoke' || github.event_name == 'workflow_dispatch' && inputs.scope == 'listening-smoke' && '-listening-smoke' || '' }}
-  cancel-in-progress: true
-
+  group: r16-shared-wire-readonly-${{ github.ref }}
+  cancel-in-progress: false
 jobs:
-  numeric-python:
-    name: ${{ github.event_name == 'workflow_dispatch' && inputs.scope == 'policy-smoke' && 'policy-smoke-numeric-python' || github.event_name == 'workflow_dispatch' && inputs.scope == 'listening-smoke' && 'listening-smoke-numeric-python' || 'numeric-python' }}
-    if: ${{ github.event_name != 'workflow_dispatch' || inputs.scope != 'listening-smoke' }}
+  shared-wire-readonly:
     runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: pgvector/pgvector:pg17
-        env:
-          POSTGRES_DB: noisia_mfp_ci
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U postgres -d noisia_mfp_ci"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 10
-      redis:
-        image: redis:7.4-alpine
-        ports:
-          - 6379:6379
-        options: >-
-          --health-cmd "redis-cli ping"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 10
-    env:
-      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/noisia_mfp_ci
-      DATABASE_SSL: 'false'
-      NOISIA_DB_SMOKE_RESET_SCHEMA: 'true'
-      NOISIA_DB_SMOKE_EMULATE_SUPABASE_ROLES: 'true'
-      NOISIA_MFP_PG_CI: 'true'
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-          cache: pip
-          cache-dependency-path: services/workers/requirements-workspace-engine.txt
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 10.33.2
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          cache: pnpm
-      - name: Install frozen Node workspace dependencies
-        run: pnpm install --frozen-lockfile
-      - name: Install isolated CPU BERTopic runtime and test runner
-        run: |
-          python -m pip install --upgrade pip
-          python -m pip install --no-deps -r services/workers/requirements-workspace-engine.txt
-          python -m pip install pytest==8.3.5
-      - name: Run real BERTopic numerical regression loops without model downloads or providers
-        if: ${{ github.event_name != 'workflow_dispatch' || inputs.scope != 'policy-smoke' }}
-        env:
-          PYTHONPATH: tools/signal-semantic-lab/src
-          HF_HUB_OFFLINE: '1'
-          TRANSFORMERS_OFFLINE: '1'
-          NUMBA_NUM_THREADS: '1'
-          OMP_NUM_THREADS: '1'
-          OPENBLAS_NUM_THREADS: '1'
-          MKL_NUM_THREADS: '1'
-        run: |
-          set -o pipefail
-          python -m pytest -q -ra tools/signal-semantic-lab/tests/test_workspace_engine.py tools/signal-semantic-lab/tests/test_workspace_incremental_engine.py | tee r16-numeric-python.tap
-          if grep -Eq '[1-9][0-9]* skipped' r16-numeric-python.tap; then
-            echo '::error::R16 numerical Python tests were skipped'
-            exit 1
-          fi
-      - name: Run Node-to-Python cached-source spool integration
-        if: ${{ github.event_name != 'workflow_dispatch' || inputs.scope != 'policy-smoke' }}
-        env:
-          HF_HUB_OFFLINE: '1'
-          TRANSFORMERS_OFFLINE: '1'
-          NUMBA_NUM_THREADS: '1'
-          OMP_NUM_THREADS: '1'
-          OPENBLAS_NUM_THREADS: '1'
-          MKL_NUM_THREADS: '1'
-        run: |
-          export NOISIA_WORKSPACE_ENGINE_TEST_PYTHON="$(command -v python)"
-          set -o pipefail
-          pnpm exec node --test --test-concurrency=1 --import tsx \
-            services/workers/src/workers/signal-listening-orphan-regroup.test.ts | tee r16-orphan-regroup.tap
-          if ! grep -qx '# skipped 0' r16-orphan-regroup.tap; then
-            echo '::error::R16 orphan regroup integration skipped Python-backed tests'
-            exit 1
-          fi
-      - name: Run initial listening through native PostgreSQL and the cached-vector numerical runtime
-        env:
-          NOISIA_R16_DISCOVERY_INITIAL_NUMERIC_PG: 'true'
-          NOISIA_WORKSPACE_ENGINE_MODULE_ROOT: ${{ github.workspace }}/tools/signal-semantic-lab/src
-          HF_HUB_OFFLINE: '1'
-          TRANSFORMERS_OFFLINE: '1'
-          NUMBA_NUM_THREADS: '1'
-          OMP_NUM_THREADS: '1'
-          OPENBLAS_NUM_THREADS: '1'
-          MKL_NUM_THREADS: '1'
-        run: |
-          export NOISIA_WORKSPACE_ENGINE_PYTHON="$(command -v python)"
-          pnpm --filter @noisia/db db:smoke:migrations
-          set -o pipefail
-          pnpm exec node --test --test-concurrency=1 --import tsx \
-            services/workers/src/workers/signal-listening-discovery-initial-numeric.postgres.test.ts | tee r16-initial-numeric-pg.tap
-          if ! grep -qx '# skipped 0' r16-initial-numeric-pg.tap; then
-            echo '::error::R16 native initial numerical flow was skipped'
-            exit 1
-          fi
-
-      - name: Verify scoped R16 policy and aggregate budget on native PostgreSQL
-        env:
-          NOISIA_R16_LISTENING_STUDY_POLICY_PG: 'true'
-          R16BENCH_REDIS_URL: redis://127.0.0.1:6379/0
-          NOISIA_WORKSPACE_ENGINE_MODULE_ROOT: ${{ github.workspace }}/tools/signal-semantic-lab/src
-          HF_HUB_OFFLINE: '1'
-          TRANSFORMERS_OFFLINE: '1'
-          NUMBA_NUM_THREADS: '1'
-          OMP_NUM_THREADS: '1'
-          OPENBLAS_NUM_THREADS: '1'
-          MKL_NUM_THREADS: '1'
-        run: |
-          export NOISIA_WORKSPACE_ENGINE_PYTHON="$(command -v python)"
-          set -o pipefail
-          pnpm exec node --test --test-concurrency=1 --import tsx \
-            infrastructure/db/migrations/signal-listening-study-policy.postgres.test.ts | tee r16-scoped-policy-pg.tap
-          if ! grep -qx '# skipped 0' r16-scoped-policy-pg.tap; then
-            echo '::error::R16 scoped policy PostgreSQL tests were skipped'
-            exit 1
-          fi
-
-      - name: Verify bounded custom-plan behavior on native PostgreSQL
-        if: ${{ github.event_name != 'workflow_dispatch' || inputs.scope == 'full' }}
-        env:
-          NOISIA_R16_LISTENING_BOUNDED_CUSTOM_PLAN_PG: 'true'
-        run: |
-          set -o pipefail
-          set +e
-          pnpm exec node --test --test-concurrency=1 --import tsx \
-            infrastructure/db/migrations/signal-listening-bounded-custom-plan.postgres.test.ts | tee r16-listening-bounded-custom-plan.tap
-          test_status=${PIPESTATUS[0]}
-          set -e
-          if [[ "$test_status" -ne 0 ]] \
-            || ! grep -qx '# tests 3' r16-listening-bounded-custom-plan.tap \
-            || ! grep -qx '# pass 3' r16-listening-bounded-custom-plan.tap \
-            || ! grep -qx '# fail 0' r16-listening-bounded-custom-plan.tap \
-            || ! grep -qx '# skipped 0' r16-listening-bounded-custom-plan.tap; then
-            echo '::error::R16 bounded custom-plan test contract failed or was skipped'
-            exit 1
-          fi
-
-      - name: Verify bounded Study source custody at the real-cut scale
-        if: ${{ github.event_name != 'workflow_dispatch' || inputs.scope != 'policy-smoke' }}
-        env:
-          NOISIA_R16_STUDY_SOURCE_SCALE: 'true'
-        run: |
-          set -o pipefail
-          pnpm exec node --max-old-space-size=256 --test --test-concurrency=1 --import tsx \
-            services/workers/src/workers/signal-study-source-pages.test.ts | tee r16-study-source-scale.tap
-          if ! grep -qx '# skipped 0' r16-study-source-scale.tap; then
-            echo '::error::R16 source scale cases were skipped'
-            exit 1
-          fi
-      - name: Run native Study pipeline, frozen human bindings and registered worker
-        if: ${{ github.event_name != 'workflow_dispatch' || inputs.scope != 'policy-smoke' }}
-        env:
-          NOISIA_R16_STUDY_PG: 'true'
-          NOISIA_R16_STUDY_SOURCE_PAGED_PG: 'true'
-          NOISIA_R16_NATIVE_AUDIT_EXPORT_PG: 'true'
-          NOISIA_R16_STUDY_WORKER_PG: 'true'
-          NOISIA_R16_HUMAN_EDITS_PG: 'true'
-          NOISIA_R16_LISTENING_CENSUS_PG: 'true'
-          R16BENCH_REDIS_URL: redis://127.0.0.1:6379/0
-          NOISIA_WORKSPACE_ENGINE_MODULE_ROOT: ${{ github.workspace }}/tools/signal-semantic-lab/src
-          HF_HUB_OFFLINE: '1'
-          TRANSFORMERS_OFFLINE: '1'
-          NUMBA_NUM_THREADS: '1'
-          OMP_NUM_THREADS: '1'
-          OPENBLAS_NUM_THREADS: '1'
-          MKL_NUM_THREADS: '1'
-        run: |
-          export NOISIA_WORKSPACE_ENGINE_PYTHON="$(command -v python)"
-          set -o pipefail
-          pnpm exec node --test --test-concurrency=1 --import tsx \
-            infrastructure/db/migrations/signal-listening-human-edits.postgres.test.ts \
-            infrastructure/db/migrations/signal-study.postgres.test.ts \
-            infrastructure/db/migrations/signal-study-editorial-replay.postgres.test.ts \
-            infrastructure/db/migrations/signal-study-author-privacy.postgres.test.ts \
-            infrastructure/db/migrations/signal-study-source-paged.postgres.test.ts \
-            infrastructure/db/migrations/signal-study-effective-listening.postgres.test.ts \
-            services/workers/src/workers/signal-study-worker.postgres.test.ts \
-            scripts/r16/native-audit-export.postgres.test.ts \
-            scripts/r16/listening-native-census.postgres.test.ts | tee r16-study-native-pg.tap
-          if ! grep -qx '# skipped 0' r16-study-native-pg.tap; then
-            echo '::error::R16 native Study or human binding tests were skipped'
-            exit 1
-          fi
-
-  migrated-schema:
-    name: ${{ github.event_name == 'workflow_dispatch' && inputs.scope == 'policy-smoke' && 'policy-smoke-migrated-schema-not-run' || github.event_name == 'workflow_dispatch' && inputs.scope == 'listening-smoke' && 'listening-smoke-migrated-schema' || 'migrated-schema' }}
-    if: ${{ github.event_name != 'workflow_dispatch' || inputs.scope != 'policy-smoke' }}
-    runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: pgvector/pgvector:pg17
-        env:
-          POSTGRES_DB: noisia_mfp_ci
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U postgres -d noisia_mfp_ci"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 10
-    env:
-      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/noisia_mfp_ci
-      DATABASE_SSL: 'false'
-      NOISIA_DB_SMOKE_RESET_SCHEMA: 'true'
-      NOISIA_DB_SMOKE_EMULATE_SUPABASE_ROLES: 'true'
-      NOISIA_MFP_PG_CI: 'true'
-      NOISIA_MFP_POLICY_SUCCESSOR_PG_TEST: 'true'
-      NOISIA_MFP_FOUNDER_ACCESS_PG_TEST: 'true'
-      NOISIA_MFP_ADOPTED_SERVING_PG_TEST: 'true'
-      NOISIA_MFP_POLICY_ACTION_SWITCH_PG_TEST: 'true'
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -259,292 +18,94 @@ jobs:
           version: 10.33.2
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: '22'
           cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - name: Apply every numbered migration to disposable PostgreSQL 17
-        run: pnpm --filter @noisia/db db:smoke:migrations
-      - name: Verify native actor query runtime on isolated fixture
-        env:
-          NOISIA_R16_ACTOR_QUERY_RUNTIME_PG: 'true'
+      - run: corepack pnpm install --frozen-lockfile
+      - name: Pure diagnostic controls
+        run: corepack pnpm exec tsx --test scripts/r16-diagnostics/shared-wire/run.test.mts scripts/r16/ci-benchmark-guards.test.ts
+      - name: Fresh owned PG17 and SELECT-only counterfactual
+        shell: bash
         run: |
-          set -o pipefail
-          set +e
-          pnpm exec node --test --test-concurrency=1 --import tsx \
-            infrastructure/db/migrations/signal-processing-actor-query-runtime.postgres.test.ts | tee r16-actor-query-runtime-pg.tap
-          test_status=${PIPESTATUS[0]}
-          set -e
-          if [[ "$test_status" -ne 0 ]] \
-            || ! grep -qx '# tests 3' r16-actor-query-runtime-pg.tap \
-            || ! grep -qx '# pass 3' r16-actor-query-runtime-pg.tap \
-            || ! grep -qx '# fail 0' r16-actor-query-runtime-pg.tap \
-            || ! grep -qx '# skipped 0' r16-actor-query-runtime-pg.tap; then
-            echo '::error::R16 actor query runtime test contract failed or was skipped'
-            exit 1
+          #!/usr/bin/env bash
+          set -euo pipefail
+
+          if [[ "${GITHUB_ACTIONS:-}" != "true" ]]; then
+            echo "R16 CI benchmark may run only on a fresh GitHub Actions runner." >&2
+            exit 2
           fi
-      - name: Run MFP integration tests on migrated schema
-        if: ${{ github.event_name != 'workflow_dispatch' || inputs.scope != 'listening-smoke' }}
-        run: |
-          set -o pipefail
-          shopt -s nullglob
-          tests=(infrastructure/db/migrations/signal-mfp-*.integration.test.ts)
-          if (( ${#tests[@]} == 0 )); then
-            echo '::error::No MFP integration tests in this checkout'
-            exit 1
-          else
-            pnpm exec node --test --test-concurrency=1 --import tsx "${tests[@]}" | tee mfp-pg-tests.tap
-            if ! grep -qx '# skipped 0' mfp-pg-tests.tap; then
-              echo '::error::MFP integration tests were skipped'
-              exit 1
+
+          repo_root="$(git rev-parse --show-toplevel)"
+          export R16BENCH_RUN_ID="benchmark-pg17"
+          export R16BENCH_SERVICES="postgres,redis"
+          lab_dir="$repo_root/.data/piloto-masivo/r16/labs/$R16BENCH_RUN_ID"
+          if [[ -e "$lab_dir" || -L "$lab_dir" ]]; then
+            echo "R16 CI benchmark metadata already exists; refusing to reuse it." >&2
+            exit 2
+          fi
+
+          project="r16bench-$R16BENCH_RUN_ID"
+          fixed_container="r16-benchmark-pg17"
+          fixed_redis_container="${project}-redis-1"
+          fixed_volume="r16bench-benchmark-pg17_postgres-data"
+          fixed_network="${project}_default"
+
+          # A query error is not evidence that a resource is absent. Keep all discovery
+          # before lab-up and before registering cleanup, so pre-existing data is never
+          # removed by this job.
+          if ! docker info >/dev/null 2>&1; then
+            echo "Docker daemon is unavailable; refusing to start the R16 CI benchmark." >&2
+            exit 2
+          fi
+
+          if ! project_containers="$(docker ps --all --filter "label=com.docker.compose.project=$project" --format '{{.ID}}')" \
+            || ! all_container_names="$(docker ps --all --format '{{.Names}}')" \
+            || ! project_volumes="$(docker volume ls --filter "label=com.docker.compose.project=$project" --format '{{.Name}}')" \
+            || ! all_volume_names="$(docker volume ls --format '{{.Name}}')" \
+            || ! project_networks="$(docker network ls --filter "label=com.docker.compose.project=$project" --format '{{.Name}}')" \
+            || ! all_network_names="$(docker network ls --format '{{.Name}}')"; then
+            echo "Docker resource discovery failed; refusing to assume the R16 project is fresh." >&2
+            exit 2
+          fi
+
+          if [[ -n "$project_containers" || -n "$project_volumes" || -n "$project_networks" ]] \
+            || [[ $'\n'$all_container_names$'\n' == *$'\n'$fixed_container$'\n'* ]] \
+            || [[ $'\n'$all_container_names$'\n' == *$'\n'$fixed_redis_container$'\n'* ]] \
+            || [[ $'\n'$all_volume_names$'\n' == *$'\n'$fixed_volume$'\n'* ]] \
+            || [[ $'\n'$all_network_names$'\n' == *$'\n'$fixed_network$'\n'* ]]; then
+            echo "R16 CI benchmark resources already exist; refusing to reuse or remove them." >&2
+            exit 2
+          fi
+
+          cleanup() {
+            local status=$?
+            trap - EXIT
+            if [[ -f "$lab_dir/private.env" ]]; then
+              R16BENCH_RUN_ID="$R16BENCH_RUN_ID" "$repo_root/scripts/r16/lab-down.sh" || {
+                local cleanup_status=$?
+                if (( status == 0 )); then status=$cleanup_status; fi
+              }
             fi
-          fi
-      - name: Run R16 listening contracts and runtime on real PostgreSQL
-        if: ${{ github.event_name != 'workflow_dispatch' || inputs.scope != 'listening-smoke' }}
-        env:
-          NOISIA_R16_LISTENING_PG: 'true'
-          NOISIA_R16_LISTENING_BOUNDED_PG: 'true'
-          NOISIA_R16_LISTENING_CROSS_RUN_INDEX_PG: 'true'
-          NOISIA_R16_LISTENING_POPULATION_PG: 'true'
-          NOISIA_R16_LISTENING_POPULATION_PLANS_PG: 'true'
-          NOISIA_R16_LISTENING_LEXICAL_PLAN_PG: 'true'
-          NOISIA_R16_LISTENING_BOUNDED_PROVENANCE_PG: 'true'
-          NOISIA_R16_MAP_INPUT_STATISTICS_PG: 'true'
-          NOISIA_R16_LISTENING_REVISION_PLAN_PG: 'true'
-          NOISIA_R16_LISTENING_METRICS_BATCH_PG: 'true'
-          NOISIA_R16_LISTENING_MONEY_BATCHES_PG: 'true'
-          NOISIA_R16_LISTENING_PROTOTYPES_PG: 'true'
-          NOISIA_R16_LISTENING_RUNTIME_PG: 'true'
-          NOISIA_R16_LISTENING_RECOVERY_PG: 'true'
-          NOISIA_R16_LISTENING_LEXICON_PG: 'true'
-          NOISIA_R16_LISTENING_DISCOVERY_PG: 'true'
-          NOISIA_R16_INPUT_BOUNDS_PG: 'true'
-          NOISIA_R16_LISTENING_SECOND_SHAPE_PG: 'true'
-          NOISIA_R16_LISTENING_DISCOVERY_MONEY_PG: 'true'
-          NOISIA_R16_DISCOVERY_HARDENING_PG: 'true'
-          NOISIA_R16_DISCOVERY_ADVANCE_PG: 'true'
-          NOISIA_R16_DISCOVERY_AUTOMATION_PG: 'true'
-          NOISIA_R16_DISCOVERY_INITIAL_PG: 'true'
-        run: |
-          set -o pipefail
-          pnpm exec node --test --test-concurrency=1 --import tsx \
-            infrastructure/db/migrations/signal-listening.postgres.test.ts \
-            infrastructure/db/migrations/signal-listening-bounded.postgres.test.ts \
-            infrastructure/db/migrations/signal-listening-cross-run-index.postgres.test.ts \
-            infrastructure/db/migrations/signal-listening-population-batches.postgres.test.ts \
-            infrastructure/db/migrations/signal-listening-population-plans.postgres.test.ts \
-            infrastructure/db/migrations/signal-listening-population-lexical-plan.postgres.test.ts \
-            infrastructure/db/migrations/signal-listening-bounded-provenance.postgres.test.ts \
-            infrastructure/db/migrations/signal-mass-labeling-map-statistics.postgres.test.ts \
-            infrastructure/db/migrations/signal-listening-human-revision-plan.postgres.test.ts \
-            infrastructure/db/migrations/signal-listening-question-metrics-batch.postgres.test.ts \
-            infrastructure/db/migrations/signal-listening-money-batches.postgres.test.ts \
-            infrastructure/db/migrations/signal-listening-prototypes.postgres.test.ts \
-            infrastructure/db/migrations/signal-listening-lexicon.postgres.test.ts \
-            infrastructure/db/migrations/signal-listening-input-bounds.postgres.test.ts \
-            infrastructure/db/migrations/signal-listening-discovery.postgres.test.ts \
-            infrastructure/db/migrations/signal-listening-discovery-money.postgres.test.ts \
-            infrastructure/db/migrations/signal-listening-discovery-hardening.postgres.test.ts \
-            infrastructure/db/migrations/signal-listening-discovery-advance.postgres.test.ts \
-            infrastructure/db/migrations/signal-listening-discovery-initial.postgres.test.ts \
-            services/workers/src/workers/signal-listening-discovery-automation.postgres.test.ts \
-            services/workers/src/workers/signal-listening-runtime.postgres.test.ts \
-            services/workers/src/workers/signal-listening-recovery.postgres.test.ts \
-            infrastructure/db/migrations/signal-listening-input-lazy-equivalence.postgres.test.ts \
-            services/workers/src/workers/signal-listening-calibration-second-shape.postgres.test.ts | tee r16-listening-pg-tests.tap
-          if ! grep -qx '# skipped 0' r16-listening-pg-tests.tap; then
-            echo '::error::R16 listening PostgreSQL tests were skipped'
-            exit 1
-          fi
-      - name: Run MFP PostgreSQL checks on migrated schema
-        if: ${{ github.event_name != 'workflow_dispatch' || inputs.scope != 'listening-smoke' }}
-        run: |
-          shopt -s nullglob
-          checks=(scripts/dev-corpus/*-postgres-check.ts)
-          if (( ${#checks[@]} < 3 )); then
-            echo '::error::Expected at least the critical, ledger and receipt PostgreSQL checks'
-            exit 1
-          fi
-          for check in "${checks[@]}"; do
-            pnpm exec node --import tsx "$check"
-          done
-      - name: Verify focused Listening input bounds and second-shape calibration on native PostgreSQL
-        if: ${{ github.event_name == 'workflow_dispatch' && inputs.scope == 'listening-smoke' }}
-        env:
-          NOISIA_R16_INPUT_BOUNDS_PG: 'true'
-          NOISIA_R16_LISTENING_SECOND_SHAPE_PG: 'true'
-        run: |
-          set -o pipefail
-          pnpm exec node --test --test-concurrency=1 --import tsx \
-            infrastructure/db/migrations/signal-listening-input-bounds.postgres.test.ts \
-            infrastructure/db/migrations/signal-listening-input-lazy-equivalence.postgres.test.ts \
-            services/workers/src/workers/signal-listening-calibration-second-shape.postgres.test.ts | tee r16-listening-smoke.tap
-          if ! grep -qx '# skipped 0' r16-listening-smoke.tap; then
-            echo '::error::R16 Listening smoke tests were skipped'
-            exit 1
-          fi
-      - name: Diagnose hybrid provider-rights plan on native PostgreSQL
-        if: ${{ github.event_name == 'workflow_dispatch' && inputs.scope == 'listening-smoke' }}
-        env:
-          NOISIA_MFP_PG_CI: 'true'
-        run: |
-          set +e
-          pnpm exec node --test --test-concurrency=1 --import tsx \
-            infrastructure/db/migrations/signal-mfp-hybrid-selector.integration.test.ts | tee mfp-hybrid-rights-diagnostic.tap
-          test_status=${PIPESTATUS[0]}
-          set -e
-          if ! grep -qx '# skipped 0' mfp-hybrid-rights-diagnostic.tap; then
-            echo '::error::Hybrid provider-rights diagnostic was skipped'
-            exit 1
-          fi
-          exit "$test_status"
-      - name: Verify genuine scoped money owners on native PostgreSQL
-        if: ${{ github.event_name == 'workflow_dispatch' && inputs.scope == 'listening-smoke' }}
-        timeout-minutes: 15
-        env:
-          NOISIA_MFP_PG_CI: 'true'
-        run: |
-          set +e
-          pnpm exec node --test --test-concurrency=1 --import tsx \
-            --test-name-pattern='^mass labeling seals full population, bills once, and serves probability pages with live tenant/rights fences \(scoped(?:-scale|-funding)?\)$' \
-            infrastructure/db/migrations/signal-mfp-mass-labeling.integration.test.ts \
-            > r16-listening-scoped-money-smoke.tap 2>&1
-          scoped_status=$?
-          set -e
-          if [ "$scoped_status" -ne 0 ]; then
-            cat r16-listening-scoped-money-smoke.tap
-            exit "$scoped_status"
-          fi
-          node - r16-listening-scoped-money-smoke.tap <<'NODE'
-          const fs = require('node:fs');
-          const tap = fs.readFileSync(process.argv[2], 'utf8');
-          const prefix = 'mass labeling seals full population, bills once, and serves probability pages with live tenant/rights fences ';
-          const expected = new Set(['(scoped)', '(scoped-scale)', '(scoped-funding)'].map(suffix => prefix + suffix));
-          const selected = tap.split(/\r?\n/u).filter(line => /^ok \d+ - /u.test(line)
-            && expected.has(line.replace(/^ok \d+ - /u, '').replace(/\s+#.*$/u, '')));
-          const names = new Set(selected.map(line => line.replace(/^ok \d+ - /u, '').replace(/\s+#.*$/u, '')));
-          if (selected.length !== 3 || names.size !== 3 || selected.some(line => /# SKIP/u.test(line))
-              || !/^# pass 3$/mu.test(tap) || !/^# fail 0$/mu.test(tap)) {
-            throw new Error('scoped money TAP must report exactly three executed passing selected cases');
+            exit "$status"
           }
-          process.stdout.write('scoped money owners: pass=3 fail=0 (other tests intentionally unselected)\n');
-          NODE
-      - name: Persist scoped money smoke TAP
-        if: ${{ always() && github.event_name == 'workflow_dispatch' && inputs.scope == 'listening-smoke' }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: r16-scoped-money-smoke-${{ github.run_id }}-${{ github.run_attempt }}
-          path: r16-listening-scoped-money-smoke.tap
-          if-no-files-found: ignore
-          retention-days: 14
-      - name: Persist synthetic second-shape component proof
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: r16-synthetic-second-shape-${{ github.run_id }}-${{ github.run_attempt }}
-          path: .data/piloto-masivo/r16/listening-second-shape-native/*.json
-          if-no-files-found: ignore
-          retention-days: 14
+          trap cleanup EXIT
 
-  bounded-custom-plan-scale:
-    name: R16 bounded custom-plan scale (isolated lab)
-    if: ${{ github.event_name != 'workflow_dispatch' || inputs.scope == 'full' || inputs.scope == 'listening-smoke' }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    env:
-      R16BENCH_RUN_ID: benchmark-pg17
-      R16BENCH_SERVICES: postgres,redis
-      NOISIA_R16_LOCAL_PG_LAB: r16-benchmark-pg17
-      DATABASE_SSL: 'false'
-    steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 10.33.2
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          cache: pnpm
-      - name: Install frozen Node workspace dependencies
-        run: pnpm install --frozen-lockfile
-      - name: Require the owned R16 container and volume to be absent
-        run: |
-          set -euo pipefail
-          if docker inspect r16-benchmark-pg17 >/dev/null 2>&1; then
-            echo '::error::The named R16 PostgreSQL container already exists'
-            exit 1
-          fi
-          if docker volume inspect r16bench-benchmark-pg17_postgres-data >/dev/null 2>&1; then
-            echo '::error::The named R16 PostgreSQL volume already exists'
-            exit 1
-          fi
-          lab_dir=.data/piloto-masivo/r16/labs/benchmark-pg17
-          if [[ -e "$lab_dir/private.env" || -e "$lab_dir/connection.env" ]]; then
-            echo '::error::Private files for the named R16 lab already exist'
-            exit 1
-          fi
-      - name: Start the named official PostgreSQL 17 and Redis lab
-        run: |
-          set -euo pipefail
-          printf '%s\n' 'R16_BOUNDED_PLAN_LAB_OWNED=true' >> "$GITHUB_ENV"
+          export R16BENCH_SERVICES=postgres
           scripts/r16/lab-up.sh
-      - name: Apply migrations to the new disposable lab
-        env:
-          NOISIA_DB_SMOKE_RESET_SCHEMA: 'true'
-          NOISIA_DB_SMOKE_EMULATE_SUPABASE_ROLES: 'true'
-          NOISIA_MFP_PG_CI: 'true'
-        run: |
-          set -euo pipefail
-          connection_file=.data/piloto-masivo/r16/labs/benchmark-pg17/connection.env
-          test -f "$connection_file"
           set -a
-          source "$connection_file"
+          source .data/piloto-masivo/r16/labs/benchmark-pg17/connection.env
           set +a
-          export DATABASE_SSL=false
-          export NOISIA_R16_LOCAL_PG_LAB=r16-benchmark-pg17
-          pnpm --filter @noisia/db db:smoke:migrations
-      - name: Run the 4096-root custom-plan scale contract
-        env:
-          NOISIA_R16_LISTENING_BOUNDED_CUSTOM_PLAN_PG: 'true'
-          NOISIA_R16_NATIVE_FIXTURE_PG: 'true'
-          NOISIA_MASS_LABELING_ENABLED: 'true'
-          NOISIA_SIGNAL_LISTENING_ENABLED: 'true'
-          NOISIA_JEV_PROVIDER_ENABLED: 'true'
-          NOISIA_JEV_STREAMING_V2_ENABLED: 'true'
-        run: |
-          set -o pipefail
-          connection_file=.data/piloto-masivo/r16/labs/benchmark-pg17/connection.env
-          test -f "$connection_file"
-          set -a
-          source "$connection_file"
-          set +a
-          export DATABASE_SSL=false
-          export NOISIA_R16_LOCAL_PG_LAB=r16-benchmark-pg17
-          set +e
-          pnpm exec node --test --test-concurrency=1 --import tsx \
-            infrastructure/db/migrations/signal-listening-bounded-custom-plan-scale.postgres.test.ts | tee r16-listening-bounded-custom-plan-scale.tap
-          test_status=${PIPESTATUS[0]}
-          set -e
-          if [[ "$test_status" -ne 0 ]] \
-            || ! grep -qx '# tests 1' r16-listening-bounded-custom-plan-scale.tap \
-            || ! grep -qx '# pass 1' r16-listening-bounded-custom-plan-scale.tap \
-            || ! grep -qx '# fail 0' r16-listening-bounded-custom-plan-scale.tap \
-            || ! grep -qx '# skipped 0' r16-listening-bounded-custom-plan-scale.tap; then
-            echo '::error::R16 bounded custom-plan scale test failed or was skipped'
-            exit 1
-          fi
-      - name: Stop and remove only the owned R16 lab
-        if: ${{ always() && env.R16_BOUNDED_PLAN_LAB_OWNED == 'true' }}
-        run: |
-          set -euo pipefail
-          lab_dir=.data/piloto-masivo/r16/labs/benchmark-pg17
-          if [[ -f "$lab_dir/private.env" ]]; then
-            scripts/r16/lab-down.sh
-          fi
-          if docker inspect r16-benchmark-pg17 >/dev/null 2>&1; then
-            echo '::error::Owned R16 PostgreSQL container survived cleanup'
-            exit 1
-          fi
-          if docker volume inspect r16bench-benchmark-pg17_postgres-data >/dev/null 2>&1; then
-            echo '::error::Owned R16 PostgreSQL volume survived cleanup'
-            exit 1
-          fi
+          # Before migrations there must be no real public relations at all.
+          test "$(docker exec r16-benchmark-pg17 psql -U postgres -d noisia_mfp_ci -Atc "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relkind IN ('r','p')")" = 0
+          export NOISIA_R16_LOCAL_PG_LAB=r16-benchmark-pg17 DATABASE_SSL=false
+          export NOISIA_DB_SMOKE_ALLOW_REMOTE=false NOISIA_DB_SMOKE_RESET_SCHEMA=true
+          export NOISIA_DB_SMOKE_EMULATE_SUPABASE_ROLES=true
+          export NOISIA_R16_NATIVE_FIXTURE_PG=true NOISIA_R16_SHARED_WIRE_READONLY=true
+          corepack pnpm --filter @noisia/db db:smoke:migrations
+          corepack pnpm exec tsx scripts/r16-diagnostics/shared-wire/run.mts
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: r16-shared-wire-readonly-synthetic-evidence
+          path: .data/piloto-masivo/r16/shared-wire/**/result.json
+          include-hidden-files: true
+          if-no-files-found: warn
