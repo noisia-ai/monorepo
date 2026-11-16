@@ -112,16 +112,23 @@ async function inputProjectionMetadata(c:Pick<PoolClient,'query'>,run:LabelingRu
     SELECT root_id,working_bytes,sum(working_bytes::numeric) OVER(ORDER BY root_id ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) cumulative_bytes
     FROM root_metadata
    ), fitting AS MATERIALIZED(SELECT root_id FROM prefix WHERE cumulative_bytes<=$9::numeric),
-   projections AS MATERIALIZED(
+   fit_matches AS MATERIALIZED(
+    SELECT p.root_id,p.input_digest,p.question_key,p.question_digest,p.scope_basis,p.n,f.root_id fitting_root_id
+    FROM pending p FULL JOIN fitting f ON f.root_id=p.root_id
+   ), projections AS MATERIALIZED(
     SELECT p.root_id,p.input_digest,array_agg(p.question_key ORDER BY p.question_key) question_keys,
      jsonb_object_agg(p.question_key,p.question_digest) question_digests,
      COALESCE(jsonb_object_agg(p.question_key,p.scope_basis) FILTER(WHERE p.scope_basis IS NOT NULL),'{}'::jsonb) scope_basis
-    FROM pending p JOIN fitting ON fitting.root_id=p.root_id WHERE p.n<=256 GROUP BY p.root_id,p.input_digest
+    FROM fit_matches p WHERE p.root_id IS NOT NULL AND p.fitting_root_id IS NOT NULL AND p.n<=256 GROUP BY p.root_id,p.input_digest
+   ), projection_rows AS MATERIALIZED(
+    SELECT prefix.root_id,prefix.working_bytes,projections.root_id projection_root_id,projections.input_digest,
+     projections.question_keys,projections.question_digests,projections.scope_basis
+    FROM prefix FULL JOIN projections ON projections.root_id=prefix.root_id
    )
-   SELECT prefix.root_id,prefix.working_bytes,CASE WHEN projections.root_id IS NOT NULL THEN
-    jsonb_build_object('input_digest',projections.input_digest,'question_keys',projections.question_keys,
-      'question_digests',projections.question_digests,'scope_basis',projections.scope_basis) END projection
-   FROM prefix LEFT JOIN projections ON projections.root_id=prefix.root_id ORDER BY prefix.root_id`,
+   SELECT root_id,working_bytes,CASE WHEN projection_root_id IS NOT NULL THEN
+    jsonb_build_object('input_digest',input_digest,'question_keys',question_keys,
+      'question_digests',question_digests,'scope_basis',scope_basis) END projection
+   FROM projection_rows WHERE root_id IS NOT NULL ORDER BY root_id`,
    [run.workspace_id,o.configuration_id,o.map_id,run.entity_context_digest,run.id,limit-rows.length,fixed,ids,remaining.toString()])).rows;
   rows.push(...page);
   // Budget belongs to the complete ordered read, never to each ID slice.
