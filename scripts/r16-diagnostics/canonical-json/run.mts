@@ -52,6 +52,7 @@ async function seal(){
 export async function run():Promise<void>{
  guard(process.env);
  const before=await seal();
+ const cases=fixtures();
  const {openR16CiPostgresV1,assertR16LocalPostgresPoolV1}=await import('../../../infrastructure/db/migrations/signal-r16-local-pg.fixture.js');
  const pool=await openR16CiPostgresV1();assertR16LocalPostgresPoolV1(pool);
  const client=await pool.connect();
@@ -84,11 +85,11 @@ export async function run():Promise<void>{
   result.phase='temporary-setup';
   await client.query('BEGIN');await client.query(`SET LOCAL statement_timeout='15s'`);
   await client.query(`CREATE TEMP TABLE r16_canonical_cases(case_id text PRIMARY KEY,payload jsonb,deep boolean NOT NULL) ON COMMIT DROP`);
-  for(const f of fixtures())await client.query('INSERT INTO pg_temp.r16_canonical_cases VALUES($1,$2::jsonb,$3)',[f.id,f.json,f.deep]);
+  for(const f of cases)await client.query('INSERT INTO pg_temp.r16_canonical_cases VALUES($1,$2::jsonb,$3)',[f.id,f.json,f.deep]);
   await client.query(candidateSql);
   const {rows:[attrs]}=await client.query(`SELECT proisstrict,provolatile FROM pg_proc WHERE oid='pg_temp.r16_json_flat_v1(jsonb)'::regprocedure`);assert.equal(attrs.proisstrict,true);assert.equal(attrs.provolatile,'i');
   result.phase='correctness';
-  for(const f of fixtures()){
+  for(const f of cases){
    const outcomes:Record<string,{state:string;bytes?:string|null;digest?:string|null;code?:string}>={};
    for(const arm of ['old','candidate'] as const){
     await client.query('SAVEPOINT one_case');
@@ -113,14 +114,14 @@ export async function run():Promise<void>{
   if(!observations.some(x=>x.equal===false)){
    result.phase='timing';
    // Warm both contexts, then balanced AB/BA rounds against the identical table.
-   const contexts=[...fixtures().filter(f=>!f.deep).map(f=>({name:`single:${f.id}`,single:true,binds:[f.id]})),{name:'batch',single:false,binds:[]}];
+   const contexts=[...cases.filter(f=>!f.deep).map(f=>({name:`single:${f.id}`,single:true,binds:[f.id]})),{name:'batch',single:false,binds:[]}];
    for(const context of contexts){
     for(const arm of ['old','candidate'] as const)await client.query(timedSql(arm,context.single),context.binds);
     let reference:unknown;
     for(let round=0;round<4;round++)for(const arm of (round%2===0?['old','candidate']:['candidate','old']) as Array<'old'|'candidate'>){
      const start=performance.now();const {rows:[consumed]}=await client.query(timedSql(arm,context.single),context.binds);
      const ms=performance.now()-start;
-     assert.equal(consumed.rows,context.single?1:fixtures().filter(f=>!f.deep).length);assert.match(consumed.digest,/^[a-f0-9]{64}$/u);
+     assert.equal(consumed.rows,context.single?1:cases.filter(f=>!f.deep).length);assert.match(consumed.digest,/^[a-f0-9]{64}$/u);
      if(reference===undefined)reference=consumed;else assert.deepEqual(consumed,reference,'timed arms must consume identical bytes/digest');
      timings.push({context:context.name,round,order:round%2===0?'AB':'BA',arm,ms,consumed});
     }

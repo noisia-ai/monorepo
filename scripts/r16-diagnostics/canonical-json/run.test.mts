@@ -4,7 +4,9 @@ import {mkdtemp,readFile,stat,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {guard,artifactPath,observationError,verdict,writePrivateArtifact} from './run.mjs';
-import {fixtures,timedSql} from './candidate.mjs';
+import {fixtures,timedSql,listeningPreimage} from './candidate.mjs';
+import {SIGNAL_LISTENING_REQUEST_VERSION_V1,signalListeningRequestDigestV1,type SignalListeningInputV1} from '../../../packages/query-engine/src/signal-listening-contracts.js';
+import {signalWorkspaceEmbeddingDigestV1} from '../../../packages/query-engine/src/signal-workspace-embeddings-v1.js';
 const env={GITHUB_ACTIONS:'true',NOISIA_R16_CANONICAL_READONLY:'true',NOISIA_R16_LOCAL_PG_LAB:'r16-benchmark-pg17',GITHUB_RUN_ID:'123',GITHUB_RUN_ATTEMPT:'1',DATABASE_URL:'postgresql://postgres:synthetic@127.0.0.1:51772/noisia_mfp_ci'};
 test('requires actual CI, explicit opt-in, exact owned loopback target and numeric run IDs',()=>{
  guard(env);
@@ -53,4 +55,14 @@ test('private evidence is mode 0600 and never overwrites an earlier receipt',asy
   await assert.rejects(writePrivateArtifact(dest,{changed:true}),{code:'EEXIST'});
   assert.equal(await readFile(dest,'utf8'),bytes);
  }finally{await rm(dir,{recursive:true});}
+});
+
+test('large synthetic preimage is consumed by the real request digest contract',()=>{
+ const preimage=listeningPreimage(4);
+ assert.equal(preimage.request_version,SIGNAL_LISTENING_REQUEST_VERSION_V1);
+ assert.equal(Object.keys(preimage.request.questions).length,18);
+ assert.equal(preimage.request.questions.voice!.type,'choice');
+ assert.equal(preimage.request.questions.promotion!.type,'noul');
+ const input:SignalListeningInputV1={root_id:preimage.root_id,input_digest:preimage.input_digest,question_digests:preimage.question_digests,scope_basis:preimage.scope_basis,text:preimage.request.state,title:null,platform:null,content_type:null,author:null,published_at:'2026-01-01',language:'es',map_id:'00000000-0000-4000-8000-000000000300',question_keys:Object.keys(preimage.request.questions),configuration_digest:'sha256:'+'3'.repeat(64)};
+ assert.equal(signalListeningRequestDigestV1({id:preimage.run_id,entity_context_digest:preimage.entity_context_digest},input,preimage.request),signalWorkspaceEmbeddingDigestV1(preimage));
 });

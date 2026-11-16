@@ -1,3 +1,7 @@
+import {signalListeningBaseTemplateV1,validateSignalListeningConfigurationV1,buildSignalListeningJevRequestV1,
+ signalListeningQuestionDigestV1,SIGNAL_LISTENING_REQUEST_VERSION_V1}
+ from '../../../packages/query-engine/src/signal-listening-contracts.js';
+
 // Experimental only: public protocol functions are never replaced.
 export const candidateSql = `CREATE FUNCTION pg_temp.r16_json_flat_v1(value jsonb)
 RETURNS text LANGUAGE sql IMMUTABLE STRICT AS $flat$
@@ -38,11 +42,27 @@ export function fixtures():Array<{id:string;json:string|null;deep:boolean}>{
   {id:'input-preimage',json:JSON.stringify({contract_version:'signal-listening-input-v1',root_id:'00000000-0000-4000-8000-000000000001',source_fingerprint:'synthetic',text:'cerveza sintética'})},
   {id:'scope-preimage',json:'{"voice":"00000000-0000-4000-8000-000000000001","promotion":null}'},
  ];
- for(let i=0;i<32;i++)result.push({id:`warmup-large-${i}`,json:JSON.stringify({request_version:'signal-listening-jev-request-v1',run_id:`synthetic-${i}`,root_id:`root-${i}`,input_digest:'sha256:'+'1'.repeat(64),entity_context_digest:'sha256:'+'2'.repeat(64),question_digests:{voice:'sha256:'+'3'.repeat(64),promotion:'sha256:'+'4'.repeat(64)},scope_basis:{voice:null,promotion:null},request:{text:'Texto sintético de cerveza. '.repeat(256),questions:Array.from({length:16},(_,q)=>({key:`q${q}`,prompt:'Pregunta sintética',options:['sí','no']}))}})});
+ for(let i=0;i<32;i++)result.push({id:`warmup-large-${i}`,json:JSON.stringify(listeningPreimage(i))});
  return [...result.map(x=>({...x,deep:false})),... [64,256,1024].map(depth=>({id:`deep-${depth}`,json:'['.repeat(depth)+'0'+']'.repeat(depth),deep:true}))];
 }
 export function timedSql(arm:'old'|'candidate',single:boolean):string{
  const fn=arm==='old'?'public.signal_labeling_json_v1':'pg_temp.r16_json_flat_v1';
  // MATERIALIZED ensures exactly one function result per row; both arms consume it identically.
  return `WITH serialized AS MATERIALIZED (SELECT ${fn}(payload) AS value FROM pg_temp.r16_canonical_cases WHERE NOT deep ${single?'AND case_id=$1':''}) SELECT count(*)::int AS rows, sum(octet_length(value))::text AS bytes, encode(sha256(convert_to(string_agg(coalesce(value,'<SQLNULL>'),'|' ORDER BY value COLLATE "C"),'UTF8')),'hex') AS digest FROM serialized`;
+}
+
+/** Actual request compiler and version; synthetic input/context only. */
+export function listeningPreimage(i:number){
+ const base=signalListeningBaseTemplateV1({category:'cerveza',lexicon_terms:['cerveza','cerveja']});
+ const config=validateSignalListeningConfigurationV1({...base,questions:[...base.questions,
+  ...Array.from({length:16},(_,q)=>({key:`topic_${q}`,type:'noul' as const,text:`¿Se menciona el tema sintético ${q}?`,
+   positive:`Tema sintético ${q}`,negative:'Otros temas',scope:'consumer_category' as const,origin:'brand_os' as const,human_locked:false}))]});
+ const root_id=`00000000-0000-4000-8000-${String(i+1).padStart(12,'0')}`;
+ const input={root_id,input_digest:'sha256:'+'1'.repeat(64),text:`Texto sintético ${i} de cerveza. `.repeat(256),
+  question_keys:config.questions.map(q=>q.key),question_digests:Object.fromEntries(config.questions.map(q=>[q.key,signalListeningQuestionDigestV1(config,q)])),
+  scope_basis:{voice:'00000000-0000-4000-8000-000000000100',promotion:'00000000-0000-4000-8000-000000000101'}};
+ const request=buildSignalListeningJevRequestV1(input,config);
+ return {request_version:SIGNAL_LISTENING_REQUEST_VERSION_V1,run_id:'00000000-0000-4000-8000-000000000200',
+  root_id,input_digest:input.input_digest,entity_context_digest:'sha256:'+'2'.repeat(64),question_digests:input.question_digests,
+  scope_basis:input.scope_basis,request};
 }

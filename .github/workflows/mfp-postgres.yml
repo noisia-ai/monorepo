@@ -30,9 +30,9 @@ jobs:
           if docker inspect r16-benchmark-pg17 >/dev/null 2>&1; then exit 1; fi
           if docker volume inspect r16bench-benchmark-pg17_postgres-data >/dev/null 2>&1; then exit 1; fi
           export R16BENCH_RUN_ID=benchmark-pg17 R16BENCH_SERVICES=postgres
-          scripts/r16/lab-up.sh
           cleanup() { scripts/r16/lab-down.sh; }
           trap cleanup EXIT
+          scripts/r16/lab-up.sh
           set -a
           source .data/piloto-masivo/r16/labs/benchmark-pg17/connection.env
           set +a
