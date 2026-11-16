@@ -60,6 +60,8 @@ test('custom bounded plans preserve completed cache and real H5 overlays without
   const overridden=effective.find(r=>r.root_id===f.roots[0]&&r.question_key===key);assert.ok(overridden);
   assert.equal(overridden.human_belongs,false);assert.equal(overridden.effective_belongs,false);assert.equal(overridden.answer.noul,.9);
   assert.equal(overridden.label_source,'human');assert.ok(overridden.cache_call_id);await equal(c,scope,[f.roots[0]!], 'client-derived-metrics',true);
+  const otherContext=await equal(c,[...scope.slice(0,3),'sha256:'+'0'.repeat(64)],null,'llm-processing');
+  assert.ok(otherContext.every(row=>row.answer===null&&row.cache_call_id===null),'another entity context cannot reuse cached answers');
   await equal(c,scope,null,'llm-processing');
   await c.query("UPDATE data_sources SET status='archived' WHERE workspace_id=$1",[f.workspace_id]);assert.equal((await equal(c,scope,null,'client-derived-metrics',true)).length,0);
  }finally{await c.query('ROLLBACK');c.release();}
