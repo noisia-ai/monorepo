@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
 import type {PoolClient} from 'pg';
-import {labelingRawPageAttachSqlV1} from '../signal-labeling-raw-page-store';
+import {labelingRawPageAttachSqlV1,labelingRawPageLockSqlV1} from '../signal-labeling-raw-page-store';
+import type {LabelingDatabaseV1} from '../signal-mention-facets';
 
 // Verbatim attach UPDATE from product 0c216867a264d9f8cc35db05a8e991423dea9676.
 // This independent reference is intentionally not built from the candidate.
@@ -19,7 +20,7 @@ export const rawAttachBeforeSqlV1=`UPDATE signal_labeling_calls c SET raw_sha256
 export const rawAttachLockSelectSqlV1=`SELECT c.id FROM signal_labeling_calls c
         JOIN signal_labeling_raw_page_members m ON m.call_id=c.id AND m.workspace_id=c.workspace_id AND m.run_id=c.run_id
         WHERE m.page_id=$1 AND m.workspace_id=$2 AND m.run_id=$3 ORDER BY c.id FOR UPDATE OF c`;
-const lockSelectSha256=()=>createHash('sha256').update(rawAttachLockSelectSqlV1.replace(/\s+/gu,' ').trim()).digest('hex');
+const lockSelectSha256=(sql=rawAttachLockSelectSqlV1)=>createHash('sha256').update(sql.replace(/\s+/gu,' ').trim()).digest('hex');
 
 type Snapshot=Array<{id:string;stable:string;updated_at:string;fresh:boolean}>;
 export async function rawAttachSnapshotV1(c:PoolClient,run:string):Promise<Snapshot>{
@@ -44,32 +45,92 @@ function nodes(plan:Record<string,unknown>,out:Record<string,unknown>[]=[]){
  out.push(Object.fromEntries(keys.filter(k=>k in plan).map(k=>[k,plan[k]])));
  for(const child of (plan.Plans??[])as Record<string,unknown>[])nodes(child,out);return out;
 }
-export function rawAttachLockSelectEvidenceV1(actual:{Plan:Record<string,unknown>;[key:string]:unknown},members:number){
- return{phase:'plan-captured',arm:'literal-f0-lock-select',members,actual_rows:actual.Plan['Actual Rows'],
-  sql_sha256:lockSelectSha256(),diagnostic_scope:'standalone synthetic oracle SELECT, not the mini/runtime query',
-  first_for_update_scope:'current RR/layout only; native reserve/mark committed before this transaction',
+export function rawAttachLockSelectEvidenceV1(actual:{Plan:Record<string,unknown>;[key:string]:unknown},members:number,arm:'original'|'candidate'='original'){
+ return{phase:'plan-captured',arm,members,actual_rows:actual.Plan['Actual Rows'],
+  sql_sha256:lockSelectSha256(arm==='original'?rawAttachLockSelectSqlV1:labelingRawPageLockSqlV1),diagnostic_scope:'standalone synthetic oracle SELECT, not the mini/runtime query',
+  first_for_update_scope:'each RR/layout arm starts after SAVEPOINT rollback to native KEY SHARE; reserve/mark committed before RR',
   prior_call_locks:'KEY SHARE retained from native member/FK guards',
   latency_scope:'includes KEY SHARE to FOR UPDATE upgrade; not production virgin locking latency',
   execution_ms:actual['Execution Time'],planning_ms:actual['Planning Time'],selected_nodes:nodes(actual.Plan)};
 }
-/** The layout seed has only native KEY SHARE call locks. This exact SELECT is
- * its first FOR UPDATE on calls; no page FOR UPDATE or direct ID lock precedes
- * it. Its locks remain until the enclosing RR/layout rollback. */
-export async function explainRawAttachLockSelectV1(c:PoolClient,args:[string,string,string],members:number){
- let phase='lock-select-provenance';
+/** A second backend tests every committed call with a compatible KEY SHARE
+ * request. Native 55P03 distinguishes an actual FOR UPDATE lock from the seed's
+ * KEY SHARE, without SKIP LOCKED, changed guards, lock timeouts or extra fixtures.
+ * The temporary function and all observer row locks roll back on every probe. */
+export async function assertRawAttachLockSetV1(database:LabelingDatabaseV1,ownerPid:number,workspace:string,run:string,
+ allIds:string[],lockedIds:string[],arm:string){
+ const observer=await database.connect();
  try{
-  assert.equal(lockSelectSha256(),'b8180180dfc8340b89511bb2ecf806c6f7bc811c7c257d2a7409915751ec5670','frozen f0 lock SELECT must remain literal');
-  phase='lock-select-explain';
-  const actual=(await c.query('EXPLAIN (ANALYZE,BUFFERS,TIMING,FORMAT JSON) '+rawAttachLockSelectSqlV1,args)).rows[0]['QUERY PLAN'][0];
-  const safe=rawAttachLockSelectEvidenceV1(actual,members);
-  // Distinct prefix, before all plan/count assertions. No full plan, SQL,
-  // IndexCond, Filter, binds, UUIDs or request/body values leave this helper.
-  console.log('# raw attach lock-select native plan '+JSON.stringify(safe));
-  phase='lock-select-row-count';assert.equal(safe.actual_rows,members);
-  assert.ok(safe.selected_nodes.some(n=>n['Node Type']==='LockRows'&&n['Actual Loops']===1&&n['Actual Rows']===members),
-   'the literal SELECT must execute its actual LockRows for exactly this page');
-  rawAttachPhaseV1('lock-select',safe.arm,members,'complete');
- }catch(error){rawAttachPhaseV1(phase,'literal-f0-lock-select',members,'failed',error);throw error;}
+  assert.notEqual(Number((await observer.query('SELECT pg_backend_pid() pid')).rows[0].pid),ownerPid);
+  await observer.query('BEGIN');
+  await observer.query(`CREATE FUNCTION pg_temp.r16_raw_key_share_probe_v1(w uuid,r uuid,ids uuid[])
+   RETURNS TABLE(id uuid,blocked boolean) LANGUAGE plpgsql AS $probe$
+   DECLARE candidate_id uuid;found_id uuid;found_workspace uuid;found_run uuid;
+   BEGIN
+    FOR candidate_id IN SELECT q.value FROM unnest(ids) q(value) ORDER BY q.value LOOP
+     BEGIN
+      SELECT c.id,c.workspace_id,c.run_id INTO found_id,found_workspace,found_run
+       FROM public.signal_labeling_calls c WHERE c.id=candidate_id FOR KEY SHARE NOWAIT;
+      IF NOT FOUND THEN RAISE EXCEPTION 'raw_lock_oracle_call_missing'; END IF;
+      IF found_workspace IS DISTINCT FROM w OR found_run IS DISTINCT FROM r THEN RAISE EXCEPTION 'raw_lock_oracle_scope_mismatch'; END IF;
+      RETURN QUERY SELECT candidate_id,false;
+     EXCEPTION WHEN lock_not_available THEN RETURN QUERY SELECT candidate_id,true;
+     END;
+    END LOOP;
+   END $probe$`);
+  const actual=(await observer.query<{id:string;blocked:boolean}>('SELECT * FROM pg_temp.r16_raw_key_share_probe_v1($1,$2,$3::uuid[])',[workspace,run,allIds])).rows;
+  const selected=new Set(lockedIds),expected=[...allIds].sort().map(id=>({id,blocked:selected.has(id)}));
+  const digest=(rows:unknown)=>createHash('sha256').update(JSON.stringify(rows)).digest('hex');
+  const equal=digest(actual)===digest(expected);
+  console.log('# raw attach lock-select semantic check '+JSON.stringify({arm,phase:'lockset',probed_calls:actual.length,
+   blocked_calls:actual.filter(r=>r.blocked).length,expected_blocked_calls:lockedIds.length,exact_lockset:equal}));
+  assert.equal(actual.length,allIds.length);assert.equal(equal,true,'every selected call must be UPDATE-locked and every disjoint call compatible');
+ }finally{try{await observer.query('ROLLBACK');}finally{observer.release();}}
+}
+/** Both SELECT arms start at the same native KEY SHARE lock state. The savepoint
+ * rollback releases each FOR UPDATE upgrade before the next arm; a separate
+ * backend proves that reset and the complete held/disjoint lock set. */
+export async function explainRawAttachLockSelectV1(c:PoolClient,args:[string,string,string],expected:string[],
+ observe:(locked:string[],arm:string)=>Promise<void>){
+ const before=await rawAttachSnapshotV1(c,args[2]),ordered=[...expected].sort();
+ for(const [arm,sql]of [['original',rawAttachLockSelectSqlV1],['candidate',labelingRawPageLockSqlV1]]as const){
+  await c.query('SAVEPOINT raw_lock_select_arm');let phase='lock-select-provenance';
+  try{
+   assert.equal(lockSelectSha256(),'b8180180dfc8340b89511bb2ecf806c6f7bc811c7c257d2a7409915751ec5670','frozen f0 lock SELECT must remain literal');
+   phase='lock-select-reset-proof';await observe([],arm+'-baseline');
+   phase='lock-select-explain';
+   const actual=(await c.query('EXPLAIN (ANALYZE,BUFFERS,TIMING,FORMAT JSON) '+sql,args)).rows[0]['QUERY PLAN'][0];
+   const safe=rawAttachLockSelectEvidenceV1(actual,ordered.length,arm);
+   console.log('# raw attach lock-select native plan '+JSON.stringify(safe));
+   phase='lock-select-row-count';assert.equal(safe.actual_rows,ordered.length);
+   assert.ok(safe.selected_nodes.some(n=>n['Node Type']==='LockRows'&&n['Actual Loops']===1&&n['Actual Rows']===ordered.length));
+   if(arm==='candidate'){
+    const members=safe.selected_nodes.filter(n=>n['Relation Name']==='signal_labeling_raw_page_members');
+    assert.ok(members.length>0&&members.every(n=>n['Actual Loops']===1),'physical page members must be scanned once');
+    const arrays=safe.selected_nodes.filter(n=>n['CTE Name']==='raw_lock_page');
+    assert.ok(arrays.length>0&&arrays.every(n=>rawAttachAtMostOnceV1(n['Actual Loops'])),'page ID InitPlans must have known zero/one loops');
+   }
+   phase='lock-select-exact-ids-order';
+   const rows=(await c.query<{id:string}>(sql,args)).rows.map(row=>row.id);
+   assert.deepEqual(rows,ordered,'semantic reentry preserves exact page IDs and global UUID output order');
+   phase='lock-select-held-proof';await observe(ordered,arm+'-held');
+   assert.deepEqual(await rawAttachSnapshotV1(c,args[2]),before,'SELECT locks never alter any call value');
+   rawAttachPhaseV1('lock-select',arm,ordered.length,'complete');
+  }catch(error){rawAttachPhaseV1(phase,arm,ordered.length,'failed',error);throw error;}
+  finally{await c.query('ROLLBACK TO SAVEPOINT raw_lock_select_arm');await c.query('RELEASE SAVEPOINT raw_lock_select_arm');}
+ }
+ await observe([],'after-both-arms');
+}
+/** Semantic edge cases execute both frozen/current SELECTs without collecting
+ * extra timing plans. Each replay is isolated so it cannot pre-lock a timed arm. */
+export async function assertRawAttachLockRowsV1(c:PoolClient,args:[string,string,string],expected:string[]){
+ const before=await rawAttachSnapshotV1(c,args[2]);
+ for(const sql of [rawAttachLockSelectSqlV1,labelingRawPageLockSqlV1]){
+  await c.query('SAVEPOINT raw_lock_rows');
+  try{const rows=(await c.query<{id:string}>(sql,args)).rows.map(row=>row.id);assert.deepEqual(rows,[...expected].sort());}
+  finally{await c.query('ROLLBACK TO SAVEPOINT raw_lock_rows');await c.query('RELEASE SAVEPOINT raw_lock_rows');}
+ }
+ assert.deepEqual(await rawAttachSnapshotV1(c,args[2]),before);
 }
 /** Both DML arms execute under a savepoint against the exact same locked native
  * fixture. No trigger, GUC, planner switch or clock is replaced. */

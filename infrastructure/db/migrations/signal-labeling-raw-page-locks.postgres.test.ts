@@ -9,6 +9,8 @@ import {createMassLabelingStoreV1} from '../signal-mass-labeling';
 import {jevUsageV1} from '../../../services/workers/src/workers/signal-jev-labeling-page';
 import {processMassLabelingJevV1} from '../../../services/workers/src/workers/signal-mass-labeling-jev';
 import {runMassLabelingAcceptanceFixtureV1} from './signal-mass-labeling-acceptance.synthetic.fixture';
+import {labelingRawPageLockSqlV1} from '../signal-labeling-raw-page-store';
+import {assertRawAttachLockSetV1} from './signal-labeling-raw-attach.oracle';
 type Context=Parameters<NonNullable<NonNullable<Parameters<typeof runMassLabelingAcceptanceFixtureV1>[1]>['beforeProcessing']>>[0];
 const enabled=process.env.NOISIA_R16_RAW_PAGE_LOCKS_PG==='true';
 const delay=(ms:number)=>new Promise<void>(r=>setTimeout(r,ms));
@@ -124,6 +126,43 @@ test('same-page plan reentry and attach use one call/page lock order',{skip:!ena
   assert.equal((await context.database.query('SELECT count(*)::int n FROM signal_labeling_raw_pages WHERE run_id=$1',[run.id])).rows[0].n,1);
   assert.equal((await context.database.query('SELECT count(*)::int n FROM signal_labeling_raw_page_members WHERE run_id=$1',[run.id])).rows[0].n,1);
   assert.equal((await store.calls(run)).find(c=>c.id===calls[0]!.id)?.raw_body,raw);assert.ok(writes()>=1&&writes()<=2);
+ });
+});
+
+test('RAW attachment locks UUID order before a blocked last member and leaves disjoint calls compatible',{skip:!enabled,timeout:120000},async()=>{
+ await fixture(async f=>{
+  const ordered=[...f.calls].sort((a,b)=>a.id<b.id?-1:a.id>b.id?1:0),first=ordered[0]!,last=ordered[2]!;
+  const blocker=await f.context.database.connect(),attempted=deferred();let opened=false,caught=false,waiter=0,primary:unknown,rollbackError:unknown;
+  const holder=Number((await blocker.query('SELECT pg_backend_pid() pid')).rows[0].pid);
+  f.intercept.before=async(sql,c)=>{if(!caught&&sql===labelingRawPageLockSqlV1){
+   caught=true;await blocker.query('BEGIN');opened=true;
+   await blocker.query('SELECT id FROM signal_labeling_calls WHERE id=$1 FOR UPDATE',[last.id]);
+   waiter=Number((await c.query('SELECT pg_backend_pid() pid')).rows[0].pid);attempted.resolve();
+  }};
+  const pending=f.store.persistRawPage(f.run,[{call:last,raw:'last UUID exact receipt'},{call:first,raw:'first UUID exact receipt'}])
+   .then(()=>null,error=>error);
+  let timer:ReturnType<typeof setTimeout>|undefined;
+  try{
+   await Promise.race([attempted.promise,pending.then(error=>{throw error??Error('RAW lock SELECT was not reached');}),
+    new Promise<never>((_,reject)=>{timer=setTimeout(()=>reject(Error('RAW lock SELECT barrier was not reached')),15000);})]);
+   let blocked=false;const deadline=Date.now()+5000;
+   do{blocked=Boolean((await blocker.query('SELECT $1::int=ANY(pg_blocking_pids($2::int)) blocked',[holder,waiter])).rows[0].blocked);
+    if(!blocked)await delay(20);
+   }while(!blocked&&Date.now()<deadline);
+   assert.equal(blocked,true,'the exact attachment backend must wait for the held largest UUID');
+   // The smallest UUID must already be UPDATE-locked by attachment, while the
+   // middle disjoint call remains compatible. A last-first lock order fails.
+   await assertRawAttachLockSetV1(f.context.database,waiter,f.run.workspace_id,f.run.id,ordered.map(c=>c.id),[first.id,last.id],'ordered-runtime-wait');
+  }catch(error){primary=error;}finally{
+   if(timer)clearTimeout(timer);
+   // Release the maximum UUID owner BEFORE draining the blocked main promise.
+   try{if(opened)await blocker.query('ROLLBACK');}catch(error){rollbackError=error;primary??=error;}
+   finally{blocker.release(rollbackError instanceof Error?rollbackError:undefined);}
+   await pending;
+  }
+  if(primary)throw primary;assert.equal(await pending,null);
+  const rows=(await f.context.database.query('SELECT id,raw_sha256 FROM signal_labeling_calls WHERE run_id=$1 ORDER BY id',[f.run.id])).rows;
+  assert.equal(rows.filter(row=>row.raw_sha256!==null).length,2);assert.equal(rows[1]!.raw_sha256,null);
  });
 });
 

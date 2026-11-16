@@ -6,7 +6,8 @@ import {runMassLabelingAcceptanceFixtureV1} from './signal-mass-labeling-accepta
 import {requestSignalListeningV1,createSignalListeningStoreV1} from '../signal-listening-runs';
 import {saveSignalListeningConfigurationV1} from '../signal-listening-configuration';
 import {buildLabelingRawPageV1,parseLabelingRawPageV1} from '../signal-labeling-raw-pages';
-import {assertRawAttachOracleV1,assertRawAttachDeniedV1,rawAttachBeforeSqlV1,rawAttachPhaseV1,rawAttachSnapshotV1,explainRawAttachLockSelectV1,type RawAttachPlanV1} from './signal-labeling-raw-attach.oracle';
+import {assertRawAttachOracleV1,assertRawAttachDeniedV1,rawAttachBeforeSqlV1,rawAttachPhaseV1,rawAttachSnapshotV1,
+ explainRawAttachLockSelectV1,assertRawAttachLockSetV1,assertRawAttachLockRowsV1,type RawAttachPlanV1} from './signal-labeling-raw-attach.oracle';
 
 // ROOT registers this large native oracle explicitly in the owned PG17 gate.
 // It is not a local acceptance and is never opened by the ordinary pure suite.
@@ -110,11 +111,34 @@ for(const count of [720,4096])test(`RAW attach layout${count} original and page 
      await c.query(`INSERT INTO signal_labeling_raw_page_members(call_id,workspace_id,run_id,page_id,request_digest,raw_sha256,raw_size_bytes,byte_offset,byte_length)
       SELECT x.call_id,$1,$2,$3,x.request_digest,x.raw_sha256,x.raw_size_bytes,x.byte_offset,x.byte_length
       FROM jsonb_to_recordset($4::jsonb)x(call_id uuid,request_digest text,raw_sha256 text,raw_size_bytes bigint,byte_offset bigint,byte_length bigint)
-      ORDER BY x.call_id`,[run.workspace_id,run.id,built.page_id,JSON.stringify(built.members)]);
+      ORDER BY x.call_id DESC`,[run.workspace_id,run.id,built.page_id,JSON.stringify(built.members)]);
      const args:[string,string,string]=[built.page_id,run.workspace_id,run.id];
-     phase='lock-select-first-for-update';await explainRawAttachLockSelectV1(c,args,count);
+     // Reverse physical member insertion must not change global UUID call-lock
+     // order. Only compatible KEY SHARE locks exist before either timed arm.
+     const pid=Number((await c.query('SELECT pg_backend_pid() pid')).rows[0].pid);
+     const allIds=calls.map(call=>call.id);
+     phase='lock-select-first-for-update';await explainRawAttachLockSelectV1(c,args,ids,
+      (held,arm)=>assertRawAttachLockSetV1(f.database,pid,run.workspace_id,run.id,allIds,held,arm));
+     phase='lock-select-scope-edges';
+     for(const wrong of [[randomUUID(),run.workspace_id,run.id],[built.page_id,randomUUID(),run.id],[built.page_id,run.workspace_id,randomUUID()]]as [string,string,string][])
+      await assertRawAttachLockRowsV1(c,wrong,[]);
+     await assertRawAttachLockRowsV1(c,args,ids); // planned/unknown exact reentry
      const locked=await c.query('SELECT id FROM signal_labeling_calls WHERE workspace_id=$1 AND run_id=$2 AND id=ANY($3::uuid[]) ORDER BY id FOR UPDATE',[run.workspace_id,run.id,ids]);
      assert.deepEqual(locked.rows.map(row=>row.id),ids,'the literal SELECT and direct call-id locks precede the explicit page lock');
+     // Semantic-only uncertainty is deliberately AFTER the measured first-lock
+     // arms. Native UPDATE guards run, then rollback restores the f0 baseline.
+     phase='lock-select-unknown-semantic';await c.query('SAVEPOINT raw_lock_unknown');
+     try{
+      await c.query("UPDATE signal_labeling_calls SET status='unknown' WHERE run_id=$1 AND id=ANY($2::uuid[])",[run.id,ids.filter((_,index)=>index%2===1)]);
+      await assertRawAttachLockRowsV1(c,args,ids);
+     }finally{await c.query('ROLLBACK TO SAVEPOINT raw_lock_unknown');await c.query('RELEASE SAVEPOINT raw_lock_unknown');}
+     const emptyPage=randomUUID(),emptySha=createHash('sha256').update('empty native intent '+built.page_id).digest('hex');
+     await c.query(`INSERT INTO signal_labeling_raw_pages(id,workspace_id,run_id,name,storage_key,sha256,size_bytes,member_count)
+      VALUES($1,$2,$3,$4,$5,$6,1,1)`,[emptyPage,run.workspace_id,run.id,`page-${emptySha}.jsonl`,key+'.empty','sha256:'+emptySha]);
+     await assertRawAttachLockRowsV1(c,[emptyPage,run.workspace_id,run.id],[]);
+     // Native planned intent declares one member but has zero: both SELECTs
+     // retain zero rows, so the unchanged runtime count gate cannot admit it.
+     assert.equal((await c.query('SELECT member_count FROM signal_labeling_raw_pages WHERE id=$1',[emptyPage])).rows[0].member_count,1);
      await c.query('SELECT id FROM signal_labeling_raw_pages WHERE id=$1 FOR UPDATE',[built.page_id]);
      phase='planned-denial';await assertRawAttachDeniedV1(c,args,run.id); // planned page cannot attach
      await c.query("UPDATE signal_labeling_raw_pages SET status='verified',verified_at=clock_timestamp() WHERE id=$1",[built.page_id]);

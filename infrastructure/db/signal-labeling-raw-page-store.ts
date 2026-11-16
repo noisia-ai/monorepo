@@ -17,6 +17,17 @@ const sameMembers=(a:LabelingRawPageMemberV1[],b:LabelingRawPageMemberV1[])=>a.l
     &&x.raw_size_bytes===Number(y.raw_size_bytes)&&x.byte_offset===Number(y.byte_offset)&&x.byte_length===Number(y.byte_length);
 });
 
+/** Read authoritative page membership once. Uncorrelated UUID-array InitPlan;
+ * all call row locks remain in global UUID order before the page FOR UPDATE.
+ * No status, digest or RAW predicate belongs here: attach validates those later. */
+export const labelingRawPageLockSqlV1=`WITH raw_lock_page AS MATERIALIZED(
+        SELECT array_agg(call_id) call_ids FROM signal_labeling_raw_page_members
+        WHERE page_id=$1 AND workspace_id=$2 AND run_id=$3
+      )
+      SELECT c.id FROM signal_labeling_calls c
+      WHERE c.id=ANY((SELECT call_ids FROM raw_lock_page)::uuid[])
+        AND c.workspace_id=$2 AND c.run_id=$3 ORDER BY c.id FOR UPDATE OF c`;
+
 /** One statement-local row per verified page. Scalar subqueries are deliberately
  * uncorrelated: their InitPlans retain IDs/map/scalars independently of the
  * target-call scan, instead of rescanning page members for every run call.
@@ -61,9 +72,7 @@ export function createLabelingRawPageStoreV1(options:{database:LabelingDatabaseV
       // Match planning's global call-id order before taking the page lock.
       // Reentry of this same page must not hold calls while attachment holds
       // its page and waits for those calls (a SHARE run fence allows both).
-      const locked=(await c.query<{id:string}>(`SELECT c.id FROM signal_labeling_calls c
-        JOIN signal_labeling_raw_page_members m ON m.call_id=c.id AND m.workspace_id=c.workspace_id AND m.run_id=c.run_id
-        WHERE m.page_id=$1 AND m.workspace_id=$2 AND m.run_id=$3 ORDER BY c.id FOR UPDATE OF c`,
+      const locked=(await c.query<{id:string}>(labelingRawPageLockSqlV1,
         [page.id,run.workspace_id,run.id])).rows;
       if(locked.length!==page.member_count)invalid();
       const row=(await c.query<Page>('SELECT * FROM signal_labeling_raw_pages WHERE id=$1 AND workspace_id=$2 AND run_id=$3 FOR UPDATE',
