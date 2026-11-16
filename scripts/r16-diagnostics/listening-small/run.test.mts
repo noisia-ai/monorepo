@@ -222,6 +222,8 @@ test('inner-plan guard is limited to the owned CI loopback database and role',as
  assert.throws(()=>assertInnerPlanCaptureGuard(env,'noisia_mfp_ci','other_role'),/capture_denied/u);
  assert.equal(innerPlanQueryLabel('sha256:d0ecbbfdca3d93e069a3ca03367439fa25ce54164efaf3135c80b27c91ed2680'),'metadata');
  assert.equal(innerPlanQueryLabel('sha256:82fa4fc106842d6422046aefb067a0a7dbaf5bb28de04c0b9147854091410c04'),'hydrate');
+ assert.equal(innerPlanQueryLabel('sha256:8ea420589c30b27ac581ade8d7fe31c467e50d5b96abc4a96358a3133b517a66'),'metadata');
+ assert.equal(innerPlanQueryLabel('sha256:8fdf796e82ccd9b4528996c607536f72bd5992946d6d3c21f0daf1700ea97d84'),'hydrate');
  assert.equal(innerPlanQueryLabel('sha256:unknown'),null);
  assert.equal(verifiedInnerPlanScopeV1({database:'noisia_mfp_ci',role:'postgres',isolation:'repeatable read',read_only:'on',superuser:true},'noisia_mfp_ci','postgres'),true);
  assert.equal(verifiedInnerPlanScopeV1({database:'noisia_mfp_ci',role:'postgres',isolation:'read committed',read_only:'off',superuser:true},'noisia_mfp_ci','postgres'),false);

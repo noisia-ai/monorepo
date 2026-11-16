@@ -9,6 +9,8 @@ export const STORE_OPERATIONS=new Set(['inputs','calls','reserve','markSubmittin
 const INNER_PLAN_QUERY_LABELS=new Map([
  ['sha256:d0ecbbfdca3d93e069a3ca03367439fa25ce54164efaf3135c80b27c91ed2680','metadata'],
  ['sha256:82fa4fc106842d6422046aefb067a0a7dbaf5bb28de04c0b9147854091410c04','hydrate'],
+ ['sha256:8ea420589c30b27ac581ade8d7fe31c467e50d5b96abc4a96358a3133b517a66','metadata'],
+ ['sha256:8fdf796e82ccd9b4528996c607536f72bd5992946d6d3c21f0daf1700ea97d84','hydrate'],
 ]);
 export const INNER_PLAN_CAPTURE_ORDINALS=[1,2,3,4,5,6,7,8] as const;
 const PLAN_NUMBERS=['Plan Rows','Plan Width','Actual Rows','Actual Loops','Startup Cost','Total Cost','Actual Startup Time','Actual Total Time',
