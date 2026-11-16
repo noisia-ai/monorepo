@@ -36,11 +36,11 @@ test('pending barriers preserve projection/budgets and do not add status or cont
  const {oldListeningMetadataSqlV1,oldListeningHydrateSqlV1}=await import('./signal-listening-reader-slices.oracle');
  const {createHash}=await import('node:crypto');
  const source=await readFile(new URL('../signal-listening-runs.ts',import.meta.url),'utf8');
- const sent=[...source.matchAll(/sent AS MATERIALIZED\(([\s\S]*?)\n\s*\), reservation_matches/g)];assert.equal(sent.length,2);
+ const sent=[...source.matchAll(/sent AS MATERIALIZED\(([\s\S]*?)\n\s*\), reservation_matches/g)];assert.equal(sent.length,3,'legacy metadata, bounded projection and unbounded hydration all retain the sent-set barrier');
  for(const item of sent){assert.ok(item[1]!.includes('WHERE workspace_id=$1 AND run_id=$5'));assert.ok(item[1]!.includes('root_id=ANY('));assert.ok(!/status|input_digest|entity_context|configuration_id/u.test(item[1]!));}
- const matches=[...source.matchAll(/reservation_matches AS MATERIALIZED\(([\s\S]*?)\n\s*\), pending/g)];assert.equal(matches.length,2);
+ const matches=[...source.matchAll(/reservation_matches AS MATERIALIZED\(([\s\S]*?)\n\s*\), pending/g)];assert.equal(matches.length,3);
  for(const item of matches){assert.ok(item[1]!.includes('FROM candidates p FULL JOIN sent'));assert.ok(!/WHERE/u.test(item[1]!),'filter cannot be pushed below the full-set materialization barrier');}
- assert.equal(source.split('FROM reservation_matches p WHERE p.root_id IS NOT NULL AND p.reserved_root_id IS NULL').length-1,2);
+ assert.equal(source.split('FROM reservation_matches p WHERE p.root_id IS NOT NULL AND p.reserved_root_id IS NULL').length-1,3);
  const meta=oldListeningMetadataSqlV1(),hydrate=oldListeningHydrateSqlV1(true);
  assert.ok(source.includes(meta.slice(meta.indexOf('   SELECT root_id,(4::bigint*'))),'metadata byte formula, question cutoff and output order stay exact');
  assert.ok(source.includes(hydrate.slice(hydrate.indexOf('  SELECT root_id,input_digest,body,'))),'hydration output and root/question order stay exact');

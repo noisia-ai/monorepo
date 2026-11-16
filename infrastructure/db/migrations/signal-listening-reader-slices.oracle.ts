@@ -2,6 +2,7 @@ import type {LabelingDatabaseV1} from '../signal-mention-facets';
 import type {PoolClient,QueryResult} from 'pg';
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
+import {compareListeningInputProjectionV1,type ListeningProjectionOracleContextV1} from './signal-listening-input-projection.oracle';
 
 // Frozen pre-0325 SELECTs; only the population name is rebound to its old
 // private function. Importing this module never registers tests or opens PG.
@@ -36,7 +37,8 @@ async function install(c:PoolClient){
    'CREATE OR REPLACE FUNCTION pg_temp.r16_reader_population_before_0325('));
  }
 }
-async function compare(c:PoolClient,sql:string,params:unknown[]|undefined,result:QueryResult){
+async function compare(c:PoolClient,sql:string,params:unknown[]|undefined,result:QueryResult,context:ListeningProjectionOracleContextV1={}){
+ if(await compareListeningInputProjectionV1(c,sql,params,result,context))return;
  const metadata=sql.startsWith('/* labeling_listening_input_metadata_v1 */'),hydrate=sql.startsWith('/* labeling_listening_inputs_v1 */');
  if(!metadata&&!hydrate)return;
  assert.ok(params);const previous=metadata?oldListeningMetadataSqlV1():oldListeningHydrateSqlV1(params.length===7);
@@ -63,9 +65,10 @@ export function withListeningReaderSliceOracleV1(database:LabelingDatabaseV1,cou
   finally{c.release();}
  },connect:async()=>{
   const c=await database.connect();try{await install(c);}catch(error){c.release();throw error;}
+  const context:ListeningProjectionOracleContextV1={};
   return new Proxy(c,{get(target,key){
    if(key==='query')return async(sql:string,params?:unknown[])=>{
-    const result:QueryResult=await target.query(sql,params);if(typeof sql==='string')await compare(target,sql,params,result);return result;
+    const result:QueryResult=await target.query(sql,params);if(typeof sql==='string')await compare(target,sql,params,result,context);return result;
    };
    const value=Reflect.get(target,key);return typeof value==='function'?value.bind(target):value;
   }});

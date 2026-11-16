@@ -3,7 +3,8 @@ import type {PoolClient} from 'pg';
 import {signalListeningJevIdentityV1,validateSignalListeningConfigurationV1,labelerDigestV1,buildSignalListeningJevRequestV1,
  signalWorkspaceEmbeddingDigestV1 as digest,type SignalListeningInputV1,type SignalListeningResultV1,type SignalListeningConfigurationV1} from '@noisia/query-engine';
 import {requestMentionFacetsV1,createSignalLabelingStoreV1,type LabelingRunV1,type LabelingCallV1} from './signal-labeling-runs';
-import {selectLabelingInputPrefixV1,type LabelingInputBoundsV1} from './signal-labeling-input-bounds';
+import {type LabelingInputBoundsV1} from './signal-labeling-input-bounds';
+import {hydrateListeningInputProjectionV1,type ListeningInputProjectionRowV1} from './signal-listening-input-projection';
 import type {LabelingDatabaseV1} from './signal-mention-facets';
 import {mapCurrent,assertMassLabelingMapCurrentV1} from './signal-mass-labeling';
 import {authorizeSignalListeningV1,loadSignalListeningConfigurationWithClientV1,listeningFailV1 as fail,
@@ -70,12 +71,81 @@ async function inputMetadata(c:Pick<PoolClient,'query'>,run:LabelingRunV1,limit:
 
  return{o,rows};
 }
+// Bounded read only: projection lifetime ends with the caller's RR snapshot.
+async function inputProjectionMetadata(c:Pick<PoolClient,'query'>,run:LabelingRunV1,bounds:LabelingInputBoundsV1){
+ const limit=bounds.max_rows;
+ const o=await owner(c,run,false);
+ if(await latestConfigurationId(c,run.workspace_id)!==o.configuration_id)return{o,rows:[]};
+ const fixed=Buffer.byteLength(JSON.stringify(run.identity))+Buffer.byteLength(JSON.stringify(run.context))+Buffer.byteLength(JSON.stringify(config(run)));
+ // This cursor belongs only to the caller's RR snapshot. Never retain it on
+ // the run: applying base answers may enable an earlier consumer root next TX.
+ const rows:ListeningInputProjectionRowV1[]=[];
+ let remaining=BigInt(bounds.max_working_bytes);
+ let cursor:string|null=null;
+ const sliceSize=Math.min(4096,Math.max(64,limit));
+ while(rows.length<limit){
+  const ids:string[]=(await c.query<{root_id:string}>(`/* labeling_listening_root_page_v1 */
+   SELECT i.root_id FROM signal_mass_labeling_items i WHERE i.workspace_id=$1 AND i.map_id=$2
+    AND EXISTS(SELECT 1 FROM signal_listening_questions q WHERE q.configuration_id=$4::uuid
+     AND NOT EXISTS(SELECT 1 FROM signal_listening_call_questions sent
+      WHERE sent.workspace_id=$1 AND sent.run_id=$5::uuid AND sent.root_id=i.root_id AND sent.question_digest=q.question_digest))
+    ${cursor?'AND i.root_id>$6::uuid':''} ORDER BY i.root_id LIMIT $3`,
+   [run.workspace_id,o.map_id,sliceSize,o.configuration_id,run.id,...(cursor?[cursor]:[])])).rows.map(row=>row.root_id);
+  if(!ids.length)break;
+  const page=(await c.query<ListeningInputProjectionRowV1>(`/* labeling_listening_input_metadata_v1 */ WITH candidates AS MATERIALIZED(
+   SELECT p.root_id,p.input_digest,p.question_key,p.question_digest,p.scope_basis,octet_length(p.body)::bigint text_bytes,octet_length(p.wire::text)::bigint wire_bytes,
+    (octet_length(p.question_key)+octet_length(p.question_digest)+octet_length(COALESCE(p.scope_basis,'')))::bigint question_metadata_bytes,
+    octet_length(COALESCE(p.platform,''))::bigint platform_bytes
+   FROM signal_listening_population_roots_v1($1::uuid,$2::uuid,$3::uuid,$4::text,$8::uuid[],'llm-processing') p WHERE ${unresolvedScope}
+  ), sent AS MATERIALIZED(
+   SELECT root_id,question_digest FROM signal_listening_call_questions WHERE workspace_id=$1 AND run_id=$5 AND root_id=ANY($8::uuid[])
+  ), reservation_matches AS MATERIALIZED(
+   SELECT p.*,sent.root_id reserved_root_id FROM candidates p FULL JOIN sent ON sent.root_id=p.root_id AND sent.question_digest=p.question_digest
+  ), pending AS MATERIALIZED(
+   SELECT root_id,input_digest,question_key,question_digest,scope_basis,text_bytes,wire_bytes,question_metadata_bytes,platform_bytes,
+    row_number() OVER(PARTITION BY root_id ORDER BY question_key) n
+   FROM reservation_matches p WHERE p.root_id IS NOT NULL AND p.reserved_root_id IS NULL AND ${noHumanDecision})
+   , root_metadata AS MATERIALIZED(
+    SELECT root_id,(4::bigint*(12*max(text_bytes)+2*sum(wire_bytes)+6*sum(question_metadata_bytes)+6*max(platform_bytes)+$7::bigint+2048)+8192)::text working_bytes
+    FROM pending WHERE n<=256 GROUP BY root_id ORDER BY root_id LIMIT $6
+   ), prefix AS MATERIALIZED(
+    SELECT root_id,working_bytes,sum(working_bytes::numeric) OVER(ORDER BY root_id ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) cumulative_bytes
+    FROM root_metadata
+   ), fitting AS MATERIALIZED(SELECT root_id FROM prefix WHERE cumulative_bytes<=$9::numeric),
+   projections AS MATERIALIZED(
+    SELECT p.root_id,p.input_digest,array_agg(p.question_key ORDER BY p.question_key) question_keys,
+     jsonb_object_agg(p.question_key,p.question_digest) question_digests,
+     COALESCE(jsonb_object_agg(p.question_key,p.scope_basis) FILTER(WHERE p.scope_basis IS NOT NULL),'{}'::jsonb) scope_basis
+    FROM pending p JOIN fitting ON fitting.root_id=p.root_id WHERE p.n<=256 GROUP BY p.root_id,p.input_digest
+   )
+   SELECT prefix.root_id,prefix.working_bytes,CASE WHEN projections.root_id IS NOT NULL THEN
+    jsonb_build_object('input_digest',projections.input_digest,'question_keys',projections.question_keys,
+      'question_digests',projections.question_digests,'scope_basis',projections.scope_basis) END projection
+   FROM prefix LEFT JOIN projections ON projections.root_id=prefix.root_id ORDER BY prefix.root_id`,
+   [run.workspace_id,o.configuration_id,o.map_id,run.entity_context_digest,run.id,limit-rows.length,fixed,ids,remaining.toString()])).rows;
+  rows.push(...page);
+  // Budget belongs to the complete ordered read, never to each ID slice.
+  // A non-fitting sentinel still reaches the canonical JS prefix validator.
+  for(const row of page)remaining-=BigInt(row.working_bytes);
+  if(remaining<0n)remaining=0n;
+  cursor=ids.at(-1)!;
+  // An excluded/awaiting-base/reserved slice is not exhaustion. Only the
+  // source ID page can establish that there are no later roots in this TX.
+  if(ids.length<sliceSize)break;
+ }
+
+ return{o,rows};
+}
 async function inputs(c:Pick<PoolClient,'query'>,run:LabelingRunV1,limit:number,bounds?:LabelingInputBoundsV1):Promise<SignalListeningInputV1[]>{
- const metadata=bounds?await inputMetadata(c,run,bounds.max_rows):null;
- const selected=metadata?selectLabelingInputPrefixV1(metadata.rows,bounds!):null;if(selected&&!selected.length)return [];
- const o=metadata?.o??await owner(c,run,false);
- if(!metadata&&await latestConfigurationId(c,run.workspace_id)!==o.configuration_id)return [];
- const hydratePopulation=selected?`signal_listening_population_roots_v1($1::uuid,$2::uuid,$3::uuid,$4::text,$7::uuid[],'llm-processing')`:population;
+ if(bounds){
+  const metadata=await inputProjectionMetadata(c,run,bounds);
+  return hydrateListeningInputProjectionV1(c,{workspace_id:run.workspace_id,map_id:metadata.o.map_id,
+   configuration_digest:metadata.o.configuration_digest},metadata.rows,bounds);
+ }
+ const selected=null;
+ const o=await owner(c,run,false);
+ if(await latestConfigurationId(c,run.workspace_id)!==o.configuration_id)return [];
+ const hydratePopulation=population;
  const rows=(await c.query<{root_id:string;input_digest:string;body:string;published_at:Date|string;platform:string|null;
   question_keys:string[];question_digests:Record<string,string>;scope_basis:Record<string,string>}>(`/* labeling_listening_inputs_v1 */ WITH candidates AS MATERIALIZED(
   SELECT p.root_id,p.input_digest,p.body,p.published_at,p.platform,p.question_key,p.question_digest,p.scope_basis
@@ -93,7 +163,7 @@ async function inputs(c:Pick<PoolClient,'query'>,run:LabelingRunV1,limit:number,
    jsonb_object_agg(question_key,question_digest) question_digests,
    COALESCE(jsonb_object_agg(question_key,scope_basis) FILTER(WHERE scope_basis IS NOT NULL),'{}'::jsonb) scope_basis
   FROM pending WHERE n<=256 GROUP BY root_id,input_digest,body,published_at,platform ORDER BY root_id LIMIT $6`,
-  [run.workspace_id,o.configuration_id,o.map_id,run.entity_context_digest,run.id,bounds?.max_rows??limit,...(selected?[selected]:[])])).rows;
+  [run.workspace_id,o.configuration_id,o.map_id,run.entity_context_digest,run.id,limit,...(selected?[selected]:[])])).rows;
  return rows.map(row=>({root_id:row.root_id,input_digest:row.input_digest,text:row.body,title:null,platform:row.platform,
   content_type:null,author:null,published_at:new Date(row.published_at).toISOString(),language:null,map_id:o.map_id,
   configuration_digest:o.configuration_digest,question_keys:row.question_keys,question_digests:row.question_digests,scope_basis:row.scope_basis}));

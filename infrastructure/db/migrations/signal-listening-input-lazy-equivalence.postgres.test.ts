@@ -34,7 +34,7 @@ test('lazy native selector matches full oracle across empty slices, base reclass
  const database={query:readerDatabase.query.bind(readerDatabase),connect:async()=>{const c=await readerDatabase.connect();return new Proxy(c,{get(target,key){if(key==='query')return async(sql:string,params?:unknown[])=>{
   const result=await target.query(sql,params);
   if(sql.includes('labeling_listening_root_page_v1')){assert.ok(result.rows.length<=4096);assert.deepEqual(Object.keys(result.rows[0]??{root_id:null}),['root_id']);assert.equal(params?.[3],cfg.id);assert.equal(typeof params?.[4],'string');assert.ok(params?.length===5||params?.length===6);pages.push({ids:result.rows.map(r=>r.root_id),cursor:params?.[5] as string??null});}
-  if(sql.includes('labeling_listening_input_metadata_v1')){assert.ok(sql.includes('signal_listening_population_roots_v1('),'metadata never projects the unbounded population');assert.ok(Array.isArray(params?.[7]));assert.ok((params![7] as string[]).length<=4096);assert.ok(result.rows.every(r=>Object.keys(r).sort().join(',')==='root_id,working_bytes'));metadata.push(result.rows);}
+  if(sql.includes('labeling_listening_input_metadata_v1')){assert.ok(sql.includes('signal_listening_population_roots_v1('),'metadata never projects the unbounded population');assert.ok(Array.isArray(params?.[7]));assert.ok((params![7] as string[]).length<=4096);assert.ok(result.rows.every(r=>Object.keys(r).sort().join(',')==='projection,root_id,working_bytes'));metadata.push(result.rows);}
   if(sql.includes('labeling_listening_pending_available_v1'))finishRows.push(result.rows[0]);
   return result;
  };const value=Reflect.get(target,key);return typeof value==='function'?value.bind(target):value;}});}} as typeof ctx.database;
@@ -70,6 +70,15 @@ test('lazy native selector matches full oracle across empty slices, base reclass
   assert.deepEqual(await store.inputs(run,{...bounds,max_working_bytes:1}),[]);
   await assert.rejects(store.inputs(run,{...bounds,max_working_bytes:1,on_oversize:'error'}),/labeling_input_memory_bound/);
   assert.ok(all.every(i=>i.author===null&&i.title===null&&i.language===null&&i.content_type===null),'private source author fields are never hydrated');
+  // Two genuine nonempty ID slices: 62 reserved roots leave two pending in
+  // the first64-ID slice and another pending root in the following slice.
+  const prefix62=await store.reserve(run,proposals(run,all.slice(0,62)));assert.equal(prefix62.length,62);
+  pages=[];metadata=[];const across=await store.inputs(run,bounds);assert.deepEqual(across,all.slice(62,65));
+  assert.deepEqual(metadata.map(rows=>rows.length),[2,1]);const globalCosts=metadata.flat();
+  const exactTwo=Number(globalCosts[0]!.working_bytes)+Number(globalCosts[1]!.working_bytes);
+  pages=[];metadata=[];assert.deepEqual(await store.inputs(run,{...bounds,max_working_bytes:exactTwo}),all.slice(62,64),
+   'byte budget belongs to the complete read, never resets for the next nonempty ID slice');
+  assert.equal((metadata[1]![0] as {projection?:unknown}).projection,null,'second-slice question payload stays NULL beyond the exact global boundary');
   const calls=await store.reserve(run,proposals(run,all.slice(0,64)));assert.equal(calls.length,64);
   pages=[];metadata=[];const expected=await oracle();assert.equal(expected.length,6);
   const selected=await store.inputs(run,bounds);assert.deepEqual(selected,expected.slice(0,3));
@@ -97,7 +106,11 @@ test('lazy native selector matches full oracle across empty slices, base reclass
   const remainingCosts=metadata[0]!;assert.equal(remainingCosts.length,3);
   assert.deepEqual(await store.inputs(run,{...bounds,max_working_bytes:Number(remainingCosts[0]!.working_bytes)+Number(remainingCosts[1]!.working_bytes)-1}),remaining.slice(0,1),'pruning preserves the exact non-fitting root byte prefix');
   await assert.rejects(store.inputs({...run,workspace_id:randomUUID()},bounds),/listening_run_unavailable/);
+  const reservationsBeforeRevocation=(await ctx.database.query('SELECT count(*)::int n FROM signal_labeling_calls WHERE run_id=$1',[run.id])).rows[0].n;
   await ctx.database.query("UPDATE data_sources SET status='archived' WHERE workspace_id=$1",[ctx.workspace_id]);
+  await assert.rejects(store.reserve(run,proposals(run,remaining.slice(0,1))),/mass_labeling_map_stale|listening_call_questions_invalid|listening_call_invalid|listening_run_stale|labeling_preparation_changed/,
+   'a captured same-RR input projection grants no authority after source rights are revoked');
+  assert.equal((await ctx.database.query('SELECT count(*)::int n FROM signal_labeling_calls WHERE run_id=$1',[run.id])).rows[0].n,reservationsBeforeRevocation);
   const outcome=async(bounded:boolean)=>{try{return{rows:await store.inputs(run,bounded?bounds:undefined)}}catch(e){return{error:(e as Error).message}}};
   assert.deepEqual(await outcome(true),await outcome(false),'rights revocation has the same denial or empty population as full oracle');
   assert.equal((await ctx.database.query("SELECT count(*)::int n FROM signal_listening_population_v1($1,$2,$3,$4)",[ctx.workspace_id,cfg.id,ctx.map_id,run.entity_context_digest])).rows[0].n,0);
