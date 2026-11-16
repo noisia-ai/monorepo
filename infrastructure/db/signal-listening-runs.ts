@@ -24,8 +24,10 @@ async function owner(c:Pick<PoolClient,'query'>,run:LabelingRunV1,current=true){
 const population=`signal_listening_population_v1($1::uuid,$2::uuid,$3::uuid,$4::text)`;
 const unansweredScope=`p.candidate AND p.scope_state='included' AND p.answer IS NULL
  AND NOT signal_listening_human_decision_exists_v1($1::uuid,$2::uuid,$3::uuid,p.root_id,p.input_digest,$4::text,p.question_digest)`;
-const pendingScope=`${unansweredScope} AND NOT EXISTS(SELECT 1 FROM signal_listening_call_questions sent
- WHERE sent.run_id=$5 AND sent.workspace_id=$1 AND sent.root_id=p.root_id AND sent.question_digest=p.question_digest)`;
+// FULL joins below consume scoped sets; filters stay beyond the materialized
+// barrier so a missing reservation never becomes a repeated correlated scan.
+const unresolvedScope="p.candidate AND p.scope_state='included' AND p.answer IS NULL";
+const noHumanDecision=`NOT signal_listening_human_decision_exists_v1($1::uuid,$2::uuid,$3::uuid,p.root_id,p.input_digest,$4::text,p.question_digest)`;
 async function inputMetadata(c:Pick<PoolClient,'query'>,run:LabelingRunV1,limit:number){
  const o=await owner(c,run,false);
  if(await latestConfigurationId(c,run.workspace_id)!==o.configuration_id)return{o,rows:[]};
@@ -41,11 +43,19 @@ async function inputMetadata(c:Pick<PoolClient,'query'>,run:LabelingRunV1,limit:
     ${cursor?'AND root_id>$4::uuid':''} ORDER BY root_id LIMIT $3`,
    [run.workspace_id,o.map_id,sliceSize,...(cursor?[cursor]:[])])).rows.map(row=>row.root_id);
   if(!ids.length)break;
-  const page=(await c.query<{root_id:string;working_bytes:string}>(`/* labeling_listening_input_metadata_v1 */ WITH pending AS MATERIALIZED(
-   SELECT p.root_id,p.question_key,octet_length(p.body)::bigint text_bytes,octet_length(p.wire::text)::bigint wire_bytes,
+  const page=(await c.query<{root_id:string;working_bytes:string}>(`/* labeling_listening_input_metadata_v1 */ WITH candidates AS MATERIALIZED(
+   SELECT p.root_id,p.input_digest,p.question_key,p.question_digest,octet_length(p.body)::bigint text_bytes,octet_length(p.wire::text)::bigint wire_bytes,
     (octet_length(p.question_key)+octet_length(p.question_digest)+octet_length(COALESCE(p.scope_basis,'')))::bigint question_metadata_bytes,
-    octet_length(COALESCE(p.platform,''))::bigint platform_bytes,row_number() OVER(PARTITION BY p.root_id ORDER BY p.question_key) n
-   FROM signal_listening_population_roots_v1($1::uuid,$2::uuid,$3::uuid,$4::text,$8::uuid[],'llm-processing') p WHERE ${pendingScope})
+    octet_length(COALESCE(p.platform,''))::bigint platform_bytes
+   FROM signal_listening_population_roots_v1($1::uuid,$2::uuid,$3::uuid,$4::text,$8::uuid[],'llm-processing') p WHERE ${unresolvedScope}
+  ), sent AS MATERIALIZED(
+   SELECT root_id,question_digest FROM signal_listening_call_questions WHERE workspace_id=$1 AND run_id=$5 AND root_id=ANY($8::uuid[])
+  ), reservation_matches AS MATERIALIZED(
+   SELECT p.*,sent.root_id reserved_root_id FROM candidates p FULL JOIN sent ON sent.root_id=p.root_id AND sent.question_digest=p.question_digest
+  ), pending AS MATERIALIZED(
+   SELECT root_id,question_key,text_bytes,wire_bytes,question_metadata_bytes,platform_bytes,
+    row_number() OVER(PARTITION BY root_id ORDER BY question_key) n
+   FROM reservation_matches p WHERE p.root_id IS NOT NULL AND p.reserved_root_id IS NULL AND ${noHumanDecision})
    SELECT root_id,(4::bigint*(12*max(text_bytes)+2*sum(wire_bytes)+6*sum(question_metadata_bytes)+6*max(platform_bytes)+$7::bigint+2048)+8192)::text working_bytes
    FROM pending WHERE n<=256 GROUP BY root_id ORDER BY root_id LIMIT $6`,
    [run.workspace_id,o.configuration_id,o.map_id,run.entity_context_digest,run.id,limit-rows.length,fixed,ids])).rows;
@@ -64,9 +74,18 @@ async function inputs(c:Pick<PoolClient,'query'>,run:LabelingRunV1,limit:number,
  if(!metadata&&await latestConfigurationId(c,run.workspace_id)!==o.configuration_id)return [];
  const hydratePopulation=selected?`signal_listening_population_roots_v1($1::uuid,$2::uuid,$3::uuid,$4::text,$7::uuid[],'llm-processing')`:population;
  const rows=(await c.query<{root_id:string;input_digest:string;body:string;published_at:Date|string;platform:string|null;
-  question_keys:string[];question_digests:Record<string,string>;scope_basis:Record<string,string>}>(`WITH pending AS MATERIALIZED(
-  SELECT p.*,row_number() OVER(PARTITION BY root_id ORDER BY question_key) n FROM ${hydratePopulation} p
-  WHERE ${pendingScope})
+  question_keys:string[];question_digests:Record<string,string>;scope_basis:Record<string,string>}>(`/* labeling_listening_inputs_v1 */ WITH candidates AS MATERIALIZED(
+  SELECT p.root_id,p.input_digest,p.body,p.published_at,p.platform,p.question_key,p.question_digest,p.scope_basis
+  FROM ${hydratePopulation} p WHERE ${unresolvedScope}
+ ), sent AS MATERIALIZED(
+  SELECT root_id,question_digest FROM signal_listening_call_questions WHERE workspace_id=$1 AND run_id=$5
+   AND root_id=ANY(${selected?'$7::uuid[]':`ARRAY(SELECT root_id FROM signal_mass_labeling_items WHERE workspace_id=$1 AND map_id=$3)`})
+ ), reservation_matches AS MATERIALIZED(
+  SELECT p.*,sent.root_id reserved_root_id FROM candidates p FULL JOIN sent ON sent.root_id=p.root_id AND sent.question_digest=p.question_digest
+ ), pending AS MATERIALIZED(
+  SELECT root_id,input_digest,body,published_at,platform,question_key,question_digest,scope_basis,
+   row_number() OVER(PARTITION BY root_id ORDER BY question_key) n
+  FROM reservation_matches p WHERE p.root_id IS NOT NULL AND p.reserved_root_id IS NULL AND ${noHumanDecision})
   SELECT root_id,input_digest,body,published_at,platform,array_agg(question_key ORDER BY question_key) question_keys,
    jsonb_object_agg(question_key,question_digest) question_digests,
    COALESCE(jsonb_object_agg(question_key,scope_basis) FILTER(WHERE scope_basis IS NOT NULL),'{}'::jsonb) scope_basis
