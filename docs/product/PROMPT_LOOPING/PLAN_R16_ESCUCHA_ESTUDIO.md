@@ -12,6 +12,12 @@ No hay aprobaciones humanas intermedias en los procesos de análisis: Sonnet 4.6
 
 ## Progreso
 
+- Checkpoint cbd96385 termina CI/PostgreSQL full verde: MFP 104/104, Escucha 105/105, Study 23/23 y suites de política/lectores/fuente, sin omisiones. El fallo inicial de recuperación queda cerrado también dentro de la suite completa. Esto no sustituye la aceptación de capacidad ni el CI de cambios posteriores.
+- 086b1a7d corrige sólo el extractor de calibración tras revisión sin P0/P1/P2: lee prosrc real SQL/static/EXECUTE tagged, valida tags case-sensitive y los seis USING, rechaza formatos desconocidos. Siete focales puras y tipos/lint 11/11 pasan; las comprobaciones nativas de índices, filas, latest32, recibos y precios permanecen intactas. Se repetirá el ensayo oficial sobre esta fuente; el benchmark d64 ya en marcha se conserva para obtener su resultado.
+
+- 0328 pasa sus diecinueve oráculos y el smoke completo 43814266970, incluidos tres scoped positivos. Resultado nativo 43814263593: 4,096 raíces/8,192 llamadas en 20.479 s, HTTP máximo 594.088 ms; sin H1. El candidato falla después del runner al exportar CPU; ocho ZIP válidos conservan sus TAP y métricas, sin perfil del candidato. Los nuevos selectores no produjeron NOTICE sobre el umbral de 50 ms, por lo que no se inventa un conteo de loops. Digest registró 504.140 ms en reserve y 127.872 ms en mark, dentro del DML completo; son tiempos inclusivos/anidados, sin aislar expected ni CPU.
+- Ensayo completo sin perfilado iniciado en 43815503975 sobre d64d8f58 exacto, rama codex/r16-unprofiled-owner-sets. Conserva workload, umbral, ventanas y matriz de fallos oficiales. El benchmark continúa; calibration falla antes de verificar recibos porque su extractor aún asume RETURN QUERY estático y entrega EXECUTE $bounded$ a EXPLAIN. Se corrige sólo esa lectura del prosrc, sin tocar SQL productivo o comprobaciones de índice y latest32.
+
 - 0328 integrada localmente como 5e7586f9 tras revisión sin P0/P1/P2: sólo dos selectores UPDATE, de Listening y del guard scoped histórico. Barreras escalares conservan todos los joins de autoridad y los predicados; el resto de ambas funciones queda literal. Hay 34 migraciones pendientes, ninguna aplicada en UAT. Tipado/lint 11/11 y doce focales puras pasan; aceptación nativa y capacidad pendientes.
 - 594eef6b añade al servicio PostgreSQL de listening-smoke los tres casos scoped, scoped-scale y scoped-funding del archivo MFP existente. Exige tres títulos distintos, pass3/fail0 y ninguna selección omitida, con TAP separado; el archivo completo de seis casos sigue en CI full. El oracle positivo scoped usa tres llamadas y su admisión genuina ya existentes antes del mark. No se habilita el guard genérico MFP en el laboratorio del benchmark ni se fabrican admissions.
 - El diagnóstico añade contadores de las funciones reales de digest/JSON/raíces por el mismo backend y transacción durante reserve/mark originales; answers conserva sus cuatro firmas y diagnóstico de actor. Cuarenta y seis focales y TSC pasan. Los datos declaran alcance DML con triggers, tiempo inclusivo y recursión; ausencia/inlining permanece desconocida. La siguiente corrida debe validar esa captura antes de atribuir el coste restante.
@@ -323,6 +329,9 @@ Recibo: separar Voyage/JEV por raíz de Claude por número de grupos y vueltas; 
 
 ## Sorpresas y descubrimientos
 
+- El diagnóstico atribuyó inicialmente el hash 99746 a INSERT de members. La comparación exacta de source confirma que es UPDATE attach de signal_labeling_calls; INSERT members tiene otro hash. Se corrige la atribución en el recibo y no se deduce un trigger o plan no capturado.
+- El test separado de calibración no se había actualizado al pasar la rama bounded a EXECUTE parametrizado. La función real migra y funciona; es el extractor de la consulta para EXPLAIN el que incorpora el wrapper PL/pgSQL. Debe leer la consulta desplegada, reconocer su delimitador y los seis argumentos de USING, y fallar ante una forma desconocida.
+
 - El guard scoped histórico sigue activo para UPDATE aunque una Escucha admitida quede fuera de su resultado. Su selector paga el join de transiciones antes de filtrar admissions; no debe confundirse con la comprobación del padre. El próximo cambio preserva también owners mixtos y la rama scoped auténtica, cuya aceptación completa exige las pruebas MFP.
 
 - Activar el fence diferido expuso un paso omitido del fixture de recuperación inicial: aplicaba RAW/settlement y reservaba otras raíces manteniendo error_code=labeling_outcome_unknown. La ruta productiva hace finish y refresh después de drenar. El fixture reproduce ahora esa frontera pública; no borra el error mediante SQL ni cambia la protección 0308. El caso sin bytes conserva incertidumbre y reserva y rechaza otra admisión.
@@ -467,6 +476,8 @@ Recibo: separar Voyage/JEV por raíz de Claude por número de grupos y vueltas; 
 - El promedio del piloto completo incluye una etapa editorial que no escala por raíz. Multiplicarlo linealmente daba USD 205.81/millón; mantener explícitamente los grupos y una vuelta de referencia produce USD 114.035250. Ambos cálculos parten del mismo recibo, cuyo uso histórico permanece USD 17.280463.
 
 ## Registro de decisiones
+
+- 2026-11-16: después de eliminar las aristas cuadráticas medidas y pasar los diecinueve oráculos y tres scoped, ejecutar una vez el workload completo sin los instrumentos opcionales. El mini y su variabilidad no prueban la capacidad a escala ni el coste fijo de preparación; el ensayo oficial debe resolverlo. Esto sustituye la espera autoimpuesta de un mini cercano a la meta, pero mantiene íntegros 1,000/s, latencia observada, duración sostenida y matriz de fallos. Su calibración fallida se corrige y debe repetirse sobre la fuente final; el benchmark vivo se conserva.
 
 - 2026-11-16: probar el resultado positivo scoped en el servicio MFP con su destino y guardas existentes, mediante tres selecciones tempranas y la suite completa final. Mantener las dos uniones de owner fuera de la barrera materializada y conservar literalmente sus comprobaciones de capacidad. El diagnóstico de funciones usa pg_stat_xact_user_functions y no resetea estadísticas, no hace flush global ni repite DML.
 
