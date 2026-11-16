@@ -190,7 +190,14 @@ test('selected materialization and full join match old validators and atomically
    assert.deepEqual(metadata.map(({name,type})=>({name,type})),[
     {name:'id',type:2950},{name:'request',type:3802},{name:'request_digest',type:25},{name:'i',type:3802},
     {name:'selected_count',type:23},{name:'digests',type:3802},{name:'basis',type:3802},{name:'expected_request',type:3802}]);
-   if(exactBatchJson){assert.ok(exact[0]!.includes('1234567890.1234567890123456789'),'SQL JSON text retains arbitrary JSONB numeric precision');assert.ok(exact[0]!.includes('00:00:00.123456'),'input JSON timestamp microseconds survive projection');}
+   if(exactBatchJson){
+    // The probe modifies JSON batch index 0; SQL orders independently by UUID.
+    // Parse only its identity, then inspect both exact values in that same row.
+    const probeIndex=perCall.findIndex((row:{id:string})=>row.id===rows[0]!.id);assert.ok(probeIndex>0,'descending UUID input places the precise call after the first ascending SQL result');
+    const probe=exact[probeIndex]!;
+    assert.ok(probe.includes('1234567890.1234567890123456789'),'SQL JSON text retains arbitrary JSONB numeric precision');
+    assert.ok(probe.includes('00:00:00.123456'),'input JSON timestamp microseconds survive projection');
+   }
    assert.equal(perCall.length,rows.length);
    assert.deepEqual(perCall.map((row:{id:string})=>row.id).sort(),rows.map(row=>row.id).sort(),'FULL never adds an unmatched-right ID or drops a batch call');
    if(missingSelectedId){const missing=perCall.find((row:{id:string})=>row.id===missingSelectedId);assert.ok(missing);assert.equal(missing.selected_count,null,'a call with no selected question survives the join');}
@@ -203,7 +210,7 @@ test('selected materialization and full join match old validators and atomically
   const flags=await oracle(c,structuredClone(proposals(f,1000)));
   assert.deepEqual(flags,{invalid_questions:false,invalid_request:false,invalid_prior:false});
   assert.deepEqual(await oracle(c,[]),flags,'empty expected relations retain all three flags');
-  const rows=structuredClone(proposals(f,1000));
+  const rows=structuredClone(proposals(f,1000)).sort((a,b)=>a.id>b.id?-1:a.id<b.id?1:0);
   const precise=(await c.query(`SELECT jsonb_set(jsonb_set($1::jsonb,'{0,inputs,0,native_precision_probe}',
    '1234567890.1234567890123456789'::jsonb),'{0,inputs,0,published_at}','"2026-01-01T00:00:00.123456Z"'::jsonb)::text batch`,[JSON.stringify(rows)])).rows[0].batch;
   assert.deepEqual(await oracle(c,rows,undefined,precise),flags,'precision probes in unread input metadata never alter validation');
