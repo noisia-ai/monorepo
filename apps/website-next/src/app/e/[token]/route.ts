@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getStudy } from "@/content/studies";
 import { accessCookieName, linkStudy, TOKEN_PATTERN } from "@/lib/content/access";
+import { requestOrigin } from "@/lib/site";
 
 /**
  * A personal link: noisia.ai/e/<token>. It unlocks one study for whoever holds it and sends
@@ -31,14 +32,15 @@ export async function GET(request: Request, { params }: { params: Promise<{ toke
   const study = studyId ? await getStudy(studyId) : undefined;
   const target = study ? (english ? `/en/insights/studies/${study.id}/full` : `/insights/estudios/${study.id}/completo`) : `${index}?enlace=vencido`;
 
-  const response = NextResponse.redirect(new URL(target, url), 303);
+  const origin = requestOrigin(request);
+  const response = NextResponse.redirect(new URL(target, origin), 303);
   response.headers.set("Cache-Control", "private, no-store");
   response.headers.set("X-Robots-Tag", "noindex, nofollow");
   response.headers.set("Referrer-Policy", "no-referrer");
   if (study) {
     response.cookies.set(accessCookieName(study.id), token, {
       httpOnly: true,
-      secure: url.protocol === "https:",
+      secure: origin.protocol === "https:",
       sameSite: "lax",
       path: "/",
       maxAge: LINK_COOKIE_DAYS * 24 * 60 * 60
