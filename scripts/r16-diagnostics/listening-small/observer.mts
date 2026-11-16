@@ -511,7 +511,7 @@ export function createListeningObserver(options:{neutral_only?:boolean}={}){
  function pid(value:any){if(Number.isSafeInteger(value?.processID)&&value.processID>0&&!pids.has(value.processID)){pids.add(value.processID);if(child?.connected)child.send({kind:'pids',pids:[...pids]},()=>{});}}
  function query(owner:any){return async(...args:any[])=>{pid(owner);const start=now(),context=scope.getStore(),op=context?.operation??'unlabeled',job=context?.job??jobSequence,sequence=++querySequence,hash=queryHash(args[0]);
   const label=innerPlanQueryLabel(hash),queryOrdinal=nextInnerPlanQueryOrdinalV1(hash,label!==null&&planRootCount>=1024,planQueryOrdinals);try{
-  const dmlSpec=dmlPlanQuerySpec(hash),dmlBatch=dmlSpec?dmlPlanBatchSize(hash,args):null;
+  const dmlSpec=options.neutral_only?null:dmlPlanQuerySpec(hash),dmlBatch=dmlSpec?dmlPlanBatchSize(hash,args):null;
   if(!options.neutral_only&&dmlSpec&&dmlBatch!==null&&dmlBatch>=DML_PLAN_MIN_BATCH&&(dmlPlanCounts.get(hash!)??0)<1
    &&dmlPlanCaptureEnvironmentAllowed(process.env)&&typeof owner.on==='function'&&typeof owner.off==='function'){
    dmlPlanCounts.set(hash!,1);
