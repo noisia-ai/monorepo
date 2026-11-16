@@ -52,11 +52,21 @@ async function setup(ctx:{database:Parameters<typeof prepareSignalListeningV1>[0
  const labeling=createSignalListeningStoreV1({database:db,rawPages,storeRaw:async()=>{throw Error('no individual or real provider calls');}});
  async function classify(run_id:string,configuration:SignalListeningConfigurationV1=cfg.configuration){
   const run=await labeling.claim(run_id);assert.ok(run,'the admitted initial run is claimable');
-  for(const call of await labeling.calls(run)){
+  try{
+  const pending=await labeling.calls(run);
+  for(const call of pending){
    if(!call.raw_body)throw Error('unknown_without_receipt_is_not_a_retry');
    const response=JSON.parse(JSON.parse(call.raw_body).body),result=mapSignalListeningJevResponseV1(call.inputs[0]!,run.context,configuration,response);
    if(call.status!=='settled')await labeling.settlePage(run,[{call,usage:jevUsageV1({input_tokens:120,output_tokens:20}),settled_micro_usd:6}]);
    await labeling.apply(run,[{call,results:[result]}]);
+  }
+  if(pending.length){
+   // Production drains a recovery-only window through finish, then refreshes
+   // its stop reason before another invocation can admit fresh requests.
+   const status=await labeling.finish(run),refreshed=await labeling.refresh(run);
+   run.error_code=refreshed.error_code;
+   assert.equal(refreshed.status,status);assert.ok(status==='running'||status==='completed');
+   assert.equal(run.error_code,null,'only fully resolved recovery may admit new inputs');
   }
   for(;;){const inputs=await labeling.inputs(run);if(!inputs.length)break;
    const calls=await labeling.reserve(run,inputs.map(input=>{const request=buildSignalListeningJevRequestV1(input,configuration),request_digest=signalListeningRequestDigestV1(run,input,request);
@@ -65,7 +75,8 @@ async function setup(ctx:{database:Parameters<typeof prepareSignalListeningV1>[0
     const response={model:configuration.model,usage:{input_tokens:120,output_tokens:20},answers:Object.fromEntries(Object.entries(request.questions).map(([key,q])=>[key,q.type==='noul'?{type:'noul' as const,noul:key==='promotion'?.1:.9}:{type:'choice' as const,choice:'individual',confidence:.9,probabilities:Object.fromEntries(Object.keys(q.criteria).map(k=>[k,k==='individual'?.9:.1/(Object.keys(q.criteria).length-1)]))}]))};
     return{call,raw:JSON.stringify({http_status:200,latency_ms:100,body:JSON.stringify(response)}),result:mapSignalListeningJevResponseV1(input,run.context,configuration,response)};});
    await labeling.persistRawPage(run,pages);await labeling.settlePage(run,pages.map(p=>({call:p.call,usage:jevUsageV1({input_tokens:120,output_tokens:20}),settled_micro_usd:6})));await labeling.apply(run,pages.map(p=>({call:p.call,results:[p.result]})));
-  }assert.equal(await labeling.finish(run),'completed');await labeling.release(run);
+  }assert.equal(await labeling.finish(run),'completed');
+  }finally{await labeling.release(run);}
  }
  async function unknown(run_id:string,durableRaw:boolean){
   const run=await labeling.claim(run_id);assert.ok(run,'initial unknown fault owns the native lease');const input=(await labeling.inputs(run))[0]!;
