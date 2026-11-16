@@ -548,3 +548,202 @@ jobs:
             echo '::error::Owned R16 PostgreSQL volume survived cleanup'
             exit 1
           fi
+
+  raw-page-acceptance:
+    name: R16 RAW page acceptance (isolated lab)
+    needs: bounded-custom-plan-scale
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.scope == 'full' || inputs.scope == 'listening-smoke' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      R16BENCH_RUN_ID: benchmark-pg17
+      R16BENCH_SERVICES: postgres,redis
+      NOISIA_R16_LOCAL_PG_LAB: r16-benchmark-pg17
+      DATABASE_SSL: 'false'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Seal the checked out source revision
+        run: |
+          set -euo pipefail
+          source_sha=$(git rev-parse HEAD)
+          if [ -n "$(git status --porcelain --untracked-files=all)" ]; then
+            echo '::error::RAW page acceptance source checkout is not clean'
+            exit 1
+          fi
+          printf 'R16_RAW_PAGE_ACCEPTANCE_SOURCE_SHA=%s\n' "$source_sha" >> "$GITHUB_ENV"
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+      - name: Install frozen Node workspace dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Require the owned R16 container and volume to be absent
+        run: |
+          set -euo pipefail
+          if docker inspect r16-benchmark-pg17 >/dev/null 2>&1; then
+            echo '::error::The named R16 PostgreSQL container already exists'
+            exit 1
+          fi
+          if docker volume inspect r16bench-benchmark-pg17_postgres-data >/dev/null 2>&1; then
+            echo '::error::The named R16 PostgreSQL volume already exists'
+            exit 1
+          fi
+          lab_dir=.data/piloto-masivo/r16/labs/benchmark-pg17
+          if [[ -e "$lab_dir/private.env" || -e "$lab_dir/connection.env" ]]; then
+            echo '::error::Private files for the named R16 lab already exist'
+            exit 1
+          fi
+      - name: Start the named official PostgreSQL 17 and Redis lab
+        run: |
+          set -euo pipefail
+          printf '%s\n' 'R16_RAW_PAGE_ACCEPTANCE_LAB_OWNED=true' >> "$GITHUB_ENV"
+          scripts/r16/lab-up.sh
+      - name: Apply migrations to the new disposable lab
+        env:
+          NOISIA_DB_SMOKE_RESET_SCHEMA: 'true'
+          NOISIA_DB_SMOKE_EMULATE_SUPABASE_ROLES: 'true'
+          NOISIA_MFP_PG_CI: 'true'
+        run: |
+          set -euo pipefail
+          connection_file=.data/piloto-masivo/r16/labs/benchmark-pg17/connection.env
+          test -f "$connection_file"
+          set -a
+          source "$connection_file"
+          set +a
+          export DATABASE_SSL=false
+          export NOISIA_R16_LOCAL_PG_LAB=r16-benchmark-pg17
+          pnpm --filter @noisia/db db:smoke:migrations
+      - name: Run exact RAW page recovery and conflict cases
+        env:
+          NOISIA_R16_RAW_PAGE_LOCKS_PG: 'true'
+          NOISIA_R16_NATIVE_FIXTURE_PG: 'true'
+          NOISIA_MASS_LABELING_ENABLED: 'true'
+          NOISIA_SIGNAL_LISTENING_ENABLED: 'true'
+          NOISIA_JEV_PROVIDER_ENABLED: 'true'
+          NOISIA_JEV_STREAMING_V2_ENABLED: 'true'
+          R16_RAW_PAGE_ACCEPTANCE_FAULT_TAP: ${{ runner.temp }}/r16-raw-page-faults.tap
+        run: |
+          set -euo pipefail
+          : > "$R16_RAW_PAGE_ACCEPTANCE_FAULT_TAP"
+          connection_file=.data/piloto-masivo/r16/labs/benchmark-pg17/connection.env
+          test -f "$connection_file"
+          set -a
+          source "$connection_file"
+          set +a
+          export DATABASE_SSL=false
+          export NOISIA_R16_LOCAL_PG_LAB=r16-benchmark-pg17
+          set +e
+          pnpm exec node --test --test-concurrency=1 \
+            --test-name-pattern='^(?:raw rollback recovery preserves exact bytes and existing budget|raw commit_ack recovery preserves exact bytes and existing budget|RAW page rejects a digest conflict without mutating a valid sibling|RAW page rejects a raw conflict without mutating a valid sibling)$' \
+            --import tsx infrastructure/db/migrations/signal-labeling-raw-page-locks.postgres.test.ts | tee "$R16_RAW_PAGE_ACCEPTANCE_FAULT_TAP"
+          test_status=${PIPESTATUS[0]}
+          set -e
+          node - "$R16_RAW_PAGE_ACCEPTANCE_FAULT_TAP" "$test_status" <<'NODE'
+          const fs = require('node:fs');
+          const tap = fs.readFileSync(process.argv[2], 'utf8');
+          const status = Number(process.argv[3]);
+          const expected = [
+            'raw rollback recovery preserves exact bytes and existing budget',
+            'raw commit_ack recovery preserves exact bytes and existing budget',
+            'RAW page rejects a digest conflict without mutating a valid sibling',
+            'RAW page rejects a raw conflict without mutating a valid sibling',
+          ];
+          const lines = tap.split(/\r?\n/u);
+          const selected = expected.map(title => lines.filter(line => /^ok \d+ - /u.test(line) && line.endsWith(` - ${title}`)));
+          if (status !== 0 || selected.some(rows => rows.length !== 1)
+              || !/^# pass 4$/mu.test(tap) || !/^# fail 0$/mu.test(tap)) {
+            throw new Error('RAW page fault TAP must report four exact selected passing cases');
+          }
+          process.stdout.write('RAW page recovery and conflict cases: 4 exact selected cases passed\n');
+          NODE
+      - name: Run exact RAW attach layout cases
+        env:
+          NOISIA_R16_RAW_ATTACH_ORACLE_PG: 'true'
+          NOISIA_R16_NATIVE_FIXTURE_PG: 'true'
+          NOISIA_MASS_LABELING_ENABLED: 'true'
+          NOISIA_SIGNAL_LISTENING_ENABLED: 'true'
+          NOISIA_JEV_PROVIDER_ENABLED: 'true'
+          NOISIA_JEV_STREAMING_V2_ENABLED: 'true'
+          R16_RAW_PAGE_ACCEPTANCE_ATTACH_TAP: ${{ runner.temp }}/r16-raw-page-attach.tap
+        run: |
+          set -euo pipefail
+          : > "$R16_RAW_PAGE_ACCEPTANCE_ATTACH_TAP"
+          connection_file=.data/piloto-masivo/r16/labs/benchmark-pg17/connection.env
+          test -f "$connection_file"
+          set -a
+          source "$connection_file"
+          set +a
+          export DATABASE_SSL=false
+          export NOISIA_R16_LOCAL_PG_LAB=r16-benchmark-pg17
+          set +e
+          pnpm exec node --test --test-concurrency=1 \
+            --test-name-pattern='^(?:RAW attach layout720 original and page map preserve native rows among 4128 calls|RAW attach layout4096 original and page map preserve native rows among 4128 calls)$' \
+            --import tsx infrastructure/db/migrations/signal-labeling-raw-attach.postgres.test.ts | tee "$R16_RAW_PAGE_ACCEPTANCE_ATTACH_TAP"
+          test_status=${PIPESTATUS[0]}
+          set -e
+          node - "$R16_RAW_PAGE_ACCEPTANCE_ATTACH_TAP" "$test_status" <<'NODE'
+          const fs = require('node:fs');
+          const tap = fs.readFileSync(process.argv[2], 'utf8');
+          const status = Number(process.argv[3]);
+          const expected = [
+            'RAW attach layout720 original and page map preserve native rows among 4128 calls',
+            'RAW attach layout4096 original and page map preserve native rows among 4128 calls',
+          ];
+          const lines = tap.split(/\r?\n/u);
+          const selected = expected.map(title => lines.filter(line => /^ok \d+ - /u.test(line) && line.endsWith(` - ${title}`)));
+          if (status !== 0 || selected.some(rows => rows.length !== 1)
+              || !/^# tests 2$/mu.test(tap) || !/^# pass 2$/mu.test(tap)
+              || !/^# fail 0$/mu.test(tap) || !/^# skipped 0$/mu.test(tap)) {
+            throw new Error('RAW attach TAP must report two exact selected titles, pass=2, fail=0, skipped=0');
+          }
+          process.stdout.write('RAW attach layouts: 2 exact selected cases passed\n');
+          NODE
+      - name: Ensure RAW page acceptance TAP receipts exist
+        if: always()
+        env:
+          R16_RAW_PAGE_ACCEPTANCE_FAULT_TAP: ${{ runner.temp }}/r16-raw-page-faults.tap
+          R16_RAW_PAGE_ACCEPTANCE_ATTACH_TAP: ${{ runner.temp }}/r16-raw-page-attach.tap
+        run: |
+          for tap in "$R16_RAW_PAGE_ACCEPTANCE_FAULT_TAP" "$R16_RAW_PAGE_ACCEPTANCE_ATTACH_TAP"; do
+            if [ ! -f "$tap" ]; then
+              printf '%s\n' 'RAW page acceptance gate was not reached' > "$tap"
+            fi
+          done
+      - name: Verify RAW page acceptance source remained unchanged
+        if: always()
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$R16_RAW_PAGE_ACCEPTANCE_SOURCE_SHA"
+          if [ -n "$(git status --porcelain --untracked-files=all)" ]; then
+            echo '::error::RAW page acceptance changed the checked out source tree'
+            exit 1
+          fi
+      - name: Upload RAW page acceptance TAP receipts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: r16-raw-page-acceptance-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/r16-raw-page-faults.tap
+            ${{ runner.temp }}/r16-raw-page-attach.tap
+          if-no-files-found: error
+          retention-days: 14
+      - name: Stop and remove only the owned RAW page acceptance lab
+        if: ${{ always() && env.R16_RAW_PAGE_ACCEPTANCE_LAB_OWNED == 'true' }}
+        run: |
+          set -euo pipefail
+          lab_dir=.data/piloto-masivo/r16/labs/benchmark-pg17
+          if [[ -f "$lab_dir/private.env" ]]; then
+            scripts/r16/lab-down.sh
+          fi
+          if docker inspect r16-benchmark-pg17 >/dev/null 2>&1; then
+            echo '::error::Owned R16 RAW page acceptance container survived cleanup'
+            exit 1
+          fi
+          if docker volume inspect r16bench-benchmark-pg17_postgres-data >/dev/null 2>&1; then
+            echo '::error::Owned R16 RAW page acceptance volume survived cleanup'
+            exit 1
+          fi
