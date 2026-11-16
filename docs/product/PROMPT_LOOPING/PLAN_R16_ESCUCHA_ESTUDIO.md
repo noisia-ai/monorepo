@@ -12,6 +12,10 @@ No hay aprobaciones humanas intermedias en los procesos de análisis: Sonnet 4.6
 
 ## Progreso
 
+- Diagnóstico neutral 43849400309 termina verde: diecinueve oráculos ejecutados, 4,096 raíces resueltas/8,192 llamadas, tres jobs y cero reservas/unknown pendientes. Fuente objetivo cb3a164b e instrumentos ec16be6a conservados antes/después; CPU y ambos tipos de planes desactivados. Clasificación/serving 25.648 s, HTTP 124.301–489.190 ms; no acredita H1. Seis artefactos privados verificados contienen la captura y sus TAP.
+- La captura observa 26 marks seriales por 5.793 s; unión de sus consultas 5.211 s, UPDATE 3.872 s y 0.582 s sin atribuir. Las adquisiciones explícitas dentro de marks suman 1.449 ms; no son la demora dominante a esta escala. Veinte cohortes están limitadas por memoria disponible, cuatro por slots HTTP y dos por cola restante. La cota de 512 MiB incluye reservas para respuestas futuras, sin prueba de fuga. RSS muestreado de clasificación: 477,245,440 bytes. El informe conserva el alcance de cada cifra, sin inferir CPU ni extrapolar a 32,768.
+- Primer shared-wire 43852247809 falla en temporary-setup: ocho wires observados, identidad no satisfecha; cero casos y cero tiempos, antes de crear la función candidata. Se conservan fuente y 1,257 funciones públicas/ACL. 613408f6 corrige sólo la normalización del fixture Unicode con el validador productivo, preservando Unicode interior; el assert nativo de ocho identidades sigue estricto. Revisión sin P0/P1/P2 y 23 focales puras pasan; Root publica el SHA exacto y repite el ensayo nativo aislado, aún sin equivalencia ni rendimiento demostrados.
+
 - Diagnóstico neutral publicado sólo en rama experimental ec16be6a, con producto objetivo cb3a164b y exactamente cuatro archivos de instrumentos aparte. Revisión sin P0/P1/P2; 52 focales actuales pasan sin omisiones. Root verificó el SHA remoto y lanzó 43849400309 con mode=neutral_only y target_ref explícito. Conserva los diecinueve oráculos, censo/serving y límites, pero no declara H1; mide cohortes, estado nativo del flujo y adquisición de conexiones con el sampler de PostgreSQL existente, sin CPU ni auto_explain. No modifica la rama remota a134 que sigue en CI completo.
 
 - Se autoriza en paralelo un contrafactual pg_temp de fragmentos canónicos compartidos, sin nueva migración ni reemplazo de funciones públicas. El wire nativo es inmutable por configuración y la población devuelve ese mismo valor; se estudiará canonicalizar sólo preguntas usadas una vez por statement. Debe conservar agregados, NULL, multiplicidad, JSONB preciso, igualdad del request y SHA256 completo en INSERT y mark. Código, revisión y medición todavía pendientes; no acredita mejora ni equivalencia.
@@ -380,6 +384,9 @@ Recibo: separar Voyage/JEV por raíz de Claude por número de grupos y vueltas; 
 
 ## Sorpresas y descubrimientos
 
+- El fixture Unicode serializaba la configuración previa a trim, pero el compilador había normalizado instrucciones y preguntas. Eso hacía divergir el fixture SQL de sus propios wires JS. La corrección usa la misma normalización antes de ambos caminos y deja U2028/U2029 en el interior, sin retirar la prueba Unicode ni tocar SQL productivo.
+- El perfil por omisión tiene 256 MiB y sólo admitiría 585 reservas simultáneas de esta forma; con HTTP medio observado de 302.401 ms y dos llamadas por raíz, su techo ideal condicionado sería inferior a 1,000 raíces/s aun sin SQL. El ensayo usa 512 MiB explícitos y llega a 1,024 slots. Es necesario definir un perfil operativo reproducible, dentro de recursos existentes, además de reducir el coste de SQL; no basta cambiar una etiqueta del benchmark.
+
 - La nueva prueba de bypass asumía constantes ausentes en el baseline histórico y habría roto el modo legacy antes del laboratorio. ec16be6a reconstruye los dos SQL reales: el actual debe tener hash elegible; el histórico declara su hash exacto y lookup NULL, sin ampliar la whitelist ni omitir la prueba. La ejecución histórica focal no se presenta como una suite completa de 52 casos.
 
 - El contrafactual plano anterior caminaba cada payload entero por separado. Compartir fragmentos de preguntas inmutables dentro de un statement es otra hipótesis: reduce recorridos repetidos del árbol sin eliminar el hash final. Hay que compilar sólo claves seleccionadas para no adelantar errores de preguntas ajenas y medir también esa compilación dentro del lote. No se asume que todo wire sea de strings ni se normalizan los JSONB originales de entrada.
@@ -567,6 +574,8 @@ Recibo: separar Voyage/JEV por raíz de Claude por número de grupos y vueltas; 
 - El promedio del piloto completo incluye una etapa editorial que no escala por raíz. Multiplicarlo linealmente daba USD 205.81/millón; mantener explícitamente los grupos y una vuelta de referencia produce USD 114.035250. Ambos cálculos parten del mismo recibo, cuyo uso histórico permanece USD 17.280463.
 
 ## Registro de decisiones
+
+- 2026-11-16: mantener el fallo shared-wire como evidencia de cero casos/cero tiempos y repetir sólo tras corregir y revisar el fixture. El pipeline real y las guardas públicas no se cambian por ese fallo. Analizar en paralelo un perfil operativo explícito mediante parámetros ya existentes, con cuotas y controles intactos: por ahora sólo lectura de recursos de UAT, ninguna variable o plan se ha modificado. No ajustar la cota de respuesta ni su multiplicador conservador para aparentar más slots.
 
 - 2026-11-16: ejecutar una única captura neutral de 4,096 raíces sobre el target cb3a164b con los instrumentos ec16be6a, después de revisión y corrección de compatibilidad histórica. El orquestador publica/despacha; el estándar custodia exclusivamente el recibo y sus artefactos. No duplicar descargas ni cancelar/reiniciar por expiración de observación. Mantener separados el diagnóstico, CI funcional y el rechazo oficial H1.
 
@@ -768,6 +777,8 @@ Recibo: separar Voyage/JEV por raíz de Claude por número de grupos y vueltas; 
 - 2026-11-14: publicar una fórmula condicional con coeficientes medidos en R15 y costo editorial por grupos/vueltas; actualizar la proyección histórica sin cambiar sus recibos ni presentarla como costo medido de R16. Reconstrucción verificada con aritmética decimal exacta.
 
 ## Resultado y retrospectiva
+
+Corte vigente 10:58 UTC: el diagnóstico neutral está completo con diecinueve oráculos verdes, sin cumplir la capacidad. Los cierres de auditoría pasan actor/MFP/Escucha completos en a134; Study sigue activo, general/runtime/escala verdes. El micro shared-wire conserva su fallo de setup y tiene una corrección de fixture revisada en repetición aislada. H0–H6 sigue abierto, sin cambios R16 reales en UAT ni nuevas llamadas pagadas.
 
 Corte vigente 10:31 UTC: el CI general/runtime de a134 está verde; PostgreSQL completo sigue activo con escala aprobada. Los cierres monetarios tienen smoke nativo verde y revisión cerrada. El diagnóstico neutral revisado corre separado en 43849400309; el contrafactual shared-wire sigue en desarrollo experimental. H1 continúa rechazado, ninguna acción R16 real en UAT y el objetivo completo permanece abierto.
 
