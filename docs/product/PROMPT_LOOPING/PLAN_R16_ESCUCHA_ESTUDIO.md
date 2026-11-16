@@ -12,6 +12,9 @@ No hay aprobaciones humanas intermedias en los procesos de análisis: Sonnet 4.6
 
 ## Progreso
 
+- d370 cierra CI funcional completo: numeric 133200675410 termina Study 23/23, política 11/11, límites 3/3, fuente 3/3 e integración Node/Python, sin omisiones seleccionadas. Migrated-schema, escala, general y runtime ya estaban verdes. La aceptación de capacidad permanece rechazada por su recibo independiente.
+- El smoke 43845204374 de 151aec88 pasa completo: actor 3/3, entradas/calibración 4/4, recuperación monetaria 1/1 seleccionada, híbrido 1/1, scoped 3/3 y escala 1/1. El primer intento 43844280456 falló por fixture: marcaba submitted antes de crear el miembro RAW, que admite submitting/unknown. e612f52c mueve sólo esa transición después de persistir la página; mantiene unknown hasta liquidar, importes, replay y guardas. El revisor aprueba el delta, tipos/lint pasan 11/11 y la repetición nativa lo confirma. No hay cambio de runtime adicional por ese ajuste.
+
 - Recibo H1 d370 verificado: diez escenarios completos, 32,768 raíces resueltas/cero pendientes y 65,536 requests. Wall 264.909 s, 123.695 raíces/s; clasificación 246.923 s y cola 17.986 s. HTTP observado 124.354–803.695 ms (p95 464.299). Rechaza ventanas sostenidas, throughput total y latencia; integridad y serving pasan. El checkout e4018915 tiene el árbol completo idéntico a d370, no se atribuye el resultado a una fuente posterior. Se analiza el perfil, sin repetir la carga automáticamente.
 - Se publica exclusivamente la rama revisada de smoke bc89d05c basada en 6143936 y se inicia 43844280456 para comprobar la transición monetaria real. La CLI rechazó el workflow por scope: Root publicó primero 6143936, actualizó la referencia mediante CAS del conector y verificó el SHA remoto antes del dispatch. El caso seleccionado debe pasar una vez, sin SKIP, y conservar todos los gates de Listening-smoke. La rama principal remota sigue congelada en d370 para preservar Study.
 
@@ -370,6 +373,9 @@ Recibo: separar Voyage/JEV por raíz de Claude por número de grupos y vueltas; 
 
 ## Sorpresas y descubrimientos
 
+- En el fixture monetario, adjuntar custodia RAW no cambia el estado de la llamada. Una unknown sigue incierta hasta su liquidación; submitted se observa después de planear/verificar el miembro y no permite saltarse la guarda de páginas. La prueba remota detectó ese orden incorrecto y se corrigió el setup, sin relajar el contrato.
+- La frontera de markSubmitting es serial en el productor: sus 188 spans de store suman 102.808 s sin solaparse entre sí, aunque sí con otras tareas. Por sí sola supera el presupuesto de pared de 32.768 s de esta población. Todavía no demuestra si la causa es tamaño de cohorte, ejecución de PostgreSQL o espera: se analizan primero los intervalos y muestras de waits del mini ya conservado, sin abrir otra corrida por inercia.
+
 - El censo completo y el éxito de los diez fallos no implican capacidad: d370 vuelve a incumplir velocidad y latencia. El perfil debe distinguir duración de clasificación, cola y setup frío; no se suman spans SQL inclusivos ni se interpreta tiempo SQL como espera de lock o CPU sin captura.
 
 - La ausencia de metadatos locales no prueba que un laboratorio sea nuevo: pueden quedar volúmenes, contenedores o redes del mismo nombre desde otro checkout. Se verifica ausencia de los seis inventarios con daemon disponible y se registra cleanup sólo después de esa prueba. Catorce pruebas de comportamiento usan ejecutables simulados por PATH, sin iniciar Docker real.
@@ -547,6 +553,8 @@ Recibo: separar Voyage/JEV por raíz de Claude por número de grupos y vueltas; 
 - El promedio del piloto completo incluye una etapa editorial que no escala por raíz. Multiplicarlo linealmente daba USD 205.81/millón; mantener explícitamente los grupos y una vuelta de referencia produce USD 114.035250. Ambos cálculos parten del mismo recibo, cuyo uso histórico permanece USD 17.280463.
 
 ## Registro de decisiones
+
+- 2026-11-16: al terminar Study d370 y pasar la regresión monetaria, publicar la integración de cierres para CI funcional completo. La rama experimental del paso focal no se integra por necesidad de ese ensayo: full ya incluye el caso monetario. Si la publicación dispara H1 automáticamente, cancelarlo expresamente y conservar su estado cancelado y el rechazo d370; no se afirma aceptación ni se consume otra carga completa sin cambio de capacidad. Exprimir primero las muestras ya guardadas del mini equivalente.
 
 - 2026-11-16: rechazar expresamente H1 de d370 y mantener todos los umbrales. Un crítico analiza sólo lectura la serialización y los tamaños efectivos de lotes de esa fuente junto con el recibo; no se autoriza una migración o ajuste especulativo hasta identificar el siguiente cuello. El smoke monetario corre en rama separada y no sustituye la aceptación global.
 
@@ -741,7 +749,7 @@ Recibo: separar Voyage/JEV por raíz de Claude por número de grupos y vueltas; 
 
 ## Resultado y retrospectiva
 
-Corte vigente 10:00 UTC: 6143936 integra localmente dos cierres de auditoría con tipos/lint y quince focales verdes; su regresión nativa corre en la rama separada bc89d05c. d370 tiene migrated-schema, escala, general y runtime verdes, y Study aún vivo. Su benchmark se rechaza: 123.695 raíces/s y máximo HTTP 803.695 ms, con población y diez fallos íntegros. H0–H6 sigue abierto, con 35 migraciones pendientes, ninguna aplicada realmente en UAT y sin gasto R16. Los estados anteriores se conservan como historia.
+Corte vigente 10:06 UTC: e612f52c contiene ambos cierres revisados y el orden correcto del fixture; tipos/lint y quince focales verdes, regresión nativa y smoke completo confirmados en 151aec88. d370 termina CI funcional/PostgreSQL completo verde, incluido Study 23/23. Se prepara CI funcional completo de la composición nueva. H1 d370 sigue rechazado: 123.695 raíces/s y máximo HTTP 803.695 ms, con población y diez fallos íntegros. H0–H6 sigue abierto, con 35 migraciones pendientes, ninguna aplicada realmente en UAT y sin gasto R16. Los estados anteriores se conservan como historia.
 
 Estado vigente, 16 nov.: H1 permanece rechazado en los full históricos. El checkpoint 9e tiene CI funcional completo verde; la fuente posterior con 0329 pasa smoke y diecinueve oráculos nativos, sin mejora global acreditada en el mini. El contrafactual canónico terminó: 49 casos exactos y uno censurado, pero la alternativa es más lenta y se descarta sin modificar la función pública. La fuente actual debe repetir CI completo y capacidad oficial para medir el prefiltro y la proyección juntos a escala. Hay 35 migraciones pendientes, ninguna aplicada en UAT, sin despliegue ni llamadas pagadas R16. La aceptación completa, ejecución real, paquete privado y QA siguen pendientes. Los párrafos siguientes son historia.
 
