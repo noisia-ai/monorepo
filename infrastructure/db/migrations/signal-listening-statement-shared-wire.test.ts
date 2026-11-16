@@ -1,6 +1,25 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import {sharedWireSourcesV1,sharedWireValidationV1,sharedWireCanonicalPartsV1,sharedWirePayloadBarrierSourceV1,restoreSharedWirePayloadSourceV1,sharedWireCanonicalProjectionV1,sharedWirePlanSummaryV1,sharedWireShaV1,sharedWireFunctionStatsV1,sharedWireFunctionDeltaV1} from './signal-listening-statement-shared-wire.oracle';
+import {sharedWireSourcesV1,sharedWireValidationV1,sharedWireCanonicalPartsV1,sharedWirePayloadBarrierSourceV1,restoreSharedWirePayloadSourceV1,sharedWireCanonicalProjectionV1,sharedWirePlanSummaryV1,sharedWireShaV1,sharedWireFunctionStatsV1,sharedWireFunctionDeltaV1,sharedWireDefaultContractV1,sharedWireDefaultContractFromSourcesV1,assertSharedWireDefaultRowV1} from './signal-listening-statement-shared-wire.oracle';
+test('0331 is the exact proved C source and reverses all bytes to frozen0330',async()=>{
+ const {readFile}=await import('node:fs/promises');const [,next]=await sharedWireSourcesV1();assert.ok(next);
+ const product=await readFile(new URL('./0331_signal_listening_statement_payload.sql',import.meta.url),'utf8');
+ assert.equal(sharedWireShaV1(product),'cabed81234f56cf2647368aab03be14817d8de99073929f0d255b2a1f1153cf5');
+ assert.equal(product,sharedWirePayloadBarrierSourceV1(next));assert.equal(restoreSharedWirePayloadSourceV1(product),next);
+});
+test('default runtime contract is source-aware and rejects B body or altered metadata when0331 exists',async()=>{
+ const [,sourceB]=await sharedWireSourcesV1();assert.ok(sourceB);const sourceC=sharedWirePayloadBarrierSourceV1(sourceB);
+ const prior=sharedWireDefaultContractFromSourcesV1(sourceB),expected=await sharedWireDefaultContractV1();
+ assert.equal(prior.default_arm,'B');assert.equal(expected.default_arm,'C');assert.equal(expected.source_sha256,sharedWireShaV1(sourceC));
+ assert.equal(assertSharedWireDefaultRowV1({prosrc:prior.prosrc,...prior.metadata},prior).default_arm,'B');
+ assert.notEqual(prior.prosrc_sha256,expected.prosrc_sha256);
+ // Pure contract fixtures only, never evidence that PostgreSQL accepted0331.
+ const row={prosrc:expected.prosrc,...expected.metadata};
+ assert.equal(assertSharedWireDefaultRowV1(row,expected).prosrc_sha256,expected.prosrc_sha256);
+ assert.throws(()=>assertSharedWireDefaultRowV1({...row,prosrc:prior.prosrc},expected));
+ for(const patch of [{proconfig:['search_path=public']},{lanname:'sql'},{prosecdef:true},{return_type:'void'},{pronargs:1},{provolatile:'s'}])assert.throws(()=>assertSharedWireDefaultRowV1({...row,...patch},expected));
+ assert.throws(()=>sharedWireDefaultContractFromSourcesV1(sourceB,sourceC+'\n'));
+});
 test('payload C is test-only and reverses exactly to frozen0330 with its scalar CASE and authority intact',async()=>{
  const [old,next]=await sharedWireSourcesV1();assert.ok(old&&next);
  assert.equal(sharedWireShaV1(next),'94fb81156f9ba8aa8faf3dc3502195998e701dc76e12a636418d8ef0df502305');

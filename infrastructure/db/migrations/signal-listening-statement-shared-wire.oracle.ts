@@ -4,6 +4,7 @@ import {createHash} from 'node:crypto';
 import {anchorListeningStatementOracleParametersV1,listeningExpectedProjectionOracleSqlV1} from './signal-listening-statement-validator.oracle';
 import type {PoolClient} from 'pg';
 export const sharedWireMigrationV1='0330_signal_listening_statement_shared_wire.sql';
+export const sharedWirePayloadMigrationV1='0331_signal_listening_statement_payload.sql';
 export const sharedWireShaV1=(s:string)=>createHash('sha256').update(s).digest('hex');
 const frozenSharedWireSourceShaV1='94fb81156f9ba8aa8faf3dc3502195998e701dc76e12a636418d8ef0df502305';
 function canonicalRegion(source:string){
@@ -27,6 +28,36 @@ export function restoreSharedWirePayloadSourceV1(source:string){
 export function sharedWireVariantsV1(oldSource:string,newSource:string){return[['before',oldSource],['after',newSource],['variant',sharedWirePayloadBarrierSourceV1(newSource)]]as const;}
 export function sharedWireValidationV1(source:string){const matches=[...source.matchAll(/EXECUTE format\(\$validation\$([\s\S]*?)\$validation\$,batch_sql\)/g)];assert.equal(matches.length,1);const sql=matches[0]![1]!;assert.equal((sql.match(/%s/g)??[]).length,1);return sql.replace('%s','SELECT n.* FROM jsonb_populate_recordset(NULL::signal_labeling_calls,$8::jsonb) n');}
 export async function sharedWireSourcesV1(){return Promise.all(['0329_signal_listening_expected_projection.sql',sharedWireMigrationV1].map(n=>readFile(new URL('./'+n,import.meta.url),'utf8')));}
+export function sharedWireDefaultContractFromSourcesV1(sourceB:string,sourceC?:string){
+ assert.equal(sharedWireShaV1(sourceB),frozenSharedWireSourceShaV1);
+ if(sourceC!==undefined)assert.equal(sourceC,sharedWirePayloadBarrierSourceV1(sourceB),'0331 must be all exact proved C bytes');
+ const source=sourceC??sourceB,match=/CREATE OR REPLACE FUNCTION signal_listening_statement_money_v1\(\) RETURNS trigger LANGUAGE plpgsql SET search_path=public,extensions,pg_temp AS \$\$([\s\S]*)\$\$;\n$/.exec(source);assert.ok(match);
+ const prosrc=match[1]!;
+ return{contract:'r16-statement-shared-wire-default-contract-v1',default_arm:sourceC===undefined?'B':'C',migration:sourceC===undefined?sharedWireMigrationV1:sharedWirePayloadMigrationV1,source_sha256:sharedWireShaV1(source),prosrc,prosrc_sha256:sharedWireShaV1(prosrc),metadata:{proconfig:['search_path=public, extensions, pg_temp'],lanname:'plpgsql',prosecdef:false,return_type:'trigger',pronargs:0,proretset:false,provolatile:'v',proisstrict:false,proparallel:'u',proleakproof:false,prokind:'f'}};
+}
+export async function sharedWireDefaultContractV1(){
+ const [,sourceB]=await sharedWireSourcesV1();assert.ok(sourceB);let sourceC:string|undefined;
+ try{sourceC=await readFile(new URL('./'+sharedWirePayloadMigrationV1,import.meta.url),'utf8');}
+ catch(error){if(!(error&&typeof error==='object'&&'code'in error&&error.code==='ENOENT'))throw error;}
+ return sharedWireDefaultContractFromSourcesV1(sourceB,sourceC);
+}
+export function assertSharedWireDefaultRowV1(row:Record<string,unknown>|undefined,expected:ReturnType<typeof sharedWireDefaultContractFromSourcesV1>){
+ assert.ok(row&&typeof row.prosrc==='string','actual native function must exist');
+ assert.equal(sharedWireShaV1(row.prosrc),expected.prosrc_sha256,'actual pg_proc.prosrc SHA must match source-aware default');
+ assert.ok(row.prosrc===expected.prosrc,'actual pg_proc.prosrc bytes must match source-aware default');
+ const {prosrc,...metadata}=row;assert.deepEqual(metadata,expected.metadata,'actual native language/config/security/return metadata must match');
+ return{contract:'r16-statement-shared-wire-default-row-v1',default_arm:expected.default_arm,migration:expected.migration,source_sha256:expected.source_sha256,prosrc_sha256:sharedWireShaV1(prosrc as string),metadata};
+}
+export const sharedWireDefaultRuntimeSqlV1=`SELECT p.prosrc,p.proconfig,l.lanname,p.prosecdef,p.prorettype::regtype::text return_type,
+  p.pronargs,p.proretset,p.provolatile,p.proisstrict,p.proparallel,p.proleakproof,p.prokind
+  FROM pg_proc p JOIN pg_language l ON l.oid=p.prolang
+  WHERE p.oid='public.signal_listening_statement_money_v1()'::regprocedure`;
+export async function assertSharedWireDefaultRuntimeV1(c:Pick<PoolClient,'query'>){
+ const expected=await sharedWireDefaultContractV1();
+ const rows=(await c.query(sharedWireDefaultRuntimeSqlV1)).rows;
+ assert.equal(rows.length,1);const checked=assertSharedWireDefaultRowV1(rows[0],expected);
+ return{...checked,contract:'r16-statement-shared-wire-default-runtime-v1',target:'public.signal_listening_statement_money_v1()',runtime_kind:checked.default_arm,observed_via:'pg_proc',actual_prosrc_sha256:checked.prosrc_sha256,actual_pg_proc_checked:true};
+}
 export function sharedWireCanonicalPartsV1(oldSource:string,newSource:string){
  const old=sharedWireValidationV1(oldSource),next=sharedWireValidationV1(newSource);
  const preimage=/signal_labeling_digest_v1\((jsonb_build_object\('request_version','listening-jev-v1',[\s\S]*?'request',expected_request\))\)/.exec(old)?.[1];assert.ok(preimage);
