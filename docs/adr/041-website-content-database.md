@@ -57,3 +57,20 @@ The rest of the site (home, solutions, methods, industries, about) changes rarel
   `Cache-Control: private, no-store`, so Cloudflare never caches gated content.
 - Migrations live in `apps/website-next/content-db/migrations`, forward-only, applied with
   `pnpm content:migrate`.
+
+## Addendum: stage 2, studies (15 Nov 2026)
+
+- **Study files live in the database**, in `content.study_files` (one row per file and version),
+  not in Supabase Storage. Reading Storage from the site would need the service key, which opens
+  everything; with the database the site keeps its single read-only role and reads files of
+  published studies through a view. A study is 10 to 20 MB; files are cached in the site's memory
+  per version.
+- **Personal links are tokens, stored as hashes.** `/e/<token>` puts the token in an httpOnly
+  cookie scoped to the study. Every request for the full study checks it through the
+  `security definer` function `content.link_study`; the site never reads `access_links`.
+  Opens and PDF downloads are recorded by `content.record_event`.
+- **Two views of the full study.** On tablet and desktop the builder's deck runs read-only in an
+  iframe (`no-rail`). On a phone the load script's slide images are stacked full width and open
+  full size on tap.
+- **`registro` waits for stage 3.** Until the form ships, a `registro` study behaves like
+  `solo_link` for readers without a link: the page explains how to request it.

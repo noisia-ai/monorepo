@@ -13,8 +13,10 @@ import { compareEntries, compareUi } from "@/content/pages/compare";
 import { privacy } from "@/content/pages/privacy";
 import { industriesPage, industryEntries } from "@/content/pages/industries";
 import { moments } from "@/content/moments";
-import { insightsReports } from "@/content/reports/reports";
+import { insightsReports, reportSummaryEn } from "@/content/reports/reports";
 import { getStories } from "@/content/stories";
+import { getStudies, type Study } from "@/content/studies";
+import { studiesPage } from "@/content/pages/studies";
 import type { Story } from "@/content/stories/schema";
 import { SITE_UPDATED, type Lang } from "./config";
 
@@ -247,12 +249,20 @@ function buildStatic(): SeoPage[] {
     }))
   });
 
-  // The reports are written in Spanish; their English pages get an English summary.
-  const reportSummaryEn: Record<string, string> = {
-    "the-mexican-home": "Eight signals on what home means in Mexico today. A Noisia report, in Spanish.",
-    "future-is-human": "Six signals that separate an efficient brand from a dehumanized one in Mexico. A Noisia report, in Spanish.",
-    "cultural-foresight-mexico-2026": "Eight signals we heard in Mexican conversation before they reach the brief. A Noisia report, in Spanish."
-  };
+  pages.push({
+    id: "/insights/estudios",
+    parent: "/insights",
+    kind: "collection",
+    lastModified: SITE_UPDATED,
+    ...both((lang) => ({
+      path: lang === "en" ? en("/insights/studies") : "/insights/estudios",
+      title: studiesPage[lang].metaTitle,
+      description: studiesPage[lang].metaDescription,
+      name: studiesPage[lang].title,
+      headline: studiesPage[lang].lead,
+      kicker: section[lang].insights
+    }))
+  });
 
   for (const report of insightsReports) {
     const subtitle = report.meta.subtitle.replace(/\.$/, "");
@@ -348,6 +358,26 @@ function storyPages(stories: Story[]): SeoPage[] {
   return pages;
 }
 
+/** One page per marketing study in the content database. */
+function studyPages(studies: Study[]): SeoPage[] {
+  return studies.map((study) => ({
+    id: `/insights/estudios/${study.id}`,
+    parent: "/insights/estudios",
+    kind: "report",
+    noindex: study.draft,
+    lastModified: (study.publishedAt ?? SITE_UPDATED).slice(0, 10),
+    image: study.coverPath ? `/api/content/studies/${study.id}/cover.webp?v=${study.version}` : undefined,
+    ...both((lang) => ({
+      path: lang === "en" ? en(`/insights/studies/${study.id}`) : `/insights/estudios/${study.id}`,
+      title: study.summary[lang].title,
+      description: study.summary[lang].dek,
+      name: study.summary[lang].title,
+      headline: study.summary[lang].title,
+      kicker: `${(messages[lang].industries as Record<string, string>)[study.industry] ?? study.industry} · ${studiesPage[lang].markets[study.market]}`
+    }))
+  }));
+}
+
 let staticCache: SeoPage[] | null = null;
 
 function staticPages(): SeoPage[] {
@@ -357,9 +387,10 @@ function staticPages(): SeoPage[] {
   return staticCache;
 }
 
-/** Every registered page. Static pages first, then the Insights pieces. */
+/** Every registered page. Static pages first, then the Insights pieces and the studies. */
 export async function seoPages(): Promise<SeoPage[]> {
-  return [...staticPages(), ...storyPages(await getStories())];
+  const [stories, studies] = await Promise.all([getStories(), getStudies()]);
+  return [...staticPages(), ...storyPages(stories), ...studyPages(studies)];
 }
 
 /** A static page (anything but an Insights piece) by its Spanish path, without touching the database. */

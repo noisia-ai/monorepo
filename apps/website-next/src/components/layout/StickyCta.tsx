@@ -29,7 +29,8 @@ export function StickyCta() {
     };
   }, [pathname]);
 
-  if (pathname === "/taller") return null;
+  // The full study keeps its own floating button (the PDF); two floating pills would collide.
+  if (pathname === "/taller" || pathname.endsWith("/completo")) return null;
   const visible = past && !footer;
   return (
     <div className={styles.bar} data-visible={visible} aria-hidden={!visible}>

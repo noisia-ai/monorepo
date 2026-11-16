@@ -56,7 +56,14 @@ export async function revalidateSite(): Promise<void> {
     console.log("Site not refreshed: set CONTENT_SITE_URL and CONTENT_REVALIDATE_SECRET to update it right away.");
     return;
   }
-  const response = await fetch(new URL("/api/content/revalidate", site), { method: "POST", headers: { authorization: `Bearer ${secret}` } });
+  let response: Response;
+  try {
+    response = await fetch(new URL("/api/content/revalidate", site), { method: "POST", headers: { authorization: `Bearer ${secret}` }, signal: AbortSignal.timeout(20_000) });
+  } catch (error) {
+    console.error(`Could not reach ${new URL(site).host} (${(error as Error).message}). The change is saved; it shows after the next refresh or deploy.`);
+    process.exitCode = 1;
+    return;
+  }
   if (!response.ok) {
     console.error(`The site did not refresh (${response.status}). The change is saved; it shows after the next refresh or deploy.`);
     process.exitCode = 1;
@@ -64,6 +71,9 @@ export async function revalidateSite(): Promise<void> {
   }
   console.log(`Site refreshed: ${new URL(site).host}`);
 }
+
+/** Flags that take a value (`--study <id>`); every other flag is a switch. */
+const VALUE_FLAGS = ["study", "status", "days", "out", "base", "lang", "revoke"];
 
 export function parseArgs(argv: string[]) {
   const flags = new Map<string, string | true>();
@@ -76,7 +86,7 @@ export function parseArgs(argv: string[]) {
     }
     const name = arg.slice(2);
     const next = argv[i + 1];
-    if (next !== undefined && !next.startsWith("--") && ["study", "status"].includes(name)) {
+    if (next !== undefined && !next.startsWith("--") && VALUE_FLAGS.includes(name)) {
       flags.set(name, next);
       i++;
     } else flags.set(name, true);

@@ -295,3 +295,10 @@ export const insightsReports = [mexicanHomeReport, futureIsHumanReport, mexicoFo
 export function getInsightReport(slug: string) {
   return insightsReports.find((reportItem) => reportItem.slug === slug);
 }
+
+/** The reports are written in Spanish; their English pages and cards get an English summary. */
+export const reportSummaryEn: Record<string, string> = {
+  "the-mexican-home": "Eight signals on what home means in Mexico today. A Noisia report, in Spanish.",
+  "future-is-human": "Six signals that separate an efficient brand from a dehumanized one in Mexico. A Noisia report, in Spanish.",
+  "cultural-foresight-mexico-2026": "Eight signals we heard in Mexican conversation before they reach the brief. A Noisia report, in Spanish."
+};
