@@ -12,6 +12,27 @@ No hay aprobaciones humanas intermedias en los procesos de análisis: Sonnet 4.6
 
 ## Progreso
 
+- Snapshot compilado 5b97af47/2ca5104d integrado localmente tras revisión sin P0/P1/P2: mantiene APIs raw validadas, handle opaco/clonado/congelado y binding por run/config/lease, sin caché de autorización o resultados. 48 focales sin omisiones, tipos/lint 11/11. Mini 43798518805 pasa money1 y actor3; conserva 4,096 raíces/8,192 llamadas/cero pendientes. Validator inclusivo baja de 4.579 a 0.152 s y event loop máximo a 371 ms; HTTP máximo 497 ms. Tiempo total de clasificación 57.721 s: H1 sigue sin aceptar.
+- El anclaje explícito muestra 46.942 s sin HTTP y 45.588 s de éstos con alguna query pendiente (uniones temporales, no sumas). Metadata4/6 e hydrate4 concentran 24.595 s: dos scans de answers con 3,289 loops y unas 956 filas por loop, y un bitmap sent repetido 6,516 veces. Se prepara una corrección de lectura por conjuntos con llaves exactas y paridad; no hay cambio de índices, cuotas ni permisos.
+
+- Actor 43787146687: el hijo medido actor_v1 consume 295.382 ms/1,100 llamadas; su SELECT real y equivalente tardan 0.016/0.015 ms, con índices y una fila por entidad. No hay join patológico en el SELECT observado; el coste está alrededor de la invocación del helper, sin atribuirlo todavía a un mecanismo específico de caché.
+- Candidato 0324 integrado localmente como a1cd26d2/af9a0ec5: ejecuta en PL/pgSQL el SELECT 0218 idéntico y conserva STABLE, invoker, firma, NONSTRICT, search_path, ACL y ambas ramas de lock_actor. Revisión sin P0/P1/P2, tipado/lint 11/11 y cuatro focales verdes. Añade tres oráculos nativos sin corpus para matriz/propiedades/frescura y carreras de revocación. El CI exige 3/3 sin omisiones antes de continuar; experimento 43789759262 en curso sobre runtime exacto cdefb167. Hay ahora 30 migraciones pendientes, ninguna aplicada en UAT.
+
+- Experimento de actor 43787146687 en curso: runtime exacto a27af513 más cuatro instrumentos revisados. Mide actor_v1 y obtiene el SELECT real del helper y el EXISTS equivalente en el mismo backend, después de cerrar counters del INSERT original. 35 focales y TSC verdes; revisión sin P0/P1/P2. La captura no llama de nuevo a lock_actor ni modifica permisos.
+
+- Focal nativo 43783838104: oracle de tres versiones con helper tipado pasa 1/1 sin omisiones, 10.516 s. Valida los agregados, preguntas vacías y rechazos atómicos de 0323; no sustituye CI completo. Pipeline conserva 4,096 raíces/8,192 llamadas/cero pendientes y tarda 58.779 s, sin H1. En 642 respuestas, guard 543.191 ms: self 66.992, derechos 69.143 y actor_lock 407.056; las funciones anidadas del actor consumen 355.392 ms todavía sin atribución directa. No se interpreta ese tiempo como espera de lock.
+- El siguiente experimento mide directamente actor_v1 y sus planes SELECT con el actor legítimo, después de cerrar los counters del DML original. No modifica roles, derechos, guardas o caché de autorización; separa el cuerpo equivalente del plan real de la función. Todavía no se prepara 0324.
+
+- CI 0d392fca terminó: general/runtime y escala verdes; Study 23/23, política 11/11 y bounded 3/3 sin omisiones. MFP integración pasa 104/104; Listening pasa 94/95, con único fallo 42P08 en los tipos del oracle nuevo. a27af513 corrige sólo el helper de prueba: fija los ocho tipos de EXECUTE USING, conservando los SQL comparados; revisión sin P0/P1/P2, tipado/lint 11/11 y tres focales verdes. La repetición nativa focal va en el siguiente diagnóstico antes de toda la suite.
+- Diagnóstico 43783838104 en curso sobre runtime exacto a27af513, cuatro instrumentos distintos. Añade counters de funciones al answers INSERT original, por OID y con ausencia/desconocido separados del cero; preserva error primario y cleanup secundario, sin repetir ni revertir DML. Revisión cerrada sin P0/P1/P2 y 33 focales verdes. El candidato ejecuta primero el oracle nativo de tres versiones, exige un caso aprobado y cero fallos y conserva su TAP separado; los casos no seleccionados no se presentan como aceptados.
+
+- Reserva original de 4,064 llamadas en 43779732001: 7,106 ms; su validación recorre selected 4,064 veces y lee 18.35 GiB temporales, aunque la agrupación ya se hace una vez. 0323/58bb8503 cambia sólo LEFT por FULL en esa unión. La revisión confirma selected.id como subconjunto único/no nulo de batch.id; ambas uniones conservan las mismas filas, incluso sin preguntas. Oracle ampliado a tres versiones y preguntas vacías, con ocho defectos y rollback nativo; sigue pendiente de CI. Tipado/lint 11/11 secuenciales y dos identidades puras pasan.
+- Ensayo 0323 43780940622 en curso: runtime exacto 58bb8503 más los cuatro archivos de diagnóstico. Captura las primeras ocho consultas de cada hash para incluir metadata4/hydrate4, ausentes de las anteriores capturas; los lectores lentos siguen sin causa demostrada. El conjunto tiene 29 migraciones pendientes; no se escenificó ni aplicó SQL en UAT.
+
+- Tracer tardío ad37512a/181c1ca3 revisado sin P0/P1/P2; 26 focales y TSC pasan. El P2 de unidades queda cerrado: reserve cuenta call_proposals, mark call_ids y answers answer_rows, en éxito y fallback. Captura ordinales SELECT 1/2/6/8 y reserve original con sus diez triggers vigentes. Ensayo remoto 43779732001 en curso sobre runtime exacto 0d392fca; sólo los cuatro archivos instrumentales difieren. CI general y runtime de 0d392fca están verdes; PostgreSQL completo continúa.
+
+- Mini 0322 43778111073 completado: 4,096 raíces/8,192 llamadas/cero pendientes; clasificación/serving 70.462 s, todavía sin H1. La captura confirma Aggregate de selected loops=1; mark de 1,024 llamadas tarda 1,094 ms frente a 3,095 y su validación 502.797 ms frente a 2,521.048, con instrumentación declarada. El perfil ahora concentra metadata/hydrate/reserve; las primeras capturas de lectura son rápidas y no representan las tardías de hasta 8.3 s. Se amplía sólo el diagnóstico para observar consultas originales en ordinales 1/2/6/8 y el reserve INSERT, sin cambiar producto ni límites.
+
 - Corte 16 nov. 00:04 UTC: el job numérico 132993209462 de 7d605789 terminó verde. Study completo 23/23, cero omisiones, incluidos cinco recibos inciertos y la carrera diaria; política 11/11, bounded 0321 3/3 y fuente/custodia 3/3 también pasan. No se canceló la corrida. La composición d092974d pasa tipado y lint 11/11 secuenciales y la identidad 0322 1/1. Incluye el preset de escala 81d8ec52 ya nativo y los dos negativos bb1f112a revisados; corresponde repetir CI/PostgreSQL sobre esta fuente antes de fusionar.
 
 - 0322/b965a07b integrada como d092974d tras revisión sin P0/P1/P2: sólo selected AS MATERIALIZED en el cuerpo exacto de 0318. Identidad 1/1 sin omisiones y DB tipado pasan. El oracle nuevo compara flags y agregados por call con ocho defectos y rollback real; su nativo sigue pendiente de CI. Mini remoto 43778111073 usa esa misma fuente con los cuatro instrumentos ya revisados. El conjunto tiene ahora 28 migraciones pendientes; paquetes privados anteriores quedan históricos, sin aplicación UAT.
@@ -269,6 +290,16 @@ Recibo: separar Voyage/JEV por raíz de Claude por número de grupos y vueltas; 
 
 ## Sorpresas y descubrimientos
 
+- El witness físico descarta el supuesto techo heredado de tokens: 64 requests oficiales de 65,536 tokens y 8,128 medidos de 302/250, sin faltantes ni discordancias; pico HTTP real 1,024. La repetición de configuración sí causaba CPU/latencia, pero quitarla expuso que las consultas de answers/sent seguían haciendo trabajo cuadrático.
+
+- La atribución directa al actor y su plan muestran que un helper pequeño puede costar más al invocarse desde el guard que al ejecutar su SELECT con los mismos valores. La diferencia observada justifica probar otro motor de preparación, conservando literalmente la lógica. No prueba por sí sola una espera de locks ni autoriza cachear decisiones de acceso.
+
+- La mayor parte del guard de respuestas corresponde a actor_lock (74.9%), y el chequeo de derechos de raíz representa 12.7%. El nombre del helper no demuestra contención: su self time es 51.664 ms y otros 355.392 ms están dentro de llamadas hijas. Hace falta medir actor_v1 antes de decidir qué cambiar.
+
+- Materializar selected eliminó repetir su agregación, pero el plan estimó una fila y volvió a escanear el resultado materializado por cada llamada. El nuevo plan debe impedir esa repetición sin tocar autoridad o dinero. Las capturas ordinales 6/8 tampoco representaron metadata4 de 10.764 s e hydrate4 de 3.647 s; la siguiente muestra incluye las primeras ocho, manteniendo ejecución única y límites declarados.
+
+- Una captura temprana correcta puede ocultar el plan problemático cuando crece el ledger. Tras 0322, metadata suma 26.184 s en trece consultas e hydrate 8.529 s en siete; las cuatro capturas existentes sólo muestran lecturas de 280 a 475 ms. Hace falta observar las tardías antes de atribuirlo al anti-join o cambiar answers.
+
 - Otra expansión cuadrática estaba dentro de la validación monetaria 0318: selected agregaba JSON por call y el optimizador lo recalculaba por cada expected. El nuevo tracer observa una sola escritura original y permite atribuir el 95.2% de su duración al trigger de statement. Los tiempos internos son inclusivos; no deben sumarse ni presentarse como capacidad del pipeline.
 
 - Resolver el plan bounded de lectura no basta: desaparecieron las relecturas temporales, pero ahora mark/answers/reserve dominan el tiempo. Las duraciones disjuntas y el muestreo backend justifican medir sus planes y triggers; no justifican suprimir validaciones ni cambiar índices sin evidencia. El coste de auto_explain ANALYZE/timing se declara no medido y sus artefactos no acreditan velocidad.
@@ -389,6 +420,20 @@ Recibo: separar Voyage/JEV por raíz de Claude por número de grupos y vueltas; 
 - El promedio del piloto completo incluye una etapa editorial que no escala por raíz. Multiplicarlo linealmente daba USD 205.81/millón; mantener explícitamente los grupos y una vuelta de referencia produce USD 114.035250. Ambos cálculos parten del mismo recibo, cuyo uso histórico permanece USD 17.280463.
 
 ## Registro de decisiones
+
+- 2026-11-16 03:49 UTC: publicar el checkpoint Node para CI completo aunque H1 aún no cumpla: cambió el compilador compartido de calibración con Study y merece la validación nativa larga mientras se corrige el lector. El mini ya pasó los cuatro oráculos y las llamadas completas. Cancelar únicamente la carga H1 automática hasta una corrección viable; el benchmark final y todo CI deben repetirse sobre la fuente final.
+
+- 2026-11-16: no aumentar cuotas, pools o memoria para ocultar el cuello. Usar el anclaje medido para atribuir intervalos sin HTTP, y corregir las lecturas repetidas de answers/sent mediante materialización por sentencia y llaves completas. Se conservan reutilización entre configuraciones, derechos, precedencia humana, pendientes inciertos y recuperación; oracle nativo antes de otro ensayo.
+
+- 2026-11-16: probar 0324 como cambio de ejecución de un SELECT idéntico. Se conservan permisos y se exige comparar con 0218 sobre identidades/grants nativos, NULL/ausencias/estados, cambios después de warmup y esperas reales de dos sesiones. Los planes se pueden reutilizar; las decisiones de autorización deben leerse de nuevo en cada sentencia. El benchmark sólo se ejecuta después del oracle nativo, y H1 final mantiene todos sus criterios.
+
+- 2026-11-16: mantener las comprobaciones de actor por cada ruta mientras se distingue coste del SELECT de autoridad, preparación del helper y locks. El experimento siguiente sólo añade una firma a stats y planes SELECT sin escrituras ni replay de DML; cualquier propuesta productiva posterior exigirá equivalencia de roles, organizaciones, grants y ramas de permiso.
+
+- 2026-11-16 01:02 UTC: conservar la evidencia terminal de Study y acelerar el feedback del oracle nuevo con un único caso nativo explícito antes del mini. No sustituye los 95 contratos completos ni las pruebas finales de PostgreSQL. Mientras la capacidad siga rechazada, mantener la composición nueva en revisión y usar diagnósticos aislados; publicar la siguiente fuente completa cuando la corrección sea viable, para evitar reiniciar la suite larga por cambios intermedios de medición.
+
+- 2026-11-16: usar FULL JOIN selected sólo tras demostrar que selected deriva exclusivamente de los IDs no nulos de batch, de modo que no puede añadir filas derechas huérfanas. 0323 conserva literalmente el resto de 0322 y exige paridad entre tres versiones, llamadas sin selected y rechazo atómico. No se cambian GUC, índices, permisos ni guards. Las lecturas quedan abiertas hasta observar su plan representativo.
+
+- 2026-11-16: conservar la corrección medida de selected y localizar las lecturas tardías con un calendario fijo acotado de capturas originales. El siguiente diagnóstico añade reserve al mismo protocolo DML revisado; ninguna consulta DML se repite y no se revierte después de escribir. 0323 queda pendiente de esa evidencia, sin cambios especulativos de planner, límites o permisos.
 
 - 2026-11-16 00:04 UTC: publicar la composición sólo después del resultado terminal de Study, preservando sus 23 casos completos. La carga H1 automática permanece cancelable mientras el mini no pruebe una corrección viable; la aceptación completa se repetirá íntegra sobre la fuente final, con el mismo umbral. CI funcional verde nunca sustituye capacidad ni UAT.
 
@@ -522,6 +567,10 @@ Recibo: separar Voyage/JEV por raíz de Claude por número de grupos y vueltas; 
 - 2026-11-14: publicar una fórmula condicional con coeficientes medidos en R15 y costo editorial por grupos/vueltas; actualizar la proyección histórica sin cambiar sus recibos ni presentarla como costo medido de R16. Reconstrucción verificada con aritmética decimal exacta.
 
 ## Resultado y retrospectiva
+
+Corte vigente 01:02 UTC: fuente local a27af513 con 0323 y helper tipado; publicada 0d392fca. General/runtime/escala verdes y Study 23/23 en 0d, pero PostgreSQL completo falla sólo en el oracle42P08 ya corregido localmente. El focal nativo y la atribución interna del guard están en curso. H1 sigue sin aceptar; hay 29 migraciones pendientes y ninguna acción R16 en UAT. Los cortes siguientes son históricos.
+
+Corte vigente 16 nov. 00:20 UTC: fuente publicada 0d392fca, CI general/runtime y escala verdes; PostgreSQL completo en curso. El Study anterior de 7d pasó 23/23 sin omisiones, incluidos ambos escenarios financieros. Capacidad aún rechazada: el mini 0322 tarda 70.46 s y se investigan lecturas tardías/reserve con consultas originales. Hay 28 migraciones pendientes, sin migración, despliegue, aprovisionamiento ni gasto R16 en UAT. H0-H6 permanece abierto. Los cortes siguientes son históricos.
 
 Corte vigente 23:52 UTC: H0-H6 sigue abierto. La equivalencia 0321 y el acceso híbrido pasan nativamente; capacidad sigue rechazada, Study remoto aún no termina y quedan dos fixtures Listening por diagnosticar. No hubo migración, despliegue, aprovisionamiento ni gasto R16 en UAT. Los resultados siguientes son históricos.
 
