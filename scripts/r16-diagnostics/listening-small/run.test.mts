@@ -293,9 +293,9 @@ test('DML plan specs match the complete source SQL, bind arity and batch-value p
  assert.equal(markHash,'sha256:1e5b3d3837b8c7354d6c25d941461f0d36e55d5cc3d42cbd31c627ba0662859b');
  assert.equal(answersHash,'sha256:7a86df2f02e720b156e7f9d7132eba342080fc9d169d7cf8e1cbdfa74de067a7');
  assert.equal(reserveHash,'sha256:4ece6654c82e3d48416690d80208f849288cd5cfed5e16f0464dd3accfba33dd');
- assert.deepEqual(dmlPlanQuerySpec(markHash),{label:'mark_submitting',values_count:2,batch_value_index:1,batch_kind:'array'});
- assert.deepEqual(dmlPlanQuerySpec(answersHash),{label:'listening_answers_insert',values_count:4,batch_value_index:3,batch_kind:'json_array'});
- assert.deepEqual(dmlPlanQuerySpec(reserveHash),{label:'reserve_calls_insert',values_count:8,batch_value_index:5,batch_kind:'json_array'});
+ assert.deepEqual(dmlPlanQuerySpec(markHash),{label:'mark_submitting',batch_unit:'call_ids',values_count:2,batch_value_index:1,batch_kind:'array'});
+ assert.deepEqual(dmlPlanQuerySpec(answersHash),{label:'listening_answers_insert',batch_unit:'answer_rows',values_count:4,batch_value_index:3,batch_kind:'json_array'});
+ assert.deepEqual(dmlPlanQuerySpec(reserveHash),{label:'reserve_calls_insert',batch_unit:'call_proposals',values_count:8,batch_value_index:5,batch_kind:'json_array'});
  assert.equal(dmlPlanBatchSize(markHash,['UPDATE', ['run',Array(256).fill('synthetic-id')]]),256);
  assert.equal(dmlPlanBatchSize(markHash,['UPDATE', ['run',Array(255).fill('synthetic-id')]]),255);
  assert.equal(dmlPlanBatchSize(markHash,['UPDATE', ['run']]),null);
@@ -342,6 +342,7 @@ test('DML savepoint releases before the original write, captures once and keeps 
  const captured=await captureDmlPlanQueryV1({client,query,query_hash:'sha256:1e5b3d3837b8c7354d6c25d941461f0d36e55d5cc3d42cbd31c627ba0662859b',
   batch_size:256,database:'noisia_mfp_ci',role:'postgres',env:process.env});
  assert.equal(writes,1);assert.equal(captured.result.rowCount,256);assert.ok(captured.observation?.status==='captured');
+ assert.equal(captured.observation.batch_unit,'call_ids');
  assert.equal(captured.observation.plans.length,DML_PLAN_MAX_PLANS);assert.equal(captured.observation.plans_dropped,2);
  assert.equal(captured.observation.triggers_omitted_count,10);assert.equal(captured.observation.plans[0]?.triggers[0]?.calls,256);
  assert.equal(captured.observation.analyze_timing_overhead_measured,false);assert.equal(client.listenerCount('notice'),0);
@@ -365,9 +366,33 @@ test('DML setup fallback rolls back before exactly one write and leaves it in th
   query_hash:'sha256:7a86df2f02e720b156e7f9d7132eba342080fc9d169d7cf8e1cbdfa74de067a7',batch_size:256,database:'noisia_mfp_ci',role:'postgres',env:process.env,clock:()=>++clockTick});
  assert.equal(writes,1);assert.equal(captured.result.rowCount,256);assert.ok(captured.observation?.status==='setup_unavailable');
  assert.equal(captured.observation.reason,'auto_explain_load_unavailable');assert.ok(events.indexOf('rollback')<events.indexOf('write'));
+ assert.equal(captured.observation.batch_unit,'answer_rows');
  assert.equal(captured.observation.cleanup_ms,1);assert.equal(captured.observation.setup_cleanup_wall_ms,captured.observation.setup_ms+captured.observation.cleanup_ms);
  assert.equal(captured.observation.analyze_timing_enabled,false);
  assert.equal(events.filter(x=>x==='write').length,1);
+}));
+
+test('reserve INSERT capture labels proposal batches distinctly from answer rows',async()=>withDmlPlanTestEnv(async()=>{
+ const {captureDmlPlanQueryV1}=await import('./observer.mjs');const {client,events}=fakeDmlPlanClient();let writes=0;
+ const captured=await captureDmlPlanQueryV1({client,query:async()=>{
+  writes++;events.push('write');client.emit('notice',{message:'duration: 62 ms plan: '+JSON.stringify({'Query Text':'INSERT INTO signal_labeling_calls ...',
+   'Execution Time':62,Plan:{'Node Type':'ModifyTable','Relation Name':'signal_labeling_calls','Actual Rows':256,'Actual Loops':1},
+   Triggers:[{'Trigger Name':'mass_labeling_call_root',Relation:'signal_labeling_calls',Time:8.5,Calls:256}]})});return{rowCount:256};},
+  query_hash:'sha256:4ece6654c82e3d48416690d80208f849288cd5cfed5e16f0464dd3accfba33dd',batch_size:256,
+  database:'noisia_mfp_ci',role:'postgres',env:process.env});
+ assert.equal(writes,1);assert.ok(captured.observation?.status==='captured');
+ assert.equal(captured.observation.batch_unit,'call_proposals');assert.equal(captured.observation.batch_size,256);
+ assert.equal(captured.observation.plans[0]?.triggers[0]?.name,'mass_labeling_call_root');
+}));
+
+test('reserve INSERT setup fallback keeps the call-proposal batch unit and runs the write once',async()=>withDmlPlanTestEnv(async()=>{
+ const {captureDmlPlanQueryV1}=await import('./observer.mjs');const {client,events}=fakeDmlPlanClient({failLoad:true});let writes=0;
+ const captured=await captureDmlPlanQueryV1({client,query:async()=>{writes++;events.push('write');return{rowCount:256};},
+  query_hash:'sha256:4ece6654c82e3d48416690d80208f849288cd5cfed5e16f0464dd3accfba33dd',batch_size:256,
+  database:'noisia_mfp_ci',role:'postgres',env:process.env});
+ assert.equal(writes,1);assert.ok(captured.observation?.status==='setup_unavailable');
+ assert.equal(captured.observation.batch_unit,'call_proposals');assert.equal(captured.observation.reason,'auto_explain_load_unavailable');
+ assert.ok(events.indexOf('rollback')<events.indexOf('write'));assert.equal(client.listenerCount('notice'),0);
 }));
 
 test('DML read-only scope mismatch falls back before write, while DML and cleanup errors never replay or leave a listener',async()=>withDmlPlanTestEnv(async()=>{

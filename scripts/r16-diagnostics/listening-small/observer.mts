@@ -20,13 +20,15 @@ export const INNER_PLAN_MIN_DURATION_MS=50;
 export const DML_PLAN_MIN_DURATION_MS=50;
 export const DML_PLAN_MIN_BATCH=256;
 export const DML_PLAN_MAX_PLANS=8;
-const DML_PLAN_QUERY_SPECS=new Map([
+type DmlPlanUnitV1='call_ids'|'answer_rows'|'call_proposals';
+type DmlPlanQuerySpecV1={label:string;batch_unit:DmlPlanUnitV1;values_count:number;batch_value_index:number;batch_kind:'array'|'json_array'};
+const DML_PLAN_QUERY_SPECS=new Map<string,DmlPlanQuerySpecV1>([
  ['sha256:1e5b3d3837b8c7354d6c25d941461f0d36e55d5cc3d42cbd31c627ba0662859b',
-  {label:'mark_submitting',values_count:2,batch_value_index:1,batch_kind:'array'}],
+  {label:'mark_submitting',batch_unit:'call_ids',values_count:2,batch_value_index:1,batch_kind:'array'}],
  ['sha256:7a86df2f02e720b156e7f9d7132eba342080fc9d169d7cf8e1cbdfa74de067a7',
-  {label:'listening_answers_insert',values_count:4,batch_value_index:3,batch_kind:'json_array'}],
+  {label:'listening_answers_insert',batch_unit:'answer_rows',values_count:4,batch_value_index:3,batch_kind:'json_array'}],
  ['sha256:4ece6654c82e3d48416690d80208f849288cd5cfed5e16f0464dd3accfba33dd',
-  {label:'reserve_calls_insert',values_count:8,batch_value_index:5,batch_kind:'json_array'}],
+  {label:'reserve_calls_insert',batch_unit:'call_proposals',values_count:8,batch_value_index:5,batch_kind:'json_array'}],
 ]);
 const SAFE_DML_TRIGGER_NAMES=new Set(['aac_signal_study_call_guard','listening_human_new_call_guard','listening_statement_money_insert','listening_statement_money_update',
  'mass_labeling_call_root','mass_labeling_scoped_insert_total','mass_labeling_scoped_money','mass_labeling_scoped_update_total','signal_listening_answer_guard',
@@ -118,9 +120,9 @@ export type InnerPlanObservationV1=
 type DmlPlanV1={sequence:number;query_text_sha256:string|null;planning_time_ms:number|null;execution_time_ms:number|null;
  plan:Record<string,unknown>;triggers:Array<{name:string;relation:string|null;time_ms:number|null;calls:number}>;triggers_seen:number;triggers_omitted:number;triggers_unknown_time:number};
 type DmlPlanTimingV1={setup_ms:number;query_wall_ms:number;cleanup_ms:number;setup_cleanup_wall_ms:number;analyze_timing_overhead_measured:false};
-export type DmlPlanObservationV1=({query_hash:string;label:string;batch_size:number;batch_unit:'call_ids'|'answer_rows';status:'setup_unavailable';
+export type DmlPlanObservationV1=({query_hash:string;label:string;batch_size:number;batch_unit:DmlPlanUnitV1;status:'setup_unavailable';
  reason:'transaction_scope_unverified'|'auto_explain_load_unavailable'|'capture_setup_unavailable';plans:DmlPlanV1[];plan_notices_seen:number;plans_dropped:number;
- triggers_omitted_count:number;triggers_unknown_time_count:number;analyze_timing_enabled:false}&DmlPlanTimingV1)|({query_hash:string;label:string;batch_size:number;batch_unit:'call_ids'|'answer_rows';status:'captured'|'plan_notice_unavailable';
+ triggers_omitted_count:number;triggers_unknown_time_count:number;analyze_timing_enabled:false}&DmlPlanTimingV1)|({query_hash:string;label:string;batch_size:number;batch_unit:DmlPlanUnitV1;status:'captured'|'plan_notice_unavailable';
  plans:DmlPlanV1[];plan_notices_seen:number;plans_dropped:number;triggers_omitted_count:number;triggers_unknown_time_count:number;analyze_timing_enabled:true;analyze_timing_overhead_measured:false}&DmlPlanTimingV1);
 function dmlCaptureGucs(prior:Map<string,string>){
  const names=['auto_explain.log_min_duration',...DML_AUTO_EXPLAIN_GUCS.filter(name=>name!=='auto_explain.log_min_duration'),
@@ -188,7 +190,7 @@ export async function captureDmlPlanQueryV1(args:{client:any;query:()=>Promise<a
    const queryStarted=clock();const original=await query();queryWallMs=clock()-queryStarted;
    const reason=setupStage==='verify_transaction_scope'?'transaction_scope_unverified':setupStage==='load_auto_explain'
     ?'auto_explain_load_unavailable':'capture_setup_unavailable';
-   return{result:original,observation:{query_hash,label:spec.label,batch_size,batch_unit:spec.label==='mark_submitting'?'call_ids':'answer_rows',
+   return{result:original,observation:{query_hash,label:spec.label,batch_size,batch_unit:spec.batch_unit,
     status:'setup_unavailable',reason,plans,plan_notices_seen:planNoticesSeen,plans_dropped:plansDropped,triggers_omitted_count:triggersOmittedCount,
     triggers_unknown_time_count:triggersUnknownTimeCount,analyze_timing_enabled:false,
     setup_ms:setupMs,query_wall_ms:queryWallMs,cleanup_ms:cleanupMs,setup_cleanup_wall_ms:setupMs+cleanupMs,analyze_timing_overhead_measured:false}};
@@ -196,7 +198,7 @@ export async function captureDmlPlanQueryV1(args:{client:any;query:()=>Promise<a
   setupMs=clock()-setupStarted;dmlStarted=true;
   const queryStarted=clock();const result=await query();queryWallMs=clock()-queryStarted;
   detach();await restoreSettings();
-  return{result,observation:{query_hash,label:spec.label,batch_size,batch_unit:spec.label==='mark_submitting'?'call_ids':'answer_rows',
+  return{result,observation:{query_hash,label:spec.label,batch_size,batch_unit:spec.batch_unit,
    status:plans.length?'captured':'plan_notice_unavailable',plans,plan_notices_seen:planNoticesSeen,plans_dropped:plansDropped,triggers_omitted_count:triggersOmittedCount,
    triggers_unknown_time_count:triggersUnknownTimeCount,analyze_timing_enabled:true,
    setup_ms:setupMs,query_wall_ms:queryWallMs,cleanup_ms:cleanupMs,setup_cleanup_wall_ms:setupMs+cleanupMs,analyze_timing_overhead_measured:false}};
