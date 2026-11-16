@@ -18,6 +18,10 @@ on:
         type: boolean
         default: false
         description: Run native shared-reservation and cursor PostgreSQL smoke gates (neutral mode only)
+      capture_projection_plan:
+        type: boolean
+        default: false
+        description: Capture one bounded read-only input projection plan (requires SQL frontier mode and shared smoke)
       target_ref:
         type: string
         required: false
@@ -53,14 +57,21 @@ jobs:
         env:
           MODE: ${{ inputs.mode }}
           RESOURCE_PROFILE: ${{ inputs.resource_profile || 'baseline_512m' }}
+          RESERVE_SHARED_SMOKE: ${{ inputs.reserve_shared_smoke || false }}
           EVENT_NAME: ${{ github.event_name }}
           TARGET_REF: ${{ inputs.target_ref }}
+          CAPTURE_PROJECTION_PLAN: ${{ inputs.capture_projection_plan || false }}
         run: |
           set -euo pipefail
           if [ "$EVENT_NAME" != workflow_dispatch ] \
               || { [ "$MODE" != neutral_only ] && [ "$MODE" != sql_frontier_only ]; } \
               || [ -z "$TARGET_REF" ] || [ "${#TARGET_REF}" -ne 40 ] || [[ ! "$TARGET_REF" =~ ^[0-9a-f]{40}$ ]]; then
             echo '::error::RAW acceptance requires a manual neutral or SQL diagnostic and an explicit 40-character target SHA'
+            exit 1
+          fi
+          if [ "$CAPTURE_PROJECTION_PLAN" = true ] \
+              && { [ "$MODE" != sql_frontier_only ] || [ "$RESERVE_SHARED_SMOKE" != true ]; }; then
+            echo '::error::projection plan capture requires a manual SQL frontier run with reserve_shared_smoke'
             exit 1
           fi
           case "$RESOURCE_PROFILE" in
@@ -373,6 +384,7 @@ jobs:
           MODE: ${{ inputs.mode || 'legacy' }}
           RESOURCE_PROFILE: ${{ inputs.resource_profile || 'baseline_512m' }}
           RESERVE_SHARED_SMOKE: ${{ inputs.reserve_shared_smoke || false }}
+          CAPTURE_PROJECTION_PLAN: ${{ inputs.capture_projection_plan || false }}
           EVENT_NAME: ${{ github.event_name }}
           TARGET_REF: ${{ inputs.target_ref }}
           RAW_ACCEPTANCE_SELECTED_PASS: ${{ needs.raw-acceptance.outputs.selected_pass || '0' }}
@@ -391,6 +403,13 @@ jobs:
             [ "$EVENT_NAME" != workflow_dispatch ] || [ -z "$TARGET_REF" ] || [ "${#TARGET_REF}" -ne 40 ] || [[ ! "$TARGET_REF" =~ ^[0-9a-f]{40}$ ]];
           }; then
             echo '::error::sql_frontier_only requires a manual dispatch and an explicit 40-character target SHA'
+            exit 1
+          fi
+          if [ "$CAPTURE_PROJECTION_PLAN" = true ] \
+              && { [ "$MODE" != sql_frontier_only ] || [ "$EVENT_NAME" != workflow_dispatch ] \
+                || [ "$RESERVE_SHARED_SMOKE" != true ] || [ -z "$TARGET_REF" ] \
+                || [ "${#TARGET_REF}" -ne 40 ] || [[ ! "$TARGET_REF" =~ ^[0-9a-f]{40}$ ]]; }; then
+            echo '::error::projection plan capture requires manual SQL frontier mode, exact target SHA and reserve_shared_smoke'
             exit 1
           fi
           if [ "$RESERVE_SHARED_SMOKE" = true ]; then
@@ -433,6 +452,10 @@ jobs:
           NOISIA_R16_SMALL_DIAGNOSTIC: 'true'
           NOISIA_R16_LISTENING_DML_PLAN_PG: ${{ inputs.mode == 'neutral_only' && 'false' || 'true' }}
           R16_DIAGNOSTIC_MODE: ${{ inputs.mode || 'legacy' }}
+          R16_DIAGNOSTIC_CAPTURE_PROJECTION_PLAN: ${{ inputs.capture_projection_plan && 'true' || 'false' }}
+          RESERVE_SHARED_SMOKE: ${{ inputs.reserve_shared_smoke || false }}
+          RAW_ACCEPTANCE_SELECTED_PASS: ${{ needs.raw-acceptance.outputs.selected_pass || '0' }}
+          RAW_ACCEPTANCE_TARGET_SHA: ${{ needs.raw-acceptance.outputs.target_sha || '' }}
           NOISIA_DB_SMOKE_ALLOW_REMOTE: 'false'
           NOISIA_DB_SMOKE_RESET_SCHEMA: 'true'
           NOISIA_DB_SMOKE_EMULATE_SUPABASE_ROLES: 'true'

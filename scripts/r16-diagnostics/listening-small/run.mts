@@ -148,6 +148,17 @@ export function assertListeningSmallGuardV1(env:NodeJS.ProcessEnv,args:string[])
   assert.equal(env.NOISIA_R16_SMALL_DIAGNOSTIC,'true','diagnostic_opt_in_required');
   const mode=diagnosticModeV1(env);
   listeningResourceProfileV1(env,mode);
+  const projectionPlanCapture=env.R16_DIAGNOSTIC_CAPTURE_PROJECTION_PLAN??'false';
+  assert.ok(projectionPlanCapture==='true'||projectionPlanCapture==='false','projection_plan_flag_invalid');
+  if(projectionPlanCapture==='true'){
+    assert.equal(mode,'sql_frontier_only','projection_plan_requires_sql_frontier');
+    assert.equal(env.GITHUB_EVENT_NAME,'workflow_dispatch','projection_plan_requires_manual_dispatch');
+    assert.equal(env.R16_DIAGNOSTIC_TARGET_LABEL,'candidate','projection_plan_requires_candidate');
+    assert.equal(env.RESERVE_SHARED_SMOKE,'true','projection_plan_requires_shared_smoke');
+    assert.equal(env.RAW_ACCEPTANCE_SELECTED_PASS,'6','projection_plan_requires_raw_acceptance');
+    assert.ok(/^[0-9a-f]{40}$/u.test(env.R16_DIAGNOSTIC_TARGET_REF_REQUESTED??''),'projection_plan_target_ref_required');
+    assert.equal(env.RAW_ACCEPTANCE_TARGET_SHA,env.R16_DIAGNOSTIC_TARGET_REF_REQUESTED,'projection_plan_raw_target_mismatch');
+  }
   if(mode==='sql_frontier_only'){
     assert.equal(env.GITHUB_EVENT_NAME,'workflow_dispatch','sql_frontier_requires_manual_dispatch');
     assert.equal(env.R16_DIAGNOSTIC_TARGET_LABEL,'candidate','sql_frontier_requires_candidate_target');
@@ -256,6 +267,7 @@ export async function runListeningSmallDiagnosticV1(){
   const mode=diagnosticModeV1(process.env);
   const neutralOnly=mode==='neutral_only';
   const sqlFrontierOnly=mode==='sql_frontier_only';
+  const projectionPlanOnly=process.env.R16_DIAGNOSTIC_CAPTURE_PROJECTION_PLAN==='true';
   const profilerDisabled=mode!=='legacy';
   let resourceProfile:ListeningResourceProfileV1|undefined;
   let effectiveExecution:ListeningExecutionV1|undefined;
@@ -265,7 +277,7 @@ export async function runListeningSmallDiagnosticV1(){
   let stage='imports';
   let storageServer:any;
   let httpTokenWitness:ReturnType<typeof createJevHttpTokenWitnessV1>|undefined;
-  const observer=createListeningObserver({neutral_only:neutralOnly,sql_frontier_only:sqlFrontierOnly});
+  const observer=createListeningObserver({neutral_only:neutralOnly,sql_frontier_only:sqlFrontierOnly,projection_plan_only:projectionPlanOnly});
   observer.setInnerPlanRootCount(ROOT_COUNT);
   try{
     Object.assign(process.env,{NOISIA_R16_LOCAL_PG_LAB:'r16-benchmark-pg17',NOISIA_R16_NATIVE_FIXTURE_PG:'true',
@@ -429,12 +441,13 @@ export async function runListeningSmallDiagnosticV1(){
           token_budget_http_witness:httpTokenWitness.snapshot(),
           inner_plan_capture:{enabled:!profilerDisabled,disabled_reason:profilerDisabled?mode:null,diagnostic_only:true,threshold_roots:1024,max_captures_per_query_hash:INNER_PLAN_CAPTURE_ORDINALS.length,capture_ordinals:INNER_PLAN_CAPTURE_ORDINALS,min_duration_ms:INNER_PLAN_MIN_DURATION_MS,
             plans_below_min_duration_captured:false,observations:observerSnapshot.inner_plan_observations},
-          dml_plan_capture:{enabled:!neutralOnly,disabled_reason:neutralOnly?'neutral_only':null,diagnostic_only:true,opt_in_required:true,min_batch_size:DML_PLAN_MIN_BATCH,max_captures_per_query_hash:1,min_duration_ms:DML_PLAN_MIN_DURATION_MS,
-            ...(sqlFrontierOnly?{first_capture_min_duration_overrides:{raw_attach_call_lock_ms:0}}:{}),
-            plans_below_min_duration_captured:false,max_plans_per_capture:DML_PLAN_MAX_PLANS+(sqlFrontierOnly?1:0),...(sqlFrontierOnly?{nested_plan_limit:DML_PLAN_MAX_PLANS,outer_plan_absence:'unknown'}:{}),trigger_names_allowlisted:true,raw_query_or_values_recorded:false,
-            analyze_timing_enabled:!neutralOnly,analyze_timing_overhead_measured:false,capacity_claim:false,
+          dml_plan_capture:{enabled:!neutralOnly&&!projectionPlanOnly,disabled_reason:projectionPlanOnly?'projection_plan_only':neutralOnly?'neutral_only':null,diagnostic_only:true,opt_in_required:true,min_batch_size:DML_PLAN_MIN_BATCH,max_captures_per_query_hash:projectionPlanOnly?0:1,min_duration_ms:DML_PLAN_MIN_DURATION_MS,
+            ...(sqlFrontierOnly&&!projectionPlanOnly?{first_capture_min_duration_overrides:{raw_attach_call_lock_ms:0}}:{}),
+            plans_below_min_duration_captured:false,max_plans_per_capture:projectionPlanOnly?0:DML_PLAN_MAX_PLANS+(sqlFrontierOnly?1:0),...(sqlFrontierOnly&&!projectionPlanOnly?{nested_plan_limit:DML_PLAN_MAX_PLANS,outer_plan_absence:'unknown'}:{}),trigger_names_allowlisted:!projectionPlanOnly,raw_query_or_values_recorded:false,
+            analyze_timing_enabled:!neutralOnly&&!projectionPlanOnly,analyze_timing_overhead_measured:false,capacity_claim:false,
             sql_frontier:sqlFrontierOnly?observerSnapshot.sql_frontier_capture:null,
             observations:observerSnapshot.dml_plan_observations},
+          ...(projectionPlanOnly?{projection_plan_capture:observerSnapshot.projection_plan_capture}:{}),
           root_census_sha256:sha([...rootSet].sort().join('\n')),
           serving_question_count:serving.length,total_wall_ms:performance.now()-started};
       }} });
@@ -458,12 +471,13 @@ export async function runListeningSmallDiagnosticV1(){
         h1_accepted:false,status:'not_started',capacity_claim:false,event_timing_overhead_measured:false},
       inner_plan_capture:{enabled:!profilerDisabled,disabled_reason:profilerDisabled?mode:null,diagnostic_only:true,threshold_roots:1024,max_captures_per_query_hash:INNER_PLAN_CAPTURE_ORDINALS.length,capture_ordinals:INNER_PLAN_CAPTURE_ORDINALS,min_duration_ms:INNER_PLAN_MIN_DURATION_MS,
         plans_below_min_duration_captured:false,observations:observerSnapshot.inner_plan_observations},
-      dml_plan_capture:{enabled:!neutralOnly,disabled_reason:neutralOnly?'neutral_only':null,diagnostic_only:true,opt_in_required:true,min_batch_size:DML_PLAN_MIN_BATCH,max_captures_per_query_hash:1,min_duration_ms:DML_PLAN_MIN_DURATION_MS,
-        ...(sqlFrontierOnly?{first_capture_min_duration_overrides:{raw_attach_call_lock_ms:0}}:{}),
-        plans_below_min_duration_captured:false,max_plans_per_capture:DML_PLAN_MAX_PLANS+(sqlFrontierOnly?1:0),...(sqlFrontierOnly?{nested_plan_limit:DML_PLAN_MAX_PLANS,outer_plan_absence:'unknown'}:{}),trigger_names_allowlisted:true,raw_query_or_values_recorded:false,
-        analyze_timing_enabled:!neutralOnly,analyze_timing_overhead_measured:false,capacity_claim:false,
+      dml_plan_capture:{enabled:!neutralOnly&&!projectionPlanOnly,disabled_reason:projectionPlanOnly?'projection_plan_only':neutralOnly?'neutral_only':null,diagnostic_only:true,opt_in_required:true,min_batch_size:DML_PLAN_MIN_BATCH,max_captures_per_query_hash:projectionPlanOnly?0:1,min_duration_ms:DML_PLAN_MIN_DURATION_MS,
+        ...(sqlFrontierOnly&&!projectionPlanOnly?{first_capture_min_duration_overrides:{raw_attach_call_lock_ms:0}}:{}),
+        plans_below_min_duration_captured:false,max_plans_per_capture:projectionPlanOnly?0:DML_PLAN_MAX_PLANS+(sqlFrontierOnly?1:0),...(sqlFrontierOnly&&!projectionPlanOnly?{nested_plan_limit:DML_PLAN_MAX_PLANS,outer_plan_absence:'unknown'}:{}),trigger_names_allowlisted:!projectionPlanOnly,raw_query_or_values_recorded:false,
+        analyze_timing_enabled:!neutralOnly&&!projectionPlanOnly,analyze_timing_overhead_measured:false,capacity_claim:false,
         sql_frontier:sqlFrontierOnly?observerSnapshot.sql_frontier_capture:null,
-        observations:observerSnapshot.dml_plan_observations}};
+        observations:observerSnapshot.dml_plan_observations},
+      ...(projectionPlanOnly?{projection_plan_capture:observerSnapshot.projection_plan_capture}:{})};
     await atomicJson(artifact,failure).catch(()=>undefined);
     await storageServer?.close().catch(()=>undefined);
     process.stderr.write('listening_small_diagnostic_failed; sanitized artifact written\n');

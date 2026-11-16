@@ -17,6 +17,7 @@ const PLAN_NUMBERS=['Plan Rows','Plan Width','Actual Rows','Actual Loops','Start
  'Shared Hit Blocks','Shared Read Blocks','Shared Dirtied Blocks','Shared Written Blocks','Temp Read Blocks','Temp Written Blocks'];
 const PLAN_NAMES=['Node Type','Relation Name','Alias','Index Name','Join Type'];
 const SAFE_CTE_NAMES=new Set(['allowed_roots','selected_items','items','prepared','qs','raw_lock_page']);
+const PROJECTION_SAFE_CTE_NAMES=new Set(['candidates','sent','reservation_matches','pending','root_metadata','prefix','fitting','projections']);
 const MAX_INNER_PLANS_PER_QUERY=32;
 export const INNER_PLAN_MIN_DURATION_MS=50;
 export const DML_PLAN_MIN_DURATION_MS=50;
@@ -124,22 +125,22 @@ export function dmlPlanCaptureEnvironmentAllowed(env:NodeJS.ProcessEnv){
    &&url.username==='postgres'&&!!url.port&&!url.search&&!url.hash;}catch{return false;}
 }
 function safeName(value:unknown){return typeof value==='string'&&/^[A-Za-z_][A-Za-z0-9_$]{0,127}$/u.test(value)?value:'redacted';}
-function safePlanNode(value:any,depth=0):any{
+function safePlanNode(value:any,depth=0,extraCteNames:ReadonlySet<string>=new Set()):any{
  if(depth>128)return null;
  if(!value||typeof value!=='object'||Array.isArray(value))return null;
  const result:Record<string,unknown>={};
  for(const key of PLAN_NAMES)if(value[key]!==undefined)result[key]=key==='Node Type'
   ?(typeof value[key]==='string'&&SAFE_NODE_TYPES.has(value[key])?value[key]:'redacted'):safeName(value[key]);
- for(const key of ['CTE Name','Subplan Name'])if(typeof value[key]==='string'&&SAFE_CTE_NAMES.has(value[key]))result[key]=value[key];
+ for(const key of ['CTE Name','Subplan Name'])if(typeof value[key]==='string'&&(SAFE_CTE_NAMES.has(value[key])||extraCteNames.has(value[key])))result[key]=value[key];
  for(const key of PLAN_NUMBERS)if(typeof value[key]==='number'&&Number.isFinite(value[key]))result[key]=value[key];
  for(const key of ['Parallel Aware','Async Capable'])if(typeof value[key]==='boolean')result[key]=value[key];
- if(Array.isArray(value.Plans)){const children=value.Plans.map((child:any)=>safePlanNode(child,depth+1));if(children.some((child:any)=>!child))return null;result.Plans=children;}
+ if(Array.isArray(value.Plans)){const children=value.Plans.map((child:any)=>safePlanNode(child,depth+1,extraCteNames));if(children.some((child:any)=>!child))return null;result.Plans=children;}
  return result;
 }
 export type AutoExplainNoticeRejectReasonV1='message_missing'|'message_too_large'|'payload_missing'|'invalid_json'|'plan_invalid';
 export type AutoExplainNoticeParseV1={status:'accepted';query_text_sha256:string|null;planning_time_ms:number|null;execution_time_ms:number|null;plan:Record<string,unknown>}|{status:'rejected';reason:AutoExplainNoticeRejectReasonV1};
 /** Parses the NOTICE only in memory. Raw PostgreSQL messages and text fields are never retained. */
-export function classifyAutoExplainNoticeV1(notice:unknown):AutoExplainNoticeParseV1{
+export function classifyAutoExplainNoticeV1(notice:unknown,extraCteNames:ReadonlySet<string>=new Set()):AutoExplainNoticeParseV1{
  const message=(notice as {message?:unknown}|null)?.message;
  if(typeof message!=='string')return{status:'rejected',reason:'message_missing'};
  if(message.length>1_000_000)return{status:'rejected',reason:'message_too_large'};
@@ -150,7 +151,7 @@ export function classifyAutoExplainNoticeV1(notice:unknown):AutoExplainNoticePar
  }catch{return{status:'rejected',reason:'invalid_json'};}
  try{
   if(!parsed||typeof parsed!=='object'||Array.isArray(parsed))return{status:'rejected',reason:'plan_invalid'};
-  const payload=parsed as Record<string,unknown>,plan=safePlanNode(payload.Plan);if(!plan)return{status:'rejected',reason:'plan_invalid'};
+  const payload=parsed as Record<string,unknown>,plan=safePlanNode(payload.Plan,0,extraCteNames);if(!plan)return{status:'rejected',reason:'plan_invalid'};
   const queryText=typeof payload['Query Text']==='string'?payload['Query Text']:null;
   return{status:'accepted',query_text_sha256:queryText?`sha256:${createHash('sha256').update(queryText,'utf8').digest('hex')}`:null,
    planning_time_ms:typeof payload['Planning Time']==='number'&&Number.isFinite(payload['Planning Time'])?payload['Planning Time']:null,
@@ -226,7 +227,7 @@ const DML_NOTICE_READBACK_GUCS=['client_min_messages','log_statement','log_param
 function safeGucReadbackValue(name:string,value:unknown):string|null{
  if(typeof value!=='string')return null;
  const lower=value.toLowerCase();
- if(name.endsWith('log_level')||name==='client_min_messages')return /^(debug5|debug4|debug3|debug2|debug1|log|notice|warning|error|fatal|panic)$/u.test(lower)?lower:null;
+ if(name.endsWith('log_level')||name==='client_min_messages'||name==='log_min_messages')return /^(debug5|debug4|debug3|debug2|debug1|log|notice|warning|error|fatal|panic)$/u.test(lower)?lower:null;
  if(name.endsWith('log_format'))return /^(text|xml|json|yaml)$/u.test(lower)?lower:null;
  if(name.endsWith('log_statement'))return /^(none|ddl|mod|all)$/u.test(lower)?lower:null;
  if(name.endsWith('log_nested_statements')||name.endsWith('log_analyze')||name.endsWith('log_buffers')||name.endsWith('log_timing')
@@ -298,6 +299,24 @@ SELECT EXISTS(SELECT 1 FROM public.signal_workspaces w
      AND a.revoked_at IS NULL AND a.access_level='admin'))))`;
 const ACTOR_NESTED_PLAN_LIMIT=8,ACTOR_CALL_IDS_LIMIT=8192;
 const UUID_PATTERN=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;
+export const PROJECTION_METADATA_QUERY_HASH_V1='sha256:623ea62b8c7f51acab4551632bfd2518d58ed70cce110afce59914d175981bd3';
+export const PROJECTION_METADATA_MIN_BATCH_V1=1024;
+export const PROJECTION_METADATA_MAX_BATCH_V1=4096;
+/** Read only the shape of the real nine-bind input projection query; never retain its binds. */
+export function projectionMetadataBatchSizeV1(hash:string|null,args:unknown[]){
+ if(hash!==PROJECTION_METADATA_QUERY_HASH_V1||args.length!==2||queryHash(args[0])!==hash||!Array.isArray(args[1]))return null;
+ const values=args[1] as unknown[];
+ if(values.length!==9||![0,1,2,4].every(index=>typeof values[index]==='string'&&UUID_PATTERN.test(values[index] as string))
+  ||typeof values[3]!=='string'||values[3].length<1||values[3].length>256
+  ||!Number.isSafeInteger(values[5])||Number(values[5])<PROJECTION_METADATA_MIN_BATCH_V1||Number(values[5])>PROJECTION_METADATA_MAX_BATCH_V1
+  ||!Number.isSafeInteger(values[6])||Number(values[6])<1||!Array.isArray(values[7])
+  ||typeof values[8]!=='string'||!/^\d{1,30}$/u.test(values[8]))return null;
+ const ids=values[7] as unknown[];
+ if(ids.length<PROJECTION_METADATA_MIN_BATCH_V1||ids.length>PROJECTION_METADATA_MAX_BATCH_V1)return null;
+ const seen=new Set<string>();for(const id of ids){if(typeof id!=='string'||!UUID_PATTERN.test(id)||seen.has(id))return null;seen.add(id);}
+ try{if(BigInt(values[8] as string)<0n)return null;}catch{return null;}
+ return ids.length;
+}
 function answerCallIdsV1(values:unknown):string[]|null{
  if(!Array.isArray(values)||values.length!==4||typeof values[3]!=='string')return null;
  try{const rows=JSON.parse(values[3]);if(!Array.isArray(rows)||rows.length<1||rows.length>ACTOR_CALL_IDS_LIMIT*2)return null;
@@ -588,6 +607,126 @@ export async function captureInnerPlanQueryV1(args:{client:any;query:()=>Promise
   try{if(savepoint)await rollback();}finally{client.off('notice',onNotice);}
  }
 }
+type ProjectionNoticePhaseV1='setup'|'original_query'|'after_query'|'cleanup';
+type ProjectionPlanV1={sequence:number;query_text_sha256:string|null;planning_time_ms:number|null;execution_time_ms:number|null;
+ frontier_role:'outer'|'nested';plan:Record<string,unknown>};
+type ProjectionGucReadbackV1={status:'captured'|'unknown';settings:Record<string,string|null>};
+type ProjectionPlanObservationV1={query_hash:string;label:'bounded_input_projection_metadata';batch_size:number;status:'captured'|'capture_unknown'|'setup_unavailable';
+ reason?:'transaction_scope_unverified'|'auto_explain_load_unavailable'|'capture_setup_unavailable'|'guc_readback_unavailable'|'outer_plan_unobserved';plans:ProjectionPlanV1[];plan_notices_seen:number;plans_dropped:number;
+ raw_notice_count_by_phase:Record<ProjectionNoticePhaseV1,number>;
+ rejected_notice_count_by_phase:Record<ProjectionNoticePhaseV1,Partial<Record<AutoExplainNoticeRejectReasonV1,number>>>;
+ accepted_outer_count_by_phase:Record<ProjectionNoticePhaseV1,number>;accepted_nested_count_by_phase:Record<ProjectionNoticePhaseV1,number>;
+ accepted_unattributed_count_by_phase:Record<ProjectionNoticePhaseV1,number>;capped_notice_count_by_phase:Record<ProjectionNoticePhaseV1,number>;
+ after_query_drain_ms:number;guc_readback:ProjectionGucReadbackV1;setup_ms:number;query_wall_ms:number;cleanup_ms:number;
+ analyze_timing_overhead_measured:false;capacity_claim:false};
+const PROJECTION_READBACK_GUCS=['log_min_messages','client_min_messages','log_statement','log_parameter_max_length','auto_explain.log_parameter_max_length',
+ 'auto_explain.log_level','auto_explain.log_min_duration','auto_explain.log_nested_statements','auto_explain.log_analyze',
+ 'auto_explain.log_buffers','auto_explain.log_timing','auto_explain.log_format','auto_explain.log_verbose','auto_explain.sample_rate'] as const;
+const PROJECTION_EXPECTED_GUCS:Record<string,string>={log_min_messages:'warning',client_min_messages:'notice',log_statement:'none',log_parameter_max_length:'0',
+ 'auto_explain.log_parameter_max_length':'0','auto_explain.log_level':'notice','auto_explain.log_min_duration':'50ms',
+ 'auto_explain.log_nested_statements':'on','auto_explain.log_analyze':'on','auto_explain.log_buffers':'on','auto_explain.log_timing':'off',
+ 'auto_explain.log_format':'json','auto_explain.log_verbose':'off','auto_explain.sample_rate':'1'};
+/** One exact, bounded RR/RO projection SELECT. Setup/readback failure falls back to its original call exactly once. */
+export async function captureReadonlyProjectionPlanV1(args:{client:any;query:()=>Promise<any>;query_hash:string;batch_size:number;outer_query_text:string;
+ database:string;role:string;env:NodeJS.ProcessEnv;clock?:()=>number}):Promise<{result:any;observation:ProjectionPlanObservationV1|null}>{
+ const {client,query,query_hash,batch_size,outer_query_text,database,role,env}=args,clock=args.clock??(()=>performance.now());
+ const targetRef=env.R16_DIAGNOSTIC_TARGET_REF_REQUESTED??'';
+ if(query_hash!==PROJECTION_METADATA_QUERY_HASH_V1||batch_size<PROJECTION_METADATA_MIN_BATCH_V1||batch_size>PROJECTION_METADATA_MAX_BATCH_V1
+  ||!dmlPlanCaptureEnvironmentAllowed(env)||database!=='noisia_mfp_ci'||role!=='postgres'
+  ||env.R16_DIAGNOSTIC_MODE!=='sql_frontier_only'||env.R16_DIAGNOSTIC_CAPTURE_PROJECTION_PLAN!=='true'
+  ||env.GITHUB_EVENT_NAME!=='workflow_dispatch'||env.R16_DIAGNOSTIC_TARGET_LABEL!=='candidate'||env.RESERVE_SHARED_SMOKE!=='true'
+  ||env.RAW_ACCEPTANCE_SELECTED_PASS!=='6'||!/^[0-9a-f]{40}$/u.test(targetRef)||env.RAW_ACCEPTANCE_TARGET_SHA!==targetRef)
+  return{result:await query(),observation:null};
+ assertInnerPlanCaptureGuard(env,database,role);
+ const phases:ProjectionNoticePhaseV1[]=['setup','original_query','after_query','cleanup'];
+ const raw=Object.fromEntries(phases.map(phase=>[phase,0])) as Record<ProjectionNoticePhaseV1,number>;
+ const rejected=Object.fromEntries(phases.map(phase=>[phase,{}])) as Record<ProjectionNoticePhaseV1,Partial<Record<AutoExplainNoticeRejectReasonV1,number>>>;
+ const outer=Object.fromEntries(phases.map(phase=>[phase,0])) as Record<ProjectionNoticePhaseV1,number>;
+ const nested=Object.fromEntries(phases.map(phase=>[phase,0])) as Record<ProjectionNoticePhaseV1,number>;
+ const unattributed=Object.fromEntries(phases.map(phase=>[phase,0])) as Record<ProjectionNoticePhaseV1,number>;
+ const capped=Object.fromEntries(phases.map(phase=>[phase,0])) as Record<ProjectionNoticePhaseV1,number>;
+ const gucSettings=Object.fromEntries(PROJECTION_READBACK_GUCS.map(name=>[name,null])) as Record<(typeof PROJECTION_READBACK_GUCS)[number],string|null>;
+ const gucReadback:ProjectionGucReadbackV1={status:'unknown',settings:gucSettings};
+ const outerTextHash=`sha256:${createHash('sha256').update(outer_query_text,'utf8').digest('hex')}`;
+ const plans:ProjectionPlanV1[]=[];let phase:ProjectionNoticePhaseV1='setup',accepted=0,dropped=0,savepoint=false,listenerAttached=false;
+ let setupMs=0,queryWallMs=0,cleanupMs=0,afterQueryDrainMs=0,setupStage='savepoint',queryError:unknown,cleanupError:unknown;
+ const listener=(notice:unknown)=>{
+  raw[phase]++;const classified=classifyAutoExplainNoticeV1(notice,PROJECTION_SAFE_CTE_NAMES);
+  if(classified.status==='rejected'){const counts=rejected[phase];counts[classified.reason]=(counts[classified.reason]??0)+1;return;}
+  accepted++;const isOuter=classified.query_text_sha256===outerTextHash;
+  if(phase==='after_query'&&!isOuter){unattributed[phase]++;return;}
+  if(phase!=='original_query'&&phase!=='after_query'){unattributed[phase]++;return;}
+  if(isOuter){outer[phase]++;if(plans.some(plan=>plan.frontier_role==='outer')||plans.length>=8){dropped++;capped[phase]++;return;}
+   plans.push({sequence:accepted,...classified,frontier_role:'outer'});return;}
+  if(phase==='original_query'&&classified.query_text_sha256!==null){nested[phase]++;if(plans.filter(plan=>plan.frontier_role==='nested').length<7&&plans.length<8)
+    plans.push({sequence:accepted,...classified,frontier_role:'nested'});else{dropped++;capped[phase]++;}return;}
+  unattributed[phase]++;
+ };
+ const detach=()=>{if(listenerAttached){client.off('notice',listener);listenerAttached=false;}};
+ client.on('notice',listener);listenerAttached=true;
+ const rollback=async(savepointName:string)=>{
+  const cleanupStart=clock();try{await client.query(`ROLLBACK TO SAVEPOINT ${savepointName}`);await client.query(`RELEASE SAVEPOINT ${savepointName}`);}
+  finally{cleanupMs+=clock()-cleanupStart;}
+ };
+ try{
+  const setupStart=clock();
+  try{
+   await client.query('SAVEPOINT r16_projection_plan_capture_v1');savepoint=true;
+   setupStage='verify_transaction_scope';
+   const identity=await client.query(`SELECT current_database() AS database,current_user AS role,
+    current_setting('transaction_isolation') AS isolation,current_setting('transaction_read_only') AS read_only,
+    r.rolsuper AS superuser FROM pg_roles r WHERE r.rolname=current_user`);
+   if(!verifiedInnerPlanScopeV1(identity.rows?.[0],database,role))throw Error('projection_scope_unverified');
+   setupStage='logging_configuration';
+   await client.query("SET LOCAL log_min_messages = 'WARNING'");await client.query("SET LOCAL client_min_messages = 'NOTICE'");
+   await client.query("SET LOCAL log_statement = 'none'");await client.query('SET LOCAL log_parameter_max_length = 0');
+   setupStage='load_auto_explain';await client.query("LOAD 'auto_explain'");
+   setupStage='auto_explain_configuration';
+   await client.query('SET LOCAL auto_explain.log_parameter_max_length = 0');await client.query("SET LOCAL auto_explain.log_level = 'NOTICE'");
+   await client.query("SET LOCAL auto_explain.log_min_duration = '50ms'");await client.query('SET LOCAL auto_explain.log_nested_statements = on');
+   await client.query('SET LOCAL auto_explain.log_analyze = on');await client.query('SET LOCAL auto_explain.log_buffers = on');
+   await client.query('SET LOCAL auto_explain.log_timing = off');await client.query("SET LOCAL auto_explain.log_format = 'json'");
+   await client.query('SET LOCAL auto_explain.log_verbose = off');
+   setupStage='guc_readback';
+   await client.query('SAVEPOINT r16_projection_guc_readback_v1');
+   try{
+    const observed:typeof gucSettings={...gucSettings};
+    for(const name of PROJECTION_READBACK_GUCS){const result=await client.query(`SHOW ${name}`),row=result.rows?.[0];
+     observed[name]=safeGucReadbackValue(name,row&&typeof row==='object'?Object.values(row)[0]:null);}
+    gucReadback.settings=observed;
+    gucReadback.status=PROJECTION_READBACK_GUCS.every(name=>observed[name]===PROJECTION_EXPECTED_GUCS[name])?'captured':'unknown';
+    await client.query('RELEASE SAVEPOINT r16_projection_guc_readback_v1');
+   }catch{
+    gucReadback.status='unknown';await client.query('ROLLBACK TO SAVEPOINT r16_projection_guc_readback_v1');
+    await client.query('RELEASE SAVEPOINT r16_projection_guc_readback_v1');
+   }
+  }catch(error){
+   setupMs=clock()-setupStart;
+   if(savepoint){await rollback('r16_projection_plan_capture_v1');savepoint=false;}
+   const queryStart=clock();let result:any;try{result=await query();}catch(queryFailure){throw queryFailure;}finally{queryWallMs=clock()-queryStart;}
+   const reason=setupStage==='verify_transaction_scope'?'transaction_scope_unverified':setupStage==='load_auto_explain'
+    ?'auto_explain_load_unavailable':'capture_setup_unavailable';
+   return{result,observation:{query_hash,label:'bounded_input_projection_metadata',batch_size,status:'setup_unavailable',reason,plans,plan_notices_seen:accepted,plans_dropped:dropped,
+    raw_notice_count_by_phase:raw,rejected_notice_count_by_phase:rejected,accepted_outer_count_by_phase:outer,accepted_nested_count_by_phase:nested,
+    accepted_unattributed_count_by_phase:unattributed,capped_notice_count_by_phase:capped,after_query_drain_ms:afterQueryDrainMs,guc_readback:gucReadback,
+    setup_ms:setupMs,query_wall_ms:queryWallMs,cleanup_ms:cleanupMs,analyze_timing_overhead_measured:false,capacity_claim:false}};
+  }
+  setupMs=clock()-setupStart;
+  phase='original_query';const queryStart=clock();let result:any;
+  try{result=await query();}catch(error){queryError=error;}finally{queryWallMs=clock()-queryStart;phase='after_query';}
+  const drainStart=clock();await new Promise<void>(resolve=>setImmediate(resolve));afterQueryDrainMs=clock()-drainStart;
+  phase='cleanup';detach();
+  if(savepoint){try{await rollback('r16_projection_plan_capture_v1');savepoint=false;}catch(error){cleanupError=error;}}
+  if(queryError&&cleanupError)throw new AggregateError([queryError,cleanupError],'projection_query_and_restore_failed');
+  if(queryError)throw queryError;if(cleanupError)throw cleanupError;
+  const reason=gucReadback.status!=='captured'?'guc_readback_unavailable':!plans.some(plan=>plan.frontier_role==='outer')?'outer_plan_unobserved':undefined;
+  return{result,observation:{query_hash,label:'bounded_input_projection_metadata',batch_size,status:reason?'capture_unknown':'captured',...(reason?{reason}:{}),plans,
+   plan_notices_seen:accepted,plans_dropped:dropped,raw_notice_count_by_phase:raw,rejected_notice_count_by_phase:rejected,
+   accepted_outer_count_by_phase:outer,accepted_nested_count_by_phase:nested,accepted_unattributed_count_by_phase:unattributed,
+   capped_notice_count_by_phase:capped,after_query_drain_ms:afterQueryDrainMs,guc_readback:gucReadback,setup_ms:setupMs,query_wall_ms:queryWallMs,
+   cleanup_ms:cleanupMs,analyze_timing_overhead_measured:false,capacity_claim:false}};
+ }finally{detach();if(savepoint){try{await rollback('r16_projection_plan_capture_v1');savepoint=false;}catch{}}}
+}
 export function safeWaitRow(row:any){
  if(!Number.isSafeInteger(row.pid)||row.pid<1)throw Error('observer_invalid_pid');
  const event=(x:unknown)=>x===null?null:typeof x==='string'&&/^[a-zA-Z0-9_]{1,80}$/u.test(x)?x:'redacted';
@@ -610,7 +749,7 @@ export function projectObserverTimeToPerformanceRangeV1(anchor:{performance_befo
   uncertainty_ms:anchor.performance_after_ms-anchor.performance_before_ms};
 }
 type ListeningObserverScopeV1={operation:string;sequence:number;job:number;raw_page?:RawPageDmlContextV1|null};
-export function createListeningObserver(options:{neutral_only?:boolean;sql_frontier_only?:boolean}={}){
+export function createListeningObserver(options:{neutral_only?:boolean;sql_frontier_only?:boolean;projection_plan_only?:boolean}={}){
  const performanceBefore=performance.now(),origin=process.hrtime.bigint(),performanceAfter=performance.now();
  const performanceOrigin=performanceBefore,now=()=>Number(process.hrtime.bigint()-origin)/1e6,events=boundedEvents(),scope=new AsyncLocalStorage<ListeningObserverScopeV1>();
  let storeSequence=0,querySequence=0,streamSequence=0,jobSequence=0,jobStreamStart=0,invalidStream=0;
@@ -627,18 +766,28 @@ export function createListeningObserver(options:{neutral_only?:boolean;sql_front
  const gc=new PerformanceObserver(list=>{for(const entry of list.getEntries())events.push({kind:'gc',at_ms:now(),start_ms:entry.startTime-performanceOrigin,end_ms:entry.startTime-performanceOrigin+entry.duration,duration_ms:entry.duration,gc_kind:(entry as any).detail?.kind??null});});gc.observe({entryTypes:['gc']});
  let closing=false;const detach:Array<()=>void>=[];let child:ChildProcess|undefined;const pids=new Set<number>();let samplerStatus='not_started';
  let planRootCount=0;const planQueryOrdinals=new Map<string,number>(),planObservations:unknown[]=[];
- const dmlPlanCounts=new Map<string,number>(),dmlPlanObservations:unknown[]=[];let sqlFrontierCaptureCount=0;
+ const dmlPlanCounts=new Map<string,number>(),dmlPlanObservations:unknown[]=[],projectionPlanObservations:ProjectionPlanObservationV1[]=[];
+ let sqlFrontierCaptureCount=0,projectionCaptureCount=0;
  function pid(value:any){if(Number.isSafeInteger(value?.processID)&&value.processID>0&&!pids.has(value.processID)){pids.add(value.processID);if(child?.connected)child.send({kind:'pids',pids:[...pids]},()=>{});}}
  function query(owner:any){return async(...args:any[])=>{pid(owner);const start=now(),context=scope.getStore(),op=context?.operation??'unlabeled',job=context?.job??jobSequence,sequence=++querySequence,hash=queryHash(args[0]);
   const label=innerPlanQueryLabel(hash),queryOrdinal=options.neutral_only||options.sql_frontier_only?null:
    nextInnerPlanQueryOrdinalV1(hash,label!==null&&planRootCount>=1024,planQueryOrdinals);try{
-  const dmlSpec=options.neutral_only?null:dmlPlanQuerySpec(hash);
+  const projectionBatch=options.sql_frontier_only&&options.projection_plan_only?projectionMetadataBatchSizeV1(hash,args):null;
+  if(projectionBatch!==null&&projectionCaptureCount<1&&dmlPlanCaptureEnvironmentAllowed(process.env)
+   &&typeof owner.on==='function'&&typeof owner.off==='function'){
+   projectionCaptureCount++;
+   const originalSql=typeof args[0]==='string'?args[0]:typeof args[0]?.text==='string'?args[0].text:undefined;
+   if(originalSql){const captured=await captureReadonlyProjectionPlanV1({client:owner,query:()=>owner.query(...args),query_hash:hash!,batch_size:projectionBatch,
+    outer_query_text:originalSql,database:'noisia_mfp_ci',role:'postgres',env:process.env});
+    if(captured.observation)projectionPlanObservations.push(captured.observation);return captured.result;}
+  }
+  const dmlSpec=options.neutral_only||options.projection_plan_only?null:dmlPlanQuerySpec(hash);
   const rawPageBatch=options.sql_frontier_only&&dmlSpec?.batch_kind==='raw_page_context'
    ?rawPageDmlBatchSizeV1(hash,args,context?.raw_page):null;
   const dmlBatch=dmlSpec?.batch_kind==='raw_page_context'?rawPageBatch:dmlSpec?dmlPlanBatchSize(hash,args):null;
   const dmlProfileAllowed=options.sql_frontier_only?Boolean(dmlSpec):Boolean(hash&&LEGACY_DML_PLAN_QUERY_HASHES.has(hash));
   const profileCaptureLimit=options.sql_frontier_only?SQL_FRONTIER_DML_CAPTURE_LIMIT:Number.POSITIVE_INFINITY;
-  if(!options.neutral_only&&dmlProfileAllowed&&dmlSpec&&dmlBatch!==null&&dmlBatch>=DML_PLAN_MIN_BATCH
+  if(!options.neutral_only&&!options.projection_plan_only&&dmlProfileAllowed&&dmlSpec&&dmlBatch!==null&&dmlBatch>=DML_PLAN_MIN_BATCH
    &&(!options.sql_frontier_only||dmlBatch<=SQL_FRONTIER_DML_BATCH_LIMIT)
    &&(dmlPlanCounts.get(hash!)??0)<1&&sqlFrontierCaptureCount<profileCaptureLimit
    &&dmlPlanCaptureEnvironmentAllowed(process.env)&&typeof owner.on==='function'&&typeof owner.off==='function'){
@@ -695,7 +844,11 @@ export function createListeningObserver(options:{neutral_only?:boolean;sql_front
  },
  setInnerPlanRootCount(value:number){if(!Number.isSafeInteger(value)||value<0)throw Error('observer_invalid_root_count');planRootCount=value;},
  snapshot(){return{contract_version:'r16-neutral-observer-v1',...events.snapshot(),clock_anchor:clockAnchor,sampler_status:samplerStatus,sampler_process_pid:child?.pid??null,fixture_pids:[...pids],neutral_only:options.neutral_only===true,sql_frontier_only:options.sql_frontier_only===true,connection_observation_scope:'explicit database.connect only; Pool.query internal checkout unobserved',stream_metrics_source:'native observe_stream; working bytes are reservation, not RSS',stream_observations:streamSequence,invalid_stream_observations:invalidStream,last_stream:streamSnapshot(),inner_plan_observations:[...planObservations],
-  sql_frontier_capture:{enabled:options.sql_frontier_only===true,scope:options.sql_frontier_only?'five_capture_slots_over_source_whitelisted_DML_hash_variants':null,max_captures:options.sql_frontier_only?SQL_FRONTIER_DML_CAPTURE_LIMIT:0,max_batch_size:options.sql_frontier_only?SQL_FRONTIER_DML_BATCH_LIMIT:0,captures_started:sqlFrontierCaptureCount,
+  ...(options.projection_plan_only?{projection_plan_capture:{enabled:true,scope:'one_source_whitelisted_bounded_input_metadata_select',max_captures:1,min_batch_size:PROJECTION_METADATA_MIN_BATCH_V1,max_batch_size:PROJECTION_METADATA_MAX_BATCH_V1,max_plans:8,nested_plan_limit:7,captures_started:projectionCaptureCount,cpu_profiling_enabled:false,heap_profiling_enabled:false,dml_plan_capture_enabled:false,actor_post_diagnostic_enabled:false,capacity_claim:false,observations:[...projectionPlanObservations]}}:{}),
+  sql_frontier_capture:{enabled:options.sql_frontier_only===true&&!options.projection_plan_only,
+   scope:options.projection_plan_only?'disabled_by_readonly_projection_capture':options.sql_frontier_only?'five_capture_slots_over_source_whitelisted_DML_hash_variants':null,
+   max_captures:options.sql_frontier_only&&!options.projection_plan_only?SQL_FRONTIER_DML_CAPTURE_LIMIT:0,
+   max_batch_size:options.sql_frontier_only&&!options.projection_plan_only?SQL_FRONTIER_DML_BATCH_LIMIT:0,captures_started:sqlFrontierCaptureCount,
    cpu_profiling_enabled:false,heap_profiling_enabled:false,inner_plan_ordinals_enabled:false,inner_plan_captures_enabled:false,actor_post_diagnostic_enabled:false,capacity_claim:false},
   dml_plan_observations:[...dmlPlanObservations],event_loop_delay_ms:{min:delay.count?delay.min/1e6:0,max:delay.max/1e6,mean:delay.count?delay.mean/1e6:0,p50:delay.percentile(50)/1e6,p99:delay.percentile(99)/1e6},diagnostic_only:true,h1_accepted:false};},
  async close(){closing=true;clearInterval(heartbeat);gc.disconnect();delay.disable();for(const remove of detach)remove();if(child)await closeOwnedChild(child);},

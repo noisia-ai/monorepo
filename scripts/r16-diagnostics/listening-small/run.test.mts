@@ -21,6 +21,28 @@ async function streamProfileDependencies(){
   NOISIA_JEV_STREAM_FLUSH_INTERVAL_MS:profile==='baseline_512m'?'250':'1000',NOISIA_JEV_STREAM_WINDOW_SIZE:'4096'});
  return{getExecution:runtime.jevStreamingExecutionFromEnvV2,envFor};
 }
+async function projectionMetadataSource(target:string){
+ const source=await readFile(join(target,'infrastructure/db/signal-listening-runs.ts'),'utf8');
+ const start=source.indexOf('async function inputProjectionMetadata('),end=source.indexOf('\nasync function inputs(',start);
+ if(start<0||end<=start){const historical=source.match(/`(\/\* labeling_listening_input_metadata_v1 \*\/[\s\S]*?LIMIT \$6)`/u);
+  let sql=historical?.[1]??null;
+  if(sql){const refs=[...new Set([...sql.matchAll(/\$\{([A-Za-z_]+)\}/gu)].map(match=>match[1]!))].sort();
+   assert.ok(JSON.stringify(refs)==='["noHumanDecision","unresolvedScope"]'||JSON.stringify(refs)==='["pendingScope","population"]');
+   for(const name of refs){const literal=source.match(new RegExp('const '+name+'=(?:`([^`]+)`|"([^"]+)");','u'));
+    assert.ok(literal);sql=sql.replaceAll('${'+name+'}',literal[1]??literal[2]!);}}
+  return{source,helper:null,sql};}
+ const helper=source.slice(start,end);
+ const query=helper.match(/`(\/\* labeling_listening_input_metadata_v1 \*\/[\s\S]*?ORDER BY prefix\.root_id)`\s*,\s*\[run\.workspace_id,o\.configuration_id,o\.map_id,run\.entity_context_digest,run\.id,limit-rows\.length,fixed,ids,remaining\.toString\(\)\]\)/u);
+ assert.ok(query,'projection helper must use the full nine-bind metadata query and exact bind order');
+ const refs=[...new Set([...query[1]!.matchAll(/\$\{([A-Za-z_]+)\}/gu)].map(match=>match[1]!))].sort();
+ assert.deepEqual(refs,['noHumanDecision','unresolvedScope'],'projection SQL may interpolate only the two scoped source predicates');
+ let sql=query[1]!;
+ for(const name of refs){const literal=source.match(new RegExp('const '+name+'=(?:`([^`]+)`|"([^"]+)");','u'));
+  assert.ok(literal,'projection SQL source predicate must be a literal');const value=literal[1]??literal[2];assert.ok(value&&!value.includes('${'));
+  sql=sql.replaceAll('${'+name+'}',value);}
+ assert.ok(!sql.includes('${'),'all projection SQL interpolation must resolve to source literals');
+ return{source,helper,sql};
+}
 
 test('default resource profile resolves through the product getter to the baseline tuple',async()=>{
  const {getExecution,envFor}=await streamProfileDependencies();
@@ -49,6 +71,13 @@ test('resource profile selection rejects unknown names and bounded mode outside 
 test('resource profile workflow Bash gate allows manual SQL frontier shared smoke and preserves other mode gates',async()=>{
  const workflowPath=new URL('../../../.github/workflows/r16-listening-small-diagnostic.yml',import.meta.url);
  const workflow=await readFile(workflowPath,'utf8');
+ assert.match(workflow,/capture_projection_plan:\r?\n\s+type: boolean\r?\n\s+default: false/u);
+ const runnerEnv=workflow.slice(workflow.indexOf('      - name: Apply migrations, focused oracle, and native diagnostic'),
+  workflow.indexOf('        run: |',workflow.indexOf('      - name: Apply migrations, focused oracle, and native diagnostic')));
+ assert.equal([...runnerEnv.matchAll(/^\s+R16_DIAGNOSTIC_CAPTURE_PROJECTION_PLAN:/gmu)].length,1,
+  'native diagnostic must receive the opt-in exactly once');
+ assert.ok(runnerEnv.includes('RAW_ACCEPTANCE_SELECTED_PASS:')&&runnerEnv.includes('RAW_ACCEPTANCE_TARGET_SHA:')
+  &&runnerEnv.includes('RESERVE_SHARED_SMOKE:'),'runner must receive only the isolated RAW acceptance decision metadata');
  const stepStart=workflow.indexOf('      - name: Validate resource profile selection');assert.ok(stepStart>=0,'resource profile validation step must exist');
  const nextStep=workflow.indexOf('      - name: ',stepStart+'      - name: Validate resource profile selection'.length);
  const step=workflow.slice(stepStart,nextStep<0?undefined:nextStep).split(/\r?\n/u);
@@ -61,24 +90,29 @@ test('resource profile workflow Bash gate allows manual SQL frontier shared smok
  }
  const script=body.join('\n').trimEnd();assert.ok(script.includes('reserve_shared_smoke requires a manual neutral_only or sql_frontier_only run'));
  const sha='a'.repeat(40);
- const run=(mode:string,profile:string,smoke:boolean,event:string,targetRef=sha,selectedPass='0',acceptanceSha='')=>spawnSync('/bin/bash',['-euo','pipefail','-c',script],{
+ const run=(mode:string,profile:string,smoke:boolean,event:string,targetRef=sha,selectedPass='0',acceptanceSha='',capture=false)=>spawnSync('/bin/bash',['-euo','pipefail','-c',script],{
   encoding:'utf8',env:{PATH:process.env.PATH??'/usr/bin:/bin',MODE:mode,RESOURCE_PROFILE:profile,
    RESERVE_SHARED_SMOKE:String(smoke),EVENT_NAME:event,TARGET_REF:targetRef,
-   RAW_ACCEPTANCE_SELECTED_PASS:selectedPass,RAW_ACCEPTANCE_TARGET_SHA:acceptanceSha}});
- const cases:[string,string,string,boolean,string,string,string,string,boolean][]=[
-  ['SQL frontier bounded profile with exact RAW acceptance evidence','sql_frontier_only','bounded_2g',true,'workflow_dispatch',sha,'6',sha,true],
-  ['neutral bounded profile with exact RAW acceptance evidence','neutral_only','bounded_2g',true,'workflow_dispatch',sha,'6',sha,true],
-  ['smoke rejects missing RAW acceptance passes','sql_frontier_only','bounded_2g',true,'workflow_dispatch',sha,'0',sha,false],
-  ['smoke rejects RAW acceptance from a different target','neutral_only','baseline_512m',true,'workflow_dispatch',sha,'6','b'.repeat(40),false],
-  ['legacy shared smoke remains rejected','legacy','baseline_512m',true,'workflow_dispatch','', '0','',false],
-  ['SQL shared smoke remains manual-only','sql_frontier_only','baseline_512m',true,'pull_request',sha,'0','',false],
-  ['neutral shared smoke remains manual-only','neutral_only','baseline_512m',true,'pull_request',sha,'0','',false],
-  ['SQL mode rejects a missing explicit target','sql_frontier_only','baseline_512m',false,'workflow_dispatch','', '0','',false],
-  ['SQL mode rejects a malformed explicit target','sql_frontier_only','baseline_512m',false,'workflow_dispatch','A'.repeat(40),'0','',false],
-  ['legacy baseline without shared smoke remains unchanged','legacy','baseline_512m',false,'pull_request','', '0','',true],
+   RAW_ACCEPTANCE_SELECTED_PASS:selectedPass,RAW_ACCEPTANCE_TARGET_SHA:acceptanceSha,CAPTURE_PROJECTION_PLAN:String(capture)}});
+ const cases:[string,string,string,boolean,string,string,string,string,boolean,boolean][]=[
+  ['SQL frontier bounded profile with exact RAW acceptance evidence','sql_frontier_only','bounded_2g',true,'workflow_dispatch',sha,'6',sha,true,false],
+  ['neutral bounded profile with exact RAW acceptance evidence','neutral_only','bounded_2g',true,'workflow_dispatch',sha,'6',sha,true,false],
+  ['projection capture accepts the exact SQL shared smoke target','sql_frontier_only','baseline_512m',true,'workflow_dispatch',sha,'6',sha,true,true],
+  ['projection capture rejects neutral mode','neutral_only','bounded_2g',true,'workflow_dispatch',sha,'6',sha,false,true],
+  ['projection capture rejects missing shared smoke','sql_frontier_only','baseline_512m',false,'workflow_dispatch',sha,'0','',false,true],
+  ['projection capture rejects a non-manual run','sql_frontier_only','baseline_512m',true,'pull_request',sha,'6',sha,false,true],
+  ['projection capture rejects a mismatched RAW target','sql_frontier_only','baseline_512m',true,'workflow_dispatch',sha,'6','b'.repeat(40),false,true],
+  ['smoke rejects missing RAW acceptance passes','sql_frontier_only','bounded_2g',true,'workflow_dispatch',sha,'0',sha,false,false],
+  ['smoke rejects RAW acceptance from a different target','neutral_only','baseline_512m',true,'workflow_dispatch',sha,'6','b'.repeat(40),false,false],
+  ['legacy shared smoke remains rejected','legacy','baseline_512m',true,'workflow_dispatch','', '0','',false,false],
+  ['SQL shared smoke remains manual-only','sql_frontier_only','baseline_512m',true,'pull_request',sha,'0','',false,false],
+  ['neutral shared smoke remains manual-only','neutral_only','baseline_512m',true,'pull_request',sha,'0','',false,false],
+  ['SQL mode rejects a missing explicit target','sql_frontier_only','baseline_512m',false,'workflow_dispatch','', '0','',false,false],
+  ['SQL mode rejects a malformed explicit target','sql_frontier_only','baseline_512m',false,'workflow_dispatch','A'.repeat(40),'0','',false,false],
+  ['legacy baseline without shared smoke remains unchanged','legacy','baseline_512m',false,'pull_request','', '0','',true,false],
  ];
- for(const [label,mode,profile,smoke,event,targetRef,selectedPass,acceptanceSha,expectedPass] of cases){
-  const result=run(mode,profile,smoke,event,targetRef,selectedPass,acceptanceSha);
+ for(const [label,mode,profile,smoke,event,targetRef,selectedPass,acceptanceSha,expectedPass,capture] of cases){
+  const result=run(mode,profile,smoke,event,targetRef,selectedPass,acceptanceSha,capture);
   assert.equal(result.status,expectedPass?0:1,`${label}: ${result.stderr||result.stdout}`);
  }
 });
@@ -335,6 +369,14 @@ test('SQL frontier mode is manual candidate-only with an explicit immutable targ
   R16_DIAGNOSTIC_CPU_PROFILE_DIR:'/tmp/work/artifacts/r16-listening-small/cpu-profile-candidate',
   DATABASE_URL:'postgresql://postgres:pw@127.0.0.1:5432/noisia_mfp_ci',R16BENCH_REDIS_URL:'redis://127.0.0.1:6379'};
  assert.doesNotThrow(()=>assertListeningSmallGuardV1(env,['--run']));
+ const projectionEnv={...env,R16_DIAGNOSTIC_CAPTURE_PROJECTION_PLAN:'true',RESERVE_SHARED_SMOKE:'true',
+  RAW_ACCEPTANCE_SELECTED_PASS:'6',RAW_ACCEPTANCE_TARGET_SHA:'c'.repeat(40)};
+ assert.doesNotThrow(()=>assertListeningSmallGuardV1(projectionEnv,['--run']));
+ assert.throws(()=>assertListeningSmallGuardV1({...projectionEnv,R16_DIAGNOSTIC_MODE:'neutral_only'},['--run']),/projection_plan_requires_sql_frontier/u);
+ assert.throws(()=>assertListeningSmallGuardV1({...projectionEnv,RESERVE_SHARED_SMOKE:'false'},['--run']),/projection_plan_requires_shared_smoke/u);
+ assert.throws(()=>assertListeningSmallGuardV1({...projectionEnv,RAW_ACCEPTANCE_SELECTED_PASS:'5'},['--run']),/projection_plan_requires_raw_acceptance/u);
+ assert.throws(()=>assertListeningSmallGuardV1({...projectionEnv,RAW_ACCEPTANCE_TARGET_SHA:'d'.repeat(40)},['--run']),/projection_plan_raw_target_mismatch/u);
+ assert.throws(()=>assertListeningSmallGuardV1({...env,R16_DIAGNOSTIC_CAPTURE_PROJECTION_PLAN:'yes'},['--run']),/projection_plan_flag_invalid/u);
  assert.throws(()=>assertListeningSmallGuardV1({...env,GITHUB_EVENT_NAME:'pull_request'},['--run']),/sql_frontier_requires_manual_dispatch/u);
  assert.throws(()=>assertListeningSmallGuardV1({...env,R16_DIAGNOSTIC_TARGET_LABEL:'baseline-32f'},['--run']),/sql_frontier_requires_candidate_target/u);
  assert.throws(()=>assertListeningSmallGuardV1({...env,R16_DIAGNOSTIC_TARGET_REF_REQUESTED:''},['--run']),/target_ref_required/u);
@@ -726,6 +768,34 @@ async function withDmlPlanTestEnv<T>(action:()=>Promise<T>){
  Object.assign(process.env,DML_PLAN_TEST_ENV);
  try{return await action();}finally{for(const key of keys){const value=prior[key];if(value===undefined)delete process.env[key];else process.env[key]=value;}}
 }
+async function withProjectionPlanTestEnv<T>(action:()=>Promise<T>){
+ const env={...DML_PLAN_TEST_ENV,GITHUB_EVENT_NAME:'workflow_dispatch',R16_DIAGNOSTIC_MODE:'sql_frontier_only',
+  R16_DIAGNOSTIC_CAPTURE_PROJECTION_PLAN:'true',R16_DIAGNOSTIC_TARGET_LABEL:'candidate',R16_DIAGNOSTIC_TARGET_REF_REQUESTED:'a'.repeat(40),
+  RESERVE_SHARED_SMOKE:'true',RAW_ACCEPTANCE_SELECTED_PASS:'6',RAW_ACCEPTANCE_TARGET_SHA:'a'.repeat(40)};
+ const keys=Object.keys(env) as Array<keyof typeof env>,prior=Object.fromEntries(keys.map(key=>[key,process.env[key]]));
+ Object.assign(process.env,env);
+ try{return await action();}finally{for(const key of keys){const value=prior[key];if(value===undefined)delete process.env[key];else process.env[key]=value;}}
+}
+function fakeReadonlyProjectionClient(options:{readOnly?:string;failLoad?:boolean;failShownGuc?:string;invalidShownGuc?:string}={}){
+ const client=new EventEmitter() as any,statements:string[]=[],events:string[]=[];
+ const gucs:Record<string,string>={log_min_messages:'warning',client_min_messages:'notice',log_statement:'none',log_parameter_max_length:'0',
+  'auto_explain.log_parameter_max_length':'0','auto_explain.log_level':'notice','auto_explain.log_min_duration':'50ms',
+  'auto_explain.log_nested_statements':'on','auto_explain.log_analyze':'on','auto_explain.log_buffers':'on',
+  'auto_explain.log_timing':'off','auto_explain.log_format':'json','auto_explain.log_verbose':'off','auto_explain.sample_rate':'1'};
+ client.processID=123;
+ client.query=async(sql:string)=>{
+  statements.push(sql);
+  if(sql.startsWith('SAVEPOINT')){events.push(sql);return{rows:[]};}
+  if(sql.startsWith('RELEASE SAVEPOINT')){events.push(sql);return{rows:[]};}
+  if(sql.startsWith('ROLLBACK TO SAVEPOINT')){events.push(sql);return{rows:[]};}
+  if(sql.startsWith('SELECT current_database'))return{rows:[{database:'noisia_mfp_ci',role:'postgres',isolation:'repeatable read',read_only:options.readOnly??'on',superuser:true}]};
+  if(sql.startsWith("LOAD 'auto_explain'")){if(options.failLoad)throw Error('private extension failure');return{rows:[]};}
+  if(sql.startsWith('SHOW ')){const name=sql.slice(5);if(name===options.failShownGuc)throw Error('private readback failure');
+   return{rows:[{[name]:name===options.invalidShownGuc?'private raw value':gucs[name]}]};}
+  return{rows:[]};
+ };
+ return{client,statements,events};
+}
 const CANONICAL_STATS_BEFORE=[
  {signature:'public.signal_labeling_digest_v1(jsonb)',function_present:true,stats_observed:false,calls:null,total_time_ms:null,self_time_ms:null},
  {signature:'public.signal_labeling_json_v1(jsonb)',function_present:true,stats_observed:false,calls:null,total_time_ms:null,self_time_ms:null},
@@ -793,6 +863,145 @@ function fakeDmlPlanClient(options:{readOnly?:string;failLoad?:boolean;failResto
  };
  return{client,statements,events,restores,oldValues,functionStatLookups};
 }
+
+test('projection capture binds only the exact bounded metadata SQL; legacy metadata stays outside the capture',async()=>{
+ const target=process.env.R16_DIAGNOSTIC_TARGET_ROOT;assert.ok(target,'projection source contract needs the checked out target');
+ const {source,helper,sql}=await projectionMetadataSource(target);
+ const {queryHash,projectionMetadataBatchSizeV1,PROJECTION_METADATA_QUERY_HASH_V1}=await import('./observer.mjs');
+ if(!helper||!sql){
+  const historical=source.match(/`(\/\* labeling_listening_input_metadata_v1 \*\/[\s\S]*?LIMIT \$6)`/u);
+  assert.ok(historical,'legacy target must expose its separate, unbounded metadata SQL for compatibility checking');
+  let legacySql=historical[1]!;
+  const refs=[...new Set([...legacySql.matchAll(/\$\{([A-Za-z_]+)\}/gu)].map(match=>match[1]!))].sort();
+  assert.ok(JSON.stringify(refs)==='["noHumanDecision","unresolvedScope"]'||JSON.stringify(refs)==='["pendingScope","population"]');
+  for(const name of refs){const literal=source.match(new RegExp('const '+name+'=(?:`([^`]+)`|"([^"]+)");','u'));
+   assert.ok(literal);legacySql=legacySql.replaceAll('${'+name+'}',literal[1]??literal[2]!);}
+  assert.notEqual(queryHash(legacySql),PROJECTION_METADATA_QUERY_HASH_V1);
+  const legacyValues=['11111111-1111-4111-8111-111111111111','22222222-2222-4222-8222-222222222222',
+   '33333333-3333-4333-8333-333333333333','e'.repeat(64),'44444444-4444-4444-8444-444444444444',4096,2048,
+   Array.from({length:1024},(_,i)=>`00000000-0000-4000-8000-${String(i+1).padStart(12,'0')}`),'1000000'];
+  assert.equal(projectionMetadataBatchSizeV1(PROJECTION_METADATA_QUERY_HASH_V1,[legacySql,legacyValues]),null);
+  return;
+ }
+ assert.equal(queryHash(sql),PROJECTION_METADATA_QUERY_HASH_V1);
+ assert.equal(PROJECTION_METADATA_QUERY_HASH_V1,'sha256:623ea62b8c7f51acab4551632bfd2518d58ed70cce110afce59914d175981bd3');
+ assert.deepEqual([...new Set([...sql.matchAll(/\$(\d+)/gu)].map(match=>Number(match[1])))].sort((a,b)=>a-b),[1,2,3,4,5,6,7,8,9]);
+ assert.match(helper,/const sliceSize=Math\.min\(4096,Math\.max\(64,limit\)\)/u);
+ assert.match(helper,/const ids:string\[\]=\(await c\.query[\s\S]*?\)\.rows\.map\(row=>row\.root_id\)/u);
+ assert.match(source,/inputProjectionMetadata\(c,run,bounds\)/u);
+ assert.match(source,/bounded_inputs:\(c,run,bounds\)=>inputs\(c,run,limit,bounds\)/u);
+ const ids=(count:number)=>Array.from({length:count},(_,index)=>`00000000-0000-4000-8000-${String(index+1).padStart(12,'0')}`);
+ const args=(idRows:unknown[],limit=4096,fixed=2048,budget='1000000')=>[sql,['11111111-1111-4111-8111-111111111111',
+  '22222222-2222-4222-8222-222222222222','33333333-3333-4333-8333-333333333333','e'.repeat(64),
+  '44444444-4444-4444-8444-444444444444',limit,fixed,idRows,budget]];
+ assert.equal(projectionMetadataBatchSizeV1(PROJECTION_METADATA_QUERY_HASH_V1,args(ids(1024))),1024);
+ assert.equal(projectionMetadataBatchSizeV1(PROJECTION_METADATA_QUERY_HASH_V1,args(ids(4096))),4096);
+ assert.equal(projectionMetadataBatchSizeV1(PROJECTION_METADATA_QUERY_HASH_V1,args(ids(1023))),null);
+ assert.equal(projectionMetadataBatchSizeV1(PROJECTION_METADATA_QUERY_HASH_V1,args(ids(4097))),null);
+ assert.equal(projectionMetadataBatchSizeV1('sha256:'+('0'.repeat(64)),args(ids(1024))),null);
+ assert.equal(projectionMetadataBatchSizeV1(PROJECTION_METADATA_QUERY_HASH_V1,[sql,[...args(ids(1024))[1].slice(0,8)]]),null);
+ const duplicate=ids(1024);duplicate[1023]=duplicate[0]!;
+ assert.equal(projectionMetadataBatchSizeV1(PROJECTION_METADATA_QUERY_HASH_V1,args(duplicate)),null);
+ assert.equal(projectionMetadataBatchSizeV1(PROJECTION_METADATA_QUERY_HASH_V1,args(ids(1024),4097)),null);
+ const invalid=args(ids(1024));(invalid[1] as unknown[])[8]='private malformed';
+ assert.equal(projectionMetadataBatchSizeV1(PROJECTION_METADATA_QUERY_HASH_V1,invalid),null);
+});
+
+test('read-only projection capture is one RR/RO source query with bounded delayed outer and nested plans',async()=>withProjectionPlanTestEnv(async()=>{
+ const {captureReadonlyProjectionPlanV1,projectionMetadataBatchSizeV1,PROJECTION_METADATA_QUERY_HASH_V1,createListeningObserver}=await import('./observer.mjs');
+ const target=process.env.R16_DIAGNOSTIC_TARGET_ROOT;assert.ok(target);
+ const {helper,sql}=await projectionMetadataSource(target);assert.ok(sql,'target metadata SQL should be source-extractable');
+ if(!helper){const fake=fakeReadonlyProjectionClient(),observer=createListeningObserver({sql_frontier_only:true,projection_plan_only:true});
+  try{const db=observer.wrapDatabase({async connect(){return fake.client;},async query(){return{rows:[]};}});
+   const client=await db.connect();await client.query(sql,[]);const snapshot=observer.snapshot();
+   assert.equal(fake.statements.filter(statement=>statement===sql).length,1);
+   assert.equal(snapshot.projection_plan_capture?.captures_started,0);assert.equal(snapshot.dml_plan_observations.length,0);
+   assert.equal(fake.statements.some(statement=>statement.startsWith('SAVEPOINT')||statement.startsWith('SHOW ')),false);
+   return;
+  }finally{await observer.close();}}
+ const ids=Array.from({length:1024},(_,index)=>`00000000-0000-4000-8000-${String(index+1).padStart(12,'0')}`);
+ const values=['11111111-1111-4111-8111-111111111111','22222222-2222-4222-8222-222222222222','33333333-3333-4333-8333-333333333333',
+  'e'.repeat(64),'44444444-4444-4444-8444-444444444444',4096,2048,ids,'1000000'];
+ assert.equal(projectionMetadataBatchSizeV1(PROJECTION_METADATA_QUERY_HASH_V1,[sql,values]),1024);
+ const fake=fakeReadonlyProjectionClient();let originalCalls=0;
+ const notice=(queryText:string,plan:Record<string,unknown>)=>({message:'duration: 1 ms plan: '+JSON.stringify({'Query Text':queryText,'Planning Time':.1,'Execution Time':1,Plan:plan})});
+ const deepPlan:any={'Node Type':'Result'};let cursor=deepPlan;for(let i=0;i<130;i++){cursor.Plans=[{'Node Type':'Result'}];cursor=cursor.Plans[0];}
+ const deep={message:'duration: 1 ms plan: '+JSON.stringify({'Query Text':'SELECT private_deep','Plan':deepPlan})};
+ const capture=await captureReadonlyProjectionPlanV1({client:fake.client,query:async()=>{originalCalls++;
+  for(let i=0;i<8;i++)fake.client.emit('notice',notice(`SELECT nested_${i}`,{'Node Type':'Index Scan','Relation Name':'signal_mass_labeling_items','Actual Rows':4096,'Actual Loops':1}));
+  fake.client.emit('notice',{message:'duration: 1 ms plan: '+JSON.stringify({Plan:{'Node Type':'Result','Actual Rows':1,'Actual Loops':1}})});
+  setImmediate(()=>{fake.client.emit('notice',notice(sql,{'Node Type':'Nested Loop','Actual Rows':4096,'Actual Loops':1,
+    Plans:[{'Node Type':'CTE Scan','CTE Name':'projections','Relation Name':'signal_mass_labeling_items','Actual Rows':4096,'Actual Loops':1}]}));
+   fake.client.emit('notice',{message:'ERROR: private after-query text'});fake.client.emit('notice',deep);
+   fake.client.emit('notice',notice('SELECT unrelated private_cleanup',{'Node Type':'Result','Actual Rows':1,'Actual Loops':1}));});return{rows:[{private:'not retained'}]};},
+  query_hash:PROJECTION_METADATA_QUERY_HASH_V1,batch_size:1024,outer_query_text:sql,database:'noisia_mfp_ci',role:'postgres',env:process.env});
+ const observation=capture.observation!;
+ assert.equal(originalCalls,1);assert.equal(capture.result.rows[0].private,'not retained');assert.equal(observation.status,'captured');
+ assert.equal(observation.guc_readback.status,'captured');assert.equal(observation.raw_notice_count_by_phase.original_query,9);
+ assert.equal(observation.accepted_nested_count_by_phase.original_query,8);assert.equal(observation.accepted_unattributed_count_by_phase.original_query,1);
+ assert.equal(observation.capped_notice_count_by_phase.original_query,1);
+ assert.equal(observation.raw_notice_count_by_phase.after_query,4);assert.equal(observation.accepted_outer_count_by_phase.after_query,1);
+ assert.equal(observation.accepted_unattributed_count_by_phase.after_query,1);assert.equal(observation.rejected_notice_count_by_phase.after_query?.payload_missing,1);
+ assert.equal(observation.rejected_notice_count_by_phase.after_query?.plan_invalid,1);assert.equal(observation.plans.length,8);
+ assert.equal(observation.plans.filter(plan=>plan.frontier_role==='outer').length,1);
+ assert.equal(observation.plans.filter(plan=>plan.frontier_role==='nested').length,7);
+ assert.equal(observation.plans.at(-1)?.frontier_role,'outer');assert.equal(observation.plans_dropped,1);
+ assert.equal((observation.plans.at(-1)?.plan.Plans as any[])?.[0]?.['CTE Name'],'projections');
+ assert.equal(observation.after_query_drain_ms>=0,true);assert.ok(observation.cleanup_ms>=0);
+ assert.ok(fake.events.includes('ROLLBACK TO SAVEPOINT r16_projection_plan_capture_v1'));
+ assert.equal(fake.events.includes('RELEASE SAVEPOINT r16_projection_plan_capture_v1'),true);
+ assert.equal(fake.client.listenerCount('notice'),0);assert.ok(fake.statements.some(sql=>sql==='SHOW auto_explain.log_min_duration'));
+ assert.equal(fake.statements.some(sql=>sql.startsWith('EXPLAIN ')||sql.startsWith('SELECT set_config')),false);
+ const serialized=JSON.stringify(observation);for(const forbidden of ['private_deep','private_cleanup','private after-query','SELECT nested_','private raw value'])assert.ok(!serialized.includes(forbidden));
+
+ const labeling=await readFile(join(target,'infrastructure/db/signal-labeling-runs.ts'),'utf8');
+ const mark=labeling.match(new RegExp('`(UPDATE signal_labeling_calls SET status=\'submitting\',[\\s\\S]*?RETURNING id)`\\s*,\\s*\\[run\\.id,\\s*calls\\.map','u'));assert.ok(mark);
+ const observer=createListeningObserver({sql_frontier_only:true,projection_plan_only:true});
+ try{const db=observer.wrapDatabase({async connect(){return fake.client;},async query(){return{rows:[]};}});
+  const c=await db.connect();await c.query(mark[1],['44444444-4444-4444-8444-444444444444',ids.slice(0,256)]);
+  const projected=await c.query(sql,values);
+  assert.ok(projected);const snapshot=observer.snapshot();assert.equal(snapshot.sql_frontier_capture.captures_started,0);
+  assert.equal(snapshot.dml_plan_observations.length,0);const projection=snapshot.projection_plan_capture;assert.ok(projection);
+  assert.equal(projection.captures_started,1);assert.equal(projection.observations.length,1);
+  assert.equal(fake.statements.filter(statement=>statement===mark[1]).length,1);
+  assert.equal(fake.statements.filter(statement=>statement===sql).length,1);
+  assert.equal(fake.statements.some(statement=>statement.includes('pg_stat_xact_user_functions')),false);
+  assert.equal(fake.statements.some(statement=>statement.startsWith('EXPLAIN ')),false);
+ }finally{await observer.close();}
+}));
+
+test('projection capture fails closed on scope, extension or GUC readback problems and restores after query errors',async()=>withProjectionPlanTestEnv(async()=>{
+ const {captureReadonlyProjectionPlanV1,PROJECTION_METADATA_QUERY_HASH_V1}=await import('./observer.mjs');
+ const outerSql='SELECT synthetic bounded projection';
+ const run=async(options:{readOnly?:string;failLoad?:boolean;failShownGuc?:string;invalidShownGuc?:string}={},failQuery=false)=>{
+  const fake=fakeReadonlyProjectionClient(options);let calls=0;
+  const capture=()=>captureReadonlyProjectionPlanV1({client:fake.client,query:async()=>{calls++;
+   if(!failQuery)fake.client.emit('notice',{message:'duration: 1 ms plan: '+JSON.stringify({'Query Text':outerSql,Plan:{'Node Type':'Result','Actual Rows':1,'Actual Loops':1}})});
+   if(failQuery)throw Error('projection_original_query_failed');return{rows:[]};},query_hash:PROJECTION_METADATA_QUERY_HASH_V1,
+   batch_size:1024,outer_query_text:outerSql,database:'noisia_mfp_ci',role:'postgres',env:process.env});
+  return{fake,capture,calls:()=>calls};
+ };
+ const badScope=await run({readOnly:'off'}),scopeResult=await badScope.capture();
+ assert.equal(badScope.calls(),1);assert.equal(scopeResult.observation?.status,'setup_unavailable');
+ assert.equal(scopeResult.observation?.reason,'transaction_scope_unverified');assert.equal(badScope.fake.client.listenerCount('notice'),0);
+ assert.ok(badScope.fake.events.includes('ROLLBACK TO SAVEPOINT r16_projection_plan_capture_v1'));
+ const badLoad=await run({failLoad:true}),loadResult=await badLoad.capture();
+ assert.equal(badLoad.calls(),1);assert.equal(loadResult.observation?.reason,'auto_explain_load_unavailable');
+ assert.equal(badLoad.fake.client.listenerCount('notice'),0);assert.ok(badLoad.fake.events.includes('ROLLBACK TO SAVEPOINT r16_projection_plan_capture_v1'));
+ const failedReadback=await run({failShownGuc:'auto_explain.log_format'}),readbackResult=await failedReadback.capture();
+ assert.equal(failedReadback.calls(),1);assert.equal(readbackResult.observation?.status,'capture_unknown');
+ assert.equal(readbackResult.observation?.reason,'guc_readback_unavailable');assert.equal(readbackResult.observation?.guc_readback.status,'unknown');
+ assert.ok(failedReadback.fake.events.includes('ROLLBACK TO SAVEPOINT r16_projection_guc_readback_v1'));
+ assert.ok(failedReadback.fake.events.includes('ROLLBACK TO SAVEPOINT r16_projection_plan_capture_v1'));
+ assert.equal(failedReadback.fake.client.listenerCount('notice'),0);
+ const invalidReadback=await run({invalidShownGuc:'auto_explain.log_format'}),invalidResult=await invalidReadback.capture();
+ assert.equal(invalidResult.observation?.status,'capture_unknown');assert.equal(invalidResult.observation?.guc_readback.settings['auto_explain.log_format'],null);
+ assert.ok(!JSON.stringify(invalidResult.observation).includes('private raw value'));
+ const failedOriginal=await run({},true);
+ await assert.rejects(failedOriginal.capture(),/projection_original_query_failed/u);
+ assert.equal(failedOriginal.calls(),1);assert.ok(failedOriginal.fake.events.includes('ROLLBACK TO SAVEPOINT r16_projection_plan_capture_v1'));
+ assert.equal(failedOriginal.fake.client.listenerCount('notice'),0);
+}));
 
 test('DML plan specs match the complete source SQL, bind arity and batch-value positions',async()=>{
  const target=process.env.R16_DIAGNOSTIC_TARGET_ROOT;assert.ok(target,'DML SQL contract test needs checked out public target root');
