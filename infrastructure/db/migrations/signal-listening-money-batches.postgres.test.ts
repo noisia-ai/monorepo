@@ -473,3 +473,130 @@ test('RAW-backed settlement recovery and unsent requeue preserve Listening money
  assert.equal(held.status,'unknown');assert.equal(held.settled_micro_usd,null);assert.equal(held.reserved_micro_usd,'1000');
  assert.equal((await f.database.query('SELECT count(*)::int n FROM signal_labeling_calls WHERE run_id=$1',[f.run.id])).rows[0].n,3);
 }));
+
+
+// These are genuine Listening admissions/receipts. Interception only holds an
+// already executed native lock; it never approves authority or replaces SQL.
+const pageDelay=(ms:number)=>new Promise<void>(resolve=>setTimeout(resolve,ms));
+function pageDeferred(){let resolve!:()=>void;const promise=new Promise<void>(r=>{resolve=r;});return{promise,resolve};}
+type ListeningPageFixture=NativeFixture&{calls:Awaited<ReturnType<NativeFixture['store']['reserve']>>;
+ intercept:{before?:(sql:string,c:PoolClient)=>Promise<void>;after?:(sql:string,c:PoolClient)=>Promise<void>}};
+async function withListeningPageFixture(body:(f:ListeningPageFixture)=>Promise<void>,rawPages=true){
+ await withMoneyFixture(1000000,async f=>{
+  const intercept:ListeningPageFixture['intercept']={};
+  const database={query:f.database.query.bind(f.database),connect:async()=>{
+   const c=await f.database.connect();return new Proxy(c,{get(target,key){
+    if(key==='query')return async(sql:string,values?:unknown[])=>{await intercept.before?.(sql,target);const result=await target.query(sql,values);await intercept.after?.(sql,target);return result;};
+    const value=Reflect.get(target,key);return typeof value==='function'?value.bind(target):value;
+   }});
+  }} as NativeFixture['database'];
+  const store=createSignalListeningStoreV1({database,...(rawPages?{rawPages:f.rawPages}:{}),storeRaw:async()=>{throw Error('no individual raw or provider transport');}});
+  const calls=await store.reserve(f.run,proposals(f,1000));assert.equal(calls.length,3);
+  await body({...f,store,calls,intercept});
+ });
+}
+async function listeningPageReady(f:ListeningPageFixture,index=0){
+ const call=f.calls[index]!;await f.store.markSubmitting(f.run,[call]);
+ const request=buildSignalListeningJevRequestV1(call.inputs[0]!,f.configuration);
+ const response={model:f.configuration.model,usage:{input_tokens:120,output_tokens:20},answers:Object.fromEntries(Object.entries(request.questions).map(([key,q])=>[key,q.type==='noul'
+  ?{type:'noul' as const,noul:.1}:{type:'choice' as const,choice:Object.keys(q.criteria)[0]!,confidence:.9,
+   probabilities:Object.fromEntries(Object.keys(q.criteria).map((k,i,all)=>[k,i===0?.9:.1/(all.length-1)]))}]))};
+ const raw=JSON.stringify({http_status:200,latency_ms:100,body:JSON.stringify(response)});
+ await f.store.persistRawPage(f.run,[{call,raw}]);
+ await f.store.settlePage(f.run,[{call,usage:jevUsageV1(response.usage),settled_micro_usd:6}]);
+ return{call,results:[mapSignalListeningJevResponseV1(call.inputs[0]!,f.run.context,f.configuration,response)]};
+}
+async function listeningPageSnapshot(f:ListeningPageFixture){
+ return{calls:(await f.database.query('SELECT id,status,results_applied,results,settled_micro_usd,terminal_exposure_micro_usd,raw_sha256,raw_storage_key,raw_size_bytes,raw_storage_verified_at,raw_storage_verified_key,usage FROM signal_labeling_calls WHERE run_id=$1 ORDER BY id',[f.run.id])).rows,
+  answers:(await f.database.query('SELECT * FROM signal_listening_answers WHERE run_id=$1 ORDER BY root_id,question_key',[f.run.id])).rows,
+  fences:(await f.database.query('SELECT id FROM signal_labeling_page_mutation_fences WHERE run_id=$1 ORDER BY id',[f.run.id])).rows};
+}
+for(const operation of ['apply_raw','mark_raw']as const)test('native Listening page fence disjoint '+operation+' commits while another page retains its run fence',{
+ skip:!enabled,timeout:600000,
+},async()=>withListeningPageFixture(async f=>{
+ const page=operation==='apply_raw'?await listeningPageReady(f):null;
+ if(operation==='apply_raw')await f.store.markSubmitting(f.run,[f.calls[1]!]);else await f.store.markSubmitting(f.run,[f.calls[0]!]);
+ const held=pageDeferred(),release=pageDeferred();let caught=false;
+ f.intercept.after=async sql=>{if(!caught&&(/WITH raw_run_fence|SELECT id FROM signal_labeling_runs/u.test(sql))){caught=true;held.resolve();await release.promise;}};
+ const first=operation==='apply_raw'?f.store.apply(f.run,[page!]):f.store.persistRawPage(f.run,[{call:f.calls[0]!,raw:'exact native first Listening receipt'}]);
+ await held.promise;
+ const second=operation==='apply_raw'?f.store.persistRawPage(f.run,[{call:f.calls[1]!,raw:'exact disjoint Listening receipt'}]):f.store.markSubmitting(f.run,[f.calls[1]!]);
+ let progressed=false;
+ try{progressed=await Promise.race([second.then(()=>true),pageDelay(1000).then(()=>false)]);}finally{release.resolve();await Promise.all([first,second]);}
+ assert.equal(progressed,true,'disjoint native Listening pages must commit before the first run fence is released');
+ const snapshot=await listeningPageSnapshot(f);
+ assert.ok(snapshot.calls.every(c=>c.terminal_exposure_micro_usd==='0'));
+ assert.equal(snapshot.answers.length,operation==='apply_raw'?Object.keys(page!.results[0]!.question_digests).length:0);
+}));
+
+test('native Listening page fence exact and partial replay retain original answers and reject divergent replay',{
+ skip:!enabled,timeout:600000,
+},async()=>withListeningPageFixture(async f=>{
+ const first=await listeningPageReady(f);await f.store.apply(f.run,[first]);const before=await listeningPageSnapshot(f);
+ await f.store.apply(f.run,[first]);assert.deepEqual(await listeningPageSnapshot(f),before,'identical replay performs no new mutation');
+ const divergent=structuredClone(first),key=Object.keys(divergent.results[0]!.answers)[0]!;
+ divergent.results[0]!.answers[key]={type:'noul',noul:.987};
+ await assert.rejects(f.store.apply(f.run,[divergent]),/labeling_result_replay_conflict/);
+ assert.deepEqual(await listeningPageSnapshot(f),before);
+ const second=await listeningPageReady(f,1);await f.store.apply(f.run,[first,second]);
+ const after=await listeningPageSnapshot(f);assert.equal(after.fences.length,before.fences.length+2,'one new mark and one new apply fence');
+ assert.deepEqual(after.answers.filter(a=>a.call_id===first.call.id),before.answers);
+ assert.equal(after.calls.filter(c=>c.results_applied).length,2);
+}));
+
+for(const divergent of [false,true])test('native Listening page fence overlapping reverse-order apply serializes exact calls (divergent '+divergent+')',{
+ skip:!enabled,timeout:600000,
+},async()=>withListeningPageFixture(async f=>{
+ const a=await listeningPageReady(f),b=await listeningPageReady(f,1),held=pageDeferred(),release=pageDeferred();let caught=false;
+ f.intercept.after=async sql=>{if(!caught&&(/WHERE workspace_id=\$1 AND run_id=\$2 AND id=ANY\(\$3::uuid\[\]\) ORDER BY id FOR UPDATE|SELECT id FROM signal_labeling_runs/u.test(sql))){caught=true;held.resolve();await release.promise;}};
+ const first=f.store.apply(f.run,[a,b]);await held.promise;
+ const copy=structuredClone(a);if(divergent)copy.results[0]!.answers[Object.keys(copy.results[0]!.answers)[0]!]={type:'noul',noul:.987};
+ const second=f.store.apply(f.run,[b,copy]),outcome=second.then(()=>({ok:true}),error=>({ok:false,error}));let premature=false;
+ try{premature=await Promise.race([outcome.then(()=>true),pageDelay(150).then(()=>false)]);}finally{release.resolve();await first;}
+ assert.equal(premature,false,'overlapping call UUIDs still serialize even though disjoint pages share the run fence');
+ const result=await outcome;assert.equal(result.ok,!divergent);if('error'in result)assert.match(String(result.error),/labeling_result_replay_conflict/);
+ const snapshot=await listeningPageSnapshot(f);assert.equal(snapshot.calls.filter(c=>c.results_applied).length,2);
+ assert.deepEqual(snapshot.answers.filter(row=>row.call_id===a.call.id).map(row=>[row.question_key,row.answer]),Object.entries(a.results[0]!.answers).sort(([a],[b])=>a.localeCompare(b)));
+}));
+
+for(const mutation of ['expiry','token']as const)test('native Listening page fence mark rejects '+mutation+' after waiting on the run writer',{
+ skip:!enabled,timeout:600000,
+},async()=>withListeningPageFixture(async f=>{
+ const blocker=await f.database.connect(),attempted=pageDeferred();let caught=false,waiter=0;
+ const blockerPid=Number((await blocker.query('SELECT pg_backend_pid() pid')).rows[0].pid);
+ await blocker.query('BEGIN');await blocker.query('SELECT id FROM signal_labeling_runs WHERE id=$1 FOR UPDATE',[f.run.id]);
+ f.intercept.before=async(sql,c)=>{if(!caught&&/WITH raw_run_fence|SELECT id FROM signal_labeling_runs/u.test(sql)){caught=true;waiter=Number((await c.query('SELECT pg_backend_pid() pid')).rows[0].pid);attempted.resolve();}};
+ const marking=f.store.markSubmitting(f.run,[f.calls[0]!]),outcome=marking.then(()=>null,error=>error);
+ try{await attempted.promise;
+  let blocked=false;const deadline=Date.now()+3000;
+  do{blocked=Boolean((await blocker.query('SELECT $1::int=ANY(pg_blocking_pids($2::int)) blocked',[blockerPid,waiter])).rows[0].blocked);if(!blocked)await pageDelay(20);}while(!blocked&&Date.now()<deadline);
+  assert.equal(blocked,true,'the native run writer must actually block this exact waiting backend before its lease changes');
+  if(mutation==='expiry')await blocker.query("UPDATE signal_labeling_runs SET lease_until=clock_timestamp()-interval '1 second' WHERE id=$1",[f.run.id]);
+  else await blocker.query('UPDATE signal_labeling_runs SET lease_token=$2 WHERE id=$1',[f.run.id,randomUUID()]);
+  await blocker.query('COMMIT');
+ }catch(error){await blocker.query('ROLLBACK');throw error;}finally{blocker.release();await outcome;}
+ assert.match(String(await outcome),/labeling_lease_lost/);
+ const snapshot=await listeningPageSnapshot(f);assert.ok(snapshot.calls.every(c=>c.status==='reserved'&&!c.results_applied));assert.equal(snapshot.answers.length,0);assert.equal(snapshot.fences.length,0);
+}));
+
+for(const operation of ['mark','apply']as const)test('native Listening page fence '+operation+' rolls back answers, results and fences when deferred COMMIT crosses lease expiry',{
+ skip:!enabled,timeout:600000,
+},async()=>withListeningPageFixture(async f=>{
+ const page=operation==='apply'?await listeningPageReady(f):null,before=await listeningPageSnapshot(f);
+ await f.database.query("UPDATE signal_labeling_runs SET lease_until=clock_timestamp()+interval '1500 milliseconds' WHERE id=$1",[f.run.id]);
+ let delayed=false;f.intercept.before=async sql=>{if(sql==='COMMIT'&&!delayed){delayed=true;await pageDelay(1700);}};
+ await assert.rejects(operation==='mark'?f.store.markSubmitting(f.run,[f.calls[0]!]):f.store.apply(f.run,[page!]),/labeling_lease_lost/);
+ assert.equal(delayed,true,'the real deferred constraint must reject COMMIT, not an earlier check');
+ assert.deepEqual(await listeningPageSnapshot(f),before,'rollback retains settled RAW custody and money while reverting all page mutations');
+}));
+
+test('native Listening page fence without raw pages retains exclusive run serialization',{
+ skip:!enabled,timeout:600000,
+},async()=>withListeningPageFixture(async f=>{
+ const held=pageDeferred(),release=pageDeferred();let caught=false;
+ f.intercept.after=async sql=>{if(!caught&&sql.includes('SELECT id FROM signal_labeling_runs')){caught=true;held.resolve();await release.promise;}};
+ const first=f.store.markSubmitting(f.run,[f.calls[0]!]);await held.promise;
+ const second=f.store.markSubmitting(f.run,[f.calls[1]!]);let premature=false;
+ try{premature=await Promise.race([second.then(()=>true),pageDelay(150).then(()=>false)]);}finally{release.resolve();await Promise.all([first,second]);}
+ assert.equal(premature,false);assert.equal((await listeningPageSnapshot(f)).fences.length,0);
+},false));

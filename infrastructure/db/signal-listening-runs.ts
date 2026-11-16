@@ -159,7 +159,7 @@ async function getForRequest(args:SignalListeningAccessV1&{configuration_id:stri
 export function createSignalListeningStoreV1(options:Omit<Parameters<typeof createSignalLabelingStoreV1>[0],'adapter'>){
  const limit=options.page_size??200;
  const store=createSignalLabelingStoreV1<SignalListeningInputV1,SignalListeningResultV1>({...options,adapter:{
-  kind:'mass_labeling',recover_failed_raw:true,policy_action:'mass_labeling_jev',feature:'mass_labeling',pending_calls_only:true,persist_results_before_write:true,
+  kind:'mass_labeling',recover_failed_raw:true,policy_action:'mass_labeling_jev',feature:'mass_labeling',pending_calls_only:true,persist_results_before_write:true,parallel_native_pages:Boolean(options.rawPages),
   inputs:(c,run)=>inputs(c,run,limit),
   bounded_inputs:(c,run,bounds)=>inputs(c,run,limit,bounds),
   has_inputs:async(c,run)=>(await inputMetadata(c,run,1)).rows.length>0,
