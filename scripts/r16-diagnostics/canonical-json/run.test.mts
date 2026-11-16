@@ -3,7 +3,7 @@ import test from 'node:test';
 import {mkdtemp,readFile,stat,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
-import {guard,artifactPath,observationError,verdict,writePrivateArtifact,guardDiagnostic} from './run.mjs';
+import {guard,artifactPath,observationError,verdict,writePrivateArtifact,guardDiagnostic,assertCurrentSeedRelations,currentSeedCounts} from './run.mjs';
 import {fixtures,timedSql,listeningPreimage} from './candidate.mjs';
 import {SIGNAL_LISTENING_REQUEST_VERSION_V1,signalListeningRequestDigestV1,type SignalListeningInputV1} from '../../../packages/query-engine/src/signal-listening-contracts.js';
 import {signalWorkspaceEmbeddingDigestV1} from '../../../packages/query-engine/src/signal-workspace-embeddings-v1.js';
@@ -85,4 +85,12 @@ test('schema guard failure preserves safe phase/table/count/code but excludes dr
  assert.throws(()=>guardDiagnostic(error,{phase:'schema-count',actual_count:NaN}));
  assert.throws(()=>guardDiagnostic(error,{phase:'schema-count',actual_count:-1}));
  assert.throws(()=>guardDiagnostic(error,{phase:'unknown' as never}));
+});
+
+test('current schema metadata requires four live seed relations and rejects retired backfill even if empty',()=>{
+ const current=['taxonomies','taxonomy_terms','methodology_taxonomy_bindings','signal_topic_context_identity_cuts_v1'];
+ assertCurrentSeedRelations([...current,'mentions','users']);
+ assert.deepEqual(currentSeedCounts,{taxonomies:3,taxonomy_terms:6,methodology_taxonomy_bindings:3,signal_topic_context_identity_cuts_v1:1});
+ assert.throws(()=>assertCurrentSeedRelations([...current,'signal_mention_text_digest_backfill_state']),/retired/u);
+ for(const missing of current)assert.throws(()=>assertCurrentSeedRelations(current.filter(x=>x!==missing)),/must exist/u);
 });

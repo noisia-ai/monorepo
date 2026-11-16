@@ -29,6 +29,13 @@ export async function writePrivateArtifact(dest:string,value:unknown):Promise<vo
  await mkdir(resolve(dest,'..'),{recursive:true,mode:0o700});
  await writeFile(dest,JSON.stringify(value,null,2)+'\n',{flag:'wx',mode:0o600});
 }
+// 0041 seeds the three catalogs; 0289 seeds the current identity cut.
+// 0169:7 retires the temporary 0167 text-digest backfill state entirely.
+export const currentSeedCounts:Readonly<Record<string,number>>=Object.freeze({taxonomies:3,taxonomy_terms:6,methodology_taxonomy_bindings:3,signal_topic_context_identity_cuts_v1:1});
+export function assertCurrentSeedRelations(names:readonly string[]):void{
+ assert.ok(!names.includes('signal_mention_text_digest_backfill_state'),'0169 retired backfill relation must be absent');
+ for(const name of Object.keys(currentSeedCounts))assert.ok(names.includes(name),'current migration-seeded relation must exist');
+}
 export type GuardPhase='schema-relations'|'schema-count'|'schema-catalog'|'schema-singleton';
 export type GuardContext={phase:GuardPhase;table?:string;actual_count?:number;expected_count?:number};
 /** Only owned synthetic-lab metadata, never driver messages, queries or values. */
@@ -78,9 +85,11 @@ export async function run():Promise<void>{
  try{
   // The workflow first proves an empty public schema before migrations. These are
   // the only migration-seeded catalogs/state; all other real relations must be empty.
-  const seeds:Record<string,number>={taxonomies:3,taxonomy_terms:6,methodology_taxonomy_bindings:3,signal_mention_text_digest_backfill_state:1,signal_topic_context_identity_cuts_v1:1};
+  const seeds=currentSeedCounts;
   const {rows:tables}=await client.query<{name:string}>(`SELECT c.relname name FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relkind IN ('r','p') ORDER BY c.relname`);
   assert.ok(tables.length>0);
+  if(tables.some(t=>t.name==='signal_mention_text_digest_backfill_state'))guardContext.table='signal_mention_text_digest_backfill_state';
+  assertCurrentSeedRelations(tables.map(t=>t.name));
   for(const {name} of tables){
    assert.match(name,/^[A-Za-z_][A-Za-z_0-9]{0,62}$/u);
    guardContext={phase:'schema-count',table:name,expected_count:seeds[name]??0};
@@ -91,7 +100,7 @@ export async function run():Promise<void>{
   guardContext={phase:'schema-catalog',table:'taxonomies'};
   const {rows:[catalog]}=await client.query(`SELECT array_agg(taxonomy_key ORDER BY taxonomy_key) keys FROM public.taxonomies`);
   assert.deepEqual(catalog.keys,['barrier','tb_layer','trigger']);
-  for(const table of ['signal_mention_text_digest_backfill_state','signal_topic_context_identity_cuts_v1']){
+  for(const table of ['signal_topic_context_identity_cuts_v1']){
    guardContext={phase:'schema-singleton',table};
    const {rows:[r]}=await client.query(`SELECT bool_and(singleton) ok FROM public.${table}`);assert.equal(r.ok,true);
   }
