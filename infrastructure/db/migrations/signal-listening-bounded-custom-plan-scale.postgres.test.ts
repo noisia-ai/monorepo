@@ -30,7 +30,7 @@ test('bounded dispatch survives 32-root warmups, repeated4096 roots and a return
   assert.equal((await equal(c,scope,Array(4097).fill(roots[0]))).length,0);
   // Report actual aggregate plans after the same cardinality sequence. Times and
   // buffers are evidence, never a timing or join-shape assertion on noisy CI.
-  for(const [version,fn]of [['0317','pg_temp.r16_population_before_0321'],['0321','signal_listening_population_roots_v1']]){
+  for(const [version,fn]of [['0317','pg_temp.r16_population_before_0321'],['current','signal_listening_population_roots_v1']]){
    const result=await c.query(`EXPLAIN (ANALYZE,BUFFERS,FORMAT JSON) SELECT * FROM ${fn}($1,$2,$3,$4,$5::uuid[],$6)`,[...scope,roots,'llm-processing']);
    const actual=result.rows[0]['QUERY PLAN'][0],plan=actual.Plan;assert.equal(plan['Actual Rows'],16384);
    console.log('# bounded custom plan '+JSON.stringify({version,roots:4096,rows:plan['Actual Rows'],execution_ms:actual['Execution Time'],estimated_rows:plan['Plan Rows'],total_cost:plan['Total Cost'],temp_read_blocks:plan['Temp Read Blocks']??0,temp_written_blocks:plan['Temp Written Blocks']??0}));
