@@ -637,7 +637,7 @@ jobs:
           export NOISIA_R16_LOCAL_PG_LAB=r16-benchmark-pg17
           set +e
           pnpm exec node --test --test-concurrency=1 \
-            --test-name-pattern='^(?:raw rollback recovery preserves exact bytes and existing budget|raw commit_ack recovery preserves exact bytes and existing budget|RAW page rejects a digest conflict without mutating a valid sibling|RAW page rejects a raw conflict without mutating a valid sibling)$' \
+            --test-name-pattern='^(?:raw rollback recovery preserves exact bytes and existing budget|raw commit_ack recovery preserves exact bytes and existing budget|RAW page rejects a digest conflict without mutating a valid sibling|RAW page rejects a raw conflict without mutating a valid sibling|RAW attachment locks UUID order before a blocked last member and leaves disjoint calls compatible)$' \
             --import tsx infrastructure/db/migrations/signal-labeling-raw-page-locks.postgres.test.ts | tee "$R16_RAW_PAGE_ACCEPTANCE_FAULT_TAP"
           test_status=${PIPESTATUS[0]}
           set -e
@@ -650,14 +650,15 @@ jobs:
             'raw commit_ack recovery preserves exact bytes and existing budget',
             'RAW page rejects a digest conflict without mutating a valid sibling',
             'RAW page rejects a raw conflict without mutating a valid sibling',
+            'RAW attachment locks UUID order before a blocked last member and leaves disjoint calls compatible',
           ];
           const lines = tap.split(/\r?\n/u);
           const selected = expected.map(title => lines.filter(line => /^ok \d+ - /u.test(line) && line.endsWith(` - ${title}`)));
           if (status !== 0 || selected.some(rows => rows.length !== 1)
-              || !/^# pass 4$/mu.test(tap) || !/^# fail 0$/mu.test(tap)) {
-            throw new Error('RAW page fault TAP must report four exact selected passing cases');
+              || !/^# pass 5$/mu.test(tap) || !/^# fail 0$/mu.test(tap)) {
+            throw new Error('RAW page fault TAP must report five exact selected passing cases');
           }
-          process.stdout.write('RAW page recovery and conflict cases: 4 exact selected cases passed\n');
+          process.stdout.write('RAW page recovery, conflict and UUID-order cases: 5 exact selected cases passed\n');
           NODE
       - name: Run exact RAW attach layout cases
         env:
