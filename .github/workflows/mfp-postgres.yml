@@ -770,7 +770,20 @@ jobs:
             echo '::error::projection linear-joins acceptance source checkout is not clean'
             exit 1
           fi
+          for name in $(compgen -e); do
+            case "$name" in
+              *ANTHROPIC*API_KEY*|*ANTHROPIC*TOKEN*|*SONNET*API_KEY*|*SONNET*TOKEN*|*VOYAGE*API_KEY*|*VOYAGE*TOKEN*)
+                echo '::error::provider credentials are forbidden in projection linear-joins acceptance'
+                exit 1
+                ;;
+            esac
+          done
           printf 'R16_PROJECTION_LINEAR_SOURCE_SHA=%s\n' "$source_sha" >> "$GITHUB_ENV"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: services/workers/requirements-workspace-engine.txt
       - uses: pnpm/action-setup@v4
         with:
           version: 10.33.2
@@ -780,6 +793,11 @@ jobs:
           cache: pnpm
       - name: Install frozen Node workspace dependencies
         run: pnpm install --frozen-lockfile
+      - name: Install the offline workspace numerical runtime
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install --no-deps -r services/workers/requirements-workspace-engine.txt
+          python -m pip install pytest==8.3.5
       - name: Require the owned projection linear-joins container and volume to be absent
         run: |
           set -euo pipefail
@@ -825,8 +843,16 @@ jobs:
           NOISIA_JEV_PROVIDER_ENABLED: 'true'
           NOISIA_JEV_STREAMING_V2_ENABLED: 'true'
           R16_PROJECTION_LINEAR_TAP: ${{ runner.temp }}/r16-projection-linear-joins.tap
+          NOISIA_WORKSPACE_ENGINE_MODULE_ROOT: ${{ github.workspace }}/tools/signal-semantic-lab/src
+          HF_HUB_OFFLINE: '1'
+          TRANSFORMERS_OFFLINE: '1'
+          NUMBA_NUM_THREADS: '1'
+          OMP_NUM_THREADS: '1'
+          OPENBLAS_NUM_THREADS: '1'
+          MKL_NUM_THREADS: '1'
         run: |
           set -euo pipefail
+          export NOISIA_WORKSPACE_ENGINE_PYTHON="$(command -v python)"
           : > "$R16_PROJECTION_LINEAR_TAP"
           connection_file=.data/piloto-masivo/r16/labs/benchmark-pg17/connection.env
           test -f "$connection_file"
