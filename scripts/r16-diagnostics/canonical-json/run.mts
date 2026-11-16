@@ -29,8 +29,19 @@ export async function writePrivateArtifact(dest:string,value:unknown):Promise<vo
  await mkdir(resolve(dest,'..'),{recursive:true,mode:0o700});
  await writeFile(dest,JSON.stringify(value,null,2)+'\n',{flag:'wx',mode:0o600});
 }
+export type GuardPhase='schema-relations'|'schema-count'|'schema-catalog'|'schema-singleton';
+export type GuardContext={phase:GuardPhase;table?:string;actual_count?:number;expected_count?:number};
+/** Only owned synthetic-lab metadata, never driver messages, queries or values. */
+export function guardDiagnostic(error:unknown,context:GuardContext){
+ assert.ok(['schema-relations','schema-count','schema-catalog','schema-singleton'].includes(context.phase));
+ const safe:{phase:GuardPhase;code:string;table?:string;actual_count?:number;expected_count?:number}={phase:context.phase,code:observationError(error).code};
+ if(context.table!==undefined){assert.match(context.table,/^[A-Za-z_][A-Za-z_0-9]{0,62}$/u);safe.table=context.table;}
+ for(const key of ['actual_count','expected_count'] as const)if(context[key]!==undefined){assert.ok(Number.isSafeInteger(context[key])&&context[key]!>=0);safe[key]=context[key];}
+ return safe;
+}
 export function observationError(error:unknown):{state:'censored'|'error';code:string}{
- const code=typeof error==='object'&&error!==null&&'code' in error?String(error.code):'unknown';
+ const raw=typeof error==='object'&&error!==null&&'code' in error?error.code:undefined;
+ const code=typeof raw==='string'&&/^[A-Z0-9_]{1,40}$/u.test(raw)?raw:'unknown';
  return {state:code==='57014'||code==='54001'?'censored':'error',code};
 }
 export function verdict(rows:Array<{complete:boolean;equal:boolean|null}>,timings:Array<{arm:string;ms:number}>):string{
@@ -61,6 +72,7 @@ export async function run():Promise<void>{
  const timings:Array<{context:string;order:string;round:number;arm:string;ms:number;consumed:unknown}>=[];
  let primary:unknown;
  let schemaAttested=false;
+ let guardContext:GuardContext={phase:'schema-relations'};
  let original:unknown;
  async function originals(){return (await client.query(`SELECT p.oid::text, p.proname, pg_get_functiondef(p.oid) definition,p.proacl::text acl FROM pg_proc p WHERE p.oid IN ('public.signal_labeling_json_v1(jsonb)'::regprocedure,'public.signal_labeling_digest_v1(jsonb)'::regprocedure) ORDER BY p.oid`)).rows;}
  try{
@@ -70,13 +82,17 @@ export async function run():Promise<void>{
   const {rows:tables}=await client.query<{name:string}>(`SELECT c.relname name FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relkind IN ('r','p') ORDER BY c.relname`);
   assert.ok(tables.length>0);
   for(const {name} of tables){
-   assert.match(name,/^[A-Za-z0-9_]+$/u);
+   assert.match(name,/^[A-Za-z_][A-Za-z_0-9]{0,62}$/u);
+   guardContext={phase:'schema-count',table:name,expected_count:seeds[name]??0};
    const {rows:[r]}=await client.query(`SELECT count(*)::int AS n FROM public."${name}"`);
+   if(Number.isSafeInteger(Number(r.n))&&Number(r.n)>=0)guardContext.actual_count=Number(r.n);
    assert.equal(r.n,seeds[name]??0,`fresh schema guard: ${name}`);
   }
+  guardContext={phase:'schema-catalog',table:'taxonomies'};
   const {rows:[catalog]}=await client.query(`SELECT array_agg(taxonomy_key ORDER BY taxonomy_key) keys FROM public.taxonomies`);
   assert.deepEqual(catalog.keys,['barrier','tb_layer','trigger']);
   for(const table of ['signal_mention_text_digest_backfill_state','signal_topic_context_identity_cuts_v1']){
+   guardContext={phase:'schema-singleton',table};
    const {rows:[r]}=await client.query(`SELECT bool_and(singleton) ok FROM public.${table}`);assert.equal(r.ok,true);
   }
   schemaAttested=true;
@@ -148,7 +164,12 @@ export async function run():Promise<void>{
   }
   client.release();await pool.end();
  }
- if(!schemaAttested)throw new Error('fresh schema guard failed; no artifact created');
+ if(!schemaAttested){
+  const diagnostic=guardDiagnostic(primary,guardContext);
+  console.error(JSON.stringify({diagnostic_only:true,fresh_schema_guard:diagnostic,artifact_created:false,temporary_ddl_started:false}));
+  const failure=new Error('fresh schema guard failed; no artifact created') as Error&{code:string};
+  failure.code=diagnostic.code;throw failure;
+ }
  // Guards ran before the first temporary write or artifact creation.
  const dest=artifactPath(process.cwd(),process.env.GITHUB_RUN_ID!,process.env.GITHUB_RUN_ATTEMPT!);
  await writePrivateArtifact(dest,result);

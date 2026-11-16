@@ -3,7 +3,7 @@ import test from 'node:test';
 import {mkdtemp,readFile,stat,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
-import {guard,artifactPath,observationError,verdict,writePrivateArtifact} from './run.mjs';
+import {guard,artifactPath,observationError,verdict,writePrivateArtifact,guardDiagnostic} from './run.mjs';
 import {fixtures,timedSql,listeningPreimage} from './candidate.mjs';
 import {SIGNAL_LISTENING_REQUEST_VERSION_V1,signalListeningRequestDigestV1,type SignalListeningInputV1} from '../../../packages/query-engine/src/signal-listening-contracts.js';
 import {signalWorkspaceEmbeddingDigestV1} from '../../../packages/query-engine/src/signal-workspace-embeddings-v1.js';
@@ -72,4 +72,17 @@ test('large synthetic preimage is consumed by the real request digest contract',
  assert.ok(Object.values(preimage.scope_basis).every(value=>value===basis));
  const input:SignalListeningInputV1={root_id:preimage.root_id,input_digest:preimage.input_digest,question_digests:preimage.question_digests,scope_basis:preimage.scope_basis,text:String(preimage.request.state),title:null,platform:null,content_type:null,author:null,published_at:'2026-01-01',language:'es',map_id:'00000000-0000-4000-8000-000000000300',question_keys:Object.keys(preimage.request.questions),configuration_digest:'sha256:'+'3'.repeat(64)};
  assert.equal(signalListeningRequestDigestV1({id:preimage.run_id,entity_context_digest:preimage.entity_context_digest},input,preimage.request),signalWorkspaceEmbeddingDigestV1(preimage));
+});
+
+test('schema guard failure preserves safe phase/table/count/code but excludes driver messages and values',()=>{
+ const error={code:'ERR_ASSERTION',message:'secret raw query',query:'SELECT secret',actual:['customer payload']};
+ const safe=guardDiagnostic(error,{phase:'schema-count',table:'taxonomies',actual_count:4,expected_count:3});
+ assert.deepEqual(safe,{phase:'schema-count',code:'ERR_ASSERTION',table:'taxonomies',actual_count:4,expected_count:3});
+ assert.doesNotMatch(JSON.stringify(safe),/secret|SELECT|customer|payload/u);
+ assert.equal(guardDiagnostic({code:'42P01',detail:'raw values'},{phase:'schema-count',table:'taxonomies'}).code,'42P01');
+ assert.equal(guardDiagnostic({code:'secret value'},{phase:'schema-relations'}).code,'unknown');
+ assert.throws(()=>guardDiagnostic(error,{phase:'schema-count',table:'bad; SELECT secret'}));
+ assert.throws(()=>guardDiagnostic(error,{phase:'schema-count',actual_count:NaN}));
+ assert.throws(()=>guardDiagnostic(error,{phase:'schema-count',actual_count:-1}));
+ assert.throws(()=>guardDiagnostic(error,{phase:'unknown' as never}));
 });
