@@ -60,6 +60,8 @@ export async function run():Promise<void>{
  const timings:Array<{context:string;order:string;round:number;arm:string;ms:number;consumed:unknown}>=[];
  let primary:unknown;
  let schemaAttested=false;
+ let original:unknown;
+ async function originals(){return (await client.query(`SELECT p.oid::text, p.proname, pg_get_functiondef(p.oid) definition,p.proacl::text acl FROM pg_proc p WHERE p.oid IN ('public.signal_labeling_json_v1(jsonb)'::regprocedure,'public.signal_labeling_digest_v1(jsonb)'::regprocedure) ORDER BY p.oid`)).rows;}
  try{
   // The workflow first proves an empty public schema before migrations. These are
   // the only migration-seeded catalogs/state; all other real relations must be empty.
@@ -77,8 +79,7 @@ export async function run():Promise<void>{
    const {rows:[r]}=await client.query(`SELECT bool_and(singleton) ok FROM public.${table}`);assert.equal(r.ok,true);
   }
   schemaAttested=true;
-  async function originals(){return (await client.query(`SELECT p.oid::text, p.proname, pg_get_functiondef(p.oid) definition,p.proacl::text acl FROM pg_proc p WHERE p.oid IN ('public.signal_labeling_json_v1(jsonb)'::regprocedure,'public.signal_labeling_digest_v1(jsonb)'::regprocedure) ORDER BY p.oid`)).rows;}
-  const original=await originals();result.original_functions_sha256=hash(JSON.stringify(original));
+  original=await originals();result.original_functions_sha256=hash(JSON.stringify(original));
   result.guc=(await client.query(`SELECT current_setting('work_mem') work_mem,current_setting('jit') jit,current_setting('server_version') server_version,current_setting('max_stack_depth') max_stack_depth,current_setting('server_encoding') server_encoding,current_setting('standard_conforming_strings') standard_conforming_strings`)).rows[0];
   result.phase='temporary-setup';
   await client.query('BEGIN');await client.query(`SET LOCAL statement_timeout='15s'`);
@@ -134,9 +135,18 @@ export async function run():Promise<void>{
   }
   result.timings=timings;result.verdict=verdict(observations,timings);
   assert.deepEqual(await originals(),original,'public protocol functions changed');
-  await client.query('ROLLBACK');result.source_end=await seal();assert.deepEqual(result.source_end,before);result.phase='complete';
+  await client.query('ROLLBACK');result.phase='complete';
  }catch(error){primary=error;result.error=observationError(error);result.verdict='diagnostic-error';try{await client.query('ROLLBACK');}catch{/* preserve primary */}}
- finally{client.release();await pool.end();}
+ finally{
+  if(schemaAttested){
+   try{
+    if(original!==undefined)assert.deepEqual(await originals(),original,'public protocol functions changed');
+    result.source_end=await seal();assert.deepEqual(result.source_end,before);
+    result.seals_unchanged=true;
+   }catch(error){result.seals_unchanged=false;result.seal_error=observationError(error);primary??=error;result.verdict='diagnostic-error';}
+  }
+  client.release();await pool.end();
+ }
  if(!schemaAttested)throw new Error('fresh schema guard failed; no artifact created');
  // Guards ran before the first temporary write or artifact creation.
  const dest=artifactPath(process.cwd(),process.env.GITHUB_RUN_ID!,process.env.GITHUB_RUN_ATTEMPT!);
