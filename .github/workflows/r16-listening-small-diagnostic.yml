@@ -587,6 +587,9 @@ jobs:
     outputs:
       selected_pass: ${{ steps.publish.outputs.selected_pass || '0' }}
       target_sha: ${{ steps.publish.outputs.target_sha || '' }}
+      source_kind: ${{ steps.publish.outputs.source_kind || '' }}
+      default_runtime_kind: ${{ steps.publish.outputs.default_runtime_kind || '' }}
+      default_receipt_count: ${{ steps.publish.outputs.default_receipt_count || '0' }}
     env:
       R16BENCH_RUN_ID: benchmark-pg17
       R16BENCH_SERVICES: postgres,redis
@@ -631,6 +634,14 @@ jobs:
         with:
           ref: ${{ inputs.target_ref }}
           path: target
+      - name: Checkout the receipt validator
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          path: probe
+          sparse-checkout: |
+            scripts/r16-diagnostics/listening-small/statement-default-contract.mjs
+          sparse-checkout-cone-mode: false
       - name: Seal the checked out statement shared-wire source
         id: source_start
         working-directory: target
@@ -644,20 +655,30 @@ jobs:
             echo '::error::statement shared-wire target checkout is not clean'
             exit 1
           fi
-          if [ ! -f infrastructure/db/migrations/signal-listening-statement-shared-wire.postgres.test.ts ]; then
-            echo '::error::statement shared-wire target source is absent'
+          shared_wire_base_files=(
+            infrastructure/db/migrations/0330_signal_listening_statement_shared_wire.sql
+            infrastructure/db/migrations/signal-listening-statement-shared-wire.oracle.ts
+            infrastructure/db/migrations/signal-listening-statement-shared-wire.fixture.ts
+            infrastructure/db/migrations/signal-listening-statement-shared-wire.postgres.test.ts
+            infrastructure/db/migrations/signal-listening-statement-shared-wire.test.ts
+          )
+          shared_wire_present=0
+          for source_file in "${shared_wire_base_files[@]}"; do
+            if [ -f "$source_file" ]; then shared_wire_present=$((shared_wire_present + 1)); fi
+          done
+          payload_migration=infrastructure/db/migrations/0331_signal_listening_statement_payload.sql
+          payload_present=false
+          if [ -f "$payload_migration" ]; then payload_present=true; fi
+          if [ "$shared_wire_present" -eq "${#shared_wire_base_files[@]}" ] && [ "$payload_present" = true ]; then
+            source_kind=six
+          elif [ "$shared_wire_present" -eq "${#shared_wire_base_files[@]}" ] && [ "$payload_present" = false ]; then
+            source_kind=legacy-five
+          else
+            echo '::error::statement shared-wire target source must contain the complete five-file legacy set or all six current blobs'
             exit 1
           fi
-          for source_file in \
-              infrastructure/db/migrations/0330_signal_listening_statement_shared_wire.sql \
-              infrastructure/db/migrations/signal-listening-statement-shared-wire.oracle.ts \
-              infrastructure/db/migrations/signal-listening-statement-shared-wire.fixture.ts \
-              infrastructure/db/migrations/signal-listening-statement-shared-wire.test.ts; do
-            if [ ! -f "$source_file" ]; then
-              echo '::error::statement shared-wire target source set is incomplete'
-              exit 1
-            fi
-          done
+          printf 'R16_STATEMENT_SHARED_WIRE_SOURCE_KIND=%s\n' "$source_kind" >> "$GITHUB_ENV"
+          printf 'source_kind=%s\n' "$source_kind" >> "$GITHUB_OUTPUT"
           printf 'R16_STATEMENT_SHARED_WIRE_SOURCE_SHA=%s\n' "$source_sha" >> "$GITHUB_ENV"
           printf 'source_sha=%s\n' "$source_sha" >> "$GITHUB_OUTPUT"
       - uses: pnpm/action-setup@v4
@@ -721,6 +742,7 @@ jobs:
           NOISIA_JEV_PROVIDER_ENABLED: 'true'
           NOISIA_JEV_STREAMING_V2_ENABLED: 'true'
           R16_STATEMENT_SHARED_WIRE_TAP: ${{ runner.temp }}/r16-statement-shared-wire.tap
+          R16_STATEMENT_SHARED_WIRE_SOURCE_KIND: ${{ steps.source_start.outputs.source_kind }}
         run: |
           set -euo pipefail
           : > "$R16_STATEMENT_SHARED_WIRE_TAP"
@@ -757,7 +779,11 @@ jobs:
           }
           process.stdout.write('statement shared-wire oracle: five exact selected cases passed\n');
           NODE
+          if [ "$R16_STATEMENT_SHARED_WIRE_SOURCE_KIND" = six ]; then
+            node ../probe/scripts/r16-diagnostics/listening-small/statement-default-contract.mjs verify-tap "$R16_STATEMENT_SHARED_WIRE_TAP" C
+          fi
           printf 'selected_pass=5\n' >> "$GITHUB_OUTPUT"
+          printf 'source_kind=%s\n' "$R16_STATEMENT_SHARED_WIRE_SOURCE_KIND" >> "$GITHUB_OUTPUT"
       - name: Ensure statement shared-wire TAP receipt exists
         if: always()
         env:
@@ -785,10 +811,16 @@ jobs:
         if: ${{ success() && steps.oracle.outcome == 'success' && steps.source_end.outcome == 'success' }}
         env:
           TARGET_REF: ${{ inputs.target_ref }}
+          SOURCE_KIND: ${{ steps.oracle.outputs.source_kind }}
+          DEFAULT_RUNTIME_KIND: ${{ steps.oracle.outputs.default_runtime_kind || '' }}
+          DEFAULT_RECEIPT_COUNT: ${{ steps.oracle.outputs.default_receipt_count || '0' }}
         run: |
           set -euo pipefail
           printf 'selected_pass=5\n' >> "$GITHUB_OUTPUT"
           printf 'target_sha=%s\n' "$TARGET_REF" >> "$GITHUB_OUTPUT"
+          printf 'source_kind=%s\n' "$SOURCE_KIND" >> "$GITHUB_OUTPUT"
+          printf 'default_runtime_kind=%s\n' "$DEFAULT_RUNTIME_KIND" >> "$GITHUB_OUTPUT"
+          printf 'default_receipt_count=%s\n' "$DEFAULT_RECEIPT_COUNT" >> "$GITHUB_OUTPUT"
       - name: Upload statement shared-wire TAP receipt
         if: always()
         uses: actions/upload-artifact@v4
@@ -863,7 +895,59 @@ jobs:
         working-directory: target
         env:
           R16_DIAGNOSTIC_TARGET_ROOT: ${{ github.workspace }}/target
-        run: corepack pnpm exec tsx --test ../probe/scripts/r16-diagnostics/listening-small/run.test.mts
+          TARGET_REF: ${{ matrix.label == 'candidate' && (inputs.target_ref || github.sha) || '32f40ec89a21da90235c3589a4820ae05dedf6fc' }}
+          PROBE_REF: ${{ github.event.pull_request.head.sha || github.sha }}
+          PURE_TAP: ${{ github.workspace }}/artifacts/r16-listening-small/run.test.tap
+          PURE_RECEIPT: ${{ github.workspace }}/artifacts/r16-listening-small/run.test.receipt.json
+        run: |
+          set -euo pipefail
+          mkdir -p "$(dirname "$PURE_TAP")"
+          target_before=$(git -C "$GITHUB_WORKSPACE/target" rev-parse HEAD)
+          probe_before=$(git -C "$GITHUB_WORKSPACE/probe" rev-parse HEAD)
+          test "$target_before" = "$TARGET_REF"
+          test "$probe_before" = "$PROBE_REF"
+          set +e
+          corepack pnpm exec tsx --test --test-concurrency=1 ../probe/scripts/r16-diagnostics/listening-small/run.test.mts 2>&1 | tee "$PURE_TAP"
+          pipeline_statuses=("${PIPESTATUS[@]}")
+          test_status=${pipeline_statuses[0]}
+          tee_status=${pipeline_statuses[1]}
+          set -e
+          if [ "$tee_status" -ne 0 ] && [ "$test_status" -eq 0 ]; then test_status=125; fi
+          target_after=$(git -C "$GITHUB_WORKSPACE/target" rev-parse HEAD)
+          probe_after=$(git -C "$GITHUB_WORKSPACE/probe" rev-parse HEAD)
+          test "$target_after" = "$TARGET_REF"
+          test "$probe_after" = "$PROBE_REF"
+          test -z "$(git -C "$GITHUB_WORKSPACE/target" status --porcelain --untracked-files=all)"
+          test -z "$(git -C "$GITHUB_WORKSPACE/probe" status --porcelain --untracked-files=all)"
+          node - "$PURE_TAP" "$PURE_RECEIPT" "$test_status" "$TARGET_REF" "$target_before" "$target_after" "$PROBE_REF" "$probe_before" "$probe_after" <<'NODE'
+          const fs = require('node:fs');
+          const crypto = require('node:crypto');
+          const [tapPath, receiptPath, statusText, requestedTarget, targetBefore, targetAfter,
+            requestedProbe, probeBefore, probeAfter] = process.argv.slice(2);
+          const tapBytes = fs.readFileSync(tapPath);
+          const tap = tapBytes.toString('utf8');
+          const readCount = (name) => {
+            const match = new RegExp(`^# ${name} (\\d+)$`, 'mu').exec(tap);
+            return match ? Number(match[1]) : null;
+          };
+          const counts = Object.fromEntries(['tests', 'pass', 'fail', 'cancelled', 'skipped'].map((key) => [key, readCount(key)]));
+          const exitStatus = Number(statusText);
+          const verified = exitStatus === 0 && Object.values(counts).every(Number.isSafeInteger)
+            && counts.tests === counts.pass && counts.fail === 0 && counts.cancelled === 0 && counts.skipped === 0
+            && targetBefore === requestedTarget && targetAfter === requestedTarget
+            && probeBefore === requestedProbe && probeAfter === requestedProbe;
+          const receipt = {
+            contract: 'r16-diagnostic-pure-suite-v1', status: verified ? 'verified' : 'not_verified',
+            diagnostic_only: true, h1_accepted: false,
+            requested_target_sha: requestedTarget, target_git_sha_before: targetBefore, target_git_sha_after: targetAfter,
+            requested_probe_sha: requestedProbe, probe_git_sha_before: probeBefore, probe_git_sha_after: probeAfter,
+            test_file: 'scripts/r16-diagnostics/listening-small/run.test.mts', exit_status: exitStatus, counts,
+            tap_file: 'artifacts/r16-listening-small/run.test.tap',
+            tap_sha256: crypto.createHash('sha256').update(tapBytes).digest('hex'),
+          };
+          fs.writeFileSync(receiptPath, `${JSON.stringify(receipt, null, 2)}\n`, {mode: 0o600});
+          if (!verified) process.exitCode = 1;
+          NODE
 
       - name: Validate neutral target binding
         if: inputs.mode == 'neutral_only' || inputs.mode == 'sql_frontier_only'
@@ -888,6 +972,9 @@ jobs:
           LINEAR_ACCEPTANCE_TARGET_SHA: ${{ needs.projection-linear-acceptance.outputs.target_sha || '' }}
           STATEMENT_SHARED_WIRE_SELECTED_PASS: ${{ needs.statement-shared-wire-acceptance.outputs.selected_pass || '0' }}
           STATEMENT_SHARED_WIRE_TARGET_SHA: ${{ needs.statement-shared-wire-acceptance.outputs.target_sha || '' }}
+          STATEMENT_SHARED_WIRE_SOURCE_KIND: ${{ needs.statement-shared-wire-acceptance.outputs.source_kind || '' }}
+          STATEMENT_SHARED_WIRE_DEFAULT_RUNTIME_KIND: ${{ needs.statement-shared-wire-acceptance.outputs.default_runtime_kind || '' }}
+          STATEMENT_SHARED_WIRE_DEFAULT_RECEIPT_COUNT: ${{ needs.statement-shared-wire-acceptance.outputs.default_receipt_count || '0' }}
         run: |
           set -euo pipefail
           case "$RESOURCE_PROFILE" in
@@ -940,29 +1027,58 @@ jobs:
             true|false) ;;
             *) echo '::error::statement shared-wire oracle flag must be true or false'; exit 1 ;;
           esac
-          statement_sources=(
+          statement_base_sources=(
             "$TARGET_ROOT/infrastructure/db/migrations/0330_signal_listening_statement_shared_wire.sql"
             "$TARGET_ROOT/infrastructure/db/migrations/signal-listening-statement-shared-wire.oracle.ts"
             "$TARGET_ROOT/infrastructure/db/migrations/signal-listening-statement-shared-wire.fixture.ts"
             "$TARGET_ROOT/infrastructure/db/migrations/signal-listening-statement-shared-wire.postgres.test.ts"
             "$TARGET_ROOT/infrastructure/db/migrations/signal-listening-statement-shared-wire.test.ts"
           )
-          statement_source_count=0
-          for source_file in "${statement_sources[@]}"; do
-            if [ -f "$source_file" ]; then statement_source_count=$((statement_source_count + 1)); fi
+          statement_base_count=0
+          for source_file in "${statement_base_sources[@]}"; do
+            if [ -f "$source_file" ]; then statement_base_count=$((statement_base_count + 1)); fi
           done
-          if [ "$statement_source_count" -gt 0 ] || [ "$STATEMENT_SHARED_WIRE_ORACLE" = true ]; then
+          payload_migration="$TARGET_ROOT/infrastructure/db/migrations/0331_signal_listening_statement_payload.sql"
+          payload_present=false
+          if [ -f "$payload_migration" ]; then payload_present=true; fi
+          if [ "$statement_base_count" -eq "${#statement_base_sources[@]}" ] && [ "$payload_present" = true ]; then
+            source_kind=six
+          elif [ "$statement_base_count" -eq "${#statement_base_sources[@]}" ] && [ "$payload_present" = false ]; then
+            source_kind=legacy-five
+          elif [ "$statement_base_count" -eq 0 ] && [ "$payload_present" = false ]; then
+            source_kind=none
+          else
+            echo '::error::statement shared-wire source must contain the complete five-file legacy set or all six current blobs'
+            exit 1
+          fi
+          if [ "$source_kind" != "$STATEMENT_SHARED_WIRE_SOURCE_KIND" ] && [ "$STATEMENT_SHARED_WIRE_ORACLE" = true ]; then
+            echo '::error::statement shared-wire target source-kind evidence does not match the exact target checkout'
+            exit 1
+          fi
+          if [ "$source_kind" != none ] || [ "$STATEMENT_SHARED_WIRE_ORACLE" = true ]; then
             if { [ "$STATEMENT_SHARED_WIRE_ORACLE" != true ] \
                 || { [ "$MODE" != neutral_only ] && [ "$MODE" != sql_frontier_only ]; } \
                 || [ "$EVENT_NAME" != workflow_dispatch ] || [ "$RESERVE_SHARED_SMOKE" != true ] \
                 || [ "$PROJECTION_LINEAR_ORACLE" != true ] || [ "$STATEMENT_SHARED_WIRE_SELECTED_PASS" != 5 ] \
-                || [ "$statement_source_count" -ne "${#statement_sources[@]}" ] \
+                || [ "$statement_base_count" -ne "${#statement_base_sources[@]}" ] \
                 || [ -z "$TARGET_REF" ] || [ "${#TARGET_REF}" -ne 40 ] \
                 || [[ ! "$TARGET_REF" =~ ^[0-9a-f]{40}$ ]] \
                 || [ "$STATEMENT_SHARED_WIRE_TARGET_SHA" != "$TARGET_REF" ] \
                 || [ "$RAW_ACCEPTANCE_SELECTED_PASS" != 6 ] || [ "$RAW_ACCEPTANCE_TARGET_SHA" != "$TARGET_REF" ] \
                 || [ "$LINEAR_ACCEPTANCE_SELECTED_PASS" != 3 ] || [ "$LINEAR_ACCEPTANCE_TARGET_SHA" != "$TARGET_REF" ]; }; then
               echo '::error::0330 source requires five statement shared-wire passes plus RAW and projection gates on the exact target SHA'
+              exit 1
+            fi
+            if [ "$source_kind" = six ] && {
+                [ "$STATEMENT_SHARED_WIRE_DEFAULT_RUNTIME_KIND" != C ] \
+                || [ "$STATEMENT_SHARED_WIRE_DEFAULT_RECEIPT_COUNT" != 12 ] \
+                || [ "$STATEMENT_SHARED_WIRE_SOURCE_KIND" != six ] \
+                || [ "$STATEMENT_SHARED_WIRE_TARGET_SHA" != "$TARGET_REF" ]; }; then
+              echo '::error::0331 source requires twelve verified C-default pg_proc receipts from the exact target SHA'
+              exit 1
+            fi
+            if [ "$source_kind" = legacy-five ] && [ "$STATEMENT_SHARED_WIRE_SOURCE_KIND" != legacy-five ]; then
+              echo '::error::legacy 0330 source must match the five-blob source result and is not C-default evidence'
               exit 1
             fi
           fi
@@ -1004,6 +1120,9 @@ jobs:
           LINEAR_ACCEPTANCE_TARGET_SHA: ${{ needs.projection-linear-acceptance.outputs.target_sha || '' }}
           STATEMENT_SHARED_WIRE_SELECTED_PASS: ${{ needs.statement-shared-wire-acceptance.outputs.selected_pass || '0' }}
           STATEMENT_SHARED_WIRE_TARGET_SHA: ${{ needs.statement-shared-wire-acceptance.outputs.target_sha || '' }}
+          STATEMENT_SHARED_WIRE_SOURCE_KIND: ${{ needs.statement-shared-wire-acceptance.outputs.source_kind || '' }}
+          STATEMENT_SHARED_WIRE_DEFAULT_RUNTIME_KIND: ${{ needs.statement-shared-wire-acceptance.outputs.default_runtime_kind || '' }}
+          STATEMENT_SHARED_WIRE_DEFAULT_RECEIPT_COUNT: ${{ needs.statement-shared-wire-acceptance.outputs.default_receipt_count || '0' }}
           NOISIA_DB_SMOKE_ALLOW_REMOTE: 'false'
           NOISIA_DB_SMOKE_RESET_SCHEMA: 'true'
           NOISIA_DB_SMOKE_EMULATE_SUPABASE_ROLES: 'true'
@@ -1025,6 +1144,9 @@ jobs:
           R16_DIAGNOSTIC_TARGET_ROOT: ${{ github.workspace }}/target
           R16_DIAGNOSTIC_PROBE_ROOT: ${{ github.workspace }}/probe
           R16_DIAGNOSTIC_ARTIFACT: ${{ github.workspace }}/artifacts/r16-listening-small/result.json
+          R16_DIAGNOSTIC_MAINLAB_DEFAULT_ARTIFACT: ${{ github.workspace }}/artifacts/r16-listening-small/mainlab-default-runtime.json
+          R16_DIAGNOSTIC_MAINLAB_DEFAULT_BEFORE: ${{ github.workspace }}/artifacts/r16-listening-small/mainlab-default-before.json
+          R16_DIAGNOSTIC_MAINLAB_DEFAULT_AFTER: ${{ github.workspace }}/artifacts/r16-listening-small/mainlab-default-after.json
           R16_DIAGNOSTIC_CPU_PROFILE_DIR: ${{ github.workspace }}/artifacts/r16-listening-small/cpu-profile-${{ matrix.label }}
           R16_MONEY_ORACLE_TAP: ${{ github.workspace }}/artifacts/r16-listening-small/money-validator-oracle.tap
           R16_ACTOR_RUNTIME_TAP: ${{ github.workspace }}/artifacts/r16-listening-small/actor-query-runtime.tap
@@ -1040,6 +1162,7 @@ jobs:
         run: |
           set -euo pipefail
           lab_dir="$GITHUB_WORKSPACE/target/.data/piloto-masivo/r16/labs/benchmark-pg17"
+          mkdir -p "$(dirname "$R16_DIAGNOSTIC_ARTIFACT")"
           cleanup() {
             if [ -d "$GITHUB_WORKSPACE/target" ]; then
               (cd "$GITHUB_WORKSPACE/target" && R16BENCH_RUN_ID=benchmark-pg17 scripts/r16/lab-down.sh) >/dev/null 2>&1 || true
@@ -1260,14 +1383,26 @@ jobs:
           process.stdout.write('Listening input contracts: 5 exact selected PostgreSQL cases passed\n');
           NODE
           fi
+          mainlab_default_precheck=false
+          if [ "$STATEMENT_SHARED_WIRE_SOURCE_KIND" = six ]; then
+            timeout 2m corepack pnpm exec node --import tsx ../probe/scripts/r16-diagnostics/listening-small/mainlab-default-runtime.mjs capture \
+              "$R16_DIAGNOSTIC_TARGET_REF_REQUESTED" before "$R16_DIAGNOSTIC_MAINLAB_DEFAULT_BEFORE"
+            mainlab_default_precheck=true
+          fi
           if [ "$R16_DIAGNOSTIC_MODE" != legacy ]; then
-            timeout 10m corepack pnpm exec node --import tsx \
+            set +e
+            R16_DIAGNOSTIC_MAINLAB_DEFAULT_PRECHECK="$mainlab_default_precheck" timeout 10m corepack pnpm exec node --import tsx \
               ../probe/scripts/r16-diagnostics/listening-small/run.mts --run
+            diagnostic_status=$?
+            set -e
           else
           mkdir -p "$R16_DIAGNOSTIC_CPU_PROFILE_DIR"
-          timeout 10m corepack pnpm exec node --cpu-prof --cpu-prof-interval=1000 \
+          set +e
+          R16_DIAGNOSTIC_MAINLAB_DEFAULT_PRECHECK="$mainlab_default_precheck" timeout 10m corepack pnpm exec node --cpu-prof --cpu-prof-interval=1000 \
             --cpu-prof-dir="$R16_DIAGNOSTIC_CPU_PROFILE_DIR" --import tsx \
             ../probe/scripts/r16-diagnostics/listening-small/run.mts --run
+          diagnostic_status=$?
+          set -e
           corepack pnpm exec node --import tsx --input-type=module - \
             "$R16_DIAGNOSTIC_CPU_PROFILE_DIR" "$R16_DIAGNOSTIC_ARTIFACT" "$R16_DIAGNOSTIC_PROBE_ROOT" <<'NODE'
           import fs from 'node:fs';
@@ -1315,6 +1450,14 @@ jobs:
           process.stdout.write(`bounded CPU profiles: count=${profiles.length} total_bytes=${total}\n`);
           NODE
           fi
+          if [ "$mainlab_default_precheck" = true ]; then
+            timeout 2m corepack pnpm exec node --import tsx ../probe/scripts/r16-diagnostics/listening-small/mainlab-default-runtime.mjs capture \
+              "$R16_DIAGNOSTIC_TARGET_REF_REQUESTED" after "$R16_DIAGNOSTIC_MAINLAB_DEFAULT_AFTER"
+            timeout 2m corepack pnpm exec node --import tsx ../probe/scripts/r16-diagnostics/listening-small/mainlab-default-runtime.mjs assemble \
+              "$R16_DIAGNOSTIC_TARGET_REF_REQUESTED" "$R16_DIAGNOSTIC_MAINLAB_DEFAULT_BEFORE" \
+              "$R16_DIAGNOSTIC_MAINLAB_DEFAULT_AFTER" "$R16_DIAGNOSTIC_MAINLAB_DEFAULT_ARTIFACT"
+          fi
+          if [ "$diagnostic_status" -ne 0 ]; then exit "$diagnostic_status"; fi
 
       - name: Upload CPU profiles
         if: always() && steps.native_diagnostic.outcome == 'success' && (inputs.mode == '' || inputs.mode == 'legacy')
@@ -1329,18 +1472,28 @@ jobs:
         if: always()
         env:
           R16_DIAGNOSTIC_ARTIFACT: ${{ github.workspace }}/artifacts/r16-listening-small/result.json
+          R16_PURE_TAP: ${{ github.workspace }}/artifacts/r16-listening-small/run.test.tap
+          R16_PURE_RECEIPT: ${{ github.workspace }}/artifacts/r16-listening-small/run.test.receipt.json
+          R16_MAINLAB_DEFAULT: ${{ github.workspace }}/artifacts/r16-listening-small/mainlab-default-runtime.json
         run: |
+          mkdir -p "$(dirname "$R16_DIAGNOSTIC_ARTIFACT")"
           if [ ! -f "$R16_DIAGNOSTIC_ARTIFACT" ]; then
-            mkdir -p "$(dirname "$R16_DIAGNOSTIC_ARTIFACT")"
             printf '%s\n' '{"contract_version":"r16-listening-small-diagnostic-v1","diagnostic_only":true,"h1_accepted":false,"status":"failed_before_runner"}' > "$R16_DIAGNOSTIC_ARTIFACT"
           fi
+          if [ ! -f "$R16_PURE_TAP" ]; then printf '%s\n' 'pure diagnostic tests were not reached' > "$R16_PURE_TAP"; fi
+          if [ ! -f "$R16_PURE_RECEIPT" ]; then printf '%s\n' '{"contract":"r16-diagnostic-pure-suite-v1","status":"not_verified","diagnostic_only":true,"h1_accepted":false}' > "$R16_PURE_RECEIPT"; fi
+          if [ ! -f "$R16_MAINLAB_DEFAULT" ]; then printf '%s\n' '{"contract":"r16-statement-shared-wire-mainlab-default-v1","status":"not_verified","diagnostic_only":true,"h1_accepted":false}' > "$R16_MAINLAB_DEFAULT"; fi
 
       - name: Upload synthetic aggregate artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: r16-listening-small-${{ matrix.label }}-${{ github.run_id }}
-          path: artifacts/r16-listening-small/result.json
+          path: |
+            artifacts/r16-listening-small/result.json
+            artifacts/r16-listening-small/run.test.tap
+            artifacts/r16-listening-small/run.test.receipt.json
+            artifacts/r16-listening-small/mainlab-default-runtime.json
           if-no-files-found: error
           retention-days: 14
 

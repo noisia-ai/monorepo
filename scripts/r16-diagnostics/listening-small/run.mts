@@ -20,9 +20,13 @@ const listeningResourceProfilesV1:Record<ListeningResourceProfileV1,ListeningExe
 };
 const providerSecrets=['ANTHROPIC_API_KEY','ANTHROPIC_AUTH_TOKEN','OPENAI_API_KEY','TYPESAFE_API_KEY',
   'NOISIA_TYPESAFE_API_KEY','VOYAGE_API_KEY','VOYAGEAI_API_KEY','SONNET_API_KEY'];
-const probeFiles=['.github/workflows/r16-listening-small-diagnostic.yml',
+const probeFiles=['.github/workflows/r16-listening-small-diagnostic.yml','.github/workflows/mfp-postgres.yml',
   'scripts/r16-diagnostics/listening-small/run.mts','scripts/r16-diagnostics/listening-small/run.test.mts',
-  'scripts/r16-diagnostics/listening-small/observer.mts'] as const;
+  'scripts/r16-diagnostics/listening-small/observer.mts',
+  'scripts/r16-diagnostics/listening-small/statement-default-contract.mjs',
+  'scripts/r16-diagnostics/listening-small/statement-default-contract.d.mts',
+  'scripts/r16-diagnostics/listening-small/mainlab-default-runtime.mjs',
+  'scripts/r16-diagnostics/listening-small/mainlab-default-runtime.d.mts'] as const;
 const sha=(value:string)=>`sha256:${createHash('sha256').update(value).digest('hex')}`;
 const percentile=(xs:number[],p:number)=>{if(!xs.length)return 0;const s=[...xs].sort((a,b)=>a-b);return s[Math.ceil(s.length*p)-1]!;};
 type CalibrationKindV1='measured'|'official_context_bound';
@@ -187,6 +191,11 @@ export function assertListeningSmallGuardV1(env:NodeJS.ProcessEnv,args:string[])
     assert.equal(env.RAW_ACCEPTANCE_TARGET_SHA,env.R16_DIAGNOSTIC_TARGET_REF_REQUESTED,'statement_shared_wire_oracle_raw_target_mismatch');
     assert.equal(env.LINEAR_ACCEPTANCE_TARGET_SHA,env.R16_DIAGNOSTIC_TARGET_REF_REQUESTED,'statement_shared_wire_oracle_linear_target_mismatch');
     assert.equal(env.STATEMENT_SHARED_WIRE_TARGET_SHA,env.R16_DIAGNOSTIC_TARGET_REF_REQUESTED,'statement_shared_wire_oracle_target_mismatch');
+    if(env.STATEMENT_SHARED_WIRE_SOURCE_KIND==='six'){
+      assert.equal(env.STATEMENT_SHARED_WIRE_DEFAULT_RUNTIME_KIND,'C','statement_shared_wire_requires_c_default_runtime');
+      assert.equal(env.STATEMENT_SHARED_WIRE_DEFAULT_RECEIPT_COUNT,'12','statement_shared_wire_requires_twelve_default_receipts');
+      assert.equal(env.R16_DIAGNOSTIC_MAINLAB_DEFAULT_PRECHECK,'true','statement_shared_wire_mainlab_default_precheck_required');
+    }
   }
   if(mode==='sql_frontier_only'){
     assert.equal(env.GITHUB_EVENT_NAME,'workflow_dispatch','sql_frontier_requires_manual_dispatch');
