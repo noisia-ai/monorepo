@@ -4,7 +4,7 @@ import test from 'node:test';
 import {buildSignalListeningJevRequestV1,signalListeningRequestDigestV1,signalListeningBaseTemplateV1,signalListeningJevIdentityV1,signalListeningQuestionDigestV1,
   signalListeningCalibrationShapeV1,signalListeningConsumerCutV1,validateSignalListeningConfigurationV1,compileSignalListeningSnapshotV1,labelerDigestV1,entityContextDigestV1,signalWorkspaceEmbeddingDigestV1 as digest,
   type SignalListeningCalibrationProfileV1,type SignalListeningConfigurationV1,type SignalListeningInputV1,type SignalListeningResultV1} from '@noisia/query-engine';
-import type {LabelingRunV1,LabelingCallV1} from '@noisia/db';
+import {LABELING_INPUT_MAX_WORKING_BYTES_V1,type LabelingRunV1,type LabelingCallV1} from '@noisia/db';
 import type {JevProviderV1,JevRequestV1} from '../providers/typesafe-jev';
 import {processSignalListeningJevV1,signalListeningJevJobV1,createSignalListeningSelectionIndexV1} from './signal-listening-jev';
 const execution={max_in_flight:8,flush_size:8,max_flushes:1,max_buffered_bytes:16*1024*1024,flush_interval_ms:5,window_size:200};
@@ -383,5 +383,35 @@ test('job stream observation cannot change physical attempts, raw custody or set
   assert.ok(snapshots.some(s=>s.in_flight===1));assert.ok(snapshots.some(s=>s.active_flushes===1));
   assert.ok(snapshots.every(s=>s.in_flight>=0&&s.reserved_working_bytes>=0&&s.buffered_responses>=0&&s.active_flushes>=0));
   assert.equal(snapshots.at(-1)!.in_flight,0);assert.equal(snapshots.at(-1)!.active_flushes,0);
+ }finally{names.forEach((k,i)=>{if(previous[i]===undefined)delete process.env[k];else process.env[k]=previous[i];});}
+});
+
+
+test('larger Listening stream custody keeps initial and continuous reads inside the native read cap and drains exact intents',async()=>{
+ const config=signalListeningBaseTemplateV1({category:'tea',lexicon_terms:['tea']}),f=fixture(config,[['voice','promotion']]);
+ const sample=(await f.store.inputs(f.run))[0]!,corpus=Array.from({length:6},()=>({...sample,root_id:randomUUID()}));
+ const reads:Array<{max_rows:number;max_working_bytes:number;on_oversize?:string}>=[];
+ const durable=new Map<string,string>(),persist=f.store.persistRawPage;
+ f.store.persistRawPage=async(run,rows)=>{await persist(run,rows);for(const row of rows)durable.set(row.call.id,row.raw);};
+ f.store.inputs=async(_run,bounds)=>{
+  assert.ok(bounds);if(bounds.max_working_bytes>LABELING_INPUT_MAX_WORKING_BYTES_V1)throw Error('labeling_input_bounds_invalid');
+  reads.push({...bounds});return corpus.filter(i=>!f.calls.some(c=>c.inputs[0]!.root_id===i.root_id)).slice(0,bounds.max_rows);
+ };
+ f.store.finish=async()=>{const status=f.results.length===corpus.length?'completed' as const:'running' as const;f.run.status=status;return status;};
+ const shape=signalListeningCalibrationShapeV1(config,sample),bytes=Buffer.byteLength(JSON.stringify(buildSignalListeningJevRequestV1(sample,config)));
+ const scope={workspace_id:f.run.workspace_id,configuration_digest:digest(config),model:shape.model,compiler_version:shape.compiler_version,phase:shape.phase,shape_digest:shape.shape_digest};
+ const profile:SignalListeningCalibrationProfileV1={scope,scope_digest:digest(scope),source_digest:digest('known-measured-profile'),source_run_id:f.run.id,
+  source_call_ids:Array.from({length:32},()=>randomUUID()),sample_count:32,request_min_bytes:bytes,request_max_bytes:bytes,max_input_tokens_per_byte:.25,status:'measured'};
+ const database={query:async(sql:string)=>({rows:sql.includes('signal_workspace_features')?[{enabled:true}]:[{workspace_id:f.run.workspace_id,labeler_digest:f.run.labeler_digest,recovery_only:false}]})}as NonNullable<Parameters<typeof signalListeningJevJobV1>[1]>['database'];
+ const names=['NOISIA_SIGNAL_LISTENING_ENABLED','NOISIA_JEV_PROVIDER_ENABLED']as const,previous=names.map(k=>process.env[k]);
+ try{
+  names.forEach(k=>process.env[k]='true');const outcome=await signalListeningJevJobV1(f.run.id,{database,store:f.store,provider:f.provider,
+   execution:{...execution,window_size:2,max_buffered_bytes:2*1024**3},preflight:async()=>{},calibration:{load:async()=>profile,derive:async()=>{throw Error('no warmup needed');}}});
+  assert.equal(outcome.status,'completed');assert.equal(f.requests.length,corpus.length);assert.equal(f.calls.length,corpus.length);
+  assert.equal(new Set(f.calls.map(c=>c.inputs[0]!.root_id)).size,corpus.length);
+  assert.ok(f.calls.every(c=>c.status==='settled'&&c.results_applied&&durable.has(c.id)&&c.raw_body===null));
+  assert.ok(reads.length>1);assert.equal(reads[0]!.max_rows,2);assert.equal(reads[0]!.max_working_bytes,LABELING_INPUT_MAX_WORKING_BYTES_V1);
+  assert.equal(reads[0]!.on_oversize,'error');assert.ok(reads.slice(1).some(r=>r.on_oversize==='empty'));
+  assert.ok(reads.every(r=>r.max_rows<=2&&r.max_working_bytes<=LABELING_INPUT_MAX_WORKING_BYTES_V1));
  }finally{names.forEach((k,i)=>{if(previous[i]===undefined)delete process.env[k];else process.env[k]=previous[i];});}
 });

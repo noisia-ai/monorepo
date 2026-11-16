@@ -1,6 +1,6 @@
 import {
   createSignalListeningStoreV1,signalWorkspaceFeatureEnabledV1,loadSignalListeningCalibrationV1,deriveSignalListeningCalibrationV1,
-  pendingSignalListeningPreparationsV1,continueSignalListeningPreparationV1,type LabelingRunV1,
+  pendingSignalListeningPreparationsV1,continueSignalListeningPreparationV1,LABELING_INPUT_MAX_WORKING_BYTES_V1,type LabelingRunV1,
 } from '@noisia/db';
 import {
   buildSignalListeningCompiledRequestV1,mapSignalListeningCompiledResponseV1,signalListeningRequestDigestV1,
@@ -18,6 +18,10 @@ import {assertJevStreamingExecutionV2,jevCallWorkingBytesV2,type JevStreamingExe
 import {listeningHasRawV1,selectSignalListeningRecoveryV1,createSignalListeningRecoveryProviderV1} from './signal-listening-recovery';
 import {planSignalListeningCalibrationV1,createSignalListeningCalibratedProviderV1} from './signal-listening-calibration';
 
+// Stream response custody and one native input read have independent budgets.
+// Invalid numbers remain invalid for the existing native validator.
+const readBounds=<T extends{max_working_bytes:number}>(bounds:T):T=>({...bounds,max_working_bytes:
+ Number.isSafeInteger(bounds.max_working_bytes)?Math.min(bounds.max_working_bytes,LABELING_INPUT_MAX_WORKING_BYTES_V1):bounds.max_working_bytes});
 type Store=ReturnType<typeof createSignalListeningStoreV1>;
 /** A private immutable copy of the claimed run's configuration, never a memo
  * of permissions. Every reserve/submit/write still uses the native fresh guards. */
@@ -68,7 +72,7 @@ export function processSignalListeningJevV1(args:{run_id:string;store:Store;prov
   const select=(inputs:SignalListeningInputV1[])=>selectionIndex.select(inputs,args.selection?.(),windowSize);
   const schedulerStore={...args.store,async inputs(run:LabelingRunV1,bounds?:Parameters<Store['inputs']>[1]){
     const selection=args.selection?.();
-    if(!selection)return args.store.inputs(run,bounds);
+    if(!selection)return args.store.inputs(run,bounds?readBounds(bounds):bounds);
     // The lease-held planner already hydrated a bounded server selection. Its
     // extrema may lie outside a warmup-sized prefix; never reread that prefix
     // and silently discard the anchors. Reserve still validates native rights.
@@ -91,7 +95,7 @@ export function processSignalListeningJevV1(args:{run_id:string;store:Store;prov
   return processJevLabelingPageV1<SignalListeningInputV1,SignalListeningResultV1>({...args,store:schedulerStore,
     // Subsequent windows must read fresh native pending identities, never the
     // retained initial calibration selection.
-    read_next_inputs:args.read_next_inputs??((run,bounds)=>args.store.inputs(run,{...bounds,on_oversize:'empty'})),
+    read_next_inputs:(run,bounds)=>args.read_next_inputs?args.read_next_inputs(run,readBounds(bounds)):args.store.inputs(run,readBounds({...bounds,on_oversize:'empty' as const})),
     prepare:args.prepare?async run=>{compiledRun=undefined;try{const prepared=await args.prepare!(run);preparedExecution=prepared.execution;preparedProvider=prepared.provider;windowSize=prepared.execution.window_size;return prepared;}finally{selectionIndex.invalidate();}}:undefined,hooks:{
     price:run=>contextOf(run).price,prepare_next:args.prepare_next?async(run,inputs)=>{try{return await args.prepare_next!(run,inputs);}finally{selectionIndex.invalidate();}}:undefined,
     propose:(run,inputs)=>select(inputs).map(input=>{
@@ -200,7 +204,7 @@ export async function signalListeningJevJobV1(run_id:string,options:{
             if(!ids.length)throw Error('listening_recovery_memory_budget_exceeded');
             hydrated=await store.calls(leased,{call_ids:ids});
           }
-          const inputs=pending.length?(hydrated??pending).filter(call=>!call.results_applied&&(!run.recovery_only||Boolean(call.raw_body))).flatMap(call=>call.inputs):await store.inputs(leased,{max_rows:execution.window_size,max_working_bytes:execution.max_buffered_bytes,on_oversize:'error'});
+          const inputs=pending.length?(hydrated??pending).filter(call=>!call.results_applied&&(!run.recovery_only||Boolean(call.raw_body))).flatMap(call=>call.inputs):await store.inputs(leased,readBounds({max_rows:execution.window_size,max_working_bytes:execution.max_buffered_bytes,on_oversize:'error' as const}));
           const plan=await planSignalListeningCalibrationV1({workspace_id:leased.workspace_id,configuration_digest,
             configuration,snapshot,inputs,execution,loadProfile:shape_digest=>(options.calibration?.load??loadSignalListeningCalibrationV1)({database,
               workspace_id:leased.workspace_id,actor_user_id:leased.actor_user_id,configuration_digest,model:configuration.model,shape_digest})});

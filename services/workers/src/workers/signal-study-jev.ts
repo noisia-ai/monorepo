@@ -4,7 +4,7 @@ import {
  labelerDigestV1,llmPriceV1,llmCostMicroUsdV1,signalListeningCalibrationShapeV1,signalWorkspaceEmbeddingDigestV1 as digest,
  type SignalStudyJevBindingV1,type SignalListeningInputV1,type SignalListeningResultV1,type SignalListeningCalibrationProfileV1,
 } from '@noisia/query-engine';
-import type {createSignalLabelingStoreV1,LabelingRunV1,LabelingCallV1} from '@noisia/db';
+import {LABELING_INPUT_MAX_WORKING_BYTES_V1,type createSignalLabelingStoreV1,type LabelingRunV1,type LabelingCallV1} from '@noisia/db';
 import {processJevLabelingPageV1,jevUsageV1,type JevPreparedExecutionV1} from './signal-jev-labeling-page';
 import {assertJevStreamingExecutionV2,type JevStreamingExecutionV2,type JevStreamingMetricsV2} from './signal-jev-streaming-window';
 import {jevStreamingExecutionFromEnvV2,createCalibratedJevRuntimeProviderV2} from '../providers/jev-streaming-runtime';
@@ -15,6 +15,9 @@ import {createLabelingRawPagesStorageV1} from './signal-labeling-receipt-storage
 import type {WorkspaceEngineStorageV1} from './signal-workspace-engine-storage';
 import type {StudyRuntimeDriversV1,StudyRuntimeLeaseV1} from './signal-study-runtime';
 
+// Do not expand the server-owned read budget when response custody grows.
+const readBounds=<T extends{max_working_bytes:number}>(bounds:T):T=>({...bounds,max_working_bytes:
+ Number.isSafeInteger(bounds.max_working_bytes)?Math.min(bounds.max_working_bytes,LABELING_INPUT_MAX_WORKING_BYTES_V1):bounds.max_working_bytes});
 export type StudyJevInputV1=SignalListeningInputV1&{scope:'study';batch_id:string;plan_digest:string;request_sha256:string;request_body:string;target_digest:string};
 export type StudyJevResultV1=SignalListeningResultV1&{scope:'study';batch_id:string;plan_digest:string;request_sha256:string;target_digest:string};
 export type StudyJevStoreV1=ReturnType<typeof createSignalLabelingStoreV1<StudyJevInputV1,StudyJevResultV1>>;
@@ -95,7 +98,7 @@ export function createSignalStudyJevDriverV1(options:{adapter:StudyJevNativeAdap
     if(!selection)return rows;
     const keys=new Set(selection.map(inputKey));return rows.filter(c=>listeningHasRawV1(c)||c.status==='unknown'||c.inputs.some(i=>keys.has(inputKey(i))));
    },
-   async inputs(run,bounds){guard(run);if(selectionPending){selectionPending=false;return selection??[];}return store.inputs(run,bounds??{max_rows:windowSize,max_working_bytes:execution.max_buffered_bytes-assertJevStreamingExecutionV2(execution,unavailable),on_oversize:'error'});},
+   async inputs(run,bounds){guard(run);if(selectionPending){selectionPending=false;return selection??[];}return store.inputs(run,readBounds(bounds??{max_rows:windowSize,max_working_bytes:execution.max_buffered_bytes-assertJevStreamingExecutionV2(execution,unavailable),on_oversize:'error' as const}));},
    async reserve(run,proposals){guard(run);if(stopped()){shutdown.abort();return[];}return store.reserve(run,proposals);},
    async markSubmitting(run,calls){guard(run);if(stopped()){shutdown.abort();throw stoppedError;}return store.markSubmitting(run,calls);},
    async persistRaw(){throw Error('study_jev_page_writer_required');},
@@ -103,7 +106,7 @@ export function createSignalStudyJevDriverV1(options:{adapter:StudyJevNativeAdap
   try{
    await processJevLabelingPageV1<StudyJevInputV1,StudyJevResultV1>({run_id:binding.run_id,signal:externalSignal,store:boundedStore,provider:unavailable,execution,
     lease_renewal_ms:options.lease_renewal_ms,observe_stream:options.observe_stream,
-    read_next_inputs:(run,bounds)=>{guard(run);return stopped()?(shutdown.abort(),Promise.resolve([])):store.inputs(run,{...bounds,on_oversize:'empty'});},
+    read_next_inputs:(run,bounds)=>{guard(run);return stopped()?(shutdown.abort(),Promise.resolve([])):store.inputs(run,readBounds({...bounds,on_oversize:'empty' as const}));},
     prepare:async run=>{
      guard(run);calibrationRun=run;metadata=await store.calls(run,{metadata_only:true});recovery=selectSignalListeningRecoveryV1(metadata,execution);
      if(recovery||metadata.some(c=>c.status==='unknown')||run.error_code==='labeling_outcome_unknown'||stopped()||env.NOISIA_JEV_PROVIDER_ENABLED==='false'||!env.TYPESAFE_API_KEY?.trim()){
@@ -120,8 +123,8 @@ export function createSignalStudyJevDriverV1(options:{adapter:StudyJevNativeAdap
       }
       if(!ids.length)fail('recovery_memory_bound');hydrated=await store.calls(run,{call_ids:ids});
      }
-     const inputs=metadata.length?hydrated!.flatMap(c=>c.inputs):await store.inputs(run,{max_rows:execution.window_size,
-      max_working_bytes:execution.max_buffered_bytes-assertJevStreamingExecutionV2(execution,unavailable),on_oversize:'error'});
+     const inputs=metadata.length?hydrated!.flatMap(c=>c.inputs):await store.inputs(run,readBounds({max_rows:execution.window_size,
+      max_working_bytes:execution.max_buffered_bytes-assertJevStreamingExecutionV2(execution,unavailable),on_oversize:'error' as const}));
      const plan=await planSignalListeningCalibrationV1({workspace_id:run.workspace_id,configuration_digest:digest(configuration),configuration,inputs,execution,
       compile_request:input=>request(input as StudyJevInputV1),loadProfile:shape_digest=>options.adapter.loadCalibration({binding,run,shape_digest})});
      selection=plan.selected_inputs as StudyJevInputV1[];selectionPending=true;windowSize=plan.execution.window_size;shapes=plan.calibration_shapes;

@@ -105,6 +105,7 @@ export * from "./signal-topic-editorial-global-stage-v2";
 export * from "./signal-topic-editorial-start-intent-v2";
 export * from "./signal-topic-editorial-batch-start-v2";
 export * from './signal-labeling-runs';
+export {LABELING_INPUT_MAX_WORKING_BYTES_V1} from './signal-labeling-input-bounds';
 export * from './signal-mention-facets';
 export * from './signal-labeling-policy-provisioning';
 
