@@ -508,6 +508,50 @@ jobs:
           export DATABASE_SSL=false
           export NOISIA_R16_LOCAL_PG_LAB=r16-benchmark-pg17
           pnpm --filter @noisia/db db:smoke:migrations
+      - name: Verify native flat prefix preimages
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.scope == 'listening-smoke' }}
+        env:
+          NOISIA_R16_PREFIX_FLAT_PREIMAGE_PG: 'true'
+          R16_PREFIX_FLAT_PREIMAGE_EVIDENCE_DIR: .data/piloto-masivo/r16/prefix-flat-preimage-native-evidence
+        run: |
+          set -euo pipefail
+          connection_file=.data/piloto-masivo/r16/labs/benchmark-pg17/connection.env
+          test -f "$connection_file"
+          set -a
+          source "$connection_file"
+          set +a
+          export DATABASE_SSL=false
+          export NOISIA_R16_LOCAL_PG_LAB=r16-benchmark-pg17
+          set +e
+          pnpm exec node --test --test-concurrency=1 --import tsx \
+            infrastructure/db/migrations/signal-listening-prefix-flat-preimage.postgres.test.ts | tee prefix-flat-preimage.tap
+          test_status=${PIPESTATUS[0]}
+          set -e
+          evidence_file="$R16_PREFIX_FLAT_PREIMAGE_EVIDENCE_DIR/prefix-flat-preimage.json"
+          if [[ "$test_status" -ne 0 ]] \
+            || ! grep -qx '# tests 2' prefix-flat-preimage.tap \
+            || ! grep -qx '# pass 2' prefix-flat-preimage.tap \
+            || ! grep -qx '# fail 0' prefix-flat-preimage.tap \
+            || ! grep -qx '# cancelled 0' prefix-flat-preimage.tap \
+            || ! grep -qx '# skipped 0' prefix-flat-preimage.tap \
+            || ! grep -qx '# Subtest: flat prefix preimages preserve native scalar bytes and FULL consumer population' prefix-flat-preimage.tap \
+            || ! grep -qx '# Subtest: flat prefix preimages preserve historical population and paired full reads' prefix-flat-preimage.tap \
+            || [[ ! -s "$evidence_file" ]] \
+            || [[ "$(wc -c < "$evidence_file")" -gt 262144 ]] \
+            || ! jq -e -s 'length == 1 and (.[0] | type == "object" and .contract == "r16-prefix-flat-preimage-oracle-v1")' "$evidence_file" >/dev/null; then
+            echo '::error::R16 prefix flat preimage tests failed, were skipped, or did not emit their contracted JSON'
+            exit 1
+          fi
+      - name: Persist native prefix flat preimage evidence
+        if: ${{ always() && github.event_name == 'workflow_dispatch' && inputs.scope == 'listening-smoke' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: r16-prefix-flat-preimage-native-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            .data/piloto-masivo/r16/prefix-flat-preimage-native-evidence/prefix-flat-preimage.json
+            prefix-flat-preimage.tap
+          if-no-files-found: error
+          retention-days: 14
       - name: Profile one native FULL consumer prefix function scan
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.scope == 'listening-smoke' }}
         env:
