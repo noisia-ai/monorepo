@@ -26,6 +26,10 @@ export function assertProfileOnlyArtifactFileSetV1(names){
  assert.deepEqual([...names].sort(),[...PROFILE_ONLY_ARTIFACT_INPUT_FILES_V1].sort(),'profile_only_artifact_files_invalid');
  return true;
 }
+export function profileOnlyEnvelopeErrorCodeV1(error){
+ const firstLine=error instanceof Error?error.message.split(/\r?\n/u,1)[0]:'';
+ return typeof firstLine==='string'&&/^profile_only_[a-z0-9_]{1,100}$/u.test(firstLine)?firstLine:'profile_only_envelope_failed';
+}
 export const PROFILE_ONLY_REQUIRED_PROBE_FILES_V1=['.github/workflows/r16-listening-profile-only.yml',
  '.github/workflows/r16-listening-small-diagnostic.yml','.github/workflows/mfp-postgres.yml',
  'scripts/r16-diagnostics/listening-small/run.mts','scripts/r16-diagnostics/listening-small/run.test.mts',
@@ -234,5 +238,5 @@ async function main(){
  process.stdout.write(JSON.stringify({status:result.status,contract:result.contract,profiling_only:true,h1_accepted:false})+'\n');
 }
 if(process.argv[1]&&import.meta.url===pathToFileURL(process.argv[1]).href){
- main().catch(error=>{process.stderr.write(`${error instanceof Error&&/^[a-z0-9_]{1,100}$/u.test(error.message)?error.message:'profile_only_envelope_failed'}\n`);process.exitCode=1;});
+ main().catch(error=>{process.stderr.write(`${profileOnlyEnvelopeErrorCodeV1(error)}\n`);process.exitCode=1;});
 }

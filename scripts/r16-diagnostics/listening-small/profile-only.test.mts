@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import {chmod,mkdtemp,mkdir,readdir,readFile,stat,rm,symlink,writeFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {dirname,join} from 'node:path';
-import {pathToFileURL} from 'node:url';
+import {fileURLToPath,pathToFileURL} from 'node:url';
 import test from 'node:test';
 import {createHash} from 'node:crypto';
 import {createMainThreadProfileCaptureV1,MAIN_THREAD_PROFILE_INTERVAL_US_V1,sanitizeV8MainThreadProfileV1,
@@ -12,7 +12,7 @@ import {assertDiagnosticExecArgsV1,assertListeningResourceProfileV1,assertListen
  createListeningStorageOutputDirV1,safeErrorV1,writeProfileOnlyPgOwnershipMarkerV1} from './run.mjs';
 import {execFileSync,spawnSync} from 'node:child_process';
 import {PROFILE_ONLY_ARTIFACT_INPUT_FILES_V1,PROFILE_ONLY_REQUIRED_PROBE_FILES_V1,assertProfileOnlyArtifactFileSetV1,
- validatePgProfileArtifactBytesV1,validateProfileOnlyProbeSealV1,validateProfileOnlyRunV1} from './profile-only-envelope.mjs';
+ profileOnlyEnvelopeErrorCodeV1,validatePgProfileArtifactBytesV1,validateProfileOnlyProbeSealV1,validateProfileOnlyRunV1} from './profile-only-envelope.mjs';
 import {PG_CPU_INSPECT_FORMAT_V1} from './profile-pg-cpu.mjs';
 
 const fakeProfile={startTime:100,endTime:350,nodes:[
@@ -255,6 +255,27 @@ test('profile-only storage path stays outside the exact assembler artifact set a
 test('profile-only cleanup errors retain only safe codes and never leak temporary paths',()=>{
  assert.equal(safeErrorV1(new Error('r16_profile_only_storage_cleanup_failed')),'r16_profile_only_storage_cleanup_failed');
  assert.equal(safeErrorV1(new Error('/tmp/private-study-uuid/connection.env denied')),'listening_small_diagnostic_failed');
+});
+
+test('profile-only assembler CLI reports only the first allowlisted error line for an actual extra artifact path',async()=>{
+ const root=await mkdtemp(join(tmpdir(),'r16-profile-assembler-cli-'));
+ const target=join(root,'target'),probe=join(root,'probe'),artifact=join(root,'private-study-uuid/artifacts'),bin=join(root,'bin');
+ const targetSha=PROFILE_ONLY_TARGET_SHA_V1,probeSha='f'.repeat(40),privatePath=join(artifact,'objects');
+ try{
+  await mkdir(target,{recursive:true});await mkdir(probe,{recursive:true});await mkdir(privatePath,{recursive:true});await mkdir(bin);
+  const fakeGit=join(bin,'git');
+  const countFile=join(root,'git-rev-parse-count');
+  await writeFile(fakeGit,`#!/bin/sh\nif [ "$1" = rev-parse ]; then count=$(cat "${countFile}" 2>/dev/null || echo 0); count=$((count+1)); echo "$count" > "${countFile}"; if [ "$count" -eq 1 ]; then echo ${targetSha}; else echo ${probeSha}; fi; exit 0; fi\nif [ "$1" = status ]; then exit 0; fi\nexit 1\n`,{mode:0o700});
+  const helper=fileURLToPath(new URL('./profile-only-envelope.mjs',import.meta.url));
+  const result=spawnSync(process.execPath,[helper,'assemble',target,probe,targetSha,probeSha,artifact],{
+   cwd:root,encoding:'utf8',env:{PATH:`${bin}:${process.env.PATH??'/usr/bin:/bin'}`}});
+  assert.equal(result.status,1);
+  assert.equal(result.stderr,'profile_only_artifact_files_invalid\n');
+  assert.doesNotMatch(result.stderr,/private-study-uuid|objects/u);
+  assert.equal(profileOnlyEnvelopeErrorCodeV1(new Error('profile_only_artifact_files_invalid\nAssertionError: private path')),
+   'profile_only_artifact_files_invalid');
+  assert.equal(profileOnlyEnvelopeErrorCodeV1(new Error(`${privatePath} rejected`)),'profile_only_envelope_failed');
+ }finally{await rm(root,{recursive:true,force:true});}
 });
 
 test('profile-only envelope requires every executable/helper source in the before/after probe seal',async()=>{

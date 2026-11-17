@@ -677,10 +677,13 @@ export async function runListeningSmallDiagnosticV1(){
       }} });
     stage='write_artifact';
     result.observer=await finishListeningObserver(observer);
-    await storageServer.close();storageServer=undefined;
-    if(profileOnly&&storageOutputDir){await rm(storageOutputDir,{recursive:true,force:true});storageOutputDir=undefined;
-      storageOutputRemoved=true;result.storage_output.removed_before_run_receipt_write=true;}
+    if(profileOnly){
+      await storageServer.close();storageServer=undefined;
+      if(storageOutputDir){await rm(storageOutputDir,{recursive:true,force:true});storageOutputDir=undefined;
+        storageOutputRemoved=true;result.storage_output.removed_before_run_receipt_write=true;}
+    }
     await atomicJson(artifact,result);
+    if(!profileOnly){await storageServer.close();storageServer=undefined;}
     process.stdout.write(JSON.stringify({status:'complete',diagnostic_only:true,h1_accepted:false,
       artifact:profileOnly?'artifacts/r16-listening-profile-only/run.json':'artifacts/r16-listening-small/result.json'})+'\n');
     return result;
