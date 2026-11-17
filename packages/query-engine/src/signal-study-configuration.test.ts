@@ -129,7 +129,7 @@ test('new layer review uses the exact saved diagnostic revision and validates ag
  const motive={key:'force',name:'Force',definition:'A configured force',centroid:vector,layer:'unclear' as const,human_locked:false};
  assert.equal(buildSignalStudyContrastReviewV1({study:f.study,template_snapshot:snapshot,motives:[{...motive,sample}],affected_keys:['force']}).study_digest,before);
  assert.equal(buildSignalStudySummaryV1({study:f.study,template_snapshot:snapshot,roots:[root],motives:[motive],memberships:[],cut_root_ids:[root.root_id],unresolved_root_ids:[]}).study_digest,before);
- assert.equal(signalStudyPromotionProposalV1({study:f.study,template_snapshot:snapshot,motive,explicit_action:true,target_revision:1}).source.study_digest,before);
+ assert.equal(signalStudyPromotionProposalV1({study:f.study,template_snapshot:snapshot,motive,explicit_action:true,target_revision:1,localization:{original_language:'en',original:{name:motive.name,definition:motive.definition},en:{name:'Force',definition:'A synthetic decision force.'},es:{name:'Fuerza',definition:'Una fuerza sintética de decisión.'}}}).source.study_digest,before);
  assert.throws(()=>signalStudyPromotionProposalV1({study:f.study,template_snapshot:snapshot,motive,explicit_action:false,target_revision:1}),/explicit_action_required/);
  assert.throws(()=>buildSignalStudyMotiveFitPlanV1({study:f.study,roots:[],embedding_space_digest:before}),/study_invalid/);
  assert.equal(digest(f.study),before);

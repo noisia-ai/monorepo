@@ -1,6 +1,6 @@
 import {getSignalListeningStatusV1,getSignalListeningHumanEditContextV1,ensureSignalStudyCorpusV1,saveSignalStudyConfigurationV1,getSignalListeningEffectiveServingSnapshotV1,getSignalListeningConfigurationV1,
  readSignalStudyConfigurationV1,listSignalStudiesV1,readLatestSignalStudyConfigurationV1,readLatestSignalStudyExecutionStatusV1,readSignalStudyExecutionStatusV1,
- requestSignalStudyExecutionV1,promoteSignalStudyMotivesV1,readSignalStudyReportOverviewV1,readSignalStudyReportPageV1} from '@noisia/db';
+ requestSignalStudyExecutionV1,promoteSignalStudyMotivesV1,readSignalStudyPromotionContextV1,readSignalStudyReportOverviewV1,readSignalStudyReportPageV1} from '@noisia/db';
 import {buildSignalStudyExecutionConfigurationV1,createSignalStudyTemplateSnapshotV1,SIGNAL_STUDY_TB_TEMPLATE_V1,SIGNAL_STUDY_TB_ROLES_V1,validateSignalStudyV1} from '@noisia/query-engine';
 import {loadSignalWorkspaceContextForTopics} from '@/app/api/data-os/signal/[workspaceId]/topics/_lib';
 import {pool} from '@/lib/db';
@@ -50,6 +50,7 @@ export async function loadSignalWorkspaceContextForStudyV1(workspace_id:string){
   overview:(s,execution_id)=>readSignalStudyReportOverviewV1({...access(s),execution_id}),
   page:(s,args)=>readSignalStudyReportPageV1({...access(s),...args}),
   execute:(s,args)=>requestSignalStudyExecutionV1({...access(s),...args}),
+  promotionContext:(s,args)=>readSignalStudyPromotionContextV1({...access(s),...args}),
   promote:(s,args)=>promoteSignalStudyMotivesV1({...access(s),...args}),
   currentListeningRevision:async s=>(await getSignalListeningConfigurationV1(access(s)))?.revision??null,
  })};

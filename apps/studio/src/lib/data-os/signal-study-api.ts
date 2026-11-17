@@ -1,5 +1,5 @@
 import {z} from 'zod';
-import type {SignalStudySubjectV1,SignalStudyV1} from '@noisia/query-engine';
+import {signalListeningTopicLocalizationSchemaV1,type SignalStudySubjectV1,type SignalStudyV1,type SignalListeningTopicLocalizationV1} from '@noisia/query-engine';
 import type {SignalStudyConfigurationRecordV1,SignalStudyExecutionStatusV1,SignalStudyReportOverviewV1,SignalStudyReportSectionV1} from '@noisia/db';
 const uuid=z.string().uuid(), sha=z.string().regex(/^sha256:[a-f0-9]{64}$/u);
 const text=(max:number)=>z.string().trim().min(1).max(max);
@@ -8,7 +8,8 @@ const subject=z.object({kind:z.enum(['category','own_brand','alternative']),name
 export const studyCreateRequestSchemaV1=z.object({source:z.object({binding_kind:z.enum(['serving','human_edit']),snapshot_id:uuid,configuration_id:uuid,configuration_digest:sha}).strict(),
  subject,business_question:text(2000),cut:z.object({start_at:z.string().datetime({offset:true}),end_at:z.string().datetime({offset:true}),timezone:text(100)}).strict()}).strict();
 const execution=z.object({operation:z.literal('execute'),configuration_id:uuid,cap_micro_usd:z.number().int().positive().safe()}).strict();
-const promotion=z.object({operation:z.literal('promote'),execution_id:uuid,motive_keys:z.array(z.string().regex(/^[a-z][a-z0-9_]{0,63}$/u)).min(1).max(256),expected_listening_revision:z.number().int().positive().safe()}).strict();
+const promotion=z.object({operation:z.literal('promote'),execution_id:uuid,motive_keys:z.array(z.string().regex(/^[a-z][a-z0-9_]{0,63}$/u)).min(1).max(256),expected_listening_revision:z.number().int().positive().safe(),localizations:z.record(signalListeningTopicLocalizationSchemaV1).optional()}).strict();
+const promotionContext=z.object({promotion_context:z.literal('true'),execution_id:uuid,motive_keys:z.string().min(1).max(2079).transform(value=>value.split(',')).pipe(z.array(z.string().regex(/^[a-z][a-z0-9_]{0,63}$/u)).min(1).max(32))}).strict();
 const mutation=z.discriminatedUnion('operation',[execution,promotion]);
 const page=z.object({execution_id:uuid,section:z.enum(['motives','topics','channels','series','evidence']),offset:z.coerce.number().int().min(0).max(100000000).default(0),limit:z.coerce.number().int().min(1).max(100).default(30)}).strict();
 export type StudyCreateRequestV1=z.infer<typeof studyCreateRequestSchemaV1>;
@@ -36,7 +37,8 @@ export type StudyApiDependenciesV1={
  overview(scope:StudyScopeV1,execution_id:string):Promise<SignalStudyReportOverviewV1|null>;
  page(scope:StudyScopeV1,args:{execution_id:string;section:SignalStudyReportSectionV1;offset:number;limit:number}):Promise<unknown>;
  execute(scope:StudyScopeV1,args:{configuration_id:string;cap_micro_usd:number;idempotency_key:string}):Promise<{id:string}>;
- promote(scope:StudyScopeV1,args:{execution_id:string;motive_keys:string[];expected_listening_revision:number;idempotency_key:string}):Promise<unknown>;
+ promote(scope:StudyScopeV1,args:{execution_id:string;motive_keys:string[];expected_listening_revision:number;idempotency_key:string;localizations?:Record<string,SignalListeningTopicLocalizationV1>}):Promise<unknown>;
+ promotionContext(scope:StudyScopeV1,args:{execution_id:string;motive_keys:string[]}):Promise<unknown>;
  currentListeningRevision(scope:StudyScopeV1):Promise<number|null>;
 };
 export const studyResponseV1=(body:unknown,status=200)=>Response.json(body,{status,headers:{'Cache-Control':'private, no-store'}});
@@ -78,6 +80,12 @@ export function createSignalStudyApiV1(deps:StudyApiDependenciesV1){
   detail:(workspace_id:string,study_id:string,request:Request)=>scoped(workspace_id,async scope=>{
    uuid.parse(study_id);const cfg=await deps.configuration(scope,study_id);if(!cfg)return studyResponseV1({error:'study_not_found'},404);
    const search=new URL(request.url).searchParams;
+   if(search.has('promotion_context')){
+    if([...new Set(search.keys())].some(key=>search.getAll(key).length!==1))return studyResponseV1({error:'study_request_invalid'},422);
+    const args=promotionContext.parse(Object.fromEntries(search));if(new Set(args.motive_keys).size!==args.motive_keys.length)return studyResponseV1({error:'study_request_invalid'},422);
+    if(!await boundExecution(scope,study_id,args.execution_id))return studyResponseV1({error:'study_execution_not_found'},404);
+    return studyResponseV1(await deps.promotionContext(scope,{execution_id:args.execution_id,motive_keys:args.motive_keys}));
+   }
    if(search.has('section')){
     const args=page.parse(Object.fromEntries(search)),status=await boundExecution(scope,study_id,args.execution_id);
     if(!status)return studyResponseV1({error:'study_execution_not_found'},404);
@@ -103,7 +111,7 @@ export function createSignalStudyApiV1(deps:StudyApiDependenciesV1){
    }
    if(new Set(body.motive_keys).size!==body.motive_keys.length)return studyResponseV1({error:'study_request_invalid'},422);
    if(!await boundExecution(scope,study_id,body.execution_id))return studyResponseV1({error:'study_execution_not_found'},404);
-   return studyResponseV1(await deps.promote(scope,{execution_id:body.execution_id,motive_keys:body.motive_keys,expected_listening_revision:body.expected_listening_revision,idempotency_key:key}));
+   return studyResponseV1(await deps.promote(scope,{execution_id:body.execution_id,motive_keys:body.motive_keys,expected_listening_revision:body.expected_listening_revision,idempotency_key:key,...(body.localizations!==undefined?{localizations:body.localizations}:{})}));
   }),
  };
 }

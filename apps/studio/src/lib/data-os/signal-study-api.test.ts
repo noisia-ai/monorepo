@@ -15,6 +15,7 @@ function harness(){
   create:async(s,a,k)=>{record('create',s,{...a,idempotency_key:k});return{study_id:study}as Awaited<ReturnType<StudyApiDependenciesV1['create']>>;},
   configuration:async()=>configuration,executionConfiguration:async()=>({...configuration,id:statusConfig,revision:2}),latestExecution:async()=>status(),status:async()=>status(),
   overview:async()=>({execution_id:execution,listening_source_binding:{kind:'human_edit',id:snapshot,configuration_id:cfgid,generation_id:workspace,source_digest:sha,base_snapshot_id:study},configuration:{secret:'full-source-questions'},overview:{status:'directional'},section_counts:{motives:2,evidence:3}}as Awaited<ReturnType<StudyApiDependenciesV1['overview']>>),
+  promotionContext:async(s,a)=>{record('promotionContext',s,a);return{execution_id:a.execution_id,motives:[{key:a.motive_keys[0],name:'Native name',definition:'Native definition',original_language:'und'}]};},
   page:async(s,a)=>{record('page',s,a);return{rows:[],next_offset:null};},
   execute:async(s,a)=>{record('execute',s,a);return{id:execution,execution_token:'never-client',source_header:{private:'source'}};},
   promote:async(s,a)=>{record('promote',s,a);return{configuration_id:cfgid};},currentListeningRevision:async()=>7};
@@ -68,4 +69,21 @@ test('readiness blocks processing only; promotion is explicit, CAS-bound and doe
 test('revoked session and native permission/CAS errors remain authoritative',async()=>{
  const f=harness();f.setDenied();for(const which of ['collection','detail']as const){assert.equal((await f.invoke(which,'GET')).status,403);assert.equal((await f.invoke(which,'POST',create)).status,403);}assert.equal(f.calls.length,0);
  for(const status of [403,409,422]){const h=harness();h.setError(Object.assign(Error('native'),{code:'study_native_guard',status}));const r=await h.invoke('collection','POST',create);assert.equal(r.status,status);assert.deepEqual(await r.json(),{error:'study_native_guard'});}
+});
+
+test('explicit promotion context is strict, bounded, study/workspace bound and never queues work',async()=>{
+ const f=harness(),query=`?promotion_context=true&execution_id=${execution}&motive_keys=motive_one`;
+ const response=await f.invoke('detail','GET',undefined,query);assert.equal(response.status,200);assert.equal(response.headers.get('Cache-Control'),'private, no-store');
+ assert.deepEqual(f.calls[0]!.args,{execution_id:execution,motive_keys:['motive_one']});
+ for(const suffix of ['&actor_user_id=forged','&section=motives','&motive_keys=duplicated'])assert.equal((await f.invoke('detail','GET',undefined,query+suffix)).status,422);
+ for(const keys of ['','bad-key','motive_one,motive_one',Array.from({length:33},(_,i)=>'motive_'+i).join(','),'x'.repeat(2080)])
+  assert.equal((await f.invoke('detail','GET',undefined,`?promotion_context=true&execution_id=${execution}&motive_keys=${keys}`)).status,422);
+ f.setOtherStudy();assert.equal((await f.invoke('detail','GET',undefined,query)).status,404);assert.equal(f.calls.length,1);
+ const denied=harness();denied.setDenied();assert.equal((await denied.invoke('detail','GET',undefined,query)).status,403);assert.equal(denied.calls.length,0);
+});
+test('explicit promotion carries human localizations without inventing missing translations',async()=>{
+ const f=harness(),localizations={motive_one:{original_language:'und',original:{name:'Native name',definition:'Native definition'},en:{name:'Leisure',definition:'A leisure motive.'},es:{name:'Ocio',definition:'Un motivo de ocio.'}}};
+ const body={operation:'promote',execution_id:execution,motive_keys:['motive_one'],expected_listening_revision:7,localizations};
+ assert.equal((await f.invoke('detail','POST',body)).status,200);assert.deepEqual((f.calls[0]!.args as Parameters<StudyApiDependenciesV1['promote']>[1]).localizations,localizations);
+ assert.equal((await f.invoke('detail','POST',{...body,localizations:{motive_one:{...localizations.motive_one,es:{name:'',definition:''}}}})).status,422);
 });

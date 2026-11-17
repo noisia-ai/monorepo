@@ -1,3 +1,4 @@
+import {validateSignalListeningTopicLocalizationV1,type SignalListeningTopicLocalizationV1} from './signal-listening-contracts';
 import {createHash} from 'node:crypto';
 import {signalWorkspaceEmbeddingDigestV1 as digest} from './signal-workspace-embeddings-v1';
 import {signalWorkspaceMassLabelingConfigV3} from './signal-workspace-engine-v1';
@@ -195,11 +196,13 @@ export function signalStudyQueryBiasV1(args:{query_terms:string[];problem_terms:
     base_ratio:args.brand_baseline_roots?args.subject_roots/args.brand_baseline_roots:null,subject_roots:args.subject_roots,brand_baseline_roots:args.brand_baseline_roots};
 }
 export function signalStudyPromotionProposalV1(args:{study:SignalStudyV1;template_snapshot?:SignalStudyTemplateSnapshotV1;motive:SignalStudyMotiveV1;explicit_action:boolean;
-  target_revision:number}):{action:'promote_study_motive';target_revision:number;question:{key:string;type:'noul';text:string;positive:string;negative:string;
-    scope:'all';origin:'methodology';human_locked:true;topic_source:'defined'};source:{study_digest:string;motive_key:string}}{
+  target_revision:number;localization?:SignalListeningTopicLocalizationV1}):{action:'promote_study_motive';target_revision:number;question:{key:string;type:'noul';text:string;positive:string;negative:string;
+    scope:'all';origin:'methodology';human_locked:true;topic_source:'defined';localization:SignalListeningTopicLocalizationV1};source:{study_digest:string;motive_key:string}}{
   const study=validateSignalStudyV1(args.study,args.template_snapshot);
   if(args.explicit_action!==true||!Number.isSafeInteger(args.target_revision)||args.target_revision<1)fail('study_promotion_explicit_action_required');
+  const localization=validateSignalListeningTopicLocalizationV1(args.localization);
+  if(localization.original.name!==args.motive.name||localization.original.definition!==args.motive.definition)fail('study_promotion_original_mismatch');
   return{action:'promote_study_motive',target_revision:args.target_revision,question:{key:args.motive.key,type:'noul',text:args.motive.name,
-    positive:args.motive.definition,negative:'The configured motive is absent.',scope:'all',origin:'methodology',human_locked:true,topic_source:'defined'},
+    positive:args.motive.definition,negative:'The configured motive is absent.',scope:'all',origin:'methodology',human_locked:true,topic_source:'defined',localization},
     source:{study_digest:digest(study),motive_key:args.motive.key}};
 }

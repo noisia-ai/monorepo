@@ -270,7 +270,11 @@ test('query bias carries an actual brand baseline and promotion requires an expl
   assert.equal(signalStudyQueryBiasV1({query_terms:['problem'],problem_terms:['problem'],subject_roots:20,brand_baseline_roots:200}).status,'possible_query_bias');
   assert.equal(signalStudyQueryBiasV1({query_terms:[],problem_terms:[],subject_roots:0,brand_baseline_roots:0}).base_ratio,null);
   assert.throws(()=>signalStudyPromotionProposalV1({study,motive:motive(),explicit_action:false,target_revision:1}),/explicit_action_required/);
-  const proposal=signalStudyPromotionProposalV1({study,motive:motive(),explicit_action:true,target_revision:8});
+  const localization={original_language:'en',original:{name:motive().name,definition:motive().definition},en:{name:'Enjoyment',definition:'Pleasure as a reason for the choice.'},es:{name:'Disfrute',definition:'Placer como motivo de la elección.'}};
+  assert.throws(()=>signalStudyPromotionProposalV1({study,motive:motive(),explicit_action:true,target_revision:8}),/localization_required/);
+  assert.throws(()=>signalStudyPromotionProposalV1({study,motive:motive(),explicit_action:true,target_revision:8,localization:{...localization,original:{...localization.original,definition:'Forged original'}}}),/original_mismatch/);
+  const proposal=signalStudyPromotionProposalV1({study,motive:motive(),explicit_action:true,target_revision:8,localization});
+  assert.deepEqual(proposal.question.localization,localization);
   assert.equal(proposal.target_revision,8);assert.equal(proposal.question.topic_source,'defined');assert.equal(proposal.question.human_locked,true);
   assert.equal(base.questions.length,2);
 });

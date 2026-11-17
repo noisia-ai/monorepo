@@ -1,5 +1,5 @@
 import type {PoolClient} from 'pg';
-import {validateSignalListeningConfigurationV1,signalListeningQuestionDigestV1,signalListeningJevIdentityV1,
+import {validateSignalListeningConfigurationV1,validateSignalListeningPublicationDeltaV1,signalListeningQuestionDigestV1,signalListeningJevIdentityV1,
  signalWorkspaceEmbeddingDigestV1 as digest,type SignalListeningConfigurationV1} from '@noisia/query-engine';
 import type {LabelingDatabaseV1} from './signal-mention-facets';
 import {loadSignalWorkspaceCapabilitiesStoreV1} from './signal-workspace-capabilities';
@@ -62,6 +62,10 @@ export async function saveSignalListeningConfigurationWithClientV1(c:PoolClient,
   const frozenChanged=current?.configuration.questions.some(old=>old.human_locked&&!next.questions.some(q=>
    digest(q)===digest(old)&&signalListeningQuestionDigestV1(next,q)===signalListeningQuestionDigestV1(current.configuration,old)));
   if(args.provenance==='agent'&&args.state!=='proposal'&&(frozenChanged||current?.configuration.themes.some(old=>old.human_locked&&!next.themes.some(t=>digest(t)===digest(old)))))listeningFailV1('listening_human_edit_frozen');
+  // Every product publisher (API, discovery, human edits and Study promotion)
+  // crosses this locked/CAS boundary. Do not tighten the historical read parser.
+  if(args.state!=='proposal')try{validateSignalListeningPublicationDeltaV1(next,current?.configuration??null);}
+  catch(error){if(error instanceof Error&&error.message==='listening_topic_localization_required')listeningFailV1(error.message,422);throw error;}
   const revision=Number((await c.query<{revision:number}>(`SELECT COALESCE(max(revision),0)+1 revision FROM signal_listening_configurations
    WHERE workspace_id=$1`,[args.workspace_id])).rows[0]!.revision);
   const saved=(await c.query<SignalListeningConfigurationRecordV1>(`INSERT INTO signal_listening_configurations(workspace_id,revision,

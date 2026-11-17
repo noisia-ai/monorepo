@@ -6,10 +6,17 @@ import {entityContextDigestV1,type EntityContextV1} from './signal-entity-contex
 
 const key=z.string().regex(/^[a-z][a-z0-9_]{0,63}$/u),text=z.string().trim().min(1);
 const localized=z.object({name:text.max(160),definition:text.max(1200)}).strict();
+export const signalListeningTopicLocalizationSchemaV1=z.object({original_language:text.max(35),original:localized,en:localized,es:localized}).strict();
+export type SignalListeningTopicLocalizationV1=z.infer<typeof signalListeningTopicLocalizationSchemaV1>;
+export function validateSignalListeningTopicLocalizationV1(value:unknown):SignalListeningTopicLocalizationV1{
+ const parsed=signalListeningTopicLocalizationSchemaV1.safeParse(value);
+ if(parsed.success)try{if(Intl.getCanonicalLocales(parsed.data.original_language).length===1)return parsed.data;}catch{}
+ throw Error('listening_topic_localization_required');
+}
 const common={key,text:text.max(1600),scope:z.enum(['all','consumer_category']),
   origin:z.enum(['base','brand_os','agent','methodology']),human_locked:z.boolean(),
   topic_source:z.enum(['defined','discovered']).optional(),domain:z.enum(['category','adjacent','outside']).optional(),parent_theme_key:key.optional(),prototype_embedding_id:z.string().uuid().optional(),
-  localization:z.object({original_language:text.max(35),original:localized,en:localized,es:localized}).strict().optional()};
+  localization:signalListeningTopicLocalizationSchemaV1.optional()};
 const question=z.discriminatedUnion('type',[
   z.object({...common,type:z.literal('choice'),options:z.array(z.object({key,definition:text.max(1600)}).strict()).min(2).max(32)}).strict(),
   z.object({...common,type:z.literal('noul'),positive:text.max(1600),negative:text.max(1600)}).strict(),
@@ -42,6 +49,22 @@ export function validateSignalListeningConfigurationV1(value:unknown):SignalList
     ||!(q.get('voice') as Extract<SignalListeningQuestionV1,{type:'choice'}>).options.some(o=>o.key==='individual'))return invalid();
   return {...c,retired_question_keys:[...c.retired_question_keys].sort(),retired_theme_keys:[...c.retired_theme_keys].sort(),lexicon_terms:[...new Set(c.lexicon_terms)].sort(),themes:[...c.themes].sort((a,b)=>a.key.localeCompare(b.key)),questions:c.questions.map(q=>q.type==='choice'
     ?{...q,options:[...q.options].sort((a,b)=>a.key.localeCompare(b.key))}:q.topic_source?{...q,domain:q.domain??'category' as const}:q).sort((a,b)=>a.key.localeCompare(b.key))};
+}
+
+/** Write-only delta gate. Historical parsing, request wires and receipt cache
+ * identities remain unchanged; carrying an untouched legacy topic is allowed. */
+export function validateSignalListeningPublicationDeltaV1(value:unknown,previous:SignalListeningConfigurationV1|null):SignalListeningConfigurationV1{
+ const next=validateSignalListeningConfigurationV1(value),prior=previous?validateSignalListeningConfigurationV1(previous):null;
+ const semantic=(configuration:SignalListeningConfigurationV1,q:SignalListeningQuestionV1)=>digest({
+  request:signalListeningQuestionDigestV1(configuration,q),topic_source:q.topic_source,domain:q.domain,
+  parent_theme_key:q.parent_theme_key,prototype_embedding_id:q.prototype_embedding_id,localization:q.localization});
+ for(const q of next.questions){
+  if(q.type!=='noul'||q.origin==='base')continue;
+  const old=prior?.questions.find(old=>old.key===q.key);
+  if(old?.type==='noul'&&old.origin!=='base'&&old.localization===undefined&&semantic(next,q)===semantic(prior!,old))continue;
+  validateSignalListeningTopicLocalizationV1(q.localization);
+ }
+ return next;
 }
 
 /** This is the versioned starting template, not a set of worker literals. Every

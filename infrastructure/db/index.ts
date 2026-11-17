@@ -174,7 +174,7 @@ export type {SignalStudyRawStorageV1,SignalStudyRawDescriptorV1} from './signal-
 export type {SignalStudyConfigurationRecordV1,SignalStudyExecutionRecordV1} from './signal-study-core';
 export {readSignalStudyExecutionStatusV1,listSignalStudiesV1,readLatestSignalStudyConfigurationV1} from './signal-study-status';
 export type {SignalStudyExecutionStatusV1} from './signal-study-status';
-export {promoteSignalStudyMotivesV1} from './signal-study-promotion';
+export {promoteSignalStudyMotivesV1,readSignalStudyPromotionContextV1,type SignalStudyPromotionContextV1} from './signal-study-promotion';
 export {readSignalStudyReportOverviewV1,readSignalStudyReportPageV1} from './signal-study-serving';
 export type {SignalStudyReportSectionV1,SignalStudyReportRowsV1,SignalStudyReportOverviewV1} from './signal-study-serving';
 export {readLatestSignalStudyExecutionStatusV1} from './signal-study-status';
