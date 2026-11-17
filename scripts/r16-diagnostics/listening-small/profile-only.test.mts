@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import {chmod,mkdtemp,mkdir,readdir,readFile,stat,rm,symlink,writeFile} from 'node:fs/promises';
+import {realpathSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {dirname,join} from 'node:path';
 import {fileURLToPath,pathToFileURL} from 'node:url';
@@ -15,6 +16,8 @@ import {PROFILE_ONLY_ARTIFACT_INPUT_FILES_V1,PROFILE_ONLY_REQUIRED_PROBE_FILES_V
  PROFILE_ONLY_PG_CPU_INTERVAL_MS_V1,assertProfileOnlyPgIntervalV1,profileOnlyEnvelopeErrorCodeV1,validatePgProfileArtifactBytesV1,
  validateProfileOnlyProbeSealV1,validateProfileOnlyRunV1} from './profile-only-envelope.mjs';
 import {PG_CPU_INSPECT_FORMAT_V1,parseProcStatV1} from './profile-pg-cpu.mjs';
+const queryCpuOracle=await import(pathToFileURL(join(dirname(fileURLToPath(import.meta.url)),'query-cpu-oracle.mjs')).href);
+const {createQueryCpuBaseReportV1,finishQueryCpuPostchecksForTestV1,SOURCE_DECLARATIONS_V1}=queryCpuOracle;
 
 const fakeProfile={startTime:100,endTime:350,nodes:[
  {id:1,callFrame:{functionName:'main',url:'file:///private/study/body.json',lineNumber:4,columnNumber:2},hitCount:1,children:[2]},
@@ -406,52 +409,92 @@ test('profile-only workflow bootstrap is restricted to the approved branch and w
   'the push registration event cannot start the profile run');
 });
 
-test('profile-only dispatch requires the separate C query CPU job and accepts only its observed or explicit unavailable receipt',async()=>{
+test('query CPU report producer initializes healthy unavailable reasons from its real base factory',()=>{
+ const report=createQueryCpuBaseReportV1({targetSha:PROFILE_ONLY_TARGET_SHA_V1,probeSha:'f'.repeat(40),
+  sources:SOURCE_DECLARATIONS_V1,inline:{},owned:{}});
+ assert.equal(report.contract,'r16-native-query-cpu-oracle-v1');
+ assert.deepEqual(report.unavailable_reasons,[]);
+ assert.equal(report.failure,null);assert.deepEqual(report.secondary_failures,[]);
+});
+
+test('profile-only gates on observed or unavailable query CPU and retains only bounded failed evidence',async()=>{
  const workflow=await readFile(new URL('../../../.github/workflows/r16-listening-profile-only.yml',import.meta.url),'utf8');
  const queryJob=workflow.slice(workflow.indexOf('  native-query-cpu:'),workflow.indexOf('  profile-only:'));
  const profileJob=workflow.slice(workflow.indexOf('  profile-only:'));
  assert.match(queryJob,/if: github\.event_name == 'workflow_dispatch'/u);
  assert.match(queryJob,/R16_QUERY_CPU_LAB_OWNED=true/u);assert.match(queryJob,/scripts\/r16\/lab-up\.sh/u);
  assert.match(queryJob,/scripts\/r16\/lab-down\.sh/u);
+ assert.match(queryJob,/Validate query CPU JSON and exact three-file artifact\n        id: verify_query_cpu\n        if: always\(\)/u);
+ assert.match(queryJob,/steps\.verify_query_cpu\.outputs\.evidence_ok == 'true'/u,
+  'bounded full evidence uploads even when the oracle step failed, only after validation');
+ assert.match(queryJob,/steps\.verify_query_cpu\.outputs\.rejection_ready == 'true'/u,
+  'invalid or over-cap files can upload only the small rejection receipt');
  assert.match(profileJob,/needs: native-query-cpu/u);
  assert.match(profileJob,/needs\.native-query-cpu\.outputs\.target_sha == inputs\.target_ref/u);
  assert.match(profileJob,/needs\.native-query-cpu\.outputs\.probe_sha == github\.sha/u);
  assert.match(profileJob,/needs\.native-query-cpu\.outputs\.status == 'observed'.*needs\.native-query-cpu\.outputs\.status == 'unavailable'/su);
  const body=await workflowStepBody(workflow,'Validate query CPU JSON and exact three-file artifact');
- const root=await mkdtemp(join(tmpdir(),'r16-query-cpu-artifact-gate-')),artifacts=join(root,'query'),output=join(root,'github-output');
+ const root=await mkdtemp(join(tmpdir(),'r16-query-cpu-artifact-gate-')),artifacts=join(root,'query'),output=join(root,'github-output'),
+  rejectionRoot=join(realpathSync(root),'query-rejected');
  const target=PROFILE_ONLY_TARGET_SHA_V1,probe='f'.repeat(40);
- const makeReport=(status:'observed'|'unavailable')=>{
+ const makeReport=async(status:'observed'|'unavailable'|'failed')=>{
   const unavailable=status==='unavailable';
-  return{contract:'r16-native-query-cpu-oracle-v1',status,target_sha:target,probe_sha:probe,diagnostic_only:true,h1_accepted:false,
-   gain_claim:false,native46_reexecuted:false,only_installed_C:true,function_replaced:false,source6:Array.from({length:6},(_,i)=>({file:`source-${i}`})),
-   failure:null,secondary_failures:[],unavailable_reasons:unavailable?['pg_read_file_sqlstate_42501']:[],
-   preflight:[{status:unavailable?'unavailable':'observed',...(unavailable?{reason:'pg_read_file_sqlstate_42501'}:{})},
-    {status:'observed'}],oracles_executed:unavailable?0:6,oracle_checks_passed:unavailable?0:6,
-   coverage:{select_repetitions_completed:unavailable?0:3,dml_repetitions_completed:unavailable?0:3,
-    dml_stages_observed:unavailable?0:9,control_pairs:unavailable?0:8,proc_reads_observed:unavailable?0:38}};
+  const report=createQueryCpuBaseReportV1({targetSha:target,probeSha:probe,sources:SOURCE_DECLARATIONS_V1,inline:{},owned:{}});
+  report.status=status;
+  report.preflight=unavailable?[{status:'unavailable',reason:'pg_read_file_sqlstate_42501'},{status:'observed'}]:
+   status==='observed'?[{status:'observed'},{status:'observed'}]:[];
+  if(unavailable)report.unavailable_reasons=['pg_read_file_sqlstate_42501'];
+  report.oracles_executed=unavailable?0:status==='observed'?6:0;report.oracle_checks_passed=report.oracles_executed;
+  report.coverage={select_repetitions_completed:unavailable?0:status==='observed'?3:0,
+   dml_repetitions_completed:unavailable?0:status==='observed'?3:0,dml_stages_observed:unavailable?0:status==='observed'?9:0,
+   control_pairs:unavailable?0:status==='observed'?8:0,proc_reads_observed:unavailable?0:status==='observed'?38:0};
+  if(status==='failed'){
+   report.failure={phase:'native_C_oracles',reason:'native_oracle_failure',sqlstate:null};
+   await finishQueryCpuPostchecksForTestV1(report,{identity:async()=>{throw Error('cpu_owned_identity_unavailable');},
+    source:async()=>{throw Error('cpu_source_identity_invalid');}});
+  }
+  return report;
  };
- const makeFiles=async(status:'observed'|'unavailable')=>{
-  await rm(artifacts,{recursive:true,force:true});await mkdir(artifacts,{recursive:true});await writeFile(output,'');
-  const tap=Buffer.from(`# tests 42\n# pass 42\n# fail 0\n# cancelled 0\n# skipped 0\n`);
+ const makeFiles=async(status:'observed'|'unavailable'|'failed')=>{
+  await rm(artifacts,{recursive:true,force:true});await rm(rejectionRoot,{recursive:true,force:true});
+  await mkdir(artifacts,{recursive:true});await writeFile(output,'');
+  const tap=Buffer.from(`# tests 43\n# pass 43\n# fail 0\n# cancelled 0\n# skipped 0\n`);
   const receipt={contract:'r16-diagnostic-pure-suite-v1',status:'verified',diagnostic_only:true,h1_accepted:false,exit_status:0,requested_target_sha:target,
    target_git_sha_before:target,target_git_sha_after:target,requested_probe_sha:probe,probe_git_sha_before:probe,probe_git_sha_after:probe,
    test_file:'scripts/r16-diagnostics/listening-small/query-cpu-oracle.test.mjs',tap_file:'query-cpu.test.tap',
-   counts:{tests:42,pass:42,fail:0,cancelled:0,skipped:0},
+   counts:{tests:43,pass:43,fail:0,cancelled:0,skipped:0},
    tap_sha256:createHash('sha256').update(tap).digest('hex')};
-  await writeFile(join(artifacts,'query-cpu.json'),JSON.stringify(makeReport(status)));
+  await writeFile(join(artifacts,'query-cpu.json'),JSON.stringify(await makeReport(status)));
   await writeFile(join(artifacts,'query-cpu.test.tap'),tap);
   await writeFile(join(artifacts,'query-cpu.test.receipt.json'),JSON.stringify(receipt));
  };
- const execute=()=>spawnSync('bash',['-euo','pipefail','-c',body],{encoding:'utf8',env:{PATH:process.env.PATH??'/usr/bin:/bin',
-  QUERY_CPU_ARTIFACT_ROOT:artifacts,TARGET_REF:target,PROBE_REF:probe,GITHUB_OUTPUT:output}});
+ const execute=(oracleOutcome='success')=>spawnSync('bash',['-euo','pipefail','-c',body],{encoding:'utf8',env:{PATH:process.env.PATH??'/usr/bin:/bin',
+  QUERY_CPU_ARTIFACT_ROOT:artifacts,TARGET_REF:target,PROBE_REF:probe,GITHUB_OUTPUT:output,ORACLE_OUTCOME:oracleOutcome,
+  QUERY_CPU_REJECTION_ROOT:rejectionRoot}});
  try{
   for(const status of ['observed','unavailable'] as const){await makeFiles(status);const result=execute();assert.equal(result.status,0,result.stderr||result.stdout);
-   assert.match(await readFile(output,'utf8'),new RegExp(`^status=${status}$`,'mu'));}
+   const writes=await readFile(output,'utf8');assert.match(writes,new RegExp(`^status=${status}$`,'mu'));assert.match(writes,/^evidence_ok=true$/mu);}
   await makeFiles('unavailable');await writeFile(join(artifacts,'extra.json'),'{}');
-  assert.notEqual(execute().status,0,'extra artifact files must be rejected');
-  await makeFiles('unavailable');const failed=JSON.parse(await readFile(join(artifacts,'query-cpu.json'),'utf8'));
-  failed.status='failed';await writeFile(join(artifacts,'query-cpu.json'),JSON.stringify(failed));
-  assert.notEqual(execute().status,0,'failed oracle status must never satisfy the profile prerequisite');
+  const extra=execute();assert.notEqual(extra.status,0,'extra artifact files must be rejected');
+  assert.match(await readFile(output,'utf8'),/^rejection_ready=true$/mu,extra.stderr||extra.stdout);
+  const reject=JSON.parse(await readFile(join(rejectionRoot,'rejection.json'),'utf8'));
+  assert.deepEqual(reject,{contract:'r16-query-cpu-evidence-rejection-v1',status:'rejected',reason:'query_cpu_file_set_invalid',diagnostic_only:true,h1_accepted:false});
+  assert.doesNotMatch(JSON.stringify(reject),new RegExp(artifacts.replace(/[.*+?^${}()|[\]\\]/g,'\\$&'),'u'));
+  await makeFiles('unavailable');await writeFile(join(artifacts,'query-cpu.json'),Buffer.alloc(2*1024*1024+1,0x61));
+  const overCap=execute();assert.notEqual(overCap.status,0,'oversized JSON must not enter the full evidence artifact');
+  const boundedReject=await readFile(join(rejectionRoot,'rejection.json'),'utf8');
+  assert.equal(JSON.parse(boundedReject).reason,'query_cpu_file_invalid');assert.ok(Buffer.byteLength(boundedReject)<8192);
+  assert.doesNotMatch(boundedReject,/a{100}/u,'oversized private payload is never copied to rejection evidence');
+  await makeFiles('failed');const failed=execute('failure');assert.equal(failed.status,0,failed.stderr||failed.stdout);
+  const failedWrites=await readFile(output,'utf8');assert.match(failedWrites,/^evidence_ok=true$/mu);
+  assert.doesNotMatch(failedWrites,/^(?:status|target_sha|probe_sha)=/mu,'failed report cannot set accepted job outputs');
+  const failedReport=JSON.parse(await readFile(join(artifacts,'query-cpu.json'),'utf8'));
+  assert.deepEqual(failedReport.failure,{phase:'native_C_oracles',reason:'native_oracle_failure',sqlstate:null});
+  assert.deepEqual(failedReport.secondary_failures.map((item:any)=>[item.phase,item.primary_phase]),
+   [['final_identity','native_C_oracles'],['final_source','native_C_oracles']]);
+  await makeFiles('unavailable');const malformedFailure=JSON.parse(await readFile(join(artifacts,'query-cpu.json'),'utf8'));
+  malformedFailure.status='failed';await writeFile(join(artifacts,'query-cpu.json'),JSON.stringify(malformedFailure));
+  assert.notEqual(execute('failure').status,0,'failed status without its producer failure contract must be rejected');
   await makeFiles('unavailable');const bad=JSON.parse(await readFile(join(artifacts,'query-cpu.json'),'utf8'));bad.target_sha='0'.repeat(40);
   await writeFile(join(artifacts,'query-cpu.json'),JSON.stringify(bad));assert.notEqual(execute().status,0,'target mismatch must be rejected');
   await makeFiles('unavailable');const reason=JSON.parse(await readFile(join(artifacts,'query-cpu.json'),'utf8'));

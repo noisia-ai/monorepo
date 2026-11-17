@@ -48,6 +48,7 @@ jobs:
       TARGET_REF: ${{ inputs.target_ref }}
       PROBE_REF: ${{ github.sha }}
       QUERY_CPU_ARTIFACT_ROOT: ${{ runner.temp }}/r16-query-cpu-${{ github.run_id }}-${{ github.run_attempt }}
+      QUERY_CPU_REJECTION_ROOT: ${{ runner.temp }}/r16-query-cpu-rejected-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
       - name: Validate fixed C target and reject provider credentials
         env:
@@ -196,7 +197,7 @@ jobs:
           const counts = Object.fromEntries(['tests','pass','fail','cancelled','skipped'].map(k => [k,readCount(k)]));
           const exitStatus = Number(statusText);
           const verified = exitStatus === 0 && Object.values(counts).every(Number.isSafeInteger)
-            && counts.tests === 42 && counts.pass === 42 && counts.fail === 0 && counts.cancelled === 0 && counts.skipped === 0
+            && counts.tests === 43 && counts.pass === 43 && counts.fail === 0 && counts.cancelled === 0 && counts.skipped === 0
             && targetBefore === requestedTarget && targetAfter === requestedTarget
             && probeBefore === requestedProbe && probeAfter === requestedProbe;
           const receipt = {contract:'r16-diagnostic-pure-suite-v1',status:verified?'verified':'not_verified',diagnostic_only:true,h1_accepted:false,
@@ -256,13 +257,44 @@ jobs:
 
       - name: Validate query CPU JSON and exact three-file artifact
         id: verify_query_cpu
-        if: success()
+        if: always()
+        env:
+          ORACLE_OUTCOME: ${{ steps.query_cpu_oracle.outcome }}
         run: |
           set -euo pipefail
-          node - "$QUERY_CPU_ARTIFACT_ROOT" "$TARGET_REF" "$PROBE_REF" "$GITHUB_OUTPUT" <<'NODE'
+          node - "$QUERY_CPU_ARTIFACT_ROOT" "$TARGET_REF" "$PROBE_REF" "$GITHUB_OUTPUT" "$ORACLE_OUTCOME" "$QUERY_CPU_REJECTION_ROOT" <<'NODE'
           const fs = require('node:fs');
           const path = require('node:path');
-          const [root, target, probe, output] = process.argv.slice(2);
+          const [root, target, probe, output, oracleOutcome, rejectionRoot] = process.argv.slice(2);
+          const reject = reason => {
+            const safeReason = /^query_cpu_[a-z_]{1,100}$/.test(reason) ? reason : 'query_cpu_evidence_invalid';
+            try {
+              fs.mkdirSync(rejectionRoot,{mode:0o700});
+              const st = fs.lstatSync(rejectionRoot);
+              if (!st.isDirectory() || st.isSymbolicLink() || fs.realpathSync(rejectionRoot) !== rejectionRoot) throw new Error();
+              const receipt = {contract:'r16-query-cpu-evidence-rejection-v1',status:'rejected',reason:safeReason,diagnostic_only:true,h1_accepted:false};
+              const bytes = Buffer.from(`${JSON.stringify(receipt,null,2)}\n`);
+              if (bytes.length > 8192) throw new Error();
+              fs.writeFileSync(path.join(rejectionRoot,'rejection.json'),bytes,{flag:'wx',mode:0o600});
+              fs.appendFileSync(output,'rejection_ready=true\n');
+            } catch {
+              process.stderr.write('query_cpu_evidence:query_cpu_rejection_receipt_unavailable\n');
+              process.exitCode = 1;
+              return;
+            }
+            process.stderr.write(`query_cpu_evidence:${safeReason}\n`);
+            process.exitCode = 1;
+          };
+          const exactKeys = (value,keys) => value && typeof value === 'object' && !Array.isArray(value) &&
+            JSON.stringify(Object.keys(value).sort()) === JSON.stringify([...keys].sort());
+          const safeReason = value => typeof value === 'string' &&
+            (/^cpu_[a-z_]{1,100}$/.test(value) || /^pg_read_file_(?:failed|sqlstate_[0-9A-Z]{5})$/.test(value) ||
+             value === 'proc_stat_empty' || value === 'native_oracle_failure');
+          const validFailure = (failure,primaryPhase=null) => exactKeys(failure,primaryPhase === null ? ['phase','reason','sqlstate'] : ['phase','reason','sqlstate','primary_phase']) &&
+            ['preflight','native_C_oracles','final_identity','final_source'].includes(failure.phase) && safeReason(failure.reason) &&
+            (failure.sqlstate === null || (typeof failure.sqlstate === 'string' && /^[0-9A-Z]{5}$/.test(failure.sqlstate))) &&
+            (primaryPhase === null || failure.primary_phase === primaryPhase);
+          try {
           const expected = ['query-cpu.json','query-cpu.test.receipt.json','query-cpu.test.tap'].sort();
           const limits = {'query-cpu.json':2*1024*1024,'query-cpu.test.receipt.json':2*1024*1024,'query-cpu.test.tap':2*1024*1024};
           const entries = fs.readdirSync(root).sort();
@@ -276,13 +308,18 @@ jobs:
           if (total > 8*1024*1024) throw new Error('query_cpu_total_size_invalid');
           const report = JSON.parse(fs.readFileSync(path.join(root,'query-cpu.json'),'utf8'));
           const receipt = JSON.parse(fs.readFileSync(path.join(root,'query-cpu.test.receipt.json'),'utf8'));
-            if (report.contract !== 'r16-native-query-cpu-oracle-v1' || !['observed','unavailable'].includes(report.status) ||
+          if (report.contract !== 'r16-native-query-cpu-oracle-v1' || !['observed','unavailable','failed'].includes(report.status) ||
             report.target_sha !== target || report.probe_sha !== probe || report.diagnostic_only !== true || report.h1_accepted !== false ||
             report.gain_claim !== false || report.native46_reexecuted !== false || report.only_installed_C !== true || report.function_replaced !== false)
             throw new Error('query_cpu_report_invalid');
-          if (report.failure !== null || !Array.isArray(report.secondary_failures) || report.secondary_failures.length !== 0 ||
-            !Array.isArray(report.source6) || report.source6.length !== 6 || !Array.isArray(report.preflight) || report.preflight.length !== 2 ||
-            !Array.isArray(report.unavailable_reasons)) throw new Error('query_cpu_report_incomplete');
+          if (!Array.isArray(report.source6) || report.source6.length !== 6 || !Array.isArray(report.secondary_failures) ||
+            report.secondary_failures.length > 2 || !Array.isArray(report.unavailable_reasons)) throw new Error('query_cpu_report_incomplete');
+          if (report.status === 'failed') {
+            if (oracleOutcome !== 'failure' || !validFailure(report.failure) ||
+              report.secondary_failures.some(failure => !validFailure(failure,report.failure.phase)))
+              throw new Error('query_cpu_failed_status_invalid');
+          } else if (oracleOutcome !== 'success' || report.failure !== null || report.secondary_failures.length !== 0 ||
+            !Array.isArray(report.preflight) || report.preflight.length !== 2) throw new Error('query_cpu_report_incomplete');
           if (report.status === 'observed' && (report.preflight.some(item => item.status !== 'observed') || report.unavailable_reasons.length !== 0 ||
             report.oracles_executed !== 6 || report.oracle_checks_passed !== 6 ||
             report.coverage?.select_repetitions_completed !== 3 || report.coverage?.dml_repetitions_completed !== 3 ||
@@ -305,14 +342,19 @@ jobs:
             receipt.requested_probe_sha !== probe || receipt.probe_git_sha_before !== probe || receipt.probe_git_sha_after !== probe ||
             receipt.test_file !== 'scripts/r16-diagnostics/listening-small/query-cpu-oracle.test.mjs' ||
             receipt.tap_file !== 'query-cpu.test.tap' ||
-            receipt.counts?.tests !== 42 || receipt.counts?.pass !== 42 || receipt.counts?.fail !== 0 ||
+            receipt.counts?.tests !== 43 || receipt.counts?.pass !== 43 || receipt.counts?.fail !== 0 ||
             receipt.counts?.cancelled !== 0 || receipt.counts?.skipped !== 0 ||
             receipt.tap_sha256 !== require('node:crypto').createHash('sha256').update(tap).digest('hex')) throw new Error('query_cpu_test_receipt_invalid');
-          fs.appendFileSync(output,`status=${report.status}\ntarget_sha=${target}\nprobe_sha=${probe}\n`);
+          if (report.status === 'failed') fs.appendFileSync(output,'evidence_ok=true\n');
+          else fs.appendFileSync(output,`evidence_ok=true\nstatus=${report.status}\ntarget_sha=${target}\nprobe_sha=${probe}\n`);
+          } catch (error) {
+            const reason = error instanceof Error && /^query_cpu_[a-z_]{1,100}$/.test(error.message) ? error.message : 'query_cpu_evidence_invalid';
+            reject(reason);
+          }
           NODE
 
       - name: Upload the bounded query CPU evidence
-        if: success() && steps.verify_query_cpu.outcome == 'success'
+        if: always() && steps.verify_query_cpu.outcome == 'success' && steps.verify_query_cpu.outputs.evidence_ok == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: r16-query-cpu-${{ github.run_id }}
@@ -320,6 +362,15 @@ jobs:
             ${{ runner.temp }}/r16-query-cpu-${{ github.run_id }}-${{ github.run_attempt }}/query-cpu.json
             ${{ runner.temp }}/r16-query-cpu-${{ github.run_id }}-${{ github.run_attempt }}/query-cpu.test.tap
             ${{ runner.temp }}/r16-query-cpu-${{ github.run_id }}-${{ github.run_attempt }}/query-cpu.test.receipt.json
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload only the bounded query CPU rejection receipt
+        if: always() && steps.verify_query_cpu.outputs.rejection_ready == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: r16-query-cpu-rejected-${{ github.run_id }}
+          path: ${{ env.QUERY_CPU_REJECTION_ROOT }}/rejection.json
           if-no-files-found: error
           retention-days: 7
 
