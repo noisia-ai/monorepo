@@ -103,6 +103,7 @@ const codecMethods:Array<readonly[object,PropertyKey,unknown]>=[
  [Object,'getPrototypeOf',codecGuard.prototype],[Object,'hasOwn',codecGuard.hasOwn],[Reflect,'ownKeys',codecGuard.keys],
  [nodeTypes,'isProxy',codecGuard.isProxy],[Object,'entries',Object.entries],[Object,'fromEntries',Object.fromEntries],
  [Object,'values',Object.values],[Object,'freeze',Object.freeze],[JSON,'parse',JSON.parse],[JSON,'stringify',JSON.stringify],
+ [Buffer,'byteLength',Buffer.byteLength],
  [globalThis,'structuredClone',structuredClone],[String.prototype,'localeCompare',String.prototype.localeCompare],
  [Array,'isArray',Array.isArray],[Array.prototype,'sort',Array.prototype.sort],[Array.prototype,'map',Array.prototype.map],
  [Array.prototype,'every',Array.prototype.every],[Array.prototype,'some',Array.prototype.some],

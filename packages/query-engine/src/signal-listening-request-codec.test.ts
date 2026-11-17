@@ -207,3 +207,19 @@ test('changed array callbacks before building retain the literal old builder obs
   assert.deepEqual(actual,expected);assert.equal(newCount,oldCount,key);
  }
 });
+
+
+test('changed Buffer.byteLength disables optional reuse without adding hooks before or after compile',()=>{
+ const config=configuration(),own=Object.getOwnPropertyDescriptor,define=Object.defineProperty,descriptor=own(Buffer,'byteLength')!;
+ const compiled=compileSignalListeningSnapshotV1(config),i=input(),q=buildSignalListeningCompiledRequestV1(i,compiled);
+ for(const mode of ['count','throw','accessor']as const){
+  let calls=0,oldCalls=0,newCalls=0,oldIdentity:ReturnType<typeof oldCompiledSnapshot>|undefined,newIdentity:ReturnType<typeof readSignalListeningSnapshotV1>|undefined,actualDigest:unknown,oldDigest:unknown;
+  const hook=(...args:unknown[])=>{calls++;if(mode!=='count')throw Error('Buffer hook must remain unread');return Reflect.apply(descriptor.value,Buffer,args);};
+  try{define(Buffer,'byteLength',mode==='accessor'?{get:hook,configurable:true}:{...descriptor,value:hook});
+   oldIdentity=oldCompiledSnapshot(config);oldCalls=calls;calls=0;newIdentity=readSignalListeningSnapshotV1(compileSignalListeningSnapshotV1(config));newCalls=calls;
+   calls=0;oldDigest=baseline(run,i,q);oldCalls+=calls;calls=0;actualDigest=signalListeningRequestDigestV1(run,i,q);newCalls+=calls;
+   const fresh=buildSignalListeningCompiledRequestV1(i,compiled);assert.equal(JSON.stringify(fresh),JSON.stringify(q));
+  }finally{define(Buffer,'byteLength',descriptor);}
+  assert.equal(newCalls,oldCalls);assert.equal(calls,0);assert.equal(actualDigest,oldDigest);assert.ok(newIdentity&&oldIdentity);assert.deepEqual(newIdentity.identity,oldIdentity.identity);assert.equal(newIdentity.identity_digest,oldIdentity.identity_digest);
+ }
+});
