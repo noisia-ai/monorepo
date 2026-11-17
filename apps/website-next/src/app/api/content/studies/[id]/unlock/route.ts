@@ -2,8 +2,9 @@ import { randomBytes } from "node:crypto";
 import { cookies } from "next/headers";
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
-import { getStudy } from "@/content/studies";
+import { getStudy, getStudyFile } from "@/content/studies";
 import { ACCESS_COOKIE_DAYS, accessCookieName, READER_COOKIE, readerValid, registerForStudy } from "@/lib/content/access";
+import { studyAccessEmail } from "@/lib/content/study-email";
 import { requestOrigin } from "@/lib/site";
 
 /**
@@ -37,37 +38,6 @@ function limited(ip: string) {
   if (recent.size > 5000) for (const [key, times] of recent) if (now - times[times.length - 1]! > WINDOW_MS) recent.delete(key);
   return hits.length > MAX_PER_WINDOW;
 }
-
-const copy = {
-  es: {
-    subject: (title: string) => `Tu estudio: ${title}`,
-    body: (name: string, title: string, link: string) =>
-      [
-        `Hola, ${name}:`,
-        "",
-        `Aquí está tu acceso a "${title}". Ábrelo cuando quieras con este link personal:`,
-        link,
-        "",
-        "Es solo para ti y dura un año. Si tienes preguntas sobre el estudio o quieres verlo para tu marca, responde a este correo.",
-        "",
-        "Noisia · noisia.ai"
-      ].join("\n")
-  },
-  en: {
-    subject: (title: string) => `Your study: ${title}`,
-    body: (name: string, title: string, link: string) =>
-      [
-        `Hi ${name},`,
-        "",
-        `Here is your access to "${title}". Open it any time with this personal link:`,
-        link,
-        "",
-        "It is just for you and lasts a year. If you have questions about the study or want it for your brand, reply to this email.",
-        "",
-        "Noisia · noisia.ai"
-      ].join("\n")
-  }
-};
 
 async function send(apiKey: string, message: Record<string, unknown>): Promise<boolean> {
   const response = await fetch("https://api.resend.com/emails", {
@@ -122,10 +92,14 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   const lang = body.locale;
   const title = study.summary[lang].title;
   const link = `${origin.origin}/e/${token}${lang === "en" ? "?lang=en" : ""}`;
+  const hasCover = Boolean(await getStudyFile(study, "email.jpg").catch(() => null));
+  const cover = hasCover ? `${origin.origin}/api/content/studies/${study.id}/email.jpg?v=${study.version}` : null;
+  const email = studyAccessEmail(lang, { name: body.name, title, link, cover, slides: study.slideCount });
   const from = process.env.STUDY_FROM_EMAIL || process.env.WORKSHOP_FROM_EMAIL || "contacto@noisia.ai";
   const team = process.env.WORKSHOP_TO_EMAIL || "hola@noisia.ai";
   const [reader_ok, team_ok] = await Promise.all([
-    send(apiKey, { from, to: [body.email], reply_to: team, subject: copy[lang].subject(title), text: copy[lang].body(body.name, title, link) }),
+    // Replies go to the team: the email invites the reader to answer.
+    send(apiKey, { from, to: [body.email], reply_to: team, subject: email.subject, html: email.html, text: email.text }),
     send(apiKey, {
       from,
       to: [team],
