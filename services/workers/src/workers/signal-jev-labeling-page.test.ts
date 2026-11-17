@@ -281,3 +281,86 @@ test('Listening waiting at an empty frontier preserves batching while HTTP sibli
   hooks:{map:(_run,call)=>[call.id],error:()=>[],labeled:()=>true}});
  assert.equal(result.labeled,2);assert.equal(attempts,2);assert.equal(rawPages,1);assert.equal(reads,2);
 });
+
+/** One retained future read cannot own the wakeup of previously committed calls. */
+async function exerciseAdmissionWake(mode:'http'|'apply'|'cancel'|'feed_failure'|'mark_failure'|'feed_memory_only'){
+ const {processJevStreamingWindowV2}=await import('./signal-jev-streaming-window');
+ type Store=Parameters<typeof processJevLabelingPageV1<FacetInput,string>>[0]['store'];
+ const rows=Array.from({length:mode==='feed_memory_only'?1:3},(_,i)=>({id:`wake-${i}`,request_digest:`wake-${i}`,status:'reserved',raw_body:null,results_applied:false,
+  request:{model:'jev-1.13.0',state:String(i),questions:{q:{type:'noul',instructions:'configured'}}},inputs:[{root_id:String(i),text:String(i)}]}))as unknown as LabelingCallV1<FacetInput>[];
+ const feedStarted=deferredFrontier(),feedGate=deferredFrontier(),firstResponse=deferredFrontier(),secondResponse=deferredFrontier(),
+  firstBuffered=deferredFrontier(),applyStarted=deferredFrontier(),applyGate=deferredFrontier();
+ const cancellation=new AbortController(),events:string[]=[],memory:number[]=[],sent:string[]=[],raw:string[]=[],settled:string[]=[],applied:string[]=[],requeued:string[]=[];
+ let reads=0,feedReleased=false,rawPages=0,finished=0,active=0,peak=0;
+ const store={markSubmitting:async(_run:unknown,calls:typeof rows)=>{
+   for(const call of calls){events.push(`mark:${call.id}`);call.status='submitting';}
+   if(mode==='mark_failure'&&calls.some(call=>call.id==='wake-2'))throw Error('mark_ack_lost');
+  },requeueUnsent:async(_run:unknown,calls:typeof rows)=>{for(const call of calls){requeued.push(call.id);call.status='reserved';}},
+  persistRawPage:async(_run:unknown,page:Array<{call:typeof rows[number];raw:string}>)=>{rawPages++;for(const row of page){raw.push(row.call.id);row.call.raw_body=row.raw;}},
+  settlePage:async(_run:unknown,page:Array<{call:typeof rows[number]}>)=>{for(const row of page){assert.ok(raw.includes(row.call.id));settled.push(row.call.id);row.call.status='settled';}},
+  apply:async(_run:unknown,page:Array<{call:typeof rows[number]}>)=>{applyStarted.resolve();if(mode==='apply')await applyGate.promise;
+   for(const row of page){assert.ok(settled.includes(row.call.id));applied.push(row.call.id);row.call.results_applied=true;}},
+  finish:async()=>{finished++;return rows.every(row=>row.results_applied)?'completed':'running';},
+  markFailed:async()=>{throw Error('paid RAW must drain without invented failure');},
+ }as unknown as Store;
+ const budget=mode==='feed_memory_only'?210000:552*1024;
+ const pending=processJevStreamingWindowV2({run:{}as LabelingRunV1,calls:rows,store,cancellation,price:llmPriceV1('typesafe','jev-1.13.0','sync',.042),
+  execution:{max_in_flight:2,window_size:3,flush_size:2,max_flushes:1,max_buffered_bytes:budget,flush_interval_ms:60000},
+  revisit_empty_after_apply:true,feed_next:async()=>{reads++;assert.equal(reads,1,'one feeder, no repeated SQL while its read is pending');feedStarted.resolve();await feedGate.promise;
+   if(mode==='feed_failure')throw Error('feed_read_failed');return{closed:true};},
+  observe_stream:m=>{memory.push(m.reserved_working_bytes);if(m.buffered_responses===1)firstBuffered.resolve();},
+  provider:{max_concurrency:2,max_response_bytes:4096,async evaluate(request){const id=String(request.state);sent.push(id);events.push(`send:${id}`);active++;peak=Math.max(peak,active);
+   try{if(id==='0')await firstResponse.promise;if(id==='1')await secondResponse.promise;
+    const body=JSON.stringify({model:request.model,usage:{input_tokens:1,output_tokens:0},answers:{q:{type:'noul',noul:.8}}});
+    // A valid body at the advertised byte bound retains the whole conservative
+    // response allowance until APPLY; no large real allocation is needed.
+    return{http_status:200,latency_ms:1,body:mode==='apply'?' '.repeat(4096-Buffer.byteLength(body))+body:body};
+   }finally{active--;}}},
+  hooks:{map:(_run,call)=>[call.id],error:()=>{throw Error('no invented technical result');},labeled:()=>true,fail_on_error:true},
+ }).then(value=>({value,error:undefined}),error=>({value:undefined,error}));
+ let observedBeforeFeed=false,drainedBeforeFeed=false;
+ try{
+  await feedStarted.promise;
+  if(mode==='cancel')cancellation.abort();
+  if(mode!=='feed_memory_only'){firstResponse.resolve();await firstBuffered.promise;}
+  if(mode==='apply'){
+   secondResponse.resolve();await applyStarted.promise;
+   assert.equal(rawPages,1,'ordinary size-two batching, not a forced first-response flush');
+   assert.equal(sent.includes('2'),false,'response custody remains charged while APPLY is pending');applyGate.resolve();
+  }
+  // An event-loop checkpoint drains the controlled promise continuations; this
+  // is an ordering assertion, not a latency threshold or a benchmark sleep.
+  await new Promise<void>(resolve=>setImmediate(resolve));
+  observedBeforeFeed=events.includes('mark:wake-2');drainedBeforeFeed=finished>0;
+  if(mode==='http'||mode==='apply'||mode==='feed_failure'){
+   assert.ok(observedBeforeFeed,'already reserved remainder must be marked before the future read completes');
+   assert.ok(sent.includes('2'),'the old reserved remainder must reach HTTP without waiting for future read');
+  }else if(mode==='mark_failure'){
+   assert.ok(observedBeforeFeed,'Mark failure must be reached without waiting on the unrelated read');assert.equal(sent.includes('2'),false,'failed Mark cannot hand off HTTP');
+  }else{assert.equal(observedBeforeFeed,false);assert.equal(sent.includes('2'),false,'no premature handoff');if(mode==='feed_memory_only')assert.equal(sent.length,0,'the pending read is the only owner that can release the needed bytes');}
+  assert.equal(feedReleased,false);assert.equal(drainedBeforeFeed,false,'drain must still wait for the owned pending feed');
+ }finally{
+  feedReleased=true;events.push('release:feed');feedGate.resolve();firstResponse.resolve();secondResponse.resolve();applyGate.resolve();await pending;
+ }
+ const result=await pending;
+ assert.equal(reads,1);assert.ok(peak<=2);assert.ok(memory.every(bytes=>bytes>=0&&bytes<=budget),'same shared byte budget throughout');assert.ok(finished>0);
+ assert.equal(new Set(sent).size,sent.length,'one physical attempt per identity');assert.equal(new Set(raw).size,raw.length);assert.equal(new Set(settled).size,settled.length);assert.equal(new Set(applied).size,applied.length);
+ assert.deepEqual([...raw].sort(),sent.map(id=>`wake-${id}`).sort());assert.deepEqual([...settled].sort(),[...raw].sort());assert.deepEqual([...applied].sort(),[...raw].sort());
+ return{result,rows,sent,requeued,memory,observedBeforeFeed};
+}
+for(const mode of ['http','apply']as const)test(`reserved admission wake follows ${mode} progress while the next read remains pending`,async()=>{
+ const x=await exerciseAdmissionWake(mode);assert.equal(x.result.error,undefined);assert.equal(x.result.value?.status,'completed');assert.equal(x.result.value?.labeled,3);assert.equal(x.sent.length,3);assert.deepEqual(x.requeued,[]);assert.equal(x.memory.at(-1),0);
+});
+test('reserved admission wake preserves cancellation and drains the pending feed and paid siblings',async()=>{
+ const x=await exerciseAdmissionWake('cancel');assert.equal(x.result.error,undefined);assert.equal(x.sent.length,2);assert.equal(x.rows[2]!.status,'reserved');assert.equal(x.rows[2]!.results_applied,false);assert.deepEqual(x.requeued,[]);assert.equal(x.memory.at(-1),0);
+});
+test('reserved admission wake preserves a later feed failure after draining every physical receipt',async()=>{
+ const x=await exerciseAdmissionWake('feed_failure');assert.equal(x.result.error?.message,'feed_read_failed');assert.equal(x.sent.length,3);assert.ok(x.rows.every(row=>row.results_applied));assert.deepEqual(x.requeued,[]);
+});
+test('reserved admission wake requeues a failed Mark handoff once without sending or losing its identity',async()=>{
+ const x=await exerciseAdmissionWake('mark_failure');assert.equal(x.result.error?.message,'mark_ack_lost');assert.equal(x.sent.length,2);assert.deepEqual(x.requeued,['wake-2']);assert.equal(x.rows[2]!.status,'reserved');assert.equal(x.rows[2]!.results_applied,false);
+});
+
+test('reserved admission wake waits safely when feeding alone owns the missing response budget',async()=>{
+ const x=await exerciseAdmissionWake('feed_memory_only');assert.equal(x.result.error,undefined);assert.equal(x.result.value?.status,'completed');assert.equal(x.sent.length,1);assert.equal(x.result.value?.labeled,1);assert.deepEqual(x.requeued,[]);assert.equal(x.memory.at(-1),0);
+});

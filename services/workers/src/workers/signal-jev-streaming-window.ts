@@ -278,7 +278,9 @@ export async function processJevStreamingWindowV2<I extends FacetInput, R>(args:
       }
       const slots=Math.min(workers-inFlight,Math.floor((e.max_buffered_bytes-memory)/reservationBytes),reserved.length);
       if(slots<1){
-        if(feeding){await feeding;continue;}
+        // Already reserved calls can regain slots before the future page commits.
+        // Feeding's finally also wakes this single coordinator after releasing bytes.
+        if(feeding){await wait();continue;}
         if(!inFlight&&!active.size&&!buffered.length)throw Error('jev_stream_memory_budget_invalid');
         // Occupied HTTP slots are not buffer pressure. Preserve batching until
         // its size/timer boundary unless responses actually need memory to move.
