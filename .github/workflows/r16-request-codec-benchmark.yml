@@ -170,6 +170,12 @@ jobs:
                   cases = value.get('workloads', [])
                   if [(item.get('configured_questions'), item.get('candidate_questions_selected'), item.get('request_questions')) for item in cases] != [(4, 2, 2), (6, 4, 6)]:
                       raise ValueError('workload_counts_invalid')
+                  if not re.fullmatch(r'sha256:[0-9a-f]{64}', main.get('configuration_digest', '')) or not re.fullmatch(r'[0-9a-f]{64}', main.get('selected_consumer_keys_sha256', '')):
+                      raise ValueError('main_workload_digest_invalid')
+                  if any(not re.fullmatch(r'sha256:[0-9a-f]{64}', item.get('snapshot_configuration_digest_old', '')) or item.get('snapshot_configuration_digest_old') != item.get('snapshot_configuration_digest_new') for item in cases):
+                      raise ValueError('snapshot_configuration_digest_invalid')
+                  if cases[0].get('snapshot_configuration_digest_old') != main.get('configuration_digest'):
+                      raise ValueError('main_snapshot_configuration_digest_mismatch')
               else:
                   if 'trials' in value or 'parity' in value or not re.fullmatch(r'[a-z][a-z0-9_]{1,80}', value.get('reason_code', '')):
                       raise ValueError('rejection_shape_invalid')

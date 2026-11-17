@@ -6,6 +6,7 @@ import {
   BenchmarkError,
   createRequestCodecWorkloadsV1,
   parseRequestCodecBenchmarkArgsV1,
+  prepareComparisonModules,
   runOwnedTempLifecycleV1,
   validateRequestCodecArtifactV1,
   REQUEST_CODEC_BASE_SHA,
@@ -22,9 +23,11 @@ function positive() {
   const workloads = [
     {case_id: 'defined_consumer_4_configured_2_selected', configured_questions: 4, base_questions: 2,
       candidate_questions_configured: 2, candidate_questions_selected: 2, request_questions: 2, calls: 1000,
-      product_configuration_digest: `sha256:${digest}`, selected_consumer_keys_sha256: digest},
+      product_configuration_digest: `sha256:${digest}`, selected_consumer_keys_sha256: digest,
+      snapshot_configuration_digest_old: `sha256:${digest}`, snapshot_configuration_digest_new: `sha256:${digest}`},
     {case_id: 'base_2_plus_4_noul_candidates', configured_questions: 6, base_questions: 2,
-      candidate_questions_configured: 4, candidate_questions_selected: 4, request_questions: 6, calls: 1000},
+      candidate_questions_configured: 4, candidate_questions_selected: 4, request_questions: 6, calls: 1000,
+      snapshot_configuration_digest_old: `sha256:${digest}`, snapshot_configuration_digest_new: `sha256:${digest}`},
   ];
   const parity = workloads.map(item => ({case_id: item.case_id, verified_calls: 1000, request_bytes: 100_000,
     paired_output_sha256: digest, timing_checksum: 7}));
@@ -110,6 +113,14 @@ test('Main fixture is derived from the target product workload and the selection
   assert.equal(main.selected_keys.length, 2);
   assert.equal(main.inputs.length, 3);
   assert.deepEqual(workloads.map(item => [item.configuration.questions.length, item.selected_keys.length]), [[4, 2], [6, 6]]);
+  const fns = {compile: codec.compileSignalListeningSnapshotV1, readSnapshot: codec.readSignalListeningSnapshotV1,
+    build: codec.buildSignalListeningCompiledRequestV1, digest: codec.signalListeningRequestDigestV1};
+  const prepared = prepareComparisonModules({old: codec, new: codec, oldFns: fns, newFns: fns}, workloads);
+  assert.deepEqual(codec.readSignalListeningSnapshotV1(prepared[0].oldSnapshot).configuration, productWorkload.configuration);
+  assert.equal(codec.readSignalListeningSnapshotV1(prepared[0].oldSnapshot).configuration_digest, productWorkload.configuration_digest);
+  assert.equal(codec.readSignalListeningSnapshotV1(prepared[0].newSnapshot).configuration_digest, productWorkload.configuration_digest);
+  assert.deepEqual(codec.readSignalListeningSnapshotV1(prepared[0].oldSnapshot).configuration,
+    codec.readSignalListeningSnapshotV1(prepared[0].newSnapshot).configuration);
 });
 
 test('owned baseline lifecycle preserves the primary failure, attempts cleanup and postchecks, and rejects any secondary failure', async () => {

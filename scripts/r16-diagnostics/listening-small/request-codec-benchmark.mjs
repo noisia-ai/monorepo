@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
 import {execFileSync} from 'node:child_process';
 import {existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync} from 'node:fs';
+import {isDeepStrictEqual} from 'node:util';
 import os from 'node:os';
 import {pathToFileURL} from 'node:url';
 import {dirname, join, resolve} from 'node:path';
@@ -131,17 +132,20 @@ export function createRequestCodecWorkloadsV1(codecModule, workloadModule, calls
   const candidateKeys = ['defined_a', 'defined_b', 'defined_c', 'defined_d'];
   const mainWorkload = workloadModule.r16ListeningWorkloadV2('defined_consumer_second_pass');
   const mainConfiguration = mainWorkload?.configuration;
+  if (mainWorkload?.arm !== 'defined_consumer_second_pass' || mainConfiguration?.questions?.length !== 4
+    || !Array.isArray(mainWorkload.question_keys) || mainWorkload.question_keys.length !== 4
+    || JSON.stringify([...mainWorkload.question_keys].sort()) !== JSON.stringify(mainConfiguration.questions.map(question => question.key).sort())) {
+    fail('main_workload_shape_invalid');
+  }
   const mainSelectedKeys = codecModule.selectSignalListeningQuestionsV1(mainConfiguration, [])
     .filter(question => question.scope === 'consumer_category' && question.type === 'noul' && question.topic_source === 'defined')
     .map(question => question.key).sort();
-  if (mainWorkload?.arm !== 'defined_consumer_second_pass' || mainConfiguration?.questions?.length !== 4
-    || mainSelectedKeys?.length !== 2 || !Array.isArray(mainWorkload.question_keys)
-    || mainWorkload.question_keys.length !== 4
-    || JSON.stringify([...mainWorkload.question_keys].sort()) !== JSON.stringify(mainConfiguration.questions.map(question => question.key).sort())
+  if (mainSelectedKeys?.length !== 2
     || mainSelectedKeys.some(key => !mainWorkload.question_keys.includes(key))) {
     fail('main_workload_shape_invalid');
   }
-  const configuredDiscovered = {...base, questions: [...base.questions, ...candidateKeys.map(key => candidateQuestion(key, 'discovered'))]};
+  const configuredDiscovered = codecModule.validateSignalListeningConfigurationV1(
+    {...base, questions: [...base.questions, ...candidateKeys.map(key => candidateQuestion(key, 'discovered'))]});
   const selectedDiscovered = codecModule.selectSignalListeningQuestionsV1(configuredDiscovered,
     candidateKeys.map((key, index) => ({key, similarity: 1 - index / 10}))).map(question => question.key).sort();
   if (configuredDiscovered.questions.length !== 6 || selectedDiscovered.length !== 6) fail('stress_workload_shape_invalid');
@@ -162,24 +166,34 @@ export function createRequestCodecWorkloadsV1(codecModule, workloadModule, calls
 }
 
 function functionsFor(codecModule) {
-  const names = ['compileSignalListeningSnapshotV1', 'buildSignalListeningCompiledRequestV1', 'signalListeningRequestDigestV1'];
+  const names = ['compileSignalListeningSnapshotV1', 'readSignalListeningSnapshotV1',
+    'buildSignalListeningCompiledRequestV1', 'signalListeningRequestDigestV1', 'validateSignalListeningConfigurationV1'];
   if (names.some(name => typeof codecModule[name] !== 'function')) fail('codec_exports_invalid');
   return {
     compile: codecModule.compileSignalListeningSnapshotV1,
+    readSnapshot: codecModule.readSignalListeningSnapshotV1,
     build: codecModule.buildSignalListeningCompiledRequestV1,
     digest: codecModule.signalListeningRequestDigestV1,
   };
 }
 
-function prepareComparisonModules(modulePair, workloads) {
+export function prepareComparisonModules(modulePair, workloads) {
   return workloads.map(workload => {
-    const oldConfig = {...modulePair.old.signalListeningBaseTemplateV1({category: 'synthetic-category', lexicon_terms: ['synthetic', 'café']}),
-      questions: workload.configuration.questions};
-    const newConfig = {...modulePair.new.signalListeningBaseTemplateV1({category: 'synthetic-category', lexicon_terms: ['synthetic', 'café']}),
-      questions: workload.configuration.questions};
-    if (JSON.stringify(oldConfig) !== JSON.stringify(newConfig)) fail('configuration_wire_mismatch');
-    return {...workload, oldConfig, newConfig,
-      oldSnapshot: modulePair.oldFns.compile(oldConfig), newSnapshot: modulePair.newFns.compile(newConfig),
+    const oldConfig = structuredClone(workload.configuration);
+    const newConfig = structuredClone(workload.configuration);
+    const oldSnapshot = modulePair.oldFns.compile(oldConfig);
+    const newSnapshot = modulePair.newFns.compile(newConfig);
+    const oldSnapshotRead = modulePair.oldFns.readSnapshot(oldSnapshot);
+    const newSnapshotRead = modulePair.newFns.readSnapshot(newSnapshot);
+    if (!isDeepStrictEqual(oldSnapshotRead.configuration, workload.configuration)
+      || !isDeepStrictEqual(newSnapshotRead.configuration, workload.configuration)) fail('compiled_configuration_wire_mismatch');
+    if (oldSnapshotRead.configuration_digest !== newSnapshotRead.configuration_digest
+      || (workload.product_configuration_digest && oldSnapshotRead.configuration_digest !== workload.product_configuration_digest)) {
+      fail('compiled_configuration_digest_mismatch');
+    }
+    return {...workload, oldConfig, newConfig, oldSnapshot, newSnapshot,
+      oldSnapshotConfigurationDigest: oldSnapshotRead.configuration_digest,
+      newSnapshotConfigurationDigest: newSnapshotRead.configuration_digest,
       run: {id: `synthetic-run-${workload.case_id}`, entity_context_digest: `sha256:${deterministicHex(`${workload.case_id}:entity-context`)}`}};
   });
 }
@@ -338,6 +352,9 @@ export function validateRequestCodecArtifactV1(value) {
       selected_consumer_keys_sha256: value.workloads[0].selected_consumer_keys_sha256});
     assert.match(value.main_workload.configuration_digest ?? '', /^sha256:[0-9a-f]{64}$/u);
     assert.match(value.main_workload.selected_consumer_keys_sha256 ?? '', HASH_RE);
+    assert.ok(value.workloads.every(item => /^sha256:[0-9a-f]{64}$/u.test(item.snapshot_configuration_digest_old ?? '')
+      && item.snapshot_configuration_digest_old === item.snapshot_configuration_digest_new));
+    assert.equal(value.workloads[0].snapshot_configuration_digest_old, value.main_workload.configuration_digest);
     assert.equal(value.parity?.length, 2);
     assert.ok(value.parity.every(item => Number.isSafeInteger(item.verified_calls) && item.verified_calls === 1000
       && Number.isSafeInteger(item.request_bytes) && item.request_bytes > 0 && HASH_RE.test(item.paired_output_sha256 ?? '')));
@@ -450,7 +467,9 @@ async function runBenchmark(args) {
         configured_questions: item.configuration.questions.length,
         candidate_questions_configured: item.configuration.questions.length - 2,
         candidate_questions_selected: item.selected_keys.filter(key => key !== 'voice' && key !== 'promotion').length,
-        request_questions: item.selected_keys.length, calls: item.inputs.length})), parity: parityResults, trials,
+        request_questions: item.selected_keys.length, calls: item.inputs.length,
+        snapshot_configuration_digest_old: item.oldSnapshotConfigurationDigest,
+        snapshot_configuration_digest_new: item.newSnapshotConfigurationDigest})), parity: parityResults, trials,
       interpretation: {whole_pipeline_gain: false, cpu_function_attribution: false, causality_claim: false,
         json_stringify_included: true, compile_snapshot_included_in_trials: false, all_inputs_synthetic: true},
     };
