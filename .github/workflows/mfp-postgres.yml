@@ -537,7 +537,7 @@ jobs:
             || ! grep -qx '# Subtest: native FULL consumer prefix exposes one inner plan and transaction-local function counters' prefix-function-profile.tap \
             || [[ ! -s "$evidence_file" ]] \
             || [[ "$(wc -c < "$evidence_file")" -gt 1048576 ]] \
-            || ! jq -e 'type == "object" and .contract == "r16-prefix-function-profile-v1"' "$evidence_file" >/dev/null; then
+            || ! jq -e -s 'length == 1 and (.[0] | type == "object" and .contract == "r16-prefix-function-profile-v1")' "$evidence_file" >/dev/null; then
             echo '::error::R16 prefix function profile failed, was skipped, or did not emit its contracted JSON'
             exit 1
           fi
