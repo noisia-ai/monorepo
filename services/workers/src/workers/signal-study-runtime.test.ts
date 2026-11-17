@@ -3,7 +3,7 @@ import test from 'node:test';
 import {createHash,randomUUID} from 'node:crypto';
 import {SIGNAL_STUDY_TB_TEMPLATE_V1,SIGNAL_STUDY_TB_ROLES_V1,createSignalStudyTemplateSnapshotV1,
  buildSignalStudyExecutionConfigurationV1,buildSignalStudyConfiguredAxesRequestV1,signalListeningBaseTemplateV1,signalWorkspaceEmbeddingDigestV1 as digest,
- SIGNAL_STUDY_EDITORIAL_COMPILER_V2,type SignalStudyEditorialFormatStopV1,type SignalStudyV1} from '@noisia/query-engine';
+ SIGNAL_STUDY_BOUNDARY_RULE_VERSION_V1,SIGNAL_STUDY_EDITORIAL_COMPILER_V2,type SignalStudyEditorialFormatStopV1,type SignalStudyV1} from '@noisia/query-engine';
 import type{StudyNumericManifestV1}from'./signal-study-numeric';
 import {signalStudyRuntimeJobV1,studyRuntimeJevQuestionIdentityV1,type StudyRuntimeJevBatchPlanV1,type StudyRuntimeJevBatchCheckpointV1,type StudyRuntimeStoreV1,type StudyRuntimeLeaseV1,type StudyRuntimeSourceV1,
  type StudyRuntimeStepV1,type StudyRuntimeStepPlanV1,type StudyRuntimeReceiptV1,type StudyRuntimeOutputV1,type StudyRuntimeNumericComputedV1,type StudyRuntimeNumericPlanV1,type StudyRuntimeStoredNumericV1} from './signal-study-runtime';
@@ -66,6 +66,7 @@ function fixture(count=160){
    }
    const payload=JSON.parse(body.messages[0].content).untrusted_data,input_digest=digest(payload);let value:unknown;
    if(payload.contract_version==='signal-study-reconciliation-input-v2')value={contract_version:'signal-study-reconciliation-output-v2',input_digest,clusters:payload.candidates.map((c:{candidate_id:string})=>({representative_id:c.candidate_id,member_ids:[c.candidate_id]}))};
+   else if(payload.purpose==='rewrite_layer_boundary_rules')value={contract_version:SIGNAL_STUDY_BOUNDARY_RULE_VERSION_V1,input_digest,rules:payload.boundary_keys.map((motive_key:string)=>({motive_key,contrast_rule:'Separate the private counterfactual force from a resource constraint; never infer layer from shared vocabulary.',reason:'The original counterfactual diagnostics differed.'}))};
    else if(payload.groups)value={contract_version:'signal-study-motive-output-v1',input_digest,insufficient_group_keys:[],motives:payload.groups.map((g:{group_key:string;rows:Array<{root_id:string}>},i:number)=>({key:i?'motive_b':'motive_a',name:'Synthetic force '+i,definition:'Synthetic force evidence '+i,group_keys:[g.group_key],evidence_root_ids:[g.rows[0]!.root_id]}))};
    else if(payload.affected_keys){dominant=false;value={contract_version:'signal-study-contrast-output-v1',input_digest,definitions:payload.motives.map((m:{key:string;sample:Array<{root_id:string}>})=>({key:m.key,name:'Contrasted force',definition:'A narrower synthetic force',contrast_reason:'Synthetic contrast',evidence_root_ids:[m.sample[0]!.root_id]}))};}
    else{const passB=payload.motives[0].sampling.independence==='disjoint'&&sends.filter(p=>p.kind==='sonnet'&&p.request_body.includes('"diagnostics"')).length%2===0;
@@ -353,4 +354,31 @@ test('native deferred source completes the same methodology without inlining fit
   const result=await signalStudyRuntimeJobV1(f.execution_id,f);assert.equal(result.status,'completed');assert.equal(observed,true);assert.equal(f.output?.summary.denominator,160);assert.equal(f.output?.stability?.kappa,1);
   assert.throws(()=>done.roots[0]!.text,/disposed/);assert.throws(()=>pages.diagnostics(),/disposed/);
  }finally{await pages.dispose();}
+});
+
+test('new source rewrites boundary rules once before two blind recoders and restart reuses the journal',async()=>{
+ const{f}=batchingFixture();f.source.layer_boundary_rule_version=SIGNAL_STUDY_BOUNDARY_RULE_VERSION_V1;sealSource(f);f.repair=true;
+ assert.equal((await signalStudyRuntimeJobV1(f.execution_id,f)).status,'completed');
+ const sent=f.sends.filter(p=>p.kind==='sonnet').map(plan=>({plan,payload:JSON.parse(JSON.parse(plan.request_body).messages[0].content).untrusted_data}));
+ const rules=sent.filter(x=>x.payload.purpose==='rewrite_layer_boundary_rules');assert.equal(rules.length,1);
+ assert.equal(rules[0]!.payload.configuration_digest,digest(f.source.configuration));assert.equal(rules[0]!.payload.motives.length,2);
+ assert.ok(rules[0]!.payload.motives.every((m:{initial_assessments:Array<{pass:string}>})=>m.initial_assessments.map(x=>x.pass).join(',')==='a,b'));
+ const recoders=sent.filter(x=>x.payload.contrast_rule);assert.equal(recoders.length,2);
+ for(const coder of recoders){assert.ok(!('initial_assessments'in coder.payload));assert.equal(coder.payload.contrast_rule.includes('Separate the private counterfactual'),true);assert.ok(JSON.parse(coder.payload.contrast_rule).rules.every((r:object)=>!('reason'in r)&&!('initial_assessments'in r)));assert.ok(sent.indexOf(coder)>sent.indexOf(rules[0]!));}
+ assert.equal(f.output?.stability?.kappa,1);const count=f.sends.length;
+ assert.equal((await signalStudyRuntimeJobV1(f.execution_id,f)).status,'completed');assert.equal(f.sends.length,count);
+});
+test('new boundary-rule RAW ACK recovery never resends and invalid rules cannot publish',async()=>{
+ const{f}=batchingFixture();f.source.layer_boundary_rule_version=SIGNAL_STUDY_BOUNDARY_RULE_VERSION_V1;sealSource(f);f.repair=true;
+ const persist=f.store.persistReceipt;let interrupted=false;
+ f.store.persistReceipt=async(...args)=>{await persist(...args);if(!interrupted&&args[1].request_body.includes('rewrite_layer_boundary_rules')){interrupted=true;throw Error('lost boundary raw ACK');}};
+ await assert.rejects(signalStudyRuntimeJobV1(f.execution_id,f),/lost boundary raw ACK/);assert.equal(f.output,undefined);
+ assert.equal((await signalStudyRuntimeJobV1(f.execution_id,f)).status,'completed');
+ assert.equal(f.sends.filter(p=>p.kind==='sonnet'&&p.request_body.includes('rewrite_layer_boundary_rules')).length,1);
+ const{f:g}=batchingFixture();g.source.layer_boundary_rule_version=SIGNAL_STUDY_BOUNDARY_RULE_VERSION_V1;sealSource(g);g.repair=true;
+ const send=g.drivers.send;g.drivers.send=async plan=>{const raw=await send(plan);if(!plan.request_body.includes('rewrite_layer_boundary_rules'))return raw;
+  const value=JSON.parse(Buffer.from(raw.body_base64,'base64').toString('utf8'));const parsed=JSON.parse(value.content[0].text);parsed.rules[0].motive_key='outside_boundary';value.content[0].text=JSON.stringify(parsed);return receipt(value);};
+ await assert.rejects(signalStudyRuntimeJobV1(g.execution_id,g),/boundary_rule_scope_invalid/);assert.equal(g.output,undefined);
+ const before=g.sends.length;assert.equal((await signalStudyRuntimeJobV1(g.execution_id,g)).status,'outcome_unknown');assert.equal(g.sends.length,before);
+ assert.equal(g.sends.filter(p=>p.kind==='sonnet'&&JSON.parse(JSON.parse(p.request_body).messages[0].content).untrusted_data.contrast_rule).length,0);
 });

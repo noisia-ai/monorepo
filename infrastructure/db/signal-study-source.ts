@@ -1,3 +1,5 @@
+import type{SignalStudyQueryMetadataV1}from'./signal-study-query-metadata';
+import{SIGNAL_STUDY_BOUNDARY_RULE_VERSION_V1}from'@noisia/query-engine';
 import {createHash} from 'node:crypto';
 import type {PoolClient} from 'pg';
 import {signalStudyJevTargetDigestV1,validateSignalStudyExecutionConfigurationV1,signalStudySourceUrlStateV1,SIGNAL_STUDY_EDITORIAL_COMPILER_V2} from '@noisia/query-engine';
@@ -12,7 +14,7 @@ import{disposeStudySourcePagesV1}from'../../services/workers/src/workers/signal-
 export{prepareSignalStudyPagedSourceWithClientV1 as prepareSignalStudySourceWithClientV1}from'./signal-study-source-paged';
 import{baseSql,filteredSql,eligibleSql,validSql,rowFields,hydrateStudySourceNativeRowV1,hydrateFrozenStudySourceRootV1,type NativeRow}from'./signal-study-source-native';
 function params(cfg:SignalStudyConfigurationRecordV1,ids:string[]|null=null){return[cfg.id,cfg.workspace_id,JSON.stringify(cfg.envelope),signalStudyJevTargetDigestV1(cfg.envelope),ids];}
-export async function prepareSignalStudyInlineSourceWithClientV1(c:PoolClient,cfg:SignalStudyConfigurationRecordV1,executionId:string,metadata:{query_terms:string[];problem_terms:string[]}){
+export async function prepareSignalStudyInlineSourceWithClientV1(c:PoolClient,cfg:SignalStudyConfigurationRecordV1,executionId:string,metadata:SignalStudyQueryMetadataV1){
  const configuration=validateSignalStudyExecutionConfigurationV1(cfg.envelope),validFilters=new Set(['platform','channel','topic',...configuration.source_listening.configuration.questions.map(q=>q.key)]);
  if(Object.keys(configuration.study.cut.filters).some(key=>!validFilters.has(key)))fail('cut_filter_invalid',422);
  // Author metadata can appear in both the private proof JSON and the roster.
@@ -39,11 +41,11 @@ export async function prepareSignalStudyInlineSourceWithClientV1(c:PoolClient,cf
  const roots=records.map(r=>r.root),evidence_source_census={valid_url_roots:roots.filter(r=>signalStudySourceUrlStateV1(r.source_url)==='valid').length,missing_url_roots:roots.filter(r=>signalStudySourceUrlStateV1(r.source_url)==='missing').length,invalid_url_roots:roots.filter(r=>signalStudySourceUrlStateV1(r.source_url)==='invalid').length};
  const binding=(await c.query<{source_kind:'serving'|'human_edit';id:string;configuration_id:string;generation_id:string;snapshot_digest:string;base_snapshot_id:string}>('SELECT * FROM signal_study_configuration_sources_v1 WHERE study_configuration_id=$1 AND workspace_id=$2',[cfg.id,cfg.workspace_id])).rows[0];if(!binding)fail('listening_source_unavailable');
  const listening_source_binding={kind:binding.source_kind,id:binding.id,configuration_id:binding.configuration_id,generation_id:binding.generation_id,source_digest:binding.snapshot_digest,base_snapshot_id:binding.base_snapshot_id};
- const body:Omit<StudyRuntimeSourceV1,'source_digest'>&{evidence_source_census:typeof evidence_source_census;listening_source_binding:typeof listening_source_binding}={configuration,roots,evidence_source_census,listening_source_binding,editorial_compiler_version:SIGNAL_STUDY_EDITORIAL_COMPILER_V2,
+ const body:Omit<StudyRuntimeSourceV1,'source_digest'>&{evidence_source_census:typeof evidence_source_census;listening_source_binding:typeof listening_source_binding}={configuration,roots,evidence_source_census,listening_source_binding,editorial_compiler_version:SIGNAL_STUDY_EDITORIAL_COMPILER_V2,layer_boundary_rule_version:SIGNAL_STUDY_BOUNDARY_RULE_VERSION_V1,
   selection:{scope:'listening_consumer_cut',source_listening_digest:configuration.source_listening.configuration_digest,cut_digest:digest(configuration.study.cut),eligible_root_ids_digest:digest(roots.map(r=>r.root_id).sort()),eligible_roots:roots.length,pending_base_roots:0,corpus_roots:baseline.corpus},
   embedding_space_digest:rows[0]?.embedding_config_digest??String((await c.query('SELECT m.embedding_config_digest FROM signal_study_configuration_sources_v1 s JOIN signal_mass_labeling_maps m ON m.id=s.map_id WHERE s.study_configuration_id=$1',[cfg.id])).rows[0].embedding_config_digest),
   source_preparation_run_ids:[...new Set(rows.flatMap(r=>r.embedding_preparation_run_id?[r.embedding_preparation_run_id]:[]))].sort(),sampling_seed:digest({execution_id:executionId,study_digest:configuration.study_digest}),
-  query_terms:metadata.query_terms,problem_terms:metadata.problem_terms,query_metadata:{query_terms_declared:metadata.query_terms.length>0,problem_terms_declared:metadata.problem_terms.length>0},brand_baseline_roots:baseline.brand,human_revision_digest:cfg.human_revision_digest,max_roots:STUDY_SOURCE_MAX_ROOTS_V1,max_bytes:STUDY_SOURCE_MAX_BYTES_V1};
+  query_terms:metadata.query_terms,problem_terms:metadata.problem_terms,...(metadata.acquisition_query_metadata?{acquisition_query_metadata:metadata.acquisition_query_metadata}:{}),query_metadata:{query_terms_declared:metadata.acquisition_query_metadata?.complete??metadata.query_terms.length>0,problem_terms_declared:metadata.problem_terms.length>0},brand_baseline_roots:baseline.brand,human_revision_digest:cfg.human_revision_digest,max_roots:STUDY_SOURCE_MAX_ROOTS_V1,max_bytes:STUDY_SOURCE_MAX_BYTES_V1};
  const source={...body,source_digest:digest(body)};if(Buffer.byteLength(JSON.stringify(source))>STUDY_SOURCE_MAX_BYTES_V1)fail('source_requires_paged_spool',422);
  return{source,records,census:digest(records.map(r=>[r.row.root_id,r.proof_digest])),working_bytes:bound.working_bytes};
 }

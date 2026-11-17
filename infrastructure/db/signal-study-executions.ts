@@ -1,3 +1,4 @@
+import{resolveSignalStudyQueryMetadataV1}from'./signal-study-query-metadata';
 import {randomUUID} from 'node:crypto';
 import type {PoolClient} from 'pg';
 import type {StudyRuntimeLeaseV1,StudyRuntimeSourceV1} from '../../services/workers/src/workers/signal-study-runtime';
@@ -17,8 +18,9 @@ export async function requestSignalStudyExecutionV1(args:StudyAccessV1&{configur
   await c.query("SELECT pg_advisory_xact_lock(hashtextextended('signal-study-config:'||$1,0))",[cfg.study_id]);await studyAuthorizeV1(c,args,'process');
   if((await c.query('SELECT id FROM signal_study_configurations WHERE study_id=$1 ORDER BY revision DESC LIMIT 1',[cfg.study_id])).rows[0]?.id!==cfg.id)fail('configuration_changed');
   if(!(await c.query("SELECT 1 FROM signal_processing_policy_actions WHERE policy_version_id=$1 AND action='mass_labeling_jev' AND provider='typesafe' AND model='jev-1.13.0' AND configuration='{\"contract_version\":\"mass-labeling-jev-v2\",\"provider\":\"typesafe\",\"model\":\"jev-1.13.0\"}'::jsonb",[policy.id])).rows.length)fail('jev_policy_unavailable');
-  const metadata={query_terms:args.query_terms??[],problem_terms:args.problem_terms??[]},request_digest=digest({contract_version:'signal-study-execution-v1',configuration_id:cfg.id,configuration_digest:cfg.configuration_digest,cap_micro_usd:args.cap_micro_usd,metadata});
   const old=(await c.query<SignalStudyExecutionRecordV1&{request_digest:string}>('SELECT * FROM signal_study_executions WHERE workspace_id=$1 AND actor_user_id=$2 AND idempotency_key=$3',[args.workspace_id,args.actor_user_id,args.idempotency_key])).rows[0];
+  const metadata=await resolveSignalStudyQueryMetadataV1(c,cfg,args,old?.source_header);
+  const request_digest=digest({contract_version:'signal-study-execution-v1',configuration_id:cfg.id,configuration_digest:cfg.configuration_digest,cap_micro_usd:args.cap_micro_usd,metadata});
   if(old){if(old.request_digest!==request_digest)fail('idempotency_conflict');return old;}
   if((await c.query("SELECT 1 FROM signal_study_executions WHERE study_id=$1 AND status IN('building','queued','running','outcome_unknown')",[cfg.study_id])).rows.length)fail('already_active');
   const snapshot=(await c.query<{map_id:string;current:boolean}>(`SELECT s.map_id,signal_listening_discovery_source_current_v1(s.generation_id) current FROM signal_study_configuration_sources_v1 s WHERE s.study_configuration_id=$1 AND s.workspace_id=$2`,[cfg.id,args.workspace_id])).rows[0];

@@ -8,8 +8,8 @@ import {SIGNAL_STUDY_TB_TEMPLATE_V1,SIGNAL_STUDY_TB_ROLES_V1,createSignalStudyTe
 import {buildSignalStudyExecutionConfigurationV1} from './signal-study-configuration';
 import type {SignalStudyV1,SignalStudyAxesV1} from './signal-study-contracts';
 import type {SignalStudySampleV1} from './signal-study-evidence';
-import {validateSignalStudyLayerReviewV1,buildSignalStudyConfiguredLayerReviewV1,buildSignalStudyMotiveReviewV1,SignalStudyEditorialRequestSizeErrorV1} from './signal-study-editorial';
-import {compileSignalStudyDiscoveryBatchesV2,compileSignalStudyLayerPairV2,compileSignalStudyContrastBatchesV2,
+import {SIGNAL_STUDY_BOUNDARY_RULE_VERSION_V1,validateSignalStudyBoundaryRuleReviewV1,validateSignalStudyLayerReviewV1,buildSignalStudyConfiguredLayerReviewV1,buildSignalStudyMotiveReviewV1,SignalStudyEditorialRequestSizeErrorV1} from './signal-study-editorial';
+import {compileSignalStudyBoundaryRuleBatchesV1,compileSignalStudyDiscoveryBatchesV2,compileSignalStudyLayerPairV2,compileSignalStudyContrastBatchesV2,
  buildSignalStudyMotiveReconciliationV2,validateSignalStudyMotiveReconciliationV2,validateSignalStudyDiscoveryBatchPrefixV2,
  assertSignalStudyLayerDecisionPrefixV1,aggregateSignalStudyLayerBatchesV2,validateSignalStudyLayerBatchV2,signalStudyLayerPartitionKeysV2,type SignalStudyEditorialBatchPlanV2} from './signal-study-editorial-batches';
 const sha=(s:string)=>'sha256:'+createHash('sha256').update(s).digest('hex');
@@ -123,4 +123,20 @@ test('semantic motive and membership identities survive execution sampling chang
  assert.deepEqual(signalStudyLayerPartitionKeysV2(a.output.motives[0]!.key),signalStudyLayerPartitionKeysV2(b.output.motives[0]!.key));
  const changed=run('execution-a','A different counterfactual force with distinct inclusion boundaries.');assert.notEqual(a.output.motives[0]!.key,changed.output.motives[0]!.key);assert.notEqual(digest(a.membership.questions),digest(changed.membership.questions));
  assert.throws(()=>run('execution-a',undefined,true),/semantic_identity_collision/u);
+});
+
+test('boundary-rule batches bind frozen diagnostics and both blind decisions, retain scope and reject invented rules',()=>{
+ const items=Array.from({length:5},(_,i)=>motive('boundary_'+i,40)),plan=ready(compileSignalStudyLayerPairV2({configuration,motives:items}));
+ const values=plan.nodes.map(n=>{const value=layerValue(n);if(n.request.pass==='b')for(const motive of value.motives)for(const p of motive.partitions){p.layer='personal';p.diagnostics=p.diagnostics.map(d=>({...d,result:d.key==='money_time'?'yes':'no',force_disappears_without:d.key==='money_time'}));}return validateSignalStudyLayerBatchV2(n.request,value);});
+ const initial=aggregateSignalStudyLayerBatchesV2(plan,values),compiled=ready(compileSignalStudyBoundaryRuleBatchesV1({configuration,initial,motives:items}));
+ assert.equal(compiled.nodes.length,3);assert.deepEqual(compiled.item_keys,items.map(i=>i.key));
+ for(const node of compiled.nodes){const payload=JSON.parse(JSON.parse(node.request.request_body).messages[0].content).untrusted_data;
+  assert.equal(payload.configuration_digest,digest(configuration));assert.deepEqual(payload.diagnostics,configuration.template_snapshot.template.diagnostics);
+  assert.equal(payload.initial_decisions_digest,digest(initial));assert.ok(node.estimated_output_tokens<=32768);
+  const output={contract_version:SIGNAL_STUDY_BOUNDARY_RULE_VERSION_V1,input_digest:node.request.input_digest,rules:node.item_keys.map(motive_key=>({motive_key,contrast_rule:'Contrast only the counterfactual in this motif.',reason:'The frozen blind counterfactuals differ.'}))};
+  assert.equal(validateSignalStudyBoundaryRuleReviewV1(node.request,output).rules.length,node.item_keys.length);
+  assert.throws(()=>validateSignalStudyBoundaryRuleReviewV1(node.request,{...output,input_digest:digest('foreign configuration')}),/scope_invalid/);
+  assert.throws(()=>validateSignalStudyBoundaryRuleReviewV1(node.request,{...output,rules:[...output.rules,...output.rules]}),/scope_invalid/);
+ }
+ assert.throws(()=>compileSignalStudyBoundaryRuleBatchesV1({configuration,initial,motives:items.map(m=>({...m,human_locked:true}))}),/scope_invalid/);
 });

@@ -12,6 +12,7 @@ import {
  signalStudyLayerStabilityV1,applySignalStudyBoundaryRecodeV1,signalStudyJevMotiveConfigurationV1,buildSignalStudyMotiveRequestV1,
  signalStudyDominancePlanV1,buildSignalStudyContrastReviewV1,validateSignalStudyContrastReviewV1,buildSignalStudySummaryV1,
  signalStudyQueryBiasV1,verifySignalStudyVerbatimV1,assertSignalStudyRootsV1,signalWorkspaceEmbeddingDigestV1 as digest,
+ SIGNAL_STUDY_BOUNDARY_RULE_VERSION_V1,compileSignalStudyBoundaryRuleBatchesV1,validateSignalStudyBoundaryRuleReviewV1,
  SIGNAL_STUDY_EDITORIAL_COMPILER_V2,compileSignalStudyDiscoveryBatchesV2,compileSignalStudyLayerPairV2,compileSignalStudyContrastBatchesV2,
  validateSignalStudyDiscoveryBatchPrefixV2,buildSignalStudyMotiveReconciliationV2,validateSignalStudyMotiveReconciliationV2,
  assertSignalStudyLayerDecisionPrefixV1,aggregateSignalStudyLayerBatchesV2,validateSignalStudyLayerBatchV2,
@@ -56,6 +57,7 @@ async function replayStudy(c:PoolClient,execution_id:string,raw:StudyRuntimeSour
  try{
  const configuration=validateSignalStudyExecutionConfigurationV1(raw.configuration),source_digest=raw.source_digest,useV2=raw.editorial_compiler_version===SIGNAL_STUDY_EDITORIAL_COMPILER_V2;
  if(raw.editorial_compiler_version!==undefined&&!useV2)fail('editorial_compiler_invalid');
+ if(raw.layer_boundary_rule_version!==undefined&&(raw.layer_boundary_rule_version!==SIGNAL_STUDY_BOUNDARY_RULE_VERSION_V1||!useV2))fail('boundary_rule_version_invalid');
  const dependencies=new Map<string,StudyRuntimeStageDependencyV1>();
  const dependency=(d:StudyRuntimeStageDependencyV1)=>dependencies.set(d.kind+':'+d.key,d);
  const layerReceipts=new Map<'a'|'b',Array<{step_key:string;value_digest:string}>>();
@@ -199,7 +201,17 @@ function jevResponse(request:JevRequestV1,value:unknown):Record<string,JevAnswer
   let stability:StudyRuntimeOutputV1['stability']=null,decisions:[SignalStudyLayerDecisionV1,SignalStudyLayerDecisionV1]|undefined;
   if(motives.length){decisions=await pair(motives.map(m=>m.key));stability=signalStudyLayerStabilityV1(...decisions);
    if(stability.action==='recode_boundary_once'){
-    const repaired=applySignalStudyBoundaryRecodeV1({initial:decisions,recoded:await pair(stability.boundary_keys,{attempt:1,boundary_keys:stability.boundary_keys,contrast_rule:'Recode only the recorded boundary set under the same frozen diagnostics; preserve distinct forces.'})});
+    let contrast_rule='Recode only the recorded boundary set under the same frozen diagnostics; preserve distinct forces.';
+    if(raw.layer_boundary_rule_version!==undefined){
+     if(raw.layer_boundary_rule_version!==SIGNAL_STUDY_BOUNDARY_RULE_VERSION_V1)fail('boundary_rule_version_invalid');
+     const rulePlan=compileSignalStudyBoundaryRuleBatchesV1({configuration,initial:decisions,motives:motives.filter(m=>stability!.boundary_keys.includes(m.key))});
+     if(rulePlan.status==='format_stop')throw new NextOperation({kind:'format_stop',stop:rulePlan});const ready=rulePlan;
+     const rules:Array<{motive_key:string;contrast_rule:string;reason:string}>=[];
+     for(const node of ready.nodes)rules.push(...(await editorial(node.stage,node.request,validateSignalStudyBoundaryRuleReviewV1)).rules);
+     if(rules.map(r=>r.motive_key).sort().join(',')!==stability.boundary_keys.join(','))fail('boundary_rule_coverage_invalid');
+     contrast_rule=JSON.stringify({contract_version:SIGNAL_STUDY_BOUNDARY_RULE_VERSION_V1,rules:rules.map(({motive_key,contrast_rule})=>({motive_key,contrast_rule}))});
+    }
+    const repaired=applySignalStudyBoundaryRecodeV1({initial:decisions,recoded:await pair(stability.boundary_keys,{attempt:1,boundary_keys:stability.boundary_keys,contrast_rule})});
     boundary_recoded_count=stability.boundary_keys.length;decisions=repaired.decisions;stability=repaired.stability;
    }
    // Split identities remain distinct, never averaged or assigned by majority.

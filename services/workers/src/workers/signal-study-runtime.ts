@@ -2,6 +2,7 @@ import{studySourceRootWithAxesV1,studySourcePagesManifestV1,studyRuntimeSourceDi
 import {createHash} from 'node:crypto';
 import type{StudyNumericManifestV1}from'@noisia/query-engine';
 import {
+ SIGNAL_STUDY_BOUNDARY_RULE_VERSION_V1,compileSignalStudyBoundaryRuleBatchesV1,validateSignalStudyBoundaryRuleReviewV1,
  SIGNAL_STUDY_EDITORIAL_COMPILER_V2,compileSignalStudyDiscoveryBatchesV2,compileSignalStudyLayerPairV2,compileSignalStudyContrastBatchesV2,
  buildSignalStudyMotiveReconciliationV2,validateSignalStudyMotiveReconciliationV2,validateSignalStudyDiscoveryBatchPrefixV2,
  aggregateSignalStudyLayerBatchesV2,assertSignalStudyLayerDecisionPrefixV1,validateSignalStudyLayerBatchV2,SignalStudyEditorialRequestSizeErrorV1,
@@ -34,7 +35,8 @@ export type StudyRuntimeSourceV1={configuration:SignalStudyExecutionConfiguratio
  selection:{scope:'listening_consumer_cut';source_listening_digest:string;cut_digest:string;eligible_root_ids_digest:string;
   eligible_roots:number;pending_base_roots:number;corpus_roots:number};
  embedding_space_digest:string;source_preparation_run_ids:string[];sampling_seed:string;query_terms:string[];problem_terms:string[];query_metadata?:{query_terms_declared:boolean;problem_terms_declared:boolean};brand_baseline_roots:number;
- source_digest:string;human_revision_digest:string;max_roots:number;max_bytes:number;source_storage?:import('./signal-study-source-pages').StudySourcePagesManifestV1;editorial_compiler_version?:typeof SIGNAL_STUDY_EDITORIAL_COMPILER_V2};
+ acquisition_query_metadata?:{contract_version:'signal-study-acquisition-query-metadata-v1';complete:boolean;source_batches:number;unavailable_batches:number};
+ source_digest:string;human_revision_digest:string;max_roots:number;max_bytes:number;source_storage?:import('./signal-study-source-pages').StudySourcePagesManifestV1;editorial_compiler_version?:typeof SIGNAL_STUDY_EDITORIAL_COMPILER_V2;layer_boundary_rule_version?:typeof SIGNAL_STUDY_BOUNDARY_RULE_VERSION_V1};
 export type StudyRuntimeReceiptV1={body_base64:string;body_bytes:number;sha256:string;complete:boolean;http_status:number|null;provider_request_id:string|null};
 export type StudyRuntimeStepPlanV1={key:string;kind:'sonnet';request_body:string;request_sha256:string;source_digest:string};
 export type StudyRuntimeStepV1=StudyRuntimeStepPlanV1&{status:'planned'|'sent'|'raw'|'committed'|'unknown';
@@ -154,6 +156,7 @@ export async function signalStudyRuntimeJobV1(execution_id:string,options:{store
   const raw=await store.source(lease);runtimeSource=raw;if(!raw)throw new Paused('stale');
   if(raw.editorial_compiler_version!==undefined&&raw.editorial_compiler_version!==SIGNAL_STUDY_EDITORIAL_COMPILER_V2)fail('editorial_compiler_invalid');
   const batching=raw.editorial_compiler_version===SIGNAL_STUDY_EDITORIAL_COMPILER_V2;
+  if(raw.layer_boundary_rule_version!==undefined&&(raw.layer_boundary_rule_version!==SIGNAL_STUDY_BOUNDARY_RULE_VERSION_V1||!batching))fail('boundary_rule_version_invalid');
   if(batching&&!store.recordFormatStop)fail('native_format_stop_store_required');
   const compiled=async(value:SignalStudyEditorialCompilationV2):Promise<SignalStudyEditorialBatchPlanV2>=>{
    if(value.status==='format_stop'){await active();await store.recordFormatStop!(lease,value);throw new EditorialFormatStopped(value);}
@@ -351,7 +354,17 @@ export async function signalStudyRuntimeJobV1(execution_id:string,options:{store
   let stability:StudyRuntimeOutputV1['stability']=null,decisions:[SignalStudyLayerDecisionV1,SignalStudyLayerDecisionV1]|undefined;
   if(motives.length){decisions=await pair(motives.map(m=>m.key));stability=signalStudyLayerStabilityV1(...decisions);
    if(stability.action==='recode_boundary_once'){
-    const repaired=applySignalStudyBoundaryRecodeV1({initial:decisions,recoded:await pair(stability.boundary_keys,{attempt:1,boundary_keys:stability.boundary_keys,contrast_rule:'Recode only the recorded boundary set under the same frozen diagnostics; preserve distinct forces.'})});
+    let contrast_rule='Recode only the recorded boundary set under the same frozen diagnostics; preserve distinct forces.';
+    if(raw.layer_boundary_rule_version!==undefined){
+     if(raw.layer_boundary_rule_version!==SIGNAL_STUDY_BOUNDARY_RULE_VERSION_V1)fail('boundary_rule_version_invalid');
+     const rulePlan=compileSignalStudyBoundaryRuleBatchesV1({configuration,initial:decisions,motives:motives.filter(m=>stability!.boundary_keys.includes(m.key))});
+     const ready=await compiled(rulePlan);
+     const rules:Array<{motive_key:string;contrast_rule:string;reason:string}>=[];
+     for(const node of ready.nodes)rules.push(...(await editorial(node.stage,node.request,validateSignalStudyBoundaryRuleReviewV1)).rules);
+     if(rules.map(r=>r.motive_key).sort().join(',')!==stability.boundary_keys.join(','))fail('boundary_rule_coverage_invalid');
+     contrast_rule=JSON.stringify({contract_version:SIGNAL_STUDY_BOUNDARY_RULE_VERSION_V1,rules:rules.map(({motive_key,contrast_rule})=>({motive_key,contrast_rule}))});
+    }
+    const repaired=applySignalStudyBoundaryRecodeV1({initial:decisions,recoded:await pair(stability.boundary_keys,{attempt:1,boundary_keys:stability.boundary_keys,contrast_rule})});
     decisions=repaired.decisions;stability=repaired.stability;
    }
    // Split identities remain distinct, never averaged or assigned by majority.

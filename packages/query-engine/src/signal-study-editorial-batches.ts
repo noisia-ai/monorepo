@@ -3,7 +3,7 @@ import {signalWorkspaceEmbeddingDigestV1 as digest} from './signal-workspace-emb
 import {validateSignalStudyExecutionConfigurationV1,type SignalStudyExecutionConfigurationV1} from './signal-study-configuration';
 import type {SignalStudySampleV1} from './signal-study-evidence';
 import {buildSignalStudyMotiveReviewV1,validateSignalStudyMotiveReviewV1,buildSignalStudyConfiguredLayerReviewV1,
- buildSignalStudyContrastReviewV1,validateSignalStudyLayerReviewV1,SignalStudyEditorialRequestSizeErrorV1,
+ buildSignalStudyContrastReviewV1,buildSignalStudyBoundaryRuleReviewV1,validateSignalStudyLayerReviewV1,SignalStudyEditorialRequestSizeErrorV1,
  type SignalStudyEditorialRequestV1,type SignalStudyLayerDecisionV1} from './signal-study-editorial';
 export const SIGNAL_STUDY_EDITORIAL_COMPILER_V2='signal-study-editorial-batches-v2' as const;
 export const SIGNAL_STUDY_EDITORIAL_BYTES_V2=524288;
@@ -89,6 +89,13 @@ export function compileSignalStudyLayerPairV2(args:{configuration:SignalStudyExe
  // Child stages retain their own pass/plan identity; the combined preflight
  // ensures pass B cannot fail only after pass A has already been paid.
  return{status:'ready',compiler_version:SIGNAL_STUDY_EDITORIAL_COMPILER_V2,phase,plan_digest,item_keys:keys,nodes:plans.flatMap(p=>p.nodes)};
+}
+export function compileSignalStudyBoundaryRuleBatchesV1(args:Parameters<typeof buildSignalStudyBoundaryRuleReviewV1>[0]):SignalStudyEditorialCompilationV2{
+ return pack({phase:'layer-boundary-rule-v1',units:args.motives,max_items:40,
+  build:motives=>buildSignalStudyBoundaryRuleReviewV1({...args,motives}),
+  // Conservative capacity estimate for at most3600 Unicode characters per
+  // rule+reason, not a tokenizer bound. Wire/receipt/truncation gates remain.
+  estimate:units=>units.length*16384});
 }
 export function compileSignalStudyContrastBatchesV2(args:{configuration:SignalStudyExecutionConfigurationV1;
  motives:Array<{key:string;name:string;definition:string;human_locked:boolean;sample:SignalStudySampleV1}>;affected_keys:string[]}):SignalStudyEditorialCompilationV2{

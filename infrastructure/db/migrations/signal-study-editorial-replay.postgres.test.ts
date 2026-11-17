@@ -1,7 +1,7 @@
 import assert from'node:assert/strict';
 import test from'node:test';
 import{createHash,randomUUID}from'node:crypto';
-import{signalWorkspaceEmbeddingDigestV1 as digest,SIGNAL_STUDY_EDITORIAL_COMPILER_V2,type SignalStudyEditorialFormatStopV1}from'@noisia/query-engine';
+import{signalWorkspaceEmbeddingDigestV1 as digest,SIGNAL_STUDY_BOUNDARY_RULE_VERSION_V1,SIGNAL_STUDY_EDITORIAL_COMPILER_V2,type SignalStudyEditorialFormatStopV1}from'@noisia/query-engine';
 import type{StudyRuntimeLeaseV1,StudyRuntimeStepPlanV1}from'../../../services/workers/src/workers/signal-study-runtime';
 import{withSignalStudyFixtureV1}from'./signal-study.synthetic.fixture';
 import{withStudyNativeRuntimeV1}from'./signal-study-runtime.synthetic.fixture';
@@ -60,3 +60,24 @@ test('a valid paid prefix survives a future indivisible format stop, native CAS 
  await assert.rejects(f.database.query('DELETE FROM signal_study_format_stops WHERE execution_id=$1',[execution.id]),/study_format_stop_immutable/);await assert.rejects(f.database.query('TRUNCATE signal_study_format_stops'),/study_history_retained/);
  assert.equal(new Set(runtime.sentStepKeys()).size,runtime.sentStepKeys().length);
 }),{population_count:240,study_text_length:12500}));
+
+test('native boundary rewrite is settled and replayed before the single blind recode pair',{
+ skip:!enabled,timeout:1200000,
+},async()=>withSignalStudyFixtureV1(async f=>withStudyNativeRuntimeV1(f.database,async runtime=>{
+ runtime.setBoundaryDisagreement(true);const sent:StudyRuntimeStepPlanV1[]=[],send=runtime.drivers.send;
+ runtime.drivers.send=async(plan,signal)=>{sent.push(plan);return send(plan,signal);};
+ const execution=await f.request(),result=await runtime.run(execution.id);assert.equal(result.status,'completed');
+ const parent=(await f.database.query('SELECT source_header FROM signal_study_executions WHERE id=$1',[execution.id])).rows[0];
+ assert.equal(parent.source_header.layer_boundary_rule_version,SIGNAL_STUDY_BOUNDARY_RULE_VERSION_V1);
+ assert.equal(parent.source_header.acquisition_query_metadata.contract_version,'signal-study-acquisition-query-metadata-v1');
+ const payloads=sent.map(plan=>JSON.parse(JSON.parse(plan.request_body).messages[0].content).untrusted_data),rewrites=payloads.filter(p=>p.purpose==='rewrite_layer_boundary_rules');
+ assert.equal(rewrites.length,1);assert.equal(rewrites[0].boundary_keys.length,1);
+ const repaired=payloads.filter(p=>p.contrast_rule);assert.equal(repaired.length,2);
+ assert.ok(repaired.every(p=>JSON.parse(p.contrast_rule).rules.every((rule:object)=>!('reason'in rule)&&!('initial_assessments'in rule))));
+ const settled=(await f.database.query(`SELECT count(*)::int n FROM signal_study_steps s JOIN signal_study_receipts r ON r.step_id=s.id
+ JOIN engine_cost_events e ON e.study_step_id=s.id WHERE s.execution_id=$1 AND s.mode='contrast' AND s.status='committed'
+ AND r.verification_status='verified' AND e.call_state='settled'`,[execution.id])).rows[0].n;
+ assert.equal(settled,1);const proof=await readSignalStudyStabilityProofV1({...f,execution_id:execution.id});
+ assert.ok(proof);assert.equal(proof.layer_agreement.boundary_recoded_count,1);assert.equal(proof.layer_agreement.kappa,1);assert.equal(proof.layer_agreement.coverage,1);
+ const count=sent.length;assert.equal((await runtime.run(execution.id)).status,'not_claimed');assert.equal(sent.length,count);
+})));
