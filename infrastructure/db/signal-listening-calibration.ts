@@ -19,9 +19,9 @@ export async function deriveSignalListeningCalibrationV1(args:SignalListeningAcc
   const value=(await c.query<{profile:SignalListeningCalibrationProfileV1|null}>(`SELECT signal_listening_calibration_evidence_v1($1,$2,$3) profile`,
    [args.workspace_id,args.run_id,args.shape_digest])).rows[0]?.profile??null;
   if(!value)return null;
-  await c.query(`INSERT INTO signal_listening_calibrations(workspace_id,source_run_id,scope_digest,source_digest,profile,created_by_user_id)
-   SELECT $1,$2,profile->>'scope_digest',profile->>'source_digest',profile,$4 FROM
-    (SELECT signal_listening_calibration_evidence_v1($1,$2,$3) profile) evidence
+  await c.query(`WITH evidence AS MATERIALIZED(SELECT signal_listening_calibration_evidence_v1($1,$2,$3) profile)
+INSERT INTO signal_listening_calibrations(workspace_id,source_run_id,scope_digest,source_digest,profile,created_by_user_id)
+   SELECT $1,$2,profile->>'scope_digest',profile->>'source_digest',profile,$4 FROM evidence
    WHERE profile IS NOT NULL ON CONFLICT(scope_digest,source_digest) DO NOTHING`,
    [args.workspace_id,args.run_id,args.shape_digest,args.actor_user_id]);
   return value;
