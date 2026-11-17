@@ -508,6 +508,49 @@ jobs:
           export DATABASE_SSL=false
           export NOISIA_R16_LOCAL_PG_LAB=r16-benchmark-pg17
           pnpm --filter @noisia/db db:smoke:migrations
+      - name: Profile one native FULL consumer prefix function scan
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.scope == 'listening-smoke' }}
+        env:
+          NOISIA_R16_PREFIX_FUNCTION_PROFILE_PG: 'true'
+          R16_PREFIX_FUNCTION_PROFILE_EVIDENCE_DIR: .data/piloto-masivo/r16/prefix-function-profile-native-evidence
+        run: |
+          set -euo pipefail
+          connection_file=.data/piloto-masivo/r16/labs/benchmark-pg17/connection.env
+          test -f "$connection_file"
+          set -a
+          source "$connection_file"
+          set +a
+          export DATABASE_SSL=false
+          export NOISIA_R16_LOCAL_PG_LAB=r16-benchmark-pg17
+          set +e
+          pnpm exec node --test --test-concurrency=1 --import tsx \
+            infrastructure/db/migrations/signal-listening-prefix-function-profile.postgres.test.ts | tee prefix-function-profile.tap
+          test_status=${PIPESTATUS[0]}
+          set -e
+          evidence_file="$R16_PREFIX_FUNCTION_PROFILE_EVIDENCE_DIR/prefix-function-profile.json"
+          if [[ "$test_status" -ne 0 ]] \
+            || ! grep -qx '# tests 1' prefix-function-profile.tap \
+            || ! grep -qx '# pass 1' prefix-function-profile.tap \
+            || ! grep -qx '# fail 0' prefix-function-profile.tap \
+            || ! grep -qx '# cancelled 0' prefix-function-profile.tap \
+            || ! grep -qx '# skipped 0' prefix-function-profile.tap \
+            || ! grep -qx '# Subtest: native FULL consumer prefix exposes one inner plan and transaction-local function counters' prefix-function-profile.tap \
+            || [[ ! -s "$evidence_file" ]] \
+            || [[ "$(wc -c < "$evidence_file")" -gt 1048576 ]] \
+            || ! jq -e 'type == "object" and .contract == "r16-prefix-function-profile-v1"' "$evidence_file" >/dev/null; then
+            echo '::error::R16 prefix function profile failed, was skipped, or did not emit its contracted JSON'
+            exit 1
+          fi
+      - name: Persist native prefix function profile evidence
+        if: ${{ always() && github.event_name == 'workflow_dispatch' && inputs.scope == 'listening-smoke' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: r16-prefix-function-profile-native-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            .data/piloto-masivo/r16/prefix-function-profile-native-evidence/prefix-function-profile.json
+            prefix-function-profile.tap
+          if-no-files-found: error
+          retention-days: 14
       - name: Run the 4096-root custom-plan scale contract
         env:
           NOISIA_R16_LISTENING_BOUNDED_CUSTOM_PLAN_PG: 'true'
