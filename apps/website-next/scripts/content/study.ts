@@ -18,6 +18,8 @@ import { lintDeckHtml, lintTexts } from "./lint";
  *   deck/          the builder folder as is: index.html, deck-stage.js, css, assets
  *   piezas.json    optional, the Insights pieces of the study
  *   portada.png    optional cover; without it, the first slide is the cover
+ *   imagen.png     optional image of the study for its page and its card (content-db/STUDY_IMAGES.md);
+ *                  needs `image_alt` in both languages. `pnpm content:image` writes its prompt.
  *
  * Nothing is written unless everything passes: the schema, the privacy checks on the summary,
  * the pieces and the deck. Then it renders one image per slide (the phone view), the cover and,
@@ -82,6 +84,15 @@ const study = parsed.success ? (parsed.data as StudyInput) : null;
 if (study) {
   problems.push(...lintTexts("estudio.json es", study.es), ...lintTexts("estudio.json en", study.en));
   if (["estudios", "studies", "reportes", "reports"].includes(study.id)) problems.push(`estudio.json id: "${study.id}" is a reserved path`);
+}
+
+// ---------- the study's image ----------
+const imagen = ["imagen.png", "imagen.jpg", "imagen.jpeg", "imagen.webp"].map((name) => join(folder, name)).find((file) => existsSync(file));
+if (imagen && study) {
+  for (const lang of ["es", "en"] as const) {
+    if (!study[lang].image_alt) problems.push(`estudio.json ${lang}.image_alt: the folder has ${relative(folder, imagen)}, describe it for people who cannot see it`);
+  }
+  if (statSync(imagen).size > MAX_FILE) problems.push(`${relative(folder, imagen)}: over the 15 MB limit`);
 }
 
 // ---------- deck ----------
@@ -196,6 +207,25 @@ try {
   }
   rendered.push({ path: "cover.webp", contentType: "image/webp", bytes: Buffer.from(await page.screenshot({ type: "webp", quality: 85 })) });
 
+  if (imagen) {
+    // Kept at its own proportions, at most 1600 px on the long side, with its transparency.
+    const data = readFileSync(imagen).toString("base64");
+    const type = TYPES[extname(imagen).toLowerCase()];
+    await page.setViewport({ width: 1600, height: 1600, deviceScaleFactor: 1 });
+    await page.setContent(`<html><body style="margin:0;background:transparent"><img id="i" src="data:${type};base64,${data}"></body></html>`, { waitUntil: "load" });
+    const size = await page.evaluate(() => {
+      const img = document.getElementById("i") as HTMLImageElement;
+      const scale = Math.min(1, 1600 / Math.max(img.naturalWidth, img.naturalHeight));
+      const width = Math.round(img.naturalWidth * scale);
+      const height = Math.round(img.naturalHeight * scale);
+      img.style.cssText = `display:block;width:${width}px;height:${height}px`;
+      return { width, height };
+    });
+    await page.setViewport({ ...size, deviceScaleFactor: 1 });
+    const bytes = Buffer.from(await page.screenshot({ type: "webp", quality: 86, omitBackground: true }));
+    rendered.push({ path: "hero.webp", contentType: "image/webp", bytes });
+  }
+
   if (!builderPdf) {
     console.log("  no PDF in deck/, printing one");
     await openDeck(1920, 1080);
@@ -247,17 +277,18 @@ try {
     builderPdf!.path,
     slideCount,
     version,
-    studyMarkets(study)
+    studyMarkets(study),
+    imagen ? "hero.webp" : null
   ];
   await db.query(
     `insert into content.studies (id, access_mode, industry, market, method, period_label, period_start, period_end, base, summary,
-                                  full_language, cover_path, deck_path, pdf_path, slide_count, version, markets)
-     values ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10::jsonb, $11, $12, $13, $14, $15, $16, $17::text[])
+                                  full_language, cover_path, deck_path, pdf_path, slide_count, version, markets, hero_path)
+     values ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10::jsonb, $11, $12, $13, $14, $15, $16, $17::text[], $18)
      on conflict (id) do update set access_mode = excluded.access_mode, industry = excluded.industry, market = excluded.market, markets = excluded.markets,
        method = excluded.method, period_label = excluded.period_label, period_start = excluded.period_start,
        period_end = excluded.period_end, base = excluded.base, summary = excluded.summary, full_language = excluded.full_language,
        cover_path = excluded.cover_path, deck_path = excluded.deck_path, pdf_path = excluded.pdf_path,
-       slide_count = excluded.slide_count, version = excluded.version`,
+       slide_count = excluded.slide_count, version = excluded.version, hero_path = excluded.hero_path`,
     values
   );
   if (!current || version !== current.version) {

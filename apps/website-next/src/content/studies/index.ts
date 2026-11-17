@@ -26,6 +26,8 @@ export type Study = {
   summary: { es: StudySummary; en: StudySummary };
   fullLanguage: FullLanguage;
   coverPath: string | null;
+  /** The study's own image (public, like the cover); null until one is generated. */
+  heroPath: string | null;
   pdfPath: string | null;
   slideCount: number;
   version: number;
@@ -48,6 +50,7 @@ type Row = {
   summary: Study["summary"];
   full_language: FullLanguage;
   cover_path: string | null;
+  hero_path?: string | null;
   pdf_path: string | null;
   slide_count: number;
   version: number;
@@ -77,6 +80,7 @@ function fromRow(row: Row): Study | null {
     summary: row.summary,
     fullLanguage: row.full_language,
     coverPath: row.cover_path,
+    heroPath: row.hero_path ?? null,
     pdfPath: row.pdf_path,
     slideCount: row.slide_count,
     version: row.version,
