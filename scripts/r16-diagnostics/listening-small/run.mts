@@ -8,7 +8,7 @@ import {fileURLToPath,pathToFileURL} from 'node:url';
 import {performance} from 'node:perf_hooks';
 import {validateDefaultRuntimeV1} from './statement-default-contract.mjs';
 import {createMainThreadProfileCaptureV1,createProcMainThreadCpuReaderV1} from './main-thread-profile.mjs';
-import {PROFILE_ONLY_TARGET_SHA_V1} from './profile-only-envelope.mjs';
+import {PROFILE_ONLY_PG_CPU_INTERVAL_MS_V1,PROFILE_ONLY_TARGET_SHA_V1} from './profile-only-envelope.mjs';
 import {createListeningObserver,DML_PLAN_MAX_PLANS,DML_PLAN_MIN_BATCH,DML_PLAN_MIN_DURATION_MS,finishListeningObserver,
  INNER_PLAN_CAPTURE_ORDINALS,INNER_PLAN_MIN_DURATION_MS} from './observer.mjs';
 
@@ -26,6 +26,7 @@ const providerSecrets=['ANTHROPIC_API_KEY','ANTHROPIC_AUTH_TOKEN','OPENAI_API_KE
 const probeFiles=['.github/workflows/r16-listening-small-diagnostic.yml','.github/workflows/mfp-postgres.yml',
   '.github/workflows/r16-listening-profile-only.yml',
   'scripts/r16-diagnostics/listening-small/run.mts','scripts/r16-diagnostics/listening-small/run.test.mts',
+  'scripts/r16-diagnostics/listening-small/query-cpu-oracle.mjs','scripts/r16-diagnostics/listening-small/query-cpu-oracle.test.mjs',
   'scripts/r16-diagnostics/listening-small/profile-only.test.mts',
   'scripts/r16-diagnostics/listening-small/main-thread-profile.mjs',
   'scripts/r16-diagnostics/listening-small/main-thread-profile.d.mts',
@@ -527,7 +528,7 @@ export async function runListeningSmallDiagnosticV1(){
         if(profileOnly){
           stage='profile_setup';
           pgCpuCollector=await pgCpuModule.startPgCpuProfileV1({targetRoot:target,targetSha:targetHeadBefore,
-            markerPath:pgCpuOwnershipMarker.path,intervalMs:250,maxDurationMs:300000});
+            markerPath:pgCpuOwnershipMarker.path,intervalMs:PROFILE_ONLY_PG_CPU_INTERVAL_MS_V1,maxDurationMs:300000});
         }
         const canceled=await db.query(`UPDATE signal_labeling_runs r SET status='canceled' WHERE r.id=$1 AND r.workspace_id=$2
           AND r.status='queued' AND NOT EXISTS(SELECT 1 FROM signal_labeling_calls c WHERE c.run_id=r.id) RETURNING r.id`,[ctx.run_id,ctx.workspace_id]);
@@ -664,7 +665,7 @@ export async function runListeningSmallDiagnosticV1(){
             start_hrtime_ns:classificationStartHrtime.toString(),end_hrtime_ns:classificationEndHrtime!.toString(),
             start_performance_ms:startedProcessing,end_performance_ms:classificationEndPerformanceMs},
             node_profile:mainThreadProfile,postgres_profile:{path:profilePgPath,contract:pgCpuProfile.contract,status:pgCpuProfile.status,
-              target_sha:pgCpuProfile.target_sha,interval_ms:250,snapshot_before:pgCpuSnapshotBefore?.sequence??null,
+              target_sha:pgCpuProfile.target_sha,sampling:'boundary_only',interval_ms:PROFILE_ONLY_PG_CPU_INTERVAL_MS_V1,snapshot_before:pgCpuSnapshotBefore?.sequence??null,
               snapshot_after:pgCpuSnapshotAfter?.sequence??null,artifact_bytes:pgProfileArtifactBytes}}:{}),
           observed_http_latency:latencySummary,storage:storageServer.metrics(),sql_profile:profile.snapshot(),
           ...(profileOnly?{storage_output:{scope:'owned_temporary_sibling_outside_artifact_directory',directory_path_sha256:storageOutputDirSha256,
@@ -717,7 +718,8 @@ export async function runListeningSmallDiagnosticV1(){
       ...(profileOnly?{profiling_only:true,profile_status:'failed',...(profileCleanupError?{profile_cleanup_error:profileCleanupError}:{})}:{}),h1_accepted:false,
       ...(profileOnly?{node_profile:mainThreadProfile??{status:'unavailable',scope:'classification_and_serving',
         coverage:'main_thread_only',worker_thread_cpu:'unknown'},postgres_profile:pgCpuProfile?{contract:pgCpuProfile.contract,
-          target_sha:pgCpuProfile.target_sha,status:pgCpuProfile.status,interval_ms:250}: {status:'unavailable'},
+          target_sha:pgCpuProfile.target_sha,status:pgCpuProfile.status,sampling:'boundary_only',interval_ms:PROFILE_ONLY_PG_CPU_INTERVAL_MS_V1}:
+          {status:'unavailable',sampling:'boundary_only',interval_ms:PROFILE_ONLY_PG_CPU_INTERVAL_MS_V1},
         storage_output:{scope:'owned_temporary_sibling_outside_artifact_directory',directory_path_sha256:storageOutputDirSha256??null,
           removed_before_run_receipt_write:storageOutputRemoved,...(storageCleanupError?{cleanup_error:storageCleanupError}:{})}}:{}),
       status:'failed',stage,code:safeError(error),total_wall_ms:performance.now()-started,process_id:process.pid,

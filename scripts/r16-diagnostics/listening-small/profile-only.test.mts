@@ -6,14 +6,15 @@ import {fileURLToPath,pathToFileURL} from 'node:url';
 import test from 'node:test';
 import {createHash} from 'node:crypto';
 import {createMainThreadProfileCaptureV1,MAIN_THREAD_PROFILE_INTERVAL_US_V1,sanitizeV8MainThreadProfileV1,
- createProcMainThreadCpuReaderV1,compareProcMainThreadCpuV1,MAIN_THREAD_CLK_TCK_TIMEOUT_MS_V1,readClockTicksV1} from './main-thread-profile.mjs';
+ createProcMainThreadCpuReaderV1,parseMainThreadProcStatLineV1,compareProcMainThreadCpuV1,MAIN_THREAD_CLK_TCK_TIMEOUT_MS_V1,readClockTicksV1} from './main-thread-profile.mjs';
 import {assertDiagnosticExecArgsV1,assertListeningResourceProfileV1,assertListeningSmallGuardV1,assertProfileOnlyManualTargetV1,
  assertProfileOnlyCDefaultBeforeV1,diagnosticModeV1,listeningResourceProfileV1,PROFILE_ONLY_TARGET_SHA_V1,
  createListeningStorageOutputDirV1,finalizeFailureStorageV1,safeErrorV1,writeProfileOnlyPgOwnershipMarkerV1} from './run.mjs';
 import {execFileSync,spawnSync} from 'node:child_process';
 import {PROFILE_ONLY_ARTIFACT_INPUT_FILES_V1,PROFILE_ONLY_REQUIRED_PROBE_FILES_V1,assertProfileOnlyArtifactFileSetV1,
- profileOnlyEnvelopeErrorCodeV1,validatePgProfileArtifactBytesV1,validateProfileOnlyProbeSealV1,validateProfileOnlyRunV1} from './profile-only-envelope.mjs';
-import {PG_CPU_INSPECT_FORMAT_V1} from './profile-pg-cpu.mjs';
+ PROFILE_ONLY_PG_CPU_INTERVAL_MS_V1,assertProfileOnlyPgIntervalV1,profileOnlyEnvelopeErrorCodeV1,validatePgProfileArtifactBytesV1,
+ validateProfileOnlyProbeSealV1,validateProfileOnlyRunV1} from './profile-only-envelope.mjs';
+import {PG_CPU_INSPECT_FORMAT_V1,parseProcStatV1} from './profile-pg-cpu.mjs';
 
 const fakeProfile={startTime:100,endTime:350,nodes:[
  {id:1,callFrame:{functionName:'main',url:'file:///private/study/body.json',lineNumber:4,columnNumber:2},hitCount:1,children:[2]},
@@ -64,22 +65,32 @@ test('profile-only rejects malformed V8 samples rather than truncating or fabric
 });
 
 test('profile-only main-thread proc reader verifies the PID/starttime pair and reports ticks without wall conversion',async()=>{
- const fixtures={
-  '/proc/self/task/42/stat':{pid:42,comm:'node (worker?)',state:'R',utime_ticks:'17',stime_ticks:'4',starttime_ticks:'900'},
-  '/proc/self/stat':{pid:42,comm:'node',state:'S',utime_ticks:'99',stime_ticks:'20',starttime_ticks:'900'},
+ const procStat=(pid:number,comm:string,state:string,user:string,system:string,start:string)=>{
+  const fields=Array(20).fill('0');fields[0]=state;fields[11]=user;fields[12]=system;fields[19]=start;
+  return`${pid} (${comm}) ${fields.join(' ')}\n`;
  };
- const reader=createProcMainThreadCpuReaderV1({pid:42,isMainThread:true,parseProcStatV1:(text)=>JSON.parse(text),
-  readText:(path)=>JSON.stringify(fixtures[path as keyof typeof fixtures]),getClockTicks:()=>100});
+ const fixtures={
+  '/proc/self/task/42/stat':procStat(42,'node (worker?)','R','17','4','900'),
+  '/proc/self/stat':procStat(42,'node','S','99','20','900'),
+ };
+ const reader=createProcMainThreadCpuReaderV1({pid:42,isMainThread:true,parseProcStatV1,
+  readText:(path)=>fixtures[path as keyof typeof fixtures],getClockTicks:()=>100});
  const start=await reader(),end={...start,user_ticks:'22',system_ticks:'5'};
  assert.equal(start.status,'captured');assert.equal((start as any).total_ticks,'21');
  assert.equal(compareProcMainThreadCpuV1(start,end).status,'captured');
  assert.equal((compareProcMainThreadCpuV1(start,end) as any).total_ticks,'6');
  assert.equal((compareProcMainThreadCpuV1(start,end) as any).conversion,'ticks_only_no_wall_clock_attribution');
- const badReader=createProcMainThreadCpuReaderV1({pid:42,isMainThread:true,parseProcStatV1:(text)=>JSON.parse(text),
-  readText:(path)=>JSON.stringify(path==='/proc/self/task/42/stat'?fixtures['/proc/self/task/42/stat']:{...fixtures['/proc/self/stat'],starttime_ticks:'901'}),
+ const badReader=createProcMainThreadCpuReaderV1({pid:42,isMainThread:true,parseProcStatV1,
+  readText:(path)=>path==='/proc/self/task/42/stat'?fixtures['/proc/self/task/42/stat']:procStat(42,'node','S','99','20','901'),
   getClockTicks:()=>100});
  await assert.rejects(badReader(),/main_thread_proc_identity_mismatch/u);
  assert.equal(compareProcMainThreadCpuV1(start,{...end,pid:43}).status,'unknown');
+ const parsed= parseMainThreadProcStatLineV1(fixtures['/proc/self/stat'],parseProcStatV1);
+ assert.equal(parsed.pid,42);assert.equal(parsed.starttime_ticks,'900');
+ assert.throws(()=>parseMainThreadProcStatLineV1(fixtures['/proc/self/stat'].slice(0,-1),parseProcStatV1),/main_thread_proc_stat_terminator_invalid/u);
+ assert.throws(()=>parseMainThreadProcStatLineV1(`${fixtures['/proc/self/stat']}\n`,parseProcStatV1),/main_thread_proc_stat_line_invalid/u);
+ assert.throws(()=>parseMainThreadProcStatLineV1(fixtures['/proc/self/stat'].replace(/\n$/u,'\r\n'),parseProcStatV1),/main_thread_proc_stat_line_invalid/u);
+ assert.throws(()=>parseMainThreadProcStatLineV1(fixtures['/proc/self/stat'].replace(' 0 ', '\n0 '),parseProcStatV1),/main_thread_proc_stat_line_invalid/u);
 });
 
 test('profile-only getconf clock query uses a bounded process call and validates its result',()=>{
@@ -210,7 +221,7 @@ function validProfileRun(){
   observed_http_latency:{count:8192},expected_http_requests:8192,
   node_profile:{contract:'r16-main-thread-profile-capture-v1',status:'captured',coverage:'main_thread_only',worker_thread_cpu:'unknown',
    window:{profile_sampling_overlap:'unknown_v8_clock_bridge'}},
-  postgres_profile:{contract:'r16-pg-cpu-profile-v1',target_sha:PROFILE_ONLY_TARGET_SHA_V1,status:'partial',interval_ms:250},
+  postgres_profile:{contract:'r16-pg-cpu-profile-v1',target_sha:PROFILE_ONLY_TARGET_SHA_V1,status:'partial',sampling:'boundary_only',interval_ms:0},
   storage_output:{scope:'owned_temporary_sibling_outside_artifact_directory',directory_path_sha256:`sha256:${'a'.repeat(64)}`,
    removed_before_run_receipt_write:true}};
 }
@@ -226,8 +237,15 @@ test('profile-only envelope validation binds the exact mini, C target, bounded t
   {targetSha:PROFILE_ONLY_TARGET_SHA_V1,probeSha:'f'.repeat(40)}),/profile_only_effective_profile_invalid/u);
  assert.throws(()=>validateProfileOnlyRunV1({...base,node_profile:{...base.node_profile,window:{profile_sampling_overlap:'mapped'}}},
   {targetSha:PROFILE_ONLY_TARGET_SHA_V1,probeSha:'f'.repeat(40)}),/profile_only_v8_clock_bridge_claimed/u);
+ assert.throws(()=>validateProfileOnlyRunV1({...base,postgres_profile:{...base.postgres_profile,interval_ms:250}},
+  {targetSha:PROFILE_ONLY_TARGET_SHA_V1,probeSha:'f'.repeat(40)}),/profile_only_pg_interval_invalid/u);
+ assert.throws(()=>validateProfileOnlyRunV1({...base,postgres_profile:{...base.postgres_profile,sampling:'periodic'}},
+  {targetSha:PROFILE_ONLY_TARGET_SHA_V1,probeSha:'f'.repeat(40)}),/profile_only_pg_sampling_invalid/u);
  assert.throws(()=>validateProfileOnlyRunV1({...base,storage_output:{...base.storage_output,removed_before_run_receipt_write:false}},
   {targetSha:PROFILE_ONLY_TARGET_SHA_V1,probeSha:'f'.repeat(40)}),/profile_only_storage_path_not_cleaned/u);
+ assert.equal(PROFILE_ONLY_PG_CPU_INTERVAL_MS_V1,0);
+ assert.equal(assertProfileOnlyPgIntervalV1({limits:{configured_interval_ms:0}}),true);
+ assert.throws(()=>assertProfileOnlyPgIntervalV1({limits:{configured_interval_ms:250}}),/profile_only_pg_interval_invalid/u);
 });
 
 test('profile-only storage path stays outside the exact assembler artifact set and is sealed for cleanup',async()=>{
@@ -379,13 +397,70 @@ test('profile-only workflow bootstrap is restricted to the approved branch and w
  assert.deepEqual([...push.matchAll(/^    branches:\n      - ([^\n]+)$/gmu)].map(match=>match[1]),['codex/r16-listening-profile-compose']);
  assert.deepEqual([...push.matchAll(/^      - (\.github\/workflows\/[^\n]+)$/gmu)].map(match=>match[1]),
   ['.github/workflows/r16-listening-profile-only.yml']);
- const registration=workflow.slice(workflow.indexOf('  register-workflow:'),workflow.indexOf('  profile-only:'));
+ const registration=workflow.slice(workflow.indexOf('  register-workflow:'),workflow.indexOf('  native-query-cpu:'));
  assert.match(registration,/if: github\.event_name == 'push'/u);
  assert.match(registration,/R16 profile-only workflow registered on the approved branch/u);
  assert.doesNotMatch(registration,/actions\/checkout|pnpm install|lab-up|postgres|DATABASE_URL/u);
  const profileJob=workflow.slice(workflow.indexOf('  profile-only:'));
- assert.match(profileJob,/if: github\.event_name == 'workflow_dispatch'/u,
+ assert.match(profileJob,/if: >-[\s\S]*github\.event_name == 'workflow_dispatch'/u,
   'the push registration event cannot start the profile run');
+});
+
+test('profile-only dispatch requires the separate C query CPU job and accepts only its observed or explicit unavailable receipt',async()=>{
+ const workflow=await readFile(new URL('../../../.github/workflows/r16-listening-profile-only.yml',import.meta.url),'utf8');
+ const queryJob=workflow.slice(workflow.indexOf('  native-query-cpu:'),workflow.indexOf('  profile-only:'));
+ const profileJob=workflow.slice(workflow.indexOf('  profile-only:'));
+ assert.match(queryJob,/if: github\.event_name == 'workflow_dispatch'/u);
+ assert.match(queryJob,/R16_QUERY_CPU_LAB_OWNED=true/u);assert.match(queryJob,/scripts\/r16\/lab-up\.sh/u);
+ assert.match(queryJob,/scripts\/r16\/lab-down\.sh/u);
+ assert.match(profileJob,/needs: native-query-cpu/u);
+ assert.match(profileJob,/needs\.native-query-cpu\.outputs\.target_sha == inputs\.target_ref/u);
+ assert.match(profileJob,/needs\.native-query-cpu\.outputs\.probe_sha == github\.sha/u);
+ assert.match(profileJob,/needs\.native-query-cpu\.outputs\.status == 'observed'.*needs\.native-query-cpu\.outputs\.status == 'unavailable'/su);
+ const body=await workflowStepBody(workflow,'Validate query CPU JSON and exact three-file artifact');
+ const root=await mkdtemp(join(tmpdir(),'r16-query-cpu-artifact-gate-')),artifacts=join(root,'query'),output=join(root,'github-output');
+ const target=PROFILE_ONLY_TARGET_SHA_V1,probe='f'.repeat(40);
+ const makeReport=(status:'observed'|'unavailable')=>{
+  const unavailable=status==='unavailable';
+  return{contract:'r16-native-query-cpu-oracle-v1',status,target_sha:target,probe_sha:probe,diagnostic_only:true,h1_accepted:false,
+   gain_claim:false,native46_reexecuted:false,only_installed_C:true,function_replaced:false,source6:Array.from({length:6},(_,i)=>({file:`source-${i}`})),
+   failure:null,secondary_failures:[],unavailable_reasons:unavailable?['pg_read_file_sqlstate_42501']:[],
+   preflight:[{status:unavailable?'unavailable':'observed',...(unavailable?{reason:'pg_read_file_sqlstate_42501'}:{})},
+    {status:'observed'}],oracles_executed:unavailable?0:6,oracle_checks_passed:unavailable?0:6,
+   coverage:{select_repetitions_completed:unavailable?0:3,dml_repetitions_completed:unavailable?0:3,
+    dml_stages_observed:unavailable?0:9,control_pairs:unavailable?0:8,proc_reads_observed:unavailable?0:38}};
+ };
+ const makeFiles=async(status:'observed'|'unavailable')=>{
+  await rm(artifacts,{recursive:true,force:true});await mkdir(artifacts,{recursive:true});await writeFile(output,'');
+  const tap=Buffer.from(`# tests 42\n# pass 42\n# fail 0\n# cancelled 0\n# skipped 0\n`);
+  const receipt={contract:'r16-diagnostic-pure-suite-v1',status:'verified',diagnostic_only:true,h1_accepted:false,exit_status:0,requested_target_sha:target,
+   target_git_sha_before:target,target_git_sha_after:target,requested_probe_sha:probe,probe_git_sha_before:probe,probe_git_sha_after:probe,
+   test_file:'scripts/r16-diagnostics/listening-small/query-cpu-oracle.test.mjs',tap_file:'query-cpu.test.tap',
+   counts:{tests:42,pass:42,fail:0,cancelled:0,skipped:0},
+   tap_sha256:createHash('sha256').update(tap).digest('hex')};
+  await writeFile(join(artifacts,'query-cpu.json'),JSON.stringify(makeReport(status)));
+  await writeFile(join(artifacts,'query-cpu.test.tap'),tap);
+  await writeFile(join(artifacts,'query-cpu.test.receipt.json'),JSON.stringify(receipt));
+ };
+ const execute=()=>spawnSync('bash',['-euo','pipefail','-c',body],{encoding:'utf8',env:{PATH:process.env.PATH??'/usr/bin:/bin',
+  QUERY_CPU_ARTIFACT_ROOT:artifacts,TARGET_REF:target,PROBE_REF:probe,GITHUB_OUTPUT:output}});
+ try{
+  for(const status of ['observed','unavailable'] as const){await makeFiles(status);const result=execute();assert.equal(result.status,0,result.stderr||result.stdout);
+   assert.match(await readFile(output,'utf8'),new RegExp(`^status=${status}$`,'mu'));}
+  await makeFiles('unavailable');await writeFile(join(artifacts,'extra.json'),'{}');
+  assert.notEqual(execute().status,0,'extra artifact files must be rejected');
+  await makeFiles('unavailable');const failed=JSON.parse(await readFile(join(artifacts,'query-cpu.json'),'utf8'));
+  failed.status='failed';await writeFile(join(artifacts,'query-cpu.json'),JSON.stringify(failed));
+  assert.notEqual(execute().status,0,'failed oracle status must never satisfy the profile prerequisite');
+  await makeFiles('unavailable');const bad=JSON.parse(await readFile(join(artifacts,'query-cpu.json'),'utf8'));bad.target_sha='0'.repeat(40);
+  await writeFile(join(artifacts,'query-cpu.json'),JSON.stringify(bad));assert.notEqual(execute().status,0,'target mismatch must be rejected');
+  await makeFiles('unavailable');const reason=JSON.parse(await readFile(join(artifacts,'query-cpu.json'),'utf8'));
+  reason.unavailable_reasons=['private error text'];await writeFile(join(artifacts,'query-cpu.json'),JSON.stringify(reason));
+  assert.notEqual(execute().status,0,'unavailable status must carry a bounded reason code');
+  await makeFiles('unavailable');const skipped=JSON.parse(await readFile(join(artifacts,'query-cpu.test.receipt.json'),'utf8'));
+  skipped.counts.skipped=1;await writeFile(join(artifacts,'query-cpu.test.receipt.json'),JSON.stringify(skipped));
+  assert.notEqual(execute().status,0,'skipped CPU pure cases must be rejected');
+ }finally{await rm(root,{recursive:true,force:true});}
 });
 
 test('profile-only fresh-lab gate inventories daemon, project containers/volumes/networks and fixed Redis resources',async()=>{

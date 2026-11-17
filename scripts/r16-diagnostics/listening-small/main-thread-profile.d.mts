@@ -2,6 +2,7 @@ export declare const MAIN_THREAD_PROFILE_INTERVAL_US_V1: 10000;
 export declare const MAIN_THREAD_PROFILE_MAX_BYTES_V1: number;
 export declare const MAIN_THREAD_CLK_TCK_TIMEOUT_MS_V1: 2000;
 export declare function readClockTicksV1(exec?:(file:string,args:string[],options:Record<string,unknown>)=>string|Buffer):number;
+export declare function parseMainThreadProcStatLineV1<T>(text:string,parseProcStatV1:(line:string)=>T):T;
 export declare function createProcMainThreadCpuReaderV1(options:{pid?:number;isMainThread?:boolean;
   parseProcStatV1:(text:string)=>{pid:number;comm:string;state:string;utime_ticks:string;stime_ticks:string;starttime_ticks:string};
   readText?:(path:string)=>string;getClockTicks?:()=>string|number}):()=>Promise<{status:string;[key:string]:unknown}>;

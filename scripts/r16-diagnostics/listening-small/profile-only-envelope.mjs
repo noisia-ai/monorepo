@@ -10,6 +10,7 @@ export const PROFILE_ONLY_TARGET_SHA_V1='b95a87a8e15343ba25d742c6fdcd97c3a7fbdec
 export const PROFILE_ONLY_MAX_NODE_PROFILE_BYTES_V1=32*1024*1024;
 export const PROFILE_ONLY_MAX_PG_PROFILE_BYTES_V1=4*1024*1024;
 export const PROFILE_ONLY_MAX_TOTAL_BYTES_V1=64*1024*1024;
+export const PROFILE_ONLY_PG_CPU_INTERVAL_MS_V1=0;
 const MAINLAB_PATHS=[
  'infrastructure/db/migrations/0330_signal_listening_statement_shared_wire.sql',
  'infrastructure/db/migrations/0331_signal_listening_statement_payload.sql',
@@ -30,6 +31,10 @@ export function profileOnlyEnvelopeErrorCodeV1(error){
  const firstLine=error instanceof Error?error.message.split(/\r?\n/u,1)[0]:'';
  return typeof firstLine==='string'&&/^profile_only_[a-z0-9_]{1,100}$/u.test(firstLine)?firstLine:'profile_only_envelope_failed';
 }
+export function assertProfileOnlyPgIntervalV1(pgProfile){
+ assert.equal(pgProfile?.limits?.configured_interval_ms,PROFILE_ONLY_PG_CPU_INTERVAL_MS_V1,'profile_only_pg_interval_invalid');
+ return true;
+}
 export const PROFILE_ONLY_REQUIRED_PROBE_FILES_V1=['.github/workflows/r16-listening-profile-only.yml',
  '.github/workflows/r16-listening-small-diagnostic.yml','.github/workflows/mfp-postgres.yml',
  'scripts/r16-diagnostics/listening-small/run.mts','scripts/r16-diagnostics/listening-small/run.test.mts',
@@ -39,7 +44,8 @@ export const PROFILE_ONLY_REQUIRED_PROBE_FILES_V1=['.github/workflows/r16-listen
  'scripts/r16-diagnostics/listening-small/main-thread-profile.d.mts','scripts/r16-diagnostics/listening-small/profile-only-envelope.mjs',
  'scripts/r16-diagnostics/listening-small/profile-only-envelope.d.mts','scripts/r16-diagnostics/listening-small/profile-only.test.mts',
  'scripts/r16-diagnostics/listening-small/profile-pg-cpu.mjs','scripts/r16-diagnostics/listening-small/profile-pg-cpu.d.mts',
- 'scripts/r16-diagnostics/listening-small/profile-pg-cpu.test.mjs'];
+ 'scripts/r16-diagnostics/listening-small/profile-pg-cpu.test.mjs',
+ 'scripts/r16-diagnostics/listening-small/query-cpu-oracle.mjs','scripts/r16-diagnostics/listening-small/query-cpu-oracle.test.mjs'];
 const hash=bytes=>createHash('sha256').update(bytes).digest('hex');
 const readJson=async path=>JSON.parse(await readFile(path,'utf8'));
 const gitHead=root=>execFileSync('git',['rev-parse','HEAD'],{cwd:root,encoding:'utf8',stdio:['ignore','pipe','ignore']}).trim();
@@ -128,8 +134,9 @@ export function validateProfileOnlyRunV1(run,{targetSha,probeSha}){
  assert.equal(run.node_profile?.window?.profile_sampling_overlap,'unknown_v8_clock_bridge','profile_only_v8_clock_bridge_claimed');
  assert.equal(run.postgres_profile?.contract,'r16-pg-cpu-profile-v1','profile_only_pg_profile_missing');
  assert.equal(run.postgres_profile?.target_sha,targetSha,'profile_only_pg_target_mismatch');
+ assert.equal(run.postgres_profile?.sampling,'boundary_only','profile_only_pg_sampling_invalid');
  assert.ok(['observed','partial','unavailable'].includes(run.postgres_profile?.status),'profile_only_pg_status_invalid');
- assert.equal(run.postgres_profile?.interval_ms,250,'profile_only_pg_interval_invalid');
+ assert.equal(run.postgres_profile?.interval_ms,PROFILE_ONLY_PG_CPU_INTERVAL_MS_V1,'profile_only_pg_interval_invalid');
  assert.equal(run.storage_output?.scope,'owned_temporary_sibling_outside_artifact_directory','profile_only_storage_path_scope_invalid');
  assert.ok(/^sha256:[0-9a-f]{64}$/u.test(run.storage_output?.directory_path_sha256??''),'profile_only_storage_path_seal_invalid');
  assert.equal(run.storage_output?.removed_before_run_receipt_write,true,'profile_only_storage_path_not_cleaned');
@@ -170,7 +177,7 @@ export async function assembleProfileOnlyEnvelopeV1(args){
  assert.equal(pgProfile.contract,'r16-pg-cpu-profile-v1','profile_only_pg_contract_invalid');
  assert.equal(pgProfile.target_sha,targetSha,'profile_only_pg_source_invalid');
  assert.ok(['observed','partial','unavailable'].includes(pgProfile.status),'profile_only_pg_status_invalid');
- assert.equal(pgProfile.limits.configured_interval_ms,250,'profile_only_pg_interval_invalid');
+ assertProfileOnlyPgIntervalV1(pgProfile);
  assert.equal(pgProfile.limits.configured_duration_ms,300000,'profile_only_pg_duration_invalid');
  const pgBytes=await readFile(path('postgres-profile.json'));
  validatePgProfileArtifactBytesV1(run.postgres_profile,pgBytes,pgProfile);
@@ -212,7 +219,8 @@ export async function assembleProfileOnlyEnvelopeV1(args){
    sha256:nodeReceipt.sha256,scope:nodeReceipt.scope,coverage:nodeReceipt.coverage,process_scope:nodeReceipt.process_scope,
    worker_thread_cpu:nodeReceipt.worker_thread_cpu,window:nodeReceipt.window,process_cpu:nodeReceipt.process_cpu,
    sampling:nodeReceipt.sampling,v8_profile:nodeReceipt.v8_profile},
-  postgres_profile:{contract:pgProfile.contract,status:pgProfile.status,path:'postgres-profile.json',bytes:pgBytes.byteLength,
+  postgres_profile:{contract:pgProfile.contract,status:pgProfile.status,sampling:'boundary_only',interval_ms:PROFILE_ONLY_PG_CPU_INTERVAL_MS_V1,
+   path:'postgres-profile.json',bytes:pgBytes.byteLength,
    sha256:hash(pgBytes),target_sha:pgProfile.target_sha,limits:pgProfile.limits,window:pgProfile.window,
    sample_count:pgProfile.snapshots.length,observed_sample_count:pgProfile.snapshots.filter(s=>s.status==='observed').length,
    consecutive_pairs_count:pgProfile.consecutive_pairs.length,delta:pgProfile.delta,waits:pgProfile.waits,

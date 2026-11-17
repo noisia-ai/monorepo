@@ -1,5 +1,5 @@
 name: R16 listening profile-only diagnostic
-run-name: R16 profile-only 4096-root diagnostic (bounded_2g)
+run-name: R16 profile-only 4096-root diagnostic (bounded_2g, PG boundary-only 0 ms)
 
 on:
   push:
@@ -31,9 +31,307 @@ jobs:
       - name: Confirm profile-only workflow registration
         run: echo 'R16 profile-only workflow registered on the approved branch.'
 
+  native-query-cpu:
+    name: R16 C query CPU oracle (fresh owned PG17)
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    outputs:
+      status: ${{ steps.verify_query_cpu.outputs.status }}
+      target_sha: ${{ steps.verify_query_cpu.outputs.target_sha }}
+      probe_sha: ${{ steps.verify_query_cpu.outputs.probe_sha }}
+    env:
+      R16BENCH_RUN_ID: benchmark-pg17
+      R16BENCH_SERVICES: postgres,redis
+      NOISIA_R16_LOCAL_PG_LAB: r16-benchmark-pg17
+      DATABASE_SSL: 'false'
+      TARGET_REF: ${{ inputs.target_ref }}
+      PROBE_REF: ${{ github.sha }}
+      QUERY_CPU_ARTIFACT_ROOT: ${{ runner.temp }}/r16-query-cpu-${{ github.run_id }}-${{ github.run_attempt }}
+    steps:
+      - name: Validate fixed C target and reject provider credentials
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          expected=b95a87a8e15343ba25d742c6fdcd97c3a7fbdec1
+          if [ "$EVENT_NAME" != workflow_dispatch ] || [ "$TARGET_REF" != "$expected" ] \
+              || [ "${#TARGET_REF}" -ne 40 ] || [[ ! "$TARGET_REF" =~ ^[0-9a-f]{40}$ ]] \
+              || [ "${#PROBE_REF}" -ne 40 ] || [[ ! "$PROBE_REF" =~ ^[0-9a-f]{40}$ ]]; then
+            echo '::error::query CPU oracle requires exact C target and pinned probe SHA'
+            exit 1
+          fi
+          for name in $(compgen -e); do
+            case "$name" in
+              *ANTHROPIC*API_KEY*|*ANTHROPIC*TOKEN*|*SONNET*API_KEY*|*SONNET*TOKEN*|*VOYAGE*API_KEY*|*VOYAGE*TOKEN*|*OPENAI*API_KEY*|*TYPESAFE*API_KEY*)
+                echo '::error::provider credentials are forbidden in the query CPU oracle'
+                exit 1
+                ;;
+            esac
+          done
+
+      - name: Checkout the exact C product target
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.target_ref }}
+          path: target
+
+      - name: Checkout the pinned diagnostic probe
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          path: probe
+          sparse-checkout: |
+            .github/workflows/r16-listening-profile-only.yml
+            .github/workflows/r16-listening-small-diagnostic.yml
+            .github/workflows/mfp-postgres.yml
+            scripts/r16-diagnostics/listening-small
+          sparse-checkout-cone-mode: false
+
+      - name: Verify exact source checkouts
+        working-directory: target
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$TARGET_REF"
+          test "$(git -C ../probe rev-parse HEAD)" = "$PROBE_REF"
+          test -z "$(git status --porcelain --untracked-files=all)"
+          test -z "$(git -C ../probe status --porcelain --untracked-files=all)"
+          test -f infrastructure/db/migrations/0330_signal_listening_statement_shared_wire.sql
+          test -f infrastructure/db/migrations/0331_signal_listening_statement_payload.sql
+          test -f ../probe/scripts/r16-diagnostics/listening-small/query-cpu-oracle.mjs
+          test -f ../probe/scripts/r16-diagnostics/listening-small/query-cpu-oracle.test.mjs
+
+      - name: Require a fresh query CPU Docker lab
+        working-directory: target
+        run: |
+          set -euo pipefail
+          lab_dir=.data/piloto-masivo/r16/labs/benchmark-pg17
+          if [[ -e "$lab_dir" || -L "$lab_dir" ]]; then
+            echo '::error::query CPU lab metadata already exists'
+            exit 1
+          fi
+          if ! docker info >/dev/null 2>&1; then
+            echo '::error::Docker resource discovery failed; refusing query CPU lab startup'
+            exit 1
+          fi
+          project=r16bench-benchmark-pg17
+          fixed_container=r16-benchmark-pg17
+          fixed_redis_container=r16bench-benchmark-pg17-redis-1
+          fixed_volume=r16bench-benchmark-pg17_postgres-data
+          fixed_network=r16bench-benchmark-pg17_default
+          if ! project_containers="$(docker ps --all --filter "label=com.docker.compose.project=$project" --format '{{.ID}}')" \
+            || ! all_container_names="$(docker ps --all --format '{{.Names}}')" \
+            || ! project_volumes="$(docker volume ls --filter "label=com.docker.compose.project=$project" --format '{{.Name}}')" \
+            || ! all_volume_names="$(docker volume ls --format '{{.Name}}')" \
+            || ! project_networks="$(docker network ls --filter "label=com.docker.compose.project=$project" --format '{{.Name}}')" \
+            || ! all_network_names="$(docker network ls --format '{{.Name}}')"; then
+            echo '::error::Docker resource discovery failed; refusing query CPU lab startup'
+            exit 1
+          fi
+          if [[ -n "$project_containers" || -n "$project_volumes" || -n "$project_networks" ]] \
+            || [[ $'\n'$all_container_names$'\n' == *$'\n'$fixed_container$'\n'* ]] \
+            || [[ $'\n'$all_container_names$'\n' == *$'\n'$fixed_redis_container$'\n'* ]] \
+            || [[ $'\n'$all_volume_names$'\n' == *$'\n'$fixed_volume$'\n'* ]] \
+            || [[ $'\n'$all_network_names$'\n' == *$'\n'$fixed_network$'\n'* ]]; then
+            echo '::error::query CPU lab resources already exist; refusing reuse or cleanup'
+            exit 1
+          fi
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.2
+
+      - name: Set up Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: target/pnpm-lock.yaml
+
+      - name: Install frozen C target dependencies
+        working-directory: target
+        run: corepack pnpm install --frozen-lockfile
+
+      - name: Create the private query CPU artifact directory
+        run: |
+          set -euo pipefail
+          test ! -e "$QUERY_CPU_ARTIFACT_ROOT" && test ! -L "$QUERY_CPU_ARTIFACT_ROOT"
+          mkdir -m 700 -- "$QUERY_CPU_ARTIFACT_ROOT"
+          test "$(stat -c '%a' "$QUERY_CPU_ARTIFACT_ROOT")" = 700
+          test "$(realpath "$QUERY_CPU_ARTIFACT_ROOT")" = "$QUERY_CPU_ARTIFACT_ROOT"
+
+      - name: Run query CPU oracle pure tests with sealed TAP receipt
+        working-directory: target
+        env:
+          R16_DIAGNOSTIC_TARGET_ROOT: ${{ github.workspace }}/target
+          PURE_TAP: ${{ runner.temp }}/r16-query-cpu-${{ github.run_id }}-${{ github.run_attempt }}/query-cpu.test.tap
+          PURE_RECEIPT: ${{ runner.temp }}/r16-query-cpu-${{ github.run_id }}-${{ github.run_attempt }}/query-cpu.test.receipt.json
+        run: |
+          set -euo pipefail
+          target_before=$(git rev-parse HEAD)
+          probe_before=$(git -C ../probe rev-parse HEAD)
+          test "$target_before" = "$TARGET_REF"
+          test "$probe_before" = "$PROBE_REF"
+          set +e
+          corepack pnpm exec node --import tsx --test --test-concurrency=1 --test-reporter=tap ../probe/scripts/r16-diagnostics/listening-small/query-cpu-oracle.test.mjs 2>&1 | tee "$PURE_TAP"
+          statuses=("${PIPESTATUS[@]}")
+          test_status=${statuses[0]}
+          tee_status=${statuses[1]}
+          set -e
+          if [ "$tee_status" -ne 0 ] && [ "$test_status" -eq 0 ]; then test_status=125; fi
+          target_after=$(git rev-parse HEAD)
+          probe_after=$(git -C ../probe rev-parse HEAD)
+          test "$target_after" = "$TARGET_REF"
+          test "$probe_after" = "$PROBE_REF"
+          test -z "$(git status --porcelain --untracked-files=all)"
+          test -z "$(git -C ../probe status --porcelain --untracked-files=all)"
+          node - "$PURE_TAP" "$PURE_RECEIPT" "$test_status" "$TARGET_REF" "$target_before" "$target_after" "$PROBE_REF" "$probe_before" "$probe_after" <<'NODE'
+          const fs = require('node:fs');
+          const crypto = require('node:crypto');
+          const [tapPath, receiptPath, statusText, requestedTarget, targetBefore, targetAfter,
+            requestedProbe, probeBefore, probeAfter] = process.argv.slice(2);
+          const tapBytes = fs.readFileSync(tapPath), tap = tapBytes.toString('utf8');
+          const readCount = name => { const m = new RegExp(`^# ${name} (\\d+)$`, 'mu').exec(tap); return m ? Number(m[1]) : null; };
+          const counts = Object.fromEntries(['tests','pass','fail','cancelled','skipped'].map(k => [k,readCount(k)]));
+          const exitStatus = Number(statusText);
+          const verified = exitStatus === 0 && Object.values(counts).every(Number.isSafeInteger)
+            && counts.tests === 42 && counts.pass === 42 && counts.fail === 0 && counts.cancelled === 0 && counts.skipped === 0
+            && targetBefore === requestedTarget && targetAfter === requestedTarget
+            && probeBefore === requestedProbe && probeAfter === requestedProbe;
+          const receipt = {contract:'r16-diagnostic-pure-suite-v1',status:verified?'verified':'not_verified',diagnostic_only:true,h1_accepted:false,
+            requested_target_sha:requestedTarget,target_git_sha_before:targetBefore,target_git_sha_after:targetAfter,
+            requested_probe_sha:requestedProbe,probe_git_sha_before:probeBefore,probe_git_sha_after:probeAfter,
+            test_file:'scripts/r16-diagnostics/listening-small/query-cpu-oracle.test.mjs',exit_status:exitStatus,counts,
+            tap_file:'query-cpu.test.tap',tap_sha256:crypto.createHash('sha256').update(tapBytes).digest('hex')};
+          fs.writeFileSync(receiptPath,`${JSON.stringify(receipt,null,2)}\n`,{mode:0o600});
+          if (!verified) process.exitCode = 1;
+          NODE
+
+      - name: Start fresh owned PG17 and Redis for query CPU oracle
+        id: query_cpu_lab
+        working-directory: target
+        run: |
+          set -euo pipefail
+          printf '%s\n' 'R16_QUERY_CPU_LAB_OWNED=true' >> "$GITHUB_ENV"
+          scripts/r16/lab-up.sh
+
+      - name: Apply C migrations to query CPU lab
+        working-directory: target
+        env:
+          NOISIA_DB_SMOKE_RESET_SCHEMA: 'true'
+          NOISIA_DB_SMOKE_EMULATE_SUPABASE_ROLES: 'true'
+          NOISIA_MFP_PG_CI: 'true'
+        run: |
+          set -euo pipefail
+          connection_file=.data/piloto-masivo/r16/labs/benchmark-pg17/connection.env
+          test -f "$connection_file"
+          set -a
+          source "$connection_file"
+          set +a
+          export DATABASE_SSL=false NOISIA_R16_LOCAL_PG_LAB=r16-benchmark-pg17
+          corepack pnpm --filter @noisia/db db:smoke:migrations
+
+      - name: Run the C-default query CPU oracle once
+        id: query_cpu_oracle
+        working-directory: target
+        run: |
+          set -euo pipefail
+          connection_file=.data/piloto-masivo/r16/labs/benchmark-pg17/connection.env
+          set -a
+          source "$connection_file"
+          set +a
+          export DATABASE_SSL=false NOISIA_R16_LOCAL_PG_LAB=r16-benchmark-pg17
+          timeout 5m corepack pnpm exec node --import tsx ../probe/scripts/r16-diagnostics/listening-small/query-cpu-oracle.mjs --run \
+            --target-root "$GITHUB_WORKSPACE/target" --target-sha "$TARGET_REF" \
+            --probe-root "$GITHUB_WORKSPACE/probe" --probe-sha "$PROBE_REF" \
+            --artifact "$QUERY_CPU_ARTIFACT_ROOT/query-cpu.json"
+
+      - name: Stop only the owned query CPU lab
+        if: always() && env.R16_QUERY_CPU_LAB_OWNED == 'true'
+        working-directory: target
+        run: |
+          set -euo pipefail
+          scripts/r16/lab-down.sh
+
+      - name: Validate query CPU JSON and exact three-file artifact
+        id: verify_query_cpu
+        if: success()
+        run: |
+          set -euo pipefail
+          node - "$QUERY_CPU_ARTIFACT_ROOT" "$TARGET_REF" "$PROBE_REF" "$GITHUB_OUTPUT" <<'NODE'
+          const fs = require('node:fs');
+          const path = require('node:path');
+          const [root, target, probe, output] = process.argv.slice(2);
+          const expected = ['query-cpu.json','query-cpu.test.receipt.json','query-cpu.test.tap'].sort();
+          const limits = {'query-cpu.json':2*1024*1024,'query-cpu.test.receipt.json':2*1024*1024,'query-cpu.test.tap':2*1024*1024};
+          const entries = fs.readdirSync(root).sort();
+          if (JSON.stringify(entries) !== JSON.stringify(expected)) throw new Error('query_cpu_file_set_invalid');
+          let total = 0;
+          for (const name of entries) {
+            const full = path.join(root,name), st = fs.lstatSync(full);
+            if (!st.isFile() || st.isSymbolicLink() || st.size > limits[name]) throw new Error('query_cpu_file_invalid');
+            total += st.size;
+          }
+          if (total > 8*1024*1024) throw new Error('query_cpu_total_size_invalid');
+          const report = JSON.parse(fs.readFileSync(path.join(root,'query-cpu.json'),'utf8'));
+          const receipt = JSON.parse(fs.readFileSync(path.join(root,'query-cpu.test.receipt.json'),'utf8'));
+            if (report.contract !== 'r16-native-query-cpu-oracle-v1' || !['observed','unavailable'].includes(report.status) ||
+            report.target_sha !== target || report.probe_sha !== probe || report.diagnostic_only !== true || report.h1_accepted !== false ||
+            report.gain_claim !== false || report.native46_reexecuted !== false || report.only_installed_C !== true || report.function_replaced !== false)
+            throw new Error('query_cpu_report_invalid');
+          if (report.failure !== null || !Array.isArray(report.secondary_failures) || report.secondary_failures.length !== 0 ||
+            !Array.isArray(report.source6) || report.source6.length !== 6 || !Array.isArray(report.preflight) || report.preflight.length !== 2 ||
+            !Array.isArray(report.unavailable_reasons)) throw new Error('query_cpu_report_incomplete');
+          if (report.status === 'observed' && (report.preflight.some(item => item.status !== 'observed') || report.unavailable_reasons.length !== 0 ||
+            report.oracles_executed !== 6 || report.oracle_checks_passed !== 6 ||
+            report.coverage?.select_repetitions_completed !== 3 || report.coverage?.dml_repetitions_completed !== 3 ||
+            report.coverage?.dml_stages_observed !== 9 || report.coverage?.control_pairs !== 8 || report.coverage?.proc_reads_observed !== 38))
+            throw new Error('query_cpu_oracle_coverage_invalid');
+          if (report.status === 'unavailable' && (report.preflight.every(item => item.status === 'observed') ||
+            report.preflight.some(item => item.status !== 'unavailable' && item.status !== 'observed') ||
+            report.unavailable_reasons.length !== report.preflight.filter(item => item.status === 'unavailable').length ||
+            report.preflight.filter(item => item.status === 'unavailable').some((item,index) => item.reason !== report.unavailable_reasons[index]) ||
+            report.unavailable_reasons.some(reason => typeof reason !== 'string' ||
+              !/^(?:cpu_(?:sample_row_count|stat_invalid|pid_mismatch|bracket_invalid|backend_identity_changed|counter_regressed|bracket_overlap|hz_invalid|counter_invalid)|proc_stat_empty|pg_read_file_failed|pg_read_file_sqlstate_[0-9A-Z]{5})$/.test(reason)) ||
+            report.oracles_executed !== 0 || report.oracle_checks_passed !== 0 || report.coverage?.select_repetitions_completed !== 0 ||
+            report.coverage?.dml_repetitions_completed !== 0 || report.coverage?.dml_stages_observed !== 0 || report.coverage?.control_pairs !== 0 ||
+            !Number.isInteger(report.coverage?.proc_reads_observed) || report.coverage.proc_reads_observed < 0 || report.coverage.proc_reads_observed > 4))
+            throw new Error('query_cpu_unavailable_status_invalid');
+          const tap = fs.readFileSync(path.join(root,'query-cpu.test.tap'));
+          if (receipt.contract !== 'r16-diagnostic-pure-suite-v1' || receipt.status !== 'verified' || receipt.diagnostic_only !== true ||
+            receipt.h1_accepted !== false || receipt.exit_status !== 0 ||
+            receipt.requested_target_sha !== target || receipt.target_git_sha_before !== target || receipt.target_git_sha_after !== target ||
+            receipt.requested_probe_sha !== probe || receipt.probe_git_sha_before !== probe || receipt.probe_git_sha_after !== probe ||
+            receipt.test_file !== 'scripts/r16-diagnostics/listening-small/query-cpu-oracle.test.mjs' ||
+            receipt.tap_file !== 'query-cpu.test.tap' ||
+            receipt.counts?.tests !== 42 || receipt.counts?.pass !== 42 || receipt.counts?.fail !== 0 ||
+            receipt.counts?.cancelled !== 0 || receipt.counts?.skipped !== 0 ||
+            receipt.tap_sha256 !== require('node:crypto').createHash('sha256').update(tap).digest('hex')) throw new Error('query_cpu_test_receipt_invalid');
+          fs.appendFileSync(output,`status=${report.status}\ntarget_sha=${target}\nprobe_sha=${probe}\n`);
+          NODE
+
+      - name: Upload the bounded query CPU evidence
+        if: success() && steps.verify_query_cpu.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: r16-query-cpu-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/r16-query-cpu-${{ github.run_id }}-${{ github.run_attempt }}/query-cpu.json
+            ${{ runner.temp }}/r16-query-cpu-${{ github.run_id }}-${{ github.run_attempt }}/query-cpu.test.tap
+            ${{ runner.temp }}/r16-query-cpu-${{ github.run_id }}-${{ github.run_attempt }}/query-cpu.test.receipt.json
+          if-no-files-found: error
+          retention-days: 7
+
   profile-only:
     name: R16 profile-only mini run (fresh owned PG17)
-    if: github.event_name == 'workflow_dispatch'
+    needs: native-query-cpu
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      needs.native-query-cpu.result == 'success' &&
+      needs.native-query-cpu.outputs.target_sha == inputs.target_ref &&
+      needs.native-query-cpu.outputs.probe_sha == github.sha &&
+      (needs.native-query-cpu.outputs.status == 'observed' || needs.native-query-cpu.outputs.status == 'unavailable')
     runs-on: ubuntu-latest
     timeout-minutes: 25
     env:
@@ -325,7 +623,7 @@ jobs:
           timeout 2m corepack pnpm exec node --import tsx ../probe/scripts/r16-diagnostics/listening-small/mainlab-default-runtime.mjs capture \
             before "$TARGET_REF" "$PROFILE_ARTIFACT_ROOT/mainlab-default-before.json"
 
-      - name: Run the unchanged 4096-root mini with bounded_2g profiling
+      - name: Run the unchanged 4096-root mini (bounded_2g; PG CPU boundary-only at 0 ms)
         id: mini
         working-directory: target
         env:

@@ -39,6 +39,14 @@ export function readClockTicksV1(exec=execFileSync){
  return ticksPerSecond;
 }
 
+export function parseMainThreadProcStatLineV1(text,parseProcStatV1){
+ assert.ok(typeof parseProcStatV1==='function','main_thread_proc_parser_missing');
+ assert.ok(typeof text==='string'&&text.endsWith('\n'),'main_thread_proc_stat_terminator_invalid');
+ const line=text.slice(0,-1);
+ assert.ok(line.length>0&&!line.includes('\n')&&!line.includes('\r'),'main_thread_proc_stat_line_invalid');
+ return parseProcStatV1(line);
+}
+
 export function createProcMainThreadCpuReaderV1(options={}){
   const pid=options.pid??process.pid,mainThread=options.isMainThread??isMainThread;
   const parse=options.parseProcStatV1,readText=options.readText??((path)=>readFileSync(path,'utf8'));
@@ -49,8 +57,8 @@ export function createProcMainThreadCpuReaderV1(options={}){
   assert.ok(Number.isSafeInteger(ticksPerSecond)&&ticksPerSecond>0&&ticksPerSecond<=10_000_000,'main_thread_proc_clk_tck_invalid');
   return async()=>{
     const before=monotonicNs();
-    const task=parse(readText(`/proc/self/task/${pid}/stat`));
-    const process=parse(readText('/proc/self/stat'));
+    const task=parseMainThreadProcStatLineV1(readText(`/proc/self/task/${pid}/stat`),parse);
+    const process=parseMainThreadProcStatLineV1(readText('/proc/self/stat'),parse);
     const after=monotonicNs();
     assert.equal(task.pid,pid,'main_thread_proc_task_pid_mismatch');
     assert.equal(process.pid,pid,'main_thread_proc_process_pid_mismatch');
