@@ -9,7 +9,7 @@ import { Button } from "@/components/ui/Button";
 import { studiesPage } from "@/content/pages/studies";
 import { getStudy, slidePaths } from "@/content/studies";
 import { getPathname } from "@/i18n/navigation";
-import { accessCookieName, canOpen, PREVIEW_SLIDES, READER_COOKIE, recordEvent, recordReaderOpen } from "@/lib/content/access";
+import { accessCookieName, canOpen, pendingCookieName, PREVIEW_SLIDES, READER_COOKIE, recordEvent, recordReaderOpen } from "@/lib/content/access";
 import { SITE_URL } from "@/lib/site";
 
 /**
@@ -33,7 +33,7 @@ export async function generateMetadata({ params }: { params: Promise<Params> }):
   };
 }
 
-export default async function StudyViewerPage({ params, searchParams }: { params: Promise<Params>; searchParams: Promise<{ slide?: string }> }) {
+export default async function StudyViewerPage({ params, searchParams }: { params: Promise<Params>; searchParams: Promise<{ slide?: string; code?: string }> }) {
   const { locale, slug } = await params;
   setRequestLocale(locale);
   const study = await getStudy(slug);
@@ -49,7 +49,8 @@ export default async function StudyViewerPage({ params, searchParams }: { params
   const access = await canOpen(study, token, reader);
   const base = `/api/content/studies/${study.id}`;
   const slides = slidePaths(study).map((path) => `${base}/${path}?v=${study.version}`);
-  const requested = Number.parseInt((await searchParams).slide ?? "", 10);
+  const query = await searchParams;
+  const requested = Number.parseInt(query.slide ?? "", 10);
   const initialSlide = Number.isFinite(requested) && requested >= 1 && requested <= slides.length ? requested - 1 : 0;
   const viewerProps = {
     title,
@@ -91,6 +92,8 @@ export default async function StudyViewerPage({ params, searchParams }: { params
           locale: lang,
           preview,
           privacyHref: getPathname({ locale, href: "/privacidad" }),
+          pending: Boolean(jar.get(pendingCookieName(study.id))?.value),
+          code: typeof query.code === "string" && /^\d{4}$/.test(query.code) ? query.code : null,
           copy: { ...unlockCopy, text: text(slides.length - preview) }
         }}
       />

@@ -85,7 +85,20 @@ export type UnlockCopy = {
   submit: string;
   sending: string;
   error: string;
+  emailError: string;
   locked: string;
+  codeTitle: string;
+  /** With {email}. */
+  codeText: string;
+  codeTextNoEmail: string;
+  codeLabel: string;
+  verify: string;
+  verifying: string;
+  wrong: string;
+  tooMany: string;
+  expired: string;
+  spam: string;
+  restart: string;
 };
 
 export const studiesPage: Record<"es" | "en", Copy> = {
@@ -156,17 +169,29 @@ export const studiesPage: Record<"es" | "en", Copy> = {
     fullMetaTitle: (title) => `${title} · Estudio completo`,
     unlock: {
       title: "Abre el estudio completo",
-      text: (remaining) => `Faltan ${remaining} láminas. Déjanos tus datos y se abren ahora; también te mandamos el link a tu correo.`,
+      text: (remaining) => `Faltan ${remaining} láminas. Déjanos tus datos y te mandamos a tu correo un código para abrirlas.`,
       name: "Nombre",
       email: "Correo",
       company: "Empresa",
       marketing: "Quiero recibir los próximos estudios de Noisia.",
       privacy: "Usamos tus datos como dice el",
       privacyLink: "aviso de privacidad",
-      submit: "Abrir el estudio",
-      sending: "Abriendo…",
+      submit: "Enviarme el código",
+      sending: "Enviando…",
       error: "No pudimos abrirlo. Revisa tus datos e inténtalo de nuevo.",
-      locked: "Se abre con tus datos"
+      emailError: "No pudimos mandar el código a ese correo. Revísalo e inténtalo de nuevo.",
+      locked: "Se abre con tus datos",
+      codeTitle: "Revisa tu correo",
+      codeText: "Te mandamos un código de 4 dígitos a {email}. Escríbelo aquí y el estudio se abre.",
+      codeTextNoEmail: "Te mandamos un código de 4 dígitos a tu correo. Escríbelo aquí y el estudio se abre.",
+      codeLabel: "Código",
+      verify: "Abrir el estudio",
+      verifying: "Abriendo…",
+      wrong: "Ese código no es. Revisa el correo e inténtalo de nuevo.",
+      tooMany: "Demasiados intentos con ese código. Pide uno nuevo.",
+      expired: "El código venció. Pide uno nuevo.",
+      spam: "¿No llega? Revisa spam o promociones, o",
+      restart: "pide otro código."
     }
   },
   en: {
@@ -236,17 +261,29 @@ export const studiesPage: Record<"es" | "en", Copy> = {
     fullMetaTitle: (title) => `${title} · Full study`,
     unlock: {
       title: "Open the full study",
-      text: (remaining) => `${remaining} more slides. Leave your details and they open now; we also email you the link.`,
+      text: (remaining) => `${remaining} more slides. Leave your details and we email you a code to open them.`,
       name: "Name",
       email: "Email",
       company: "Company",
       marketing: "Send me Noisia's next studies.",
       privacy: "We use your data as described in our",
       privacyLink: "privacy notice",
-      submit: "Open the study",
-      sending: "Opening…",
+      submit: "Email me the code",
+      sending: "Sending…",
       error: "We couldn't open it. Check your details and try again.",
-      locked: "Opens with your details"
+      emailError: "We couldn't send the code to that email. Check it and try again.",
+      locked: "Opens with your details",
+      codeTitle: "Check your email",
+      codeText: "We sent a 4-digit code to {email}. Type it here and the study opens.",
+      codeTextNoEmail: "We sent a 4-digit code to your email. Type it here and the study opens.",
+      codeLabel: "Code",
+      verify: "Open the study",
+      verifying: "Opening…",
+      wrong: "That code is not right. Check the email and try again.",
+      tooMany: "Too many tries with that code. Ask for a new one.",
+      expired: "The code expired. Ask for a new one.",
+      spam: "Not there? Check spam or promotions, or",
+      restart: "ask for another code."
     }
   }
 };

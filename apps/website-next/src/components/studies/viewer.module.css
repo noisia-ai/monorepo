@@ -640,6 +640,31 @@
   box-shadow: 0 0 0 3px var(--teal-soft);
 }
 
+.field input.codeInput {
+  height: 64px;
+  padding: 0 0 0 0.5em;
+  text-align: center;
+  font-family: var(--font-mono, ui-monospace, "SFMono-Regular", Menlo, monospace);
+  font-size: 32px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.5em;
+}
+
+.field input.codeInput::placeholder {
+  color: var(--fg-faint);
+}
+
+.linkButton {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
 .check {
   display: grid;
   grid-template-columns: 18px minmax(0, 1fr);
