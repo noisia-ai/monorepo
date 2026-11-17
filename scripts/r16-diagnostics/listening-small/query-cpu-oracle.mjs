@@ -143,6 +143,16 @@ function unavailableReason(e){
  return null;
 }
 function safeFailure(e){return{reason:unavailableReason(e)??(/^cpu_[a-z_]+$/.test(e?.message??'')?e.message:'native_oracle_failure'),sqlstate:/^[0-9A-Z]{5}$/.test(e?.code??'')?e.code:null};}
+async function finishPostchecks(report,checks){
+ for(const [phase,check]of [['final_identity',checks.identity],['final_source',checks.source]]){
+  try{await check();}catch(e){
+   report.status='failed';const failure={phase,...safeFailure(e)};
+   if(report.failure){report.secondary_failures.push({...failure,primary_phase:report.failure.phase});}
+   else report.failure=failure;
+  }
+ }
+}
+export const finishQueryCpuPostchecksForTestV1=finishPostchecks;
 function reader(raw,clock,sequence){return async()=>{
  const start=clock();let row;
  try{const result=await raw.query(CPU_READ_SQL_V1);if(result.rows.length!==1)throw new CpuUnavailable('cpu_sample_row_count');row=result.rows[0];}
@@ -272,7 +282,7 @@ async function run(o){
   limits:{artifact_bytes:MAX_ARTIFACT_BYTES,repetitions:3,selected_calls:1000,proc_read_bytes:8192},
   limitations:['CPU snapshots include probe/protocol CPU; controls are observed, never subtracted.',
    'Ticks are quantized; zero increment is not proof of zero CPU.','Leader only; parallel workers and SQL function CPU unknown.',
-   'Instrumented wall times are not capacity evidence. No H1 or new Native46 claim.'],failure:null};
+   'Instrumented wall times are not capacity evidence. No H1 or new Native46 claim.'],failure:null,secondary_failures:[]};
  let phase='preflight';const clock=()=>process.hrtime.bigint(),sequence={next:0};
  try{
   poolTransferred=true;report.preflight=await preflight(pool,owned,clock,sequence);
@@ -283,10 +293,11 @@ async function run(o){
   });
  }catch(e){report.status='failed';report.failure={phase,...safeFailure(e)};}
  finally{if(!poolTransferred)await pool.end();}
- try{report.hz_after=await ownedHz(o);assert.equal(report.hz_after.clk_tck,owned.clk_tck);
-  assert.deepEqual(report.hz_after.ownership,owned.ownership);assert.deepEqual(report.hz_after.postmaster,owned.postmaster);
-  await checkSources(o);
- }catch(e){report.status='failed';report.failure={phase:'final_identity',...safeFailure(e)};}
+ await finishPostchecks(report,{
+  identity:async()=>{report.hz_after=await ownedHz(o);assert.equal(report.hz_after.clk_tck,owned.clk_tck);
+   assert.deepEqual(report.hz_after.ownership,owned.ownership);assert.deepEqual(report.hz_after.postmaster,owned.postmaster);},
+  source:()=>checkSources(o),
+ });
  report.coverage={select_repetitions_completed:report.select.length,dml_repetitions_completed:report.dml.length,
   dml_stages_observed:report.dml.reduce((sum,r)=>sum+r.stages.length,0),control_pairs:report.controls.length,proc_reads_observed:sequence.next};
  await artifactDirectory(o);await writeQueryCpuArtifactForTestV1(o.artifact,report);

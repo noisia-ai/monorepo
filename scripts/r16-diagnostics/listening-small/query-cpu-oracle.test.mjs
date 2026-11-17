@@ -4,7 +4,7 @@ import test from 'node:test';
 import { CPU_READ_SQL_V1, TARGET_SHA_V1, SOURCE_DECLARATIONS_V1, parseQueryCpuSampleV1,
   queryCpuDeltaV1, createQueryCpuDriverForTestV1, validateQueryCpuInvocationV1,
   verifyInlineSourcesV1, writeQueryCpuArtifactForTestV1,runQueryCpuPreflightForTestV1,
-  afterQueryCpuPreflightForTestV1 } from './query-cpu-oracle.mjs';
+  afterQueryCpuPreflightForTestV1,finishQueryCpuPostchecksForTestV1 } from './query-cpu-oracle.mjs';
 
 function stat(pid=263,u='100',s='20',start='52607',comm='postgres') {
   const f=Array(24).fill('0');f[0]='S';f[11]=u;f[12]=s;f[19]=start;
@@ -130,6 +130,37 @@ test('incomplete preflight and missing native checks fail closed rather than bec
   await assert.rejects(afterQueryCpuPreflightForTestV1({preflight:[],oracles_executed:0,oracle_checks_passed:0},async()=>{}),/cpu_preflight_incomplete/);
   const report={preflight:[{status:'observed'},{status:'observed'}],oracles_executed:6,oracle_checks_passed:5};
   await assert.rejects(afterQueryCpuPreflightForTestV1(report,async()=>{}));assert.notEqual(report.status,'observed');
+});
+for(const [phase,sqlstate]of [['native_C_oracles','23514'],['preflight','08006']])
+test(`${phase} failure survives a later owned-inspect failure and final source still gets checked`,async()=>{
+  const primary={phase,reason:'native_oracle_failure',sqlstate};
+  const report={status:'failed',failure:primary,secondary_failures:[]};let sourceChecked=false;
+  await finishQueryCpuPostchecksForTestV1(report,{
+    identity:async()=>{throw Error('cpu_owned_identity_unavailable');},
+    source:async()=>{sourceChecked=true;},
+  });
+  assert.equal(report.status,'failed');assert.equal(report.failure,primary);assert.equal(sourceChecked,true);
+  assert.deepEqual(report.secondary_failures,[{phase:'final_identity',reason:'cpu_owned_identity_unavailable',sqlstate:null,primary_phase:phase}]);
+});
+test('multiple failed postchecks retain the first failure and record the later source cause',async()=>{
+  const report={status:'observed',failure:null,secondary_failures:[]};
+  await finishQueryCpuPostchecksForTestV1(report,{
+    identity:async()=>{throw Error('cpu_owned_identity_changed');},source:async()=>{throw Error('cpu_source_hash_mismatch');},
+  });
+  assert.equal(report.status,'failed');assert.equal(report.failure.phase,'final_identity');
+  assert.deepEqual(report.secondary_failures,[{phase:'final_source',reason:'cpu_source_hash_mismatch',sqlstate:null,primary_phase:'final_identity'}]);
+});
+test('a source-only postcheck failure turns an otherwise observed run into failed',async()=>{
+  const report={status:'observed',failure:null,secondary_failures:[]};
+  await finishQueryCpuPostchecksForTestV1(report,{identity:async()=>{},source:async()=>{throw Error('cpu_source_identity_invalid');}});
+  assert.equal(report.status,'failed');assert.deepEqual(report.failure,{phase:'final_source',reason:'cpu_source_identity_invalid',sqlstate:null});
+  assert.deepEqual(report.secondary_failures,[]);
+});
+test('successful postchecks preserve the existing result without replay or repair',async()=>{
+  const calls=[],report={status:'unavailable',failure:null,secondary_failures:[]};
+  await finishQueryCpuPostchecksForTestV1(report,{identity:async()=>{calls.push('identity');},source:async()=>{calls.push('source');}});
+  assert.equal(report.status,'unavailable');assert.equal(report.failure,null);assert.deepEqual(report.secondary_failures,[]);
+  assert.deepEqual(calls,['identity','source']);
 });
 
 const opts={targetRoot:'/workspace/target',targetSha:TARGET_SHA_V1,probeRoot:'/workspace/probe',
