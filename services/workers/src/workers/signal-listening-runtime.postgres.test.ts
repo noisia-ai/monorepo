@@ -10,6 +10,7 @@ import {SIGNAL_WORKSPACE_EMBEDDING_PROFILE_V1 as embeddingProfile,signalListenin
 import {createWorkspaceEngineStorageV1} from './signal-workspace-engine-storage';
 import {createSignalListeningRuntimeStoreV1,signalListeningJevJobV1,drainSignalListeningOnceV1} from './signal-listening-jev';
 import {createBrandContextSyntheticVoyageProviderV1} from '../../../../infrastructure/db/migrations/signal-brand-context.synthetic.fixture';
+import {localizeSyntheticListeningConfigurationV1} from '../../../../infrastructure/db/migrations/signal-listening-localized.synthetic.fixture';
 import {signalWorkspaceEmbeddingsJobV1} from './signal-workspace-embeddings';
 import type {JevProviderV1,JevRequestV1} from '../providers/typesafe-jev';
 const execution={max_in_flight:64,flush_size:32,max_flushes:2,max_buffered_bytes:64*1024*1024,flush_interval_ms:5,window_size:200};
@@ -50,8 +51,8 @@ test('automatic listening runtime calibrates finite normal receipts, adds only m
    const profile=await loadSignalListeningCalibrationV1({...access,configuration_digest:base.configuration_digest,model:base.configuration.model,
     shape_digest:signalListeningCalibrationShapeV1(base.configuration,{question_keys:['voice','promotion']}).shape_digest});
    assert.equal(profile?.sample_count,3);assert.equal(profile?.source_call_ids.length,3);assert.equal(profile?.source_run_id,first.run_id);
-   const extra=await saveSignalListeningConfigurationV1({...access,expected_revision:base.revision,provenance:'human',configuration:{...base.configuration,
-    questions:[...base.configuration.questions,{key:'occasion',type:'noul',text:'Is an occasion present?',positive:'An occasion is present.',negative:'No occasion.',scope:'all',origin:'brand_os',human_locked:true}]}});
+   const extra=await saveSignalListeningConfigurationV1({...access,expected_revision:base.revision,provenance:'human',configuration:localizeSyntheticListeningConfigurationV1({...base.configuration,
+    questions:[...base.configuration.questions,{key:'occasion',type:'noul',text:'Is an occasion present?',positive:'An occasion is present.',negative:'No occasion.',scope:'all',origin:'brand_os',human_locked:true}]})});
    const second=await requestSignalListeningV1({...access,configuration_id:extra.id,map_id:ctx.map_id,idempotency_key:randomUUID(),cap_micro_usd:1000000,provider_available:true});
    assert.equal((await runJob(second.run_id)).status,'completed');assert.equal(requests.length,6);
    assert.ok(requests.slice(3).every(request=>Object.keys(request.questions).join(',')==='occasion'));
@@ -73,9 +74,9 @@ test('automatic listening runtime calibrates finite normal receipts, adds only m
    const replacement=await requestSignalListeningV1({...access,configuration_id:newest.id,map_id:ctx.map_id,idempotency_key:randomUUID(),cap_micro_usd:1000000,provider_available:true});
    assert.ok(replacement.run_id);
    await database.query("UPDATE signal_labeling_runs SET status='canceled' WHERE id=$1",[replacement.run_id]);
-   const defined=await saveSignalListeningConfigurationV1({...access,expected_revision:newest.revision,provenance:'human',configuration:{...newest.configuration,
+   const defined=await saveSignalListeningConfigurationV1({...access,expected_revision:newest.revision,provenance:'human',configuration:localizeSyntheticListeningConfigurationV1({...newest.configuration,
     questions:[...newest.configuration.questions,...Array.from({length:9},(_,i)=>({key:'defined_'+i,type:'noul' as const,text:'Configured topic '+i,
-      positive:'Exact bicycle positive '+i,negative:'Other content',scope:'all' as const,origin:'brand_os' as const,human_locked:true,topic_source:'defined' as const}))]}});
+      positive:'Exact bicycle positive '+i,negative:'Other content',scope:'all' as const,origin:'brand_os' as const,human_locked:true,topic_source:'defined' as const}))]})});
    // Grant the synthetic prototype action through the same draft/publish policy
    // guards. This is isolated fixture setup, never a runtime permission grant.
    const policyId=randomUUID();

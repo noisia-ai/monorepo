@@ -4,6 +4,7 @@ import test from 'node:test';
 import {runMassLabelingAcceptanceFixtureV1} from './signal-mass-labeling-acceptance.synthetic.fixture';
 import {signalListeningBaseTemplateV1,buildSignalListeningJevRequestV1,signalListeningRequestDigestV1} from '@noisia/query-engine';
 import {saveSignalListeningConfigurationV1} from '../signal-listening-configuration';
+import {localizeSyntheticListeningConfigurationV1} from './signal-listening-localized.synthetic.fixture';
 import {createSignalListeningStoreV1,requestSignalListeningV1} from '../signal-listening-runs';
 test('complete cross-run guard probes indexed tenant/root/question history and preserves native denials',{
  skip:process.env.NOISIA_R16_LISTENING_CROSS_RUN_INDEX_PG!=='true',timeout:600000,
@@ -18,8 +19,8 @@ test('complete cross-run guard probes indexed tenant/root/question history and p
   const store=createSignalListeningStoreV1({database:db,page_size:200,storeRaw:async()=>{throw Error('history setup never invokes transport or creates raw receipts');}});
   let revision=0,latest:string|null=null,targetRun:string|null=null,targetRoot:string|null=null,otherRoot:string|null=null;
   for(let generation=0;generation<24;generation++){
-   const cfg=await saveSignalListeningConfigurationV1({...access,expected_revision:revision,provenance:'human',configuration:{...base,
-    instructions:'Versioned native history instructions '+generation,questions}});revision=cfg.revision;latest=cfg.id;
+   const cfg=await saveSignalListeningConfigurationV1({...access,expected_revision:revision,provenance:'human',configuration:localizeSyntheticListeningConfigurationV1({...base,
+    instructions:'Versioned native history instructions '+generation,questions})});revision=cfg.revision;latest=cfg.id;
    const admitted=await requestSignalListeningV1({...access,configuration_id:cfg.id,map_id:ctx.map_id,idempotency_key:randomUUID(),cap_micro_usd:1000000,provider_available:true});
    const run=await store.claim(admitted.run_id);assert.ok(run);const all=await store.inputs(run);assert.equal(all.length,3);
    const input=generation===23?all.slice(0,1):all;

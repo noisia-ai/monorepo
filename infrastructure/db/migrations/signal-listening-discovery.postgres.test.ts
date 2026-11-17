@@ -7,6 +7,7 @@ import test from 'node:test';
 import {runMassLabelingAcceptanceFixtureV1} from './signal-mass-labeling-acceptance.synthetic.fixture';
 import {signalListeningBaseTemplateV1,buildSignalListeningJevRequestV1,signalListeningRequestDigestV1,mapSignalListeningJevResponseV1} from '@noisia/query-engine';
 import {saveSignalListeningConfigurationV1} from '../signal-listening-configuration';
+import {localizeSyntheticListeningConfigurationV1} from './signal-listening-localized.synthetic.fixture';
 import {requestSignalListeningV1,createSignalListeningStoreV1} from '../signal-listening-runs';
 import {proposeSignalListeningDiscoveryBootstrapV1,bootstrapSignalListeningDiscoveryV1,refreshSignalListeningDiscoveryV1,
  snapshotSignalListeningDiscoveryOrphansV1,readSignalListeningDiscoveryOrphanSubsetV1,readSignalListeningDiscoveryRootsV1,
@@ -28,7 +29,7 @@ test('discovery stores scoped seed/confirmed generations and orphan subsets with
   assert.notEqual(signalListeningDiscoveryAliasV1(ctx.map_id,'voice'),'voice');
   const base=await saveSignalListeningConfigurationV1({...access,expected_revision:0,provenance:'human',configuration:signalListeningBaseTemplateV1({category:'bicycles',lexicon_terms:['synthetic']})});
   const proposed=await proposeSignalListeningDiscoveryBootstrapV1({...access,configuration_id:base.id,map_id:ctx.map_id});
-  let cfg=await saveSignalListeningConfigurationV1({...access,expected_revision:base.revision,provenance:'agent',source_digest:proposed.source_digest,configuration:proposed.configuration});
+  let cfg=await saveSignalListeningConfigurationV1({...access,expected_revision:base.revision,provenance:'agent',source_digest:proposed.source_digest,configuration:localizeSyntheticListeningConfigurationV1(proposed.configuration)});
   const initial=await bootstrapSignalListeningDiscoveryV1({...access,configuration_id:cfg.id,map_id:ctx.map_id,bindings:proposed.bindings});
   assert.equal(initial.kind,'legacy_seed');assert.equal(initial.counts.roots,3);assert.equal(initial.counts.cached_vectors,3);
   assert.equal((await db.query("SELECT count(*)::int n FROM signal_listening_discovery_topics WHERE generation_id=$1 AND kind='legacy_seed' AND source_map_id=$2",[initial.id,ctx.map_id])).rows[0].n,proposed.bindings.length);
@@ -67,7 +68,7 @@ test('discovery stores scoped seed/confirmed generations and orphan subsets with
    await assert.rejects(saveSignalListeningConfigurationV1({...access,expected_revision:cfg.revision,provenance:'agent',source_digest:sha('agent'),configuration:{...cfg.configuration,
     questions:cfg.configuration.questions.map(q=>q.key===key&&q.type==='noul'?{...q,positive:'Agent may not redefine a frozen manual topic'}:q)}}),/human_edit_frozen/);
    const added=Array.from({length:5},(_,i)=>({key:'a_new_'+i,type:'noul' as const,text:'New revision topic '+i,positive:'New topic definition '+i,negative:'Other content',scope:'all' as const,origin:'agent' as const,human_locked:false,topic_source:'discovered' as const}));
-   const next=await saveSignalListeningConfigurationV1({...access,expected_revision:cfg.revision,provenance:'agent',source_digest:sha('new-map'),configuration:{...cfg.configuration,questions:[...cfg.configuration.questions,...added]}});
+   const next=await saveSignalListeningConfigurationV1({...access,expected_revision:cfg.revision,provenance:'agent',source_digest:sha('new-map'),configuration:localizeSyntheticListeningConfigurationV1({...cfg.configuration,questions:[...cfg.configuration.questions,...added]})});
    const seeded=await seedSignalListeningDiscoveryV1({...access,configuration_id:next.id,map_id:ctx.map_id,round:3,source_generation_id:manual.id,seeds:next.configuration.questions.filter(q=>q.topic_source==='discovered').map(q=>
     q.key==='a_new_4'?{question_key:q.key,orphan_subset_id:subset.id,orphan_root_ids:[inputs[2]!.root_id]}:{question_key:q.key,source_topic_keys:[q.key.startsWith('a_new_')?key:q.key]})});
    assert.equal(seeded.kind,'source_seed');

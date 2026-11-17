@@ -13,6 +13,7 @@ import {bootstrapSignalListeningDiscoveryV1,proposeSignalListeningDiscoveryBoots
 import * as money from '../signal-listening-discovery-money';
 import type {ListeningDiscoveryAdvanceSubsetV1,ListeningDiscoveryNumericInputV1,ListeningDiscoveryNumericStorageV1,ListeningDiscoveryNumericArtifactDescriptorV1} from '../signal-listening-discovery-advance';
 import {jevUsageV1} from '../../../services/workers/src/workers/signal-jev-labeling-page';
+import {localizeSyntheticListeningConfigurationV1} from './signal-listening-localized.synthetic.fixture';
 const sha=(raw:string|Buffer)=>'sha256:'+createHash('sha256').update(raw).digest('hex');
 type FixtureOptions={population_count?:number;study_author_metadata?:boolean;study_text_length?:number;initial_approved?:number;no_category?:boolean;cap_micro_usd?:number;org_race?:boolean;additional_defined_topic?:boolean};
 export async function withDiscoveryAdvanceFixtureV1(fn:(f:Awaited<ReturnType<typeof seed>>)=>Promise<void>,options:FixtureOptions={}){
@@ -29,7 +30,8 @@ async function seed(ctx:FixtureContext,files:string,options:FixtureOptions){
  const proposal=await proposeSignalListeningDiscoveryBootstrapV1({...access,configuration_id:base.id,map_id:ctx.map_id});
  if(options.additional_defined_topic){const source=proposal.configuration.questions.find(q=>q.topic_source==='discovered');assert.ok(source);
   const key='additional_defined_topic';proposal.configuration.questions.push({...source,key,topic_source:'defined',human_locked:false});}
- const cfg=await saveSignalListeningConfigurationV1({...access,expected_revision:base.revision,provenance:'agent',source_digest:proposal.source_digest,configuration:proposal.configuration});
+ const cfg=await saveSignalListeningConfigurationV1({...access,expected_revision:base.revision,provenance:'agent',source_digest:proposal.source_digest,
+  configuration:localizeSyntheticListeningConfigurationV1(proposal.configuration)});
  const initial=await bootstrapSignalListeningDiscoveryV1({...access,configuration_id:cfg.id,map_id:ctx.map_id,bindings:proposal.bindings});
  const roots=(await db.query<{root_id:string}>('SELECT root_id FROM signal_mass_labeling_items WHERE workspace_id=$1 AND map_id=$2 ORDER BY root_id',[ctx.workspace_id,ctx.map_id])).rows.map(r=>r.root_id);
  const rawPages={reference:(a:{workspace_id:string;run_id:string;name:string;raw_sha256:string})=>({storage_key:`private/${a.workspace_id}/${a.run_id}/${a.name}.${a.raw_sha256.slice(7)}.parts.json`}),

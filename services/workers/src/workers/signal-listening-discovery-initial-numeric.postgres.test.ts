@@ -5,6 +5,7 @@ import {readFile,writeFile,open} from 'node:fs/promises';
 import {join,basename} from 'node:path';
 import {withInitialDiscoveryFixtureV1} from '../../../../infrastructure/db/migrations/signal-listening-discovery-initial.synthetic.fixture';
 import {saveSignalListeningConfigurationV1} from '../../../../infrastructure/db/signal-listening-configuration';
+import {localizeSyntheticListeningConfigurationV1} from '../../../../infrastructure/db/migrations/signal-listening-localized.synthetic.fixture';
 import {signalListeningBaseTemplateV1} from '@noisia/query-engine';
 import {drainSignalListeningDiscoveryAutomationOnceV1} from './signal-listening-discovery-automation';
 import {buildWorkspaceEngineStorageKeyV1,type WorkspaceEngineStorageV1} from './signal-workspace-engine-storage';
@@ -17,9 +18,9 @@ for(const {defined,count}of [{defined:false,count:3},{defined:true,count:3},{def
  assert.ok(process.env.NOISIA_WORKSPACE_ENGINE_PYTHON,'a real numerical Python runtime is required');
  assert.ok(process.env.NOISIA_WORKSPACE_ENGINE_MODULE_ROOT,'the exact numerical source must be explicit');
  const template=signalListeningBaseTemplateV1({category:'bicycles',lexicon_terms:['synthetic']});
- const cfg=await saveSignalListeningConfigurationV1({...f,expected_revision:f.cfg.revision,provenance:'human',configuration:{...template,
+ const cfg=await saveSignalListeningConfigurationV1({...f,expected_revision:f.cfg.revision,provenance:'human',configuration:localizeSyntheticListeningConfigurationV1({...template,
   retired_question_keys:f.cfg.configuration.questions.filter(q=>q.topic_source==='discovered').map(q=>q.key),
-  questions:[...template.questions,...(defined?[{key:'defined_interest',type:'noul' as const,text:'Is this about bicycle maintenance?',positive:'Bicycle maintenance',negative:'Other topics',scope:'all' as const,origin:'brand_os' as const,human_locked:false,topic_source:'defined' as const}]:[])]}});
+  questions:[...template.questions,...(defined?[{key:'defined_interest',type:'noul' as const,text:'Is this about bicycle maintenance?',positive:'Bicycle maintenance',negative:'Other topics',scope:'all' as const,origin:'brand_os' as const,human_locked:false,topic_source:'defined' as const}]:[])]})});
  const {result,intent}=await f.request({configuration_id:cfg.id});assert.ok(intent);assert.ok(result.run_id);await f.classify(result.run_id,cfg.configuration);
  const remote=new Map<string,string>();
  const storage:WorkspaceEngineStorageV1={async assertReady(){},async put(args){

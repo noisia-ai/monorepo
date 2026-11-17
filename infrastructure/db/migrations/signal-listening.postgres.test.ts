@@ -15,6 +15,7 @@ import {signalListeningBaseTemplateV1,buildSignalListeningJevRequestV1,signalLis
 import type {LabelingRunV1} from '../signal-labeling-runs';
 import {deriveSignalListeningCalibrationV1,loadSignalListeningCalibrationV1} from '../signal-listening-calibration';
 import {jevUsageV1} from '../../../services/workers/src/workers/signal-jev-labeling-page';
+import {localizeSyntheticListeningConfigurationV1} from './signal-listening-localized.synthetic.fixture';
 
 const sha=(text:string)=>'sha256:'+createHash('sha256').update(text).digest('hex');
 test('listening reuses question receipts across configuration versions with live authority and no legacy mutation',{
@@ -61,9 +62,9 @@ test('listening reuses question receipts across configuration versions with live
    const custom={key:'tone',type:'choice' as const,text:'What kind of comment is this?',scope:'all' as const,origin:'brand_os' as const,human_locked:false,
     options:[{key:'praise',definition:'A favorable comment'},{key:'other',definition:'Other comment'}]};
    const scoped={...custom,key:'usage',scope:'consumer_category' as const,text:'How is the product used?'};
-   let configuration=await saveSignalListeningConfigurationV1({...access,expected_revision:0,provenance:'human',configuration:{...base,questions:[...base.questions,custom,scoped,
+   let configuration=await saveSignalListeningConfigurationV1({...access,expected_revision:0,provenance:'human',configuration:localizeSyntheticListeningConfigurationV1({...base,questions:[...base.questions,custom,scoped,
     {key:'repair_topic',type:'noul',text:'Does this discuss bicycle repairs?',positive:'Bicycle repairs',negative:'Unrelated content',scope:'all',
-     origin:'brand_os',human_locked:false,topic_source:'defined',domain:'category'}]}});
+     origin:'brand_os',human_locked:false,topic_source:'defined',domain:'category'}]})});
    assert.equal(configuration.revision,1);
    assert.equal((await getSignalListeningConfigurationV1(access))?.id,configuration.id);
    await assert.rejects(getSignalListeningConfigurationV1({...access,workspace_id:randomUUID()}),/listening_forbidden/);
@@ -125,8 +126,8 @@ test('listening reuses question receipts across configuration versions with live
    assert.equal(usage.counts.eligible,1);assert.equal(usage.counts.asked,1);assert.equal(usage.counts.excluded_scope,2);
    const previousCalls=physical;await complete((await start()).run_id);assert.equal(physical,previousCalls,'a new run reuses every previous semantic question');
    const appended={...custom,key:'opinion',text:'Is an opinion expressed?'};
-   configuration=await saveSignalListeningConfigurationV1({...access,expected_revision:configuration.revision,provenance:'human',configuration:{...configuration.configuration,
-    questions:[...configuration.configuration.questions,appended]}});
+   configuration=await saveSignalListeningConfigurationV1({...access,expected_revision:configuration.revision,provenance:'human',configuration:localizeSyntheticListeningConfigurationV1({...configuration.configuration,
+    questions:[...configuration.configuration.questions,appended]})});
    const missing=await readSignalListeningQuestionMetricsV1({...access,configuration_id:configuration.id,map_id:ctx.map_id,question_key:'opinion'});
    assert.equal(missing.counts.eligible,3);assert.equal(missing.counts.asked,0);assert.equal(missing.counts.pending,3);
    assert.equal(missing.distribution.reduce((n,d)=>n+d.count,0),0,'unasked roots are not assigned to a negative or other option');

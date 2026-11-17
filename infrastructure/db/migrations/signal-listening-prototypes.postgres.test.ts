@@ -4,6 +4,7 @@ import test from 'node:test';
 import {signalListeningBaseTemplateV1,SIGNAL_WORKSPACE_EMBEDDING_PROFILE_V1 as profile} from '@noisia/query-engine';
 import {runMassLabelingAcceptanceFixtureV1} from './signal-mass-labeling-acceptance.synthetic.fixture';
 import {saveSignalListeningConfigurationV1} from '../signal-listening-configuration';
+import {localizeSyntheticListeningConfigurationV1} from './signal-listening-localized.synthetic.fixture';
 import {prepareSignalListeningV1,continueSignalListeningPreparationV1,quoteSignalListeningPreparationV1,pendingSignalListeningPreparationsV1} from '../signal-listening-preparation';
 import {createBrandContextSyntheticVoyageProviderV1} from './signal-brand-context.synthetic.fixture';
 import {signalWorkspaceEmbeddingsJobV1} from '../../../services/workers/src/workers/signal-workspace-embeddings';
@@ -19,9 +20,9 @@ test('listening prototypes use governed Voyage receipts and share one total exec
   await database.query("UPDATE signal_labeling_runs SET status='canceled' WHERE id=$1",[context.run_id]);
   const legacy=(await database.query('SELECT to_jsonb(m) row FROM signal_mass_labeling_runs m WHERE run_id=$1',[context.run_id])).rows;
   const base=signalListeningBaseTemplateV1({category:'bicycles',lexicon_terms:['synthetic']});
-  const configuration=await saveSignalListeningConfigurationV1({...access,expected_revision:0,provenance:'human',configuration:{...base,questions:[...base.questions,
+  const configuration=await saveSignalListeningConfigurationV1({...access,expected_revision:0,provenance:'human',configuration:localizeSyntheticListeningConfigurationV1({...base,questions:[...base.questions,
    ...Array.from({length:9},(_,i)=>({key:'defined_'+i,type:'noul' as const,text:'Topic '+i,positive:'Exact bicycle positive '+(i===8?0:i)+' é',negative:'Other content',
-    scope:'all' as const,origin:'brand_os' as const,human_locked:false,topic_source:'defined' as const}))]}});
+    scope:'all' as const,origin:'brand_os' as const,human_locked:false,topic_source:'defined' as const}))]})});
   const scope={...access,configuration_id:configuration.id,map_id:context.map_id};
   await assert.rejects(quoteSignalListeningPreparationV1(scope),/prototype_policy_unavailable/,'the runtime never grants itself a missing provider permission');
   // This invented policy is fixture setup, through the native draft/publish guards.

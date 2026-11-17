@@ -11,6 +11,7 @@ import {signalListeningBaseTemplateV1,buildSignalListeningJevRequestV1,signalLis
 import {jevUsageV1} from '../../../services/workers/src/workers/signal-jev-labeling-page';
 import type {LabelingRunV1} from '../signal-labeling-runs';
 import {withListeningReaderSliceOracleV1} from './signal-listening-reader-slices.oracle';
+import {localizeSyntheticListeningConfigurationV1} from './signal-listening-localized.synthetic.fixture';
 const enabled=process.env.NOISIA_R16_INPUT_BOUNDS_PG==='true',bounds={max_rows:3,max_working_bytes:512*1024*1024};
 const sha=(s:string)=>'sha256:'+createHash('sha256').update(s).digest('hex');
 
@@ -26,8 +27,8 @@ test('lazy native selector matches full oracle across empty slices, base reclass
  assert.deepEqual((await ctx.database.query('SELECT id,status FROM signal_labeling_runs WHERE workspace_id=$1 AND id<>$2 ORDER BY id',[ctx.workspace_id,ctx.run_id])).rows,otherRunsBefore,'no unrelated run is canceled');
  assert.equal((await ctx.database.query('SELECT count(*)::int n FROM signal_labeling_calls WHERE workspace_id=$1',[ctx.workspace_id])).rows[0].n,callsBefore,'fixture cancellation creates zero new calls');
  const base=signalListeningBaseTemplateV1({category:'bicycles',lexicon_terms:['synthetic']});
- const cfg=await saveSignalListeningConfigurationV1({...access,expected_revision:0,provenance:'human',configuration:{...base,questions:[...base.questions,
-  {key:'consumer_usage',type:'noul',text:'Does this describe using the category?',positive:'Use by an individual consumer',negative:'Unrelated',scope:'consumer_category',origin:'brand_os',human_locked:false,topic_source:'defined',domain:'category'}]}});
+ const cfg=await saveSignalListeningConfigurationV1({...access,expected_revision:0,provenance:'human',configuration:localizeSyntheticListeningConfigurationV1({...base,questions:[...base.questions,
+  {key:'consumer_usage',type:'noul',text:'Does this describe using the category?',positive:'Use by an individual consumer',negative:'Unrelated',scope:'consumer_category',origin:'brand_os',human_locked:false,topic_source:'defined',domain:'category'}]})});
  const admitted=await requestSignalListeningV1({...access,configuration_id:cfg.id,map_id:ctx.map_id,cap_micro_usd:1000000,idempotency_key:randomUUID(),provider_available:true});
  let pages:Array<{ids:string[];cursor:string|null}>=[],metadata:Array<Array<{root_id:string;working_bytes:string}>>=[],finishRows:Array<{pending:number;available:boolean}>=[];
  const comparisons={unbounded:0},readerDatabase=withListeningReaderSliceOracleV1(ctx.database,comparisons);

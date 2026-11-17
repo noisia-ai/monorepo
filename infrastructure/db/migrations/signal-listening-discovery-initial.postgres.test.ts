@@ -14,6 +14,7 @@ import {randomUUID} from 'node:crypto';
 import {withInitialDiscoveryFixtureV1} from './signal-listening-discovery-initial.synthetic.fixture';
 import {startSignalListeningDiscoveryInitialV1,pendingSignalListeningDiscoveryInitialV1} from '../signal-listening-discovery-initial';
 import {saveSignalListeningConfigurationV1} from '../signal-listening-configuration';
+import {localizeSyntheticListeningConfigurationV1} from './signal-listening-localized.synthetic.fixture';
 import {bootstrapSignalListeningDiscoveryV1} from '../signal-listening-discovery';
 import {startSignalListeningDiscoveryExecutionV1} from '../signal-listening-discovery-money';
 import {prepareSignalListeningV1} from '../signal-listening-preparation';
@@ -23,9 +24,9 @@ for(const defined of [false,true])test('base'+(defined?' plus defined':' only')+
  skip:!enabled,timeout:600000,
 },async()=>withInitialDiscoveryFixtureV1(async f=>{
  const template=signalListeningBaseTemplateV1({category:'bicycles',lexicon_terms:['synthetic']});
- const cfg=await saveSignalListeningConfigurationV1({...f,expected_revision:f.cfg.revision,provenance:'human',configuration:{...template,
+ const cfg=await saveSignalListeningConfigurationV1({...f,expected_revision:f.cfg.revision,provenance:'human',configuration:localizeSyntheticListeningConfigurationV1({...template,
   retired_question_keys:f.cfg.configuration.questions.filter(q=>q.topic_source==='discovered').map(q=>q.key),
-  questions:[...template.questions,...(defined?[{key:'defined_interest',type:'noul' as const,text:'Is this about bicycle maintenance?',positive:'Bicycle maintenance',negative:'Other topics',scope:'all' as const,origin:'brand_os' as const,human_locked:false,topic_source:'defined' as const}]:[])]}});
+  questions:[...template.questions,...(defined?[{key:'defined_interest',type:'noul' as const,text:'Is this about bicycle maintenance?',positive:'Bicycle maintenance',negative:'Other topics',scope:'all' as const,origin:'brand_os' as const,human_locked:false,topic_source:'defined' as const}]:[])]})});
  assert.equal((await f.database.query('SELECT count(*)::int n FROM signal_listening_discovery_generations WHERE configuration_id=$1',[cfg.id])).rows[0].n,0);
  const key=randomUUID(),{result,intent}=await f.request({configuration_id:cfg.id,idempotency_key:key});assert.ok(intent);assert.ok(result.run_id);
  const seed=(await f.database.query('SELECT * FROM signal_listening_discovery_generations WHERE id=$1',[intent.seed_generation_id])).rows[0];

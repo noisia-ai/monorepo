@@ -14,6 +14,7 @@ import {createSignalListeningStoreV1} from '../signal-listening-runs';
 import {signalListeningBaseTemplateV1,buildSignalListeningJevRequestV1,signalListeningRequestDigestV1,mapSignalListeningJevResponseV1,type SignalListeningConfigurationV1} from '@noisia/query-engine';
 import {jevUsageV1} from '../../../services/workers/src/workers/signal-jev-labeling-page';
 import type {ListeningDiscoveryInitialIntentV1} from '../signal-listening-discovery-initial';
+import {localizeSyntheticListeningConfigurationV1} from './signal-listening-localized.synthetic.fixture';
 const sha=(bytes:string|Buffer)=>'sha256:'+createHash('sha256').update(bytes).digest('hex');
 export async function withInitialDiscoveryFixtureV1(fn:(f:Awaited<ReturnType<typeof setup>>)=>Promise<void>,options:{review_enabled?:boolean;prototypes?:boolean;population_count?:number}={}){
  return runMassLabelingAcceptanceFixtureV1('product',{population_count:options.population_count,beforeProcessing:async ctx=>{
@@ -26,9 +27,10 @@ async function setup(ctx:{database:Parameters<typeof prepareSignalListeningV1>[0
  const db=ctx.database,access={database:db,workspace_id:ctx.workspace_id,actor_user_id:ctx.actor_user_id};
  await db.query("UPDATE signal_labeling_runs SET status='canceled' WHERE id=$1",[ctx.run_id]);
  const template=signalListeningBaseTemplateV1({category:'bicycles',lexicon_terms:['synthetic']});
- const base=await saveSignalListeningConfigurationV1({...access,expected_revision:0,provenance:'human',configuration:{...template,questions:[...template.questions,...(options.prototypes?Array.from({length:9},(_,n)=>({key:'defined_'+n,type:'noul' as const,text:'Exact defined question '+n,positive:'Exact bicycle positive '+n,negative:'Other content',scope:'all' as const,origin:'brand_os' as const,human_locked:false,topic_source:'defined' as const})):[])]}});
+ const base=await saveSignalListeningConfigurationV1({...access,expected_revision:0,provenance:'human',configuration:localizeSyntheticListeningConfigurationV1({...template,questions:[...template.questions,...(options.prototypes?Array.from({length:9},(_,n)=>({key:'defined_'+n,type:'noul' as const,text:'Exact defined question '+n,positive:'Exact bicycle positive '+n,negative:'Other content',scope:'all' as const,origin:'brand_os' as const,human_locked:false,topic_source:'defined' as const})):[])]})});
  const proposal=await proposeSignalListeningDiscoveryBootstrapV1({...access,configuration_id:base.id,map_id:ctx.map_id});
- const cfg=await saveSignalListeningConfigurationV1({...access,expected_revision:base.revision,provenance:'agent',source_digest:proposal.source_digest,configuration:proposal.configuration});
+ const cfg=await saveSignalListeningConfigurationV1({...access,expected_revision:base.revision,provenance:'agent',source_digest:proposal.source_digest,
+  configuration:localizeSyntheticListeningConfigurationV1(proposal.configuration)});
  const seed=await bootstrapSignalListeningDiscoveryV1({...access,configuration_id:cfg.id,map_id:ctx.map_id,bindings:proposal.bindings});
  let policy=(await db.query('SELECT p.* FROM signal_processing_policy_versions p JOIN signal_workspaces w ON w.organization_id=p.organization_id WHERE w.id=$1 AND p.status=\'active\'',[ctx.workspace_id])).rows[0];
  if(options.review_enabled!==false){

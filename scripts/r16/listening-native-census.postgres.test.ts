@@ -4,6 +4,7 @@ import test from 'node:test';
 import {signalListeningBaseTemplateV1} from '../../packages/query-engine/src/index';
 import {withInitialDiscoveryFixtureV1} from '../../infrastructure/db/migrations/signal-listening-discovery-initial.synthetic.fixture';
 import {saveSignalListeningConfigurationV1} from '../../infrastructure/db/signal-listening-configuration';
+import {localizeSyntheticListeningConfigurationV1} from '../../infrastructure/db/migrations/signal-listening-localized.synthetic.fixture';
 import {loadR16ListeningNativeCensusV1} from './listening-native-census';
 
 test('native census counts distinct roots only after every eligible question and rejects changed scope',{
@@ -26,9 +27,9 @@ test('native census counts distinct roots only after every eligible question and
  await assert.rejects(loadR16ListeningNativeCensusV1(binding,4),/population_count/u);
  await assert.rejects(loadR16ListeningNativeCensusV1({...binding,run_id:randomUUID()},3),/owner_unavailable/u);
  await assert.rejects(loadR16ListeningNativeCensusV1({...binding,actor_user_id:randomUUID()},3),/forbidden/u);
- const defined=await saveSignalListeningConfigurationV1({...f,expected_revision:base.revision,provenance:'human',configuration:{...base.configuration,
+ const defined=await saveSignalListeningConfigurationV1({...f,expected_revision:base.revision,provenance:'human',configuration:localizeSyntheticListeningConfigurationV1({...base.configuration,
   questions:[...base.configuration.questions,...['repairs','equipment'].map(key=>({key,type:'noul' as const,text:'Is this about '+key+'?',
-   positive:'Bicycle '+key,negative:'Other conversation',scope:'consumer_category' as const,origin:'brand_os' as const,human_locked:true,topic_source:'defined' as const}))]}});
+   positive:'Bicycle '+key,negative:'Other conversation',scope:'consumer_category' as const,origin:'brand_os' as const,human_locked:true,topic_source:'defined' as const}))]})});
  await assert.rejects(census.readResolvedRootIds(),/configuration_changed/u);
  const second=await f.request({configuration_id:defined.id});assert.ok(second.result.run_id);
  const next=await loadR16ListeningNativeCensusV1({...binding,configuration_id:defined.id,run_id:second.result.run_id},3);

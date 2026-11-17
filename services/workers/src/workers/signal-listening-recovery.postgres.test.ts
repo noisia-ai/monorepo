@@ -8,6 +8,7 @@ import {runMassLabelingAcceptanceFixtureV1} from '../../../../infrastructure/db/
 import {saveSignalListeningConfigurationV1,requestSignalListeningV1,deriveSignalListeningCalibrationV1,loadSignalListeningCalibrationV1,type LabelingCallV1,type LabelingRunV1} from '@noisia/db';
 import {signalListeningBaseTemplateV1,signalListeningRequestDigestV1,buildSignalListeningJevRequestV1,mapSignalListeningJevResponseV1,
  signalListeningCalibrationShapeV1,type SignalListeningInputV1} from '@noisia/query-engine';
+import {localizeSyntheticListeningConfigurationV1} from '../../../../infrastructure/db/migrations/signal-listening-localized.synthetic.fixture';
 import {createWorkspaceEngineStorageV1} from './signal-workspace-engine-storage';
 import {createSignalListeningRuntimeStoreV1,signalListeningJevJobV1} from './signal-listening-jev';
 import {jevUsageV1} from './signal-jev-labeling-page';
@@ -20,8 +21,8 @@ test('metadata recovery finds paid and rejected raw beyond32 before calibrating 
   const database=ctx.database,access={database,workspace_id:ctx.workspace_id,actor_user_id:ctx.actor_user_id};
   await database.query("UPDATE signal_labeling_runs SET status='canceled' WHERE id=$1",[ctx.run_id]);
   const base=signalListeningBaseTemplateV1({category:'bicycles',lexicon_terms:['synthetic']});
-  const cfg=await saveSignalListeningConfigurationV1({...access,expected_revision:0,provenance:'human',configuration:{...base,questions:[...base.questions,
-   {key:'occasion',type:'noul',text:'Consumer occasion?',positive:'Configured positive '.repeat(60),negative:'Not present',scope:'consumer_category',origin:'brand_os',human_locked:true}]}});
+  const cfg=await saveSignalListeningConfigurationV1({...access,expected_revision:0,provenance:'human',configuration:localizeSyntheticListeningConfigurationV1({...base,questions:[...base.questions,
+   {key:'occasion',type:'noul',text:'Consumer occasion?',positive:'Configured positive '.repeat(60),negative:'Not present',scope:'consumer_category',origin:'brand_os',human_locked:true}]})});
   const request=await requestSignalListeningV1({...access,configuration_id:cfg.id,map_id:ctx.map_id,idempotency_key:randomUUID(),cap_micro_usd:1000000,provider_available:true});
   const directory=await mkdtemp(join(tmpdir(),'r16-recovery-pg-')),objects=new Map<string,string>();
   try{

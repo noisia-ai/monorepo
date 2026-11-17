@@ -4,6 +4,7 @@ import {randomUUID} from 'node:crypto';
 import {runMassLabelingAcceptanceFixtureV1} from './signal-mass-labeling-acceptance.synthetic.fixture';
 import {signalListeningBaseTemplateV1,buildSignalListeningJevRequestV1,signalListeningRequestDigestV1,type SignalListeningConfigurationV1} from '@noisia/query-engine';
 import {saveSignalListeningConfigurationV1} from '../signal-listening-configuration';
+import {localizeSyntheticListeningConfigurationV1} from './signal-listening-localized.synthetic.fixture';
 import {requestSignalListeningV1,createSignalListeningStoreV1} from '../signal-listening-runs';
 import {withListeningReaderSliceOracleV1} from './signal-listening-reader-slices.oracle';
 test('native Listening reader bounds questions and text before hydrating an input',{
@@ -12,8 +13,8 @@ test('native Listening reader bounds questions and text before hydrating an inpu
  const access={database:ctx.database,workspace_id:ctx.workspace_id,actor_user_id:ctx.actor_user_id};
  await ctx.database.query("UPDATE signal_labeling_runs SET status='canceled' WHERE id=$1",[ctx.run_id]);
  const template=signalListeningBaseTemplateV1({category:'bicycles',lexicon_terms:['bicycle']});
- const cfg=await saveSignalListeningConfigurationV1({...access,expected_revision:0,provenance:'human',configuration:{...template,instructions:('Treat text as evidence. "Rules"\n').repeat(40),questions:[...template.questions,
-  ...Array.from({length:16},(_,i)=>({key:'detail_'+i,type:'noul' as const,text:'Does this description contain the configured detail?',positive:('Detailed "positive" café.\n').repeat(40),negative:('Other text, "negative".\n').repeat(40),origin:'brand_os' as const,human_locked:false,scope:'all' as const}))]}});
+ const cfg=await saveSignalListeningConfigurationV1({...access,expected_revision:0,provenance:'human',configuration:localizeSyntheticListeningConfigurationV1({...template,instructions:('Treat text as evidence. "Rules"\n').repeat(40),questions:[...template.questions,
+  ...Array.from({length:16},(_,i)=>({key:'detail_'+i,type:'noul' as const,text:'Does this description contain the configured detail?',positive:('Detailed "positive" café.\n').repeat(40),negative:('Other text, "negative".\n').repeat(40),origin:'brand_os' as const,human_locked:false,scope:'all' as const}))]})});
  const admitted=await requestSignalListeningV1({...access,configuration_id:cfg.id,map_id:ctx.map_id,cap_micro_usd:1000000,idempotency_key:'bounded-listening-native',provider_available:true});
  const reads:{ids:string[];costs:number[]}[]=[];let hydrated=0,race=false,changed=false,finishSources=0;
  const oracleDatabase=withListeningReaderSliceOracleV1(ctx.database);
@@ -66,8 +67,8 @@ test('bounded Listening projection preserves 256 native keys, Unicode wire bytes
  const access={database:ctx.database,workspace_id:ctx.workspace_id,actor_user_id:ctx.actor_user_id};
  const canceled=await ctx.database.query("UPDATE signal_labeling_runs SET status='canceled' WHERE id=$1 AND status='queued' AND NOT EXISTS(SELECT 1 FROM signal_labeling_calls WHERE run_id=$1) RETURNING id",[ctx.run_id]);assert.equal(canceled.rows.length,1);
  const base=signalListeningBaseTemplateV1({category:'bicycles',lexicon_terms:['bicycle']});
- const cfg=await saveSignalListeningConfigurationV1({...access,expected_revision:0,provenance:'human',configuration:{...base,instructions:'Café 😀 漢字 \\ "evidence"\n',questions:[...base.questions,
-  ...Array.from({length:254},(_,i)=>({key:'detail_'+String(i).padStart(3,'0'),type:'noul' as const,text:'Café 😀?',positive:'sí 漢字',negative:'no',scope:'all' as const,origin:'brand_os' as const,human_locked:false}))]}});
+ const cfg=await saveSignalListeningConfigurationV1({...access,expected_revision:0,provenance:'human',configuration:localizeSyntheticListeningConfigurationV1({...base,instructions:'Café 😀 漢字 \\ "evidence"\n',questions:[...base.questions,
+  ...Array.from({length:254},(_,i)=>({key:'detail_'+String(i).padStart(3,'0'),type:'noul' as const,text:'Café 😀?',positive:'sí 漢字',negative:'no',scope:'all' as const,origin:'brand_os' as const,human_locked:false}))]})});
  assert.equal(cfg.configuration.questions.length,256);
  const admitted=await requestSignalListeningV1({...access,configuration_id:cfg.id,map_id:ctx.map_id,cap_micro_usd:1000000,idempotency_key:randomUUID(),provider_available:true});
  const counters={unbounded:0},store=createSignalListeningStoreV1({database:withListeningReaderSliceOracleV1(ctx.database,counters),page_size:4096,storeRaw:async()=>{throw Error('no provider');}});

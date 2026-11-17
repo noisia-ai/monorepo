@@ -11,6 +11,7 @@ import {loadSignalListeningLexiconSuggestionsV1} from '../signal-listening-lexic
 import {signalListeningBaseTemplateV1,buildSignalListeningJevRequestV1,signalListeningRequestDigestV1,
   mapSignalListeningJevResponseV1} from '@noisia/query-engine';
 import {jevUsageV1} from '../../../services/workers/src/workers/signal-jev-labeling-page';
+import {localizeSyntheticListeningConfigurationV1} from './signal-listening-localized.synthetic.fixture';
 
 test('native lexical evidence uses configured category topics without trigger/barrier and retains tenant and feature guards',{
   skip:process.env.NOISIA_R16_LISTENING_LEXICON_PG!=='true',timeout:180000,
@@ -19,9 +20,9 @@ test('native lexical evidence uses configured category topics without trigger/ba
     const database=ctx.database,access={database,workspace_id:ctx.workspace_id,actor_user_id:ctx.actor_user_id};
     await database.query("UPDATE signal_labeling_runs SET status='canceled' WHERE id=$1",[ctx.run_id]);
     const base=signalListeningBaseTemplateV1({category:'bicycles',lexicon_terms:['unmatchedlexicalterm']});
-    const configuration=await saveSignalListeningConfigurationV1({...access,expected_revision:0,provenance:'human',configuration:{...base,
+    const configuration=await saveSignalListeningConfigurationV1({...access,expected_revision:0,provenance:'human',configuration:localizeSyntheticListeningConfigurationV1({...base,
       questions:[...base.questions,{key:'category_topic',type:'noul',text:'Category conversation?',positive:'Bicycle conversation',negative:'Other content',
-        scope:'all',origin:'brand_os',human_locked:false,topic_source:'defined',domain:'category'}]}});
+        scope:'all',origin:'brand_os',human_locked:false,topic_source:'defined',domain:'category'}]})});
     const args={...access,configuration_id:configuration.id,map_id:ctx.map_id};
     const empty=await loadSignalListeningLexiconSuggestionsV1(args);
     assert.equal(empty.background_size,0);assert.deepEqual(empty.items,[]);

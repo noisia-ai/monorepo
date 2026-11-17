@@ -7,6 +7,7 @@ import {runMassLabelingAcceptanceFixtureV1} from './signal-mass-labeling-accepta
 import {withSignalStudyFixtureV1} from './signal-study.synthetic.fixture';
 import {withDiscoveryAdvanceFixtureV1} from './signal-listening-discovery-advance.synthetic.fixture';
 import {saveSignalListeningConfigurationV1} from '../signal-listening-configuration';
+import {localizeSyntheticListeningConfigurationV1} from './signal-listening-localized.synthetic.fixture';
 import {requestSignalListeningV1,createSignalListeningStoreV1} from '../signal-listening-runs';
 import {setSignalListeningDiscoveryManualV1} from '../signal-listening-discovery';
 import * as human from '../signal-listening-human-edits';
@@ -34,8 +35,8 @@ test('projection linear joins native preserves256keys, Unicode microseconds, byt
 },async()=>runMassLabelingAcceptanceFixtureV1('product',{seed_published_at:'2026-01-01T00:00:00.123456Z',study_author_metadata:true,beforeProcessing:async f=>{
  const canceled=await f.database.query("UPDATE signal_labeling_runs SET status='canceled' WHERE id=$1 AND workspace_id=$2 AND status='queued' AND NOT EXISTS(SELECT 1 FROM signal_labeling_calls WHERE run_id=$1) RETURNING id",[f.run_id,f.workspace_id]);assert.equal(canceled.rows.length,1);
  const access={database:f.database,workspace_id:f.workspace_id,actor_user_id:f.actor_user_id},base=signalListeningBaseTemplateV1({category:'bicycles',lexicon_terms:['synthetic']});
- const cfg=await saveSignalListeningConfigurationV1({...access,expected_revision:0,provenance:'human',configuration:{...base,instructions:'Café 😀 漢字 "evidence"\n',questions:[...base.questions,
-  ...Array.from({length:254},(_,i)=>({key:'detail_'+String(i).padStart(3,'0'),type:'noul' as const,text:'Café 😀?',positive:'sí 漢字',negative:'no',scope:'all' as const,origin:'brand_os' as const,human_locked:false}))]}});
+ const cfg=await saveSignalListeningConfigurationV1({...access,expected_revision:0,provenance:'human',configuration:localizeSyntheticListeningConfigurationV1({...base,instructions:'Café 😀 漢字 "evidence"\n',questions:[...base.questions,
+  ...Array.from({length:254},(_,i)=>({key:'detail_'+String(i).padStart(3,'0'),type:'noul' as const,text:'Café 😀?',positive:'sí 漢字',negative:'no',scope:'all' as const,origin:'brand_os' as const,human_locked:false}))]})});
  const admitted=await requestSignalListeningV1({...access,configuration_id:cfg.id,map_id:f.map_id,cap_micro_usd:1000000,idempotency_key:randomUUID(),provider_available:true});
  const counters={metadata:0,hydrated:0,sentinel:0},database=oracleDatabase(f.database,counters);
  const store=createSignalListeningStoreV1({database,page_size:4096,storeRaw:async()=>{throw Error('no provider');}}),run=await store.claim(admitted.run_id);assert.ok(run);
@@ -72,7 +73,7 @@ test('projection linear joins native preserves awaiting/excluded, H5 precedence 
  await withDiscoveryAdvanceFixtureV1(async f=>{
  const access={database:f.database,workspace_id:f.workspace_id,actor_user_id:f.actor_user_id};
  const scoped={key:'consumer_probe',type:'noul' as const,text:'Does this describe category use?',positive:'Category use',negative:'Other',scope:'consumer_category' as const,origin:'brand_os' as const,human_locked:false,topic_source:'defined' as const};
- const excluded=await saveSignalListeningConfigurationV1({...access,expected_revision:f.cfg.revision,provenance:'human',configuration:{...f.cfg.configuration,questions:[...f.cfg.configuration.questions,scoped]}});
+ const excluded=await saveSignalListeningConfigurationV1({...access,expected_revision:f.cfg.revision,provenance:'human',configuration:localizeSyntheticListeningConfigurationV1({...f.cfg.configuration,questions:[...f.cfg.configuration.questions,scoped]})});
  const awaiting=await saveSignalListeningConfigurationV1({...access,expected_revision:excluded.revision,provenance:'human',configuration:{...excluded.configuration,questions:excluded.configuration.questions.map(q=>q.key==='promotion'?{...q,text:q.text+' New pending version.',human_locked:true}:q)}});
  const ctx=(await f.database.query('SELECT entity_context_digest FROM signal_mass_labeling_maps WHERE id=$1',[f.map_id])).rows[0].entity_context_digest;
  const c=await f.database.connect();try{await c.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');const sql=await candidateProjectionMetadataSqlV1();
@@ -112,7 +113,8 @@ test('projection linear joins native preserves awaiting/excluded, H5 precedence 
  await runMassLabelingAcceptanceFixtureV1('product',{population_count:70,beforeProcessing:async f=>{
   const canceled=await f.database.query("UPDATE signal_labeling_runs SET status='canceled' WHERE id=$1 AND workspace_id=$2 AND status='queued' AND NOT EXISTS(SELECT 1 FROM signal_labeling_calls WHERE run_id=$1) RETURNING id",[f.run_id,f.workspace_id]);assert.equal(canceled.rows.length,1);
   const access={database:f.database,workspace_id:f.workspace_id,actor_user_id:f.actor_user_id};
-  const cfg=await saveSignalListeningConfigurationV1({...access,expected_revision:0,provenance:'human',configuration:{...signalListeningBaseTemplateV1({category:'bicycles',lexicon_terms:['synthetic']}),questions:[...signalListeningBaseTemplateV1({category:'bicycles',lexicon_terms:['synthetic']}).questions,{key:'consumer_probe',type:'noul',text:'Does this describe category use?',positive:'Category use',negative:'Other',scope:'consumer_category',origin:'brand_os',human_locked:false,topic_source:'defined'}]}});
+  const base=signalListeningBaseTemplateV1({category:'bicycles',lexicon_terms:['synthetic']});
+  const cfg=await saveSignalListeningConfigurationV1({...access,expected_revision:0,provenance:'human',configuration:localizeSyntheticListeningConfigurationV1({...base,questions:[...base.questions,{key:'consumer_probe',type:'noul',text:'Does this describe category use?',positive:'Category use',negative:'Other',scope:'consumer_category',origin:'brand_os',human_locked:false,topic_source:'defined'}]})});
   const admitted=await requestSignalListeningV1({...access,configuration_id:cfg.id,map_id:f.map_id,cap_micro_usd:1000000,idempotency_key:randomUUID(),provider_available:true});
   const counters={metadata:0,hydrated:0,sentinel:0};let pages:Array<Array<{root_id:string;working_bytes:string;projection:unknown}>>=[];
   const original=oracleDatabase(f.database,counters),database={query:original.query.bind(original),connect:async()=>{const c=await original.connect();return new Proxy(c,{get(target,key){if(key==='query')return async(sql:string,params?:unknown[])=>{

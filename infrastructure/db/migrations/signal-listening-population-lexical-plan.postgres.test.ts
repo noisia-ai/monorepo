@@ -7,6 +7,7 @@ import {runMassLabelingAcceptanceFixtureV1} from './signal-mass-labeling-accepta
 import {withDiscoveryAdvanceFixtureV1} from './signal-listening-discovery-advance.synthetic.fixture';
 import {withSignalStudyFixtureV1} from './signal-study.synthetic.fixture';
 import {saveSignalListeningConfigurationV1} from '../signal-listening-configuration';
+import {localizeSyntheticListeningConfigurationV1} from './signal-listening-localized.synthetic.fixture';
 import * as human from '../signal-listening-human-edits';
 import {r16ListeningWorkloadV1} from '../../../scripts/r16/listening-workload';
 const enabled=process.env.NOISIA_R16_LISTENING_LEXICAL_PLAN_PG==='true';
@@ -48,10 +49,10 @@ test('lexical plan preserves both scopes, bounded selection and current source d
 test('official voice with a newly missing promotion answer remains awaiting base before lexical exclusion',{
  skip:!enabled,timeout:600000,
 },async()=>withDiscoveryAdvanceFixtureV1(async f=>{
- const cfg=await saveSignalListeningConfigurationV1({...f,expected_revision:f.cfg.revision,provenance:'human',configuration:{...f.cfg.configuration,
+ const cfg=await saveSignalListeningConfigurationV1({...f,expected_revision:f.cfg.revision,provenance:'human',configuration:localizeSyntheticListeningConfigurationV1({...f.cfg.configuration,
   questions:[...f.cfg.configuration.questions.map(q=>q.key==='promotion'?{...q,text:q.text+' New version.'}:q),
    {key:'consumer_scope_probe',type:'noul',text:'Does the configured consumer discuss maintenance?',positive:'Consumer maintenance',negative:'Other conversation',
-    scope:'consumer_category',origin:'brand_os',human_locked:true,topic_source:'defined'}]}});
+    scope:'consumer_category',origin:'brand_os',human_locked:true,topic_source:'defined'}]})});
  const context=(await f.database.query('SELECT entity_context_digest FROM signal_mass_labeling_maps WHERE id=$1',[f.map_id])).rows[0].entity_context_digest;
  const c=await f.database.connect();try{await c.query('BEGIN');await references(c);const scope=[f.workspace_id,cfg.id,f.map_id,context];
   const all=await equal(c,scope);assert.ok(all.some(r=>r.question_key==='voice'&&r.answer?.choice==='brand_official'&&r.cache_call_id));

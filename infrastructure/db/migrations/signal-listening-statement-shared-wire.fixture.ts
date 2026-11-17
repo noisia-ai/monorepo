@@ -7,6 +7,7 @@ import type {PoolClient} from 'pg';
 import {signalListeningBaseTemplateV1,buildSignalListeningJevRequestV1,signalListeningRequestDigestV1,mapSignalListeningJevResponseV1,type SignalListeningInputV1,type SignalListeningConfigurationV1} from '@noisia/query-engine';
 import {runMassLabelingAcceptanceFixtureV1} from './signal-mass-labeling-acceptance.synthetic.fixture';
 import {saveSignalListeningConfigurationV1} from '../signal-listening-configuration';
+import {localizeSyntheticListeningConfigurationV1} from './signal-listening-localized.synthetic.fixture';
 import {createSignalListeningStoreV1,requestSignalListeningV1} from '../signal-listening-runs';
 import type {LabelingRunV1} from '../signal-labeling-runs';
 import {jevUsageV1} from '../../../services/workers/src/workers/signal-jev-labeling-page';
@@ -18,7 +19,7 @@ export async function withSharedWireFixtureV1(body:(f:SharedWireFixtureV1)=>Prom
  await runMassLabelingAcceptanceFixtureV1(mode,{seed_published_at:'2026-01-01T00:00:00.123456Z',beforeProcessing:async ctx=>{
   const database=ctx.database,access={database,workspace_id:ctx.workspace_id,actor_user_id:ctx.actor_user_id};
   assert.equal((await database.query("UPDATE signal_labeling_runs SET status='canceled' WHERE id=$1 AND workspace_id=$2 AND status='queued' AND NOT EXISTS(SELECT 1 FROM signal_labeling_calls WHERE run_id=$1) RETURNING id",[ctx.run_id,ctx.workspace_id])).rows.length,1);
-  const cfg=await saveSignalListeningConfigurationV1({...access,expected_revision:0,provenance:'human',configuration});
+  const cfg=await saveSignalListeningConfigurationV1({...access,expected_revision:0,provenance:'human',configuration:localizeSyntheticListeningConfigurationV1(configuration)});
   const requested=await requestSignalListeningV1({...access,configuration_id:cfg.id,map_id:ctx.map_id,idempotency_key:randomUUID(),cap_micro_usd:1000000,provider_available:true});
   const files=await mkdtemp(join(tmpdir(),'r16-shared-wire-'));
   const rawPages:SharedWireFixtureV1['rawPages']={reference:a=>({storage_key:`private/${a.workspace_id}/${a.run_id}/${a.name}.${a.raw_sha256.slice(7)}.parts.json`}),

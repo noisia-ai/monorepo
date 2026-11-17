@@ -19,7 +19,7 @@ import{claimSignalStudyExecutionV1,readSignalStudyRuntimeSourceV1,releaseSignalS
 import{readSignalStudyConfigurationV1,saveSignalStudyConfigurationV1}from'../signal-study-configuration';
 import{listSignalStudiesV1,readSignalStudyExecutionStatusV1,readLatestSignalStudyConfigurationV1,readLatestSignalStudyExecutionStatusV1}from'../signal-study-status';
 import{readSignalStudyReportOverviewV1,readSignalStudyReportPageV1}from'../signal-study-serving';
-import{promoteSignalStudyMotivesV1}from'../signal-study-promotion';
+import{promoteSignalStudyMotivesV1,readSignalStudyPromotionContextV1}from'../signal-study-promotion';
 test('Study freezes only its native consumer cut and exact external configuration, with no import, Voyage or provider admission',{
  skip:!enabled,timeout:600000,
 },async()=>withSignalStudyFixtureV1(async f=>{
@@ -102,8 +102,15 @@ test('Study full native pipeline uses real BERTopic groups, native Sonnet money,
  const page=await readSignalStudyReportPageV1({...f,execution_id:execution.id,section:'evidence',limit:1});assert.ok(page);assert.equal(page.rows.length,1);assert.equal(page.total,reported.output.verified_evidence.length);assert.deepEqual(page.rows,reported.output.verified_evidence.slice(0,1));assert.equal(page.next_offset,1);
  await assert.rejects(readSignalStudyReportPageV1({...f,execution_id:execution.id,section:'evidence',limit:101}),/study_pagination_invalid/);
  const listeningBefore=(await f.database.query("SELECT * FROM signal_listening_configurations WHERE workspace_id=$1 AND state='published' ORDER BY revision DESC LIMIT 1",[f.workspace_id])).rows[0],promoteArgs={...f,execution_id:execution.id,motive_keys:[reported.output.summary.motives[0]!.key],expected_listening_revision:listeningBefore.revision,idempotency_key:randomUUID()},beforePromotion=runtime.metrics();
- const promoted=await promoteSignalStudyMotivesV1(promoteArgs);assert.deepEqual(await promoteSignalStudyMotivesV1(promoteArgs),promoted,'promotion ACK lost returns its exact prior publication');assert.deepEqual(runtime.metrics(),beforePromotion,'explicit promotion neither sends nor classifies');
+ const promotionContext=await readSignalStudyPromotionContextV1({...f,execution_id:execution.id,motive_keys:promoteArgs.motive_keys});
+ const localizations=Object.fromEntries(promotionContext.motives.map(motive=>[motive.key,{original_language:motive.original_language,
+  original:{name:motive.name,definition:motive.definition},
+  en:{name:`Synthetic English ${motive.key}`,definition:`Synthetic English definition for ${motive.key}.`},
+  es:{name:`Sintético español ${motive.key}`,definition:`Definición sintética en español para ${motive.key}.`}}]));
+ const localizedPromoteArgs={...promoteArgs,localizations};
+ const promoted=await promoteSignalStudyMotivesV1(localizedPromoteArgs);assert.deepEqual(await promoteSignalStudyMotivesV1(localizedPromoteArgs),promoted,'promotion ACK lost returns its exact prior publication');assert.deepEqual(runtime.metrics(),beforePromotion,'explicit promotion neither sends nor classifies');
  const promotedConfiguration=(await f.database.query('SELECT configuration,revision FROM signal_listening_configurations WHERE id=$1',[promoted.configuration_id])).rows[0];assert.equal(promotedConfiguration.revision,listeningBefore.revision+1);const added=promotedConfiguration.configuration.questions.filter((q:{key:string})=>q.key.startsWith('study_'));assert.equal(added.length,1);assert.equal(added[0].human_locked,true);assert.equal(added[0].topic_source,'defined');
+ assert.deepEqual(added[0].localization.original,{name:promotionContext.motives[0]!.name,definition:promotionContext.motives[0]!.definition});
  await assert.rejects(promoteSignalStudyMotivesV1({...promoteArgs,motive_keys:['missing_motive']}),/study_idempotency_conflict/);
  assert.equal((await readSignalStudyOutputV1({...f,execution_id:execution.id}))?.output_digest,reported.output_digest,'explicit promotion never mutates the completed Study');
 }),{population_count:240}));

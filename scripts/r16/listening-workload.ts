@@ -1,5 +1,6 @@
 import {validateSignalListeningConfigurationV1,signalListeningBaseTemplateV1,signalWorkspaceEmbeddingDigestV1 as digest,
   type SignalListeningConfigurationV1} from '../../packages/query-engine/src/index';
+import {localizeSyntheticListeningConfigurationV1} from '../../infrastructure/db/migrations/signal-listening-localized.synthetic.fixture';
 
 /** Frozen BEFORE measurements. These are synthetic Brand OS data, not worker methodology. */
 export const R16_LISTENING_PREREGISTRATION_V1=Object.freeze({
@@ -37,7 +38,9 @@ export function r16ListeningWorkloadV1(arm:R16ListeningArmV1){
   if(arm==='discovered_four')for(let i=1;i<=4;i++)configuration.questions.push({key:`discovered_${i}_v1`,type:'noul',
     text:`Synthetic discovered fixture topic ${i}`,scope:'consumer_category',origin:'agent',human_locked:false,topic_source:'discovered',
     positive:`Synthetic topic marker ${i} present`,negative:`Synthetic topic marker ${i} absent`});
-  const frozen=validateSignalListeningConfigurationV1(configuration);
+  // Display metadata is synthetic and test-only; the adapter asserts that it
+  // leaves selection, question digests, and every JEV request wire unchanged.
+  const frozen=localizeSyntheticListeningConfigurationV1(validateSignalListeningConfigurationV1(configuration));
   return{arm,configuration:frozen,configuration_digest:digest(frozen),preregistration_digest:digest(R16_LISTENING_PREREGISTRATION_V1),
     question_keys:frozen.questions.map(q=>q.key).sort()};
 }

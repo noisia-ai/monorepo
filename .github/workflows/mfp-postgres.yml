@@ -324,6 +324,7 @@ jobs:
           NOISIA_R16_DISCOVERY_ADVANCE_PG: 'true'
           NOISIA_R16_DISCOVERY_AUTOMATION_PG: 'true'
           NOISIA_R16_DISCOVERY_INITIAL_PG: 'true'
+          NOISIA_R16_TOPIC_LOCALIZATION_PG: 'true'
         run: |
           set -o pipefail
           pnpm exec node --test --test-concurrency=1 --import tsx \
@@ -346,6 +347,7 @@ jobs:
             infrastructure/db/migrations/signal-listening-discovery-hardening.postgres.test.ts \
             infrastructure/db/migrations/signal-listening-discovery-advance.postgres.test.ts \
             infrastructure/db/migrations/signal-listening-discovery-initial.postgres.test.ts \
+            infrastructure/db/migrations/signal-listening-publication.postgres.test.ts \
             services/workers/src/workers/signal-listening-discovery-automation.postgres.test.ts \
             services/workers/src/workers/signal-listening-runtime.postgres.test.ts \
             services/workers/src/workers/signal-listening-recovery.postgres.test.ts \
@@ -353,6 +355,10 @@ jobs:
             services/workers/src/workers/signal-listening-calibration-second-shape.postgres.test.ts | tee r16-listening-pg-tests.tap
           if ! grep -qx '# skipped 0' r16-listening-pg-tests.tap; then
             echo '::error::R16 listening PostgreSQL tests were skipped'
+            exit 1
+          fi
+          if ! grep -Fqx '# Subtest: publication localization protects new and changed topics while intact native legacy remains readable and reusable' r16-listening-pg-tests.tap; then
+            echo '::error::localized topic publication PostgreSQL case did not execute'
             exit 1
           fi
       - name: Run MFP PostgreSQL checks on migrated schema
