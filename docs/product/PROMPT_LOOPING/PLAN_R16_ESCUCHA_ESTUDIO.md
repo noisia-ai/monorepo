@@ -125,7 +125,7 @@ R16 H0–H6 sigue activo y no logrado. El último FULL conocido está en curso s
 
 `FULL187` continúa rechazado por 221.225389 raíces/s y ventanas/HTTP; no se cambia la barra. La revisión y las pruebas tardías de cohorte/observabilidad corrigen contratos y mejoran evidencia, sin acreditar aún capacidad integral.
 
-H2/H3 tienen cambios de producto revisados y 51 pruebas focales Listening verdes en la fuente c400; la aceptación PostgreSQL integrada sigue pendiente del job numérico Study y del resto del gate final. CI general/runtime y el job `migrated-schema` de dfcb están verdes, pero no cubren el candidato final por sí solos. Falta también el uso real UAT. H4/H5/H6 mantienen las pruebas y entregables indicados arriba; el corpus real no se ha procesado en R16. No se han aplicado SQL R16, desplegado UAT ni hecho gasto R16 real.
+H2/H3 tienen wiring revisado estáticamente y checks propios de dfcb; su aceptación PostgreSQL integrada y el uso real UAT siguen pendientes. Las 51 pruebas focales de `c400` corresponden al candidato lateMark y su testigo de recursos, no acreditan H2/H3. CI general/runtime y el job `migrated-schema` de dfcb están verdes, pero no cubren el candidato final por sí solos; también sigue activo el job numérico Study. H4/H5/H6 mantienen las pruebas y entregables indicados arriba; el corpus real no se ha procesado en R16. No se han aplicado SQL R16, desplegado UAT ni hecho gasto R16 real.
 
 ## Historial y recibos
 
