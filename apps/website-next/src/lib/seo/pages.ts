@@ -364,7 +364,8 @@ function studyPages(studies: Study[]): SeoPage[] {
     id: `/insights/estudios/${study.id}`,
     parent: "/insights/estudios",
     kind: "report",
-    noindex: study.draft,
+    // Drafts and studies shared only by personal link stay out of search, the sitemap and the index's list.
+    noindex: study.draft || study.accessMode === "solo_link",
     lastModified: (study.publishedAt ?? SITE_UPDATED).slice(0, 10),
     image: study.coverPath ? `/api/content/studies/${study.id}/cover.webp?v=${study.version}` : undefined,
     ...both((lang) => ({
