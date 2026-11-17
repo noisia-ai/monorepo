@@ -38,14 +38,13 @@ export async function getFeedStories(locale: string): Promise<FeedStory[]> {
   }));
 }
 
-/** Collections that have at least one story loaded: studies first (newest first), then the listed ones. */
+/**
+ * Curated collections with at least one story loaded (a season, a theme across studies). A study
+ * does not get a tab of its own: the industry chips already find its pieces, and one tab per study
+ * would not scale past a handful.
+ */
 export async function getFeedCollections(stories: FeedStory[], locale: string): Promise<FeedCollection[]> {
-  const lang = locale === "en" ? "en" : "es";
-  const fromStudies = (await getStudies())
-    .filter((study) => stories.some((story) => story.collection === study.id))
-    .map((study) => ({ id: study.id, name: study.summary[lang].title, demo: false }));
-  const listed = collections
+  return collections
     .filter((collection) => stories.some((story) => story.collection === collection.id))
     .map((collection) => ({ id: collection.id, name: (locale === "en" ? collection.en : collection.es).name, demo: Boolean(collection.demo) }));
-  return [...fromStudies, ...listed];
 }

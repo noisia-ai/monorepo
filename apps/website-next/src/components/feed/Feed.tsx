@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocale, useTranslations } from "next-intl";
-import { OpenBook, Pause, Play, ShareIos } from "iconoir-react";
+import { InfoCircle, OpenBook, Pause, Play, ShareIos } from "iconoir-react";
 import { Link } from "@/i18n/navigation";
 import { Logo } from "@/components/brand/Logo";
 import { SourceIcon, sourceLabel } from "@/components/brand/SourceMark";
@@ -76,7 +76,6 @@ export function Feed({ stories, collections = [], initialId, initialFilter, init
   );
 
   const industries = useMemo(() => Array.from(new Set(stories.map((story) => story.industry))), [stories]);
-  const collectionName = useMemo(() => new Map(collections.map((collection) => [collection.id, collection.name])), [collections]);
 
   // Every item is exactly one viewport tall, so the active story follows from the scroll
   // position. Simpler and sturdier than an IntersectionObserver across browsers.
@@ -263,24 +262,24 @@ export function Feed({ stories, collections = [], initialId, initialFilter, init
 
               {near ? (
               <div className={styles.caption}>
-                <div className={styles.metaRow}>
-                  <span className={story.kind === "demo" ? styles.kindDemo : styles.kind}>
-                    {story.kind === "editorial" ? t("kindEditorial") : story.kind === "demo" ? t("kindDemo") : t("kindExample")}
-                    {story.collection && collectionName.has(story.collection) ? ` · ${collectionName.get(story.collection)}` : ""}
-                  </span>
-                  <span className={styles.sourceIcons}>
-                    {story.sources.slice(0, 6).map((source) => (
-                      <span key={source} title={sourceLabel(source, locale)} aria-label={sourceLabel(source, locale)} role="img">
-                        <SourceIcon name={source} size={15} />
-                      </span>
-                    ))}
-                  </span>
-                </div>
-                <h2 id={`${key}-title`} className={styles.title}>
-                  {story.content.title}
-                </h2>
-                <p className={styles.dek}>{story.content.dek}</p>
-                {near ? (
+                {/* On a phone the reel already says this; the text lives in the evidence sheet. */}
+                <div className={styles.captionText}>
+                  <div className={styles.metaRow}>
+                    <span className={story.kind === "demo" ? styles.kindDemo : styles.kind}>
+                      {story.kind === "editorial" ? t("kindEditorial") : story.kind === "demo" ? t("kindDemo") : t("kindExample")}
+                    </span>
+                    <span className={styles.sourceIcons}>
+                      {story.sources.slice(0, 6).map((source) => (
+                        <span key={source} title={sourceLabel(source, locale)} aria-label={sourceLabel(source, locale)} role="img">
+                          <SourceIcon name={source} size={15} />
+                        </span>
+                      ))}
+                    </span>
+                  </div>
+                  <h2 id={`${key}-title`} className={styles.title}>
+                    {story.content.title}
+                  </h2>
+                  <p className={styles.dek}>{story.content.dek}</p>
                   <ul className={styles.inlineEvidence} aria-label={t("evidenceTitle")}>
                     {story.content.evidence.slice(0, 2).map((item, i) => (
                       <li key={i} className={styles.mention}>
@@ -291,21 +290,26 @@ export function Feed({ stories, collections = [], initialId, initialFilter, init
                       </li>
                     ))}
                   </ul>
-                ) : null}
+                </div>
+                {/* A phone gets a column of round buttons on the right, within thumb reach, the
+                    most used at the bottom; a desktop gets them in a row under the text. */}
                 <div className={styles.actions}>
                   <button
                     type="button"
                     className={styles.action}
+                    aria-label={t("evidence")}
                     onClick={(event) => {
                       evidenceTrigger.current = event.currentTarget;
                       setSheet(story);
                     }}
                   >
-                    {t("evidence")}
+                    <InfoCircle aria-hidden className={styles.phoneIcon} />
+                    <span className={styles.actionLabel}>{t("evidence")}</span>
                   </button>
                   {story.reportHref ? (
-                    <a className={styles.actionGhost} href={story.reportHref}>
-                      <OpenBook aria-hidden /> {t("report")}
+                    <a className={styles.actionGhost} href={story.reportHref} aria-label={t("report")}>
+                      <OpenBook aria-hidden />
+                      <span className={styles.actionLabel}>{t("report")}</span>
                     </a>
                   ) : null}
                   <button type="button" className={styles.iconAction} aria-label={t("share")} onClick={() => share(story)}>
