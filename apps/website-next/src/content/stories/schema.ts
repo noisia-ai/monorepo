@@ -78,7 +78,9 @@ export const industries = [
   "movilidad",
   "apuestas-y-gaming",
   "retail",
-  "cultura-y-sociedad"
+  "cultura-y-sociedad",
+  "banca-y-fintech",
+  "seguros"
 ] as const;
 
 export const storySchema = z.object({
