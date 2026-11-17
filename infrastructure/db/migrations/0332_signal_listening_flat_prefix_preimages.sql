@@ -8,7 +8,7 @@
 -- the slice, while the final join preserves one result per question key, including
 -- different keys sharing a digest. Empty questions/missing answers retain NULLs.
 -- Raw fourteen fields, human/manual overlays, scope, rights and dispatch are exact.
-CREATE FUNCTION pg_temp.r16_flat_new(w uuid,cid uuid,mid uuid,ctx text,roots uuid[],purpose text)
+CREATE OR REPLACE FUNCTION signal_listening_population_roots_v1(w uuid,cid uuid,mid uuid,ctx text,roots uuid[],purpose text)
 RETURNS TABLE(root_id uuid,input_digest text,body text,published_at timestamptz,platform text,
  question_key text,question_digest text,definition jsonb,wire jsonb,candidate boolean,scope_state text,
  answer jsonb,cache_call_id uuid,scope_basis text)
@@ -189,5 +189,3 @@ WITH eligible_batches AS MATERIALIZED(
  END IF;
 END
 $function$;
-
-REVOKE ALL ON FUNCTION pg_temp.r16_flat_new(uuid,uuid,uuid,text,uuid[],text) FROM PUBLIC;
