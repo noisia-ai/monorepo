@@ -17,7 +17,7 @@ Estado verificado al congelar la fuente `c400d9308ad0bb1e046803eabf5b3b04b58ecb8
 - El único FULL activo es [44068444485](https://github.com/noisia-ai/monorepo/actions/runs/44068444485), congelado sobre `c400d930`/source-tree `3749fa10cb826b3cdc9b80231af5c872e82ff48bc78fd8c7bb3a37af87a1a504`. Calibration `133988163036` SUCCESS; benchmark `133988163326` IN_PROGRESS según el último owner. No redispatch ni conclusión antes de terminal.
 - El PR [198](https://github.com/noisia-ai/monorepo/pull/198) sigue OPEN/DRAFT con head `dfcb1191e3c0875e442b2cc6206f50c35809b081`; `develop` sigue en `e12f81d710de58cd3c6e3dc6fac6f3e93ac9844a`. No hay merge ni UAT R16. Checks del PR/árbol `dfcb`: CI general, runtime y `migrated-schema` verdes; en MFP el job numérico Study continúa activo. Esos checks no acreditan el candidato `c400` ni la rama lateMark.
 - `FULL187` [44049874678](https://github.com/noisia-ai/monorepo/actions/runs/44049874678) quedó rechazado y terminal: 32,768 raíces y 65,536 solicitudes completas; throughput 221.225389 raíces/s, 130/133 ventanas bajo 1,000 y 341 respuestas HTTP >500 ms. Mantener la barra intacta.
-- El candidato lateMark `e1799c65` conserva los cambios revisados de store, worker y testigo de observabilidad: 8 blobs exactos a autores; 51 pruebas focales y TSC Listening verdes. Revisión no reporta P0/P1/P2. No está integrado, publicado ni aceptado por PostgreSQL o por un FULL. El testigo nuevo registra picos de stream y RSS escaso; no es una medida de rendimiento.
+- El candidato lateMark `e1799c65` está compuesto en `c400d930` y publicado en la rama que ejecuta el FULL actual. Sus cambios revisados de store, worker y testigo de observabilidad tienen 8 blobs exactos a autores; 51 pruebas focales y TSC Listening verdes. Revisión no reporta P0/P1/P2. No está fusionado a `develop` ni aceptado por PostgreSQL o por un FULL. El testigo nuevo registra picos de stream y RSS escaso; no es una medida de rendimiento.
 - H0–H6 siguen incompletos. No se ha ensayado físicamente la copia de las 37 migraciones 0295–0331, no se aplicaron migraciones R16 ni se desplegó en UAT. Human22 continúa cerrado hasta congelar la salida real de Study.
 
 ### Seguimiento de aceptación
@@ -95,7 +95,7 @@ Recibo: separar Voyage/JEV por raíz de Claude por número de grupos y vueltas; 
 - FULL187 sí completó la población y las diez fallas, pero rechazó capacidad; no se infiere el CPU ni la causa integral desde métricas SQL solapadas. El testigo previo no conservaba picos de stream/RSS. FULL c400 está activo y debe aportar la evidencia nueva, sin contaminar el recibo anterior.
 - Los candidatos D, codec y E se descartaron: E y codec preservaron comportamiento, pero empeoraron sus cuatro pares medidos; D falló su expectativa nativa. Sus corridas y razones permanecen en el archivo histórico.
 - El código lateMark selecciona sólo llamadas ya reservadas después de autoridad y antes de locks de llamadas; conserva COMMIT antes de enviar. Sus RED/GREEN focales prueban el orden y fallos, no un aumento de throughput.
-- El testigo de recursos observa límites efectivos (memoria 512 MiB, 1,024 HTTP simultáneos, ventana 4,096, flush 1,024 cada 250 ms, dos flushes) y máximos del stream. RSS se muestrea al inicio, al concluir cada job y al final; no es peak RSS ni entra a la aceptación.
+- El testigo de recursos registra límites configurados (memoria 512 MiB, `max_in_flight` 1,024, ventana 4,096, flush 1,024 cada 250 ms, dos flushes) y máximos del stream. Ese límite no mide concurrencia HTTP física. RSS se muestrea al inicio, al concluir cada job y al final; no es peak RSS ni entra a la aceptación.
 - El tipado global local alcanzó OOM al límite acotado; se traslada a CI. Las pruebas focales verdes no sustituyen los jobs integrados ni el PostgreSQL real.
 
 ## Registro de decisiones
@@ -104,14 +104,14 @@ Recibo: separar Voyage/JEV por raíz de Claude por número de grupos y vueltas; 
 - 2026-11-17: full187 falla las barras originales. No rebajar 1,000 raíces distintas en cada ventana completa de 1 s desde 5 s, 20 s activos, 1,000 raíz/s end-to-end ni HTTP observado de 100–500 ms; mantener 32,768 raíces, 65,536 solicitudes, diez fallos y límites/custodia originales.
 - 2026-11-17: el mecanismo lateMark requiere CI/PG y medición full sobre su propia fuente congelada antes de adoptar; ninguna regresión funcional autoriza una conclusión de rendimiento.
 - 2026-11-17: no aumentar heap ni abrir Docker en el equipo local; suites pesadas, PostgreSQL y benchmarks se ejecutan en CI remoto. Mantener sólo un owner por cada handle.
-- 2026-11-17: no integrar ni desplegar hasta revisión exacta, CI/PG, H1 y ensayo físico en copia. Después sólo `develop`/UAT y aplicación única forward-only. No `main`, producción ni compras.
+- 2026-11-17: no fusionar a `develop` ni desplegar hasta revisión exacta, CI/PG, H1 y ensayo físico en copia. Componer y publicar una rama para prueba está permitido. Después sólo `develop`/UAT y aplicación única forward-only. No `main`, producción ni compras.
 - 2026-11-17: mantener Human22 privado y sin abrir hasta congelar la salida real de Study; nunca inventar muestras, κ, costos o citas.
 - 2026-11-17: extraer las entradas históricas verbatim al archivo vinculado. Conservar la fuente original con SHA para que se puedan recuperar incluso los estados `IN_PROGRESS` antiguos; el banner advierte que no son handles vivos.
 
 ## Ruta restante de ejecución
 
 1. Seguir sólo `44068444485` hasta terminal y auditar artefactos/fuente exacta. Si falla, registrar el gate real; no relajar la prerregistración ni reutilizar resultados viejos.
-2. Completar revisión y checks del candidato lateMark sobre su fuente integrada. Cuando el full actual cierre, usar un único despacho full posterior sólo si la nueva fuente ya pasó CI/PG/revisión; observar throughput, ventanas, HTTP, fallas, memoria, RAW/DB/Signal y testigos sin omisiones.
+2. Completar revisión y checks del candidato lateMark sobre su fuente integrada. Si el FULL actual pasa todas las barras, conservar esa aceptación y no repetirlo por observar o recopilar más métricas. Si falla, o una modificación posterior cambia código relevante y deja obsoleta esa evidencia, decidir desde el resultado; despachar otro FULL sólo sobre una fuente congelada que haya pasado revisión y CI/PG, y sólo para aceptar esa fuente nueva. Medir throughput, ventanas, HTTP, fallas, memoria, RAW/DB/Signal y testigos sin omisiones.
 3. Ensayar físicamente las 37 migraciones 0295–0331 en una copia aislada. Root integra a `develop` sólo tras las puertas técnicas; aplicación UAT única y despliegue únicamente `studio-uat`/`workers-uat`.
 4. Refrescar saldo, límite, cotización y cota antes de cualquier etapa pagada. Correr Escucha automática (base, descubrimiento y apuestas/racismo) y luego Study T&B real sobre el mismo corpus; medir CSV→Signal, importación, Voyage, JEV, almacenamiento y serving por etapa.
 5. Congelar Study antes de Human22. Armar los paquetes sin clave para 500 tópicos antes/después, ≥200 casos de dirección/objetivo/uso, ~30 `none` dentro y ~30 fuera, 10×20 miembros de motivos y cuatro candidatos por cohortes. Mantener clave, semillas y comparación de las 22 causas en privado.
@@ -125,7 +125,7 @@ R16 H0–H6 sigue activo y no logrado. El último FULL conocido está en curso s
 
 `FULL187` continúa rechazado por 221.225389 raíces/s y ventanas/HTTP; no se cambia la barra. La revisión y las pruebas tardías de cohorte/observabilidad corrigen contratos y mejoran evidencia, sin acreditar aún capacidad integral.
 
-H2/H3 tienen cambios de producto revisados y focales, pero falta aceptación integrada/PG y uso real UAT. H4/H5/H6 mantienen las pruebas y entregables indicados arriba; el corpus real no se ha procesado en R16. No se han aplicado SQL R16, desplegado UAT ni hecho gasto R16 real.
+H2/H3 tienen cambios de producto revisados y 51 pruebas focales Listening verdes en la fuente c400; la aceptación PostgreSQL integrada sigue pendiente del job numérico Study y del resto del gate final. CI general/runtime y el job `migrated-schema` de dfcb están verdes, pero no cubren el candidato final por sí solos. Falta también el uso real UAT. H4/H5/H6 mantienen las pruebas y entregables indicados arriba; el corpus real no se ha procesado en R16. No se han aplicado SQL R16, desplegado UAT ni hecho gasto R16 real.
 
 ## Historial y recibos
 
