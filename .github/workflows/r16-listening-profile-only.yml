@@ -2,6 +2,11 @@ name: R16 listening profile-only diagnostic
 run-name: R16 profile-only 4096-root diagnostic (bounded_2g)
 
 on:
+  push:
+    branches:
+      - codex/r16-listening-profile-compose
+    paths:
+      - .github/workflows/r16-listening-profile-only.yml
   workflow_dispatch:
     inputs:
       target_ref:
@@ -18,6 +23,14 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  register-workflow:
+    name: Register profile-only manual workflow
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Confirm profile-only workflow registration
+        run: echo 'R16 profile-only workflow registered on the approved branch.'
+
   profile-only:
     name: R16 profile-only mini run (fresh owned PG17)
     if: github.event_name == 'workflow_dispatch'

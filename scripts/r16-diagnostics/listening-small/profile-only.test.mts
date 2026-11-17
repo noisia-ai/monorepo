@@ -303,6 +303,21 @@ test('profile-only workflow dispatch gate executes its real Bash and rejects any
  assert.doesNotMatch(workflow,/--cpu-prof|--prof-process|--heap(?:-|\s)/u);
 });
 
+test('profile-only workflow bootstrap is restricted to the approved branch and workflow path',async()=>{
+ const workflow=await readFile(new URL('../../../.github/workflows/r16-listening-profile-only.yml',import.meta.url),'utf8');
+ const push=workflow.match(/\n  push:\n([\s\S]*?)\n  workflow_dispatch:/u)?.[1];assert.ok(push,'bootstrap push trigger is present');
+ assert.deepEqual([...push.matchAll(/^    branches:\n      - ([^\n]+)$/gmu)].map(match=>match[1]),['codex/r16-listening-profile-compose']);
+ assert.deepEqual([...push.matchAll(/^      - (\.github\/workflows\/[^\n]+)$/gmu)].map(match=>match[1]),
+  ['.github/workflows/r16-listening-profile-only.yml']);
+ const registration=workflow.slice(workflow.indexOf('  register-workflow:'),workflow.indexOf('  profile-only:'));
+ assert.match(registration,/if: github\.event_name == 'push'/u);
+ assert.match(registration,/R16 profile-only workflow registered on the approved branch/u);
+ assert.doesNotMatch(registration,/actions\/checkout|pnpm install|lab-up|postgres|DATABASE_URL/u);
+ const profileJob=workflow.slice(workflow.indexOf('  profile-only:'));
+ assert.match(profileJob,/if: github\.event_name == 'workflow_dispatch'/u,
+  'the push registration event cannot start the profile run');
+});
+
 test('profile-only fresh-lab gate inventories daemon, project containers/volumes/networks and fixed Redis resources',async()=>{
  const workflow=await readFile(new URL('../../../.github/workflows/r16-listening-profile-only.yml',import.meta.url),'utf8');
  const body=await workflowStepBody(workflow,'Require fresh profile-only Docker lab resources');
