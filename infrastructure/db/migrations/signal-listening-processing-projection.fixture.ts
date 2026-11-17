@@ -157,8 +157,19 @@ export async function compareProcessingProjectionBudgetsV1(c:PoolClient,scope:un
  const limitOne=[...args];limitOne[5]=1;
  assert.deepEqual((await c.query(sql.new.metadata,limitOne)).rows,(await c.query(sql.old.metadata,limitOne)).rows,'row limit stays exact');
 }
-const preregistration={narrow_timings:16,full_timings:8,scenarios:['empty','historical'],narrow_queries:['census','metadata'],full_control:'full14_roots_null',order:['old','new','new','old'],narrow_strata:4,full_strata:2,median_ratio_max:.9,paired_ratio_max:1.1,pairing:'old_first:new_first;old_last:new_second',timing:'client_hrtime_query_only;EXPLAIN_and_parity_outside',cpu:'UNKNOWN'} as const;
-type Observation={scenario:'empty'|'historical';query:'census'|'metadata'|'full14';arm:'old'|'new';position:number;wall_ms:number;rows:number;result_sha256:string;snapshot_sha256:string};
+export const PROCESSING_PROJECTION_QUERY_ORDER_V1=['census','metadata','full14','full14_bounded'] as const;
+const preregistration={narrow_timings:16,full_timings:16,total_timings:32,scenarios:['empty','historical'],narrow_queries:['census','metadata'],full_controls:{full14:{roots:null,purpose:'client-derived-metrics',observations:8},full14_bounded:{roots:4096,purpose:'llm-processing',observations:8}},order:['old','new','new','old'],narrow_strata:4,full_strata:4,median_ratio_max:.9,paired_ratio_max:1.1,pairing:'old_first:new_first;old_last:new_second',timing:'client_hrtime_query_only;EXPLAIN_and_parity_outside',cpu:'UNKNOWN'} as const;
+type Observation={scenario:'empty'|'historical';query:typeof PROCESSING_PROJECTION_QUERY_ORDER_V1[number];arm:'old'|'new';position:number;wall_ms:number;rows:number;result_sha256:string;snapshot_sha256:string};
+export function assertProcessingProjectionMeasurementCountsV1(rows:ReadonlyArray<Pick<Observation,'scenario'|'query'|'arm'|'position'>>){
+ assert.equal(rows.length,32,'16 narrow +8 fullNULL +8 fullbounded');
+ for(const query of PROCESSING_PROJECTION_QUERY_ORDER_V1){
+  const stratum=rows.filter(r=>r.query===query);assert.equal(stratum.length,8,'each query has eight observations');
+  for(const scenario of ['empty','historical'] as const){
+   const paired=stratum.filter(r=>r.scenario===scenario);assert.equal(paired.length,4);
+   assert.deepEqual(paired.map(r=>r.arm),['old','new','new','old']);assert.deepEqual(paired.map(r=>r.position),[0,1,2,3]);
+  }
+ }
+}
 type PairGate={scenario:string;query:string;old_median_ms:number;new_median_ms:number;median_ratio:number;max_paired_ratio:number;no_regression_10pct:boolean};
 export type ProcessingProjectionEvidenceV1={contract:'r16-processing-projection-oracle-v1';status:'observed';query_only:true;h1_accepted:false;cpu:'UNKNOWN';inner_cost:'UNKNOWN';
  preregistration:typeof preregistration;source_sha256:string;candidate_sha256:string;source_body_sha256:string;mark_body_sha256:string;oracle_sha256:string;acceptance_sha256:string;target_sha:string;
@@ -186,7 +197,7 @@ export async function runProcessingProjection4096V1():Promise<ProcessingProjecti
    assert.equal((await c.query('SELECT count(*)::int n FROM signal_listening_questions WHERE configuration_id=$1',[cfg.id])).rows[0].n,4);
    const lengths=(await c.query('SELECT min(octet_length(text))::int minimum,max(octet_length(text))::int maximum FROM signal_mass_labeling_items WHERE map_id=$1',[f.map_id])).rows[0];
    const templates=await queryTemplates(),fullOld='SELECT * FROM pg_temp.r16_projection_old($1,$2,$3,$4,$5::uuid[],$6) ORDER BY root_id,question_key',fullNew=fullOld.replace('r16_projection_old','r16_projection_full');
-   const params={census:[...scope,roots],metadata:await metadataParams(c,scope,requested.run_id,roots),full14:[...scope,null,'client-derived-metrics']};
+   const params={census:[...scope,roots],metadata:await metadataParams(c,scope,requested.run_id,roots),full14:[...scope,null,'client-derived-metrics'],full14_bounded:[...scope,roots,'llm-processing']};
    const runtime=(await c.query("SELECT current_database() database,current_setting('server_version_num')::int postgres_version,system_identifier::text FROM pg_control_system()")).rows[0];
    assert.match(runtime.database,/^noisia_mfp_recovery_[a-f0-9]{32}$/u);assert.notEqual(runtime.database,new URL(process.env.DATABASE_URL!).pathname.slice(1));
    const mark=installed.defaults.find(r=>r.proname==='signal_listening_statement_money_v1');assert.ok(mark);
@@ -208,24 +219,26 @@ export async function runProcessingProjection4096V1():Promise<ProcessingProjecti
     await withProcessingProjectionSnapshotV1(c,async()=>{
      await processingProjectionReadV1(c,scope,null);await processingProjectionReadV1(c,scope,roots);await processingProjectionReadV1(c,scope,roots,true);
      await compareProcessingProjectionBudgetsV1(c,scope,requested.run_id,roots);
+     await equalNative(c,fullOld,fullNew,params.full14_bounded,14);
      const snapshot=sha((await c.query('SELECT pg_current_snapshot()::text snapshot')).rows[0].snapshot);
-     for(const query of ['census','metadata','full14'] as const){
+     for(const query of PROCESSING_PROJECTION_QUERY_ORDER_V1){
+      const isFull=query==='full14'||query==='full14_bounded';
       const measured:Observation[]=[];
       for(const [position,arm]of (['old','new','new','old'] as const).entries()){
-       const sql=query==='full14'?(arm==='old'?fullOld:fullNew):templates[arm][query],started=process.hrtime.bigint();
+       const sql=isFull?(arm==='old'?fullOld:fullNew):templates[arm][query],started=process.hrtime.bigint();
        const result=await c.query(sql,params[query]),wall=Number(process.hrtime.bigint()-started)/1e6;
        const observation={scenario,query,arm,position,wall_ms:wall,rows:result.rows.length,result_sha256:sha(JSON.stringify(result.rows)),snapshot_sha256:snapshot};measured.push(observation);
-       (query==='full14'?receipt!.full_measurements:receipt!.narrow_measurements).push(observation);
+       (isFull?receipt!.full_measurements:receipt!.narrow_measurements).push(observation);
       }
       assert.ok(measured.every(m=>m.result_sha256===measured[0]!.result_sha256&&m.rows===measured[0]!.rows),'timed native caller outputs agree independently of packet parity');
       const old=measured.filter(m=>m.arm==='old'),next=measured.filter(m=>m.arm==='new'),om=median(old.map(m=>m.wall_ms)),nm=median(next.map(m=>m.wall_ms));
       const maxRatio=Math.max(next[0]!.wall_ms/old[0]!.wall_ms,next[1]!.wall_ms/old[1]!.wall_ms),gate={scenario,query,old_median_ms:om,new_median_ms:nm,median_ratio:nm/om,max_paired_ratio:maxRatio,no_regression_10pct:maxRatio<=1.1};
-      if(query==='full14')receipt!.full_gates.push(gate);else receipt!.narrow_gates.push({...gate,median_10pct:nm<=.9*om});
-      for(const arm of ['old','new'] as const){const sql=query==='full14'?(arm==='old'?fullOld:fullNew):templates[arm][query];receipt!.plans.push({scenario,query,arm,plan:planSummary((await c.query('EXPLAIN(FORMAT JSON) '+sql,params[query])).rows[0]['QUERY PLAN'])});}
+      if(isFull)receipt!.full_gates.push(gate);else receipt!.narrow_gates.push({...gate,median_10pct:nm<=.9*om});
+      for(const arm of ['old','new'] as const){const sql=isFull?(arm==='old'?fullOld:fullNew):templates[arm][query];receipt!.plans.push({scenario,query,arm,plan:planSummary((await c.query('EXPLAIN(FORMAT JSON) '+sql,params[query])).rows[0]['QUERY PLAN'])});}
      }
     });
    }
-   assert.equal(receipt.narrow_measurements.length,16);assert.equal(receipt.full_measurements.length,8);assert.equal(receipt.narrow_gates.length,4);assert.equal(receipt.full_gates.length,2);
+   assertProcessingProjectionMeasurementCountsV1([...receipt.narrow_measurements,...receipt.full_measurements]);assert.equal(receipt.narrow_measurements.length,16);assert.equal(receipt.full_measurements.length,16);assert.equal(receipt.narrow_gates.length,4);assert.equal(receipt.full_gates.length,4);
    receipt.primary_candidate=receipt.narrow_gates.every(g=>g.median_10pct&&g.no_regression_10pct)&&receipt.full_gates.every(g=>g.no_regression_10pct);receipt.diagnosis=receipt.primary_candidate?'eligible_query_only':'rejected_query_only';
    assert.deepEqual(await defaults(c),installed.defaults);
   }finally{releaseProcessingProjectionClientV1(c);}

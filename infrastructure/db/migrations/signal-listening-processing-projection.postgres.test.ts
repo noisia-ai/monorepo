@@ -13,7 +13,7 @@ import {saveSignalListeningConfigurationV1} from '../signal-listening-configurat
 import {setSignalListeningDiscoveryManualV1} from '../signal-listening-discovery';
 import * as human from '../signal-listening-human-edits';
 import {installProcessingProjectionV1,processingProjectionReadV1,processingProjectionKernelV1,withProcessingProjectionSnapshotV1,
- processingProjectionReadOnlyTransactionV1,releaseProcessingProjectionClientV1,assertProcessingProjectionSourceV1,compareProcessingProjectionBudgetsV1,
+ processingProjectionReadOnlyTransactionV1,releaseProcessingProjectionClientV1,assertProcessingProjectionSourceV1,compareProcessingProjectionBudgetsV1,PROCESSING_PROJECTION_QUERY_ORDER_V1,assertProcessingProjectionMeasurementCountsV1,
  runProcessingProjection4096V1,writeProcessingProjectionEvidenceV1} from './signal-listening-processing-projection.fixture';
 const enabled=process.env.NOISIA_R16_PROCESSING_PROJECTION_PG==='true';
 // No provider, product function replacement, GUC authority or trigger disabling.
@@ -166,4 +166,13 @@ if(process.env.NOISIA_R16_PROCESSING_PROJECTION_PURE==='true')test('processing p
  assert.throws(()=>assertProcessingProjectionSourceV1(source,candidate.replace("m.inclusion_status='included'","m.inclusion_status='excluded'")));
  assert.equal((candidate.match(/CREATE FUNCTION pg_temp\.r16_projection_/gu)??[]).length,4);
  assert.ok(!/SECURITY DEFINER|CREATE OR REPLACE|CREATE FUNCTION public\.|GRANT |ALTER FUNCTION/u.test(candidate));
+});
+
+if(process.env.NOISIA_R16_PROCESSING_PROJECTION_PURE==='true')test('processing projection schedules both independent full14 root controls',()=>{
+ assert.deepEqual(PROCESSING_PROJECTION_QUERY_ORDER_V1,['census','metadata','full14','full14_bounded']);
+ const schedule=PROCESSING_PROJECTION_QUERY_ORDER_V1.flatMap(query=>(['empty','historical'] as const).flatMap(scenario=>(['old','new','new','old'] as const).map((arm,position)=>({query,scenario,arm,position}))));
+ assertProcessingProjectionMeasurementCountsV1(schedule);
+ assert.throws(()=>assertProcessingProjectionMeasurementCountsV1(schedule.filter(r=>r.query!=='full14_bounded')));
+ assert.throws(()=>assertProcessingProjectionMeasurementCountsV1(schedule.map(r=>r.query==='full14_bounded'?{...r,query:'full14' as const}:r)));
+ assert.throws(()=>assertProcessingProjectionMeasurementCountsV1([]));
 });
