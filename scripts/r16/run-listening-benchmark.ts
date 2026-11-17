@@ -13,6 +13,27 @@ import {createSyntheticJevFetchV1,deterministicR16LatencyV1} from './synthetic-j
 import {startR16HttpFilesystemStorageV1} from './http-filesystem-storage';
 import {r16ListeningWorkloadV2,summarizeR16ListeningCapacityV2,R16_LISTENING_PREREGISTRATION_V2 as registration,type R16ListeningArmV1} from './listening-workload';
 import type {R16QueryProfilerV1} from './query-profiler';
+import {assertSharedWireDefaultRuntimeV1,withSharedWireDefaultPostcheckV1} from '../../infrastructure/db/migrations/signal-listening-statement-shared-wire.oracle';
+
+export type R16ListeningRuntimeReceiptV1=Awaited<ReturnType<typeof assertSharedWireDefaultRuntimeV1>>;
+export type R16ListeningRuntimeDatabaseV1=Parameters<typeof assertSharedWireDefaultRuntimeV1>[0];
+export type R16ListeningRuntimeWitnessV1={
+ contract:'r16-listening-runtime-witness-v1';
+ before:R16ListeningRuntimeReceiptV1|null;
+ after:R16ListeningRuntimeReceiptV1|null;
+};
+export async function withR16ListeningRuntimeWitnessV1<T>(database:R16ListeningRuntimeDatabaseV1,
+ body:(witness:R16ListeningRuntimeWitnessV1,captureAfter:()=>Promise<R16ListeningRuntimeReceiptV1>)=>Promise<T>){
+ const witness:R16ListeningRuntimeWitnessV1={contract:'r16-listening-runtime-witness-v1',before:null,after:null};
+ const captureAfter=async()=>{const receipt=await assertSharedWireDefaultRuntimeV1(database);witness.after=receipt;return receipt;};
+ const value=await withSharedWireDefaultPostcheckV1(async()=>{
+  witness.before=await assertSharedWireDefaultRuntimeV1(database);
+  const result=await body(witness,captureAfter);
+  if(witness.after===null)await captureAfter();
+  return result;
+ },async()=>{if(witness.after===null)await captureAfter();});
+ return{value,runtime_witness:witness};
+}
 
 /** Native fixture ownership is deliberately external: seeding may not invent a
  * configuration, profile, scope, admission, money event or serving projection. */
@@ -62,6 +83,7 @@ export async function runR16ListeningBenchmarkV1(args:{arm:R16ListeningArmV1;obj
    assertReady:()=>timed('preflight',()=>baseStorage.assertReady!()),
    put:value=>timed('put',()=>baseStorage.put(value)),get:value=>timed('get',()=>baseStorage.get(value))};
   return await args.withNativeFixture({workload,storage},async f=>{
+  const observed=await withR16ListeningRuntimeWitnessV1(f.access.database,async(_runtimeWitness,captureAfter)=>{
   const start=assertR16ListeningAdmissionClockV1(coldStart,f.admission_started_at_ms,performance.now());
   const status=await getSignalListeningStatusV1(f.access);
   assert.equal(status.configuration?.id,f.access.configuration_id);assert.equal(status.map?.id,f.access.map_id);
@@ -109,6 +131,9 @@ export async function runR16ListeningBenchmarkV1(args:{arm:R16ListeningArmV1;obj
   const beforeFinal=resolved.size;await sample();
   assert.equal(resolved.size,beforeFinal,'final census found roots not observed after native page apply');
   const metrics=await readSignalListeningQuestionsMetricsV1({...f.access,question_keys:workload.question_keys});
+  // Keep the final default-body proof inside the existing admission-to-wall
+  // clock. The wrapper repeats it on failures and preserves both failures.
+  await captureAfter();
   const wall_elapsed_ms=performance.now()-start;
   const capacity=summarizeR16ListeningCapacityV2({wall_elapsed_ms,processing_elapsed_ms:classification_wall_elapsed_ms,
    native_processing_complete,resolved_roots:resolved.size,commits,latency_ms});
@@ -122,6 +147,8 @@ export async function runR16ListeningBenchmarkV1(args:{arm:R16ListeningArmV1;obj
    capacity_gates,capacity,source_provenance,job_spans,warmup_wall_ms:job_spans.filter(span=>span.warmup).reduce((sum,span)=>sum+span.end_ms-span.start_ms,0),workload,root_census_digest:digest([...expected].sort()),cold_elapsed_ms:performance.now()-coldStart,wall_elapsed_ms,classification_wall_elapsed_ms,
    fully_resolved_distinct_roots:resolved.size,requests,requests_per_resolved_root:resolved.size?requests/resolved.size:null,latency_ms,calibration,commits,jobs,metrics,storage:storageServer.metrics(),
    unresolved_roots:expected.size-resolved.size,storage_spans,sql_profile:args.query_profiler?.snapshot()??null};
+  });
+  return{...observed.value,runtime_witness:observed.runtime_witness};
   });
  }finally{await storageServer.close();}
 }
