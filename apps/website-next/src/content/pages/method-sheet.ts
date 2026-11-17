@@ -124,3 +124,10 @@ export const methodSheetLabels = {
   es: { method: "Método", roots: "Se apoya en", link: "Conoce nuestro enfoque", close: "Cerrar", open: "Ver más sobre" },
   en: { method: "Method", roots: "Built on", link: "See our approach", close: "Close", open: "More about" }
 } as const;
+
+/** The library key of a method by its name ("Triggers & Barriers" → "tb"), or null if it is not one of the six. */
+export function methodKeyByName(name: string | null | undefined): MethodKey | null {
+  const wanted = name?.trim().toLowerCase();
+  if (!wanted) return null;
+  return methodOrder.find((key) => methodSheet[key].name.toLowerCase() === wanted) ?? null;
+}

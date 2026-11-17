@@ -30,6 +30,11 @@ export function studyCover(study: Study): string | null {
   return study.coverPath ? `/api/content/studies/${study.id}/cover.webp?v=${study.version}` : null;
 }
 
+/** The study's own image, when it has one. */
+export function studyHero(study: Study): string | null {
+  return study.heroPath ? `/api/content/studies/${study.id}/${study.heroPath}?v=${study.version}` : null;
+}
+
 export async function studyCardItems(locale: string): Promise<StudyCardItem[]> {
   const lang = locale === "en" ? "en" : "es";
   const c = studiesPage[lang];
@@ -52,7 +57,7 @@ export async function studyCardItems(locale: string): Promise<StudyCardItem[]> {
       meta: [study.method, study.summary[lang].period_label ?? study.periodLabel].filter(Boolean).join(" · "),
       badge: c.access[study.accessMode],
       gated: study.accessMode !== "abierto",
-      cover: studyCover(study),
+      cover: studyHero(study) ?? studyCover(study),
       date: study.publishedAt ?? new Date().toISOString(),
       draft: study.draft
     }));

@@ -1,6 +1,6 @@
 import type { AccessMode, FullLanguage, Market } from "@/content/studies/schema";
 
-/** Copy of the studies index, the study page and the full-study viewer. */
+/** Copy of the studies index, the study page and the study viewer. */
 
 const names: Record<"es" | "en", Record<Market, string>> = {
   es: { MX: "México", UK: "Reino Unido", BR: "Brasil", DE: "Alemania", "US-CA": "Estados Unidos y Canadá", ES: "España", FR: "Francia" },
@@ -31,20 +31,38 @@ type Copy = {
   languages: Record<FullLanguage, string>;
   allStudies: string;
   // study page
+  eyebrow: string;
   findingsTitle: string;
+  findingsCta: string;
+  voiceTitle: string;
   methodTitle: string;
-  baseLine: (mentions: string, channels: string) => string;
+  facts: { method: string; markets: string; period: string; base: string; channels: string; language: string };
+  mentions: (mentions: string) => string;
   fullCta: string;
-  fullLanguage: (language: string) => string;
+  /** "45 slides · In English · On request" */
+  fullMeta: (slides: number, language: string, access: AccessMode) => string;
+  fullTitle: string;
+  fullText: (slides: number, language: string) => string;
   accessNote: Record<AccessMode, string>;
   piecesTitle: string;
   piecesLead: string;
   moreStudies: string;
   draft: string;
-  // full study
-  backToStudy: string;
+  // viewer
+  close: string;
+  slides: (n: number) => string;
+  slideOf: (n: number, total: number) => string;
+  prev: string;
+  next: string;
+  showThumbs: string;
+  hideThumbs: string;
+  zoomIn: string;
+  zoomOut: string;
+  fit: string;
+  share: string;
+  copied: string;
   downloadPdf: string;
-  fullscreen: string;
+  present: string;
   slideAlt: (n: number, total: number) => string;
   tapHint: string;
   gateTitle: Record<Exclude<AccessMode, "abierto">, string>;
@@ -75,13 +93,20 @@ export const studiesPage: Record<"es" | "en", Copy> = {
     access: { abierto: "Libre", registro: "Con registro", solo_link: "Bajo solicitud" },
     languages: { es: "español", en: "inglés", pt: "portugués", de: "alemán" },
     allStudies: "Todos los estudios",
+    eyebrow: "Estudio",
     findingsTitle: "Lo que encontramos",
+    findingsCta: "Lo que encontramos",
+    voiceTitle: "En palabras de la gente",
     methodTitle: "Cómo lo hicimos",
-    baseLine: (mentions, channels) => `${mentions} menciones analizadas en ${channels}`,
-    fullCta: "Ver el estudio completo",
-    fullLanguage: (language) => `El estudio completo está en ${language}.`,
+    facts: { method: "Método", markets: "Mercados", period: "Periodo", base: "Base", channels: "Canales", language: "Estudio completo" },
+    mentions: (mentions) => `${mentions} menciones`,
+    fullCta: "Ver el estudio",
+    fullMeta: (slides, language, access) =>
+      [`${slides} láminas`, `en ${language}`, access === "abierto" ? null : access === "registro" ? "con registro" : "bajo solicitud"].filter(Boolean).join(" · "),
+    fullTitle: "El estudio completo",
+    fullText: (slides, language) => `${slides} láminas con cada hallazgo, sus cifras y la evidencia detrás. Está en ${language} y se descarga en PDF.`,
     accessNote: {
-      abierto: "Libre: se abre sin registro.",
+      abierto: "Se abre sin registro.",
       registro: "Se comparte con registro. Si recibiste un enlace personal, ya lo tienes abierto.",
       solo_link: "Se comparte bajo solicitud. Si recibiste un enlace personal, ya lo tienes abierto."
     },
@@ -89,9 +114,20 @@ export const studiesPage: Record<"es" | "en", Copy> = {
     piecesLead: "Hallazgos cortos, cada uno con su evidencia.",
     moreStudies: "Más estudios",
     draft: "Borrador",
-    backToStudy: "Volver al estudio",
+    close: "Cerrar y volver al estudio",
+    slides: (n) => `${n} láminas`,
+    slideOf: (n, total) => `${n} de ${total}`,
+    prev: "Lámina anterior",
+    next: "Lámina siguiente",
+    showThumbs: "Mostrar miniaturas",
+    hideThumbs: "Ocultar miniaturas",
+    zoomIn: "Acercar",
+    zoomOut: "Alejar",
+    fit: "Ajustar",
+    share: "Compartir",
+    copied: "Link copiado. Abre la página del estudio; tu acceso sigue siendo personal.",
     downloadPdf: "Descargar PDF",
-    fullscreen: "Pantalla completa",
+    present: "Presentar",
     slideAlt: (n, total) => `Lámina ${n} de ${total}`,
     tapHint: "Toca una lámina para verla completa. Gira el teléfono o acerca para leer el detalle.",
     gateTitle: { registro: "Este estudio se comparte con registro", solo_link: "Este estudio se comparte bajo solicitud" },
@@ -123,13 +159,20 @@ export const studiesPage: Record<"es" | "en", Copy> = {
     access: { abierto: "Free", registro: "Sign-up", solo_link: "On request" },
     languages: { es: "Spanish", en: "English", pt: "Portuguese", de: "German" },
     allStudies: "All studies",
+    eyebrow: "Study",
     findingsTitle: "What we found",
+    findingsCta: "What we found",
+    voiceTitle: "In people's words",
     methodTitle: "How we did it",
-    baseLine: (mentions, channels) => `${mentions} mentions analyzed across ${channels}`,
-    fullCta: "See the full study",
-    fullLanguage: (language) => `The full study is in ${language}.`,
+    facts: { method: "Method", markets: "Markets", period: "Period", base: "Base", channels: "Channels", language: "Full study" },
+    mentions: (mentions) => `${mentions} mentions`,
+    fullCta: "See the study",
+    fullMeta: (slides, language, access) =>
+      [`${slides} slides`, `in ${language}`, access === "abierto" ? null : access === "registro" ? "with sign-up" : "on request"].filter(Boolean).join(" · "),
+    fullTitle: "The full study",
+    fullText: (slides, language) => `${slides} slides with every finding, its figures and the evidence behind it. It is in ${language} and downloads as a PDF.`,
     accessNote: {
-      abierto: "Free: it opens without signing up.",
+      abierto: "It opens without signing up.",
       registro: "Shared with sign-up. If you received a personal link, it is already open for you.",
       solo_link: "Shared on request. If you received a personal link, it is already open for you."
     },
@@ -137,9 +180,20 @@ export const studiesPage: Record<"es" | "en", Copy> = {
     piecesLead: "Short findings, each with its evidence.",
     moreStudies: "More studies",
     draft: "Draft",
-    backToStudy: "Back to the study",
+    close: "Close and go back to the study",
+    slides: (n) => `${n} slides`,
+    slideOf: (n, total) => `${n} of ${total}`,
+    prev: "Previous slide",
+    next: "Next slide",
+    showThumbs: "Show thumbnails",
+    hideThumbs: "Hide thumbnails",
+    zoomIn: "Zoom in",
+    zoomOut: "Zoom out",
+    fit: "Fit",
+    share: "Share",
+    copied: "Link copied. It opens the study page; your access stays personal.",
     downloadPdf: "Download PDF",
-    fullscreen: "Full screen",
+    present: "Present",
     slideAlt: (n, total) => `Slide ${n} of ${total}`,
     tapHint: "Tap a slide to see it full size. Turn your phone or zoom in to read the detail.",
     gateTitle: { registro: "This study is shared with sign-up", solo_link: "This study is shared on request" },
