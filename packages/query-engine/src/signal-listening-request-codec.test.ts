@@ -4,7 +4,7 @@ import {createHash} from 'node:crypto';
 import {signalWorkspaceEmbeddingDigestV1 as legacyDigest} from './signal-workspace-embeddings-v1';
 import {SIGNAL_LISTENING_REQUEST_VERSION_V1,signalListeningBaseTemplateV1,compileSignalListeningSnapshotV1,
  readSignalListeningSnapshotV1,signalListeningSnapshotWorkV1,buildSignalListeningCompiledRequestV1,
- buildSignalListeningJevRequestV1,signalListeningRequestDigestV1,type SignalListeningInputV1} from './signal-listening-contracts';
+ buildSignalListeningJevRequestV1,signalListeningRequestDigestV1,validateSignalListeningConfigurationV1,type SignalListeningInputV1,type SignalListeningConfigurationV1} from './signal-listening-contracts';
 import type {JevRequestV1} from './signal-mention-facets-jev-v1';
 
 const run={id:'run-é-é-😀',entity_context_digest:'sha256:context'};
@@ -138,5 +138,72 @@ test('exotic builder inputs preserve the previous late-selection result instead 
  for(const key of ['missing',{toString:()=> 'voice'} as unknown as string]){
   const make=()=>{let reads=0;return{i:{text:'body',get question_keys(){reads++;return reads<=5?['voice']:[key];}},reads:()=>reads};};
   const a=make(),b=make(),actual=buildSignalListeningCompiledRequestV1(a.i,snapshot),old=oldCompiled(b.i);assert.deepEqual(actual,old);assert.equal(a.reads(),b.reads());assert.equal(signalListeningRequestDigestV1(run,input(),actual),baseline(run,input(),old));
+ }
+});
+
+test('changed reflection intrinsics and accessors are ignored exactly like the old digest',()=>{
+ const snapshot=compileSignalListeningSnapshotV1(configuration()),i=input(),q=buildSignalListeningCompiledRequestV1(i,snapshot);
+ const own=Object.getOwnPropertyDescriptor,define=Object.defineProperty;
+ for(const [owner,key]of [[Object,'getOwnPropertyDescriptor'],[Object,'getOwnPropertyDescriptors'],[Object,'getPrototypeOf'],[Object,'hasOwn'],[Reflect,'ownKeys']]as const){
+  const descriptor=own(owner,key)!;
+  for(const accessor of [false,true]){
+   let observations=0,actual:unknown,expected:unknown;
+   try{
+    const hook=()=>{observations++;throw Error('reflection hook must not be observed');};
+    define(owner,key,accessor?{get:hook,configurable:true}:{...descriptor,value:hook});
+    expected=baseline(run,i,q);actual=signalListeningRequestDigestV1(run,i,q);
+   }finally{define(owner,key,descriptor);}
+   assert.equal(actual,expected);assert.equal(observations,0,key);
+  }
+ }
+});
+
+test('changed canonicalizer/builder callbacks fall back before extra array/map/weakmap observations',()=>{
+ const snapshot=compileSignalListeningSnapshotV1(configuration()),i=input(),q=buildSignalListeningCompiledRequestV1(i,snapshot);
+ const own=Object.getOwnPropertyDescriptor,define=Object.defineProperty;
+ for(const [owner,key]of [[Array,'isArray'],[Array.prototype,'map'],[Array.prototype,'every'],[Array.prototype,'some'],[Map.prototype,'get'],[WeakMap.prototype,'get']]as const){
+  const descriptor=own(owner,key)!;let observations=0,actual:unknown,expected:unknown,oldCount=0,newCount=0;
+  try{define(owner,key,{...descriptor,value:function(this:unknown,...args:unknown[]){observations++;return Reflect.apply(descriptor.value,this,args);}});
+   expected=baseline(run,i,q);oldCount=observations;observations=0;actual=signalListeningRequestDigestV1(run,i,q);newCount=observations;
+  }finally{define(owner,key,descriptor);}
+  assert.equal(actual,expected);assert.equal(newCount,oldCount,key);
+ }
+});
+
+// Independent b95 compile oracle: especially hash(identity) BEFORE wire creation.
+function oldCompiledSnapshot(value:unknown){
+ const freeze=<T>(v:T):T=>{if(v&&typeof v==='object'){for(const child of Object.values(v))freeze(child);Object.freeze(v);}return v;};
+ const config=freeze(validateSignalListeningConfigurationV1(value)),configuration_digest=legacyDigest(config);
+ const identity=freeze({kind:'mass_labeling',provider:'typesafe',model:config.model,prompt_digest:configuration_digest,
+  schema_digest:legacyDigest({version:SIGNAL_LISTENING_REQUEST_VERSION_V1,answers:'question-digest-cache-v1'}),params:{request_version:SIGNAL_LISTENING_REQUEST_VERSION_V1,configuration:config,configuration_digest,input_usd_per_mtok:.042,defined_universal_limit:8,defined_candidates:4,discovered_candidates:4}});
+ Object.freeze({});const identity_digest=legacyDigest(identity);
+ const wire=(q:SignalListeningConfigurationV1['questions'][number])=>{const instructions={rules:config.instructions,question:q.text};return q.type==='choice'?{type:'choice',instructions,criteria:Object.fromEntries(q.options.map(o=>[o.key,o.definition]))}:{type:'noul',instructions,criteria:{true:q.positive,false:q.negative}};};
+ const wires=new Map(config.questions.map(q=>[q.key,freeze(wire(q))]));return{identity,identity_digest,wires};
+}
+
+test('changed intrinsics before compile preserve literal identity-hash-before-wires callback order',()=>{
+ const config=configuration(),oldStringify=JSON.stringify,oldValues=Object.values;let events:string[]=[];
+ const stringify=((v:unknown,...args:unknown[])=>{if(v&&typeof v==='object'&&(v as {kind?:unknown}).kind==='mass_labeling')events.push('identity hash');return Reflect.apply(oldStringify,JSON,[v,...args]);}) as typeof JSON.stringify;
+ const values=((v:object)=>{if(Object.hasOwn(v,'instructions')&&Object.hasOwn(v,'criteria'))events.push('wire');return oldValues(v);}) as typeof Object.values;
+ let expected:ReturnType<typeof oldCompiledSnapshot>|undefined,actual:ReturnType<typeof readSignalListeningSnapshotV1>|undefined,oldEvents:string[]=[],newEvents:string[]=[];
+ try{JSON.stringify=stringify;Object.values=values;expected=oldCompiledSnapshot(config);oldEvents=events;events=[];actual=readSignalListeningSnapshotV1(compileSignalListeningSnapshotV1(config));newEvents=events;
+ }finally{JSON.stringify=oldStringify;Object.values=oldValues;}
+ assert.deepEqual(newEvents,oldEvents);assert.equal(newEvents[0],'identity hash');assert.equal(newEvents.filter(e=>e==='wire').length,config.questions.length);
+ assert.ok(expected&&actual);assert.deepEqual(actual.identity,expected.identity);assert.equal(actual.identity_digest,expected.identity_digest);
+});
+
+test('changed array callbacks before building retain the literal old builder observations',()=>{
+ const config=configuration(),snapshot=compileSignalListeningSnapshotV1(config),i=input(),wires=new Map(Object.entries(buildSignalListeningJevRequestV1({text:'x',question_keys:config.questions.map(q=>q.key)},config).questions));
+ const oldBuilder=():JevRequestV1=>{
+  if(!i.text.trim()||!i.question_keys.length||i.question_keys.length>256||new Set(i.question_keys).size!==i.question_keys.length||i.question_keys.some(k=>!wires.has(k)))throw Error('listening_input_invalid');
+  return{model:'jev-1.13.0',state:i.text,questions:Object.fromEntries([...i.question_keys].sort().map(k=>[k,structuredClone(wires.get(k)!)]))};
+ };
+ const own=Object.getOwnPropertyDescriptor,define=Object.defineProperty;
+ for(const [owner,key]of [[Array,'isArray'],[Array.prototype,'map'],[Array.prototype,'every'],[Array.prototype,'some']]as const){
+  const descriptor=own(owner,key)!;let observations=0,oldCount=0,newCount=0,expected:JevRequestV1|undefined,actual:JevRequestV1|undefined;
+  try{define(owner,key,{...descriptor,value:function(this:unknown,...args:unknown[]){observations++;return Reflect.apply(descriptor.value,this,args);}});
+   expected=oldBuilder();oldCount=observations;observations=0;actual=buildSignalListeningCompiledRequestV1(i,snapshot);newCount=observations;
+  }finally{define(owner,key,descriptor);}
+  assert.deepEqual(actual,expected);assert.equal(newCount,oldCount,key);
  }
 });

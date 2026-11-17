@@ -93,17 +93,30 @@ type SnapshotState={configuration:SignalListeningConfigurationV1;configuration_d
 // No cache of selections, roots, permissions or results; live requests are weak.
 const MAX_SNAPSHOT_WIRE_CODEC_BYTES=1_048_576;
 const requestCodecs=new WeakMap<JevRequestV1,RequestCodec>();
-const codecIntrinsics={parse:JSON.parse,stringify:JSON.stringify,clone:structuredClone,entries:Object.entries,fromEntries:Object.fromEntries,
- compare:String.prototype.localeCompare,sort:Array.prototype.sort};
+const PrivateMap=Map;
+const codecGuard={own:Object.getOwnPropertyDescriptor,descriptors:Object.getOwnPropertyDescriptors,
+ prototype:Object.getPrototypeOf,hasOwn:Object.hasOwn,keys:Reflect.ownKeys,isProxy:nodeTypes.isProxy};
+// Only intrinsics used by the old builder/canonicalizer or by this optional
+// codec. Inspect descriptors with captured references, never invoke a new hook.
+const codecMethods:Array<readonly[object,PropertyKey,unknown]>=[
+ [Object,'getOwnPropertyDescriptor',codecGuard.own],[Object,'getOwnPropertyDescriptors',codecGuard.descriptors],
+ [Object,'getPrototypeOf',codecGuard.prototype],[Object,'hasOwn',codecGuard.hasOwn],[Reflect,'ownKeys',codecGuard.keys],
+ [nodeTypes,'isProxy',codecGuard.isProxy],[Object,'entries',Object.entries],[Object,'fromEntries',Object.fromEntries],
+ [Object,'values',Object.values],[Object,'freeze',Object.freeze],[JSON,'parse',JSON.parse],[JSON,'stringify',JSON.stringify],
+ [globalThis,'structuredClone',structuredClone],[String.prototype,'localeCompare',String.prototype.localeCompare],
+ [Array,'isArray',Array.isArray],[Array.prototype,'sort',Array.prototype.sort],[Array.prototype,'map',Array.prototype.map],
+ [Array.prototype,'every',Array.prototype.every],[Array.prototype,'some',Array.prototype.some],
+ [Array.prototype,Symbol.iterator,Array.prototype[Symbol.iterator]],[Map.prototype,Symbol.iterator,Map.prototype[Symbol.iterator]],
+ [Map.prototype,'get',Map.prototype.get],[Map.prototype,'has',Map.prototype.has],[Map.prototype,'set',Map.prototype.set],
+ [WeakMap.prototype,'get',WeakMap.prototype.get],[WeakMap.prototype,'set',WeakMap.prototype.set],
+];
 function codecIntrinsicsUnchanged(){
- return Object.getOwnPropertyDescriptor(Object,'entries')?.value===codecIntrinsics.entries
-  &&Object.getOwnPropertyDescriptor(Object,'fromEntries')?.value===codecIntrinsics.fromEntries
-  &&Object.getOwnPropertyDescriptor(JSON,'parse')?.value===codecIntrinsics.parse
-  &&Object.getOwnPropertyDescriptor(JSON,'stringify')?.value===codecIntrinsics.stringify
-  &&Object.getOwnPropertyDescriptor(globalThis,'structuredClone')?.value===codecIntrinsics.clone
-  &&Object.getOwnPropertyDescriptor(String.prototype,'localeCompare')?.value===codecIntrinsics.compare
-  &&Object.getOwnPropertyDescriptor(Array.prototype,'sort')?.value===codecIntrinsics.sort
-  &&Object.getPrototypeOf(Object.prototype)===null&&!Object.getOwnPropertyDescriptor(Object.prototype,'toJSON');
+ // No array callbacks/iteration or public reflection methods before this gate.
+ for(let n=0;n<codecMethods.length;n++){
+  const check=codecMethods[n]!,d=codecGuard.own(check[0],check[1]);
+  if(!d||!codecGuard.hasOwn(d,'value')||d.value!==check[2])return false;
+ }
+ return codecGuard.prototype(Object.prototype)===null&&!codecGuard.own(Object.prototype,'toJSON');
 }
 function orderedRecord(entries:Array<[string,unknown]>){return Object.fromEntries(entries.sort(([a],[b])=>a.localeCompare(b)));}
 // Schema-produced wires have only three plain records with string leaves. This
@@ -115,20 +128,20 @@ function makeWireCodec(value:JevQuestionV1,json:string):WireCodec{
 }
 function sameDataRecord(value:object,entries:Array<[string,unknown]>){
  // Every value here has private identity provenance; no Proxy can share it.
- if(Object.getPrototypeOf(value)!==Object.prototype)return false;
- const descriptors=Object.getOwnPropertyDescriptors(value);
- if(Reflect.ownKeys(descriptors).length!==entries.length)return false;
- return entries.every(([key,expected])=>{if(!Object.hasOwn(descriptors,key))return false;const d=descriptors[key];return d&&'value'in d&&d.enumerable===true
+ if(codecGuard.prototype(value)!==Object.prototype)return false;
+ const descriptors=codecGuard.descriptors(value);
+ if(codecGuard.keys(descriptors).length!==entries.length)return false;
+ return entries.every(([key,expected])=>{if(!codecGuard.hasOwn(descriptors,key))return false;const d=descriptors[key];return d&&'value'in d&&d.enumerable===true
   &&d.configurable===true&&d.writable===true&&d.value===expected;});
 }
 function plainStringData(value:unknown):boolean{
- if(!value||typeof value!=='object'||nodeTypes.isProxy(value)||Object.getPrototypeOf(value)!==Object.prototype)return false;
- const descriptors=Object.getOwnPropertyDescriptors(value);
- return Reflect.ownKeys(descriptors).every(key=>typeof key==='string'&&'value'in descriptors[key]!
+ if(!value||typeof value!=='object'||codecGuard.isProxy(value)||codecGuard.prototype(value)!==Object.prototype)return false;
+ const descriptors=codecGuard.descriptors(value);
+ return codecGuard.keys(descriptors).every(key=>typeof key==='string'&&'value'in descriptors[key]!
   &&descriptors[key]!.enumerable===true&&typeof descriptors[key]!.value==='string');
 }
 function rememberRequest(request:JevRequestV1,codecs:Map<string,WireCodec>){
- if(typeof request.state!=='string'||!codecIntrinsicsUnchanged())return;
+ if(!codecIntrinsicsUnchanged()||typeof request.state!=='string')return;
  const selected=Object.entries(request.questions);
  // The old builder can return undefined wires if an exotic input changes its
  // selection between validation and construction. Preserve that result/error.
@@ -143,7 +156,7 @@ function rememberRequest(request:JevRequestV1,codecs:Map<string,WireCodec>){
 }
 function unchangedRequest(codec:RequestCodec){
  const {request,questions,entries}=codec;
- if(!codecIntrinsicsUnchanged()||!sameDataRecord(request,[['model','jev-1.13.0'],['state',codec.state],['questions',questions]])
+ if(!sameDataRecord(request,[['model','jev-1.13.0'],['state',codec.state],['questions',questions]])
   ||!sameDataRecord(questions,entries.map(e=>[e.key,e.wire])))return false;
  return entries.every(e=>sameDataRecord(e.wire,[['type',e.codec.wire.type],['instructions',e.instructions],['criteria',e.criteria]])
   &&sameDataRecord(e.instructions,e.codec.instructions)
@@ -161,13 +174,14 @@ export function compileSignalListeningSnapshotV1(value:unknown):SignalListeningC
   params:{request_version:SIGNAL_LISTENING_REQUEST_VERSION_V1,configuration,configuration_digest,
    input_usd_per_mtok:.042,defined_universal_limit:8,defined_candidates:4,discovered_candidates:4}});
  const snapshot=Object.freeze({}) as SignalListeningCompiledSnapshotV1;
- const wires=new Map(configuration.questions.map(q=>[q.key,frozen(wire(configuration,q))])),wireCodecs=new Map<string,WireCodec>();let codecBytes=0;
+ const identity_digest=hash(identity); // Preserve the original hash-before-wires evaluation order.
+ const wires=new Map(configuration.questions.map(q=>[q.key,frozen(wire(configuration,q))])),wireCodecs=new PrivateMap<string,WireCodec>();let codecBytes=0;
  if(codecIntrinsicsUnchanged())for(const [key,value]of wires){
   const json=JSON.stringify(value),bytes=Buffer.byteLength(json,'utf8');
   if(bytes>MAX_SNAPSHOT_WIRE_CODEC_BYTES-codecBytes)continue;
   wireCodecs.set(key,makeWireCodec(value,json));codecBytes+=bytes;
  }
- snapshots.set(snapshot,{configuration,configuration_digest,identity,identity_digest:hash(identity),wires,wireCodecs,codecBytes,work});return snapshot;
+ snapshots.set(snapshot,{configuration,configuration_digest,identity,identity_digest,wires,wireCodecs,codecBytes,work});return snapshot;
 }
 export function readSignalListeningSnapshotV1(snapshot:SignalListeningCompiledSnapshotV1){
  const {configuration,configuration_digest,identity,identity_digest}=snapshotState(snapshot);
@@ -180,10 +194,14 @@ export function buildSignalListeningCompiledRequestV1(input:Pick<SignalListening
  const {configuration:c,wires,wireCodecs}=snapshotState(snapshot);
  if(!input.text.trim()||!input.question_keys.length||input.question_keys.length>256
   ||new Set(input.question_keys).size!==input.question_keys.length||input.question_keys.some(k=>!wires.has(k)))throw Error('listening_input_invalid');
+ // Under changed intrinsics, retain the literal old builder before touching
+ // codec maps or running any extra callbacks. Inputs may also change them later.
+ if(!codecIntrinsicsUnchanged())return{model:c.model,state:input.text,questions:Object.fromEntries([...input.question_keys].sort().map(k=>[k,structuredClone(wires.get(k)!)]))};
  // JSON codecs only contain schema-produced string leaves; parsing preserves
  // the original wire order and mutable, caller-owned plain records.
  const request={model:c.model,state:input.text,questions:Object.fromEntries([...input.question_keys].sort().map(k=>{
-  const codec=wireCodecs.get(k);return[k,codec&&codecIntrinsicsUnchanged()?JSON.parse(codec.json) as JevQuestionV1:structuredClone(wires.get(k)!)];
+  if(!codecIntrinsicsUnchanged())return[k,structuredClone(wires.get(k)!)];
+  const codec=wireCodecs.get(k);return[k,codec?JSON.parse(codec.json) as JevQuestionV1:structuredClone(wires.get(k)!)];
  }))};
  rememberRequest(request,wireCodecs);return request;
 }
@@ -236,6 +254,7 @@ export function signalListeningRequestDigestV1(run:{id:string;entity_context_dig
   // Preserve the original getter evaluation order before considering reuse.
   const value={request_version:SIGNAL_LISTENING_REQUEST_VERSION_V1,run_id:run.id,root_id:input.root_id,input_digest:input.input_digest,
     entity_context_digest:run.entity_context_digest,question_digests:input.question_digests,scope_basis:input.scope_basis,request};
+  if(!codecIntrinsicsUnchanged())return digest(value);
   const codec=requestCodecs.get(request);
   if(codec&&typeof value.run_id==='string'&&typeof value.root_id==='string'&&typeof value.input_digest==='string'
    &&typeof value.entity_context_digest==='string'&&plainStringData(value.question_digests)&&plainStringData(value.scope_basis)
