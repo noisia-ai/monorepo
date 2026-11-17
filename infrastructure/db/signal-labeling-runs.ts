@@ -996,7 +996,7 @@ export function createSignalLabelingStoreV1<
        * authority wait. This callback grants no DB authority and receives no client. */
       async markSubmittingSelected(run:LabelingRunV1,selectCommitted:()=>ReadonlyArray<LabelingCallV1<Input>>):Promise<ReadonlyArray<LabelingCallV1<Input>>>{
         await options.assertRawReady?.();
-        const c=await db.connect();
+        const c=await db.connect();let discardClient=false;
         try{
           await c.query("BEGIN");
           await pageMutationFence(c,run);await authority(c,run,0);
@@ -1022,9 +1022,9 @@ export function createSignalLabelingStoreV1<
           await c.query("COMMIT");return calls;
         }catch(primary){
           try{await c.query("ROLLBACK");}
-          catch(rollback){throw new AggregateError([primary,rollback],'labeling_mark_body_and_rollback_failed',{cause:primary});}
+          catch(rollback){discardClient=true;throw new AggregateError([primary,rollback],'labeling_mark_body_and_rollback_failed',{cause:primary});}
           throw primary;
-        }finally{c.release();}
+        }finally{c.release(discardClient);}
       },
     }:{}),
     async markSubmitting(run: LabelingRunV1, calls: LabelingCallV1<Input>[]) {

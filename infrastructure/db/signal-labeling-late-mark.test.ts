@@ -10,7 +10,7 @@ type SelectedStore={markSubmittingSelected?:(run:native.LabelingRunV1,select:Sel
 const deferred=()=>{let resolve!:()=>void;const promise=new Promise<void>(r=>{resolve=r;});return{promise,resolve};};
 function fixture(options:{enabled?:boolean;raw?:boolean;parallel?:boolean;denied?:boolean;lease?:boolean;commitError?:Error;rollbackError?:Error;updateError?:Error;authorityGate?:ReturnType<typeof deferred>;callGate?:ReturnType<typeof deferred>}={}){
  const events:string[]=[],run={id:'run',workspace_id:'workspace',actor_user_id:'actor',kind:'mass_labeling',identity:{provider:'typesafe',model:'jev-1.13.0'},entity_context_digest:'ctx',cap_micro_usd:'1000000',processing_admission_id:'admission'}as native.LabelingRunV1;
- const calls=Array.from({length:3},(_,i)=>({id:'call'+i,status:'reserved',raw_body:null,request:{test:i},inputs:[]}as unknown as Call));let clientReleased=0,locked:string[]=[],updated:string[]=[];
+ const calls=Array.from({length:3},(_,i)=>({id:'call'+i,status:'reserved',raw_body:null,request:{test:i},inputs:[]}as unknown as Call));let clientReleased=0,locked:string[]=[],updated:string[]=[];const discarded:boolean[]=[];
  const client={query:async(sql:string,params:unknown[]=[])=>{
   if(sql.startsWith('WITH raw_run_fence')){events.push('run');return{rows:options.lease?[]:[{id:run.id}]};}
   if(sql.includes("'signal-processing-policy:'")){events.push('policy');return{rows:[]};}
@@ -25,7 +25,7 @@ function fixture(options:{enabled?:boolean;raw?:boolean;parallel?:boolean;denied
   if(sql==='ROLLBACK'&&options.rollbackError){events.push(sql);throw options.rollbackError;}
   if(sql==='BEGIN'||sql==='COMMIT'||sql==='ROLLBACK'){events.push(sql);return{rows:[]};}
   assert.fail('unexpected store query');
- },release(){events.push('release');clientReleased++;}};
+ },release(destroy?:boolean){events.push('release');clientReleased++;discarded.push(destroy===true);}};
  const dependencies:Record<string,unknown>={'node:crypto':crypto,'@noisia/query-engine':engine,
  './signal-workspace-capabilities':{loadSignalWorkspaceCapabilitiesStoreV1:async()=>{events.push('actor');return{can_request_processing:!options.denied};}},
  './signal-workspace-features':{signalWorkspaceFeatureEnabledV1:async()=>true},'./signal-processing-policy':{},
@@ -38,7 +38,7 @@ function fixture(options:{enabled?:boolean;raw?:boolean;parallel?:boolean;denied
  storeRaw:async()=>'unused',...(options.raw===false?{}:{rawPages:{}as never}),assertRawReady:async()=>{events.push('rawReady');},
  adapter:{kind:'mass_labeling',parallel_native_pages:options.parallel!==false,...(options.enabled===false?{}:{reserve_selection:'native_listening_pending' as const}),inputs:async()=>[],pending:async()=>0,write:async()=>{},
  policy:async()=>({organization_id:'org',budget_date:'2026-01-01',budget_timezone:'UTC',daily_cap_micro_usd:'1000000',max_execution_micro_usd:'1000000',provider:'typesafe',model:'jev-1.13.0',action:'mass_labeling_jev'}),policy_action:'mass_labeling_jev',authority:async()=>{events.push('owner');},beforeSubmit:async()=>{events.push('beforeSubmit');}}})as ReturnType<typeof factory>&SelectedStore;
- return{store,run,calls,events,get locked(){return locked;},get updated(){return updated;},get clientReleased(){return clientReleased;}};
+ return{store,run,calls,events,get locked(){return locked;},get updated(){return updated;},get clientReleased(){return clientReleased;},discarded};
 }
 test('late Mark exists only for native Listening selection plus parallel durable RAW',()=>{
  assert.equal(typeof fixture().store.markSubmittingSelected,'function');
@@ -51,7 +51,7 @@ test('late selection runs once only after authority waits, copies its array, the
  selected.push(f.calls[1]!);ready=true;authorityGate.resolve();
  while(!f.events.includes('calls'))await new Promise<void>(resolve=>setImmediate(resolve));selected.push(f.calls[2]!);callGate.resolve();
  const result=await pending;assert.equal(selections,1);assert.deepEqual(result,[f.calls[0],f.calls[1]]);assert.notEqual(result,selected);
- assert.deepEqual(f.locked,['call0','call1']);assert.deepEqual(f.updated,['call0','call1']);assert.equal(result[0],f.calls[0]);
+ assert.deepEqual(f.locked,['call0','call1']);assert.deepEqual(f.updated,['call0','call1']);assert.equal(result[0],f.calls[0]);assert.deepEqual(f.discarded,[false]);
  assert.deepEqual(f.events,['rawReady','connect','BEGIN','run','policy','org','actor','context','prepared','owner','orgSum','runSum','select','calls','beforeSubmit','run','fence','update','COMMIT','release']);
 });
 test('authority or lease rejection happens before the selector and cannot write calls',async()=>{
@@ -74,8 +74,9 @@ test('malformed, duplicate, over-bound, sent or RAW selections reject without aw
 test('selector errors and lost COMMIT acknowledgement retain the primary and never resolve a handoff',async()=>{
  const primary=Error('primary');for(const kind of ['selector','commit']as const){const f=fixture(kind==='commit'?{commitError:primary}:{});let handed=false;
   await assert.rejects(f.store.markSubmittingSelected!(f.run,()=>{if(kind==='selector')throw primary;return f.calls;}).then(()=>{handed=true;}),error=>error===primary);
-  assert.equal(handed,false);assert.equal(f.clientReleased,1);assert.ok(f.events.includes('ROLLBACK'));
+  assert.equal(handed,false);assert.equal(f.clientReleased,1);assert.ok(f.events.includes('ROLLBACK'));assert.deepEqual(f.discarded,[false]);
  }
  const secondary=Error('rollback'),f=fixture({updateError:primary,rollbackError:secondary});
  await assert.rejects(f.store.markSubmittingSelected!(f.run,()=>f.calls),error=>{assert.ok(error instanceof AggregateError);assert.deepEqual(error.errors,[primary,secondary]);assert.equal(error.cause,primary);return true;});
+ assert.equal(f.clientReleased,1);assert.deepEqual(f.discarded,[true]);
 });
