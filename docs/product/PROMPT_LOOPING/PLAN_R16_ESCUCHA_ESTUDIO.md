@@ -169,6 +169,8 @@ Recibo: separar Voyage/JEV por raíz de Claude por número de grupos y vueltas; 
 
 - 2026-11-17: basar el siguiente diseno en el perfil real7178/44114269384: especializar solo preimagenes tipadas input/basis de0326 con encoding JSON escalar nativo y SHA256UTF8 completo, sin tocar las relaciones, autoridad, Mark0331 ni caller. Nota privada d4d3dc1f619005c65f28ddffa743e3963bc2ec71bb61267d32aef5139750a8d5 propone matriz de bytes/NULL/Unicode y16timings ABBA en4estratos, cotas0.90/1.10 originales. Todavia diseno, sin implementacion autorizada: requiere revision antes de codigo/prototipo. Se distingue de JSrequestcodec/D/E y ancho estrecho ya rechazados.
 
+- 2026-11-17: paralelizar la escritura reversible del prototipo test-only de preimagenes con la revision del diseno. Root cotejo la propuesta y autoriza unicamente tres archivos experimentales y seam minimo en el fixture del perfil, cada autor en su worktree; ninguna ejecucion PG, cambio de producto o publicacion se permite hasta revision exacta/cotas/checks. El orden anterior de terminar review antes de escribir codigo era una decision interna adicional, no una puerta del fundador; se conserva la revision independiente antes de integrar/ejecutar/PR. No hay puerta humana de analisis.
+
 ## Ruta restante de ejecución
 
 1. La revisión de676c rechazado y su retiro está cerrada. Ejecutar una sola medición interior0326 sobre fuente nueva revisada, con setup FULL consumidor nativo, plan completo y contadores xact. Revisar custodia/resultado antes de elegir otro mecanismo. No repetir los candidatos rechazados ni convertir paridad o MFP parcialscope en H1.
