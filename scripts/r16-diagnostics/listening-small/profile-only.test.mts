@@ -9,7 +9,7 @@ import {createMainThreadProfileCaptureV1,MAIN_THREAD_PROFILE_INTERVAL_US_V1,sani
  createProcMainThreadCpuReaderV1,compareProcMainThreadCpuV1,MAIN_THREAD_CLK_TCK_TIMEOUT_MS_V1,readClockTicksV1} from './main-thread-profile.mjs';
 import {assertDiagnosticExecArgsV1,assertListeningResourceProfileV1,assertListeningSmallGuardV1,assertProfileOnlyManualTargetV1,
  assertProfileOnlyCDefaultBeforeV1,diagnosticModeV1,listeningResourceProfileV1,PROFILE_ONLY_TARGET_SHA_V1,
- createListeningStorageOutputDirV1,safeErrorV1,writeProfileOnlyPgOwnershipMarkerV1} from './run.mjs';
+ createListeningStorageOutputDirV1,finalizeFailureStorageV1,safeErrorV1,writeProfileOnlyPgOwnershipMarkerV1} from './run.mjs';
 import {execFileSync,spawnSync} from 'node:child_process';
 import {PROFILE_ONLY_ARTIFACT_INPUT_FILES_V1,PROFILE_ONLY_REQUIRED_PROBE_FILES_V1,assertProfileOnlyArtifactFileSetV1,
  profileOnlyEnvelopeErrorCodeV1,validatePgProfileArtifactBytesV1,validateProfileOnlyProbeSealV1,validateProfileOnlyRunV1} from './profile-only-envelope.mjs';
@@ -250,6 +250,24 @@ test('profile-only storage path stays outside the exact assembler artifact set a
   for(const path of tempDir)await rm(path,{recursive:true,force:true});
   await rm(root,{recursive:true,force:true});
  }
+});
+
+test('failure persistence precedes pending storage close for legacy and follows owned cleanup for profile-only',async()=>{
+ const events:string[]=[];let releaseLegacy!:()=>void;let releaseProfile!:()=>void;
+ const legacyClose=new Promise<void>(resolve=>{releaseLegacy=resolve});
+ const profileClose=new Promise<void>(resolve=>{releaseProfile=resolve});
+ const legacy=finalizeFailureStorageV1({profileOnly:false,closeStorage:()=>{events.push('legacy_close_started');return legacyClose.then(()=>{events.push('legacy_close_finished');});},
+  removeStorage:async()=>{events.push('unexpected_legacy_remove');},writeArtifact:async()=>{events.push('legacy_receipt_written');},onCleanupError:()=>{}});
+ await new Promise<void>(resolve=>setImmediate(resolve));
+ assert.deepEqual(events,['legacy_receipt_written','legacy_close_started']);
+ releaseLegacy();await legacy;
+ events.length=0;
+ const profile=finalizeFailureStorageV1({profileOnly:true,closeStorage:()=>{events.push('profile_close_started');return profileClose.then(()=>{events.push('profile_close_finished');});},
+  removeStorage:async()=>{events.push('profile_temp_removed');},writeArtifact:async()=>{events.push('profile_receipt_written');},onCleanupError:()=>{}});
+ await new Promise<void>(resolve=>setImmediate(resolve));
+ assert.deepEqual(events,['profile_close_started']);
+ releaseProfile();await profile;
+ assert.deepEqual(events,['profile_close_started','profile_close_finished','profile_temp_removed','profile_receipt_written']);
 });
 
 test('profile-only cleanup errors retain only safe codes and never leak temporary paths',()=>{

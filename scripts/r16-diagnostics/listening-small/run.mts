@@ -262,6 +262,13 @@ export async function createListeningStorageOutputDirV1(profileOnly:boolean,outp
   const parent=dirname(outputRoot);await mkdir(parent,{recursive:true});
   return mkdtemp(join(parent,'.r16-listening-profile-only-storage-'));
 }
+export async function finalizeFailureStorageV1(options:{profileOnly:boolean;closeStorage:()=>Promise<void>;removeStorage:()=>Promise<void>;
+ writeArtifact:()=>Promise<void>;onCleanupError:(error:unknown)=>void}){
+  const cleanup=async(action:()=>Promise<void>)=>{try{await action();}catch(error){options.onCleanupError(error);}};
+  if(options.profileOnly){await cleanup(options.closeStorage);await cleanup(options.removeStorage);}
+  await options.writeArtifact();
+  if(!options.profileOnly)await cleanup(options.closeStorage);
+}
 export function assertListeningSmallGuardV1(env:NodeJS.ProcessEnv,args:string[]){
   if(!args.includes('--run'))return;
   assert.equal(env.GITHUB_ACTIONS,'true','diagnostic_requires_github_actions');
@@ -706,10 +713,6 @@ export async function runListeningSmallDiagnosticV1(){
     let observerSnapshot:any;
     try{observerSnapshot=await finishListeningObserver(observer);}catch(cleanupError){observerSnapshot={...observer.snapshot(),cleanup_error:safeError(cleanupError)};}
     let storageCleanupError:string|undefined;
-    if(storageServer)try{await storageServer.close();}catch(cleanupError){storageCleanupError=safeError(cleanupError);}
-    storageServer=undefined;
-    if(profileOnly&&storageOutputDir)try{await rm(storageOutputDir,{recursive:true,force:true});storageOutputDir=undefined;storageOutputRemoved=true;}
-      catch(cleanupError){storageCleanupError=storageCleanupError??safeError(cleanupError);}
     const failure={contract_version:profileOnly?'r16-listening-profile-only-run-v1':'r16-listening-small-diagnostic-v1',diagnostic_only:true,
       ...(profileOnly?{profiling_only:true,profile_status:'failed',...(profileCleanupError?{profile_cleanup_error:profileCleanupError}:{})}:{}),h1_accepted:false,
       ...(profileOnly?{node_profile:mainThreadProfile??{status:'unavailable',scope:'classification_and_serving',
@@ -734,7 +737,13 @@ export async function runListeningSmallDiagnosticV1(){
         sql_frontier:sqlFrontierOnly?observerSnapshot.sql_frontier_capture:null,
         observations:observerSnapshot.dml_plan_observations},
       ...(projectionPlanOnly?{projection_plan_capture:observerSnapshot.projection_plan_capture}:{})};
-    await atomicJson(artifact,failure).catch(()=>undefined);
+    await finalizeFailureStorageV1({profileOnly,
+      closeStorage:async()=>{if(storageServer){const current=storageServer;storageServer=undefined;await current.close();}},
+      removeStorage:async()=>{if(profileOnly&&storageOutputDir){await rm(storageOutputDir,{recursive:true,force:true});storageOutputDir=undefined;storageOutputRemoved=true;}},
+      writeArtifact:async()=>{if(profileOnly&&failure.storage_output){failure.storage_output.removed_before_run_receipt_write=storageOutputRemoved;
+        if(storageCleanupError)failure.storage_output.cleanup_error=storageCleanupError;}
+        await atomicJson(artifact,failure).catch(()=>undefined);},
+      onCleanupError:cleanupError=>{storageCleanupError=storageCleanupError??safeError(cleanupError);}});
     process.stderr.write('listening_small_diagnostic_failed; sanitized artifact written\n');
     process.exitCode=1;return failure;
   }
