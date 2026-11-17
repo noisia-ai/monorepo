@@ -8,7 +8,7 @@ import {SIGNAL_STUDY_TB_TEMPLATE_V1,SIGNAL_STUDY_TB_ROLES_V1,createSignalStudyTe
 import {buildSignalStudyExecutionConfigurationV1} from './signal-study-configuration';
 import type {SignalStudyV1,SignalStudyAxesV1} from './signal-study-contracts';
 import type {SignalStudySampleV1} from './signal-study-evidence';
-import {SIGNAL_STUDY_BOUNDARY_RULE_VERSION_V1,validateSignalStudyBoundaryRuleReviewV1,validateSignalStudyLayerReviewV1,buildSignalStudyConfiguredLayerReviewV1,buildSignalStudyMotiveReviewV1,SignalStudyEditorialRequestSizeErrorV1} from './signal-study-editorial';
+import {SIGNAL_STUDY_BOUNDARY_RULE_VERSION_V1,signalStudyLayerStabilityV1,signalStudyBoundaryRuleStabilityV1,validateSignalStudyBoundaryRuleReviewV1,validateSignalStudyLayerReviewV1,buildSignalStudyConfiguredLayerReviewV1,buildSignalStudyMotiveReviewV1,SignalStudyEditorialRequestSizeErrorV1} from './signal-study-editorial';
 import {compileSignalStudyBoundaryRuleBatchesV1,compileSignalStudyDiscoveryBatchesV2,compileSignalStudyLayerPairV2,compileSignalStudyContrastBatchesV2,
  buildSignalStudyMotiveReconciliationV2,validateSignalStudyMotiveReconciliationV2,validateSignalStudyDiscoveryBatchPrefixV2,
  assertSignalStudyLayerDecisionPrefixV1,aggregateSignalStudyLayerBatchesV2,validateSignalStudyLayerBatchV2,signalStudyLayerPartitionKeysV2,type SignalStudyEditorialBatchPlanV2} from './signal-study-editorial-batches';
@@ -139,4 +139,13 @@ test('boundary-rule batches bind frozen diagnostics and both blind decisions, re
   assert.throws(()=>validateSignalStudyBoundaryRuleReviewV1(node.request,{...output,rules:[...output.rules,...output.rules]}),/scope_invalid/);
  }
  assert.throws(()=>compileSignalStudyBoundaryRuleBatchesV1({configuration,initial,motives:items.map(m=>({...m,human_locked:true}))}),/scope_invalid/);
+});
+
+test('unestimable kappa cannot authorize a paid rule rewrite while the historical policy remains unchanged',()=>{
+ const items=[motive('unclear_a',40),motive('unclear_b',40)],plan=ready(compileSignalStudyLayerPairV2({configuration,motives:items}));
+ const values=plan.nodes.map(node=>{const value=JSON.parse(JSON.stringify(layerValue(node)));for(const motive of value.motives)for(const partition of motive.partitions){partition.layer='unclear';partition.evidence=null;partition.diagnostics=partition.diagnostics.map((d:object)=>({...d,result:'unclear',force_disappears_without:false}));}return validateSignalStudyLayerBatchV2(node.request,value);});
+ const pair=aggregateSignalStudyLayerBatchesV2(plan,values),old=signalStudyLayerStabilityV1(...pair),current=signalStudyBoundaryRuleStabilityV1(...pair);
+ assert.equal(old.kappa,null);assert.equal(old.action,'recode_boundary_once');assert.equal(current.kappa,null);assert.equal(current.action,'not_estimable');assert.equal(current.estimation_status,'not_estimable');
+ assert.deepEqual(current.boundary_keys,old.boundary_keys);assert.equal(current.total_motives,2);
+ assert.throws(()=>compileSignalStudyBoundaryRuleBatchesV1({configuration,initial:pair,motives:items}),/boundary_rule_scope_invalid/);
 });

@@ -1,3 +1,4 @@
+import{signalStudyQueryMetadataAggregateSqlV1}from'../signal-study-query-metadata';
 import assert from'node:assert/strict';
 import test from'node:test';
 import{createHash,randomUUID}from'node:crypto';
@@ -64,6 +65,15 @@ test('a valid paid prefix survives a future indivisible format stop, native CAS 
 test('native boundary rewrite is settled and replayed before the single blind recode pair',{
  skip:!enabled,timeout:1200000,
 },async()=>withSignalStudyFixtureV1(async f=>withStudyNativeRuntimeV1(f.database,async runtime=>{
+ for(const scenario of[
+  {include:[['marca'],[]],unavailable:1,terms:['marca']},
+  {include:[['marca'],['categoría']],unavailable:0,terms:['categoría','marca']},
+  {include:[[],[]],unavailable:2,terms:[]},
+ ]){
+  const rows=scenario.include.map((include,index)=>({id:index+1,query_id:index+1,structured_terms:{include}}));
+  const coverage=(await f.database.query(`WITH linked AS(SELECT * FROM jsonb_to_recordset($1::jsonb) r(id int,query_id int,structured_terms jsonb)),${signalStudyQueryMetadataAggregateSqlV1}`,[JSON.stringify(rows)])).rows[0];
+  assert.deepEqual(coverage,{source_batches:2,unavailable_batches:scenario.unavailable,terms:scenario.terms},'native SQL covers EACH batch, not any term in the union');
+ }
  runtime.setBoundaryDisagreement(true);const sent:StudyRuntimeStepPlanV1[]=[],send=runtime.drivers.send;
  runtime.drivers.send=async(plan,signal)=>{sent.push(plan);return send(plan,signal);};
  const execution=await f.request(),result=await runtime.run(execution.id);assert.equal(result.status,'completed');

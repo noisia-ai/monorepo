@@ -2,6 +2,19 @@ import type{PoolClient}from'pg';
 import{studyFailV1 as fail,type SignalStudyConfigurationRecordV1}from'./signal-study-core';
 export type SignalStudyQueryMetadataV1={query_terms:string[];problem_terms:string[];acquisition_query_metadata?:{
  contract_version:'signal-study-acquisition-query-metadata-v1';complete:boolean;source_batches:number;unavailable_batches:number}};
+/** Shared literal aggregate, also exercised with real PostgreSQL VALUES.
+ * Coverage is per batch; another batch's terms cannot cover an empty query. */
+export const signalStudyQueryMetadataAggregateSqlV1=`normalized AS MATERIALIZED(
+ SELECT l.*,CASE WHEN jsonb_typeof(l.structured_terms->'include')='array' THEN l.structured_terms->'include' ELSE '[]'::jsonb END positive_terms FROM linked l
+ ),covered AS MATERIALIZED(
+ SELECT n.*,n.query_id IS NOT NULL AND jsonb_array_length(n.positive_terms)>0 AND NOT EXISTS(
+  SELECT 1 FROM jsonb_array_elements(n.positive_terms) term(value) WHERE jsonb_typeof(term.value)<>'string'
+   OR length(btrim(term.value#>>'{}'))=0 OR length(term.value#>>'{}')>240) has_positive_terms FROM normalized n
+ ),terms AS MATERIALIZED(
+ SELECT DISTINCT term.value#>>'{}' value FROM covered c CROSS JOIN LATERAL jsonb_array_elements(c.positive_terms) term(value) WHERE c.has_positive_terms
+ )
+ SELECT (SELECT count(*)::int FROM covered) source_batches,(SELECT count(*) FILTER(WHERE NOT has_positive_terms)::int FROM covered) unavailable_batches,
+ ARRAY(SELECT value FROM terms ORDER BY value LIMIT 501) terms`;
 /** Acquisition include terms are factual provenance, not a classification of
  * problem vocabulary. Missing evidence keeps the bias assessment unknown. */
 export async function loadSignalStudyAcquisitionQueryMetadataV1(c:PoolClient,cfg:SignalStudyConfigurationRecordV1):Promise<SignalStudyQueryMetadataV1>{
@@ -36,11 +49,7 @@ export async function loadSignalStudyAcquisitionQueryMetadataV1(c:PoolClient,cfg
   SELECT b.id,q.id query_id,q.structured_terms FROM source_batches b
   LEFT JOIN signal_acquisition_query_versions q ON q.id=b.acquisition_query_version_id AND q.workspace_id=$1 AND q.data_source_id=b.data_source_id
    AND q.definition_hash=b.acquisition_query_digest AND b.acquisition_query_evidence_class IN('provider_verified','operator_attested')
- ),terms AS MATERIALIZED(
-  SELECT DISTINCT term.value FROM linked l CROSS JOIN LATERAL jsonb_array_elements_text(l.structured_terms->'include') term(value)
- )
- SELECT (SELECT count(*)::int FROM linked) source_batches,(SELECT count(*) FILTER(WHERE query_id IS NULL)::int FROM linked) unavailable_batches,
- ARRAY(SELECT value FROM terms ORDER BY value LIMIT 501) terms`,[cfg.workspace_id,cfg.id,JSON.stringify(cfg.envelope)])).rows[0];
+ ),${signalStudyQueryMetadataAggregateSqlV1}`,[cfg.workspace_id,cfg.id,JSON.stringify(cfg.envelope)])).rows[0];
  if(!value||!Number.isSafeInteger(value.source_batches)||!Number.isSafeInteger(value.unavailable_batches)
   ||value.source_batches<0||value.unavailable_batches<0||value.unavailable_batches>value.source_batches)fail('query_metadata_invalid',422);
  if(!Array.isArray(value.terms)||value.terms.length>500||value.terms.some(term=>typeof term!=='string'||!term.trim()||term.length>240))fail('query_metadata_capacity_exceeded',422);

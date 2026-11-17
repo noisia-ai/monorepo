@@ -382,3 +382,30 @@ test('new boundary-rule RAW ACK recovery never resends and invalid rules cannot 
  const before=g.sends.length;assert.equal((await signalStudyRuntimeJobV1(g.execution_id,g)).status,'outcome_unknown');assert.equal(g.sends.length,before);
  assert.equal(g.sends.filter(p=>p.kind==='sonnet'&&JSON.parse(JSON.parse(p.request_body).messages[0].content).untrusted_data.contrast_rule).length,0);
 });
+
+test('new null-kappa sources retain uncertainty and second-pass split identities without rewrite or recode HTTP',async()=>{
+ for(const mode of['unclear','split_b','legacy_unclear']as const){
+  const{f}=batchingFixture();if(mode!=='legacy_unclear'){f.source.layer_boundary_rule_version=SIGNAL_STUDY_BOUNDARY_RULE_VERSION_V1;sealSource(f);}
+  const send=f.drivers.send,seen=new Map<string,number>();let firstKey:string|undefined;
+  f.drivers.send=async plan=>{const raw=await send(plan),payload=JSON.parse(JSON.parse(plan.request_body).messages[0].content).untrusted_data;
+   if(!payload.diagnostics||payload.purpose)return raw;
+   const value=JSON.parse(Buffer.from(raw.body_base64,'base64').toString('utf8')),output=JSON.parse(value.content[0].text);
+   for(const motive of output.motives){firstKey??=motive.motive_key;const occurrence=seen.get(motive.motive_key)??0;seen.set(motive.motive_key,occurrence+1);
+    if(mode!=='split_b')for(const p of motive.partitions){p.layer='unclear';p.evidence=null;p.normative_evidence=null;p.diagnostics=p.diagnostics.map((d:object)=>({...d,result:'unclear',force_disappears_without:false}));}
+    else if(motive.motive_key===firstKey&&occurrence===1){const original=motive.partitions[0],ids=original.sample_root_ids,half=Math.floor(ids.length/2),request=payload.motives.find((m:{key:string})=>m.key===motive.motive_key);
+     const a={...original,name:'Force alone',sample_root_ids:ids.slice(0,half)},b={...structuredClone(original),key:request.partition_keys[1],name:'Force resources',sample_root_ids:ids.slice(half),layer:'personal',
+      diagnostics:payload.diagnostics.map((d:{key:string;layer:string})=>({key:d.key,result:d.layer==='personal'?'yes':'no',force_disappears_without:d.layer==='personal',reason:'Resource counterfactual'}))};
+     a.evidence={...a.evidence,root_id:a.sample_root_ids[0]};b.evidence={...b.evidence,root_id:b.sample_root_ids[0]};motive.partitions=[a,b];
+    }
+   }value.content[0].text=JSON.stringify(output);return receipt(value);
+  };
+  assert.equal((await signalStudyRuntimeJobV1(f.execution_id,f)).status,'completed');assert.equal(f.output?.stability?.kappa,null);
+  const payloads=f.sends.filter(p=>p.kind==='sonnet').map(p=>JSON.parse(JSON.parse(p.request_body).messages[0].content).untrusted_data);
+  assert.equal(payloads.filter(p=>p.purpose==='rewrite_layer_boundary_rules').length,0);
+  assert.equal(payloads.filter(p=>p.contrast_rule).length,mode==='legacy_unclear'?2:0);
+  assert.equal(f.output?.stability?.action,mode==='legacy_unclear'?'unstable_report':'not_estimable');
+  assert.equal(f.output?.summary.denominator,160);assert.ok(f.output?.summary.motives.every(m=>m.layer==='unclear'&&m.permission==='no_permission'));
+  if(mode==='split_b'){assert.equal(f.output?.summary.motives.length,3);assert.ok(f.output?.summary.motives.some(m=>m.name==='Force alone'));assert.ok(f.output?.summary.motives.some(m=>m.name==='Force resources'));}
+  assert.equal(f.output?.summary.limitations.some(note=>note.startsWith('Layer agreement is not estimable.')),mode!=='legacy_unclear');
+ }
+});

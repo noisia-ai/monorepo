@@ -137,8 +137,8 @@ export function validateSignalStudyMotiveReviewV1(review:SignalStudyEditorialReq
  * rewriting rules; neither blind recoder receives those prior decisions. */
 export function buildSignalStudyBoundaryRuleReviewV1(args:{configuration:SignalStudyExecutionConfigurationV1;
  initial:[SignalStudyLayerDecisionV1,SignalStudyLayerDecisionV1];motives:Array<{key:string;name:string;definition:string;human_locked:boolean}>}):SignalStudyEditorialRequestV1{
- const cfg=validateSignalStudyExecutionConfigurationV1(args.configuration),stability=signalStudyLayerStabilityV1(...args.initial),keys=args.motives.map(m=>m.key).sort();
- if(stability.action!=='recode_boundary_once'||!keys.length||keys.length>40||new Set(keys).size!==keys.length
+ const cfg=validateSignalStudyExecutionConfigurationV1(args.configuration),stability=signalStudyBoundaryRuleStabilityV1(...args.initial),keys=args.motives.map(m=>m.key).sort();
+ if(stability.action!=='recode_boundary_once'||stability.kappa===null||!Number.isFinite(stability.kappa)||stability.kappa>=.8||!keys.length||keys.length>40||new Set(keys).size!==keys.length
   ||args.motives.some(m=>m.human_locked||!stability.boundary_keys.includes(m.key))
   ||args.initial.some((d,i)=>d.study_digest!==cfg.study_digest||d.recode_attempt!==0||d.pass!==(['a','b']as const)[i]))fail('boundary_rule_scope_invalid');
  return request({mode:'contrast',boundary_rule:true,study_digest:cfg.study_digest,
@@ -249,6 +249,21 @@ export function signalStudyLayerStabilityV1(first:SignalStudyLayerDecisionV1,sec
   return{kappa,observed_agreement:observed,expected_agreement:expected,estimation_status:kappa===null?'not_estimable':'complete',compared_motives:n,total_motives:first.motives.length,
     boundary_keys:boundaries.sort(),action:stable?'stable':first.recode_attempt===1?'unstable_report':boundaries.length?'recode_boundary_once':'not_estimable'};
 }
+
+/** New-source policy only. Null is not zero agreement: without estimable κ
+ * there is no justified paid boundary rewrite or recoding attempt. */
+export function signalStudyBoundaryRuleStabilityV1(first:SignalStudyLayerDecisionV1,second:SignalStudyLayerDecisionV1):ReturnType<typeof signalStudyLayerStabilityV1>{
+ const value=signalStudyLayerStabilityV1(first,second);
+ return value.kappa===null||!Number.isFinite(value.kappa)?{...value,kappa:null,estimation_status:'not_estimable',
+  action:first.recode_attempt===0?'not_estimable':'unstable_report'}:value;
+}
+/** Preserve split identities even if only the second blind coder found them.
+ * This is an explicitly unreliable partition, not a majority layer decision. */
+export function signalStudyUnmeasurableMotivePartitionsV1(first:SignalStudyLayerDecisionV1,second:SignalStudyLayerDecisionV1){
+ const stability=signalStudyLayerStabilityV1(first,second);if(stability.kappa!==null)fail('unmeasurable_partitions_not_allowed');
+ return first.motives.map(m=>m.partitions.length>1?m:second.motives.find(other=>other.motive_key===m.motive_key&&other.partitions.length>1)??m);
+}
+export const SIGNAL_STUDY_UNMEASURED_LAYER_NOTE_V1='Layer agreement is not estimable. Motive splits are retained, but layer labels remain unclear and are not validated.';
 
 /** Recode only the preregistered boundary set, then recompute reliability over
  * the WHOLE original motif population. A convenient boundary-only kappa must

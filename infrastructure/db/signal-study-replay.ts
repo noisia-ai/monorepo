@@ -9,7 +9,7 @@ import {
  validateSignalStudyExecutionConfigurationV1,buildSignalStudyConfiguredAxesRequestV1,resolveSignalStudyConfiguredAxesV1,signalStudyConfiguredCutV1,
  buildSignalStudyMotiveFitPlanV1,buildSignalStudyMotivePopulationV1,sampleSignalStudyGroupV1,signalStudyConfirmedCentroidV1,
  buildSignalStudyMotiveReviewV1,validateSignalStudyMotiveReviewV1,buildSignalStudyConfiguredLayerReviewV1,validateSignalStudyLayerReviewV1,
- signalStudyLayerStabilityV1,applySignalStudyBoundaryRecodeV1,signalStudyJevMotiveConfigurationV1,buildSignalStudyMotiveRequestV1,
+ signalStudyLayerStabilityV1,signalStudyBoundaryRuleStabilityV1,signalStudyUnmeasurableMotivePartitionsV1,SIGNAL_STUDY_UNMEASURED_LAYER_NOTE_V1,applySignalStudyBoundaryRecodeV1,signalStudyJevMotiveConfigurationV1,buildSignalStudyMotiveRequestV1,
  signalStudyDominancePlanV1,buildSignalStudyContrastReviewV1,validateSignalStudyContrastReviewV1,buildSignalStudySummaryV1,
  signalStudyQueryBiasV1,verifySignalStudyVerbatimV1,assertSignalStudyRootsV1,signalWorkspaceEmbeddingDigestV1 as digest,
  SIGNAL_STUDY_BOUNDARY_RULE_VERSION_V1,compileSignalStudyBoundaryRuleBatchesV1,validateSignalStudyBoundaryRuleReviewV1,
@@ -199,7 +199,7 @@ function jevResponse(request:JevRequestV1,value:unknown):Record<string,JevAnswer
   };
   let boundary_recoded_count=0;
   let stability:StudyRuntimeOutputV1['stability']=null,decisions:[SignalStudyLayerDecisionV1,SignalStudyLayerDecisionV1]|undefined;
-  if(motives.length){decisions=await pair(motives.map(m=>m.key));stability=signalStudyLayerStabilityV1(...decisions);
+  if(motives.length){decisions=await pair(motives.map(m=>m.key));stability=raw.layer_boundary_rule_version?signalStudyBoundaryRuleStabilityV1(...decisions):signalStudyLayerStabilityV1(...decisions);
    if(stability.action==='recode_boundary_once'){
     let contrast_rule='Recode only the recorded boundary set under the same frozen diagnostics; preserve distinct forces.';
     if(raw.layer_boundary_rule_version!==undefined){
@@ -215,7 +215,7 @@ function jevResponse(request:JevRequestV1,value:unknown):Record<string,JevAnswer
     boundary_recoded_count=stability.boundary_keys.length;decisions=repaired.decisions;stability=repaired.stability;
    }
    // Split identities remain distinct, never averaged or assigned by majority.
-   motives=decisions[0].motives.flatMap(m=>m.partitions.map(p=>({key:p.key,name:p.name,definition:p.definition,
+   motives=(raw.layer_boundary_rule_version&&stability.kappa===null?signalStudyUnmeasurableMotivePartitionsV1(...decisions):decisions[0].motives).flatMap(m=>m.partitions.map(p=>({key:p.key,name:p.name,definition:p.definition,
     centroid:signalStudyConfirmedCentroidV1(p.sample_root_ids.map(id=>byRoot.get(id)!)),layer:stability?.action==='stable'?p.layer:'unclear',human_locked:false,
     ...(stability?.action==='stable'&&p.permission_overridden?{permission_override:{permission:p.permission,reason:p.permission_override!.reason}}:{})})));
   }
@@ -247,8 +247,10 @@ function jevResponse(request:JevRequestV1,value:unknown):Record<string,JevAnswer
   }
   const verified_evidence=decisions?.flatMap(d=>d.motives.flatMap(m=>m.partitions.flatMap(p=>[p.evidence,p.normative_evidence].filter(e=>e!==null)
    .map(e=>verifySignalStudyVerbatimV1(byRoot.get(e.root_id)!,e.quote,e.private_person_names)))))??[];
+  const summary=buildSignalStudySummaryV1({study,template_snapshot:snapshot,roots,motives,memberships,cut_root_ids:roots.map(r=>r.root_id),unresolved_root_ids:[]});
+  if(raw.layer_boundary_rule_version&&stability?.kappa===null)summary.limitations.push(SIGNAL_STUDY_UNMEASURED_LAYER_NOTE_V1);
   const output:StudyRuntimeOutputV1={contract_version:'signal-study-runtime-output-v1',status:'directional',source_digest,configuration_digest:digest(configuration),
-   summary:buildSignalStudySummaryV1({study,template_snapshot:snapshot,roots,motives,memberships,cut_root_ids:roots.map(r=>r.root_id),unresolved_root_ids:[]}),
+   summary,
    query_bias,
    stability,dominance,verified_evidence,insufficient_group_keys:discovered.insufficient_group_keys,promotion:{status:'explicit_action_required',automatic:false}};
 
