@@ -5,4 +5,5 @@ export declare const PROFILE_ONLY_MAX_TOTAL_BYTES_V1:number;
 export declare const PROFILE_ONLY_REQUIRED_PROBE_FILES_V1:readonly string[];
 export declare function validateProfileOnlyRunV1(run:unknown,identity:{targetSha:string;probeSha:string}):unknown;
 export declare function validateProfileOnlyProbeSealV1(sealedHashes:Record<string,string>,probeRoot:string):Promise<true>;
+export declare function validatePgProfileArtifactBytesV1(receipt:{artifact_bytes:number},bytes:Buffer,parsed:unknown):true;
 export declare function assembleProfileOnlyEnvelopeV1(args:{targetRoot:string;probeRoot:string;targetSha?:string;probeSha:string;artifactRoot:string}):Promise<Record<string,unknown>>;

@@ -1,15 +1,19 @@
 import assert from 'node:assert/strict';
-import {mkdtemp,mkdir,readFile,stat,rm,writeFile} from 'node:fs/promises';
+import {chmod,mkdtemp,mkdir,readFile,stat,rm,symlink,writeFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
+import {pathToFileURL} from 'node:url';
 import test from 'node:test';
 import {createHash} from 'node:crypto';
 import {createMainThreadProfileCaptureV1,MAIN_THREAD_PROFILE_INTERVAL_US_V1,sanitizeV8MainThreadProfileV1,
- createProcMainThreadCpuReaderV1,compareProcMainThreadCpuV1} from './main-thread-profile.mjs';
-import {assertDiagnosticExecArgsV1,assertListeningSmallGuardV1,assertProfileOnlyManualTargetV1,assertProfileOnlyCDefaultBeforeV1,diagnosticModeV1,
- listeningResourceProfileV1,PROFILE_ONLY_TARGET_SHA_V1,writeProfileOnlyPgOwnershipMarkerV1} from './run.mjs';
+ createProcMainThreadCpuReaderV1,compareProcMainThreadCpuV1,MAIN_THREAD_CLK_TCK_TIMEOUT_MS_V1,readClockTicksV1} from './main-thread-profile.mjs';
+import {assertDiagnosticExecArgsV1,assertListeningResourceProfileV1,assertListeningSmallGuardV1,assertProfileOnlyManualTargetV1,
+ assertProfileOnlyCDefaultBeforeV1,diagnosticModeV1,listeningResourceProfileV1,PROFILE_ONLY_TARGET_SHA_V1,
+ writeProfileOnlyPgOwnershipMarkerV1} from './run.mjs';
 import {execFileSync,spawnSync} from 'node:child_process';
-import {PROFILE_ONLY_REQUIRED_PROBE_FILES_V1,validateProfileOnlyProbeSealV1,validateProfileOnlyRunV1} from './profile-only-envelope.mjs';
+import {PROFILE_ONLY_REQUIRED_PROBE_FILES_V1,validatePgProfileArtifactBytesV1,validateProfileOnlyProbeSealV1,
+ validateProfileOnlyRunV1} from './profile-only-envelope.mjs';
+import {PG_CPU_INSPECT_FORMAT_V1} from './profile-pg-cpu.mjs';
 
 const fakeProfile={startTime:100,endTime:350,nodes:[
  {id:1,callFrame:{functionName:'main',url:'file:///private/study/body.json',lineNumber:4,columnNumber:2},hitCount:1,children:[2]},
@@ -76,6 +80,14 @@ test('profile-only main-thread proc reader verifies the PID/starttime pair and r
   getClockTicks:()=>100});
  await assert.rejects(badReader(),/main_thread_proc_identity_mismatch/u);
  assert.equal(compareProcMainThreadCpuV1(start,{...end,pid:43}).status,'unknown');
+});
+
+test('profile-only getconf clock query uses a bounded process call and validates its result',()=>{
+ let call:unknown[]=[];
+ assert.equal(readClockTicksV1((file,args,options)=>{call=[file,args,options];return '100\n';}),100);
+ assert.deepEqual(call.slice(0,2),['getconf',['CLK_TCK']]);
+ assert.deepEqual(call[2],{encoding:'utf8',stdio:['ignore','pipe','ignore'],timeout:MAIN_THREAD_CLK_TCK_TIMEOUT_MS_V1,maxBuffer:128});
+ assert.throws(()=>readClockTicksV1(()=> 'not-a-number'),/main_thread_proc_clk_tck_invalid/u);
 });
 
 test('profile-only Inspector cleanup is terminal after a sampling failure and never reports a profile',async()=>{
@@ -160,20 +172,28 @@ test('profile-only ownership marker requires accredited PG17 loopback and stores
  const target=await mkdtemp(join(tmpdir(),'r16-profile-only-marker-'));
  const env={GITHUB_ACTIONS:'true',GITHUB_RUN_ID:'12345',GITHUB_RUN_ATTEMPT:'1',GITHUB_JOB:'profile-only',
   DATABASE_URL:'postgresql://postgres:private@127.0.0.1:54321/noisia_mfp_ci'};
- const container={Name:'/r16-benchmark-pg17',Id:'a'.repeat(64),State:{Running:true,StartedAt:'2026-11-16T00:00:00Z'},
-  Config:{Image:'pgvector/pgvector:pg17'},Image:'sha256:'+'b'.repeat(64),NetworkSettings:{Ports:{'5432/tcp':[{HostIp:'127.0.0.1',HostPort:'54321'}]}}};
+ const container={name:'/r16-benchmark-pg17',id:'a'.repeat(64),running:true,restarting:false,restart_count:0,
+  started_at:'2026-11-16T00:00:00Z',image:'pgvector/pgvector:pg17',image_id:'sha256:'+'b'.repeat(64),
+  project:'r16bench-benchmark-pg17',service:'postgres',db_ok:true,user_ok:true,pid_mode:'',privileged:false,
+  mounts:[{type:'volume',name:'r16bench-benchmark-pg17_postgres-data',destination:'/var/lib/postgresql/data'}],
+  ports:[{HostIp:'127.0.0.1',HostPort:'54321'}]};
  const pool={query:async()=>({rows:[{database:'noisia_mfp_ci',version:170005,system_identifier:'7400000000000000001',pgvector:true}]})};
  const localPg={assertR16LocalPostgresPoolV1(value:unknown){assert.equal(value,pool);}};
  try{
+  const inspectContainer=(name:string,options:{endpoint:string;format:string;timeoutMs:number;maxBytes:number})=>{
+   assert.equal(name,'r16-benchmark-pg17');assert.deepEqual(options,{endpoint:'unix:///var/run/docker.sock',
+    format:PG_CPU_INSPECT_FORMAT_V1,timeoutMs:2000,maxBytes:16384});return container;};
   const marker=await writeProfileOnlyPgOwnershipMarkerV1({targetRoot:target,targetSha:PROFILE_ONLY_TARGET_SHA_V1,pool,localPg,env,
-   inspectContainer:()=>container});
+   inspectFormat:PG_CPU_INSPECT_FORMAT_V1,inspectContainer});
   assert.equal(marker.marker.contract,'r16-pg-cpu-owned-lab-v1');
   assert.equal(marker.marker.postgres_accredited,true);
   const stored=await readFile(marker.path,'utf8');assert.doesNotMatch(stored,/7400000000000000001|private/u);
   assert.equal(JSON.parse(stored).postgres_system_identifier_sha256,createHash('sha256').update('7400000000000000001').digest('hex'));
   assert.equal((await stat(marker.path)).mode&0o777,0o600);
   await assert.rejects(writeProfileOnlyPgOwnershipMarkerV1({targetRoot:target,targetSha:PROFILE_ONLY_TARGET_SHA_V1,pool,localPg,
-   env:{...env,DATABASE_URL:'postgresql://postgres:private@0.0.0.0:54321/noisia_mfp_ci'},inspectContainer:()=>container}),/profile_only_marker_loopback_invalid/u);
+   env:{...env,DATABASE_URL:'postgresql://postgres:private@0.0.0.0:54321/noisia_mfp_ci'},inspectFormat:PG_CPU_INSPECT_FORMAT_V1,inspectContainer}),/profile_only_marker_loopback_invalid/u);
+  await assert.rejects(writeProfileOnlyPgOwnershipMarkerV1({targetRoot:target,targetSha:PROFILE_ONLY_TARGET_SHA_V1,pool,localPg,env,
+   inspectFormat:PG_CPU_INSPECT_FORMAT_V1,inspectContainer:()=>({...container,project:'foreign'})}),/profile_only_marker_project_invalid/u);
  }finally{await rm(target,{recursive:true,force:true});}
 });
 
@@ -223,6 +243,40 @@ test('profile-only envelope requires every executable/helper source in the befor
  }finally{await rm(root,{recursive:true,force:true});}
 });
 
+test('profile-only pg artifact receipt binds exact persisted pretty JSON bytes',()=>{
+ const parsed={contract:'r16-pg-cpu-profile-v1',status:'partial',snapshots:[{status:'observed',sequence:1}]};
+ const bytes=Buffer.from(`${JSON.stringify(parsed,null,2)}\n`,'utf8');
+ assert.equal(validatePgProfileArtifactBytesV1({artifact_bytes:bytes.byteLength},bytes,parsed),true);
+ assert.throws(()=>validatePgProfileArtifactBytesV1({artifact_bytes:Buffer.byteLength(JSON.stringify(parsed))},bytes,parsed),
+  /profile_only_pg_receipt_size_mismatch/u);
+ const drifted=Buffer.from(`${JSON.stringify({...parsed,status:'observed'},null,2)}\n`,'utf8');
+ assert.throws(()=>validatePgProfileArtifactBytesV1({artifact_bytes:drifted.byteLength},drifted,parsed),
+  /profile_only_pg_artifact_content_mismatch/u);
+});
+
+test('profile-only resource getter keeps its actual manual/C-target guard and derives bounded tuple through product code',async()=>{
+ const target=process.env.R16_DIAGNOSTIC_TARGET_ROOT;assert.ok(target,'profile-only getter requires checked out C target');
+ const runtime=await import(pathToFileURL(join(target,'services/workers/src/providers/jev-streaming-runtime.ts')).href) as any;
+ const env:NodeJS.ProcessEnv={R16_PROFILE_ONLY_WORKFLOW:'true',GITHUB_ACTIONS:'true',GITHUB_EVENT_NAME:'workflow_dispatch',
+  R16_DIAGNOSTIC_TARGET_LABEL:'candidate',R16_DIAGNOSTIC_TARGET_REF_REQUESTED:PROFILE_ONLY_TARGET_SHA_V1,
+  R16_DIAGNOSTIC_PROBE_REF_REQUESTED:'f'.repeat(40),R16_DIAGNOSTIC_MAINLAB_DEFAULT_PRECHECK:'true',
+  R16_DIAGNOSTIC_RESOURCE_PROFILE:'bounded_2g',R16_DIAGNOSTIC_CAPTURE_PROJECTION_PLAN:'false',
+  R16_DIAGNOSTIC_PROJECTION_LINEAR_ORACLE:'false',R16_DIAGNOSTIC_STATEMENT_SHARED_WIRE_ORACLE:'false',RESERVE_SHARED_SMOKE:'false',
+  NOISIA_JEV_STREAMING_V2_ENABLED:'true',NOISIA_JEV_STREAM_MAX_IN_FLIGHT:'4096',NOISIA_JEV_STREAM_BUFFER_BYTES:'2147483648',
+  NOISIA_JEV_STREAM_FLUSH_SIZE:'4096',NOISIA_JEV_STREAM_MAX_FLUSHES:'2',NOISIA_JEV_STREAM_FLUSH_INTERVAL_MS:'1000',
+  NOISIA_JEV_STREAM_WINDOW_SIZE:'4096'};
+ const expected={max_in_flight:4096,max_buffered_bytes:2147483648,flush_size:4096,max_flushes:2,flush_interval_ms:1000,window_size:4096};
+ assert.equal(listeningResourceProfileV1(env,'profile_only'),'bounded_2g');
+ assert.deepEqual(assertListeningResourceProfileV1('bounded_2g','profile_only',env,runtime.jevStreamingExecutionFromEnvV2),expected);
+ for(const [key,value] of [['R16_PROFILE_ONLY_WORKFLOW','false'],['GITHUB_EVENT_NAME','push'],['R16_DIAGNOSTIC_TARGET_LABEL','baseline'],
+  ['R16_DIAGNOSTIC_TARGET_REF_REQUESTED','a'.repeat(40)],['R16_DIAGNOSTIC_MAINLAB_DEFAULT_PRECHECK','false'],
+  ['R16_DIAGNOSTIC_CAPTURE_PROJECTION_PLAN','true'],['RESERVE_SHARED_SMOKE','true']] as const){
+  assert.throws(()=>assertListeningResourceProfileV1('bounded_2g','profile_only',{...env,[key]:value},runtime.jevStreamingExecutionFromEnvV2));
+ }
+ assert.throws(()=>listeningResourceProfileV1({...env,R16_DIAGNOSTIC_RESOURCE_PROFILE:'baseline_512m'},'profile_only'),
+  /profile_only_bounded_profile_required/u);
+});
+
 async function workflowStepBody(workflow:string,name:string){
  const marker=`      - name: ${name}`;const start=workflow.indexOf(marker);assert.ok(start>=0,`workflow step ${name} exists`);
  const next=workflow.indexOf('      - name: ',start+marker.length),section=workflow.slice(start,next<0?undefined:next).split(/\r?\n/u);
@@ -247,6 +301,82 @@ test('profile-only workflow dispatch gate executes its real Bash and rejects any
  assert.match(workflow,/R16_DIAGNOSTIC_MODE: profile_only/u);assert.match(workflow,/NOISIA_JEV_STREAM_BUFFER_BYTES: '2147483648'/u);
  assert.match(workflow,/timeout 12m corepack pnpm exec node --import tsx/);
  assert.doesNotMatch(workflow,/--cpu-prof|--prof-process|--heap(?:-|\s)/u);
+});
+
+test('profile-only fresh-lab gate inventories daemon, project containers/volumes/networks and fixed Redis resources',async()=>{
+ const workflow=await readFile(new URL('../../../.github/workflows/r16-listening-profile-only.yml',import.meta.url),'utf8');
+ const body=await workflowStepBody(workflow,'Require fresh profile-only Docker lab resources');
+ const root=await mkdtemp(join(tmpdir(),'r16-profile-fresh-lab-')),bin=join(root,'bin'),log=join(root,'docker-calls.log');
+ await mkdir(bin);const docker=join(bin,'docker');
+ await writeFile(docker,`#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\\n' "$*" >> "$DOCKER_CALL_LOG"
+scenario="$DOCKER_SCENARIO"
+if [[ "$1" == info ]]; then [[ "$scenario" != daemon_error ]] || exit 1; exit 0; fi
+case "$1:$2" in
+  ps:*)
+    if [[ "$*" == *"label=com.docker.compose.project=r16bench-benchmark-pg17"* ]]; then
+      [[ "$scenario" != project_container ]] || printf '%s\\n' synthetic-resource-id
+    else
+      [[ "$scenario" != redis_container ]] || printf '%s\\n' r16bench-benchmark-pg17-redis-1
+    fi;;
+  volume:ls)
+    if [[ "$*" == *"label=com.docker.compose.project=r16bench-benchmark-pg17"* ]]; then
+      [[ "$scenario" != project_volume ]] || printf '%s\\n' synthetic-volume
+    else
+      [[ "$scenario" != fixed_volume ]] || printf '%s\\n' r16bench-benchmark-pg17_postgres-data
+    fi;;
+  network:ls)
+    if [[ "$*" == *"label=com.docker.compose.project=r16bench-benchmark-pg17"* ]]; then
+      [[ "$scenario" != project_network ]] || printf '%s\\n' synthetic-network
+    else
+      [[ "$scenario" != fixed_network ]] || printf '%s\\n' r16bench-benchmark-pg17_default
+    fi;;
+  *) exit 3;;
+esac
+`,{mode:0o700});await chmod(docker,0o700);
+ const execute=(scenario:string)=>spawnSync('bash',['-euo','pipefail','-c',body],{cwd:root,encoding:'utf8',env:{PATH:`${bin}:/usr/bin:/bin`,DOCKER_SCENARIO:scenario,DOCKER_CALL_LOG:log}});
+ try{
+  const fresh=execute('fresh');assert.equal(fresh.status,0,fresh.stderr||fresh.stdout);
+  assert.equal((await readFile(log,'utf8')).trim().split('\n').length,7,'fresh gate must complete all seven inventory calls');
+  for(const scenario of ['daemon_error','project_container','redis_container','project_volume','fixed_volume','project_network','fixed_network']){
+   await rm(log,{force:true});const rejected=execute(scenario);assert.notEqual(rejected.status,0,`${scenario} must fail closed`);
+   assert.doesNotMatch(`${rejected.stdout}${rejected.stderr}`,/synthetic-(?:resource|volume|network)/u);
+   if(scenario==='daemon_error')assert.equal((await readFile(log,'utf8')).trim().split('\n').length,1,'daemon failure cannot be treated as absence');
+  }
+  const symlinkRoot=join(root,'symlink-case'),symlinkBin=join(symlinkRoot,'bin'),symlinkLog=join(symlinkRoot,'calls.log');
+  await mkdir(symlinkBin,{recursive:true});await writeFile(join(symlinkBin,'docker'),'#!/bin/sh\nexit 0\n',{mode:0o700});
+  await mkdir(join(symlinkRoot,'.data/piloto-masivo/r16/labs'),{recursive:true});
+  await symlink(join(symlinkRoot,'missing-lab'),join(symlinkRoot,'.data/piloto-masivo/r16/labs/benchmark-pg17'));
+  const linked=spawnSync('bash',['-euo','pipefail','-c',body],{cwd:symlinkRoot,encoding:'utf8',env:{PATH:`${symlinkBin}:/usr/bin:/bin`,DOCKER_SCENARIO:'fresh',DOCKER_CALL_LOG:symlinkLog}});
+  assert.notEqual(linked.status,0,'dangling lab symlink must fail closed');
+  await assert.rejects(readFile(symlinkLog,'utf8'));
+ }finally{await rm(root,{recursive:true,force:true});}
+});
+
+test('profile-only artifact upload gate requires the exact fourteen-file set and size validation success',async()=>{
+ const workflow=await readFile(new URL('../../../.github/workflows/r16-listening-profile-only.yml',import.meta.url),'utf8');
+ const body=await workflowStepBody(workflow,'Validate and whitelist the bounded profile artifact');
+ const root=await mkdtemp(join(tmpdir(),'r16-profile-upload-gate-')),artifacts=join(root,'profile'),out=join(root,'output');
+ const names=['mainlab-default-after.json','mainlab-default-before.json','mainlab-default-runtime.json','node-profile.json',
+  'profile-only.json','profile-only.test.receipt.json','profile-only.test.tap','profile-pg-cpu.test.receipt.json',
+  'profile-pg-cpu.test.tap','postgres-profile.json','run.json','run.test.receipt.json','run.test.tap','v8-main-thread-profile.json'];
+ try{
+  await mkdir(artifacts,{recursive:true});await writeFile(out,'');
+  for(const name of names)await writeFile(join(artifacts,name),'{}\n',{mode:0o600});
+  const execute=()=>spawnSync('bash',['-euo','pipefail','-c',body],{cwd:root,encoding:'utf8',env:{PATH:process.env.PATH??'/usr/bin:/bin',
+   PROFILE_ARTIFACT_ROOT:artifacts,GITHUB_WORKSPACE:root,GITHUB_OUTPUT:out}});
+  const valid=execute();assert.equal(valid.status,0,valid.stderr||valid.stdout);assert.match(await readFile(out,'utf8'),/artifact_ok=true/u);
+  await writeFile(join(artifacts,'extra-secret.json'),'not-for-upload');await writeFile(out,'');
+  const rejected=execute();assert.notEqual(rejected.status,0);assert.doesNotMatch(`${rejected.stdout}${rejected.stderr}`,/not-for-upload/u);
+  assert.deepEqual(JSON.parse(await readFile(join(root,'artifacts/r16-profile-only-rejected/rejection.json'),'utf8')),
+   {contract:'r16-profile-only-artifact-rejection-v1',status:'rejected',reason:'artifact_file_set_invalid',total_bytes:'0',
+    max_total_bytes:'67108864',diagnostic_only:true,h1_accepted:false});
+  assert.match(workflow,/if: always\(\) && steps\.profile_artifact_validation\.outcome == 'success'/u,
+   'full evidence uploads only after exact whitelist and size validation');
+  assert.match(workflow,/steps\.profile_artifact_validation\.outcome == 'failure'/u,
+   'a rejected package can upload only its bounded small rejection receipt');
+ }finally{await rm(root,{recursive:true,force:true});}
 });
 
 test('profile-only run CLI reaches its strict target guard before database or provider setup',async()=>{

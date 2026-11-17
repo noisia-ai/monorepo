@@ -177,7 +177,7 @@ export async function assertProfileOnlyCDefaultBeforeV1(target:string,receiptPat
  return receipt;
 }
 export async function writeProfileOnlyPgOwnershipMarkerV1(args:{targetRoot:string;targetSha:string;pool:any;localPg:any;
-  env:NodeJS.ProcessEnv;inspectContainer?:(name:string)=>any}){
+  env:NodeJS.ProcessEnv;inspectFormat:string;inspectContainer?:(name:string,options:{endpoint:string;format:string;timeoutMs:number;maxBytes:number})=>any}){
  assert.ok(/^[0-9a-f]{40}$/u.test(args.targetSha),'profile_only_marker_target_sha_invalid');
  assert.equal(args.env.GITHUB_ACTIONS,'true','profile_only_marker_requires_ci');
  for(const key of ['GITHUB_RUN_ID','GITHUB_RUN_ATTEMPT','GITHUB_JOB'])
@@ -194,20 +194,34 @@ export async function writeProfileOnlyPgOwnershipMarkerV1(args:{targetRoot:strin
  const databaseUrl=new URL(args.env.DATABASE_URL??'');
  assert.equal(databaseUrl.hostname,'127.0.0.1','profile_only_marker_loopback_invalid');
  assert.ok(/^\d+$/u.test(databaseUrl.port),'profile_only_marker_port_invalid');
- const inspect=args.inspectContainer??((name:string)=>JSON.parse(execFileSync('docker',['inspect',name],{encoding:'utf8',stdio:['ignore','pipe','ignore']}))[0]);
- const container=inspect('r16-benchmark-pg17');
- assert.equal(container?.Name,'/r16-benchmark-pg17','profile_only_marker_container_name_invalid');
- assert.equal(container?.State?.Running,true,'profile_only_marker_container_not_running');
- assert.equal(container?.Config?.Image,'pgvector/pgvector:pg17','profile_only_marker_image_invalid');
- assert.ok(/^sha256:[0-9a-f]{64}$/u.test(container?.Image??''),'profile_only_marker_image_id_invalid');
- assert.ok(typeof container?.State?.StartedAt==='string'&&!Number.isNaN(Date.parse(container.State.StartedAt)),
+ const inspectOptions={endpoint:'unix:///var/run/docker.sock',format:args.inspectFormat,timeoutMs:2000,maxBytes:16384};
+ assert.ok(typeof inspectOptions.format==='string'&&inspectOptions.format.length>0,'profile_only_marker_inspect_format_invalid');
+ const inspect=args.inspectContainer??((name:string,options:typeof inspectOptions)=>JSON.parse(execFileSync('docker',
+  [`--host=${options.endpoint}`,'inspect','--format',options.format,name],
+  {encoding:'utf8',stdio:['ignore','pipe','ignore'],timeout:options.timeoutMs,maxBuffer:options.maxBytes})));
+ const container=inspect('r16-benchmark-pg17',inspectOptions);
+ assert.equal(container?.name,'/r16-benchmark-pg17','profile_only_marker_container_name_invalid');
+ assert.equal(container?.running,true,'profile_only_marker_container_not_running');
+ assert.equal(container?.restarting,false,'profile_only_marker_container_restarting');
+ assert.equal(container?.restart_count,0,'profile_only_marker_container_restarted');
+ assert.equal(container?.image,'pgvector/pgvector:pg17','profile_only_marker_image_invalid');
+ assert.ok(/^sha256:[0-9a-f]{64}$/u.test(container?.image_id??''),'profile_only_marker_image_id_invalid');
+ assert.ok(typeof container?.started_at==='string'&&!Number.isNaN(Date.parse(container.started_at)),
   'profile_only_marker_container_start_invalid');
- const bindings=container?.NetworkSettings?.Ports?.['5432/tcp'];
+ assert.equal(container?.project,'r16bench-benchmark-pg17','profile_only_marker_project_invalid');
+ assert.equal(container?.service,'postgres','profile_only_marker_service_invalid');
+ assert.equal(container?.db_ok,true,'profile_only_marker_database_env_invalid');
+ assert.equal(container?.user_ok,true,'profile_only_marker_user_env_invalid');
+ assert.ok(['','private'].includes(container?.pid_mode),'profile_only_marker_pid_mode_invalid');
+ assert.equal(container?.privileged,false,'profile_only_marker_privileged_container');
+ assert.deepEqual(container?.mounts,[{type:'volume',name:'r16bench-benchmark-pg17_postgres-data',destination:'/var/lib/postgresql/data'}],
+  'profile_only_marker_mount_invalid');
+ const bindings=container?.ports;
  assert.ok(Array.isArray(bindings)&&bindings.length===1&&bindings[0]?.HostIp==='127.0.0.1'
   &&bindings[0]?.HostPort===databaseUrl.port,'profile_only_marker_binding_invalid');
  const marker={contract:'r16-pg-cpu-owned-lab-v1',github_run_id:args.env.GITHUB_RUN_ID,
   github_run_attempt:args.env.GITHUB_RUN_ATTEMPT,github_job:args.env.GITHUB_JOB,target_sha:args.targetSha,
-  container_id:container.Id,container_started_at:container.State.StartedAt,container_image_id:container.Image,
+  container_id:container.id,container_started_at:container.started_at,container_image_id:container.image_id,
   loopback_port:databaseUrl.port,postgres_system_identifier_sha256:createHash('sha256').update(identity.system_identifier).digest('hex'),
   fresh_lab_owned:true,postgres_accredited:true};
  assert.ok(/^[0-9a-f]{64}$/u.test(marker.container_id??''),'profile_only_marker_container_id_invalid');
@@ -226,7 +240,7 @@ export function listeningResourceProfileV1(env:NodeJS.ProcessEnv,mode:string):Li
 }
 export function assertListeningResourceProfileV1(profile:ListeningResourceProfileV1,mode:string,env:NodeJS.ProcessEnv,
  executionFromEnv:(env:NodeJS.ProcessEnv)=>ListeningExecutionV1|undefined):ListeningExecutionV1{
- listeningResourceProfileV1({R16_DIAGNOSTIC_RESOURCE_PROFILE:profile},mode);
+ listeningResourceProfileV1({...env,R16_DIAGNOSTIC_RESOURCE_PROFILE:profile},mode);
  const expected=listeningResourceProfilesV1[profile];
  const streamEnv={NOISIA_JEV_STREAM_MAX_IN_FLIGHT:expected.max_in_flight,NOISIA_JEV_STREAM_BUFFER_BYTES:expected.max_buffered_bytes,
   NOISIA_JEV_STREAM_FLUSH_SIZE:expected.flush_size,NOISIA_JEV_STREAM_MAX_FLUSHES:expected.max_flushes,
@@ -482,7 +496,7 @@ export async function runListeningSmallDiagnosticV1(){
       const baseline=await dbPool.query(`SELECT (SELECT count(*)::int FROM mentions) roots,(SELECT count(*)::int FROM signal_labeling_calls) calls,(SELECT count(*)::int FROM signal_listening_configurations) configurations`);
       assert.deepEqual(baseline.rows[0],{roots:0,calls:0,configurations:0},'owned_database_must_be_empty');
       if(profileOnly)pgCpuOwnershipMarker=await writeProfileOnlyPgOwnershipMarkerV1({targetRoot:target,targetSha:targetHeadBefore,
-        pool:dbPool,localPg,env:process.env});
+        pool:dbPool,localPg,env:process.env,inspectFormat:pgCpuModule.PG_CPU_INSPECT_FORMAT_V1});
     }finally{await dbPool.end();}
     let result:any;
     stage='native_fixture';

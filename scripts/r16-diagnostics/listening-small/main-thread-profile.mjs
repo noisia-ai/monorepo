@@ -10,6 +10,7 @@ import {isMainThread} from 'node:worker_threads';
 
 export const MAIN_THREAD_PROFILE_INTERVAL_US_V1=10_000;
 export const MAIN_THREAD_PROFILE_MAX_BYTES_V1=32*1024*1024;
+export const MAIN_THREAD_CLK_TCK_TIMEOUT_MS_V1=2_000;
 
 const plainObject=(value)=>value!==null&&typeof value==='object'&&!Array.isArray(value);
 const monotonicNs=()=>hrtime.bigint();
@@ -31,10 +32,17 @@ const safeResource=(value)=>{
   return result;
 };
 
+export function readClockTicksV1(exec=execFileSync){
+ const raw=exec('getconf',['CLK_TCK'],{encoding:'utf8',stdio:['ignore','pipe','ignore'],timeout:MAIN_THREAD_CLK_TCK_TIMEOUT_MS_V1,maxBuffer:128});
+ const ticksPerSecond=Number(String(raw).trim());
+ assert.ok(Number.isSafeInteger(ticksPerSecond)&&ticksPerSecond>0&&ticksPerSecond<=10_000_000,'main_thread_proc_clk_tck_invalid');
+ return ticksPerSecond;
+}
+
 export function createProcMainThreadCpuReaderV1(options={}){
   const pid=options.pid??process.pid,mainThread=options.isMainThread??isMainThread;
   const parse=options.parseProcStatV1,readText=options.readText??((path)=>readFileSync(path,'utf8'));
-  const getClockTicks=options.getClockTicks??(()=>execFileSync('getconf',['CLK_TCK'],{encoding:'utf8',stdio:['ignore','pipe','ignore']}));
+  const getClockTicks=options.getClockTicks??(()=>readClockTicksV1(options.execFileSync??execFileSync));
   assert.ok(typeof parse==='function','main_thread_proc_parser_missing');
   if(!mainThread)return async()=>({status:'unknown',reason:'not_main_thread'});
   const ticksPerSecond=Number(String(getClockTicks()).trim());

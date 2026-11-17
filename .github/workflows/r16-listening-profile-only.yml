@@ -81,17 +81,40 @@ jobs:
           test -z "$(git -C ../probe status --porcelain --untracked-files=all)"
           test -f infrastructure/db/migrations/0330_signal_listening_statement_shared_wire.sql
           test -f infrastructure/db/migrations/0331_signal_listening_statement_payload.sql
-          if docker inspect r16-benchmark-pg17 >/dev/null 2>&1; then
-            echo '::error::profile-only PG17 container already exists'
-            exit 1
-          fi
-          if docker volume inspect r16bench-benchmark-pg17_postgres-data >/dev/null 2>&1; then
-            echo '::error::profile-only PG17 volume already exists'
-            exit 1
-          fi
+
+      - name: Require fresh profile-only Docker lab resources
+        working-directory: target
+        run: |
+          set -euo pipefail
           lab_dir=.data/piloto-masivo/r16/labs/benchmark-pg17
-          if [[ -e "$lab_dir/private.env" || -e "$lab_dir/connection.env" || -e "$lab_dir/pg-cpu-owned-marker.json" ]]; then
-            echo '::error::profile-only private lab state already exists'
+          if [[ -e "$lab_dir" || -L "$lab_dir" ]]; then
+            echo '::error::profile-only lab metadata already exists'
+            exit 1
+          fi
+          if ! docker info >/dev/null 2>&1; then
+            echo '::error::Docker resource discovery failed; refusing profile-only lab startup'
+            exit 1
+          fi
+          project=r16bench-benchmark-pg17
+          fixed_container=r16-benchmark-pg17
+          fixed_redis_container=r16bench-benchmark-pg17-redis-1
+          fixed_volume=r16bench-benchmark-pg17_postgres-data
+          fixed_network=r16bench-benchmark-pg17_default
+          if ! project_containers="$(docker ps --all --filter "label=com.docker.compose.project=$project" --format '{{.ID}}')" \
+            || ! all_container_names="$(docker ps --all --format '{{.Names}}')" \
+            || ! project_volumes="$(docker volume ls --filter "label=com.docker.compose.project=$project" --format '{{.Name}}')" \
+            || ! all_volume_names="$(docker volume ls --format '{{.Name}}')" \
+            || ! project_networks="$(docker network ls --filter "label=com.docker.compose.project=$project" --format '{{.Name}}')" \
+            || ! all_network_names="$(docker network ls --format '{{.Name}}')"; then
+            echo '::error::Docker resource discovery failed; refusing profile-only lab startup'
+            exit 1
+          fi
+          if [[ -n "$project_containers" || -n "$project_volumes" || -n "$project_networks" ]] \
+            || [[ $'\n'$all_container_names$'\n' == *$'\n'$fixed_container$'\n'* ]] \
+            || [[ $'\n'$all_container_names$'\n' == *$'\n'$fixed_redis_container$'\n'* ]] \
+            || [[ $'\n'$all_volume_names$'\n' == *$'\n'$fixed_volume$'\n'* ]] \
+            || [[ $'\n'$all_network_names$'\n' == *$'\n'$fixed_network$'\n'* ]]; then
+            echo '::error::profile-only lab resources already exist; refusing reuse or cleanup'
             exit 1
           fi
 
@@ -347,14 +370,49 @@ jobs:
           timeout 2m corepack pnpm exec node ../probe/scripts/r16-diagnostics/listening-small/profile-only-envelope.mjs assemble \
             "$GITHUB_WORKSPACE/target" "$GITHUB_WORKSPACE/probe" "$TARGET_REF" "$PROBE_REF" "$PROFILE_ARTIFACT_ROOT"
 
-      - name: Validate private artifact directory is within the aggregate size bound
+      - name: Validate and whitelist the bounded profile artifact
+        id: profile_artifact_validation
         if: always()
         run: |
           set -euo pipefail
-          if [ -d "$PROFILE_ARTIFACT_ROOT" ]; then
-            total=$(find "$PROFILE_ARTIFACT_ROOT" -type f -printf '%s\n' | awk '{sum += $1} END {print sum + 0}')
-            test "$total" -le 67108864
-          fi
+          node - "$PROFILE_ARTIFACT_ROOT" "$GITHUB_WORKSPACE" "$GITHUB_OUTPUT" <<'NODE'
+          const fs = require('node:fs');
+          const path = require('node:path');
+          const [artifactRoot, workspace, outputPath] = process.argv.slice(2);
+          const expected = ['mainlab-default-after.json','mainlab-default-before.json','mainlab-default-runtime.json','node-profile.json',
+            'profile-only.json','profile-only.test.receipt.json','profile-only.test.tap','profile-pg-cpu.test.receipt.json',
+            'profile-pg-cpu.test.tap','postgres-profile.json','run.json','run.test.receipt.json','run.test.tap','v8-main-thread-profile.json'].sort();
+          const maxBytes = 67108864n;
+          let reason = 'artifact_directory_missing', total = 0n;
+          try {
+            const rootStat = fs.lstatSync(artifactRoot);
+            if (rootStat.isDirectory() && !rootStat.isSymbolicLink()) {
+              reason = 'artifact_file_set_invalid';
+              const entries = fs.readdirSync(artifactRoot, {withFileTypes:true}).sort((a,b)=>a.name<b.name?-1:a.name>b.name?1:0);
+              if (entries.length === expected.length && entries.every((entry,index)=>entry.name===expected[index] && entry.isFile() && !entry.isSymbolicLink())) {
+                for (const entry of entries) {
+                  const file = fs.lstatSync(path.join(artifactRoot,entry.name));
+                  if (!file.isFile() || file.isSymbolicLink() || !Number.isSafeInteger(file.size)) throw new Error('artifact_file_set_invalid');
+                  total += BigInt(file.size);
+                }
+                reason = 'artifact_total_size_exceeded';
+                if (total <= maxBytes) {
+                  fs.appendFileSync(outputPath,'artifact_ok=true\n',{mode:0o600});
+                  process.exit(0);
+                }
+              }
+            }
+          } catch (error) {
+            if (!(error instanceof Error) || !['ENOENT','artifact_file_set_invalid'].includes(error.code || error.message)) reason = 'artifact_directory_missing';
+          }
+          const rejectedRoot = path.join(workspace,'artifacts/r16-profile-only-rejected');
+          fs.mkdirSync(rejectedRoot,{recursive:true,mode:0o700});
+          const rejection = {contract:'r16-profile-only-artifact-rejection-v1',status:'rejected',reason,total_bytes:total.toString(),
+            max_total_bytes:maxBytes.toString(),diagnostic_only:true,h1_accepted:false};
+          fs.writeFileSync(path.join(rejectedRoot,'rejection.json'),`${JSON.stringify(rejection)}\n`,{flag:'wx',mode:0o600});
+          process.stderr.write(`::error::${reason}\n`);
+          process.exitCode = 1;
+          NODE
 
       - name: Stop only the owned profile-only lab and remove its marker
         if: always() && env.R16_PROFILE_ONLY_LAB_OWNED == 'true'
@@ -382,10 +440,19 @@ jobs:
           if [ "$marker_cleanup_status" -ne 0 ]; then exit "$marker_cleanup_status"; fi
 
       - name: Upload profile-only evidence
-        if: always() && hashFiles('artifacts/r16-listening-profile-only/*') != ''
+        if: always() && steps.profile_artifact_validation.outcome == 'success'
         uses: actions/upload-artifact@v4
         with:
           name: r16-listening-profile-only-${{ github.run_id }}
           path: artifacts/r16-listening-profile-only/
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload bounded profile rejection receipt
+        if: always() && steps.profile_artifact_validation.outcome == 'failure' && hashFiles('artifacts/r16-profile-only-rejected/rejection.json') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: r16-listening-profile-only-rejected-${{ github.run_id }}
+          path: artifacts/r16-profile-only-rejected/rejection.json
           if-no-files-found: error
           retention-days: 7

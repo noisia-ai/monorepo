@@ -47,6 +47,13 @@ export async function validateProfileOnlyProbeSealV1(sealedHashes,probeRoot){
  return true;
 }
 
+export function validatePgProfileArtifactBytesV1(receipt,bytes,parsed){
+ assert.ok(Buffer.isBuffer(bytes),'profile_only_pg_artifact_bytes_invalid');
+ assert.deepEqual(JSON.parse(bytes.toString('utf8')),parsed,'profile_only_pg_artifact_content_mismatch');
+ assert.equal(receipt.artifact_bytes,bytes.byteLength,'profile_only_pg_receipt_size_mismatch');
+ return true;
+}
+
 function validatePureReceiptV1(receipt,tapBytes,{targetSha,probeSha,testFile}){
  const tap=tapBytes.toString('utf8');
  assert.equal(receipt.contract,'r16-diagnostic-pure-suite-v1','profile_only_pure_contract_invalid');
@@ -154,7 +161,8 @@ export async function assembleProfileOnlyEnvelopeV1(args){
  assert.ok(['observed','partial','unavailable'].includes(pgProfile.status),'profile_only_pg_status_invalid');
  assert.equal(pgProfile.limits.configured_interval_ms,250,'profile_only_pg_interval_invalid');
  assert.equal(pgProfile.limits.configured_duration_ms,300000,'profile_only_pg_duration_invalid');
- assert.equal(run.postgres_profile.artifact_bytes,Buffer.byteLength(JSON.stringify(pgProfile)),'profile_only_pg_receipt_size_mismatch');
+ const pgBytes=await readFile(path('postgres-profile.json'));
+ validatePgProfileArtifactBytesV1(run.postgres_profile,pgBytes,pgProfile);
  const nodeBytes=await readFile(path('v8-main-thread-profile.json'));
  assert.equal(nodeReceipt.path,path('v8-main-thread-profile.json'),'profile_only_node_path_invalid');
  assert.equal(nodeBytes.byteLength,nodeReceipt.bytes,'profile_only_node_size_mismatch');
@@ -164,7 +172,6 @@ export async function assembleProfileOnlyEnvelopeV1(args){
  assert.equal(nodeProfile.contract,'r16-v8-main-thread-profile-v1','profile_only_v8_contract_invalid');
  assert.equal(nodeProfile.urls_embedded,false,'profile_only_v8_urls_present');
  assert.equal(nodeProfile.source_text_embedded,false,'profile_only_v8_source_text_present');
- const pgBytes=await readFile(path('postgres-profile.json'));
  assert.ok(pgBytes.byteLength>0&&pgBytes.byteLength<=PROFILE_ONLY_MAX_PG_PROFILE_BYTES_V1,'profile_only_pg_size_exceeded');
  const profilePure=validatePureReceiptV1(profileRunPure,profilePureTap,{targetSha,probeSha,testFile:'scripts/r16-diagnostics/listening-small/profile-only.test.mts'});
  const pgPureSummary=validatePureReceiptV1(pgPure,pgPureTap,{targetSha,probeSha,testFile:'scripts/r16-diagnostics/listening-small/profile-pg-cpu.test.mjs'});
