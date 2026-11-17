@@ -1,0 +1,382 @@
+name: R16 statement-frame native D oracle
+run-name: R16 statement-frame D oracle (manual, owned PostgreSQL 17)
+
+on:
+  push:
+    branches:
+      - codex/r16-statement-frame-native-harness
+      - codex/r16-statement-frame-compose
+    paths:
+      - .github/workflows/r16-statement-frame-native.yml
+  workflow_dispatch:
+    inputs:
+      target_ref:
+        type: string
+        required: true
+        description: Exact 40-character SHA of the reviewed D test-only source target
+
+permissions:
+  contents: read
+
+concurrency:
+  group: r16-statement-frame-native-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  register-workflow:
+    name: Register the manual D oracle
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Confirm workflow registration only
+        run: echo 'R16 statement-frame manual oracle registered; no database job ran.'
+
+  statement-frame-native:
+    name: D native oracle (fresh owned PostgreSQL 17)
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    outputs:
+      status: ${{ steps.verify.outputs.status }}
+      target_sha: ${{ steps.verify.outputs.target_sha }}
+      probe_sha: ${{ steps.verify.outputs.probe_sha }}
+      native_selected_pass: ${{ steps.verify.outputs.native_selected_pass }}
+    env:
+      R16BENCH_RUN_ID: benchmark-pg17
+      R16BENCH_SERVICES: postgres,redis
+      NOISIA_R16_LOCAL_PG_LAB: r16-benchmark-pg17
+      DATABASE_SSL: 'false'
+      TARGET_REF: ${{ inputs.target_ref }}
+      PROBE_REF: ${{ github.sha }}
+    steps:
+      - name: Validate exact target and forbid provider credentials
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          DISPATCH_REF: ${{ github.ref }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" != workflow_dispatch ] \
+              || { [ "$DISPATCH_REF" != refs/heads/codex/r16-statement-frame-native-harness ] \
+                && [ "$DISPATCH_REF" != refs/heads/codex/r16-statement-frame-compose ]; } \
+              || [ "${#TARGET_REF}" -ne 40 ] || [[ ! "$TARGET_REF" =~ ^[0-9a-f]{40}$ ]] \
+              || [ "$TARGET_REF" = b95a87a8e15343ba25d742c6fdcd97c3a7fbdec1 ] \
+              || [ "${#PROBE_REF}" -ne 40 ] || [[ ! "$PROBE_REF" =~ ^[0-9a-f]{40}$ ]]; then
+            echo '::error::statement-frame D oracle requires an exact reviewed D source SHA and pinned probe SHA'
+            exit 1
+          fi
+          for name in $(compgen -e); do
+            case "$name" in
+              *ANTHROPIC*API_KEY*|*ANTHROPIC*TOKEN*|*SONNET*API_KEY*|*SONNET*TOKEN*|*VOYAGE*API_KEY*|*VOYAGE*TOKEN*|*OPENAI*API_KEY*|*TYPESAFE*API_KEY*)
+                echo '::error::provider credentials are forbidden in the native D oracle'
+                exit 1
+                ;;
+            esac
+          done
+
+      - name: Checkout exact D product source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.target_ref }}
+          path: target
+
+      - name: Checkout the exact diagnostic harness
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          path: probe
+          sparse-checkout: |
+            .github/workflows/r16-statement-frame-native.yml
+            scripts/r16-diagnostics/listening-small
+          sparse-checkout-cone-mode: false
+
+      - name: Verify clean, pinned source trees and required source files
+        working-directory: target
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$TARGET_REF"
+          test "$(git -C ../probe rev-parse HEAD)" = "$PROBE_REF"
+          test -z "$(git status --porcelain --untracked-files=all)"
+          test -z "$(git -C ../probe status --porcelain --untracked-files=all)"
+          for file in \
+            infrastructure/db/migrations/0330_signal_listening_statement_shared_wire.sql \
+            infrastructure/db/migrations/0331_signal_listening_statement_payload.sql \
+            infrastructure/db/migrations/signal-listening-statement-shared-wire.fixture.ts \
+            infrastructure/db/migrations/signal-listening-statement-shared-wire.oracle.ts \
+            infrastructure/db/migrations/signal-listening-statement-shared-wire.postgres.test.ts \
+            infrastructure/db/migrations/signal-listening-statement-shared-wire.test.ts \
+            infrastructure/db/migrations/signal-listening-statement-frame.oracle.ts \
+            infrastructure/db/migrations/signal-listening-statement-frame.test.ts \
+            infrastructure/db/migrations/signal-listening-statement-frame.postgres.test.ts; do
+            test -f "$file"
+          done
+          test -f ../probe/scripts/r16-diagnostics/listening-small/query-cpu-oracle.mjs
+          test -f ../probe/scripts/r16-diagnostics/listening-small/profile-pg-cpu.mjs
+          test -f ../probe/scripts/r16-diagnostics/listening-small/run.mts
+          test -f ../probe/scripts/r16-diagnostics/listening-small/statement-frame-native-harness.mjs
+          test -f ../probe/scripts/r16-diagnostics/listening-small/statement-frame-native-harness.test.mjs
+
+      - name: Require a fresh owned PG17 Docker lab
+        working-directory: target
+        run: |
+          set -euo pipefail
+          lab_dir=.data/piloto-masivo/r16/labs/benchmark-pg17
+          if [[ -e "$lab_dir" || -L "$lab_dir" ]]; then
+            echo '::error::statement-frame lab metadata already exists'
+            exit 1
+          fi
+          if ! docker info >/dev/null 2>&1; then
+            echo '::error::Docker resource discovery failed; refusing lab startup'
+            exit 1
+          fi
+          project=r16bench-benchmark-pg17
+          fixed_container=r16-benchmark-pg17
+          fixed_redis_container=r16bench-benchmark-pg17-redis-1
+          fixed_volume=r16bench-benchmark-pg17_postgres-data
+          fixed_network=r16bench-benchmark-pg17_default
+          if ! project_containers="$(docker ps --all --filter "label=com.docker.compose.project=$project" --format '{{.ID}}')" \
+            || ! all_container_names="$(docker ps --all --format '{{.Names}}')" \
+            || ! project_volumes="$(docker volume ls --filter "label=com.docker.compose.project=$project" --format '{{.Name}}')" \
+            || ! all_volume_names="$(docker volume ls --format '{{.Name}}')" \
+            || ! project_networks="$(docker network ls --filter "label=com.docker.compose.project=$project" --format '{{.Name}}')" \
+            || ! all_network_names="$(docker network ls --format '{{.Name}}')"; then
+            echo '::error::Docker resource discovery failed; refusing lab startup'
+            exit 1
+          fi
+          if [[ -n "$project_containers" || -n "$project_volumes" || -n "$project_networks" ]] \
+            || [[ $'\n'$all_container_names$'\n' == *$'\n'$fixed_container$'\n'* ]] \
+            || [[ $'\n'$all_container_names$'\n' == *$'\n'$fixed_redis_container$'\n'* ]] \
+            || [[ $'\n'$all_volume_names$'\n' == *$'\n'$fixed_volume$'\n'* ]] \
+            || [[ $'\n'$all_network_names$'\n' == *$'\n'$fixed_network$'\n'* ]]; then
+            echo '::error::statement-frame lab resources already exist; refusing reuse or cleanup'
+            exit 1
+          fi
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.2
+
+      - name: Set up Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: target/pnpm-lock.yaml
+
+      - name: Install frozen target dependencies
+        working-directory: target
+        run: corepack pnpm install --frozen-lockfile
+
+      - name: Create bounded private artifact directories
+        env:
+          FRAME_ARTIFACT_ROOT: ${{ runner.temp }}/r16-statement-frame-${{ github.run_id }}-${{ github.run_attempt }}
+          FRAME_REJECTION_ROOT: ${{ runner.temp }}/r16-statement-frame-rejected-${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          test ! -e "$FRAME_ARTIFACT_ROOT" && test ! -L "$FRAME_ARTIFACT_ROOT"
+          test ! -e "$FRAME_REJECTION_ROOT" && test ! -L "$FRAME_REJECTION_ROOT"
+          mkdir -m 700 -- "$FRAME_ARTIFACT_ROOT" "$FRAME_REJECTION_ROOT"
+          test "$(stat -c '%a' "$FRAME_ARTIFACT_ROOT")" = 700
+          test "$(stat -c '%a' "$FRAME_REJECTION_ROOT")" = 700
+          test "$(realpath "$FRAME_ARTIFACT_ROOT")" = "$FRAME_ARTIFACT_ROOT"
+          test "$(realpath "$FRAME_REJECTION_ROOT")" = "$FRAME_REJECTION_ROOT"
+
+      - name: Run D source pure suite and preserve TAP
+        id: pure
+        working-directory: target
+        env:
+          FRAME_ARTIFACT_ROOT: ${{ runner.temp }}/r16-statement-frame-${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          set +e
+          corepack pnpm exec node --test --test-concurrency=1 --test-reporter=tap --import tsx \
+            infrastructure/db/migrations/signal-listening-statement-frame.test.ts 2>&1 | tee "$FRAME_ARTIFACT_ROOT/statement-frame.pure.tap"
+          statuses=("${PIPESTATUS[@]}")
+          test_status=${statuses[0]}
+          tee_status=${statuses[1]}
+          set -e
+          if [ "$tee_status" -ne 0 ] && [ "$test_status" -eq 0 ]; then test_status=125; fi
+          chmod 600 "$FRAME_ARTIFACT_ROOT/statement-frame.pure.tap"
+          echo "exit_status=$test_status" >> "$GITHUB_OUTPUT"
+          if [ "$test_status" -ne 0 ]; then exit "$test_status"; fi
+
+      - name: Start fresh owned PG17 and Redis lab
+        id: lab_up
+        working-directory: target
+        run: |
+          set -euo pipefail
+          printf '%s\n' 'R16_STATEMENT_FRAME_LAB_OWNED=true' >> "$GITHUB_ENV"
+          scripts/r16/lab-up.sh
+
+      - name: Apply C migrations to the fresh lab
+        working-directory: target
+        env:
+          NOISIA_DB_SMOKE_RESET_SCHEMA: 'true'
+          NOISIA_DB_SMOKE_EMULATE_SUPABASE_ROLES: 'true'
+          NOISIA_MFP_PG_CI: 'true'
+        run: |
+          set -euo pipefail
+          connection_file=.data/piloto-masivo/r16/labs/benchmark-pg17/connection.env
+          test -f "$connection_file"
+          set -a
+          source "$connection_file"
+          set +a
+          export DATABASE_SSL=false NOISIA_R16_LOCAL_PG_LAB=r16-benchmark-pg17
+          corepack pnpm --filter @noisia/db db:smoke:migrations
+
+      - name: Run the four exact D native cases once
+        id: native
+        working-directory: target
+        env:
+          NOISIA_R16_STATEMENT_FRAME_PG: 'true'
+          NOISIA_R16_NATIVE_FIXTURE_PG: 'true'
+          NOISIA_MASS_LABELING_ENABLED: 'true'
+          NOISIA_SIGNAL_LISTENING_ENABLED: 'true'
+          NOISIA_JEV_PROVIDER_ENABLED: 'true'
+          NOISIA_JEV_STREAMING_V2_ENABLED: 'true'
+          R16_FRAME_PROBE_ROOT: ${{ github.workspace }}/probe
+          R16_FRAME_PROBE_SHA: ${{ github.sha }}
+          FRAME_ARTIFACT_ROOT: ${{ runner.temp }}/r16-statement-frame-${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          connection_file=.data/piloto-masivo/r16/labs/benchmark-pg17/connection.env
+          test -f "$connection_file"
+          set -a
+          source "$connection_file"
+          set +a
+          export DATABASE_SSL=false NOISIA_R16_LOCAL_PG_LAB=r16-benchmark-pg17
+          set +e
+          timeout 55m corepack pnpm exec node --test --test-concurrency=1 --test-reporter=tap --import tsx \
+            infrastructure/db/migrations/signal-listening-statement-frame.postgres.test.ts 2>&1 | tee "$FRAME_ARTIFACT_ROOT/statement-frame.native.tap"
+          statuses=("${PIPESTATUS[@]}")
+          test_status=${statuses[0]}
+          tee_status=${statuses[1]}
+          set -e
+          if [ "$tee_status" -ne 0 ] && [ "$test_status" -eq 0 ]; then test_status=125; fi
+          chmod 600 "$FRAME_ARTIFACT_ROOT/statement-frame.native.tap"
+          echo "exit_status=$test_status" >> "$GITHUB_OUTPUT"
+          if [ "$test_status" -ne 0 ]; then exit "$test_status"; fi
+
+      - name: Stop only the owned D oracle lab
+        id: lab_down
+        if: always() && env.R16_STATEMENT_FRAME_LAB_OWNED == 'true'
+        working-directory: target
+        run: |
+          set -euo pipefail
+          scripts/r16/lab-down.sh
+
+      - name: Verify source trees remained pinned and clean
+        id: source_after
+        if: always()
+        working-directory: target
+        run: |
+          set -euo pipefail
+          target_after=$(git rev-parse HEAD)
+          probe_after=$(git -C ../probe rev-parse HEAD)
+          test "$target_after" = "$TARGET_REF"
+          test "$probe_after" = "$PROBE_REF"
+          test -z "$(git status --porcelain --untracked-files=all)"
+          test -z "$(git -C ../probe status --porcelain --untracked-files=all)"
+          printf 'target_sha_after=%s\nprobe_sha_after=%s\n' "$target_after" "$probe_after" >> "$GITHUB_OUTPUT"
+
+      - name: Validate exact TAP, result, source bindings, and artifact caps
+        id: verify
+        if: always()
+        env:
+          PURE_OUTCOME: ${{ steps.pure.outcome }}
+          PURE_EXIT: ${{ steps.pure.outputs.exit_status }}
+          NATIVE_OUTCOME: ${{ steps.native.outcome }}
+          NATIVE_EXIT: ${{ steps.native.outputs.exit_status }}
+          LAB_DOWN_OUTCOME: ${{ steps.lab_down.outcome }}
+          SOURCE_AFTER_OUTCOME: ${{ steps.source_after.outcome }}
+          TARGET_AFTER: ${{ steps.source_after.outputs.target_sha_after }}
+          PROBE_AFTER: ${{ steps.source_after.outputs.probe_sha_after }}
+          FRAME_ARTIFACT_ROOT: ${{ runner.temp }}/r16-statement-frame-${{ github.run_id }}-${{ github.run_attempt }}
+          FRAME_REJECTION_ROOT: ${{ runner.temp }}/r16-statement-frame-rejected-${{ github.run_id }}-${{ github.run_attempt }}
+          TARGET_REF: ${{ inputs.target_ref }}
+          PROBE_REF: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          node --input-type=module - "$FRAME_ARTIFACT_ROOT" "$FRAME_REJECTION_ROOT" "$GITHUB_WORKSPACE/target" "$GITHUB_WORKSPACE/probe" "$TARGET_REF" "$PROBE_REF" \
+            "$TARGET_AFTER" "$PROBE_AFTER" "$PURE_OUTCOME" "$PURE_EXIT" "$NATIVE_OUTCOME" "$NATIVE_EXIT" "$LAB_DOWN_OUTCOME" "$SOURCE_AFTER_OUTCOME" "$GITHUB_OUTPUT" <<'NODE'
+          import fs from 'node:fs';
+          import path from 'node:path';
+          import {parseStatementFrameNativeTAPV1,parseStatementFramePureTAPV1} from './probe/scripts/r16-diagnostics/listening-small/statement-frame-native-harness.mjs';
+          const [artifactRoot,rejectionRoot,targetRoot,probeRoot,targetSha,probeSha,targetAfter,probeAfter,pureOutcome,pureExit,nativeOutcome,nativeExit,labDownOutcome,sourceAfterOutcome,githubOutput]=process.argv.slice(2);
+          const {pathToFileURL}=await import('node:url');
+          const writeSafeRejection=reason=>{
+            const code=/^statement_frame_[a-z0-9_]{1,100}$/.test(reason??'')?reason:'statement_frame_evidence_invalid';
+            try{
+              const real=fs.realpathSync(rejectionRoot),stat=fs.lstatSync(rejectionRoot);
+              if(real!==rejectionRoot||!stat.isDirectory()||stat.isSymbolicLink()||(stat.mode&0o777)!==0o700)throw Error();
+              const receipt={contract:'r16-statement-frame-rejection-v1',status:'rejected',reason:code,diagnostic_only:true,h1_accepted:false};
+              const bytes=Buffer.from(`${JSON.stringify(receipt,null,2)}\n`);
+              if(bytes.length>8192)throw Error();
+              fs.writeFileSync(path.join(rejectionRoot,'rejection.json'),bytes,{flag:'wx',mode:0o600});
+              fs.appendFileSync(githubOutput,'rejection_ready=true\n');
+            }catch{process.stderr.write('statement_frame_evidence:rejection_receipt_unavailable\n');process.exitCode=1;return;}
+            process.stderr.write(`statement_frame_evidence:${code}\n`);
+            process.exitCode=1;
+          };
+          try{
+            if(pureOutcome!=='success'||nativeOutcome!=='success'||labDownOutcome!=='success'||sourceAfterOutcome!=='success')
+              throw Error('statement_frame_native_step_failed');
+            if(fs.realpathSync(artifactRoot)!==artifactRoot||fs.realpathSync(targetRoot)!==targetRoot||fs.realpathSync(probeRoot)!==probeRoot)
+              throw Error('statement_frame_path_identity_invalid');
+            const expected=['statement-frame.native.tap','statement-frame.pure.tap'];
+            const entries=fs.readdirSync(artifactRoot).sort();
+            if(JSON.stringify(entries)!==JSON.stringify(expected))throw Error('statement_frame_initial_file_set_invalid');
+            const limits={'statement-frame.native.tap':2000000,'statement-frame.pure.tap':2000000};
+            for(const name of entries){const file=path.join(artifactRoot,name),stat=fs.lstatSync(file);if(!stat.isFile()||stat.isSymbolicLink()||stat.size>limits[name])throw Error('statement_frame_tap_file_invalid');}
+            const nativeBytes=fs.readFileSync(path.join(artifactRoot,'statement-frame.native.tap'));
+            const pureBytes=fs.readFileSync(path.join(artifactRoot,'statement-frame.pure.tap'));
+            const {SOURCE_DECLARATIONS_V1}=await import(pathToFileURL(path.join(probeRoot,'scripts/r16-diagnostics/listening-small/query-cpu-oracle.mjs')).href);
+            const newSourcePaths=['signal-listening-statement-frame.oracle.ts','signal-listening-statement-frame.test.ts','signal-listening-statement-frame.postgres.test.ts'];
+            const sourceFiles=Object.fromEntries(newSourcePaths.map(file=>{
+              const full=path.join(targetRoot,'infrastructure/db/migrations',file),stat=fs.lstatSync(full);
+              if(!stat.isFile()||stat.isSymbolicLink()||fs.realpathSync(full)!==full)throw Error('statement_frame_source_file_invalid');
+              return[file,fs.readFileSync(full)];
+            }));
+            const nativeReceipt=parseStatementFrameNativeTAPV1(nativeBytes,{exitStatus:Number(nativeExit),targetSha,probeSha,
+              targetBefore:targetSha,targetAfter,probeBefore:probeSha,probeAfter,sourceDeclarations:SOURCE_DECLARATIONS_V1,sourceFiles});
+            const pureReceipt=parseStatementFramePureTAPV1(pureBytes,{exitStatus:Number(pureExit),targetSha,probeSha});
+            fs.writeFileSync(path.join(artifactRoot,'statement-frame.native.receipt.json'),`${JSON.stringify(nativeReceipt,null,2)}\n`,{flag:'wx',mode:0o600});
+            fs.writeFileSync(path.join(artifactRoot,'statement-frame.pure.receipt.json'),`${JSON.stringify(pureReceipt,null,2)}\n`,{flag:'wx',mode:0o600});
+            const finalExpected=['statement-frame.native.receipt.json','statement-frame.native.tap','statement-frame.pure.receipt.json','statement-frame.pure.tap'].sort();
+            const finalEntries=fs.readdirSync(artifactRoot).sort();
+            if(JSON.stringify(finalEntries)!==JSON.stringify(finalExpected))throw Error('statement_frame_artifact_file_set_invalid');
+            const fileLimits={'statement-frame.native.receipt.json':1048576,'statement-frame.native.tap':2000000,
+              'statement-frame.pure.receipt.json':65536,'statement-frame.pure.tap':2000000};
+            let total=0;
+            for(const name of finalEntries){const stat=fs.lstatSync(path.join(artifactRoot,name));if(!stat.isFile()||stat.isSymbolicLink()||stat.size>fileLimits[name])throw Error('statement_frame_artifact_file_invalid');total+=stat.size;}
+            if(total>8388608)throw Error('statement_frame_artifact_expanded_size_invalid');
+            const {deflateRawSync}=await import('node:zlib');
+            let estimatedZipBytes=22;
+            for(const name of finalEntries){
+              const fileBytes=fs.readFileSync(path.join(artifactRoot,name)),nameBytes=Buffer.byteLength(name);
+              estimatedZipBytes+=30+nameBytes+deflateRawSync(fileBytes,{level:6}).byteLength+46+nameBytes;
+            }
+            estimatedZipBytes+=65536;
+            if(estimatedZipBytes>=4194304)throw Error('statement_frame_artifact_zip_size_invalid');
+            fs.appendFileSync(githubOutput,`status=verified\ntarget_sha=${targetSha}\nprobe_sha=${probeSha}\nnative_selected_pass=4\nartifact_ready=true\n`);
+          }catch(error){writeSafeRejection(error?.message?.split(/\r?\n/u,1)[0]);}
+          NODE
+
+      - name: Upload verified four-file D evidence
+        if: always() && steps.verify.outputs.artifact_ready == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: r16-statement-frame-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/r16-statement-frame-${{ github.run_id }}-${{ github.run_attempt }}
+          compression-level: 6
+          if-no-files-found: error
+          retention-days: 2
+
+      - name: Upload bounded rejection evidence
+        if: always() && steps.verify.outputs.rejection_ready == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: r16-statement-frame-rejection-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/r16-statement-frame-rejected-${{ github.run_id }}-${{ github.run_attempt }}/rejection.json
+          if-no-files-found: error
+          retention-days: 2
