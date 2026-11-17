@@ -70,6 +70,22 @@ type Copy = {
   gateCta: string;
   gateHasLink: string;
   fullMetaTitle: (title: string) => string;
+  unlock: UnlockCopy;
+};
+
+export type UnlockCopy = {
+  title: string;
+  text: (remaining: number) => string;
+  name: string;
+  email: string;
+  company: string;
+  marketing: string;
+  privacy: string;
+  privacyLink: string;
+  submit: string;
+  sending: string;
+  error: string;
+  locked: string;
 };
 
 export const studiesPage: Record<"es" | "en", Copy> = {
@@ -90,7 +106,7 @@ export const studiesPage: Record<"es" | "en", Copy> = {
     markets: names.es,
     marketSummary: (markets) => (markets.length > 2 ? `${markets.length} mercados` : list("es-MX", markets.map((m) => names.es[m]))),
     marketList: (markets) => list("es-MX", markets.map((m) => names.es[m])),
-    access: { abierto: "Libre", registro: "Con registro", solo_link: "Bajo solicitud" },
+    access: { abierto: "Gratis", registro: "Gratis", solo_link: "Bajo solicitud" },
     languages: { es: "español", en: "inglés", pt: "portugués", de: "alemán" },
     allStudies: "Todos los estudios",
     eyebrow: "Estudio",
@@ -102,12 +118,12 @@ export const studiesPage: Record<"es" | "en", Copy> = {
     mentions: (mentions) => `${mentions} menciones`,
     fullCta: "Ver el estudio",
     fullMeta: (slides, language, access) =>
-      [`${slides} láminas`, `en ${language}`, access === "abierto" ? null : access === "registro" ? "con registro" : "bajo solicitud"].filter(Boolean).join(" · "),
+      [`${slides} láminas`, `en ${language}`, access === "solo_link" ? "bajo solicitud" : null].filter(Boolean).join(" · "),
     fullTitle: "El estudio completo",
     fullText: (slides, language) => `${slides} láminas con cada hallazgo, sus cifras y la evidencia detrás. Está en ${language} y se descarga en PDF.`,
     accessNote: {
       abierto: "Se abre sin registro.",
-      registro: "Se comparte con registro. Si recibiste un enlace personal, ya lo tienes abierto.",
+      registro: "Gratis. Solo te pedimos nombre, correo y empresa.",
       solo_link: "Se comparte bajo solicitud. Si recibiste un enlace personal, ya lo tienes abierto."
     },
     piecesTitle: "Piezas de este estudio",
@@ -137,7 +153,21 @@ export const studiesPage: Record<"es" | "en", Copy> = {
     },
     gateCta: "Pedir el estudio",
     gateHasLink: "¿Recibiste un enlace personal? Ábrelo desde tu correo o tu mensaje y el estudio se abre aquí.",
-    fullMetaTitle: (title) => `${title} · Estudio completo`
+    fullMetaTitle: (title) => `${title} · Estudio completo`,
+    unlock: {
+      title: "Abre el estudio completo",
+      text: (remaining) => `Faltan ${remaining} láminas. Déjanos tus datos y se abren ahora; también te mandamos el link a tu correo.`,
+      name: "Nombre",
+      email: "Correo",
+      company: "Empresa",
+      marketing: "Quiero recibir los próximos estudios de Noisia.",
+      privacy: "Usamos tus datos como dice el",
+      privacyLink: "aviso de privacidad",
+      submit: "Abrir el estudio",
+      sending: "Abriendo…",
+      error: "No pudimos abrirlo. Revisa tus datos e inténtalo de nuevo.",
+      locked: "Se abre con tus datos"
+    }
   },
   en: {
     metaTitle: "Social intelligence studies",
@@ -156,7 +186,7 @@ export const studiesPage: Record<"es" | "en", Copy> = {
     markets: names.en,
     marketSummary: (markets) => (markets.length > 2 ? `${markets.length} markets` : list("en-US", markets.map((m) => names.en[m]))),
     marketList: (markets) => list("en-US", markets.map((m) => names.en[m])),
-    access: { abierto: "Free", registro: "Sign-up", solo_link: "On request" },
+    access: { abierto: "Free", registro: "Free", solo_link: "On request" },
     languages: { es: "Spanish", en: "English", pt: "Portuguese", de: "German" },
     allStudies: "All studies",
     eyebrow: "Study",
@@ -168,12 +198,12 @@ export const studiesPage: Record<"es" | "en", Copy> = {
     mentions: (mentions) => `${mentions} mentions`,
     fullCta: "See the study",
     fullMeta: (slides, language, access) =>
-      [`${slides} slides`, `in ${language}`, access === "abierto" ? null : access === "registro" ? "with sign-up" : "on request"].filter(Boolean).join(" · "),
+      [`${slides} slides`, `in ${language}`, access === "solo_link" ? "on request" : null].filter(Boolean).join(" · "),
     fullTitle: "The full study",
     fullText: (slides, language) => `${slides} slides with every finding, its figures and the evidence behind it. It is in ${language} and downloads as a PDF.`,
     accessNote: {
       abierto: "It opens without signing up.",
-      registro: "Shared with sign-up. If you received a personal link, it is already open for you.",
+      registro: "Free. We only ask for your name, email and company.",
       solo_link: "Shared on request. If you received a personal link, it is already open for you."
     },
     piecesTitle: "Pieces from this study",
@@ -203,6 +233,20 @@ export const studiesPage: Record<"es" | "en", Copy> = {
     },
     gateCta: "Request the study",
     gateHasLink: "Did you receive a personal link? Open it from your email or message and the study opens here.",
-    fullMetaTitle: (title) => `${title} · Full study`
+    fullMetaTitle: (title) => `${title} · Full study`,
+    unlock: {
+      title: "Open the full study",
+      text: (remaining) => `${remaining} more slides. Leave your details and they open now; we also email you the link.`,
+      name: "Name",
+      email: "Email",
+      company: "Company",
+      marketing: "Send me Noisia's next studies.",
+      privacy: "We use your data as described in our",
+      privacyLink: "privacy notice",
+      submit: "Open the study",
+      sending: "Opening…",
+      error: "We couldn't open it. Check your details and try again.",
+      locked: "Opens with your details"
+    }
   }
 };

@@ -1,12 +1,12 @@
 import { cookies } from "next/headers";
 import { getStudy, getStudyFile } from "@/content/studies";
-import { accessCookieName, canOpen, recordEvent } from "@/lib/content/access";
+import { accessCookieName, canOpen, isPreviewSlide, READER_COOKIE, recordEvent } from "@/lib/content/access";
 
 /**
  * Serves the files of a study: the deck the builder made, its slide images, the PDF, the cover and
  * the study's image.
  *
- * Only the cover and the image are public. Everything else checks access first and goes out with
+ * The cover, the image and the preview slides of a `registro` study are public. Everything else checks access first and goes out with
  * `Cache-Control: private`, so Cloudflare never keeps a gated study and serves it to someone
  * who did not unlock it. The browser gets these paths, never a direct link to the storage.
  */
@@ -39,9 +39,10 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
     });
   }
 
-  const token = (await cookies()).get(accessCookieName(study.id))?.value;
-  const access = await canOpen(study, token);
-  if (!access.allowed) return deny(403);
+  const jar = await cookies();
+  const token = jar.get(accessCookieName(study.id))?.value;
+  const access = await canOpen(study, token, jar.get(READER_COOKIE)?.value);
+  if (!access.allowed && !isPreviewSlide(study, path)) return deny(403);
 
   const isPdf = path === "pdf" || path.startsWith("pdf/");
   const filePath = isPdf ? (study.pdfPath ?? "") : path;
@@ -50,7 +51,7 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
   if (!file) return deny(404);
 
   // Open studies may stay in the reader's own browser cache; gated ones are never stored.
-  const cache = study.accessMode === "abierto" && !access.viaLink ? "private, max-age=3600" : "private, no-store";
+  const cache = !access.allowed ? "public, max-age=3600" : study.accessMode === "abierto" && !access.viaLink ? "private, max-age=3600" : "private, no-store";
   const headers: Record<string, string> = { "Content-Type": file.contentType, "Cache-Control": cache, "X-Robots-Tag": "noindex, nofollow" };
 
   if (isPdf) {

@@ -9,7 +9,7 @@ import { Button } from "@/components/ui/Button";
 import { studiesPage } from "@/content/pages/studies";
 import { getStudy, slidePaths } from "@/content/studies";
 import { getPathname } from "@/i18n/navigation";
-import { accessCookieName, canOpen, recordEvent } from "@/lib/content/access";
+import { accessCookieName, canOpen, PREVIEW_SLIDES, READER_COOKIE, recordEvent, recordReaderOpen } from "@/lib/content/access";
 import { SITE_URL } from "@/lib/site";
 
 /**
@@ -43,8 +43,59 @@ export default async function StudyViewerPage({ params, searchParams }: { params
   const title = study.summary[lang].title;
   const studyHref = getPathname({ locale, href: { pathname: "/insights/estudios/[slug]", params: { slug: study.id } } });
 
-  const token = (await cookies()).get(accessCookieName(study.id))?.value;
-  const access = await canOpen(study, token);
+  const jar = await cookies();
+  const token = jar.get(accessCookieName(study.id))?.value;
+  const reader = jar.get(READER_COOKIE)?.value;
+  const access = await canOpen(study, token, reader);
+  const base = `/api/content/studies/${study.id}`;
+  const slides = slidePaths(study).map((path) => `${base}/${path}?v=${study.version}`);
+  const requested = Number.parseInt((await searchParams).slide ?? "", 10);
+  const initialSlide = Number.isFinite(requested) && requested >= 1 && requested <= slides.length ? requested - 1 : 0;
+  const viewerProps = {
+    title,
+    studyHref,
+    shareUrl: new URL(studyHref, SITE_URL).toString(),
+    deckSrc: `${base}/deck/index.html?v=${study.version}`,
+    slides,
+    initialSlide,
+    pdfHref: study.pdfPath ? `${base}/pdf?v=${study.version}` : null,
+    labels: {
+      close: c.close,
+      slides: c.slides(slides.length),
+      slideOf: slides.map((_, i) => c.slideOf(i + 1, slides.length)),
+      slideAlt: slides.map((_, i) => c.slideAlt(i + 1, slides.length)),
+      prev: c.prev,
+      next: c.next,
+      showThumbs: c.showThumbs,
+      hideThumbs: c.hideThumbs,
+      zoomIn: c.zoomIn,
+      zoomOut: c.zoomOut,
+      fit: c.fit,
+      share: c.share,
+      copied: c.copied,
+      downloadPdf: c.downloadPdf,
+      present: c.present,
+      tapHint: c.tapHint
+    }
+  };
+
+  // A `registro` study shows its first slides and opens the rest with name, email and company.
+  if (!access.allowed && study.accessMode === "registro") {
+    const preview = Math.min(PREVIEW_SLIDES, slides.length);
+    const { text, ...unlockCopy } = c.unlock;
+    return (
+      <StudyViewer
+        {...viewerProps}
+        unlock={{
+          endpoint: `${base}/unlock`,
+          locale: lang,
+          preview,
+          privacyHref: getPathname({ locale, href: "/privacidad" }),
+          copy: { ...unlockCopy, text: text(slides.length - preview) }
+        }}
+      />
+    );
+  }
 
   if (!access.allowed) {
     const mode = study.accessMode === "abierto" ? "solo_link" : study.accessMode;
@@ -74,39 +125,8 @@ export default async function StudyViewerPage({ params, searchParams }: { params
     );
   }
 
-  await recordEvent(study.id, access.viaLink ? token : undefined, "open");
-  const base = `/api/content/studies/${study.id}`;
-  const slides = slidePaths(study).map((path) => `${base}/${path}?v=${study.version}`);
-  const requested = Number.parseInt((await searchParams).slide ?? "", 10);
-  const initialSlide = Number.isFinite(requested) && requested >= 1 && requested <= slides.length ? requested - 1 : 0;
+  if (access.viaReader && reader) await recordReaderOpen(study.id, reader);
+  else await recordEvent(study.id, access.viaLink ? token : undefined, "open");
 
-  return (
-    <StudyViewer
-      title={title}
-      studyHref={studyHref}
-      shareUrl={new URL(studyHref, SITE_URL).toString()}
-      deckSrc={`${base}/deck/index.html?v=${study.version}`}
-      slides={slides}
-      initialSlide={initialSlide}
-      pdfHref={study.pdfPath ? `${base}/pdf?v=${study.version}` : null}
-      labels={{
-        close: c.close,
-        slides: c.slides(slides.length),
-        slideOf: slides.map((_, i) => c.slideOf(i + 1, slides.length)),
-        slideAlt: slides.map((_, i) => c.slideAlt(i + 1, slides.length)),
-        prev: c.prev,
-        next: c.next,
-        showThumbs: c.showThumbs,
-        hideThumbs: c.hideThumbs,
-        zoomIn: c.zoomIn,
-        zoomOut: c.zoomOut,
-        fit: c.fit,
-        share: c.share,
-        copied: c.copied,
-        downloadPdf: c.downloadPdf,
-        present: c.present,
-        tapHint: c.tapHint
-      }}
-    />
-  );
+  return <StudyViewer {...viewerProps} />;
 }

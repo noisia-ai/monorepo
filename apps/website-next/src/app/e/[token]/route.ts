@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getStudy } from "@/content/studies";
-import { accessCookieName, linkStudy, TOKEN_PATTERN } from "@/lib/content/access";
+import { ACCESS_COOKIE_DAYS, accessCookieName, linkStudy, TOKEN_PATTERN } from "@/lib/content/access";
 import { requestOrigin } from "@/lib/site";
 
 /**
@@ -13,7 +13,7 @@ import { requestOrigin } from "@/lib/site";
 
 export const dynamic = "force-dynamic";
 
-const LINK_COOKIE_DAYS = 90;
+
 
 export async function GET(request: Request, { params }: { params: Promise<{ token: string }> }) {
   const { token } = await params;
@@ -43,7 +43,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ toke
       secure: origin.protocol === "https:",
       sameSite: "lax",
       path: "/",
-      maxAge: LINK_COOKIE_DAYS * 24 * 60 * 60
+      maxAge: ACCESS_COOKIE_DAYS * 24 * 60 * 60
     });
   }
   return response;
