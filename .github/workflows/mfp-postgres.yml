@@ -17,11 +17,15 @@ on:
           - listening-smoke
         default: full
         required: true
-      pipeline_profile:
-        description: Run the isolated consumer pipeline diagnostic instead of submit contention
-        type: boolean
-        default: false
-        required: false
+      listening_diagnostic:
+        description: Select one isolated diagnostic for the focused listening smoke
+        type: choice
+        options:
+          - submit-contention
+          - pipeline
+          - calibration-materialization
+        default: submit-contention
+        required: true
 
 permissions:
   contents: read
@@ -1288,7 +1292,7 @@ jobs:
 
   submit-contention-profile-experimental:
     name: R16 Submit contention profile (experimental, isolated lab)
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.scope == 'listening-smoke' && !inputs.pipeline_profile }}
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.scope == 'listening-smoke' && inputs.listening_diagnostic == 'submit-contention' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
@@ -1438,7 +1442,7 @@ jobs:
 
   listening-pipeline-profile-experimental:
     name: R16 Listening pipeline profile (experimental, isolated lab)
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.scope == 'listening-smoke' && inputs.pipeline_profile }}
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.scope == 'listening-smoke' && inputs.listening_diagnostic == 'pipeline' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
@@ -1583,5 +1587,157 @@ jobs:
           fi
           if docker volume inspect r16bench-benchmark-pg17_postgres-data >/dev/null 2>&1; then
             echo '::error::Owned experimental Listening pipeline PostgreSQL volume survived cleanup'
+            exit 1
+          fi
+
+  calibration-insert-materialization-experimental:
+    name: R16 Calibration INSERT materialization (experimental, isolated lab)
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.scope == 'listening-smoke' && inputs.listening_diagnostic == 'calibration-materialization' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      R16BENCH_RUN_ID: benchmark-pg17
+      R16BENCH_SERVICES: postgres,redis
+      NOISIA_R16_LOCAL_PG_LAB: r16-benchmark-pg17
+      DATABASE_SSL: 'false'
+      R16_CALIBRATION_INSERT_EVIDENCE_DIR: .data/piloto-masivo/r16/calibration-insert-native-evidence
+    steps:
+      - uses: actions/checkout@v4
+      - name: Initialize an empty TAP receipt for the experimental calibration profile
+        run: printf '%s\n' '# native calibration INSERT materialization did not start' > calibration-insert-materialization.tap
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+      - name: Install frozen Node workspace dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Require the owned experimental container, volume, and private files to be absent
+        run: |
+          set -euo pipefail
+          container_name=r16-benchmark-pg17
+          volume_name=r16bench-benchmark-pg17_postgres-data
+          lab_dir=.data/piloto-masivo/r16/labs/benchmark-pg17
+          if docker inspect "$container_name" >/dev/null 2>&1; then
+            echo '::error::The experimental calibration materialization PostgreSQL container already exists'
+            exit 1
+          fi
+          if docker volume inspect "$volume_name" >/dev/null 2>&1; then
+            echo '::error::The experimental calibration materialization PostgreSQL volume already exists'
+            exit 1
+          fi
+          if [[ -e "$lab_dir/private.env" || -e "$lab_dir/connection.env" ]]; then
+            echo '::error::Private files for the experimental calibration materialization lab already exist'
+            exit 1
+          fi
+      - name: Start the owned official PostgreSQL 17 and Redis lab
+        run: |
+          set -euo pipefail
+          printf '%s\n' 'R16_CALIBRATION_INSERT_LAB_OWNED=true' >> "$GITHUB_ENV"
+          scripts/r16/lab-up.sh
+      - name: Apply migrations to the fresh experimental lab
+        env:
+          NOISIA_DB_SMOKE_RESET_SCHEMA: 'true'
+          NOISIA_DB_SMOKE_EMULATE_SUPABASE_ROLES: 'true'
+          NOISIA_MFP_PG_CI: 'true'
+        run: |
+          set -euo pipefail
+          connection_file=.data/piloto-masivo/r16/labs/benchmark-pg17/connection.env
+          test -f "$connection_file"
+          set -a
+          source "$connection_file"
+          set +a
+          export DATABASE_SSL=false
+          export NOISIA_R16_LOCAL_PG_LAB=r16-benchmark-pg17
+          pnpm --filter @noisia/db db:smoke:migrations
+      - name: Run the exact native calibration INSERT materialization profile
+        env:
+          NOISIA_R16_CALIBRATION_INSERT_PG: 'true'
+          NOISIA_R16_NATIVE_FIXTURE_PG: 'true'
+          NOISIA_MASS_LABELING_ENABLED: 'true'
+          NOISIA_SIGNAL_LISTENING_ENABLED: 'true'
+          NOISIA_JEV_PROVIDER_ENABLED: 'true'
+          NOISIA_JEV_STREAMING_V2_ENABLED: 'true'
+        run: |
+          set -euo pipefail
+          connection_file=.data/piloto-masivo/r16/labs/benchmark-pg17/connection.env
+          test -f "$connection_file"
+          set -a
+          source "$connection_file"
+          set +a
+          export DATABASE_SSL=false
+          export NOISIA_R16_LOCAL_PG_LAB=r16-benchmark-pg17
+          set +e
+          pnpm exec node --test --test-concurrency=1 --import tsx \
+            infrastructure/db/migrations/signal-listening-calibration-insert.postgres.test.ts \
+            2>&1 | tee calibration-insert-materialization.tap
+          test_status=${PIPESTATUS[0]}
+          set -e
+          if [[ "$test_status" -ne 0 ]] \
+            || ! grep -qx '# tests 1' calibration-insert-materialization.tap \
+            || ! grep -qx '# pass 1' calibration-insert-materialization.tap \
+            || ! grep -qx '# fail 0' calibration-insert-materialization.tap \
+            || ! grep -qx '# cancelled 0' calibration-insert-materialization.tap \
+            || ! grep -qx '# skipped 0' calibration-insert-materialization.tap \
+            || ! grep -qx '# Subtest: native calibration INSERT materialization preserves fresh evidence and paired execution' calibration-insert-materialization.tap; then
+            echo '::error::The native calibration INSERT materialization profile failed, was skipped, or did not execute the exact test'
+            exit 1
+          fi
+      - name: Validate the native calibration INSERT materialization JSON
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          path = Path(os.environ['R16_CALIBRATION_INSERT_EVIDENCE_DIR']) / 'calibration-insert-materialization.json'
+          if not path.is_file() or path.stat().st_size <= 0 or path.stat().st_size > 2 * 1024 * 1024:
+              raise SystemExit('Calibration INSERT materialization JSON is missing, empty, or exceeds 2 MiB')
+          with path.open(encoding='utf-8') as stream:
+              value = json.load(stream)
+          if type(value) is not dict:
+              raise SystemExit('Calibration INSERT materialization JSON must be a single object')
+          expected = {
+              'contract': 'r16-calibration-insert-materialization-v1',
+              'status': 'observed',
+              'diagnostic_only': True,
+              'h1_accepted': False,
+              'cpu': 'UNKNOWN',
+              'candidate_accepted': True,
+          }
+          if any(value.get(key) != expected_value for key, expected_value in expected.items()):
+              raise SystemExit('Calibration INSERT materialization JSON does not match its diagnostic contract')
+          gates = value.get('gates')
+          if type(gates) is not dict or any(gates.get(name) is not True for name in ('semantics', 'native_counters', 'paired_wall')):
+              raise SystemExit('Calibration INSERT materialization JSON is missing an explicit passing preregistered gate')
+          PY
+      - name: Upload calibration INSERT materialization diagnostic evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: r16-calibration-insert-materialization-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            calibration-insert-materialization.tap
+            .data/piloto-masivo/r16/calibration-insert-native-evidence/calibration-insert-materialization.json
+          if-no-files-found: error
+          retention-days: 14
+          include-hidden-files: true
+      - name: Stop and remove only the owned experimental calibration lab
+        if: ${{ always() && env.R16_CALIBRATION_INSERT_LAB_OWNED == 'true' }}
+        run: |
+          set -euo pipefail
+          lab_dir=.data/piloto-masivo/r16/labs/benchmark-pg17
+          if [[ -f "$lab_dir/private.env" ]]; then
+            R16BENCH_RUN_ID=benchmark-pg17 scripts/r16/lab-down.sh
+          fi
+          if docker inspect r16-benchmark-pg17 >/dev/null 2>&1; then
+            echo '::error::Owned experimental calibration INSERT PostgreSQL container survived cleanup'
+            exit 1
+          fi
+          if docker volume inspect r16bench-benchmark-pg17_postgres-data >/dev/null 2>&1; then
+            echo '::error::Owned experimental calibration INSERT PostgreSQL volume survived cleanup'
             exit 1
           fi
