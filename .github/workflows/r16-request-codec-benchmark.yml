@@ -1,0 +1,190 @@
+name: R16 request codec microbenchmark
+run-name: R16 request codec benchmark (manual, synthetic inputs only)
+
+on:
+  push:
+    branches:
+      - codex/r16-request-codec-benchmark
+      - codex/r16-request-codec-compose
+    paths:
+      - .github/workflows/r16-request-codec-benchmark.yml
+  workflow_dispatch:
+    inputs:
+      target_ref:
+        type: string
+        required: true
+        description: Exact 40-character SHA of the reviewed request codec candidate
+
+permissions:
+  contents: read
+
+concurrency:
+  group: r16-request-codec-benchmark-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  register-workflow:
+    name: Register the manual benchmark
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Confirm workflow registration only
+        run: echo 'R16 request codec benchmark registered; no benchmark ran.'
+
+  request-codec-benchmark:
+    name: Synthetic request codec CPU comparison
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    outputs:
+      status: ${{ steps.validate.outputs.status }}
+      target_sha: ${{ steps.validate.outputs.target_sha }}
+      probe_sha: ${{ steps.validate.outputs.probe_sha }}
+    steps:
+      - name: Validate exact target SHA input
+        env:
+          TARGET_REF: ${{ inputs.target_ref }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$TARGET_REF" =~ ^[0-9a-f]{40}$ ]]; then
+            echo 'target_ref_invalid' >&2
+            exit 1
+          fi
+
+      - name: Checkout probe at the dispatched workflow commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          path: probe
+          persist-credentials: false
+
+      - name: Checkout exact source candidate
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.target_ref }}
+          path: target
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up pinned pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.2
+
+      - name: Set up Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: pnpm
+          cache-dependency-path: target/pnpm-lock.yaml
+
+      - name: Install locked workspace dependencies
+        working-directory: target
+        run: pnpm install --frozen-lockfile
+
+      - name: Run benchmark contract tests
+        working-directory: probe
+        env:
+          NODE_OPTIONS: --max-old-space-size=384
+        run: node --test --test-concurrency=1 scripts/r16-diagnostics/listening-small/request-codec-benchmark.test.mjs
+
+      - name: Prepare private result directory
+        id: artifact_path
+        run: |
+          set -euo pipefail
+          artifact_dir="$RUNNER_TEMP/r16-request-codec-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          mkdir -m 700 "$artifact_dir"
+          echo "path=$artifact_dir/request-codec-benchmark.json" >> "$GITHUB_OUTPUT"
+
+      - name: Run old/new request codec comparison
+        id: benchmark
+        continue-on-error: true
+        working-directory: target
+        env:
+          NODE_OPTIONS: --max-old-space-size=384
+          TARGET_ROOT: ${{ github.workspace }}/target
+          PROBE_ROOT: ${{ github.workspace }}/probe
+          TARGET_SHA: ${{ inputs.target_ref }}
+          PROBE_SHA: ${{ github.sha }}
+          ARTIFACT_PATH: ${{ steps.artifact_path.outputs.path }}
+        run: |
+          set -euo pipefail
+          node --import tsx "$PROBE_ROOT/scripts/r16-diagnostics/listening-small/request-codec-benchmark.mjs" \
+            --run \
+            --target-root "$TARGET_ROOT" \
+            --target-sha "$TARGET_SHA" \
+            --probe-root "$PROBE_ROOT" \
+            --probe-sha "$PROBE_SHA" \
+            --artifact "$ARTIFACT_PATH"
+
+      - name: Validate the single bounded result or rejection
+        id: validate
+        if: always()
+        env:
+          ARTIFACT_PATH: ${{ steps.artifact_path.outputs.path }}
+          BENCHMARK_OUTCOME: ${{ steps.benchmark.outcome }}
+          TARGET_SHA: ${{ inputs.target_ref }}
+          PROBE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, os, pathlib, re, stat
+          path = pathlib.Path(os.environ['ARTIFACT_PATH'])
+          result = {'safe': 'false', 'status': 'missing', 'target_sha': '', 'probe_sha': ''}
+          try:
+              info = path.lstat()
+              parent = path.parent.lstat()
+              if not stat.S_ISREG(info.st_mode) or stat.S_ISLNK(info.st_mode) or stat.S_IMODE(info.st_mode) != 0o600 or not stat.S_ISDIR(parent.st_mode) or stat.S_ISLNK(parent.st_mode) or stat.S_IMODE(parent.st_mode) != 0o700:
+                  raise ValueError('artifact_path_invalid')
+              if info.st_size > 1048576 or list(path.parent.iterdir()) != [path]:
+                  raise ValueError('artifact_size_or_file_set_invalid')
+              value = json.loads(path.read_text(encoding='utf-8'))
+              if value.get('contract') != 'r16-request-codec-microbenchmark-v1' or value.get('diagnostic_only') is not True or value.get('h1_accepted') is not False or value.get('gain_claim') is not False:
+                  raise ValueError('artifact_contract_invalid')
+              if value.get('status') not in ('verified', 'rejected'):
+                  raise ValueError('artifact_status_invalid')
+              if value.get('status') == 'verified':
+                  target, probe = os.environ['TARGET_SHA'], os.environ['PROBE_SHA']
+                  if value.get('requested_target_sha') != target or value.get('target_git_sha_before') != target or value.get('target_git_sha_after') != target:
+                      raise ValueError('target_seal_invalid')
+                  if value.get('requested_probe_sha') != probe or value.get('probe_git_sha_before') != probe or value.get('probe_git_sha_after') != probe:
+                      raise ValueError('probe_seal_invalid')
+                  if len(value.get('trials', [])) != 8 or len(value.get('parity', [])) != 2:
+                      raise ValueError('result_counts_invalid')
+              else:
+                  if 'trials' in value or 'parity' in value or not re.fullmatch(r'[a-z][a-z0-9_]{1,80}', value.get('reason_code', '')):
+                      raise ValueError('rejection_shape_invalid')
+              result = {'safe': 'true', 'status': value['status'],
+                        'target_sha': value.get('requested_target_sha', os.environ['TARGET_SHA']),
+                        'probe_sha': value.get('requested_probe_sha', os.environ['PROBE_SHA'])}
+          except Exception:
+              result = {'safe': 'false', 'status': 'invalid', 'target_sha': '', 'probe_sha': ''}
+          with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as output:
+              for key, value in result.items():
+                  output.write(f'{key}={value}\n')
+          PY
+
+      - name: Upload the single result or bounded rejection
+        if: always() && steps.validate.outputs.safe == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: r16-request-codec-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ steps.artifact_path.outputs.path }}
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
+
+      - name: Require a verified comparison
+        if: always()
+        env:
+          BENCHMARK_OUTCOME: ${{ steps.benchmark.outcome }}
+          SAFE_RESULT: ${{ steps.validate.outputs.safe }}
+          RESULT_STATUS: ${{ steps.validate.outputs.status }}
+        run: |
+          set -euo pipefail
+          if [ "$BENCHMARK_OUTCOME" != success ] || [ "$SAFE_RESULT" != true ] || [ "$RESULT_STATUS" != verified ]; then
+            echo 'request_codec_benchmark_not_verified' >&2
+            exit 1
+          fi
