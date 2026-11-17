@@ -79,6 +79,32 @@ export function answerGuardProjectionOracleV1(c:string,arm:'C'|'E'){
  RETURNS jsonb LANGUAGE plpgsql SET search_path=public,extensions,pg_temp AS $answer_projection$
 ${declaration}
 BEGIN
-${load} RETURN jsonb_build_object('call',to_jsonb(call),'run',to_jsonb(r),'owner',to_jsonb(owner),'question',to_jsonb(q),'found',FOUND);
+${load} RETURN jsonb_build_object('call',to_jsonb(call),'run',to_jsonb(r),'owner',to_jsonb(owner),'question',to_jsonb(q),
+ 'field_types',jsonb_build_object('call',pg_typeof(call)::text,'run',pg_typeof(r)::text,'owner',pg_typeof(owner)::text,'question',pg_typeof(q)::text),'found',FOUND);
 END $answer_projection$;`;
+}
+/** Read the literal production APPLY statements; these are not a new protocol. */
+export async function answerGuardProductSqlV1(){
+ const files=[{file:'signal-listening-runs.ts',sha256:'86b080e064dbb97a80e11bec610f52a99b4101aacc6b51c8a88928a9ad69add2'},
+  {file:'signal-labeling-runs.ts',sha256:'b46e0b8d7a6d7b4957dd447d52c6b91ad9d9f1472bbe1d66d8a2842f8bd15646'}]as const;
+ const bodies=await Promise.all(files.map(async file=>{const text=await readFile(new URL('../'+file.file,import.meta.url),'utf8');assert.equal(sha(text),file.sha256);return text;}));
+ const literal=(body:string,needle:string)=>{assert.equal(body.split(needle).length,2);const at=body.indexOf(needle),a=body.lastIndexOf('`',at),b=body.indexOf('`',at);assert.ok(a>=0&&b>at);
+  const sql=body.slice(a+1,b);assert.ok(sql.startsWith(needle));assert.ok(!sql.includes('${'));return sql;};
+ const sql={answers:literal(bodies[0]!, 'INSERT INTO signal_listening_answers(workspace_id,root_id,input_digest,entity_context_digest,'),
+  results:literal(bodies[1]!, 'UPDATE signal_labeling_calls call SET results_applied=true,results=page.results,updated_at=now()'),
+  runFence:literal(bodies[1]!, 'WITH raw_run_fence AS MATERIALIZED('),
+  callLock:literal(bodies[1]!, 'SELECT id FROM signal_labeling_calls\n      WHERE workspace_id=$1 AND run_id=$2 AND id=ANY($3::uuid[]) ORDER BY id FOR UPDATE'),
+  replay:literal(bodies[1]!, 'SELECT call.id,call.results_applied,'),
+  mutationFence:literal(bodies[1]!, 'INSERT INTO signal_labeling_page_mutation_fences(workspace_id,run_id,lease_token,operation)')};
+ return{files,sql,hashes:Object.fromEntries(Object.entries(sql).map(([name,text])=>[name,sha(text)]))};
+}
+
+/** Drain native lock contenders before the caller restores the public C body.
+ * Even failed rollback/release must not abandon the other live query. */
+export async function drainAnswerGuardWaitersV1(holder:Pick<PoolClient,'query'|'release'>,pending:Promise<unknown>|undefined,contender?:Pick<PoolClient,'query'|'release'>){
+ const errors:unknown[]=[];
+ const close=async(client:Pick<PoolClient,'query'|'release'>)=>{let broken=false;try{await client.query('ROLLBACK');}catch(error){broken=true;errors.push(error);}
+  try{client.release(broken);}catch(error){errors.push(error);}};
+ await close(holder);if(pending)try{await pending;}catch(error){errors.push(error);}
+ if(contender)await close(contender);if(errors.length)throw new AggregateError(errors,'answer_guard_waiter_cleanup_failed');
 }
