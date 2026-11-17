@@ -20,7 +20,8 @@
     "content:load": "tsx scripts/content/load.ts",
     "content:publish": "tsx scripts/content/publish.ts",
     "content:study": "tsx scripts/content/study.ts",
-    "content:links": "tsx scripts/content/links.ts"
+    "content:links": "tsx scripts/content/links.ts",
+    "content:image": "tsx scripts/content/image.ts"
   },
   "dependencies": {
     "clsx": "^2.1.1",

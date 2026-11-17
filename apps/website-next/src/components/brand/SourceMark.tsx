@@ -1,5 +1,5 @@
 import type { ComponentType, CSSProperties, SVGProps } from "react";
-import { ChatLines, Community, Database, Journal, Linkedin, Megaphone, PercentageCircle, Search, Star } from "iconoir-react";
+import { Cart, ChatLines, Community, Database, Internet, Journal, Linkedin, Megaphone, PercentageCircle, Search, Star } from "iconoir-react";
 import {
   siAppstore,
   siDiscord,
@@ -62,7 +62,9 @@ const MARKS: Record<string, Mark> = {
   ads: { kind: "generic", label: { es: "Anuncios", en: "Ads" }, Icon: Megaphone },
   nps: { kind: "generic", label: { es: "NPS", en: "NPS" }, Icon: PercentageCircle },
   social: { kind: "generic", label: { es: "Redes sociales", en: "Social media" }, Icon: Community },
-  crm: { kind: "generic", label: { es: "CRM", en: "CRM" }, Icon: Database }
+  crm: { kind: "generic", label: { es: "CRM", en: "CRM" }, Icon: Database },
+  web: { kind: "generic", label: { es: "Web", en: "Web" }, Icon: Internet },
+  deals: { kind: "generic", label: { es: "Sitios de ofertas", en: "Deal sites" }, Icon: Cart }
 };
 
 const ALIASES: Record<string, string> = {
@@ -78,7 +80,12 @@ const ALIASES: Record<string, string> = {
   "búsqueda": "search",
   busqueda: "search",
   anuncios: "ads",
-  redes: "social"
+  redes: "social",
+  "sitios de ofertas": "deals",
+  "deal sites": "deals",
+  blogs: "web",
+  "sitios web": "web",
+  websites: "web"
 };
 
 // Free-text source names ("Reseñas de Google Maps", "Betting forums") still get the closest mark.

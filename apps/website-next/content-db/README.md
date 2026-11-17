@@ -55,6 +55,7 @@ pnpm content:publish --study <id> --retire             # take the study and its 
 pnpm content:links <id> <leads.csv> [--days 90]        # one personal link per lead, written to <leads>.links.csv
 pnpm content:links <id> --list                         # links of a study, with opens
 pnpm content:links --revoke <link-id>                  # close one link
+pnpm content:image <web folder> [--n 2]                # draw the study's image (STUDY_IMAGES.md)
 ```
 
 The `web/` folder is what a study agent delivers: `estudio.json` (schema in

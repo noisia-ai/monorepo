@@ -27,7 +27,9 @@ export const studySummarySchema = z.object({
   quote: z.object({ text, translation: text.optional(), platform: text, date: text }).optional(),
   method_note: text,
   /** The period in this language ("Jan–Oct 2026"); without it the page shows `period.label`. */
-  period_label: text.optional()
+  period_label: text.optional(),
+  /** What the study's image shows, for people who cannot see it. Required when the folder has one. */
+  image_alt: text.optional()
 });
 
 export const studySchema = z.object({
@@ -40,6 +42,11 @@ export const studySchema = z.object({
   base: z.object({ mentions: z.number().int().positive(), channels: z.array(text).min(1), cut_date: isoDate }),
   access: z.enum(ACCESS_MODES),
   full_language: z.enum(FULL_LANGUAGES),
+  /**
+   * The brief for the study's image (content-db/STUDY_IMAGES.md): who is in it and what they are
+   * doing, in English. `pnpm content:image` turns it into the full prompt.
+   */
+  image: z.object({ brief: text }).optional(),
   es: studySummarySchema,
   en: studySummarySchema
 });
