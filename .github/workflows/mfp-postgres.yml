@@ -17,6 +17,11 @@ on:
           - listening-smoke
         default: full
         required: true
+      listening_startup_prefix:
+        description: Run the isolated native Listening startup prefix diagnostic
+        type: boolean
+        default: false
+        required: false
 
 permissions:
   contents: read
@@ -1280,3 +1285,168 @@ jobs:
             echo '::error::Owned R16 statement shared-wire PostgreSQL volume survived cleanup'
             exit 1
           fi
+
+  listening-startup-prefix-experimental:
+    name: R16 Listening startup prefix diagnostic (isolated lab)
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.scope == 'listening-smoke' && inputs.listening_startup_prefix }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      R16BENCH_RUN_ID: benchmark-pg17
+      R16BENCH_SERVICES: postgres,redis
+      NOISIA_R16_LOCAL_PG_LAB: r16-benchmark-pg17
+      DATABASE_SSL: 'false'
+      R16_LISTENING_STARTUP_PREFIX_EVIDENCE_DIR: .data/piloto-masivo/r16/listening-startup-prefix-native-evidence
+    steps:
+      - uses: actions/checkout@v4
+      - name: Initialize an empty Listening startup prefix TAP receipt
+        run: printf '%s\n' '# native Listening startup prefix did not start' > listening-startup-prefix.tap
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+      - name: Install frozen Node workspace dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Require the owned startup prefix lab and private files to be absent
+        run: |
+          set -euo pipefail
+          if docker inspect r16-benchmark-pg17 >/dev/null 2>&1; then
+            echo '::error::The named R16 startup prefix PostgreSQL container already exists'
+            exit 1
+          fi
+          if docker volume inspect r16bench-benchmark-pg17_postgres-data >/dev/null 2>&1; then
+            echo '::error::The named R16 startup prefix PostgreSQL volume already exists'
+            exit 1
+          fi
+          lab_dir=.data/piloto-masivo/r16/labs/benchmark-pg17
+          if [[ -e "$lab_dir/private.env" || -e "$lab_dir/connection.env" ]]; then
+            echo '::error::Private files for the named R16 startup prefix lab already exist'
+            exit 1
+          fi
+      - name: Start the owned official PostgreSQL 17 and Redis lab
+        run: |
+          set -euo pipefail
+          printf '%s\n' 'R16_LISTENING_STARTUP_PREFIX_LAB_OWNED=true' >> "$GITHUB_ENV"
+          scripts/r16/lab-up.sh
+      - name: Apply migrations to the fresh startup prefix lab
+        env:
+          NOISIA_DB_SMOKE_RESET_SCHEMA: 'true'
+          NOISIA_DB_SMOKE_EMULATE_SUPABASE_ROLES: 'true'
+          NOISIA_MFP_PG_CI: 'true'
+        run: |
+          set -euo pipefail
+          connection_file=.data/piloto-masivo/r16/labs/benchmark-pg17/connection.env
+          test -f "$connection_file"
+          set -a
+          source "$connection_file"
+          set +a
+          export DATABASE_SSL=false
+          export NOISIA_R16_LOCAL_PG_LAB=r16-benchmark-pg17
+          pnpm --filter @noisia/db db:smoke:migrations
+      - name: Run the exact native Listening startup prefix profile
+        id: profile
+        env:
+          NOISIA_R16_LISTENING_STARTUP_PREFIX_PG: 'true'
+          NOISIA_R16_NATIVE_FIXTURE_PG: 'true'
+          NOISIA_MASS_LABELING_ENABLED: 'true'
+          NOISIA_SIGNAL_LISTENING_ENABLED: 'true'
+          NOISIA_JEV_PROVIDER_ENABLED: 'true'
+          NOISIA_JEV_STREAMING_V2_ENABLED: 'true'
+        run: |
+          set -o pipefail
+          connection_file=.data/piloto-masivo/r16/labs/benchmark-pg17/connection.env
+          test -f "$connection_file"
+          set -a
+          source "$connection_file"
+          set +a
+          export DATABASE_SSL=false
+          export NOISIA_R16_LOCAL_PG_LAB=r16-benchmark-pg17
+          set +e
+          pnpm exec node --test --test-concurrency=1 --import tsx \
+            infrastructure/db/migrations/signal-listening-startup-prefix.postgres.test.ts \
+            2>&1 | tee listening-startup-prefix.tap
+          test_status=${PIPESTATUS[0]}
+          set -e
+          if [[ "$test_status" -ne 0 ]] \
+            || ! grep -qx '# tests 1' listening-startup-prefix.tap \
+            || ! grep -qx '# pass 1' listening-startup-prefix.tap \
+            || ! grep -qx '# fail 0' listening-startup-prefix.tap \
+            || ! grep -qx '# cancelled 0' listening-startup-prefix.tap \
+            || ! grep -qx '# skipped 0' listening-startup-prefix.tap \
+            || ! grep -qx '# Subtest: native Listening startup prefix preserves admission and initial census without provider calls' listening-startup-prefix.tap; then
+            echo '::error::The native Listening startup prefix profile failed, was skipped, or did not execute the exact test'
+            exit 1
+          fi
+      - name: Stop and remove only the owned startup prefix lab
+        id: cleanup
+        if: ${{ always() && env.R16_LISTENING_STARTUP_PREFIX_LAB_OWNED == 'true' }}
+        run: |
+          set -euo pipefail
+          lab_dir=.data/piloto-masivo/r16/labs/benchmark-pg17
+          if [[ -f "$lab_dir/private.env" ]]; then
+            scripts/r16/lab-down.sh
+          fi
+          if docker inspect r16-benchmark-pg17 >/dev/null 2>&1; then
+            echo '::error::Owned R16 startup prefix PostgreSQL container survived cleanup'
+            exit 1
+          fi
+          if docker volume inspect r16bench-benchmark-pg17_postgres-data >/dev/null 2>&1; then
+            echo '::error::Owned R16 startup prefix PostgreSQL volume survived cleanup'
+            exit 1
+          fi
+      - name: Validate the native Listening startup prefix evidence
+        if: always()
+        env:
+          PROFILE_CONCLUSION: ${{ steps.profile.conclusion }}
+          CLEANUP_CONCLUSION: ${{ steps.cleanup.conclusion }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          path = Path(os.environ['R16_LISTENING_STARTUP_PREFIX_EVIDENCE_DIR']) / 'listening-startup-prefix.json'
+          if os.environ.get('PROFILE_CONCLUSION') != 'success' or os.environ.get('CLEANUP_CONCLUSION') != 'success':
+              raise SystemExit('startup prefix evidence is not accepted unless the native test and owned-lab cleanup both pass')
+          if not path.is_file() or path.stat().st_size <= 0 or path.stat().st_size > 2 * 1024 * 1024:
+              raise SystemExit('Listening startup prefix JSON is missing, empty, or exceeds 2 MiB')
+          with path.open(encoding='utf-8') as stream:
+              value = json.load(stream)
+          if type(value) is not dict:
+              raise SystemExit('Listening startup prefix JSON must be a single object')
+          expected = {
+              'contract': 'r16-listening-startup-prefix-v1',
+              'status': 'observed',
+              'diagnostic_only': True,
+              'h1_accepted': False,
+              'cpu': 'UNKNOWN',
+          }
+          if any(value.get(key) != expected_value for key, expected_value in expected.items()):
+              raise SystemExit('Listening startup prefix JSON does not match its diagnostic contract')
+          gates = value.get('gates')
+          required_gates = {
+              'source_binding',
+              'initial_census',
+              'zero_provider_calls',
+              'zero_listening_calls',
+              'no_recording_loss',
+              'cleanup_confirmed',
+          }
+          if type(gates) is not dict or set(gates) != required_gates or any(gates.get(key) is not True for key in required_gates):
+              raise SystemExit('Listening startup prefix JSON must explicitly pass every registered evidence gate')
+          PY
+      - name: Upload Listening startup prefix diagnostic evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: r16-listening-startup-prefix-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            listening-startup-prefix.tap
+            .data/piloto-masivo/r16/listening-startup-prefix-native-evidence/listening-startup-prefix.json
+          if-no-files-found: ignore
+          retention-days: 14
+          include-hidden-files: true
