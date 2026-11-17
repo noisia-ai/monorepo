@@ -1,7 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
-import { Download, Minus, NavArrowLeft, NavArrowRight, Plus, Presentation, ShareIos, SidebarCollapse, SidebarExpand, Xmark } from "iconoir-react";
+import { useCallback, useEffect, useId, useRef, useState, useSyncExternalStore } from "react";
+import { Download, Lock, Minus, NavArrowLeft, NavArrowRight, Plus, Presentation, ShareIos, SidebarCollapse, SidebarExpand, Xmark } from "iconoir-react";
 import styles from "./viewer.module.css";
 
 /**
@@ -11,6 +11,10 @@ import styles from "./viewer.module.css";
  * the page drives it directly (goTo, slidechange). On a phone a 16:9 slide is a fifth of its size
  * and its text unreadable, so the slides come as images one under the other: tapping one opens it
  * full size, where the phone can turn or zoom.
+ *
+ * A `registro` study the reader has not opened yet comes with `unlock`: its first slides show as
+ * images and from there the study sits blurred behind a small form (name, email, company). Sending
+ * it opens the study at once: the page reloads with the access cookies set.
  */
 
 const DESKTOP = "(min-width: 768px)";
@@ -51,6 +55,30 @@ type Props = {
   initialSlide: number;
   pdfHref: string | null;
   labels: ViewerLabels;
+  unlock?: Unlock;
+};
+
+export type Unlock = {
+  endpoint: string;
+  locale: "es" | "en";
+  /** How many slides show before the form. */
+  preview: number;
+  privacyHref: string;
+  copy: {
+    title: string;
+    /** "14 more slides. Leave your details…" */
+    text: string;
+    name: string;
+    email: string;
+    company: string;
+    marketing: string;
+    privacy: string;
+    privacyLink: string;
+    submit: string;
+    sending: string;
+    error: string;
+    locked: string;
+  };
 };
 
 function subscribe(onChange: () => void) {
@@ -104,7 +132,90 @@ function Logo() {
   return <img src="/brand/noisia.svg" alt="Noisia" className={styles.logo} />;
 }
 
-function DeckViewer({ title, studyHref, shareUrl, deckSrc, slides, initialSlide, pdfHref, labels, ready }: Props & { ready: boolean }) {
+function UnlockCard({ unlock, slide, autoFocus = true }: { unlock: Unlock; slide: number; autoFocus?: boolean }) {
+  const [state, setState] = useState<"idle" | "sending" | "error">("idle");
+  const first = useRef<HTMLInputElement>(null);
+  const c = unlock.copy;
+  const id = useId();
+
+  useEffect(() => {
+    // Focus the first field once it is on screen, without scrolling the page under it.
+    if (autoFocus) first.current?.focus({ preventScroll: true });
+  }, [autoFocus]);
+
+  const submit = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    setState("sending");
+    const response = await fetch(unlock.endpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: String(form.get("name") ?? ""),
+        email: String(form.get("email") ?? ""),
+        company: String(form.get("company") ?? ""),
+        marketing: form.get("marketing") === "on",
+        website: String(form.get("website") ?? ""),
+        locale: unlock.locale
+      })
+    }).catch(() => null);
+    if (!response?.ok) {
+      setState("error");
+      return;
+    }
+    // The cookies are set: reload on the slide the reader was going to see.
+    const url = new URL(window.location.href);
+    url.searchParams.set("slide", String(slide + 1));
+    window.location.replace(url);
+  };
+
+  return (
+    <form className={styles.unlock} onSubmit={submit} aria-labelledby={`${id}-title`}>
+      <span className={styles.unlockIcon} aria-hidden>
+        <Lock />
+      </span>
+      <h2 id={`${id}-title`} className={styles.unlockTitle}>
+        {c.title}
+      </h2>
+      <p className={styles.unlockText}>{c.text}</p>
+      <label className={styles.field}>
+        <span>{c.name}</span>
+        <input ref={first} name="name" autoComplete="name" required maxLength={120} />
+      </label>
+      <label className={styles.field}>
+        <span>{c.email}</span>
+        <input name="email" type="email" autoComplete="email" inputMode="email" required maxLength={200} />
+      </label>
+      <label className={styles.field}>
+        <span>{c.company}</span>
+        <input name="company" autoComplete="organization" required maxLength={160} />
+      </label>
+      {/* Honeypot: hidden from people, filled by bots. */}
+      <input name="website" tabIndex={-1} autoComplete="off" className={styles.honeypot} aria-hidden />
+      <label className={styles.check}>
+        <input type="checkbox" name="marketing" />
+        <span>{c.marketing}</span>
+      </label>
+      <button type="submit" className={styles.unlockButton} disabled={state === "sending"}>
+        {state === "sending" ? c.sending : c.submit}
+      </button>
+      {state === "error" ? (
+        <p className={styles.unlockError} role="alert">
+          {c.error}
+        </p>
+      ) : null}
+      <p className={styles.unlockSmall}>
+        {c.privacy}{" "}
+        <a href={unlock.privacyHref} target="_blank" rel="noopener">
+          {c.privacyLink}
+        </a>
+        .
+      </p>
+    </form>
+  );
+}
+
+function DeckViewer({ title, studyHref, shareUrl, deckSrc, slides, initialSlide, pdfHref, labels, ready, unlock }: Props & { ready: boolean }) {
   const [current, setCurrent] = useState(initialSlide);
   const [total, setTotal] = useState(slides.length);
   const [thumbs, setThumbs] = useState(true);
@@ -295,10 +406,12 @@ function DeckViewer({ title, studyHref, shareUrl, deckSrc, slides, initialSlide,
           <button type="button" className={styles.iconButton} onClick={share} aria-label={labels.share} title={labels.share}>
             <ShareIos aria-hidden />
           </button>
-          <button type="button" className={styles.textButton} onClick={present} title={`${labels.present} (F)`}>
-            <Presentation aria-hidden /> <span>{labels.present}</span>
-          </button>
-          {pdfHref ? (
+          {unlock ? null : (
+            <button type="button" className={styles.textButton} onClick={present} title={`${labels.present} (F)`}>
+              <Presentation aria-hidden /> <span>{labels.present}</span>
+            </button>
+          )}
+          {pdfHref && !unlock ? (
             <a className={styles.primaryButton} href={pdfHref} download>
               <Download aria-hidden /> <span>{labels.downloadPdf}</span>
             </a>
@@ -313,8 +426,14 @@ function DeckViewer({ title, studyHref, shareUrl, deckSrc, slides, initialSlide,
               <li key={src}>
                 <button type="button" className={styles.thumb} data-index={i} aria-current={i === current ? "true" : undefined} onClick={() => goTo(i)} aria-label={labels.slideAlt[i]}>
                   <span className={styles.thumbNumber}>{i + 1}</span>
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img src={src} alt="" loading={i < 8 ? "eager" : "lazy"} decoding="async" />
+                  {unlock && i >= unlock.preview ? (
+                    <span className={styles.thumbLocked} title={unlock.copy.locked}>
+                      <Lock aria-hidden />
+                    </span>
+                  ) : (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={src} alt="" loading={i < 8 ? "eager" : "lazy"} decoding="async" />
+                  )}
                 </button>
               </li>
             ))}
@@ -324,11 +443,23 @@ function DeckViewer({ title, studyHref, shareUrl, deckSrc, slides, initialSlide,
         <div className={styles.stageWrap}>
           <div className={styles.stage} ref={stage}>
             <div className={styles.canvas} ref={canvas} style={fit.width ? size : undefined}>
-              {ready ? (
+              {unlock ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  className={current >= unlock.preview ? styles.slideBlurred : styles.slideImage}
+                  src={slides[Math.min(current, unlock.preview - 1)]}
+                  alt={current < unlock.preview ? labels.slideAlt[current] : ""}
+                />
+              ) : ready ? (
                 <iframe ref={frame} src={`${deckSrc}#${initialSlide + 1}`} title={title} allow="fullscreen" referrerPolicy="same-origin" onLoad={onFrameLoad} />
               ) : null}
             </div>
           </div>
+          {unlock && current >= unlock.preview ? (
+            <div className={styles.unlockLayer}>
+              <UnlockCard unlock={unlock} slide={current} />
+            </div>
+          ) : null}
           <div className={styles.dock}>
             <button type="button" className={styles.dockButton} onClick={() => goTo(current - 1)} disabled={current === 0} aria-label={labels.prev} title={`${labels.prev} (←)`}>
               <NavArrowLeft aria-hidden />
@@ -350,7 +481,8 @@ function DeckViewer({ title, studyHref, shareUrl, deckSrc, slides, initialSlide,
   );
 }
 
-function StackViewer({ title, studyHref, shareUrl, slides, pdfHref, labels }: Props) {
+function StackViewer({ title, studyHref, shareUrl, slides, pdfHref, labels, unlock }: Props) {
+  const shown = unlock ? slides.slice(0, unlock.preview) : slides;
   const { share, toast } = useShare(title, shareUrl, labels.copied);
   return (
     <div className={styles.mobile}>
@@ -368,7 +500,7 @@ function StackViewer({ title, studyHref, shareUrl, slides, pdfHref, labels }: Pr
       </header>
       <p className={styles.hint}>{labels.tapHint}</p>
       <ol className={styles.stack}>
-        {slides.map((src, i) => (
+        {shown.map((src, i) => (
           <li key={src} id={`slide-${i + 1}`}>
             <a href={src} target="_blank" rel="noopener">
               {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -377,7 +509,14 @@ function StackViewer({ title, studyHref, shareUrl, slides, pdfHref, labels }: Pr
           </li>
         ))}
       </ol>
-      {pdfHref ? (
+      {unlock ? (
+        <section className={styles.stackLocked}>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src={shown[shown.length - 1]} alt="" className={styles.stackLockedImage} />
+          <UnlockCard unlock={unlock} slide={unlock.preview} autoFocus={false} />
+        </section>
+      ) : null}
+      {pdfHref && !unlock ? (
         <div className={styles.pdfDock}>
           <a className={styles.primaryButton} href={pdfHref} download>
             <Download aria-hidden /> <span>{labels.downloadPdf}</span>

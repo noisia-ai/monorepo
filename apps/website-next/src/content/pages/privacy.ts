@@ -25,13 +25,13 @@ export const privacy: Localized<PrivacyCopy> = {
   es: {
     metaTitle: "Aviso de privacidad",
     metaDescription:
-      "Aviso de privacidad simplificado de Noisia. Qué datos recabamos en el formulario del taller, para qué los usamos y cómo ejercer tus derechos ARCO.",
+      "Aviso de privacidad simplificado de Noisia. Qué datos recabamos en los formularios del taller y de los estudios, para qué los usamos y cómo ejercer tus derechos ARCO.",
     title: "Aviso de privacidad",
     lead: "Qué datos personales recabamos a través de este sitio, para qué los usamos y cómo puedes ejercer tus derechos. Se lee en unos minutos.",
     summaryTitle: "En resumen",
     summary: [
-      { name: "Solo lo que tú nos das", text: "Los datos del formulario del taller o de tu correo. No pedimos datos sensibles.", icon: "user" },
-      { name: "Para atender tu solicitud", text: "Contactarte, preparar el taller y, si lo pides, enviarte una propuesta.", icon: "page" },
+      { name: "Solo lo que tú nos das", text: "Los datos de los formularios del taller y de los estudios, o de tu correo. No pedimos datos sensibles.", icon: "user" },
+      { name: "Para atender tu solicitud", text: "Abrirte el estudio que pediste, contactarte sobre el taller y, si lo pides, enviarte una propuesta.", icon: "page" },
       { name: "No los vendemos", text: "Ni los transferimos a terceros para sus propios fines.", icon: "shield" }
     ],
     tocTitle: "En esta página",
@@ -50,6 +50,7 @@ export const privacy: Localized<PrivacyCopy> = {
         icon: "data",
         paragraphs: [
           "Cuando llenas el formulario para agendar un taller, recabamos los datos que tú nos das: nombre, correo de trabajo, empresa, puesto, la pregunta o decisión que quieres trabajar, el mercado o los países que te interesan y para cuándo lo necesitas.",
+          "Cuando abres un estudio, te pedimos tu nombre, tu correo y tu empresa. Guardamos también qué estudios abriste y cuándo.",
           "No pedimos ni recabamos datos personales sensibles a través de este sitio. Si nos escribes por correo, tratamos los datos que incluyas en tu mensaje con las mismas reglas."
         ]
       },
@@ -58,8 +59,8 @@ export const privacy: Localized<PrivacyCopy> = {
         title: "Para qué los usamos",
         icon: "page",
         paragraphs: [
-          "Usamos tus datos para contactarte sobre el taller que solicitaste, prepararlo con tu contexto y, si lo pides, enviarte una propuesta de alcance. Esas son las finalidades necesarias para atender tu solicitud.",
-          "Si en algún momento quisiéramos enviarte contenido de Noisia que no esté relacionado con tu solicitud, te lo preguntaríamos antes y podrías negarte sin que eso afecte la atención del taller."
+          "Usamos tus datos para contactarte sobre el taller que solicitaste, prepararlo con tu contexto y, si lo pides, enviarte una propuesta de alcance. Con los datos del formulario de un estudio, te abrimos el estudio, te mandamos por correo tu link personal para volver a él y le avisamos a nuestro equipo, que puede escribirte sobre ese estudio. Esas son las finalidades necesarias para atender tu solicitud.",
+          "Si en algún momento quisiéramos enviarte contenido de Noisia que no esté relacionado con tu solicitud, te lo preguntaríamos antes y podrías negarte sin que eso afecte la atención del taller. En el formulario de un estudio esa pregunta es una casilla aparte, sin marcar: si no la marcas, el estudio se abre igual."
         ]
       },
       {
@@ -100,13 +101,13 @@ export const privacy: Localized<PrivacyCopy> = {
   en: {
     metaTitle: "Privacy notice",
     metaDescription:
-      "Noisia's short privacy notice. Which data we collect in the workshop form, what we use it for, and how you can exercise your rights over it.",
+      "Noisia's short privacy notice. Which data we collect in the workshop and study forms, what we use it for, and how you can exercise your rights over it.",
     title: "Privacy notice",
     lead: "Which personal data we collect through this site, what we use it for and how you can exercise your rights. It takes a few minutes to read.",
     summaryTitle: "In short",
     summary: [
-      { name: "Only what you give us", text: "The data in the workshop form or in your email. We don't ask for sensitive data.", icon: "user" },
-      { name: "To handle your request", text: "To contact you, prepare the workshop and, if you ask, send you a proposal.", icon: "page" },
+      { name: "Only what you give us", text: "The data in the workshop and study forms, or in your email. We don't ask for sensitive data.", icon: "user" },
+      { name: "To handle your request", text: "To open the study you asked for, contact you about the workshop and, if you ask, send you a proposal.", icon: "page" },
       { name: "We don't sell it", text: "Nor do we transfer it to third parties for their own purposes.", icon: "shield" }
     ],
     tocTitle: "On this page",
@@ -125,6 +126,7 @@ export const privacy: Localized<PrivacyCopy> = {
         icon: "data",
         paragraphs: [
           "When you fill in the form to book a workshop, we collect the data you give us: name, work email, company, role, the question or decision you want to work on, the market or countries you are interested in, and when you need it.",
+          "When you open a study, we ask for your name, email and company. We also keep which studies you opened and when.",
           "We don't ask for or collect sensitive personal data through this site. If you write to us by email, we handle the data included in your message under the same rules."
         ]
       },
@@ -133,8 +135,8 @@ export const privacy: Localized<PrivacyCopy> = {
         title: "What we use it for",
         icon: "page",
         paragraphs: [
-          "We use your data to contact you about the workshop you requested, prepare it with your context and, if you ask, send you a scope proposal. Those are the purposes needed to handle your request.",
-          "If at some point we wanted to send you Noisia content unrelated to your request, we would ask you first, and you could decline without it affecting the workshop."
+          "We use your data to contact you about the workshop you requested, prepare it with your context and, if you ask, send you a scope proposal. With the data in a study form, we open the study for you, email you your personal link to come back to it and let our team know, who may write to you about that study. Those are the purposes needed to handle your request.",
+          "If at some point we wanted to send you Noisia content unrelated to your request, we would ask you first, and you could decline without it affecting the workshop. In a study form that question is a separate, unticked box: if you leave it unticked, the study opens all the same."
         ]
       },
       {

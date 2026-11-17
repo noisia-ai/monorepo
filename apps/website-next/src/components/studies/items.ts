@@ -56,7 +56,7 @@ export async function studyCardItems(locale: string): Promise<StudyCardItem[]> {
       marketLabel: c.marketSummary(study.markets),
       meta: [study.method, study.summary[lang].period_label ?? study.periodLabel].filter(Boolean).join(" · "),
       badge: c.access[study.accessMode],
-      gated: study.accessMode !== "abierto",
+      gated: study.accessMode === "solo_link",
       cover: studyHero(study) ?? studyCover(study),
       date: study.publishedAt ?? new Date().toISOString(),
       draft: study.draft
