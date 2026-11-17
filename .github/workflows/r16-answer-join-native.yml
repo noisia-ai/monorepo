@@ -1,0 +1,365 @@
+name: R16 answer-join native oracle
+run-name: R16 answer-join native oracle (manual, owned PostgreSQL 17)
+
+on:
+  push:
+    branches:
+      - codex/r16-answer-join-native-harness
+      - codex/r16-answer-join-compose
+    paths:
+      - .github/workflows/r16-answer-join-native.yml
+  workflow_dispatch:
+    inputs:
+      target_ref:
+        type: string
+        required: true
+        description: Exact 40-character SHA of the reviewed E test-only source
+
+permissions:
+  contents: read
+
+concurrency:
+  group: r16-answer-join-native-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  register-workflow:
+    name: Register the manual answer-join oracle
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Confirm workflow registration only
+        run: echo 'R16 answer-join manual oracle registered; no database job ran.'
+
+  answer-join-native:
+    name: E native answer guard join (fresh owned PostgreSQL 17)
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    outputs:
+      status: ${{ steps.verify.outputs.status }}
+      target_sha: ${{ steps.verify.outputs.target_sha }}
+      probe_sha: ${{ steps.verify.outputs.probe_sha }}
+      native_selected_pass: ${{ steps.verify.outputs.native_selected_pass }}
+    env:
+      R16BENCH_RUN_ID: benchmark-pg17
+      R16BENCH_SERVICES: postgres,redis
+      NOISIA_R16_LOCAL_PG_LAB: r16-benchmark-pg17
+      DATABASE_SSL: 'false'
+      TARGET_REF: ${{ inputs.target_ref }}
+      PROBE_REF: ${{ github.sha }}
+    steps:
+      - name: Validate exact refs and forbid provider credentials
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          DISPATCH_REF: ${{ github.ref }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" != workflow_dispatch ] \
+              || { [ "$DISPATCH_REF" != refs/heads/codex/r16-answer-join-native-harness ] \
+                && [ "$DISPATCH_REF" != refs/heads/codex/r16-answer-join-compose ]; } \
+              || [ "${#TARGET_REF}" -ne 40 ] || [[ ! "$TARGET_REF" =~ ^[0-9a-f]{40}$ ]] \
+              || [ "$TARGET_REF" != 5d5ed883b9e9921900d82bbfcb2f2817a546fd41 ] \
+              || [ "${#PROBE_REF}" -ne 40 ] || [[ ! "$PROBE_REF" =~ ^[0-9a-f]{40}$ ]]; then
+            echo '::error::answer-join oracle requires the exact reviewed E source and a pinned diagnostic ref'
+            exit 1
+          fi
+          for name in $(compgen -e); do
+            case "$name" in
+              *ANTHROPIC*API_KEY*|*ANTHROPIC*TOKEN*|*SONNET*API_KEY*|*SONNET*TOKEN*|*VOYAGE*API_KEY*|*VOYAGE*TOKEN*|*OPENAI*API_KEY*|*OPENAI*TOKEN*|*TYPESAFE*API_KEY*|*TYPESAFE*TOKEN*)
+                echo '::error::provider credentials are forbidden in the native answer-join oracle'
+                exit 1
+                ;;
+            esac
+          done
+
+      - name: Checkout exact E product source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.target_ref }}
+          path: target
+
+      - name: Checkout pinned diagnostic harness
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          path: probe
+          sparse-checkout: |
+            .github/workflows/r16-answer-join-native.yml
+            scripts/r16-diagnostics/listening-small
+          sparse-checkout-cone-mode: false
+
+      - name: Verify pinned clean trees and source files
+        working-directory: target
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$TARGET_REF"
+          test "$(git -C ../probe rev-parse HEAD)" = "$PROBE_REF"
+          test -z "$(git status --porcelain --untracked-files=all)"
+          test -z "$(git -C ../probe status --porcelain --untracked-files=all)"
+          for file in \
+            infrastructure/db/migrations/0330_signal_listening_statement_shared_wire.sql \
+            infrastructure/db/migrations/0331_signal_listening_statement_payload.sql \
+            infrastructure/db/migrations/signal-listening-statement-shared-wire.oracle.ts \
+            infrastructure/db/migrations/signal-listening-statement-shared-wire.fixture.ts \
+            infrastructure/db/migrations/signal-listening-statement-shared-wire.postgres.test.ts \
+            infrastructure/db/migrations/signal-listening-statement-shared-wire.test.ts \
+            infrastructure/db/migrations/signal-listening-answer-join.oracle.ts \
+            infrastructure/db/migrations/signal-listening-answer-join.test.ts \
+            infrastructure/db/migrations/signal-listening-answer-join.postgres.test.ts \
+            infrastructure/db/migrations/0296_signal_listening_configuration.sql \
+            infrastructure/db/signal-listening-runs.ts \
+            infrastructure/db/signal-labeling-runs.ts; do test -f "$file"; done
+          test -f ../probe/scripts/r16-diagnostics/listening-small/query-cpu-oracle.mjs
+          test -f ../probe/scripts/r16-diagnostics/listening-small/profile-pg-cpu.mjs
+          test -f ../probe/scripts/r16-diagnostics/listening-small/run.mts
+          test -f ../probe/scripts/r16-diagnostics/listening-small/answer-join-native-harness.mjs
+          test -f ../probe/scripts/r16-diagnostics/listening-small/answer-join-native-harness.test.mjs
+
+      - name: Require a fresh owned PostgreSQL 17 lab
+        working-directory: target
+        run: |
+          set -euo pipefail
+          lab_dir=.data/piloto-masivo/r16/labs/benchmark-pg17
+          if [[ -e "$lab_dir" || -L "$lab_dir" ]]; then
+            echo '::error::answer-join lab metadata already exists'
+            exit 1
+          fi
+          if ! docker info >/dev/null 2>&1; then
+            echo '::error::Docker resource discovery failed; refusing lab startup'
+            exit 1
+          fi
+          project=r16bench-benchmark-pg17
+          fixed_container=r16-benchmark-pg17
+          fixed_redis_container=r16bench-benchmark-pg17-redis-1
+          fixed_volume=r16bench-benchmark-pg17_postgres-data
+          fixed_network=r16bench-benchmark-pg17_default
+          if ! project_containers="$(docker ps --all --filter "label=com.docker.compose.project=$project" --format '{{.ID}}')" \
+              || ! all_container_names="$(docker ps --all --format '{{.Names}}')" \
+              || ! project_volumes="$(docker volume ls --filter "label=com.docker.compose.project=$project" --format '{{.Name}}')" \
+              || ! all_volume_names="$(docker volume ls --format '{{.Name}}')" \
+              || ! project_networks="$(docker network ls --filter "label=com.docker.compose.project=$project" --format '{{.Name}}')" \
+              || ! all_network_names="$(docker network ls --format '{{.Name}}')"; then
+            echo '::error::Docker resource discovery failed; refusing lab startup'
+            exit 1
+          fi
+          if [[ -n "$project_containers" || -n "$project_volumes" || -n "$project_networks" ]] \
+              || [[ $'\n'$all_container_names$'\n' == *$'\n'$fixed_container$'\n'* ]] \
+              || [[ $'\n'$all_container_names$'\n' == *$'\n'$fixed_redis_container$'\n'* ]] \
+              || [[ $'\n'$all_volume_names$'\n' == *$'\n'$fixed_volume$'\n'* ]] \
+              || [[ $'\n'$all_network_names$'\n' == *$'\n'$fixed_network$'\n'* ]]; then
+            echo '::error::answer-join lab resources already exist; refusing reuse or cleanup'
+            exit 1
+          fi
+
+      - name: Set up pnpm and Node 22
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.2
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: target/pnpm-lock.yaml
+
+      - name: Install frozen target dependencies
+        working-directory: target
+        run: corepack pnpm install --frozen-lockfile
+
+      - name: Create bounded private artifact directories
+        env:
+          ANSWER_ARTIFACT_ROOT: ${{ runner.temp }}/r16-answer-join-${{ github.run_id }}-${{ github.run_attempt }}
+          ANSWER_REJECTION_ROOT: ${{ runner.temp }}/r16-answer-join-rejected-${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          test ! -e "$ANSWER_ARTIFACT_ROOT" && test ! -L "$ANSWER_ARTIFACT_ROOT"
+          test ! -e "$ANSWER_REJECTION_ROOT" && test ! -L "$ANSWER_REJECTION_ROOT"
+          mkdir -m 700 -- "$ANSWER_ARTIFACT_ROOT" "$ANSWER_REJECTION_ROOT"
+          test "$(stat -c '%a' "$ANSWER_ARTIFACT_ROOT")" = 700
+          test "$(stat -c '%a' "$ANSWER_REJECTION_ROOT")" = 700
+          test "$(realpath "$ANSWER_ARTIFACT_ROOT")" = "$ANSWER_ARTIFACT_ROOT"
+          test "$(realpath "$ANSWER_REJECTION_ROOT")" = "$ANSWER_REJECTION_ROOT"
+
+      - name: Run frozen source pure suite and harness parser tests
+        id: pure
+        working-directory: target
+        env:
+          ANSWER_ARTIFACT_ROOT: ${{ runner.temp }}/r16-answer-join-${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          set +e
+          corepack pnpm exec node --test --test-concurrency=1 --test-reporter=tap --import tsx \
+            infrastructure/db/migrations/signal-listening-answer-join.test.ts 2>&1 | tee "$ANSWER_ARTIFACT_ROOT/answer-join.pure.tap"
+          statuses=("${PIPESTATUS[@]}")
+          test_status=${statuses[0]}; tee_status=${statuses[1]}; set -e
+          if [ "$tee_status" -ne 0 ] && [ "$test_status" -eq 0 ]; then test_status=125; fi
+          chmod 600 "$ANSWER_ARTIFACT_ROOT/answer-join.pure.tap"
+          echo "exit_status=$test_status" >> "$GITHUB_OUTPUT"
+          if [ "$test_status" -ne 0 ]; then exit "$test_status"; fi
+          corepack pnpm exec node --test --test-concurrency=1 --test-reporter=spec \
+            ../probe/scripts/r16-diagnostics/listening-small/answer-join-native-harness.test.mjs
+
+      - name: Start fresh owned PostgreSQL 17 and Redis lab
+        id: lab_up
+        working-directory: target
+        run: |
+          set -euo pipefail
+          printf '%s\n' 'R16_ANSWER_JOIN_LAB_OWNED=true' >> "$GITHUB_ENV"
+          scripts/r16/lab-up.sh
+
+      - name: Apply frozen C migrations to the owned lab
+        working-directory: target
+        env:
+          NOISIA_DB_SMOKE_RESET_SCHEMA: 'true'
+          NOISIA_DB_SMOKE_EMULATE_SUPABASE_ROLES: 'true'
+          NOISIA_MFP_PG_CI: 'true'
+        run: |
+          set -euo pipefail
+          connection_file=.data/piloto-masivo/r16/labs/benchmark-pg17/connection.env
+          test -f "$connection_file"
+          set -a; source "$connection_file"; set +a
+          export DATABASE_SSL=false NOISIA_R16_LOCAL_PG_LAB=r16-benchmark-pg17
+          corepack pnpm --filter @noisia/db db:smoke:migrations
+
+      - name: Run exactly five native answer-join cases once
+        id: native
+        working-directory: target
+        env:
+          NOISIA_R16_ANSWER_JOIN_PG: 'true'
+          NOISIA_R16_NATIVE_FIXTURE_PG: 'true'
+          NOISIA_MASS_LABELING_ENABLED: 'true'
+          NOISIA_SIGNAL_LISTENING_ENABLED: 'true'
+          NOISIA_JEV_PROVIDER_ENABLED: 'true'
+          NOISIA_JEV_STREAMING_V2_ENABLED: 'true'
+          R16_ANSWER_JOIN_PROBE_ROOT: ${{ github.workspace }}/probe
+          R16_ANSWER_JOIN_PROBE_SHA: ${{ github.sha }}
+          ANSWER_ARTIFACT_ROOT: ${{ runner.temp }}/r16-answer-join-${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          connection_file=.data/piloto-masivo/r16/labs/benchmark-pg17/connection.env
+          test -f "$connection_file"
+          set -a; source "$connection_file"; set +a
+          export DATABASE_SSL=false NOISIA_R16_LOCAL_PG_LAB=r16-benchmark-pg17
+          set +e
+          timeout 55m corepack pnpm exec node --test --test-concurrency=1 --test-reporter=tap --import tsx \
+            infrastructure/db/migrations/signal-listening-answer-join.postgres.test.ts 2>&1 | tee "$ANSWER_ARTIFACT_ROOT/answer-join.native.tap"
+          statuses=("${PIPESTATUS[@]}")
+          test_status=${statuses[0]}; tee_status=${statuses[1]}; set -e
+          if [ "$tee_status" -ne 0 ] && [ "$test_status" -eq 0 ]; then test_status=125; fi
+          chmod 600 "$ANSWER_ARTIFACT_ROOT/answer-join.native.tap"
+          echo "exit_status=$test_status" >> "$GITHUB_OUTPUT"
+          if [ "$test_status" -ne 0 ]; then exit "$test_status"; fi
+
+      - name: Stop only the owned answer-join lab
+        id: lab_down
+        if: always() && env.R16_ANSWER_JOIN_LAB_OWNED == 'true'
+        working-directory: target
+        run: |
+          set -euo pipefail
+          scripts/r16/lab-down.sh
+
+      - name: Verify pinned source trees remained clean
+        id: source_after
+        if: always()
+        working-directory: target
+        run: |
+          set -euo pipefail
+          target_after=$(git rev-parse HEAD)
+          probe_after=$(git -C ../probe rev-parse HEAD)
+          test "$target_after" = "$TARGET_REF"
+          test "$probe_after" = "$PROBE_REF"
+          test -z "$(git status --porcelain --untracked-files=all)"
+          test -z "$(git -C ../probe status --porcelain --untracked-files=all)"
+          printf 'target_sha_after=%s\nprobe_sha_after=%s\n' "$target_after" "$probe_after" >> "$GITHUB_OUTPUT"
+
+      - name: Validate TAP, result seals, source bindings, and artifact caps
+        id: verify
+        if: always()
+        env:
+          PURE_OUTCOME: ${{ steps.pure.outcome }}
+          PURE_EXIT: ${{ steps.pure.outputs.exit_status }}
+          NATIVE_OUTCOME: ${{ steps.native.outcome }}
+          NATIVE_EXIT: ${{ steps.native.outputs.exit_status }}
+          LAB_DOWN_OUTCOME: ${{ steps.lab_down.outcome }}
+          SOURCE_AFTER_OUTCOME: ${{ steps.source_after.outcome }}
+          TARGET_AFTER: ${{ steps.source_after.outputs.target_sha_after }}
+          PROBE_AFTER: ${{ steps.source_after.outputs.probe_sha_after }}
+          ANSWER_ARTIFACT_ROOT: ${{ runner.temp }}/r16-answer-join-${{ github.run_id }}-${{ github.run_attempt }}
+          ANSWER_REJECTION_ROOT: ${{ runner.temp }}/r16-answer-join-rejected-${{ github.run_id }}-${{ github.run_attempt }}
+          TARGET_REF: ${{ inputs.target_ref }}
+          PROBE_REF: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          node --input-type=module - "$ANSWER_ARTIFACT_ROOT" "$ANSWER_REJECTION_ROOT" "$GITHUB_WORKSPACE/target" "$GITHUB_WORKSPACE/probe" \
+            "$TARGET_REF" "$PROBE_REF" "$TARGET_AFTER" "$PROBE_AFTER" "$PURE_OUTCOME" "$PURE_EXIT" "$NATIVE_OUTCOME" "$NATIVE_EXIT" \
+            "$LAB_DOWN_OUTCOME" "$SOURCE_AFTER_OUTCOME" "$GITHUB_OUTPUT" <<'NODE'
+          import fs from 'node:fs';
+          import path from 'node:path';
+          import {pathToFileURL} from 'node:url';
+          const [artifactRoot,rejectionRoot,targetRoot,probeRoot,targetSha,probeSha,targetAfter,probeAfter,pureOutcome,pureExit,nativeOutcome,nativeExit,labDownOutcome,sourceAfterOutcome,githubOutput]=process.argv.slice(2);
+          const writeSafeRejection=reason=>{
+            const code=/^answer_join_[a-z0-9_]{1,100}$/u.test(reason??'')?reason:'answer_join_evidence_invalid';
+            try{
+              const st=fs.lstatSync(rejectionRoot);
+              if(fs.realpathSync(rejectionRoot)!==rejectionRoot||!st.isDirectory()||st.isSymbolicLink()||(st.mode&0o777)!==0o700)throw Error();
+              const bytes=Buffer.from(`${JSON.stringify({contract:'r16-answer-join-rejection-v1',status:'rejected',reason:code,diagnostic_only:true,h1_accepted:false},null,2)}\n`);
+              if(bytes.length>8192)throw Error();
+              fs.writeFileSync(path.join(rejectionRoot,'rejection.json'),bytes,{flag:'wx',mode:0o600});
+              fs.appendFileSync(githubOutput,'rejection_ready=true\n');
+            }catch{process.stderr.write('answer_join_evidence:rejection_receipt_unavailable\n');process.exitCode=1;return;}
+            process.stderr.write(`answer_join_evidence:${code}\n`);process.exitCode=1;
+          };
+          try{
+            if(pureOutcome!=='success'||nativeOutcome!=='success'||labDownOutcome!=='success'||sourceAfterOutcome!=='success')throw Error('answer_join_step_failed');
+            for(const root of [artifactRoot,targetRoot,probeRoot])if(fs.realpathSync(root)!==root)throw Error('answer_join_path_identity_invalid');
+            const expected=['answer-join.native.tap','answer-join.pure.tap'];
+            if(JSON.stringify(fs.readdirSync(artifactRoot).sort())!==JSON.stringify(expected))throw Error('answer_join_initial_file_set_invalid');
+            for(const name of expected){const file=path.join(artifactRoot,name),st=fs.lstatSync(file);if(!st.isFile()||st.isSymbolicLink()||st.size>2_000_000)throw Error('answer_join_tap_file_invalid');}
+            const paths=['0330_signal_listening_statement_shared_wire.sql','0331_signal_listening_statement_payload.sql','signal-listening-statement-shared-wire.oracle.ts',
+              'signal-listening-statement-shared-wire.fixture.ts','signal-listening-statement-shared-wire.postgres.test.ts','signal-listening-statement-shared-wire.test.ts',
+              'signal-listening-answer-join.oracle.ts','signal-listening-answer-join.test.ts','signal-listening-answer-join.postgres.test.ts',
+              '0296_signal_listening_configuration.sql'];
+            const base=path.join(targetRoot,'infrastructure/db/migrations');
+            const sourceFiles=Object.fromEntries(paths.map(file=>{const full=path.join(base,file),st=fs.lstatSync(full);if(!st.isFile()||st.isSymbolicLink()||fs.realpathSync(full)!==full)throw Error('answer_join_source_file_invalid');return[file,fs.readFileSync(full)];}));
+            for(const file of ['signal-listening-runs.ts','signal-labeling-runs.ts']){const full=path.join(targetRoot,'infrastructure/db',file),st=fs.lstatSync(full);if(!st.isFile()||st.isSymbolicLink()||fs.realpathSync(full)!==full)throw Error('answer_join_source_file_invalid');sourceFiles[file]=fs.readFileSync(full);}
+            const harness=await import(pathToFileURL(path.join(probeRoot,'scripts/r16-diagnostics/listening-small/answer-join-native-harness.mjs')).href);
+            const nativeBytes=fs.readFileSync(path.join(artifactRoot,'answer-join.native.tap'));
+            const pureBytes=fs.readFileSync(path.join(artifactRoot,'answer-join.pure.tap'));
+            const nativeReceipt=harness.parseAnswerJoinNativeTAPV1(nativeBytes,{exitStatus:Number(nativeExit),targetSha,probeSha,targetBefore:targetSha,targetAfter,probeBefore:probeSha,probeAfter,sourceFiles});
+            const pureReceipt=harness.parseAnswerJoinPureTAPV1(pureBytes,{exitStatus:Number(pureExit),targetSha,probeSha});
+            fs.writeFileSync(path.join(artifactRoot,'answer-join.native.receipt.json'),`${JSON.stringify(nativeReceipt,null,2)}\n`,{flag:'wx',mode:0o600});
+            fs.writeFileSync(path.join(artifactRoot,'answer-join.pure.receipt.json'),`${JSON.stringify(pureReceipt,null,2)}\n`,{flag:'wx',mode:0o600});
+            const final=['answer-join.native.receipt.json','answer-join.native.tap','answer-join.pure.receipt.json','answer-join.pure.tap'].sort();
+            if(JSON.stringify(fs.readdirSync(artifactRoot).sort())!==JSON.stringify(final))throw Error('answer_join_artifact_file_set_invalid');
+            const caps={'answer-join.native.receipt.json':1_048_576,'answer-join.native.tap':2_000_000,'answer-join.pure.receipt.json':65_536,'answer-join.pure.tap':2_000_000};let total=0;
+            for(const name of final){const st=fs.lstatSync(path.join(artifactRoot,name));if(!st.isFile()||st.isSymbolicLink()||st.size>caps[name])throw Error('answer_join_artifact_file_invalid');total+=st.size;}
+            if(total>8_388_608)throw Error('answer_join_artifact_expanded_size_invalid');
+            const{deflateRawSync}=await import('node:zlib');let zip=22;
+            for(const name of final){const bytes=fs.readFileSync(path.join(artifactRoot,name)),n=Buffer.byteLength(name);zip+=30+n+deflateRawSync(bytes,{level:6}).byteLength+46+n;}
+            zip+=65_536;if(zip>=4_194_304)throw Error('answer_join_artifact_zip_size_invalid');
+            fs.appendFileSync(githubOutput,'status=verified\ntarget_sha='+targetSha+'\nprobe_sha='+probeSha+'\nnative_selected_pass=5\nartifact_ready=true\n');
+          }catch(error){writeSafeRejection(error?.message);}
+          NODE
+
+      - name: Upload four-file evidence pack
+        if: always() && steps.verify.outputs.artifact_ready == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: r16-answer-join-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/r16-answer-join-${{ github.run_id }}-${{ github.run_attempt }}
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload sanitized rejection receipt
+        if: always() && steps.verify.outputs.rejection_ready == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: r16-answer-join-rejected-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/r16-answer-join-rejected-${{ github.run_id }}-${{ github.run_attempt }}/rejection.json
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Require validated evidence
+        if: always()
+        run: test "${{ steps.verify.outputs.status }}" = verified
