@@ -189,40 +189,128 @@ jobs:
             echo '::error::R16 source scale cases were skipped'
             exit 1
           fi
-      - name: Run native Study pipeline, frozen human bindings and registered worker
-        if: ${{ github.event_name != 'workflow_dispatch' || inputs.scope != 'policy-smoke' }}
+
+  study-native-shards:
+    name: R16 native Study (${{ matrix.shard }})
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.scope == 'full' }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix:
+        include:
+          - shard: core
+            expected_tests: 8
+            files: >-
+              infrastructure/db/migrations/signal-study.postgres.test.ts
+          - shard: editorial
+            expected_tests: 10
+            files: >-
+              infrastructure/db/migrations/signal-study-editorial-replay.postgres.test.ts
+              infrastructure/db/migrations/signal-listening-human-edits.postgres.test.ts
+              infrastructure/db/migrations/signal-study-author-privacy.postgres.test.ts
+          - shard: serving
+            expected_tests: 6
+            files: >-
+              infrastructure/db/migrations/signal-study-source-paged.postgres.test.ts
+              infrastructure/db/migrations/signal-study-effective-listening.postgres.test.ts
+              services/workers/src/workers/signal-study-worker.postgres.test.ts
+              scripts/r16/native-audit-export.postgres.test.ts
+              scripts/r16/listening-native-census.postgres.test.ts
+    services:
+      postgres:
+        image: pgvector/pgvector:pg17
         env:
-          NOISIA_R16_STUDY_PG: 'true'
-          NOISIA_R16_STUDY_SOURCE_PAGED_PG: 'true'
-          NOISIA_R16_NATIVE_AUDIT_EXPORT_PG: 'true'
-          NOISIA_R16_STUDY_WORKER_PG: 'true'
-          NOISIA_R16_HUMAN_EDITS_PG: 'true'
-          NOISIA_R16_LISTENING_CENSUS_PG: 'true'
-          R16BENCH_REDIS_URL: redis://127.0.0.1:6379/0
-          NOISIA_WORKSPACE_ENGINE_MODULE_ROOT: ${{ github.workspace }}/tools/signal-semantic-lab/src
-          HF_HUB_OFFLINE: '1'
-          TRANSFORMERS_OFFLINE: '1'
-          NUMBA_NUM_THREADS: '1'
-          OMP_NUM_THREADS: '1'
-          OPENBLAS_NUM_THREADS: '1'
-          MKL_NUM_THREADS: '1'
+          POSTGRES_DB: noisia_mfp_ci
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d noisia_mfp_ci"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7.4-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/noisia_mfp_ci
+      DATABASE_SSL: 'false'
+      NOISIA_DB_SMOKE_RESET_SCHEMA: 'true'
+      NOISIA_DB_SMOKE_EMULATE_SUPABASE_ROLES: 'true'
+      NOISIA_MFP_PG_CI: 'true'
+      NOISIA_R16_STUDY_PG: 'true'
+      NOISIA_R16_STUDY_SOURCE_PAGED_PG: 'true'
+      NOISIA_R16_NATIVE_AUDIT_EXPORT_PG: 'true'
+      NOISIA_R16_STUDY_WORKER_PG: 'true'
+      NOISIA_R16_HUMAN_EDITS_PG: 'true'
+      NOISIA_R16_LISTENING_CENSUS_PG: 'true'
+      R16BENCH_REDIS_URL: redis://127.0.0.1:6379/0
+      NOISIA_WORKSPACE_ENGINE_MODULE_ROOT: ${{ github.workspace }}/tools/signal-semantic-lab/src
+      HF_HUB_OFFLINE: '1'
+      TRANSFORMERS_OFFLINE: '1'
+      NUMBA_NUM_THREADS: '1'
+      OMP_NUM_THREADS: '1'
+      OPENBLAS_NUM_THREADS: '1'
+      MKL_NUM_THREADS: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: services/workers/requirements-workspace-engine.txt
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+      - name: Install frozen Node workspace dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Install isolated CPU BERTopic runtime and test runner
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install --no-deps -r services/workers/requirements-workspace-engine.txt
+          python -m pip install pytest==8.3.5
+      - name: Apply migrations to fresh shard PostgreSQL 17
+        run: pnpm --filter @noisia/db db:smoke:migrations
+      - name: Run complete native Study shard
+        env:
+          EXPECTED_TESTS: ${{ matrix.expected_tests }}
+          TAP_FILE: r16-study-native-${{ matrix.shard }}.tap
         run: |
           export NOISIA_WORKSPACE_ENGINE_PYTHON="$(command -v python)"
           set -o pipefail
-          pnpm exec node --test --test-concurrency=1 --import tsx \
-            infrastructure/db/migrations/signal-listening-human-edits.postgres.test.ts \
-            infrastructure/db/migrations/signal-study.postgres.test.ts \
-            infrastructure/db/migrations/signal-study-editorial-replay.postgres.test.ts \
-            infrastructure/db/migrations/signal-study-author-privacy.postgres.test.ts \
-            infrastructure/db/migrations/signal-study-source-paged.postgres.test.ts \
-            infrastructure/db/migrations/signal-study-effective-listening.postgres.test.ts \
-            services/workers/src/workers/signal-study-worker.postgres.test.ts \
-            scripts/r16/native-audit-export.postgres.test.ts \
-            scripts/r16/listening-native-census.postgres.test.ts | tee r16-study-native-pg.tap
-          if ! grep -qx '# skipped 0' r16-study-native-pg.tap; then
-            echo '::error::R16 native Study or human binding tests were skipped'
+          set +e
+          pnpm exec node --test --test-concurrency=1 --import tsx ${{ matrix.files }} | tee "$TAP_FILE"
+          test_status=${PIPESTATUS[0]}
+          set -e
+          if [[ "$test_status" -ne 0 ]] \
+            || ! grep -qx "# tests $EXPECTED_TESTS" "$TAP_FILE" \
+            || ! grep -qx "# pass $EXPECTED_TESTS" "$TAP_FILE" \
+            || ! grep -qx '# fail 0' "$TAP_FILE" \
+            || ! grep -qx '# cancelled 0' "$TAP_FILE" \
+            || ! grep -qx '# skipped 0' "$TAP_FILE"; then
+            echo "::error::R16 native Study shard ${{ matrix.shard }} failed, skipped cases, or violated its exact test-count contract"
             exit 1
           fi
+      - name: Persist native Study shard TAP
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: r16-study-native-${{ matrix.shard }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: r16-study-native-${{ matrix.shard }}.tap
+          if-no-files-found: error
+          retention-days: 14
 
   migrated-schema:
     name: ${{ github.event_name == 'workflow_dispatch' && inputs.scope == 'policy-smoke' && 'policy-smoke-migrated-schema-not-run' || github.event_name == 'workflow_dispatch' && inputs.scope == 'listening-smoke' && 'listening-smoke-migrated-schema' || 'migrated-schema' }}
