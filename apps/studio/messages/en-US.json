@@ -5084,6 +5084,7 @@
     "sections": "Report sections",
     "emptySection": "No results in this section.",
     "tensions": "Mixed tensions: {count}",
+    "promotionLocalizationHelp": "Complete the English and Spanish names and definitions before promoting. The original motive text is preserved; this optional action makes no provider calls.",
     "promoteExplanation": "Explicit action: turn selected motives into defined, human-locked Brand OS topics. It does not call providers or reclassify mentions.",
     "promote": "Promote selected motives to Brand OS",
     "redacted": "Personal details hidden",

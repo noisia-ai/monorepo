@@ -84,7 +84,7 @@ test('legacy topic localization can be completed without changing historical or 
   const base=signalListeningBaseTemplateV1({category:'tea',lexicon_terms:['tea']});
   const configuration:SignalListeningConfigurationV1={...base,retired_question_keys:['old_topic'],retired_theme_keys:['old_theme'],questions:[...base.questions,
     {key:'occasion',type:'choice',text:'Which occasion?',scope:'all',origin:'brand_os',human_locked:true,options:[{key:'home',definition:'Home'},{key:'away',definition:'Away'}]},
-    ...(['defined','discovered']as const).map((topic_source,index)=>({key:`legacy_${topic_source}`,type:'noul' as const,text:'Does this concern tea rituals?',positive:'Tea rituals',negative:'Other conversations',scope:'all' as const,origin:index?'agent' as const:'brand_os' as const,human_locked:!index,topic_source,domain:'adjacent' as const})),
+    ...(['defined','discovered',undefined]as const).map((topic_source,index)=>({key:`legacy_${topic_source}`,type:'noul' as const,text:'Does this concern tea rituals?',positive:'Tea rituals',negative:'Other conversations',scope:'all' as const,origin:index?'agent' as const:'brand_os' as const,human_locked:!index,...(topic_source?{topic_source,domain:'adjacent' as const}:{})})),
     {key:'localized',type:'noul',text:'Shared tea',positive:'Shared tea',negative:'Other',scope:'all',origin:'agent',human_locked:true,topic_source:'discovered',
       localization:{original_language:'pt',original:{name:'Chá',definition:'Tomar chá'},en:{name:'Tea',definition:'Drinking tea'},es:{name:'Té',definition:'Tomar té'}}}]};
   const original=globalThis.fetch;let body:{expected_revision:number;configuration:SignalListeningConfigurationV1}|undefined;
@@ -99,7 +99,7 @@ test('legacy topic localization can be completed without changing historical or 
     const fields=[...host.querySelectorAll('fieldset')];
     const localizedFields=(index:number)=>[...fields[index]!.querySelectorAll('label')].filter(label=>label.textContent?.includes(' · '));
     for(const index of [0,1,2])assert.equal(localizedFields(index).length,0,'base and choice questions gain no topic fields');
-    for(const index of [3,4]){
+    for(const index of [3,4,5]){
       const labels=localizedFields(index);assert.equal(labels.length,6,'legacy topics expose original, English and Spanish name and definition');
       assert.ok(labels.every(label=>(label.querySelector('input,textarea')as HTMLInputElement).value===''),'missing text is never invented');
       for(const [field,label]of labels.entries()){
@@ -110,8 +110,8 @@ test('legacy topic localization can be completed without changing historical or 
     await act(async()=>{[...host.querySelectorAll('button')].find(button=>button.textContent===messages.Listening.save)!.click();});
     assert.ok(body);assert.equal(body.expected_revision,7);assert.equal(body.configuration.instructions,configuration.instructions);
     assert.deepEqual(body.configuration.retired_question_keys,configuration.retired_question_keys);assert.deepEqual(body.configuration.retired_theme_keys,configuration.retired_theme_keys);
-    for(const index of [0,1,2,5])assert.deepEqual(body.configuration.questions[index],configuration.questions[index]);
-    for(const index of [3,4]){
+    for(const index of [0,1,2,6])assert.deepEqual(body.configuration.questions[index],configuration.questions[index]);
+    for(const index of [3,4,5]){
       const saved:SignalListeningConfigurationV1['questions'][number]=body.configuration.questions[index]!;
       assert.deepEqual(saved,{...configuration.questions[index],human_locked:true,localization:{original_language:'und',original:{name:`topic ${index} field 0`,definition:`topic ${index} field 1`},en:{name:`topic ${index} field 2`,definition:`topic ${index} field 3`},es:{name:`topic ${index} field 4`,definition:`topic ${index} field 5`}}});
     }

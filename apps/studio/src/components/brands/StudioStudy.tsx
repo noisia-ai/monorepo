@@ -3,11 +3,14 @@ import Link from 'next/link';
 import {useCallback,useEffect,useRef,useState} from 'react';
 import {useRouter} from 'next/navigation';
 import {useTranslations} from 'next-intl';
+import type {SignalListeningQuestionV1} from '@noisia/query-engine';
 import type {SignalStudyExecutionStatusV1,SignalStudyReportRowsV1,SignalStudyReportSectionV1} from '@noisia/db';
 import {signalListeningDateBoundaryV1} from '@/lib/data-os/signal-listening-date';
 import type {StudyMetadataV1,StudyOverviewV1,StudySourceV1} from '@/lib/data-os/signal-study-api';
 type ListRow={study_id:string;subject_name:string;methodology:string;execution:SignalStudyExecutionStatusV1|null};
 type Detail={configuration:StudyMetadataV1;configuration_is_latest:boolean;execution:SignalStudyExecutionStatusV1|null;overview:StudyOverviewV1|null;processing_ready:boolean;can_edit:boolean;can_execute:boolean;current_listening_revision:number|null};
+type TopicLocalization=NonNullable<SignalListeningQuestionV1['localization']>;
+type PromotionContext={execution_id:string;motives:Array<{key:string;name:string;definition:string;original_language:string}>};
 type Pending={body:string;key:string};
 const endpoint=(workspaceId:string)=>`/api/data-os/signal/${encodeURIComponent(workspaceId)}/studies`;
 const active=(status:string)=>['building','queued','running','outcome_unknown'].includes(status);
@@ -105,15 +108,18 @@ export function StudioStudyDetail({workspaceId,studyId}:{workspaceId:string;stud
     <label className="admin-form-field">{t('cap')}<input type="number" min="0.000001" step="0.000001" required value={cap} onChange={e=>setCap(e.target.value)} disabled={mutation.locked}/></label><p>{t('capExplanation')}</p>
     <button disabled={!detail.processing_ready||!detail.can_execute||mutation.locked} type="submit">{t('run')}</button>
    </form>:null}
-   {detail.overview?<StudyReport key={JSON.stringify([url,detail.overview.study_id,detail.overview.configuration_id,detail.overview.execution_id,detail.overview.output_digest,detail.overview.source_digest])} workspaceUrl={url} value={detail.overview} currentRevision={detail.current_listening_revision} onPromote={keys=>void mutation.submit({operation:'promote',execution_id:detail.overview!.execution_id,motive_keys:keys,expected_listening_revision:detail.current_listening_revision})} locked={mutation.locked||!detail.can_edit}/>:detail.execution?.status==='completed'?<p role="alert">{t('outputUnavailable')}</p>:null}
+   {detail.overview?<StudyReport key={JSON.stringify([url,detail.overview.study_id,detail.overview.configuration_id,detail.overview.execution_id,detail.overview.output_digest,detail.overview.source_digest])} workspaceUrl={url} value={detail.overview} currentRevision={detail.current_listening_revision} onPromote={(keys,localizations)=>void mutation.submit({operation:'promote',execution_id:detail.overview!.execution_id,motive_keys:keys,expected_listening_revision:detail.current_listening_revision,localizations})} locked={mutation.locked||!detail.can_edit}/>:detail.execution?.status==='completed'?<p role="alert">{t('outputUnavailable')}</p>:null}
   </>}
   {mutation.phase==='uncertain'?<p role="alert">{t('uncertain')} <button disabled={!canRetry} onClick={()=>{if(canRetry)void mutation.submit(null);}}>{t('retrySame')}</button></p>:mutation.phase==='failed'?<p role="alert">{t('mutationFailed')} <button onClick={()=>void load()}>{t('refresh')}</button></p>:mutation.phase==='saved'?<p role="status">{t('saved')}</p>:null}
  </section>;
 }
 type Page={[S in SignalStudyReportSectionV1]:{section:S;rows:SignalStudyReportRowsV1[S];offset:number;next_offset:number|null;total:number}}[SignalStudyReportSectionV1];
-function StudyReport({workspaceUrl,value,currentRevision,onPromote,locked}:{workspaceUrl:string;value:StudyOverviewV1;currentRevision:number|null;onPromote:(keys:string[])=>void;locked:boolean}){
+function StudyReport({workspaceUrl,value,currentRevision,onPromote,locked}:{workspaceUrl:string;value:StudyOverviewV1;currentRevision:number|null;onPromote:(keys:string[],localizations:Record<string,TopicLocalization>)=>void;locked:boolean}){
  const t=useTranslations('StudioStudy'),[section,setSection]=useState<SignalStudyReportSectionV1>('motives'),[offset,setOffset]=useState(0),[loaded,setLoaded]=useState<{identity:string;page:Page}|null>(null),[errorIdentity,setErrorIdentity]=useState<string|null>(null),[retry,setRetry]=useState(0),[selected,setSelected]=useState<string[]>([]);
- const sequence=useRef(0);
+ const tListening=useTranslations('Listening'),[localizations,setLocalizations]=useState<Record<string,TopicLocalization>>({}),[promotionContext,setPromotionContext]=useState<(PromotionContext&{identity:string})|null>(null),[promotionError,setPromotionError]=useState(false),[promotionRetry,setPromotionRetry]=useState(0);
+ const sequence=useRef(0),promotionSequence=useRef(0);
+ const selectedIdentity=JSON.stringify(selected),promotionIdentity=JSON.stringify([workspaceUrl,value.execution_id,currentRevision,selected]);
+ const currentPromotionContext=promotionContext?.identity===promotionIdentity?promotionContext:null;
  const identity=JSON.stringify([workspaceUrl,value.study_id,value.configuration_id,value.execution_id,value.output_digest,value.source_digest,section,offset,retry]);
  // Effects run after render: old rows must already be hidden in the render that
  // changes section, execution or pagination, before any request cleanup runs.
@@ -130,7 +136,21 @@ function StudyReport({workspaceUrl,value,currentRevision,onPromote,locked}:{work
   return()=>c.abort();
  },[workspaceUrl,value.execution_id,section,offset,retry,identity]);
  const move=(nextSection:SignalStudyReportSectionV1,nextOffset:number)=>{setLoaded(null);setErrorIdentity(null);setSection(nextSection);setOffset(nextOffset);};
- useEffect(()=>setSelected([]),[value.execution_id,currentRevision]);
+ useEffect(()=>{setSelected([]);setLocalizations({});setPromotionContext(null);},[value.execution_id,currentRevision]);
+ useEffect(()=>{
+  const controller=new AbortController(),request=++promotionSequence.current;setPromotionContext(null);setPromotionError(false);
+  const keys=JSON.parse(selectedIdentity)as string[];if(!keys.length||locked||currentRevision===null)return()=>controller.abort();
+  const query=new URLSearchParams({promotion_context:'true',execution_id:value.execution_id,motive_keys:keys.join(',')});
+  void(async()=>{try{
+   const response=await fetch(`${workspaceUrl}?${query}`,{cache:'no-store',signal:controller.signal});if(!response.ok)throw Error();
+   const context=await response.json()as PromotionContext;
+   if(controller.signal.aborted||request!==promotionSequence.current)return;
+   if(context.execution_id!==value.execution_id||!Array.isArray(context.motives)||context.motives.length!==keys.length||new Set(context.motives.map(m=>m.key)).size!==keys.length||context.motives.some(m=>!keys.includes(m.key)||!m.name?.trim()||!m.definition?.trim()||!m.original_language?.trim()))throw Error();
+   setPromotionContext({...context,identity:promotionIdentity});setLocalizations(prior=>Object.fromEntries(context.motives.map(m=>[m.key,{original_language:m.original_language,original:{name:m.name,definition:m.definition},en:prior[m.key]?.en??{name:'',definition:''},es:prior[m.key]?.es??{name:'',definition:''}}])));
+  }catch{if(!controller.signal.aborted&&request===promotionSequence.current)setPromotionError(true);}})();
+  return()=>controller.abort();
+ },[workspaceUrl,value.execution_id,currentRevision,selectedIdentity,promotionIdentity,promotionRetry,locked]);
+ const promotionReady=Boolean(currentPromotionContext&&selected.length===currentPromotionContext.motives.length&&selected.every(key=>{const item=localizations[key];return item&&(['original','en','es']as const).every(language=>item[language].name.trim()&&item[language].definition.trim());}));
  const directions=(counts:{trigger:number;barrier:number;mixed:number;none:number})=>(['trigger','barrier','mixed','none']as const).map(key=>`${t(`direction.${key}`)}: ${counts[key]}`).join(' · ');
  return <section><h3>{t('directional')}</h3><p>{t('denominator',{count:summary.denominator})}</p><p>{t('multilabel')}</p>
   <p>{t('subjectDirection')}: {directions(summary.subject_direction)}</p><p>{t('competitorDirection')}: {directions(summary.competitor_direction)}</p><p>{t('alternativeDirection')}: {directions(summary.alternative_direction)}</p>
@@ -143,9 +163,15 @@ function StudyReport({workspaceUrl,value,currentRevision,onPromote,locked}:{work
   {!page&&!error?<p role="status">{t('loading')}</p>:null}
   {page?.rows.length===0?<p>{t('emptySection')}</p>:null}
   {page?.section==='motives'?<><ul>{page.rows.map(row=><li key={row.key}>
-   <label className="admin-form-field"><input type="checkbox" checked={selected.includes(row.key)} disabled={locked||currentRevision===null} onChange={e=>setSelected(prior=>e.target.checked?[...prior,row.key]:prior.filter(k=>k!==row.key))}/>{row.name}</label> · {t(`layer.${row.layer}`)} · {t(`permission.${row.permission}`)} · {row.mentions} · {(row.share_of_cut*100).toFixed(1)}%
+   <label className="admin-form-field"><input type="checkbox" checked={selected.includes(row.key)} disabled={locked||currentRevision===null||!selected.includes(row.key)&&selected.length>=32} onChange={e=>setSelected(prior=>e.target.checked?[...prior,row.key]:prior.filter(k=>k!==row.key))}/>{row.name}</label> · {t(`layer.${row.layer}`)} · {t(`permission.${row.permission}`)} · {row.mentions} · {(row.share_of_cut*100).toFixed(1)}%
    <p>{t('subjectDirection')}: {directions(row.subject)}</p><p>{t('competitorDirection')}: {directions(row.competitor)}</p><p>{t('alternativeDirection')}: {directions(row.alternative)}</p><p>{t('tensions',{count:row.mixed})}</p>{row.permission_override_reason?<p>{t('permissionOverride')}: {row.permission_override_reason}</p>:null}
-  </li>)}</ul><p>{t('promoteExplanation')}</p><button disabled={!selected.length||locked||currentRevision===null} onClick={()=>onPromote(selected)}>{t('promote')}</button></>:null}
+  </li>)}</ul><p>{t('promoteExplanation')}</p>
+   {selected.length?<><p>{t('promotionLocalizationHelp')}</p>{promotionError?<p role="alert">{t('loadFailed')} <button disabled={locked} onClick={()=>setPromotionRetry(prior=>prior+1)}>{t('refresh')}</button></p>:!currentPromotionContext&&!locked?<p role="status">{t('loading')}</p>:null}
+    {currentPromotionContext?.motives.map(motive=><fieldset key={motive.key} className="admin-form" disabled={locked}><legend>{motive.name}</legend>{(['original','en','es']as const).map(language=><div className="admin-form" key={language}>
+     <label className="admin-form-field"><span>{tListening('nameLanguage',{language})}</span><input required maxLength={160} readOnly={language==='original'} value={localizations[motive.key]?.[language].name??''} onChange={event=>{const text=event.target.value;setLocalizations(prior=>({...prior,[motive.key]:{...prior[motive.key]!,[language]:{...prior[motive.key]![language],name:text}}}));}}/></label>
+     <label className="admin-form-field"><span>{tListening('definitionLanguage',{language})}</span><textarea required maxLength={1200} readOnly={language==='original'} value={localizations[motive.key]?.[language].definition??''} onChange={event=>{const text=event.target.value;setLocalizations(prior=>({...prior,[motive.key]:{...prior[motive.key]!,[language]:{...prior[motive.key]![language],definition:text}}}));}}/></label>
+    </div>)}</fieldset>)}</>:null}
+   <button disabled={!promotionReady||locked||currentRevision===null} onClick={()=>{if(promotionReady&&!locked&&currentRevision!==null)onPromote(selected,Object.fromEntries(selected.map(key=>[key,localizations[key]!])));}}>{t('promote')}</button></>:null}
   {page?.section==='topics'?<ul>{page.rows.map((row,index)=><li key={index}>{row.motive_key} · {row.topic_key} · {t(`aggregate.${row.aggregate}`)}: {row.mentions}</li>)}</ul>:null}
   {page?.section==='channels'?<ul>{page.rows.map((row,index)=><li key={index}>{row.motive_key} · {row.channel} · {t(`aggregate.${row.aggregate}`)}: {row.mentions}</li>)}</ul>:null}
   {page?.section==='series'?<ul>{page.rows.map((row,index)=><li key={index}>{row.date} · {row.motive_key} · {t(`aggregate.${row.aggregate}`)}: {directions(row.direction)}</li>)}</ul>:null}

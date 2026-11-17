@@ -38,6 +38,18 @@ function mount(element:React.ReactElement,messages=en,locale='en-US'){
  return{host,render:(next=element)=>act(async()=>{root.render(<intl.NextIntlClientProvider locale={locale} messages={messages} timeZone="UTC">{next}</intl.NextIntlClientProvider>);}),close:async()=>{await act(async()=>root.unmount());host.remove();}};
 }
 function button(host:HTMLElement,text:string){const result=[...host.querySelectorAll('button')].find(b=>b.textContent===text);assert.ok(result,text);return result;}
+async function completePromotion(host:HTMLElement){
+ const field=(label:string)=>{const row=[...host.querySelectorAll('label')].find(row=>row.querySelector('span')?.textContent===label);assert.ok(row,`localization field ${label}`);return row.querySelector('input,textarea')as HTMLInputElement;};
+ const name=(language:string)=>en.Listening.nameLanguage.replace('{language}',language),definition=(language:string)=>en.Listening.definitionLanguage.replace('{language}',language);
+ assert.equal(field(name('original')).value,'Time together');assert.equal(field(definition('original')).value,'Sharing time with others');
+ assert.equal(field(name('original')).readOnly,true);assert.equal(field(definition('original')).readOnly,true);
+ assert.equal(button(host,en.StudioStudy.promote).disabled,true,'translations must be completed before promotion');
+ for(const language of ['en','es'])for(const [key,label]of [['name',name(language)],['definition',definition(language)]]){
+  const input=field(label!);assert.equal(input.value,'','translations are never invented');
+  await act(async()=>{input.value=`${language} ${key}`;Simulate.change(input);});
+ }
+ assert.equal(button(host,en.StudioStudy.promote).disabled,false);
+}
 test('native report mounts in both languages, loads bounded sections and shows only verified display evidence',async()=>{
  const original=fetch;
  try{for(const [locale,messages]of [['en-US',en],['es-MX',es]]as const){
@@ -53,12 +65,34 @@ test('native report mounts in both languages, loads bounded sections and shows o
 test('human promotion keeps exact selected motive ids, current CAS and same body/key after unknown acknowledgement',async()=>{
  const original=fetch;const posts:Array<{body:string;key:string}>=[];
  globalThis.fetch=async(input,options)=>{if(options?.method==='POST'){posts.push({body:String(options.body),key:new Headers(options.headers).get('Idempotency-Key')!});return posts.length===1?Response.json({error:'unknown'},{status:503}):Response.json({configuration_id:'published'});}
-  const section=new URL(String(input),'https://studio.invalid').searchParams.get('section');return Response.json(section?page(section):detail());};
+  const query=new URL(String(input),'https://studio.invalid').searchParams;if(query.has('promotion_context'))return Response.json({execution_id:'execution',motives:[{key:'social_time',name:'Time together',definition:'Sharing time with others',original_language:'und'}]});const section=query.get('section');return Response.json(section?page(section):detail());};
  const m=mount(<Detail workspaceId="workspace" studyId="study"/>);
  try{await m.render();assert.equal(posts.length,0);await act(async()=>{m.host.querySelector('input[type="checkbox"]')!.dispatchEvent(new browser.MouseEvent('click',{bubbles:true})as unknown as Event);});
+  await completePromotion(m.host);
   await act(async()=>{button(m.host,en.StudioStudy.promote).click();});assert.equal(posts.length,1);
-  assert.deepEqual(JSON.parse(posts[0]!.body),{operation:'promote',execution_id:'execution',motive_keys:['social_time'],expected_listening_revision:7});
+  assert.deepEqual(JSON.parse(posts[0]!.body),{operation:'promote',execution_id:'execution',motive_keys:['social_time'],expected_listening_revision:7,localizations:{social_time:{original_language:'und',original:{name:'Time together',definition:'Sharing time with others'},en:{name:'en name',definition:'en definition'},es:{name:'es name',definition:'es definition'}}}});
   await act(async()=>{button(m.host,en.StudioStudy.retrySame).click();});assert.equal(posts.length,2);assert.deepEqual(posts[0]!,posts[1]!);
+ }finally{await m.close();globalThis.fetch=original;}
+});
+test('promotion context is lazy, fails visibly and discards a late response after deselection',async()=>{
+ const original=fetch,requests:Array<{url:string;signal:AbortSignal|null|undefined}>=[];let reply!:(response:Response)=>void,attempt=0,posts=0;
+ globalThis.fetch=async(input,options)=>{
+  const url=String(input),query=new URL(url,'https://studio.invalid').searchParams;
+  if(options?.method==='POST'){posts++;return Response.json({});}
+  if(query.has('promotion_context')){requests.push({url,signal:options?.signal});attempt++;return attempt===1?Response.json({error:'unavailable'},{status:503}):new Promise<Response>(resolve=>{reply=resolve;});}
+  return Response.json(query.has('section')?page(query.get('section')!):detail());
+ };
+ const m=mount(<Detail workspaceId="workspace" studyId="study"/>);
+ try{
+  await m.render();assert.equal(requests.length,0,'reading a report never derives promotion context');
+  const checkbox=m.host.querySelector('input[type="checkbox"]')!;
+  await act(async()=>checkbox.dispatchEvent(new browser.MouseEvent('click',{bubbles:true})as unknown as Event));
+  assert.equal(requests.length,1);assert.equal(new URL(requests[0]!.url,'https://studio.invalid').searchParams.get('motive_keys'),'social_time');
+  assert.ok(m.host.querySelector('[role="alert"]')?.textContent?.includes(en.StudioStudy.loadFailed));assert.equal(button(m.host,en.StudioStudy.promote).disabled,true);
+  await act(async()=>button(m.host,en.StudioStudy.refresh).click());assert.equal(requests.length,2);
+  await act(async()=>checkbox.dispatchEvent(new browser.MouseEvent('click',{bubbles:true})as unknown as Event));assert.equal(requests[1]!.signal?.aborted,true);
+  await act(async()=>reply(Response.json({execution_id:'execution',motives:[{key:'social_time',name:'late-original',definition:'late-definition',original_language:'und'}]})));
+  assert.ok(!m.host.textContent?.includes('late-original'));assert.equal(button(m.host,en.StudioStudy.promote).disabled,true);assert.equal(posts,0);
  }finally{await m.close();globalThis.fetch=original;}
 });
 test('read-only native capability disables human promotion and creating configurations',async()=>{
@@ -160,7 +194,7 @@ test('report tab changes preserve the historical Study subject, template version
 test('edit-only accounts cannot submit paid processing while configuration creation and promotion remain available',async()=>{
  const original=fetch;let completed=false;const posts:Record<string,unknown>[]=[];
  globalThis.fetch=async(input,options)=>{if(options?.method==='POST'){posts.push(JSON.parse(String(options.body)));return posts.length===1?Response.json({error:'unknown'},{status:503}):Response.json({configuration_id:'human-publication'});}
-  const url=String(input),section=new URL(url,'https://studio.invalid').searchParams.get('section');if(section)return Response.json(page(section));
+  const url=String(input),query=new URL(url,'https://studio.invalid').searchParams,section=query.get('section');if(query.has('promotion_context'))return Response.json({execution_id:'execution',motives:[{key:'social_time',name:'Time together',definition:'Sharing time with others',original_language:'und'}]});if(section)return Response.json(page(section));
   if(url.includes('context=true'))return Response.json({source:{binding_kind:'serving',snapshot_id:'snapshot',configuration_id:'config',configuration_digest:'digest',category:'beer',revision:1,configuration_is_latest:true},can_edit:true,can_execute:false,processing_ready:true});
   if(url.endsWith('/studies'))return Response.json({studies:[],next_after_study_id:null});return Response.json({...detail(completed?'completed':null),can_edit:true,can_execute:false,processing_ready:true});};
  const a=mount(<Detail workspaceId="workspace" studyId="study"/>),b=mount(<List workspaceId="workspace" brandId="brand" brandName="Beer" timezone="UTC"/>);
@@ -168,7 +202,7 @@ test('edit-only accounts cannot submit paid processing while configuration creat
   await act(async()=>{input.value='2';Simulate.change(input);});await act(async()=>{a.host.querySelector('form')!.dispatchEvent(new browser.Event('submit',{bubbles:true,cancelable:true})as unknown as Event);});assert.equal(posts.length,0,'even form submission cannot start a paid request without native processing capability');
   await b.render();assert.equal(b.host.querySelector('fieldset')!.disabled,false);assert.equal(button(b.host,en.StudioStudy.save).disabled,false);
   completed=true;await a.render(<Detail workspaceId="workspace" studyId="completed-study"/>);const checkbox=a.host.querySelector('input[type="checkbox"]')!as HTMLInputElement;assert.equal(checkbox.disabled,false);
-  await act(async()=>checkbox.dispatchEvent(new browser.MouseEvent('click',{bubbles:true})as unknown as Event));await act(async()=>button(a.host,en.StudioStudy.promote).click());assert.equal(posts.length,1);assert.equal(posts[0]!.operation,'promote');assert.equal(button(a.host,en.StudioStudy.retrySame).disabled,false);await act(async()=>button(a.host,en.StudioStudy.retrySame).click());assert.equal(posts.length,2);assert.deepEqual(posts[0],posts[1]);assert.equal(posts.some(p=>p.operation==='execute'),false);
+  await act(async()=>checkbox.dispatchEvent(new browser.MouseEvent('click',{bubbles:true})as unknown as Event));await completePromotion(a.host);await act(async()=>button(a.host,en.StudioStudy.promote).click());assert.equal(posts.length,1);assert.equal(posts[0]!.operation,'promote');assert.equal(button(a.host,en.StudioStudy.retrySame).disabled,false);await act(async()=>button(a.host,en.StudioStudy.retrySame).click());assert.equal(posts.length,2);assert.deepEqual(posts[0],posts[1]);assert.equal(posts.some(p=>p.operation==='execute'),false);
  }finally{await a.close();await b.close();globalThis.fetch=original;}
 });
 test('read-only accounts keep both edit and paid controls disabled even when the provider is ready',async()=>{

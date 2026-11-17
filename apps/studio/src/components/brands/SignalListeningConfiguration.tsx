@@ -118,7 +118,7 @@ export function SignalListeningConfiguration({workspaceId,editable=true}:{worksp
       {draft.questions.map((question,index)=>{
         // Legacy topics remain untouched until a human fills their missing text.
         // An unknown original language must not be presented as a translation.
-        const localization=question.localization??(question.type==='noul'&&question.topic_source?{original_language:'und',
+        const localization=question.localization??(question.type==='noul'&&question.origin!=='base'?{original_language:'und',
           original:{name:'',definition:''},en:{name:'',definition:''},es:{name:'',definition:''}}:undefined);
         return <fieldset key={`${index}:${question.type}`} disabled={!canEdit||busy} className="admin-section">
         <legend>{question.topic_source?t('topic'):t('question')}</legend>
