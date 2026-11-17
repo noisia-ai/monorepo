@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import {AsyncLocalStorage} from 'node:async_hooks';
 import {createHash} from 'node:crypto';
 import {execFileSync} from 'node:child_process';
-import {mkdir,open,readFile,unlink} from 'node:fs/promises';
+import {mkdir,mkdtemp,open,readFile,rm,unlink} from 'node:fs/promises';
 import {dirname,join,resolve,sep} from 'node:path';
 import {fileURLToPath,pathToFileURL} from 'node:url';
 import {performance} from 'node:perf_hooks';
@@ -257,6 +257,11 @@ export function assertDiagnosticExecArgsV1(mode:string,args:string[],profileDir:
  else if(mode!=='legacy')assert.ok(!args.some(a=>a.startsWith('--cpu-prof')||a.startsWith('--heap')),'diagnostic_profiler_forbidden');
  else assertCpuProfilerArgsV1(args,profileDir);
 }
+export async function createListeningStorageOutputDirV1(profileOnly:boolean,outputRoot:string){
+  if(!profileOnly)return join(outputRoot,'objects');
+  const parent=dirname(outputRoot);await mkdir(parent,{recursive:true});
+  return mkdtemp(join(parent,'.r16-listening-profile-only-storage-'));
+}
 export function assertListeningSmallGuardV1(env:NodeJS.ProcessEnv,args:string[]){
   if(!args.includes('--run'))return;
   assert.equal(env.GITHUB_ACTIONS,'true','diagnostic_requires_github_actions');
@@ -406,7 +411,8 @@ async function removeProfileOnlyMarker(marker:any){
  await unlink(marker.path);return true;
 }
 function moduleAt<T>(root:string,relative:string):Promise<T>{return import(pathToFileURL(join(root,relative)).href) as Promise<T>;}
-function safeError(error:unknown){return error instanceof Error&&/^(?:r16|listening|mass_labeling|labeling|workspace_engine|jev)_[a-z0-9_]{1,100}$/u.test(error.message)?error.message:'listening_small_diagnostic_failed';}
+export function safeErrorV1(error:unknown){return error instanceof Error&&/^(?:r16|listening|mass_labeling|labeling|workspace_engine|jev)_[a-z0-9_]{1,100}$/u.test(error.message)?error.message:'listening_small_diagnostic_failed';}
+const safeError=safeErrorV1;
 const gitHead=(root:string)=>execFileSync('git',['rev-parse','HEAD'],{cwd:root,encoding:'utf8',stdio:['ignore','pipe','ignore']}).trim();
 async function probeFileHashes(root:string){return Object.fromEntries(await Promise.all(probeFiles.map(async path=>[path,sha(await readFile(join(root,path),'utf8'))])));}
 
@@ -443,6 +449,9 @@ export async function runListeningSmallDiagnosticV1(){
   const monotonicOrigin=process.hrtime.bigint();
   let stage='imports';
   let storageServer:any;
+  let storageOutputDir:string|undefined;
+  let storageOutputDirSha256:string|undefined;
+  let storageOutputRemoved=false;
   let pgCpuCollector:any;
   let pgCpuOwnershipMarker:any;
   let pgCpuSnapshotBefore:any;
@@ -488,8 +497,9 @@ export async function runListeningSmallDiagnosticV1(){
     const workload=workloadModule.r16ListeningWorkloadV2('defined_consumer_second_pass');
     const instrument=sha(await readFile(new URL(import.meta.url),'utf8'));
     const profile=new profilerModule.R16QueryProfilerV1();
-    const outputDir=join(outputRoot,'objects');
-    storageServer=await filesystemModule.startR16HttpFilesystemStorageV1(outputDir);
+    storageOutputDir=await createListeningStorageOutputDirV1(profileOnly,outputRoot);
+    if(profileOnly)storageOutputDirSha256=sha(storageOutputDir);
+    storageServer=await filesystemModule.startR16HttpFilesystemStorageV1(storageOutputDir);
     const storage=storageModule.createWorkspaceEngineStorageV1({url:storageServer.base_url,service_role_key:'synthetic-local-only',bucket:'corpus-files'});
     const dbPool=await localPg.openR16CiPostgresV1();
     try{
@@ -650,6 +660,8 @@ export async function runListeningSmallDiagnosticV1(){
               target_sha:pgCpuProfile.target_sha,interval_ms:250,snapshot_before:pgCpuSnapshotBefore?.sequence??null,
               snapshot_after:pgCpuSnapshotAfter?.sequence??null,artifact_bytes:pgProfileArtifactBytes}}:{}),
           observed_http_latency:latencySummary,storage:storageServer.metrics(),sql_profile:profile.snapshot(),
+          ...(profileOnly?{storage_output:{scope:'owned_temporary_sibling_outside_artifact_directory',directory_path_sha256:storageOutputDirSha256,
+            removed_before_run_receipt_write:false}}:{}),
           token_budget_http_witness:httpTokenWitness.snapshot(),
           inner_plan_capture:{enabled:!profilerDisabled,disabled_reason:profilerDisabled?mode:null,diagnostic_only:true,threshold_roots:1024,max_captures_per_query_hash:INNER_PLAN_CAPTURE_ORDINALS.length,capture_ordinals:INNER_PLAN_CAPTURE_ORDINALS,min_duration_ms:INNER_PLAN_MIN_DURATION_MS,
             plans_below_min_duration_captured:false,observations:observerSnapshot.inner_plan_observations},
@@ -665,8 +677,10 @@ export async function runListeningSmallDiagnosticV1(){
       }} });
     stage='write_artifact';
     result.observer=await finishListeningObserver(observer);
-    await atomicJson(artifact,result);
     await storageServer.close();storageServer=undefined;
+    if(profileOnly&&storageOutputDir){await rm(storageOutputDir,{recursive:true,force:true});storageOutputDir=undefined;
+      storageOutputRemoved=true;result.storage_output.removed_before_run_receipt_write=true;}
+    await atomicJson(artifact,result);
     process.stdout.write(JSON.stringify({status:'complete',diagnostic_only:true,h1_accepted:false,
       artifact:profileOnly?'artifacts/r16-listening-profile-only/run.json':'artifacts/r16-listening-small/result.json'})+'\n');
     return result;
@@ -688,11 +702,18 @@ export async function runListeningSmallDiagnosticV1(){
     }
     let observerSnapshot:any;
     try{observerSnapshot=await finishListeningObserver(observer);}catch(cleanupError){observerSnapshot={...observer.snapshot(),cleanup_error:safeError(cleanupError)};}
+    let storageCleanupError:string|undefined;
+    if(storageServer)try{await storageServer.close();}catch(cleanupError){storageCleanupError=safeError(cleanupError);}
+    storageServer=undefined;
+    if(profileOnly&&storageOutputDir)try{await rm(storageOutputDir,{recursive:true,force:true});storageOutputDir=undefined;storageOutputRemoved=true;}
+      catch(cleanupError){storageCleanupError=storageCleanupError??safeError(cleanupError);}
     const failure={contract_version:profileOnly?'r16-listening-profile-only-run-v1':'r16-listening-small-diagnostic-v1',diagnostic_only:true,
       ...(profileOnly?{profiling_only:true,profile_status:'failed',...(profileCleanupError?{profile_cleanup_error:profileCleanupError}:{})}:{}),h1_accepted:false,
       ...(profileOnly?{node_profile:mainThreadProfile??{status:'unavailable',scope:'classification_and_serving',
         coverage:'main_thread_only',worker_thread_cpu:'unknown'},postgres_profile:pgCpuProfile?{contract:pgCpuProfile.contract,
-          target_sha:pgCpuProfile.target_sha,status:pgCpuProfile.status,interval_ms:250}: {status:'unavailable'}}:{}),
+          target_sha:pgCpuProfile.target_sha,status:pgCpuProfile.status,interval_ms:250}: {status:'unavailable'},
+        storage_output:{scope:'owned_temporary_sibling_outside_artifact_directory',directory_path_sha256:storageOutputDirSha256??null,
+          removed_before_run_receipt_write:storageOutputRemoved,...(storageCleanupError?{cleanup_error:storageCleanupError}:{})}}:{}),
       status:'failed',stage,code:safeError(error),total_wall_ms:performance.now()-started,process_id:process.pid,
       diagnostic_mode:mode,
       resource_profile:{requested_profile:resourceProfile??process.env.R16_DIAGNOSTIC_RESOURCE_PROFILE??'baseline_512m',execution:effectiveExecution??null},
@@ -711,7 +732,6 @@ export async function runListeningSmallDiagnosticV1(){
         observations:observerSnapshot.dml_plan_observations},
       ...(projectionPlanOnly?{projection_plan_capture:observerSnapshot.projection_plan_capture}:{})};
     await atomicJson(artifact,failure).catch(()=>undefined);
-    await storageServer?.close().catch(()=>undefined);
     process.stderr.write('listening_small_diagnostic_failed; sanitized artifact written\n');
     process.exitCode=1;return failure;
   }

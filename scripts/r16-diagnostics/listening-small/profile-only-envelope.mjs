@@ -18,10 +18,14 @@ const MAINLAB_PATHS=[
  'infrastructure/db/migrations/signal-listening-statement-shared-wire.postgres.test.ts',
  'infrastructure/db/migrations/signal-listening-statement-shared-wire.test.ts',
 ];
-const INPUT_FILES=new Set(['mainlab-default-before.json','mainlab-default-after.json','mainlab-default-runtime.json',
+export const PROFILE_ONLY_ARTIFACT_INPUT_FILES_V1=Object.freeze(['mainlab-default-before.json','mainlab-default-after.json','mainlab-default-runtime.json',
  'node-profile.json','postgres-profile.json','profile-only.test.receipt.json','profile-only.test.tap',
  'profile-pg-cpu.test.receipt.json','profile-pg-cpu.test.tap',
  'run.json','run.test.receipt.json','run.test.tap','v8-main-thread-profile.json']);
+export function assertProfileOnlyArtifactFileSetV1(names){
+ assert.deepEqual([...names].sort(),[...PROFILE_ONLY_ARTIFACT_INPUT_FILES_V1].sort(),'profile_only_artifact_files_invalid');
+ return true;
+}
 export const PROFILE_ONLY_REQUIRED_PROBE_FILES_V1=['.github/workflows/r16-listening-profile-only.yml',
  '.github/workflows/r16-listening-small-diagnostic.yml','.github/workflows/mfp-postgres.yml',
  'scripts/r16-diagnostics/listening-small/run.mts','scripts/r16-diagnostics/listening-small/run.test.mts',
@@ -122,6 +126,9 @@ export function validateProfileOnlyRunV1(run,{targetSha,probeSha}){
  assert.equal(run.postgres_profile?.target_sha,targetSha,'profile_only_pg_target_mismatch');
  assert.ok(['observed','partial','unavailable'].includes(run.postgres_profile?.status),'profile_only_pg_status_invalid');
  assert.equal(run.postgres_profile?.interval_ms,250,'profile_only_pg_interval_invalid');
+ assert.equal(run.storage_output?.scope,'owned_temporary_sibling_outside_artifact_directory','profile_only_storage_path_scope_invalid');
+ assert.ok(/^sha256:[0-9a-f]{64}$/u.test(run.storage_output?.directory_path_sha256??''),'profile_only_storage_path_seal_invalid');
+ assert.equal(run.storage_output?.removed_before_run_receipt_write,true,'profile_only_storage_path_not_cleaned');
  return run;
 }
 
@@ -133,7 +140,7 @@ export async function assembleProfileOnlyEnvelopeV1(args){
  assert.equal(gitHead(targetRoot),targetSha,'profile_only_target_head_invalid');
  assert.equal(gitHead(probeRoot),probeSha,'profile_only_probe_head_invalid');
  assertClean(targetRoot);assertClean(probeRoot);
- const names=await readdir(artifactRoot);assert.deepEqual([...names].sort(),[...INPUT_FILES].sort(),'profile_only_artifact_files_invalid');
+ const names=await readdir(artifactRoot);assertProfileOnlyArtifactFileSetV1(names);
  const path=name=>join(artifactRoot,name);
  const [run,mainlab,nodeReceipt,pgProfile,profileRunPure,profilePureTap,pgPure,pgPureTap,runPure,runPureTap]=await Promise.all([
   readJson(path('run.json')),readJson(path('mainlab-default-runtime.json')),readJson(path('node-profile.json')),

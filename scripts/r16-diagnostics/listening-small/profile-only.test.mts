@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
-import {chmod,mkdtemp,mkdir,readFile,stat,rm,symlink,writeFile} from 'node:fs/promises';
+import {chmod,mkdtemp,mkdir,readdir,readFile,stat,rm,symlink,writeFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
-import {join} from 'node:path';
+import {dirname,join} from 'node:path';
 import {pathToFileURL} from 'node:url';
 import test from 'node:test';
 import {createHash} from 'node:crypto';
@@ -9,10 +9,10 @@ import {createMainThreadProfileCaptureV1,MAIN_THREAD_PROFILE_INTERVAL_US_V1,sani
  createProcMainThreadCpuReaderV1,compareProcMainThreadCpuV1,MAIN_THREAD_CLK_TCK_TIMEOUT_MS_V1,readClockTicksV1} from './main-thread-profile.mjs';
 import {assertDiagnosticExecArgsV1,assertListeningResourceProfileV1,assertListeningSmallGuardV1,assertProfileOnlyManualTargetV1,
  assertProfileOnlyCDefaultBeforeV1,diagnosticModeV1,listeningResourceProfileV1,PROFILE_ONLY_TARGET_SHA_V1,
- writeProfileOnlyPgOwnershipMarkerV1} from './run.mjs';
+ createListeningStorageOutputDirV1,safeErrorV1,writeProfileOnlyPgOwnershipMarkerV1} from './run.mjs';
 import {execFileSync,spawnSync} from 'node:child_process';
-import {PROFILE_ONLY_REQUIRED_PROBE_FILES_V1,validatePgProfileArtifactBytesV1,validateProfileOnlyProbeSealV1,
- validateProfileOnlyRunV1} from './profile-only-envelope.mjs';
+import {PROFILE_ONLY_ARTIFACT_INPUT_FILES_V1,PROFILE_ONLY_REQUIRED_PROBE_FILES_V1,assertProfileOnlyArtifactFileSetV1,
+ validatePgProfileArtifactBytesV1,validateProfileOnlyProbeSealV1,validateProfileOnlyRunV1} from './profile-only-envelope.mjs';
 import {PG_CPU_INSPECT_FORMAT_V1} from './profile-pg-cpu.mjs';
 
 const fakeProfile={startTime:100,endTime:350,nodes:[
@@ -210,7 +210,9 @@ function validProfileRun(){
   observed_http_latency:{count:8192},expected_http_requests:8192,
   node_profile:{contract:'r16-main-thread-profile-capture-v1',status:'captured',coverage:'main_thread_only',worker_thread_cpu:'unknown',
    window:{profile_sampling_overlap:'unknown_v8_clock_bridge'}},
-  postgres_profile:{contract:'r16-pg-cpu-profile-v1',target_sha:PROFILE_ONLY_TARGET_SHA_V1,status:'partial',interval_ms:250}};
+  postgres_profile:{contract:'r16-pg-cpu-profile-v1',target_sha:PROFILE_ONLY_TARGET_SHA_V1,status:'partial',interval_ms:250},
+  storage_output:{scope:'owned_temporary_sibling_outside_artifact_directory',directory_path_sha256:`sha256:${'a'.repeat(64)}`,
+   removed_before_run_receipt_write:true}};
 }
 
 test('profile-only envelope validation binds the exact mini, C target, bounded tuple and unknown clock bridge',()=>{
@@ -224,6 +226,35 @@ test('profile-only envelope validation binds the exact mini, C target, bounded t
   {targetSha:PROFILE_ONLY_TARGET_SHA_V1,probeSha:'f'.repeat(40)}),/profile_only_effective_profile_invalid/u);
  assert.throws(()=>validateProfileOnlyRunV1({...base,node_profile:{...base.node_profile,window:{profile_sampling_overlap:'mapped'}}},
   {targetSha:PROFILE_ONLY_TARGET_SHA_V1,probeSha:'f'.repeat(40)}),/profile_only_v8_clock_bridge_claimed/u);
+ assert.throws(()=>validateProfileOnlyRunV1({...base,storage_output:{...base.storage_output,removed_before_run_receipt_write:false}},
+  {targetSha:PROFILE_ONLY_TARGET_SHA_V1,probeSha:'f'.repeat(40)}),/profile_only_storage_path_not_cleaned/u);
+});
+
+test('profile-only storage path stays outside the exact assembler artifact set and is sealed for cleanup',async()=>{
+ const root=await mkdtemp(join(tmpdir(),'r16-profile-storage-path-')),artifactRoot=join(root,'artifacts/r16-listening-profile-only');
+ const tempDir: string[]=[];
+ try{
+  await mkdir(artifactRoot,{recursive:true});await mkdir(join(artifactRoot,'objects'));
+  const residual=await readdir(artifactRoot);
+  assert.deepEqual(residual,['objects']);
+  assert.throws(()=>assertProfileOnlyArtifactFileSetV1(residual),/profile_only_artifact_files_invalid/u);
+  await rm(join(artifactRoot,'objects'),{recursive:true});
+  const storagePath=await createListeningStorageOutputDirV1(true,artifactRoot);tempDir.push(storagePath);
+  assert.equal(dirname(storagePath),dirname(artifactRoot));
+  assert.equal(storagePath.startsWith(`${artifactRoot}/`),false);
+  assert.deepEqual(await readdir(artifactRoot),[]);
+  assert.equal(await createListeningStorageOutputDirV1(false,artifactRoot),join(artifactRoot,'objects'),
+   'legacy and neutral storage path remains unchanged');
+  assert.equal(PROFILE_ONLY_ARTIFACT_INPUT_FILES_V1.length,13,'assembler file whitelist remains fixed');
+ }finally{
+  for(const path of tempDir)await rm(path,{recursive:true,force:true});
+  await rm(root,{recursive:true,force:true});
+ }
+});
+
+test('profile-only cleanup errors retain only safe codes and never leak temporary paths',()=>{
+ assert.equal(safeErrorV1(new Error('r16_profile_only_storage_cleanup_failed')),'r16_profile_only_storage_cleanup_failed');
+ assert.equal(safeErrorV1(new Error('/tmp/private-study-uuid/connection.env denied')),'listening_small_diagnostic_failed');
 });
 
 test('profile-only envelope requires every executable/helper source in the before/after probe seal',async()=>{
