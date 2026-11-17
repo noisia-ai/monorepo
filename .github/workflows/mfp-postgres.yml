@@ -1287,9 +1287,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
-      R16BENCH_RUN_ID: submit-contention-pg17
+      R16BENCH_RUN_ID: benchmark-pg17
       R16BENCH_SERVICES: postgres,redis
-      NOISIA_R16_LOCAL_PG_LAB: submit-contention-pg17
+      NOISIA_R16_LOCAL_PG_LAB: r16-benchmark-pg17
       DATABASE_SSL: 'false'
       R16_SUBMIT_CONTENTION_EVIDENCE_DIR: .data/piloto-masivo/r16/submit-contention-profile-native-evidence
     steps:
@@ -1308,9 +1308,9 @@ jobs:
       - name: Require the owned experimental container, volume, and private files to be absent
         run: |
           set -euo pipefail
-          container_name=r16bench-submit-contention-pg17-postgres
-          volume_name=r16bench-submit-contention-pg17_postgres-data
-          lab_dir=.data/piloto-masivo/r16/labs/submit-contention-pg17
+          container_name=r16-benchmark-pg17
+          volume_name=r16bench-benchmark-pg17_postgres-data
+          lab_dir=.data/piloto-masivo/r16/labs/benchmark-pg17
           if docker inspect "$container_name" >/dev/null 2>&1; then
             echo '::error::The experimental submit-contention PostgreSQL container already exists'
             exit 1
@@ -1335,13 +1335,13 @@ jobs:
           NOISIA_MFP_PG_CI: 'true'
         run: |
           set -euo pipefail
-          connection_file=.data/piloto-masivo/r16/labs/submit-contention-pg17/connection.env
+          connection_file=.data/piloto-masivo/r16/labs/benchmark-pg17/connection.env
           test -f "$connection_file"
           set -a
           source "$connection_file"
           set +a
           export DATABASE_SSL=false
-          export NOISIA_R16_LOCAL_PG_LAB=submit-contention-pg17
+          export NOISIA_R16_LOCAL_PG_LAB=r16-benchmark-pg17
           pnpm --filter @noisia/db db:smoke:migrations
       - name: Run the exact native Reserve and Mark contention profile
         env:
@@ -1353,13 +1353,13 @@ jobs:
           NOISIA_JEV_STREAMING_V2_ENABLED: 'true'
         run: |
           set -euo pipefail
-          connection_file=.data/piloto-masivo/r16/labs/submit-contention-pg17/connection.env
+          connection_file=.data/piloto-masivo/r16/labs/benchmark-pg17/connection.env
           test -f "$connection_file"
           set -a
           source "$connection_file"
           set +a
           export DATABASE_SSL=false
-          export NOISIA_R16_LOCAL_PG_LAB=submit-contention-pg17
+          export NOISIA_R16_LOCAL_PG_LAB=r16-benchmark-pg17
           set +e
           pnpm exec node --test --test-concurrency=1 --import tsx \
             infrastructure/db/migrations/signal-listening-submit-contention-profile.postgres.test.ts \
@@ -1413,19 +1413,20 @@ jobs:
             .data/piloto-masivo/r16/submit-contention-profile-native-evidence/submit-contention-profile.json
           if-no-files-found: error
           retention-days: 14
+          include-hidden-files: true
       - name: Stop and remove only the owned experimental lab
         if: ${{ always() && env.R16_SUBMIT_CONTENTION_LAB_OWNED == 'true' }}
         run: |
           set -euo pipefail
-          lab_dir=.data/piloto-masivo/r16/labs/submit-contention-pg17
+          lab_dir=.data/piloto-masivo/r16/labs/benchmark-pg17
           if [[ -f "$lab_dir/private.env" ]]; then
-            R16BENCH_RUN_ID=submit-contention-pg17 scripts/r16/lab-down.sh
+            R16BENCH_RUN_ID=benchmark-pg17 scripts/r16/lab-down.sh
           fi
-          if docker inspect r16bench-submit-contention-pg17-postgres >/dev/null 2>&1; then
+          if docker inspect r16-benchmark-pg17 >/dev/null 2>&1; then
             echo '::error::Owned experimental submit-contention PostgreSQL container survived cleanup'
             exit 1
           fi
-          if docker volume inspect r16bench-submit-contention-pg17_postgres-data >/dev/null 2>&1; then
+          if docker volume inspect r16bench-benchmark-pg17_postgres-data >/dev/null 2>&1; then
             echo '::error::Owned experimental submit-contention PostgreSQL volume survived cleanup'
             exit 1
           fi
