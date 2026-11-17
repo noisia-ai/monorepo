@@ -4,11 +4,13 @@ import {join} from 'node:path';
 import {pathToFileURL} from 'node:url';
 import {
   BenchmarkError,
+  assembleRequestCodecWorkloadEvidenceV1,
   createRequestCodecWorkloadsV1,
   parseRequestCodecBenchmarkArgsV1,
   prepareComparisonModules,
   runOwnedTempLifecycleV1,
   validateRequestCodecArtifactV1,
+  validateRequestCodecWorkloadEvidenceV1,
   REQUEST_CODEC_BASE_SHA,
   REQUEST_CODEC_TRIAL_ORDER,
 } from './request-codec-benchmark.mjs';
@@ -116,11 +118,12 @@ test('Main fixture is derived from the target product workload and the selection
   const fns = {compile: codec.compileSignalListeningSnapshotV1, readSnapshot: codec.readSignalListeningSnapshotV1,
     build: codec.buildSignalListeningCompiledRequestV1, digest: codec.signalListeningRequestDigestV1};
   const prepared = prepareComparisonModules({old: codec, new: codec, oldFns: fns, newFns: fns}, workloads);
+  const evidence = assembleRequestCodecWorkloadEvidenceV1(prepared);
+  assert.equal(validateRequestCodecWorkloadEvidenceV1(evidence), true);
+  assert.deepEqual(evidence.main_workload.configuration_digest, productWorkload.configuration_digest);
+  assert.equal(evidence.workloads[0].snapshot_configuration_digest_old, productWorkload.configuration_digest);
+  assert.equal(evidence.workloads[0].snapshot_configuration_digest_new, productWorkload.configuration_digest);
   assert.deepEqual(codec.readSignalListeningSnapshotV1(prepared[0].oldSnapshot).configuration, productWorkload.configuration);
-  assert.equal(codec.readSignalListeningSnapshotV1(prepared[0].oldSnapshot).configuration_digest, productWorkload.configuration_digest);
-  assert.equal(codec.readSignalListeningSnapshotV1(prepared[0].newSnapshot).configuration_digest, productWorkload.configuration_digest);
-  assert.deepEqual(codec.readSignalListeningSnapshotV1(prepared[0].oldSnapshot).configuration,
-    codec.readSignalListeningSnapshotV1(prepared[0].newSnapshot).configuration);
 });
 
 test('owned baseline lifecycle preserves the primary failure, attempts cleanup and postchecks, and rejects any secondary failure', async () => {

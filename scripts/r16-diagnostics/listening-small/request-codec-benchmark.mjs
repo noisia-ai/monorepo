@@ -319,6 +319,44 @@ function writeArtifact(path, object) {
   return bytes.byteLength;
 }
 
+export function assembleRequestCodecWorkloadEvidenceV1(preparedWorkloads) {
+  if (!Array.isArray(preparedWorkloads) || preparedWorkloads.length !== 2) fail('prepared_workload_count_invalid');
+  const main = preparedWorkloads[0];
+  return {
+    main_workload: {source_function: 'r16ListeningWorkloadV2', arm: 'defined_consumer_second_pass',
+      configured_questions: main.configuration.questions.length,
+      selected_consumer_questions: main.selected_keys.filter(key => key !== 'voice' && key !== 'promotion').length,
+      configuration_digest: main.product_configuration_digest,
+      selected_consumer_keys_sha256: main.selected_consumer_keys_sha256},
+    workloads: preparedWorkloads.map(item => ({case_id: item.case_id, base_questions: 2,
+      configured_questions: item.configuration.questions.length,
+      candidate_questions_configured: item.configuration.questions.length - 2,
+      candidate_questions_selected: item.selected_keys.filter(key => key !== 'voice' && key !== 'promotion').length,
+      request_questions: item.selected_keys.length, calls: item.inputs.length,
+      product_configuration_digest: item.product_configuration_digest,
+      selected_consumer_keys_sha256: item.selected_consumer_keys_sha256,
+      snapshot_configuration_digest_old: item.oldSnapshotConfigurationDigest,
+      snapshot_configuration_digest_new: item.newSnapshotConfigurationDigest})),
+  };
+}
+
+export function validateRequestCodecWorkloadEvidenceV1(evidence) {
+  assert.deepEqual(evidence?.workloads?.map(item => item.case_id), ['defined_consumer_4_configured_2_selected', 'base_2_plus_4_noul_candidates']);
+  assert.deepEqual(evidence.workloads.map(item => [item.configured_questions, item.base_questions,
+    item.candidate_questions_configured, item.candidate_questions_selected, item.request_questions]),
+  [[4, 2, 2, 2, 2], [6, 2, 4, 4, 6]]);
+  assert.deepEqual(evidence.main_workload, {source_function: 'r16ListeningWorkloadV2', arm: 'defined_consumer_second_pass',
+    configured_questions: 4, selected_consumer_questions: 2,
+    configuration_digest: evidence.workloads[0].product_configuration_digest,
+    selected_consumer_keys_sha256: evidence.workloads[0].selected_consumer_keys_sha256});
+  assert.match(evidence.main_workload.configuration_digest ?? '', /^sha256:[0-9a-f]{64}$/u);
+  assert.match(evidence.main_workload.selected_consumer_keys_sha256 ?? '', HASH_RE);
+  assert.ok(evidence.workloads.every(item => /^sha256:[0-9a-f]{64}$/u.test(item.snapshot_configuration_digest_old ?? '')
+    && item.snapshot_configuration_digest_old === item.snapshot_configuration_digest_new));
+  assert.equal(evidence.workloads[0].snapshot_configuration_digest_old, evidence.main_workload.configuration_digest);
+  return true;
+}
+
 export function validateRequestCodecArtifactV1(value) {
   assert.equal(value?.contract, 'r16-request-codec-microbenchmark-v1');
   assert.equal(value?.diagnostic_only, true);
@@ -342,19 +380,8 @@ export function validateRequestCodecArtifactV1(value) {
     assert.equal(value.target_git_sha_after, value.requested_target_sha);
     assert.equal(value.probe_git_sha_before, value.requested_probe_sha);
     assert.equal(value.probe_git_sha_after, value.requested_probe_sha);
-    assert.deepEqual(value.workloads?.map(item => item.case_id), ['defined_consumer_4_configured_2_selected', 'base_2_plus_4_noul_candidates']);
-    assert.deepEqual(value.workloads?.map(item => [item.configured_questions, item.base_questions,
-      item.candidate_questions_configured, item.candidate_questions_selected, item.request_questions, item.calls]),
-    [[4, 2, 2, 2, 2, 1000], [6, 2, 4, 4, 6, 1000]]);
-    assert.deepEqual(value.main_workload, {source_function: 'r16ListeningWorkloadV2', arm: 'defined_consumer_second_pass',
-      configured_questions: 4, selected_consumer_questions: 2,
-      configuration_digest: value.workloads[0].product_configuration_digest,
-      selected_consumer_keys_sha256: value.workloads[0].selected_consumer_keys_sha256});
-    assert.match(value.main_workload.configuration_digest ?? '', /^sha256:[0-9a-f]{64}$/u);
-    assert.match(value.main_workload.selected_consumer_keys_sha256 ?? '', HASH_RE);
-    assert.ok(value.workloads.every(item => /^sha256:[0-9a-f]{64}$/u.test(item.snapshot_configuration_digest_old ?? '')
-      && item.snapshot_configuration_digest_old === item.snapshot_configuration_digest_new));
-    assert.equal(value.workloads[0].snapshot_configuration_digest_old, value.main_workload.configuration_digest);
+    validateRequestCodecWorkloadEvidenceV1(value);
+    assert.ok(value.workloads.every(item => item.calls === 1000));
     assert.equal(value.parity?.length, 2);
     assert.ok(value.parity.every(item => Number.isSafeInteger(item.verified_calls) && item.verified_calls === 1000
       && Number.isSafeInteger(item.request_bytes) && item.request_bytes > 0 && HASH_RE.test(item.paired_output_sha256 ?? '')));
@@ -459,17 +486,7 @@ async function runBenchmark(args) {
         timing_includes_sink_and_byte_count_bookkeeping: true, overhead_subtracted: false},
       snapshot_preparation: {function: 'compileSignalListeningSnapshotV1', calls_per_arm_case: 1, included_in_trials: false},
       trial_order: [...REQUEST_CODEC_TRIAL_ORDER], warmup_calls_per_arm_case: 100,
-      main_workload: {source_function: 'r16ListeningWorkloadV2', arm: 'defined_consumer_second_pass',
-        configured_questions: 4, selected_consumer_questions: 2,
-        configuration_digest: oldWorkloads[0].product_configuration_digest,
-        selected_consumer_keys_sha256: oldWorkloads[0].selected_consumer_keys_sha256},
-      workloads: oldWorkloads.map(item => ({case_id: item.case_id, base_questions: 2,
-        configured_questions: item.configuration.questions.length,
-        candidate_questions_configured: item.configuration.questions.length - 2,
-        candidate_questions_selected: item.selected_keys.filter(key => key !== 'voice' && key !== 'promotion').length,
-        request_questions: item.selected_keys.length, calls: item.inputs.length,
-        snapshot_configuration_digest_old: item.oldSnapshotConfigurationDigest,
-        snapshot_configuration_digest_new: item.newSnapshotConfigurationDigest})), parity: parityResults, trials,
+      ...assembleRequestCodecWorkloadEvidenceV1(preparedWorkloads), parity: parityResults, trials,
       interpretation: {whole_pipeline_gain: false, cpu_function_attribution: false, causality_claim: false,
         json_stringify_included: true, compile_snapshot_included_in_trials: false, all_inputs_synthetic: true},
     };
