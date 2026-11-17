@@ -47,8 +47,6 @@ jobs:
       DATABASE_SSL: 'false'
       TARGET_REF: ${{ inputs.target_ref }}
       PROBE_REF: ${{ github.sha }}
-      QUERY_CPU_ARTIFACT_ROOT: ${{ runner.temp }}/r16-query-cpu-${{ github.run_id }}-${{ github.run_attempt }}
-      QUERY_CPU_REJECTION_ROOT: ${{ runner.temp }}/r16-query-cpu-rejected-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
       - name: Validate fixed C target and reject provider credentials
         env:
@@ -155,6 +153,8 @@ jobs:
         run: corepack pnpm install --frozen-lockfile
 
       - name: Create the private query CPU artifact directory
+        env:
+          QUERY_CPU_ARTIFACT_ROOT: ${{ runner.temp }}/r16-query-cpu-${{ github.run_id }}-${{ github.run_attempt }}
         run: |
           set -euo pipefail
           test ! -e "$QUERY_CPU_ARTIFACT_ROOT" && test ! -L "$QUERY_CPU_ARTIFACT_ROOT"
@@ -236,6 +236,8 @@ jobs:
       - name: Run the C-default query CPU oracle once
         id: query_cpu_oracle
         working-directory: target
+        env:
+          QUERY_CPU_ARTIFACT_ROOT: ${{ runner.temp }}/r16-query-cpu-${{ github.run_id }}-${{ github.run_attempt }}
         run: |
           set -euo pipefail
           connection_file=.data/piloto-masivo/r16/labs/benchmark-pg17/connection.env
@@ -260,6 +262,8 @@ jobs:
         if: always()
         env:
           ORACLE_OUTCOME: ${{ steps.query_cpu_oracle.outcome }}
+          QUERY_CPU_ARTIFACT_ROOT: ${{ runner.temp }}/r16-query-cpu-${{ github.run_id }}-${{ github.run_attempt }}
+          QUERY_CPU_REJECTION_ROOT: ${{ runner.temp }}/r16-query-cpu-rejected-${{ github.run_id }}-${{ github.run_attempt }}
         run: |
           set -euo pipefail
           node - "$QUERY_CPU_ARTIFACT_ROOT" "$TARGET_REF" "$PROBE_REF" "$GITHUB_OUTPUT" "$ORACLE_OUTCOME" "$QUERY_CPU_REJECTION_ROOT" <<'NODE'
@@ -370,7 +374,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: r16-query-cpu-rejected-${{ github.run_id }}
-          path: ${{ env.QUERY_CPU_REJECTION_ROOT }}/rejection.json
+          path: ${{ runner.temp }}/r16-query-cpu-rejected-${{ github.run_id }}-${{ github.run_attempt }}/rejection.json
           if-no-files-found: error
           retention-days: 7
 

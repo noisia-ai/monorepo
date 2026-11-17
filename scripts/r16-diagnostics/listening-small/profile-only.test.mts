@@ -421,6 +421,16 @@ test('profile-only gates on observed or unavailable query CPU and retains only b
  const workflow=await readFile(new URL('../../../.github/workflows/r16-listening-profile-only.yml',import.meta.url),'utf8');
  const queryJob=workflow.slice(workflow.indexOf('  native-query-cpu:'),workflow.indexOf('  profile-only:'));
  const profileJob=workflow.slice(workflow.indexOf('  profile-only:'));
+ const jobEnvStart=queryJob.indexOf('    env:\n'),jobStepsStart=queryJob.indexOf('    steps:\n',jobEnvStart);
+ assert.ok(jobEnvStart>=0&&jobStepsStart>jobEnvStart,'query job has a distinct job-level env block');
+ const jobEnv=queryJob.slice(jobEnvStart,jobStepsStart);
+ const allowedJobContexts=new Set(['github','needs','strategy','matrix','vars','secrets','inputs']);
+ for(const match of jobEnv.matchAll(/\$\{\{\s*([A-Za-z_]+)/gu))assert.ok(allowedJobContexts.has(match[1]),`unsupported job env context ${match[1]}`);
+ assert.doesNotMatch(jobEnv,/\$\{\{\s*runner\./u,'runner.temp is unavailable in jobs.<job_id>.env');
+ assert.match(queryJob,/name: Create the private query CPU artifact directory\n        env:\n          QUERY_CPU_ARTIFACT_ROOT: \$\{\{ runner\.temp \}\}/u);
+ assert.match(queryJob,/name: Run the C-default query CPU oracle once\n        id: query_cpu_oracle\n        working-directory: target\n        env:\n          QUERY_CPU_ARTIFACT_ROOT: \$\{\{ runner\.temp \}\}/u);
+ assert.match(queryJob,/name: Validate query CPU JSON and exact three-file artifact\n        id: verify_query_cpu\n        if: always\(\)\n        env:\n          ORACLE_OUTCOME: \$\{\{ steps\.query_cpu_oracle\.outcome \}\}\n          QUERY_CPU_ARTIFACT_ROOT: \$\{\{ runner\.temp \}\}[\s\S]*?QUERY_CPU_REJECTION_ROOT: \$\{\{ runner\.temp \}\}/u);
+ assert.match(queryJob,/path: \$\{\{ runner\.temp \}\}\/r16-query-cpu-rejected-/u);
  assert.match(queryJob,/if: github\.event_name == 'workflow_dispatch'/u);
  assert.match(queryJob,/R16_QUERY_CPU_LAB_OWNED=true/u);assert.match(queryJob,/scripts\/r16\/lab-up\.sh/u);
  assert.match(queryJob,/scripts\/r16\/lab-down\.sh/u);
