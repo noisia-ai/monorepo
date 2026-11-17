@@ -2,10 +2,13 @@ import assert from 'node:assert/strict';
 import {AsyncLocalStorage} from 'node:async_hooks';
 import {createHash} from 'node:crypto';
 import {execFileSync} from 'node:child_process';
-import {mkdir,open,readFile} from 'node:fs/promises';
-import {join,resolve,sep} from 'node:path';
+import {mkdir,open,readFile,unlink} from 'node:fs/promises';
+import {dirname,join,resolve,sep} from 'node:path';
 import {fileURLToPath,pathToFileURL} from 'node:url';
 import {performance} from 'node:perf_hooks';
+import {validateDefaultRuntimeV1} from './statement-default-contract.mjs';
+import {createMainThreadProfileCaptureV1,createProcMainThreadCpuReaderV1} from './main-thread-profile.mjs';
+import {PROFILE_ONLY_TARGET_SHA_V1} from './profile-only-envelope.mjs';
 import {createListeningObserver,DML_PLAN_MAX_PLANS,DML_PLAN_MIN_BATCH,DML_PLAN_MIN_DURATION_MS,finishListeningObserver,
  INNER_PLAN_CAPTURE_ORDINALS,INNER_PLAN_MIN_DURATION_MS} from './observer.mjs';
 
@@ -21,7 +24,16 @@ const listeningResourceProfilesV1:Record<ListeningResourceProfileV1,ListeningExe
 const providerSecrets=['ANTHROPIC_API_KEY','ANTHROPIC_AUTH_TOKEN','OPENAI_API_KEY','TYPESAFE_API_KEY',
   'NOISIA_TYPESAFE_API_KEY','VOYAGE_API_KEY','VOYAGEAI_API_KEY','SONNET_API_KEY'];
 const probeFiles=['.github/workflows/r16-listening-small-diagnostic.yml','.github/workflows/mfp-postgres.yml',
+  '.github/workflows/r16-listening-profile-only.yml',
   'scripts/r16-diagnostics/listening-small/run.mts','scripts/r16-diagnostics/listening-small/run.test.mts',
+  'scripts/r16-diagnostics/listening-small/profile-only.test.mts',
+  'scripts/r16-diagnostics/listening-small/main-thread-profile.mjs',
+  'scripts/r16-diagnostics/listening-small/main-thread-profile.d.mts',
+  'scripts/r16-diagnostics/listening-small/profile-only-envelope.mjs',
+  'scripts/r16-diagnostics/listening-small/profile-only-envelope.d.mts',
+  'scripts/r16-diagnostics/listening-small/profile-pg-cpu.mjs',
+  'scripts/r16-diagnostics/listening-small/profile-pg-cpu.d.mts',
+  'scripts/r16-diagnostics/listening-small/profile-pg-cpu.test.mjs',
   'scripts/r16-diagnostics/listening-small/observer.mts',
   'scripts/r16-diagnostics/listening-small/statement-default-contract.mjs',
   'scripts/r16-diagnostics/listening-small/statement-default-contract.d.mts',
@@ -121,12 +133,95 @@ export function createJevHttpTokenWitnessV1(clock=()=>performance.now(),eventLim
 
 export function diagnosticModeV1(env:NodeJS.ProcessEnv){
  const mode=env.R16_DIAGNOSTIC_MODE??'legacy';
- assert.ok(mode==='legacy'||mode==='neutral_only'||mode==='sql_frontier_only','diagnostic_mode_invalid');return mode;
+ assert.ok(mode==='legacy'||mode==='neutral_only'||mode==='sql_frontier_only'||mode==='profile_only','diagnostic_mode_invalid');return mode;
+}
+export {PROFILE_ONLY_TARGET_SHA_V1};
+export function assertProfileOnlyManualTargetV1(env:NodeJS.ProcessEnv){
+ assert.equal(env.R16_PROFILE_ONLY_WORKFLOW,'true','profile_only_workflow_required');
+ assert.equal(env.GITHUB_ACTIONS,'true','profile_only_requires_github_actions');
+ assert.equal(env.GITHUB_EVENT_NAME,'workflow_dispatch','profile_only_requires_manual_dispatch');
+ assert.equal(env.R16_DIAGNOSTIC_TARGET_LABEL,'candidate','profile_only_candidate_required');
+ assert.equal(env.R16_DIAGNOSTIC_RESOURCE_PROFILE,'bounded_2g','profile_only_bounded_profile_required');
+ assert.equal(env.R16_DIAGNOSTIC_TARGET_REF_REQUESTED,PROFILE_ONLY_TARGET_SHA_V1,'profile_only_target_sha_invalid');
+ assert.ok(/^[0-9a-f]{40}$/u.test(env.R16_DIAGNOSTIC_PROBE_REF_REQUESTED??''),'profile_only_probe_sha_required');
+ assert.equal(env.R16_DIAGNOSTIC_MAINLAB_DEFAULT_PRECHECK,'true','profile_only_c_default_precheck_required');
+ assert.equal(env.R16_DIAGNOSTIC_CAPTURE_PROJECTION_PLAN??'false','false','profile_only_projection_capture_forbidden');
+ assert.equal(env.R16_DIAGNOSTIC_PROJECTION_LINEAR_ORACLE??'false','false','profile_only_projection_oracle_forbidden');
+ assert.equal(env.R16_DIAGNOSTIC_STATEMENT_SHARED_WIRE_ORACLE??'false','false','profile_only_shared_wire_oracle_forbidden');
+ assert.equal(env.RESERVE_SHARED_SMOKE??'false','false','profile_only_repeated_native_smoke_forbidden');
+}
+const profileOnlySourcePaths=[
+ 'infrastructure/db/migrations/0330_signal_listening_statement_shared_wire.sql',
+ 'infrastructure/db/migrations/0331_signal_listening_statement_payload.sql',
+ 'infrastructure/db/migrations/signal-listening-statement-shared-wire.fixture.ts',
+ 'infrastructure/db/migrations/signal-listening-statement-shared-wire.oracle.ts',
+ 'infrastructure/db/migrations/signal-listening-statement-shared-wire.postgres.test.ts',
+ 'infrastructure/db/migrations/signal-listening-statement-shared-wire.test.ts',
+] as const;
+export async function assertProfileOnlyCDefaultBeforeV1(target:string,receiptPath:string,targetSha:string){
+ const receipt=JSON.parse(await readFile(receiptPath,'utf8'));
+ assert.equal(receipt.phase,'before','profile_only_mainlab_phase_invalid');
+ assert.equal(receipt.requested_target_sha,targetSha,'profile_only_mainlab_target_mismatch');
+ assert.equal(receipt.target_git_sha_before,targetSha,'profile_only_mainlab_head_before_mismatch');
+ assert.equal(receipt.target_git_sha_after,targetSha,'profile_only_mainlab_head_after_mismatch');
+ assert.equal(receipt.source_set,'six','profile_only_mainlab_source_set_invalid');
+ assert.deepEqual(receipt.source_files.map((file:any)=>file.path),profileOnlySourcePaths,'profile_only_mainlab_source_paths_invalid');
+ for(let index=0;index<profileOnlySourcePaths.length;index++){
+  const file=receipt.source_files[index];
+  assert.ok(/^[0-9a-f]{64}$/u.test(file.sha256),'profile_only_mainlab_source_hash_invalid');
+  assert.equal(file.sha256,createHash('sha256').update(await readFile(join(target,profileOnlySourcePaths[index]!))).digest('hex'),
+    'profile_only_mainlab_source_file_changed');
+ }
+ assert.equal(receipt.runtime.phase,'before','profile_only_mainlab_runtime_phase_invalid');
+ validateDefaultRuntimeV1(receipt.runtime,'C');
+ return receipt;
+}
+export async function writeProfileOnlyPgOwnershipMarkerV1(args:{targetRoot:string;targetSha:string;pool:any;localPg:any;
+  env:NodeJS.ProcessEnv;inspectContainer?:(name:string)=>any}){
+ assert.ok(/^[0-9a-f]{40}$/u.test(args.targetSha),'profile_only_marker_target_sha_invalid');
+ assert.equal(args.env.GITHUB_ACTIONS,'true','profile_only_marker_requires_ci');
+ for(const key of ['GITHUB_RUN_ID','GITHUB_RUN_ATTEMPT','GITHUB_JOB'])
+  assert.ok(typeof args.env[key]==='string'&&args.env[key]!.length>0&&args.env[key]!.length<=128,'profile_only_marker_run_identity_invalid');
+ args.localPg.assertR16LocalPostgresPoolV1(args.pool);
+ const identity=(await args.pool.query(`SELECT current_database() database,current_setting('server_version_num')::int version,
+   (SELECT system_identifier::text FROM pg_control_system()) system_identifier,
+   EXISTS(SELECT 1 FROM pg_extension WHERE extname='vector') pgvector`)).rows[0];
+ assert.equal(identity?.database,'noisia_mfp_ci','profile_only_marker_database_invalid');
+ assert.ok(Number.isSafeInteger(identity?.version)&&identity.version>=170000&&identity.version<180000,'profile_only_marker_postgres_version_invalid');
+ assert.equal(identity?.pgvector,true,'profile_only_marker_pgvector_missing');
+ assert.ok(typeof identity?.system_identifier==='string'&&/^[0-9]+$/u.test(identity.system_identifier),
+  'profile_only_marker_system_identifier_invalid');
+ const databaseUrl=new URL(args.env.DATABASE_URL??'');
+ assert.equal(databaseUrl.hostname,'127.0.0.1','profile_only_marker_loopback_invalid');
+ assert.ok(/^\d+$/u.test(databaseUrl.port),'profile_only_marker_port_invalid');
+ const inspect=args.inspectContainer??((name:string)=>JSON.parse(execFileSync('docker',['inspect',name],{encoding:'utf8',stdio:['ignore','pipe','ignore']}))[0]);
+ const container=inspect('r16-benchmark-pg17');
+ assert.equal(container?.Name,'/r16-benchmark-pg17','profile_only_marker_container_name_invalid');
+ assert.equal(container?.State?.Running,true,'profile_only_marker_container_not_running');
+ assert.equal(container?.Config?.Image,'pgvector/pgvector:pg17','profile_only_marker_image_invalid');
+ assert.ok(/^sha256:[0-9a-f]{64}$/u.test(container?.Image??''),'profile_only_marker_image_id_invalid');
+ assert.ok(typeof container?.State?.StartedAt==='string'&&!Number.isNaN(Date.parse(container.State.StartedAt)),
+  'profile_only_marker_container_start_invalid');
+ const bindings=container?.NetworkSettings?.Ports?.['5432/tcp'];
+ assert.ok(Array.isArray(bindings)&&bindings.length===1&&bindings[0]?.HostIp==='127.0.0.1'
+  &&bindings[0]?.HostPort===databaseUrl.port,'profile_only_marker_binding_invalid');
+ const marker={contract:'r16-pg-cpu-owned-lab-v1',github_run_id:args.env.GITHUB_RUN_ID,
+  github_run_attempt:args.env.GITHUB_RUN_ATTEMPT,github_job:args.env.GITHUB_JOB,target_sha:args.targetSha,
+  container_id:container.Id,container_started_at:container.State.StartedAt,container_image_id:container.Image,
+  loopback_port:databaseUrl.port,postgres_system_identifier_sha256:createHash('sha256').update(identity.system_identifier).digest('hex'),
+  fresh_lab_owned:true,postgres_accredited:true};
+ assert.ok(/^[0-9a-f]{64}$/u.test(marker.container_id??''),'profile_only_marker_container_id_invalid');
+ const path=join(args.targetRoot,'.data/piloto-masivo/r16/labs/benchmark-pg17/pg-cpu-owned-marker.json');
+ await mkdir(dirname(path),{recursive:true,mode:0o700});
+ const bytes=`${JSON.stringify(marker,null,2)}\n`,handle=await open(path,'wx',0o600);
+ try{await handle.writeFile(bytes);await handle.sync();}finally{await handle.close();}
+ return{path,sha256:createHash('sha256').update(bytes).digest('hex'),marker};
 }
 export function listeningResourceProfileV1(env:NodeJS.ProcessEnv,mode:string):ListeningResourceProfileV1{
  const requested=env.R16_DIAGNOSTIC_RESOURCE_PROFILE??'baseline_512m';
  assert.ok(requested==='baseline_512m'||requested==='bounded_2g','resource_profile_invalid');
- assert.ok(requested!=='bounded_2g'||mode==='neutral_only'||mode==='sql_frontier_only','resource_profile_requires_neutral_mode');
+ assert.ok(requested!=='bounded_2g'||mode==='neutral_only'||mode==='sql_frontier_only'||mode==='profile_only','resource_profile_requires_neutral_mode');
+ if(mode==='profile_only')assertProfileOnlyManualTargetV1(env);
  return requested;
 }
 export function assertListeningResourceProfileV1(profile:ListeningResourceProfileV1,mode:string,env:NodeJS.ProcessEnv,
@@ -143,7 +238,9 @@ export function assertListeningResourceProfileV1(profile:ListeningResourceProfil
  return effective;
 }
 export function assertDiagnosticExecArgsV1(mode:string,args:string[],profileDir:string){
- if(mode!=='legacy')assert.ok(!args.some(a=>a.startsWith('--cpu-prof')||a.startsWith('--heap')),'diagnostic_profiler_forbidden');
+ if(mode==='profile_only')assert.ok(!args.some(a=>/^--(?:cpu-prof(?:-|$)|heap(?:-|$)|prof(?:-|$)|inspect(?:-|$))/u.test(a)),
+  'profile_only_second_profiler_forbidden');
+ else if(mode!=='legacy')assert.ok(!args.some(a=>a.startsWith('--cpu-prof')||a.startsWith('--heap')),'diagnostic_profiler_forbidden');
  else assertCpuProfilerArgsV1(args,profileDir);
 }
 export function assertListeningSmallGuardV1(env:NodeJS.ProcessEnv,args:string[]){
@@ -152,6 +249,7 @@ export function assertListeningSmallGuardV1(env:NodeJS.ProcessEnv,args:string[])
   assert.equal(env.NOISIA_R16_SMALL_DIAGNOSTIC,'true','diagnostic_opt_in_required');
   const mode=diagnosticModeV1(env);
   listeningResourceProfileV1(env,mode);
+  if(mode==='profile_only')assertProfileOnlyManualTargetV1(env);
   const projectionPlanCapture=env.R16_DIAGNOSTIC_CAPTURE_PROJECTION_PLAN??'false';
   assert.ok(projectionPlanCapture==='true'||projectionPlanCapture==='false','projection_plan_flag_invalid');
   if(projectionPlanCapture==='true'){
@@ -217,11 +315,13 @@ export function assertListeningSmallGuardV1(env:NodeJS.ProcessEnv,args:string[])
   assert.ok(pg.port);assert.equal(pg.search,'');assert.equal(pg.hash,'');
   assert.ok(['redis:','rediss:'].includes(redis.protocol)&&['127.0.0.1','localhost','[::1]'].includes(redis.hostname),'redis_must_be_loopback');
   const out=resolve(env.R16_DIAGNOSTIC_ARTIFACT??'');
-  assert.equal(out,resolve(env.GITHUB_WORKSPACE??'','artifacts','r16-listening-small','result.json'),'artifact_path_not_bound');
+  assert.equal(out,resolve(env.GITHUB_WORKSPACE??'','artifacts',mode==='profile_only'?'r16-listening-profile-only':'r16-listening-small',
+    mode==='profile_only'?'run.json':'result.json'),'artifact_path_not_bound');
   const profileDir=resolve(env.R16_DIAGNOSTIC_CPU_PROFILE_DIR??'');
   const label=env.R16_DIAGNOSTIC_TARGET_LABEL;
   assert.ok(label==='baseline-32f'||label==='candidate','cpu_profile_target_label_invalid');
-  assert.equal(profileDir,resolve(env.GITHUB_WORKSPACE??'','artifacts','r16-listening-small',`cpu-profile-${label}`),'cpu_profile_path_not_bound');
+  assert.equal(profileDir,mode==='profile_only'?resolve(env.GITHUB_WORKSPACE??'','artifacts','r16-listening-profile-only','no-cli-cpu-prof'):
+    resolve(env.GITHUB_WORKSPACE??'','artifacts','r16-listening-small',`cpu-profile-${label}`),'cpu_profile_path_not_bound');
 }
 
 export function assertCpuProfilerArgsV1(args:string[],profileDir:string){
@@ -285,6 +385,12 @@ async function atomicJson(path:string,value:unknown){
   await mkdir(join(path,'..'),{recursive:true});
   const h=await open(path,'wx',0o600);try{await h.writeFile(JSON.stringify(value,null,2)+'\n');await h.sync();}finally{await h.close();}
 }
+async function removeProfileOnlyMarker(marker:any){
+ if(!marker?.path||!marker?.sha256)return false;
+ const current=await readFile(marker.path,'utf8').catch(()=>null);
+ if(current===null||createHash('sha256').update(current).digest('hex')!==marker.sha256)return false;
+ await unlink(marker.path);return true;
+}
 function moduleAt<T>(root:string,relative:string):Promise<T>{return import(pathToFileURL(join(root,relative)).href) as Promise<T>;}
 function safeError(error:unknown){return error instanceof Error&&/^(?:r16|listening|mass_labeling|labeling|workspace_engine|jev)_[a-z0-9_]{1,100}$/u.test(error.message)?error.message:'listening_small_diagnostic_failed';}
 const gitHead=(root:string)=>execFileSync('git',['rev-parse','HEAD'],{cwd:root,encoding:'utf8',stdio:['ignore','pipe','ignore']}).trim();
@@ -296,14 +402,22 @@ export async function runListeningSmallDiagnosticV1(){
   const target=resolve(process.env.R16_DIAGNOSTIC_TARGET_ROOT!);
   const probe=resolve(process.env.R16_DIAGNOSTIC_PROBE_ROOT!);
   const artifact=resolve(process.env.R16_DIAGNOSTIC_ARTIFACT!);
-  const outputRoot=resolve(process.env.GITHUB_WORKSPACE??'','artifacts','r16-listening-small');
+  const mode=diagnosticModeV1(process.env),profileOnly=mode==='profile_only';
+  const outputRoot=resolve(process.env.GITHUB_WORKSPACE??'','artifacts',profileOnly?'r16-listening-profile-only':'r16-listening-small');
   assert.ok(artifact.startsWith(outputRoot+sep),'artifact_path_not_bound');
+  const profileNodePath=profileOnly?resolve(process.env.R16_PROFILE_NODE_ARTIFACT??''):'';
+  const profilePgPath=profileOnly?resolve(process.env.R16_PROFILE_PG_ARTIFACT??''):'';
+  const mainlabBeforePath=profileOnly?resolve(process.env.R16_DIAGNOSTIC_MAINLAB_DEFAULT_BEFORE??''):'';
+  if(profileOnly){
+    assert.ok(profileNodePath.startsWith(outputRoot+sep),'profile_only_node_artifact_path_not_bound');
+    assert.ok(profilePgPath.startsWith(outputRoot+sep),'profile_only_pg_artifact_path_not_bound');
+    assert.ok(mainlabBeforePath.startsWith(outputRoot+sep),'profile_only_mainlab_artifact_path_not_bound');
+  }
   const targetHeadBefore=gitHead(target),probeHeadBefore=gitHead(probe),probeHashesBefore=await probeFileHashes(probe);
   assert.equal(targetHeadBefore,process.env.R16_DIAGNOSTIC_TARGET_REF_REQUESTED,'target_ref_checkout_mismatch');
   assert.equal(probeHeadBefore,process.env.R16_DIAGNOSTIC_PROBE_REF_REQUESTED,'probe_ref_checkout_mismatch');
   const started=performance.now();
-  const mode=diagnosticModeV1(process.env);
-  const neutralOnly=mode==='neutral_only';
+  const neutralOnly=mode==='neutral_only'||profileOnly;
   const sqlFrontierOnly=mode==='sql_frontier_only';
   const projectionPlanOnly=process.env.R16_DIAGNOSTIC_CAPTURE_PROJECTION_PLAN==='true';
   const projectionLinearOracle=process.env.R16_DIAGNOSTIC_PROJECTION_LINEAR_ORACLE==='true';
@@ -315,6 +429,14 @@ export async function runListeningSmallDiagnosticV1(){
   const monotonicOrigin=process.hrtime.bigint();
   let stage='imports';
   let storageServer:any;
+  let pgCpuCollector:any;
+  let pgCpuOwnershipMarker:any;
+  let pgCpuSnapshotBefore:any;
+  let pgCpuSnapshotAfter:any;
+  let pgCpuProfile:any;
+  let pgProfileArtifactBytes:number|null=null;
+  let mainThreadProfileCapture:any;
+  let mainThreadProfile:any;
   let httpTokenWitness:ReturnType<typeof createJevHttpTokenWitnessV1>|undefined;
   const observer=createListeningObserver({neutral_only:neutralOnly,sql_frontier_only:sqlFrontierOnly,projection_plan_only:projectionPlanOnly,
     projection_linear_oracle:projectionLinearOracle});
@@ -343,10 +465,12 @@ export async function runListeningSmallDiagnosticV1(){
         moduleAt<any>(target,'scripts/r16/listening-preflight.ts'),
         moduleAt<any>(target,'packages/query-engine/src/index.ts'),
       ]);
+    const pgCpuModule=profileOnly?await moduleAt<any>(probe,'scripts/r16-diagnostics/listening-small/profile-pg-cpu.mjs'):null;
     stage='resource_profile';
     effectiveExecution={...assertListeningResourceProfileV1(resourceProfile,mode,process.env,providerModule.jevStreamingExecutionFromEnvV2)};
     const source=await provenanceModule.captureR16SourceProvenanceV1(target);
     assert.equal(source.tree_status_sha256,'sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855','target_tree_must_be_clean');
+    if(profileOnly)await assertProfileOnlyCDefaultBeforeV1(target,mainlabBeforePath,targetHeadBefore);
     const workload=workloadModule.r16ListeningWorkloadV2('defined_consumer_second_pass');
     const instrument=sha(await readFile(new URL(import.meta.url),'utf8'));
     const profile=new profilerModule.R16QueryProfilerV1();
@@ -357,6 +481,8 @@ export async function runListeningSmallDiagnosticV1(){
     try{
       const baseline=await dbPool.query(`SELECT (SELECT count(*)::int FROM mentions) roots,(SELECT count(*)::int FROM signal_labeling_calls) calls,(SELECT count(*)::int FROM signal_listening_configurations) configurations`);
       assert.deepEqual(baseline.rows[0],{roots:0,calls:0,configurations:0},'owned_database_must_be_empty');
+      if(profileOnly)pgCpuOwnershipMarker=await writeProfileOnlyPgOwnershipMarkerV1({targetRoot:target,targetSha:targetHeadBefore,
+        pool:dbPool,localPg,env:process.env});
     }finally{await dbPool.end();}
     let result:any;
     stage='native_fixture';
@@ -367,6 +493,11 @@ export async function runListeningSmallDiagnosticV1(){
         const db=profile.wrapDatabase(observer.wrapDatabase(ctx.database));
         const databaseName=(await ctx.database.query('SELECT current_database() database')).rows[0].database;
         await observer.startSampler({target,url:process.env.DATABASE_URL!,database:databaseName});
+        if(profileOnly){
+          stage='profile_setup';
+          pgCpuCollector=await pgCpuModule.startPgCpuProfileV1({targetRoot:target,targetSha:targetHeadBefore,
+            markerPath:pgCpuOwnershipMarker.path,intervalMs:250,maxDurationMs:300000});
+        }
         const canceled=await db.query(`UPDATE signal_labeling_runs r SET status='canceled' WHERE r.id=$1 AND r.workspace_id=$2
           AND r.status='queued' AND NOT EXISTS(SELECT 1 FROM signal_labeling_calls c WHERE c.run_id=r.id) RETURNING r.id`,[ctx.run_id,ctx.workspace_id]);
         assert.equal(canceled.rows.length,1,'fixture_legacy_run_has_physical_calls');
@@ -398,6 +529,12 @@ export async function runListeningSmallDiagnosticV1(){
         const store={...profiled,async apply(...args:any[]){await profiled.apply(...args);const roots=[...new Set(args[1].flatMap((row:any)=>row.results.map((x:any)=>x.root_id)))];
           for(let n=0;n<roots.length;n+=1024){const resolved=await census.readResolvedRootIds(roots.slice(n,n+1024));commits.push(resolved.length);}}};
         const rootSet=new Set<string>();
+        if(profileOnly){
+          pgCpuSnapshotBefore=await pgCpuCollector.snapshot('before_classification_serving');
+          const threadCpuReader=createProcMainThreadCpuReaderV1({parseProcStatV1:pgCpuModule.parseProcStatV1});
+          mainThreadProfileCapture=createMainThreadProfileCaptureV1({threadCpuReader});
+          await mainThreadProfileCapture.start();
+        }
         const startedProcessing=performance.now(),classificationStartHrtime=process.hrtime.bigint();let classificationEndHrtime:bigint|undefined;
         let classificationEndPerformanceMs:number|undefined,jobs=0;
         stage='native_jobs';
@@ -425,6 +562,19 @@ export async function runListeningSmallDiagnosticV1(){
         assert.equal(serving.length,workload.question_keys.length,'serving_metrics_missing');
         assert.ok(serving.every((item:any)=>item.counts.pending===0&&item.counts.awaiting_base===0),'serving_has_unresolved_work');
         classificationEndPerformanceMs=performance.now();classificationEndHrtime=process.hrtime.bigint();
+        if(profileOnly){
+          stage='profile_finalize';
+          mainThreadProfile=await mainThreadProfileCapture.stop(profileNodePath);mainThreadProfileCapture=undefined;
+          await atomicJson(join(outputRoot,'node-profile.json'),mainThreadProfile);
+          pgCpuSnapshotAfter=await pgCpuCollector.snapshot('after_classification_serving');
+          pgCpuProfile=await pgCpuCollector.stop('completed');pgCpuCollector=undefined;
+          assert.equal(pgCpuProfile.contract,'r16-pg-cpu-profile-v1','profile_only_pg_contract_invalid');
+          assert.equal(pgCpuProfile.target_sha,targetHeadBefore,'profile_only_pg_target_mismatch');
+          pgProfileArtifactBytes=Buffer.byteLength(`${JSON.stringify(pgCpuProfile,null,2)}\n`);
+          assert.ok(pgProfileArtifactBytes<=4*1024*1024,'profile_only_pg_artifact_size_limit_exceeded');
+          await atomicJson(profilePgPath,pgCpuProfile);
+          if(pgCpuOwnershipMarker){await removeProfileOnlyMarker(pgCpuOwnershipMarker);pgCpuOwnershipMarker=null;}
+        }
         const warmups=calibrations.filter((item:any)=>item.warmup);
         const phaseByShape=new Map<string,string>();
         for(const group of ['base','consumer_category'] as const){
@@ -441,6 +591,7 @@ export async function runListeningSmallDiagnosticV1(){
         assert.deepEqual(warmupPhases,['base','consumer_category'],'unexpected_native_warmup_phases');
         const latencySummary={count:latencies.length,min_ms:Math.min(...latencies),p50_ms:percentile(latencies,.5),p95_ms:percentile(latencies,.95),max_ms:Math.max(...latencies)};
         assert.equal(requests,ROOT_COUNT*2,'expected_two_provider_requests_per_root');
+        if(profileOnly)assert.equal(jobs,3,'profile_only_expected_three_native_jobs');
         const counts=await db.query(`SELECT count(*)::int job_count FROM signal_labeling_calls WHERE run_id=$1`,[prepared.run_id]);
         const provenanceAfter=await provenanceModule.captureR16SourceProvenanceV1(target);
         assert.equal(provenanceAfter.source_tree_sha256,source.source_tree_sha256,'target_source_changed_during_run');
@@ -454,7 +605,8 @@ export async function runListeningSmallDiagnosticV1(){
         const classificationClock=classificationClockMetadataV1({hrtime_origin_ns:monotonicOrigin.toString(),
           start_hrtime_ns:classificationStartHrtime.toString(),end_hrtime_ns:classificationEndHrtime!.toString(),
           performance_time_origin_ms:performance.timeOrigin,start_performance_ms:startedProcessing,end_performance_ms:classificationEndPerformanceMs!});
-        result={contract_version:'r16-listening-small-diagnostic-v1',diagnostic_only:true,h1_accepted:false,
+        result={contract_version:profileOnly?'r16-listening-profile-only-run-v1':'r16-listening-small-diagnostic-v1',diagnostic_only:true,
+          ...(profileOnly?{profiling_only:true,profile_status:'captured',status:'profiled'}:{}),h1_accepted:false,
           a_b_source_verified:false,
           target_label:process.env.R16_DIAGNOSTIC_TARGET_LABEL??'unspecified',
           target_ref_requested:process.env.R16_DIAGNOSTIC_TARGET_REF_REQUESTED,
@@ -474,14 +626,20 @@ export async function runListeningSmallDiagnosticV1(){
             warmups:warmups.length,warmup_phases:warmupPhases,calibrations,commit_batch_count:commits.length},
           diagnostic_mode:mode,
           resource_profile:{requested_profile:resourceProfile,execution:effectiveExecution},
-          cpu_profile:profilerDisabled?{enabled:false,reason:sqlFrontierOnly?'sql_frontier_only':'neutral_only',classification_clock:classificationClock,capacity_claim:false}:cpuProfileMetadataV1({main_pid:process.pid,sampler_pid:observerSnapshot.sampler_process_pid,
+          ...(!profileOnly?{cpu_profile:profilerDisabled?{enabled:false,reason:sqlFrontierOnly?'sql_frontier_only':'neutral_only',classification_clock:classificationClock,capacity_claim:false}:cpuProfileMetadataV1({main_pid:process.pid,sampler_pid:observerSnapshot.sampler_process_pid,
             clock:classificationClock,exec_args:process.execArgv,
-            profile_dir:resolve(process.env.R16_DIAGNOSTIC_CPU_PROFILE_DIR!)}),
+            profile_dir:resolve(process.env.R16_DIAGNOSTIC_CPU_PROFILE_DIR!)})}:{}),
+          ...(profileOnly?{profile_window:{scope:'classification_and_serving',clock:'process.hrtime.bigint',
+            start_hrtime_ns:classificationStartHrtime.toString(),end_hrtime_ns:classificationEndHrtime!.toString(),
+            start_performance_ms:startedProcessing,end_performance_ms:classificationEndPerformanceMs},
+            node_profile:mainThreadProfile,postgres_profile:{path:profilePgPath,contract:pgCpuProfile.contract,status:pgCpuProfile.status,
+              target_sha:pgCpuProfile.target_sha,interval_ms:250,snapshot_before:pgCpuSnapshotBefore?.sequence??null,
+              snapshot_after:pgCpuSnapshotAfter?.sequence??null,artifact_bytes:pgProfileArtifactBytes}}:{}),
           observed_http_latency:latencySummary,storage:storageServer.metrics(),sql_profile:profile.snapshot(),
           token_budget_http_witness:httpTokenWitness.snapshot(),
           inner_plan_capture:{enabled:!profilerDisabled,disabled_reason:profilerDisabled?mode:null,diagnostic_only:true,threshold_roots:1024,max_captures_per_query_hash:INNER_PLAN_CAPTURE_ORDINALS.length,capture_ordinals:INNER_PLAN_CAPTURE_ORDINALS,min_duration_ms:INNER_PLAN_MIN_DURATION_MS,
             plans_below_min_duration_captured:false,observations:observerSnapshot.inner_plan_observations},
-          dml_plan_capture:{enabled:!neutralOnly&&!projectionPlanOnly,disabled_reason:projectionPlanOnly?'projection_plan_only':neutralOnly?'neutral_only':null,diagnostic_only:true,opt_in_required:true,min_batch_size:DML_PLAN_MIN_BATCH,max_captures_per_query_hash:projectionPlanOnly?0:1,min_duration_ms:DML_PLAN_MIN_DURATION_MS,
+          dml_plan_capture:{enabled:!neutralOnly&&!projectionPlanOnly,disabled_reason:profileOnly?'profile_only':projectionPlanOnly?'projection_plan_only':neutralOnly?'neutral_only':null,diagnostic_only:true,opt_in_required:true,min_batch_size:DML_PLAN_MIN_BATCH,max_captures_per_query_hash:projectionPlanOnly?0:1,min_duration_ms:DML_PLAN_MIN_DURATION_MS,
             ...(sqlFrontierOnly&&!projectionPlanOnly?{first_capture_min_duration_overrides:{raw_attach_call_lock_ms:0}}:{}),
             plans_below_min_duration_captured:false,max_plans_per_capture:projectionPlanOnly?0:DML_PLAN_MAX_PLANS+(sqlFrontierOnly?1:0),...(sqlFrontierOnly&&!projectionPlanOnly?{nested_plan_limit:DML_PLAN_MAX_PLANS,outer_plan_absence:'unknown'}:{}),trigger_names_allowlisted:!projectionPlanOnly,raw_query_or_values_recorded:false,
             analyze_timing_enabled:!neutralOnly&&!projectionPlanOnly,analyze_timing_overhead_measured:false,capacity_claim:false,
@@ -495,23 +653,43 @@ export async function runListeningSmallDiagnosticV1(){
     result.observer=await finishListeningObserver(observer);
     await atomicJson(artifact,result);
     await storageServer.close();storageServer=undefined;
-    process.stdout.write(JSON.stringify({status:'complete',diagnostic_only:true,h1_accepted:false,artifact:'artifacts/r16-listening-small/result.json'})+'\n');
+    process.stdout.write(JSON.stringify({status:'complete',diagnostic_only:true,h1_accepted:false,
+      artifact:profileOnly?'artifacts/r16-listening-profile-only/run.json':'artifacts/r16-listening-small/result.json'})+'\n');
     return result;
   }catch(error){
+    let profileCleanupError:string|undefined;
+    if(profileOnly){
+      if(mainThreadProfileCapture?.state==='recording')try{
+        mainThreadProfile=await mainThreadProfileCapture.stop(profileNodePath);
+        await atomicJson(join(outputRoot,'node-profile.json'),mainThreadProfile);
+      }catch(cleanupError){profileCleanupError=safeError(cleanupError);}
+      mainThreadProfileCapture=undefined;
+      if(pgCpuCollector)try{
+        pgCpuProfile=await pgCpuCollector.stop('workload_failed');
+        if(pgCpuProfile?.contract==='r16-pg-cpu-profile-v1')await atomicJson(profilePgPath,pgCpuProfile);
+      }catch(cleanupError){profileCleanupError=profileCleanupError??safeError(cleanupError);}
+      pgCpuCollector=undefined;
+      if(pgCpuOwnershipMarker)try{await removeProfileOnlyMarker(pgCpuOwnershipMarker);}catch(cleanupError){profileCleanupError=profileCleanupError??safeError(cleanupError);}
+      pgCpuOwnershipMarker=null;
+    }
     let observerSnapshot:any;
     try{observerSnapshot=await finishListeningObserver(observer);}catch(cleanupError){observerSnapshot={...observer.snapshot(),cleanup_error:safeError(cleanupError)};}
-    const failure={contract_version:'r16-listening-small-diagnostic-v1',diagnostic_only:true,h1_accepted:false,
+    const failure={contract_version:profileOnly?'r16-listening-profile-only-run-v1':'r16-listening-small-diagnostic-v1',diagnostic_only:true,
+      ...(profileOnly?{profiling_only:true,profile_status:'failed',...(profileCleanupError?{profile_cleanup_error:profileCleanupError}:{})}:{}),h1_accepted:false,
+      ...(profileOnly?{node_profile:mainThreadProfile??{status:'unavailable',scope:'classification_and_serving',
+        coverage:'main_thread_only',worker_thread_cpu:'unknown'},postgres_profile:pgCpuProfile?{contract:pgCpuProfile.contract,
+          target_sha:pgCpuProfile.target_sha,status:pgCpuProfile.status,interval_ms:250}: {status:'unavailable'}}:{}),
       status:'failed',stage,code:safeError(error),total_wall_ms:performance.now()-started,process_id:process.pid,
       diagnostic_mode:mode,
       resource_profile:{requested_profile:resourceProfile??process.env.R16_DIAGNOSTIC_RESOURCE_PROFILE??'baseline_512m',execution:effectiveExecution??null},
-      cpu_profile:profilerDisabled?{enabled:false,reason:sqlFrontierOnly?'sql_frontier_only':'neutral_only',capacity_claim:false}:{enabled:true,profiler:'node_cpu_prof',interval_us:1000,main_process_pid:process.pid,
+      ...(!profileOnly?{cpu_profile:profilerDisabled?{enabled:false,reason:sqlFrontierOnly?'sql_frontier_only':'neutral_only',capacity_claim:false}:{enabled:true,profiler:'node_cpu_prof',interval_us:1000,main_process_pid:process.pid,
         sampler_process_pid:observerSnapshot.sampler_process_pid??null,output:'pid_scoped_cpu_profiles_only',heap_profile:false,
-        source_text_embedded:false,overhead_measured:false,capacity_claim:false},observer:observerSnapshot,
+        source_text_embedded:false,overhead_measured:false,capacity_claim:false}}:{}),observer:observerSnapshot,
       token_budget_http_witness:httpTokenWitness?.snapshot()??{contract_version:'r16-jev-http-token-witness-v1',diagnostic_only:true,
         h1_accepted:false,status:'not_started',capacity_claim:false,event_timing_overhead_measured:false},
       inner_plan_capture:{enabled:!profilerDisabled,disabled_reason:profilerDisabled?mode:null,diagnostic_only:true,threshold_roots:1024,max_captures_per_query_hash:INNER_PLAN_CAPTURE_ORDINALS.length,capture_ordinals:INNER_PLAN_CAPTURE_ORDINALS,min_duration_ms:INNER_PLAN_MIN_DURATION_MS,
         plans_below_min_duration_captured:false,observations:observerSnapshot.inner_plan_observations},
-      dml_plan_capture:{enabled:!neutralOnly&&!projectionPlanOnly,disabled_reason:projectionPlanOnly?'projection_plan_only':neutralOnly?'neutral_only':null,diagnostic_only:true,opt_in_required:true,min_batch_size:DML_PLAN_MIN_BATCH,max_captures_per_query_hash:projectionPlanOnly?0:1,min_duration_ms:DML_PLAN_MIN_DURATION_MS,
+      dml_plan_capture:{enabled:!neutralOnly&&!projectionPlanOnly,disabled_reason:profileOnly?'profile_only':projectionPlanOnly?'projection_plan_only':neutralOnly?'neutral_only':null,diagnostic_only:true,opt_in_required:true,min_batch_size:DML_PLAN_MIN_BATCH,max_captures_per_query_hash:projectionPlanOnly?0:1,min_duration_ms:DML_PLAN_MIN_DURATION_MS,
         ...(sqlFrontierOnly&&!projectionPlanOnly?{first_capture_min_duration_overrides:{raw_attach_call_lock_ms:0}}:{}),
         plans_below_min_duration_captured:false,max_plans_per_capture:projectionPlanOnly?0:DML_PLAN_MAX_PLANS+(sqlFrontierOnly?1:0),...(sqlFrontierOnly&&!projectionPlanOnly?{nested_plan_limit:DML_PLAN_MAX_PLANS,outer_plan_absence:'unknown'}:{}),trigger_names_allowlisted:!projectionPlanOnly,raw_query_or_values_recorded:false,
         analyze_timing_enabled:!neutralOnly&&!projectionPlanOnly,analyze_timing_overhead_measured:false,capacity_claim:false,

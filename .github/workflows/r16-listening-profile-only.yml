@@ -1,0 +1,391 @@
+name: R16 listening profile-only diagnostic
+run-name: R16 profile-only 4096-root diagnostic (bounded_2g)
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_ref:
+        type: string
+        required: true
+        default: b95a87a8e15343ba25d742c6fdcd97c3a7fbdec1
+        description: The verified C-default runtime target; this workflow rejects any other SHA
+
+permissions:
+  contents: read
+
+concurrency:
+  group: r16-listening-profile-only-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  profile-only:
+    name: R16 profile-only mini run (fresh owned PG17)
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      R16BENCH_RUN_ID: benchmark-pg17
+      R16BENCH_SERVICES: postgres,redis
+      NOISIA_R16_LOCAL_PG_LAB: r16-benchmark-pg17
+      DATABASE_SSL: 'false'
+      TARGET_REF: ${{ inputs.target_ref }}
+      PROBE_REF: ${{ github.sha }}
+      PROFILE_ARTIFACT_ROOT: ${{ github.workspace }}/artifacts/r16-listening-profile-only
+    steps:
+      - name: Validate fixed C target and reject provider credentials
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          expected=b95a87a8e15343ba25d742c6fdcd97c3a7fbdec1
+          if [ "$EVENT_NAME" != workflow_dispatch ] || [ "$TARGET_REF" != "$expected" ] \
+              || [ "${#TARGET_REF}" -ne 40 ] || [[ ! "$TARGET_REF" =~ ^[0-9a-f]{40}$ ]] \
+              || [ "${#PROBE_REF}" -ne 40 ] || [[ ! "$PROBE_REF" =~ ^[0-9a-f]{40}$ ]]; then
+            echo '::error::profile-only requires the exact verified C target and a pinned probe commit'
+            exit 1
+          fi
+          for name in $(compgen -e); do
+            case "$name" in
+              *ANTHROPIC*API_KEY*|*ANTHROPIC*TOKEN*|*SONNET*API_KEY*|*SONNET*TOKEN*|*VOYAGE*API_KEY*|*VOYAGE*TOKEN*|*OPENAI*API_KEY*)
+                echo '::error::provider credentials are forbidden in the profile-only diagnostic'
+                exit 1
+                ;;
+            esac
+          done
+
+      - name: Checkout the exact C-default product target
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.target_ref }}
+          path: target
+
+      - name: Checkout the pinned diagnostic probe files
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          path: probe
+          sparse-checkout: |
+            .github/workflows/r16-listening-profile-only.yml
+            .github/workflows/r16-listening-small-diagnostic.yml
+            .github/workflows/mfp-postgres.yml
+            scripts/r16-diagnostics/listening-small
+          sparse-checkout-cone-mode: false
+
+      - name: Verify target and probe checkouts and require a fresh lab
+        working-directory: target
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$TARGET_REF"
+          test "$(git -C ../probe rev-parse HEAD)" = "$PROBE_REF"
+          test -z "$(git status --porcelain --untracked-files=all)"
+          test -z "$(git -C ../probe status --porcelain --untracked-files=all)"
+          test -f infrastructure/db/migrations/0330_signal_listening_statement_shared_wire.sql
+          test -f infrastructure/db/migrations/0331_signal_listening_statement_payload.sql
+          if docker inspect r16-benchmark-pg17 >/dev/null 2>&1; then
+            echo '::error::profile-only PG17 container already exists'
+            exit 1
+          fi
+          if docker volume inspect r16bench-benchmark-pg17_postgres-data >/dev/null 2>&1; then
+            echo '::error::profile-only PG17 volume already exists'
+            exit 1
+          fi
+          lab_dir=.data/piloto-masivo/r16/labs/benchmark-pg17
+          if [[ -e "$lab_dir/private.env" || -e "$lab_dir/connection.env" || -e "$lab_dir/pg-cpu-owned-marker.json" ]]; then
+            echo '::error::profile-only private lab state already exists'
+            exit 1
+          fi
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.2
+
+      - name: Set up Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: target/pnpm-lock.yaml
+
+      - name: Install frozen product dependencies
+        working-directory: target
+        run: corepack pnpm install --frozen-lockfile
+
+      - name: Run existing 85-test probe suite with a sealed TAP receipt
+        working-directory: target
+        env:
+          R16_DIAGNOSTIC_TARGET_ROOT: ${{ github.workspace }}/target
+          PURE_TAP: ${{ github.workspace }}/artifacts/r16-listening-profile-only/run.test.tap
+          PURE_RECEIPT: ${{ github.workspace }}/artifacts/r16-listening-profile-only/run.test.receipt.json
+        run: |
+          set -euo pipefail
+          mkdir -p "$PROFILE_ARTIFACT_ROOT"
+          target_before=$(git rev-parse HEAD)
+          probe_before=$(git -C ../probe rev-parse HEAD)
+          test "$target_before" = "$TARGET_REF"
+          test "$probe_before" = "$PROBE_REF"
+          set +e
+          corepack pnpm exec tsx --test --test-concurrency=1 ../probe/scripts/r16-diagnostics/listening-small/run.test.mts 2>&1 | tee "$PURE_TAP"
+          statuses=("${PIPESTATUS[@]}")
+          test_status=${statuses[0]}
+          tee_status=${statuses[1]}
+          set -e
+          if [ "$tee_status" -ne 0 ] && [ "$test_status" -eq 0 ]; then test_status=125; fi
+          target_after=$(git rev-parse HEAD)
+          probe_after=$(git -C ../probe rev-parse HEAD)
+          test "$target_after" = "$TARGET_REF"
+          test "$probe_after" = "$PROBE_REF"
+          test -z "$(git status --porcelain --untracked-files=all)"
+          test -z "$(git -C ../probe status --porcelain --untracked-files=all)"
+          node - "$PURE_TAP" "$PURE_RECEIPT" "$test_status" "$TARGET_REF" "$target_before" "$target_after" "$PROBE_REF" "$probe_before" "$probe_after" <<'NODE'
+          const fs = require('node:fs');
+          const crypto = require('node:crypto');
+          const [tapPath, receiptPath, statusText, requestedTarget, targetBefore, targetAfter,
+            requestedProbe, probeBefore, probeAfter] = process.argv.slice(2);
+          const tapBytes = fs.readFileSync(tapPath), tap = tapBytes.toString('utf8');
+          const readCount = name => { const m = new RegExp(`^# ${name} (\\d+)$`, 'mu').exec(tap); return m ? Number(m[1]) : null; };
+          const counts = Object.fromEntries(['tests','pass','fail','cancelled','skipped'].map(k => [k,readCount(k)]));
+          const exitStatus = Number(statusText);
+          const verified = exitStatus === 0 && Object.values(counts).every(Number.isSafeInteger)
+            && counts.tests === counts.pass && counts.fail === 0 && counts.cancelled === 0 && counts.skipped === 0
+            && targetBefore === requestedTarget && targetAfter === requestedTarget
+            && probeBefore === requestedProbe && probeAfter === requestedProbe;
+          const receipt = {contract:'r16-diagnostic-pure-suite-v1',status:verified?'verified':'not_verified',
+            diagnostic_only:true,h1_accepted:false,requested_target_sha:requestedTarget,target_git_sha_before:targetBefore,target_git_sha_after:targetAfter,
+            requested_probe_sha:requestedProbe,probe_git_sha_before:probeBefore,probe_git_sha_after:probeAfter,
+            test_file:'scripts/r16-diagnostics/listening-small/run.test.mts',exit_status:exitStatus,counts,
+            tap_file:'artifacts/r16-listening-profile-only/run.test.tap',tap_sha256:crypto.createHash('sha256').update(tapBytes).digest('hex')};
+          fs.writeFileSync(receiptPath,`${JSON.stringify(receipt,null,2)}\n`,{mode:0o600});
+          if (!verified) process.exitCode = 1;
+          NODE
+
+      - name: Run profile-only pure tests with a sealed TAP receipt
+        working-directory: target
+        env:
+          R16_DIAGNOSTIC_TARGET_ROOT: ${{ github.workspace }}/target
+          R16_DIAGNOSTIC_PROBE_ROOT: ${{ github.workspace }}/probe
+          PURE_TAP: ${{ github.workspace }}/artifacts/r16-listening-profile-only/profile-only.test.tap
+          PURE_RECEIPT: ${{ github.workspace }}/artifacts/r16-listening-profile-only/profile-only.test.receipt.json
+        run: |
+          set -euo pipefail
+          target_before=$(git rev-parse HEAD)
+          probe_before=$(git -C ../probe rev-parse HEAD)
+          test "$target_before" = "$TARGET_REF"
+          test "$probe_before" = "$PROBE_REF"
+          set +e
+          corepack pnpm exec tsx --test --test-concurrency=1 ../probe/scripts/r16-diagnostics/listening-small/profile-only.test.mts 2>&1 | tee "$PURE_TAP"
+          statuses=("${PIPESTATUS[@]}")
+          test_status=${statuses[0]}
+          tee_status=${statuses[1]}
+          set -e
+          if [ "$tee_status" -ne 0 ] && [ "$test_status" -eq 0 ]; then test_status=125; fi
+          target_after=$(git rev-parse HEAD)
+          probe_after=$(git -C ../probe rev-parse HEAD)
+          test "$target_after" = "$TARGET_REF"
+          test "$probe_after" = "$PROBE_REF"
+          test -z "$(git status --porcelain --untracked-files=all)"
+          test -z "$(git -C ../probe status --porcelain --untracked-files=all)"
+          node - "$PURE_TAP" "$PURE_RECEIPT" "$test_status" "$TARGET_REF" "$target_before" "$target_after" "$PROBE_REF" "$probe_before" "$probe_after" <<'NODE'
+          const fs = require('node:fs');
+          const crypto = require('node:crypto');
+          const [tapPath, receiptPath, statusText, requestedTarget, targetBefore, targetAfter,
+            requestedProbe, probeBefore, probeAfter] = process.argv.slice(2);
+          const tapBytes = fs.readFileSync(tapPath), tap = tapBytes.toString('utf8');
+          const readCount = name => { const m = new RegExp(`^# ${name} (\\d+)$`, 'mu').exec(tap); return m ? Number(m[1]) : null; };
+          const counts = Object.fromEntries(['tests','pass','fail','cancelled','skipped'].map(k => [k,readCount(k)]));
+          const exitStatus = Number(statusText);
+          const verified = exitStatus === 0 && Object.values(counts).every(Number.isSafeInteger)
+            && counts.tests === counts.pass && counts.fail === 0 && counts.cancelled === 0 && counts.skipped === 0
+            && targetBefore === requestedTarget && targetAfter === requestedTarget
+            && probeBefore === requestedProbe && probeAfter === requestedProbe;
+          const receipt = {contract:'r16-diagnostic-pure-suite-v1',status:verified?'verified':'not_verified',
+            diagnostic_only:true,h1_accepted:false,requested_target_sha:requestedTarget,target_git_sha_before:targetBefore,target_git_sha_after:targetAfter,
+            requested_probe_sha:requestedProbe,probe_git_sha_before:probeBefore,probe_git_sha_after:probeAfter,
+            test_file:'scripts/r16-diagnostics/listening-small/profile-only.test.mts',exit_status:exitStatus,counts,
+            tap_file:'artifacts/r16-listening-profile-only/profile-only.test.tap',tap_sha256:crypto.createHash('sha256').update(tapBytes).digest('hex')};
+          fs.writeFileSync(receiptPath,`${JSON.stringify(receipt,null,2)}\n`,{mode:0o600});
+          if (!verified) process.exitCode = 1;
+          NODE
+
+      - name: Run PG collector pure tests with a sealed TAP receipt
+        working-directory: target
+        env:
+          PURE_TAP: ${{ github.workspace }}/artifacts/r16-listening-profile-only/profile-pg-cpu.test.tap
+          PURE_RECEIPT: ${{ github.workspace }}/artifacts/r16-listening-profile-only/profile-pg-cpu.test.receipt.json
+        run: |
+          set -euo pipefail
+          target_before=$(git rev-parse HEAD)
+          probe_before=$(git -C ../probe rev-parse HEAD)
+          test "$target_before" = "$TARGET_REF"
+          test "$probe_before" = "$PROBE_REF"
+          set +e
+          corepack pnpm exec node --test --test-concurrency=1 --test-reporter=tap ../probe/scripts/r16-diagnostics/listening-small/profile-pg-cpu.test.mjs 2>&1 | tee "$PURE_TAP"
+          statuses=("${PIPESTATUS[@]}")
+          test_status=${statuses[0]}
+          tee_status=${statuses[1]}
+          set -e
+          if [ "$tee_status" -ne 0 ] && [ "$test_status" -eq 0 ]; then test_status=125; fi
+          target_after=$(git rev-parse HEAD)
+          probe_after=$(git -C ../probe rev-parse HEAD)
+          test "$target_after" = "$TARGET_REF"
+          test "$probe_after" = "$PROBE_REF"
+          test -z "$(git status --porcelain --untracked-files=all)"
+          test -z "$(git -C ../probe status --porcelain --untracked-files=all)"
+          node - "$PURE_TAP" "$PURE_RECEIPT" "$test_status" "$TARGET_REF" "$target_before" "$target_after" "$PROBE_REF" "$probe_before" "$probe_after" <<'NODE'
+          const fs = require('node:fs');
+          const crypto = require('node:crypto');
+          const [tapPath, receiptPath, statusText, requestedTarget, targetBefore, targetAfter,
+            requestedProbe, probeBefore, probeAfter] = process.argv.slice(2);
+          const tapBytes = fs.readFileSync(tapPath), tap = tapBytes.toString('utf8');
+          const readCount = name => { const m = new RegExp(`^# ${name} (\\d+)$`, 'mu').exec(tap); return m ? Number(m[1]) : null; };
+          const counts = Object.fromEntries(['tests','pass','fail','cancelled','skipped'].map(k => [k,readCount(k)]));
+          const exitStatus = Number(statusText);
+          const verified = exitStatus === 0 && Object.values(counts).every(Number.isSafeInteger)
+            && counts.tests === counts.pass && counts.fail === 0 && counts.cancelled === 0 && counts.skipped === 0
+            && targetBefore === requestedTarget && targetAfter === requestedTarget
+            && probeBefore === requestedProbe && probeAfter === requestedProbe;
+          const receipt = {contract:'r16-diagnostic-pure-suite-v1',status:verified?'verified':'not_verified',
+            diagnostic_only:true,h1_accepted:false,requested_target_sha:requestedTarget,target_git_sha_before:targetBefore,target_git_sha_after:targetAfter,
+            requested_probe_sha:requestedProbe,probe_git_sha_before:probeBefore,probe_git_sha_after:probeAfter,
+            test_file:'scripts/r16-diagnostics/listening-small/profile-pg-cpu.test.mjs',exit_status:exitStatus,counts,
+            tap_file:'artifacts/r16-listening-profile-only/profile-pg-cpu.test.tap',tap_sha256:crypto.createHash('sha256').update(tapBytes).digest('hex')};
+          fs.writeFileSync(receiptPath,`${JSON.stringify(receipt,null,2)}\n`,{mode:0o600});
+          if (!verified) process.exitCode = 1;
+          NODE
+
+      - name: Start the fresh owned PG17 and Redis lab
+        id: lab
+        working-directory: target
+        run: |
+          set -euo pipefail
+          printf '%s\n' 'R16_PROFILE_ONLY_LAB_OWNED=true' >> "$GITHUB_ENV"
+          scripts/r16/lab-up.sh
+
+      - name: Apply migrations to the fresh profile-only lab
+        working-directory: target
+        env:
+          NOISIA_DB_SMOKE_RESET_SCHEMA: 'true'
+          NOISIA_DB_SMOKE_EMULATE_SUPABASE_ROLES: 'true'
+          NOISIA_MFP_PG_CI: 'true'
+        run: |
+          set -euo pipefail
+          connection_file=.data/piloto-masivo/r16/labs/benchmark-pg17/connection.env
+          test -f "$connection_file"
+          set -a
+          source "$connection_file"
+          set +a
+          export DATABASE_SSL=false NOISIA_R16_LOCAL_PG_LAB=r16-benchmark-pg17
+          corepack pnpm --filter @noisia/db db:smoke:migrations
+
+      - name: Read C-default pg_proc before the profile run
+        working-directory: target
+        run: |
+          set -euo pipefail
+          mkdir -p "$PROFILE_ARTIFACT_ROOT"
+          set -a
+          source .data/piloto-masivo/r16/labs/benchmark-pg17/connection.env
+          set +a
+          export DATABASE_SSL=false NOISIA_R16_LOCAL_PG_LAB=r16-benchmark-pg17
+          timeout 2m corepack pnpm exec node --import tsx ../probe/scripts/r16-diagnostics/listening-small/mainlab-default-runtime.mjs capture \
+            before "$TARGET_REF" "$PROFILE_ARTIFACT_ROOT/mainlab-default-before.json"
+
+      - name: Run the unchanged 4096-root mini with bounded_2g profiling
+        id: mini
+        working-directory: target
+        env:
+          R16_PROFILE_ONLY_WORKFLOW: 'true'
+          NOISIA_R16_SMALL_DIAGNOSTIC: 'true'
+          R16_DIAGNOSTIC_MODE: profile_only
+          R16_DIAGNOSTIC_RESOURCE_PROFILE: bounded_2g
+          R16_DIAGNOSTIC_TARGET_LABEL: candidate
+          R16_DIAGNOSTIC_TARGET_REF_REQUESTED: ${{ inputs.target_ref }}
+          R16_DIAGNOSTIC_PROBE_REF_REQUESTED: ${{ github.sha }}
+          R16_DIAGNOSTIC_TARGET_ROOT: ${{ github.workspace }}/target
+          R16_DIAGNOSTIC_PROBE_ROOT: ${{ github.workspace }}/probe
+          R16_DIAGNOSTIC_ARTIFACT: ${{ github.workspace }}/artifacts/r16-listening-profile-only/run.json
+          R16_PROFILE_NODE_ARTIFACT: ${{ github.workspace }}/artifacts/r16-listening-profile-only/v8-main-thread-profile.json
+          R16_PROFILE_PG_ARTIFACT: ${{ github.workspace }}/artifacts/r16-listening-profile-only/postgres-profile.json
+          R16_DIAGNOSTIC_MAINLAB_DEFAULT_PRECHECK: 'true'
+          R16_DIAGNOSTIC_MAINLAB_DEFAULT_BEFORE: ${{ github.workspace }}/artifacts/r16-listening-profile-only/mainlab-default-before.json
+          R16_DIAGNOSTIC_CPU_PROFILE_DIR: ${{ github.workspace }}/artifacts/r16-listening-profile-only/no-cli-cpu-prof
+          NOISIA_R16_NATIVE_FIXTURE_PG: 'true'
+          NOISIA_SIGNAL_LISTENING_ENABLED: 'true'
+          NOISIA_JEV_PROVIDER_ENABLED: 'true'
+          NOISIA_JEV_STREAMING_V2_ENABLED: 'true'
+          NOISIA_MASS_LABELING_ENABLED: 'true'
+          NOISIA_JEV_STREAM_MAX_IN_FLIGHT: '4096'
+          NOISIA_JEV_STREAM_BUFFER_BYTES: '2147483648'
+          NOISIA_JEV_STREAM_FLUSH_SIZE: '4096'
+          NOISIA_JEV_STREAM_MAX_FLUSHES: '2'
+          NOISIA_JEV_STREAM_FLUSH_INTERVAL_MS: '1000'
+          NOISIA_JEV_STREAM_WINDOW_SIZE: '4096'
+        run: |
+          set -euo pipefail
+          set -a
+          source .data/piloto-masivo/r16/labs/benchmark-pg17/connection.env
+          set +a
+          export DATABASE_SSL=false NOISIA_R16_LOCAL_PG_LAB=r16-benchmark-pg17
+          set +e
+          timeout 12m corepack pnpm exec node --import tsx ../probe/scripts/r16-diagnostics/listening-small/run.mts --run
+          diagnostic_status=$?
+          set -e
+          set +e
+          timeout 2m corepack pnpm exec node --import tsx ../probe/scripts/r16-diagnostics/listening-small/mainlab-default-runtime.mjs capture \
+            after "$TARGET_REF" "$PROFILE_ARTIFACT_ROOT/mainlab-default-after.json"
+          mainlab_after_status=$?
+          mainlab_assemble_status=0
+          if [ "$mainlab_after_status" -eq 0 ]; then
+            timeout 2m corepack pnpm exec node --import tsx ../probe/scripts/r16-diagnostics/listening-small/mainlab-default-runtime.mjs assemble \
+              "$TARGET_REF" "$PROFILE_ARTIFACT_ROOT/mainlab-default-before.json" "$PROFILE_ARTIFACT_ROOT/mainlab-default-after.json" \
+              "$PROFILE_ARTIFACT_ROOT/mainlab-default-runtime.json"
+            mainlab_assemble_status=$?
+          fi
+          set -e
+          if [ "$diagnostic_status" -ne 0 ]; then exit "$diagnostic_status"; fi
+          if [ "$mainlab_after_status" -ne 0 ]; then exit "$mainlab_after_status"; fi
+          if [ "$mainlab_assemble_status" -ne 0 ]; then exit "$mainlab_assemble_status"; fi
+          timeout 2m corepack pnpm exec node ../probe/scripts/r16-diagnostics/listening-small/profile-only-envelope.mjs assemble \
+            "$GITHUB_WORKSPACE/target" "$GITHUB_WORKSPACE/probe" "$TARGET_REF" "$PROBE_REF" "$PROFILE_ARTIFACT_ROOT"
+
+      - name: Validate private artifact directory is within the aggregate size bound
+        if: always()
+        run: |
+          set -euo pipefail
+          if [ -d "$PROFILE_ARTIFACT_ROOT" ]; then
+            total=$(find "$PROFILE_ARTIFACT_ROOT" -type f -printf '%s\n' | awk '{sum += $1} END {print sum + 0}')
+            test "$total" -le 67108864
+          fi
+
+      - name: Stop only the owned profile-only lab and remove its marker
+        if: always() && env.R16_PROFILE_ONLY_LAB_OWNED == 'true'
+        working-directory: target
+        run: |
+          set -euo pipefail
+          marker=.data/piloto-masivo/r16/labs/benchmark-pg17/pg-cpu-owned-marker.json
+          marker_cleanup_status=0
+          if [ -f "$marker" ]; then
+            set +e
+            node - "$marker" "$TARGET_REF" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "$GITHUB_JOB" <<'NODE'
+          const fs = require('node:fs');
+          const [file, target, run, attempt, job] = process.argv.slice(2);
+          const marker = JSON.parse(fs.readFileSync(file,'utf8'));
+          if (marker.contract === 'r16-pg-cpu-owned-lab-v1' && marker.target_sha === target
+              && marker.github_run_id === run && marker.github_run_attempt === attempt && marker.github_job === job) fs.unlinkSync(file);
+          else throw new Error('profile-only owned marker identity changed');
+          NODE
+            marker_cleanup_status=$?
+            set -e
+          fi
+          if [ -f .data/piloto-masivo/r16/labs/benchmark-pg17/private.env ]; then
+            R16BENCH_RUN_ID=benchmark-pg17 scripts/r16/lab-down.sh
+          fi
+          if [ "$marker_cleanup_status" -ne 0 ]; then exit "$marker_cleanup_status"; fi
+
+      - name: Upload profile-only evidence
+        if: always() && hashFiles('artifacts/r16-listening-profile-only/*') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: r16-listening-profile-only-${{ github.run_id }}
+          path: artifacts/r16-listening-profile-only/
+          if-no-files-found: error
+          retention-days: 7
