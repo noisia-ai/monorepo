@@ -16,15 +16,53 @@ const sha256 = bytes => createHash('sha256').update(bytes).digest('hex');
 const HASH_RE = /^[0-9a-f]{64}$/u;
 const SHA_RE = /^[0-9a-f]{40}$/u;
 
-class BenchmarkError extends Error {
-  constructor(code) {
+export class BenchmarkError extends Error {
+  constructor(code, secondaryFailureCodes = []) {
     super(code);
     this.code = code;
+    this.secondaryFailureCodes = secondaryFailureCodes;
   }
 }
 
 function fail(code) {
   throw new BenchmarkError(code);
+}
+
+function safeFailureCode(error, fallback = 'benchmark_failed') {
+  return error instanceof BenchmarkError && /^[a-z][a-z0-9_]{1,80}$/u.test(error.code) ? error.code : fallback;
+}
+
+export async function runOwnedTempLifecycleV1({create, body, cleanup, postcheck}) {
+  let result;
+  let primaryFailureCode;
+  const secondaryFailureCodes = [];
+  try {
+    await create();
+    result = await body();
+  } catch (error) {
+    primaryFailureCode = safeFailureCode(error);
+  }
+  try {
+    await cleanup();
+  } catch (error) {
+    secondaryFailureCodes.push(safeFailureCode(error, 'baseline_temp_cleanup_failed'));
+  }
+  try {
+    const postcheckCodes = await postcheck();
+    if (Array.isArray(postcheckCodes)) {
+      for (const code of postcheckCodes) {
+        if (typeof code === 'string' && /^[a-z][a-z0-9_]{1,80}$/u.test(code)) secondaryFailureCodes.push(code);
+      }
+    }
+  } catch (error) {
+    secondaryFailureCodes.push(safeFailureCode(error, 'source_postcheck_failed'));
+  }
+  const uniqueSecondary = [...new Set(secondaryFailureCodes)].slice(0, 3);
+  if (primaryFailureCode || uniqueSecondary.length) {
+    const [reasonCode, ...remaining] = primaryFailureCode ? [primaryFailureCode, ...uniqueSecondary] : uniqueSecondary;
+    throw new BenchmarkError(reasonCode, remaining);
+  }
+  return result;
 }
 
 function git(targetRoot, args) {
@@ -85,23 +123,42 @@ function candidateQuestion(key, topicSource) {
   };
 }
 
-export function createRequestCodecWorkloadsV1(codecModule) {
+export function createRequestCodecWorkloadsV1(codecModule, workloadModule, callsPerWorkload = REQUEST_CODEC_CALLS_PER_TRIAL) {
+  if (typeof workloadModule?.r16ListeningWorkloadV2 !== 'function'
+    || typeof codecModule?.selectSignalListeningQuestionsV1 !== 'function') fail('workload_module_invalid');
+  if (!Number.isSafeInteger(callsPerWorkload) || callsPerWorkload < 1 || callsPerWorkload > REQUEST_CODEC_CALLS_PER_TRIAL) fail('workload_call_count_invalid');
   const base = codecModule.signalListeningBaseTemplateV1({category: 'synthetic-category', lexicon_terms: ['synthetic', 'café']});
   const candidateKeys = ['defined_a', 'defined_b', 'defined_c', 'defined_d'];
-  const configuredFour = {...base, questions: [...base.questions, ...candidateKeys.map(key => candidateQuestion(key, 'defined'))]};
+  const mainWorkload = workloadModule.r16ListeningWorkloadV2('defined_consumer_second_pass');
+  const mainConfiguration = mainWorkload?.configuration;
+  const mainSelectedKeys = codecModule.selectSignalListeningQuestionsV1(mainConfiguration, [])
+    .filter(question => question.scope === 'consumer_category' && question.type === 'noul' && question.topic_source === 'defined')
+    .map(question => question.key).sort();
+  if (mainWorkload?.arm !== 'defined_consumer_second_pass' || mainConfiguration?.questions?.length !== 4
+    || mainSelectedKeys?.length !== 2 || !Array.isArray(mainWorkload.question_keys)
+    || mainWorkload.question_keys.length !== 4
+    || JSON.stringify([...mainWorkload.question_keys].sort()) !== JSON.stringify(mainConfiguration.questions.map(question => question.key).sort())
+    || mainSelectedKeys.some(key => !mainWorkload.question_keys.includes(key))) {
+    fail('main_workload_shape_invalid');
+  }
   const configuredDiscovered = {...base, questions: [...base.questions, ...candidateKeys.map(key => candidateQuestion(key, 'discovered'))]};
+  const selectedDiscovered = codecModule.selectSignalListeningQuestionsV1(configuredDiscovered,
+    candidateKeys.map((key, index) => ({key, similarity: 1 - index / 10}))).map(question => question.key).sort();
+  if (configuredDiscovered.questions.length !== 6 || selectedDiscovered.length !== 6) fail('stress_workload_shape_invalid');
   return [
     {
       case_id: 'defined_consumer_4_configured_2_selected',
-      configuration: configuredFour,
-      selected_keys: ['voice', 'promotion', 'defined_a', 'defined_c'],
+      configuration: mainConfiguration,
+      selected_keys: mainSelectedKeys,
+      product_configuration_digest: mainWorkload.configuration_digest,
+      selected_consumer_keys_sha256: sha256(Buffer.from(JSON.stringify(mainSelectedKeys), 'utf8')),
     },
     {
       case_id: 'base_2_plus_4_noul_candidates',
       configuration: configuredDiscovered,
-      selected_keys: ['voice', 'promotion', ...candidateKeys],
+      selected_keys: selectedDiscovered,
     },
-  ].map(item => ({...item, inputs: Array.from({length: REQUEST_CODEC_CALLS_PER_TRIAL}, (_, index) => makeInput(index, item.case_id, item.selected_keys))}));
+  ].map(item => ({...item, inputs: Array.from({length: callsPerWorkload}, (_, index) => makeInput(index, item.case_id, item.selected_keys))}));
 }
 
 function functionsFor(codecModule) {
@@ -272,8 +329,15 @@ export function validateRequestCodecArtifactV1(value) {
     assert.equal(value.probe_git_sha_before, value.requested_probe_sha);
     assert.equal(value.probe_git_sha_after, value.requested_probe_sha);
     assert.deepEqual(value.workloads?.map(item => item.case_id), ['defined_consumer_4_configured_2_selected', 'base_2_plus_4_noul_candidates']);
-    assert.deepEqual(value.workloads?.map(item => [item.base_questions, item.candidate_questions_configured,
-      item.candidate_questions_selected, item.request_questions, item.calls]), [[2, 4, 2, 4, 1000], [2, 4, 4, 6, 1000]]);
+    assert.deepEqual(value.workloads?.map(item => [item.configured_questions, item.base_questions,
+      item.candidate_questions_configured, item.candidate_questions_selected, item.request_questions, item.calls]),
+    [[4, 2, 2, 2, 2, 1000], [6, 2, 4, 4, 6, 1000]]);
+    assert.deepEqual(value.main_workload, {source_function: 'r16ListeningWorkloadV2', arm: 'defined_consumer_second_pass',
+      configured_questions: 4, selected_consumer_questions: 2,
+      configuration_digest: value.workloads[0].product_configuration_digest,
+      selected_consumer_keys_sha256: value.workloads[0].selected_consumer_keys_sha256});
+    assert.match(value.main_workload.configuration_digest ?? '', /^sha256:[0-9a-f]{64}$/u);
+    assert.match(value.main_workload.selected_consumer_keys_sha256 ?? '', HASH_RE);
     assert.equal(value.parity?.length, 2);
     assert.ok(value.parity.every(item => Number.isSafeInteger(item.verified_calls) && item.verified_calls === 1000
       && Number.isSafeInteger(item.request_bytes) && item.request_bytes > 0 && HASH_RE.test(item.paired_output_sha256 ?? '')));
@@ -301,6 +365,10 @@ export function validateRequestCodecArtifactV1(value) {
   } else {
     assert.equal(value.status, 'rejected');
     assert.match(value.reason_code ?? '', /^[a-z][a-z0-9_]{1,80}$/u);
+    if (Object.hasOwn(value, 'secondary_failure_codes')) {
+      assert.ok(Array.isArray(value.secondary_failure_codes) && value.secondary_failure_codes.length <= 3
+        && value.secondary_failure_codes.every(code => /^[a-z][a-z0-9_]{1,80}$/u.test(code)));
+    }
     assert.ok(!Object.hasOwn(value, 'trials') && !Object.hasOwn(value, 'parity'));
   }
   return true;
@@ -333,33 +401,33 @@ async function runBenchmark(args) {
   }
   const baselinePath = join(dirname(targetSourcePath), `signal-listening-contracts.benchmark-old-${process.pid}.ts`);
   if (existsSync(baselinePath)) fail('baseline_temp_path_exists');
-  let benchmarkResult;
-  try {
-    writeFileSync(baselinePath, baselineBytes, {flag: 'wx', mode: 0o600});
+  let baselineCreated = false;
+  const benchmarkResult = await runOwnedTempLifecycleV1({
+    create: async () => { writeFileSync(baselinePath, baselineBytes, {flag: 'wx', mode: 0o600}); baselineCreated = true; },
+    body: async () => {
     const oldModule = await import(pathToFileURL(baselinePath).href);
     const newModule = await import(pathToFileURL(targetSourcePath).href);
     const modulePair = {old: oldModule, new: newModule, oldFns: functionsFor(oldModule), newFns: functionsFor(newModule)};
-    const oldWorkloads = createRequestCodecWorkloadsV1(oldModule);
-    const newWorkloads = createRequestCodecWorkloadsV1(newModule);
+    const workloadModule = await import(pathToFileURL(join(targetRoot, 'scripts/r16/listening-workload.ts')).href);
+    const oldWorkloads = createRequestCodecWorkloadsV1(oldModule, workloadModule);
+    const newWorkloads = createRequestCodecWorkloadsV1(newModule, workloadModule);
     const workloadShape = items => items.map(item => ({case_id: item.case_id, configuration: item.configuration,
       selected_keys: item.selected_keys, inputs: item.inputs}));
     if (JSON.stringify(workloadShape(oldWorkloads)) !== JSON.stringify(workloadShape(newWorkloads))) fail('workload_input_mismatch');
     const preparedWorkloads = prepareComparisonModules(modulePair, oldWorkloads);
-    const parity = parity(modulePair, preparedWorkloads);
+    const parityResults = parity(modulePair, preparedWorkloads);
     const trials = trialPair(modulePair, preparedWorkloads);
-    if (trials.some(trial => trial.http_bytes !== parity.find(item => item.case_id === trial.case_id)?.request_bytes)) {
+    if (trials.some(trial => trial.http_bytes !== parityResults.find(item => item.case_id === trial.case_id)?.request_bytes)) {
       // Each trial repeats the same 1000 request wires, so the byte totals must match parity.
       fail('trial_byte_total_mismatch');
     }
-    assertExactHead(targetRoot, targetSha, 'target_source_seal_failed');
-    assertExactHead(probeRoot, probeSha, 'probe_source_seal_failed');
     if (sha256(readFileSync(targetSourcePath)) !== candidateHash) fail('candidate_source_changed');
     const environment = {platform: process.platform, arch: process.arch, os_release: os.release(),
       ci: process.env.CI === 'true', github_actions: process.env.GITHUB_ACTIONS === 'true',
       runner_os: process.env.RUNNER_OS ?? '', event_name: process.env.GITHUB_EVENT_NAME ?? ''};
     const environmentFingerprint = sha256(Buffer.from(JSON.stringify({node: process.version, pnpm: pnpmVersion,
       lockfile: lockfileSha256, runtime_flags: process.execArgv, node_options: process.env.NODE_OPTIONS ?? '', environment})));
-    benchmarkResult = {
+    const benchmarkResult = {
       contract: 'r16-request-codec-microbenchmark-v1', status: 'verified', diagnostic_only: true,
       h1_accepted: false, gain_claim: false, comparison_scope: 'request_codec_cpu_wall_only',
       base_source_sha: REQUEST_CODEC_BASE_SHA, baseline_module_sha256: baselineHash, baseline_module_bytes: baselineBytes.byteLength,
@@ -374,19 +442,38 @@ async function runBenchmark(args) {
         timing_includes_sink_and_byte_count_bookkeeping: true, overhead_subtracted: false},
       snapshot_preparation: {function: 'compileSignalListeningSnapshotV1', calls_per_arm_case: 1, included_in_trials: false},
       trial_order: [...REQUEST_CODEC_TRIAL_ORDER], warmup_calls_per_arm_case: 100,
+      main_workload: {source_function: 'r16ListeningWorkloadV2', arm: 'defined_consumer_second_pass',
+        configured_questions: 4, selected_consumer_questions: 2,
+        configuration_digest: oldWorkloads[0].product_configuration_digest,
+        selected_consumer_keys_sha256: oldWorkloads[0].selected_consumer_keys_sha256},
       workloads: oldWorkloads.map(item => ({case_id: item.case_id, base_questions: 2,
-        candidate_questions_configured: 4,
+        configured_questions: item.configuration.questions.length,
+        candidate_questions_configured: item.configuration.questions.length - 2,
         candidate_questions_selected: item.selected_keys.filter(key => key !== 'voice' && key !== 'promotion').length,
-        request_questions: item.selected_keys.length, calls: item.inputs.length})), parity, trials,
+        request_questions: item.selected_keys.length, calls: item.inputs.length})), parity: parityResults, trials,
       interpretation: {whole_pipeline_gain: false, cpu_function_attribution: false, causality_claim: false,
         json_stringify_included: true, compile_snapshot_included_in_trials: false, all_inputs_synthetic: true},
     };
     validateRequestCodecArtifactV1(benchmarkResult);
-  } finally {
-    rmSync(baselinePath, {force: true});
-  }
-  assertExactHead(targetRoot, targetSha, 'target_source_cleanup_failed');
-  assertExactHead(probeRoot, probeSha, 'probe_source_cleanup_failed');
+    return benchmarkResult;
+    },
+    cleanup: async () => { if (baselineCreated) rmSync(baselinePath); },
+    postcheck: async () => {
+      const failures = [];
+      const check = (root, expected, headCode, cleanCode) => {
+        try { if (git(root, ['rev-parse', 'HEAD']) !== expected) failures.push(headCode); }
+        catch { failures.push(headCode); }
+        try { if (git(root, ['status', '--porcelain', '--untracked-files=all']) !== '') failures.push(cleanCode); }
+        catch { failures.push(cleanCode); }
+      };
+      check(targetRoot, targetSha, 'target_source_head_changed', 'target_source_cleanup_failed');
+      try {
+        if (sha256(readFileSync(targetSourcePath)) !== candidateHash) failures.push('candidate_source_changed_after_run');
+      } catch { failures.push('candidate_source_unreadable_after_run'); }
+      check(probeRoot, probeSha, 'probe_source_head_changed', 'probe_source_cleanup_failed');
+      return failures;
+    },
+  });
   const artifactBytes = writeArtifact(artifactPath, benchmarkResult);
   return {artifactBytes, result: benchmarkResult};
 }
@@ -403,7 +490,9 @@ export async function main(argv = process.argv.slice(2)) {
     if (args?.artifactPath && !existsSync(args.artifactPath)) {
       try {
         writeArtifact(args.artifactPath, {contract: 'r16-request-codec-microbenchmark-v1', status: 'rejected',
-          diagnostic_only: true, h1_accepted: false, gain_claim: false, reason_code: reasonCode});
+          diagnostic_only: true, h1_accepted: false, gain_claim: false, reason_code: reasonCode,
+          ...(error instanceof BenchmarkError && error.secondaryFailureCodes.length
+            ? {secondary_failure_codes: error.secondaryFailureCodes} : {})});
       } catch {
         // A bounded rejection is best effort; never expose raw exception details.
       }

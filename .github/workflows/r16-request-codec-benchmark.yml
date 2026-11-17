@@ -68,6 +68,14 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      - name: Prepare private result directory
+        id: artifact_path
+        run: |
+          set -euo pipefail
+          artifact_dir="$RUNNER_TEMP/r16-request-codec-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          mkdir -m 700 "$artifact_dir"
+          echo "path=$artifact_dir/request-codec-benchmark.json" >> "$GITHUB_OUTPUT"
+
       - name: Set up pinned pnpm
         uses: pnpm/action-setup@v4
         with:
@@ -85,18 +93,11 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Run benchmark contract tests
-        working-directory: probe
+        working-directory: target
         env:
           NODE_OPTIONS: --max-old-space-size=384
-        run: node --test --test-concurrency=1 scripts/r16-diagnostics/listening-small/request-codec-benchmark.test.mjs
-
-      - name: Prepare private result directory
-        id: artifact_path
-        run: |
-          set -euo pipefail
-          artifact_dir="$RUNNER_TEMP/r16-request-codec-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          mkdir -m 700 "$artifact_dir"
-          echo "path=$artifact_dir/request-codec-benchmark.json" >> "$GITHUB_OUTPUT"
+          R16_REQUEST_CODEC_TARGET_ROOT: ${{ github.workspace }}/target
+        run: node --import tsx --test --test-concurrency=1 "$GITHUB_WORKSPACE/probe/scripts/r16-diagnostics/listening-small/request-codec-benchmark.test.mjs"
 
       - name: Run old/new request codec comparison
         id: benchmark
@@ -134,8 +135,18 @@ jobs:
           path = pathlib.Path(os.environ['ARTIFACT_PATH'])
           result = {'safe': 'false', 'status': 'missing', 'target_sha': '', 'probe_sha': ''}
           try:
-              info = path.lstat()
               parent = path.parent.lstat()
+              if not stat.S_ISDIR(parent.st_mode) or stat.S_ISLNK(parent.st_mode) or stat.S_IMODE(parent.st_mode) != 0o700:
+                  raise ValueError('artifact_parent_invalid')
+              if not path.exists() and os.environ['BENCHMARK_OUTCOME'] in ('failure', 'cancelled', 'skipped'):
+                  rejection = {'contract': 'r16-request-codec-microbenchmark-v1', 'status': 'rejected',
+                               'diagnostic_only': True, 'h1_accepted': False, 'gain_claim': False,
+                               'reason_code': 'workflow_step_failed'}
+                  with path.open('x', encoding='utf-8') as output:
+                      json.dump(rejection, output, separators=(',', ':'))
+                      output.write('\n')
+                  path.chmod(0o600)
+              info = path.lstat()
               if not stat.S_ISREG(info.st_mode) or stat.S_ISLNK(info.st_mode) or stat.S_IMODE(info.st_mode) != 0o600 or not stat.S_ISDIR(parent.st_mode) or stat.S_ISLNK(parent.st_mode) or stat.S_IMODE(parent.st_mode) != 0o700:
                   raise ValueError('artifact_path_invalid')
               if info.st_size > 1048576 or list(path.parent.iterdir()) != [path]:
@@ -153,9 +164,18 @@ jobs:
                       raise ValueError('probe_seal_invalid')
                   if len(value.get('trials', [])) != 8 or len(value.get('parity', [])) != 2:
                       raise ValueError('result_counts_invalid')
+                  main = value.get('main_workload', {})
+                  if main.get('source_function') != 'r16ListeningWorkloadV2' or main.get('arm') != 'defined_consumer_second_pass' or main.get('configured_questions') != 4 or main.get('selected_consumer_questions') != 2:
+                      raise ValueError('main_workload_invalid')
+                  cases = value.get('workloads', [])
+                  if [(item.get('configured_questions'), item.get('candidate_questions_selected'), item.get('request_questions')) for item in cases] != [(4, 2, 2), (6, 4, 6)]:
+                      raise ValueError('workload_counts_invalid')
               else:
                   if 'trials' in value or 'parity' in value or not re.fullmatch(r'[a-z][a-z0-9_]{1,80}', value.get('reason_code', '')):
                       raise ValueError('rejection_shape_invalid')
+                  secondary = value.get('secondary_failure_codes', [])
+                  if not isinstance(secondary, list) or len(secondary) > 3 or any(not isinstance(code, str) or not re.fullmatch(r'[a-z][a-z0-9_]{1,80}', code) for code in secondary):
+                      raise ValueError('rejection_secondary_codes_invalid')
               result = {'safe': 'true', 'status': value['status'],
                         'target_sha': value.get('requested_target_sha', os.environ['TARGET_SHA']),
                         'probe_sha': value.get('requested_probe_sha', os.environ['PROBE_SHA'])}
