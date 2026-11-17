@@ -59,8 +59,9 @@ async function setupState(c:PoolClient,params:unknown[],run_id:string){
  const run=(await c.query('SELECT status,lease_token IS NULL released FROM signal_labeling_runs WHERE id=$1',[run_id])).rows[0];assert.equal(run.status,'running');assert.equal(run.released,true,'setup releases its lease before measurement');
  return{...ledger,base_answers:answers,consumer_pending:8192,raw14_rows:state.rows,basis_fresh:true,run_status:run.status,open_exposure_micro_usd:String(BigInt(ledger.reserved_micro_usd)+BigInt(ledger.unknown_micro_usd)),external_spend_micro_usd:0};
 }
+export type FlatPrefixReadyFixtureV1={database:SharedWireFixtureV1['database'];run:SharedWireFixtureV1['run'];store:SharedWireFixtureV1['store'];rawPages:SharedWireFixtureV1['rawPages'];configuration:SharedWireFixtureV1['configuration'];configuration_id:string;map_id:string;params:unknown[];assertRawReady:()=>Promise<void>;deadline:()=>void};
 export type FlatPrefixNativeCaseV1={install(c:PoolClient):Promise<void>;read(args:{c:PoolClient;params:unknown[];setup:Record<string,unknown>}):Promise<void>};
-export async function withFlatPrefixFullFixtureV1(testCase:FlatPrefixNativeCaseV1){
+export async function withFlatPrefixFullFixtureV1(testCase:FlatPrefixNativeCaseV1|{afterSetup:(f:FlatPrefixReadyFixtureV1)=>Promise<void>}){
  assert.equal(process.env.GITHUB_ACTIONS,'true','owned CI only');
  const workload=r16ListeningWorkloadV2('defined_consumer_second_pass'),started=process.hrtime.bigint();
  const elapsed=()=>Number(process.hrtime.bigint()-started)/1e6;
@@ -95,6 +96,7 @@ export async function withFlatPrefixFullFixtureV1(testCase:FlatPrefixNativeCaseV
     // original roster, not a new consumer read, supplies the one fixed scope.
     deadline();const roots=Object.freeze(initial.map(i=>i.root_id));
     const params:unknown[]=[access.workspace_id,cfg.id,ctx.map_id,run.entity_context_digest,roots,'llm-processing'];
+    if('afterSetup'in testCase){await testCase.afterSetup({database,run,store,rawPages,configuration:cfg.configuration,configuration_id:cfg.id,map_id:ctx.map_id,params,assertRawReady:()=>storage.assertReady!(),deadline});return;}
     const c=await database.connect();
     try{
      const original=(await c.query("SELECT current_setting('search_path') search_path,current_setting('track_functions') track_functions,current_database() database,current_setting('server_version_num')::int version")).rows[0];
@@ -115,3 +117,5 @@ export async function withFlatPrefixFullFixtureV1(testCase:FlatPrefixNativeCaseV
    },async()=>{await withSharedWireDefaultPostcheckV1(()=>server.close(),()=>rm(directory,{recursive:true,force:true}));});
   }}});
 }
+
+export {setupState as readFlatPrefixSetupStateV1};
