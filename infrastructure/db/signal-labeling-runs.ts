@@ -991,6 +991,42 @@ export function createSignalLabelingStoreV1<
       if(!row)fail("labeling_lease_lost");
       return row;
     },
+    ...(nativePendingReserve?{
+      /** Select only already-committed, memory-owned calls after the common
+       * authority wait. This callback grants no DB authority and receives no client. */
+      async markSubmittingSelected(run:LabelingRunV1,selectCommitted:()=>ReadonlyArray<LabelingCallV1<Input>>):Promise<ReadonlyArray<LabelingCallV1<Input>>>{
+        await options.assertRawReady?.();
+        const c=await db.connect();
+        try{
+          await c.query("BEGIN");
+          await pageMutationFence(c,run);await authority(c,run,0);
+          const selected:unknown=selectCommitted();
+          if(!Array.isArray(selected)){
+            // Reject async selectors without awaiting them or leaking a rejected
+            // native Promise as an unhandled rejection on this failure path.
+            if(selected instanceof Promise)void selected.catch(()=>undefined);
+            fail('labeling_mark_selection_invalid',400);
+          }
+          const calls:LabelingCallV1<Input>[]=[...selected];
+          if(calls.length>pageSize||calls.some(call=>!call||typeof call.id!=='string'||!call.id||call.status!=='reserved'||Boolean(call.raw_body)))
+            fail('labeling_mark_selection_invalid',400);
+          if(calls.length){
+            await lockMutationCalls(c,run,calls);
+            await options.adapter?.beforeSubmit?.(c,run,calls);
+            await rawRunReadFence(c,run);await registerMutationFence(c,run,'mark');
+            const changed=await c.query(
+              `UPDATE signal_labeling_calls SET status='submitting',updated_at=now() WHERE run_id=$1 AND id=ANY($2::uuid[]) AND status='reserved' RETURNING id`,
+              [run.id,calls.map(call=>call.id)]);
+            if(changed.rows.length!==calls.length)fail('labeling_submission_conflict');
+          }
+          await c.query("COMMIT");return calls;
+        }catch(primary){
+          try{await c.query("ROLLBACK");}
+          catch(rollback){throw new AggregateError([primary,rollback],'labeling_mark_body_and_rollback_failed',{cause:primary});}
+          throw primary;
+        }finally{c.release();}
+      },
+    }:{}),
     async markSubmitting(run: LabelingRunV1, calls: LabelingCallV1<Input>[]) {
       await options.assertRawReady?.();
       await tx(db, async (c) => {
