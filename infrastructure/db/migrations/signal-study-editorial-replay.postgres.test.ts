@@ -76,8 +76,41 @@ test('native boundary rewrite is settled and replayed before the single blind re
  }
  runtime.setBoundaryDisagreement(true);const sent:StudyRuntimeStepPlanV1[]=[],send=runtime.drivers.send;
  runtime.drivers.send=async(plan,signal)=>{sent.push(plan);return send(plan,signal);};
- const execution=await f.request(),result=await runtime.run(execution.id);assert.equal(result.status,'completed');
- const parent=(await f.database.query('SELECT source_header FROM signal_study_executions WHERE id=$1',[execution.id])).rows[0];
+ // Three roots (the generic default) are intentionally below the numerical
+ // minimum and cannot exercise layer agreement. This gate owns three80-root
+ // clouds, enough for both complete, disjoint35+5 blind samples per motive.
+ const execution=await f.request();
+ const parent=(await f.database.query('SELECT source_header,source_roots FROM signal_study_executions WHERE id=$1',[execution.id])).rows[0];
+ assert.equal(parent.source_roots,240,'boundary fixture must admit its full240-root cut before running');
+ const result=await runtime.run(execution.id);assert.equal(result.status,'completed');
+ const numeric=(await f.database.query('SELECT value,manifest_json FROM signal_study_numeric_checkpoints WHERE execution_id=$1',[execution.id])).rows[0];
+ assert.ok(numeric);const manifest=JSON.parse(numeric.manifest_json);
+ assert.equal(manifest.status,'completed');assert.equal(manifest.root_count,240);assert.equal(manifest.grouped_count,240);assert.equal(manifest.unassigned_count,0);
+ assert.equal(numeric.value.groups.length,3);assert.deepEqual(numeric.value.groups.map((g:{root_ids:string[]})=>g.root_ids.length).sort((a:number,b:number)=>a-b),[80,80,80]);
+ assert.equal(new Set(numeric.value.groups.flatMap((g:{root_ids:string[]})=>g.root_ids)).size,240);assert.deepEqual(numeric.value.unassigned_root_ids,[]);
+ const layerRows=(await f.database.query<{step_key:string;request_body:string;value:{model:string;content:Array<{type:string;text:string}>}}>(
+  "SELECT step_key,request_body,value FROM signal_study_steps WHERE execution_id=$1 AND mode='layers' AND status='committed'",[execution.id])).rows;
+ const byKey=new Map(layerRows.map(row=>[row.step_key,row]));
+ const initialByMotive=new Map<string,Array<{layer:string;sample_ids:string[]}>>();
+ for(const plan of sent){const row=byKey.get(plan.key);if(!row)continue;assert.equal(row.request_body,plan.request_body);
+  const message=JSON.parse(JSON.parse(row.request_body).messages[0].content),payload=message.untrusted_data;if(payload.contrast_rule!==null)continue;
+  assert.equal(row.value.model,'claude-sonnet-4-6');const value=JSON.parse(row.value.content.find(c=>c.type==='text')!.text);assert.equal(value.input_digest,message.input_digest);
+  for(const motive of value.motives){assert.equal(motive.partitions.length,1);const sample=payload.motives.find((m:{key:string})=>m.key===motive.motive_key).sample as Array<{root_id:string;source:string}>;
+   assert.equal(sample.length,40);assert.equal(sample.filter(r=>r.source==='random').length,35);assert.equal(sample.filter(r=>r.source==='far').length,5);
+   initialByMotive.set(motive.motive_key,[...(initialByMotive.get(motive.motive_key)??[]),{layer:motive.partitions[0].layer,sample_ids:sample.map(r=>r.root_id)}]);
+  }
+ }
+ assert.equal(initialByMotive.size,3);const countsA=new Map<string,number>(),countsB=new Map<string,number>();let agreements=0;
+ for(const pair of initialByMotive.values()){assert.equal(pair.length,2,'every original motive has two complete blind decisions');const a=pair[0]!,b=pair[1]!;
+  assert.equal(a.sample_ids.filter(id=>b.sample_ids.includes(id)).length,0);if(a.layer===b.layer)agreements++;
+  countsA.set(a.layer,(countsA.get(a.layer)??0)+1);countsB.set(b.layer,(countsB.get(b.layer)??0)+1);
+ }
+ const n=initialByMotive.size,expectedNumerator=[...countsA].reduce((sum,[layer,count])=>sum+count*(countsB.get(layer)??0),0);
+ assert.deepEqual([...countsA.values()].sort(),[1,1,1]);assert.equal(agreements,2);assert.equal(expectedNumerator,3);
+ // Count-form κ=(n*agreements - sum marginals)/(n² - sum marginals)
+ // is0.5 here (observed2/3, expected1/3), not null or a rounded threshold.
+ const initialKappa=(n*agreements-expectedNumerator)/(n*n-expectedNumerator);assert.equal(initialKappa,.5);assert.ok(Number.isFinite(initialKappa)&&initialKappa<.8);
+ console.info('# native boundary initial agreement '+JSON.stringify({roots:240,groups:3,group_roots:[80,80,80],motives:n,agreements,expected_numerator:expectedNumerator,kappa:initialKappa}));
  assert.equal(parent.source_header.layer_boundary_rule_version,SIGNAL_STUDY_BOUNDARY_RULE_VERSION_V1);
  assert.equal(parent.source_header.acquisition_query_metadata.contract_version,'signal-study-acquisition-query-metadata-v1');
  const payloads=sent.map(plan=>JSON.parse(JSON.parse(plan.request_body).messages[0].content).untrusted_data),rewrites=payloads.filter(p=>p.purpose==='rewrite_layer_boundary_rules');
@@ -90,4 +123,4 @@ test('native boundary rewrite is settled and replayed before the single blind re
  assert.equal(settled,1);const proof=await readSignalStudyStabilityProofV1({...f,execution_id:execution.id});
  assert.ok(proof);assert.equal(proof.layer_agreement.boundary_recoded_count,1);assert.equal(proof.layer_agreement.kappa,1);assert.equal(proof.layer_agreement.coverage,1);
  const count=sent.length;assert.equal((await runtime.run(execution.id)).status,'not_claimed');assert.equal(sent.length,count);
-})));
+}),{population_count:240,study_text_length:3962}));
