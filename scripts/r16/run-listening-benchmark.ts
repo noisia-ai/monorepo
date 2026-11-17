@@ -154,7 +154,6 @@ export async function runR16ListeningBenchmarkV1(args:{arm:R16ListeningArmV1;obj
     sampleResources();
     if(['failed','outcome_unknown','lease_lost'].includes(outcome.status))break;
    }
-  sampleResources();
   // The job promise has drained native apply/settlement, calibration and provider
   // cleanup. Confirm its completed identity/exposure before closing active time.
   const processingStatus=await getSignalListeningStatusV1(f.access);
@@ -168,6 +167,7 @@ export async function runR16ListeningBenchmarkV1(args:{arm:R16ListeningArmV1;obj
   // Keep the final default-body proof inside the existing admission-to-wall
   // clock. The wrapper repeats it on failures and preserves both failures.
   await captureAfter();
+  sampleResources();
   const wall_elapsed_ms=performance.now()-start;
   const capacity=summarizeR16ListeningCapacityV2({wall_elapsed_ms,processing_elapsed_ms:classification_wall_elapsed_ms,
    native_processing_complete,resolved_roots:resolved.size,commits,latency_ms});
