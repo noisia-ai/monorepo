@@ -31,7 +31,12 @@ export function jevCallWorkingBytesV2(call:Pick<LabelingCallV1<FacetInput>,'requ
  * its page is durable, billed and applied. No provider request is retried here. */
 export async function processJevStreamingWindowV2<I extends FacetInput, R>(args: {
   run: LabelingRunV1; calls: LabelingCallV1<I>[]; send_calls?:LabelingCallV1<I>[];
-  store: ReturnType<typeof createSignalLabelingStoreV1<I, R>>; provider: JevProviderV1;
+  store: ReturnType<typeof createSignalLabelingStoreV1<I, R>> & {
+    /** Native adapters select only after their fresh authority fences, and
+     * return the exact cohort after its submitting transaction commits. */
+    markSubmittingSelected?(run:LabelingRunV1,
+      selectCommitted:()=>ReadonlyArray<LabelingCallV1<I>>):Promise<ReadonlyArray<LabelingCallV1<I>>>;
+  }; provider: JevProviderV1;
   execution: JevStreamingExecutionV2; price: LlmPriceV1; cancellation: AbortController;
   observe_stream?(metrics: JevStreamingMetricsV2): void;
   /** First-party adapters only: inputs exclude every already reserved identity.
@@ -287,9 +292,29 @@ export async function processJevStreamingWindowV2<I extends FacetInput, R>(args:
         if(!inFlight||e.max_buffered_bytes-memory<reservationBytes)flush(true);
         await wait();continue;
       }
-      const cohort=reserved.slice(0,slots);memory+=reservationBytes*cohort.length;observe();markingUnsent=cohort;
-      try{await store.markSubmitting(run,cohort);}
-      catch(error){release(reservationBytes*cohort.length);fail(error);break;}
+      let cohort:LabelingCallV1<I>[]=[];
+      try{
+        if(store.markSubmittingSelected){
+          let selected=false;
+          const committed=await store.markSubmittingSelected(run,()=>{
+            if(selected)throw Error('jev_stream_selection_repeated');
+            selected=true;
+            if(fatal||admission.signal.aborted||cancellation.signal.aborted)return[];
+            // Responses, durable flushes and an already-committed input page
+            // may advance while native authority is waiting. Claim their newly
+            // available slots only now, before the native call-row locks.
+            const available=Math.min(workers-inFlight,Math.floor((e.max_buffered_bytes-memory)/reservationBytes),reserved.length);
+            cohort=reserved.slice(0,available);
+            memory+=reservationBytes*cohort.length;markingUnsent=cohort;observe();
+            return cohort;
+          });
+          if(!selected||committed.length!==cohort.length||committed.some((call,index)=>call!==cohort[index]))
+            throw Error('jev_stream_selection_handoff_invalid');
+        }else{
+          cohort=reserved.slice(0,slots);memory+=reservationBytes*cohort.length;observe();markingUnsent=cohort;
+          await store.markSubmitting(run,cohort);
+        }
+      }catch(error){release(reservationBytes*cohort.length);fail(error);break;}
       // There is deliberately no await/cancellation check between the successful
       // durable handoff and delivering EVERY cohort member to evaluate. A sync
       // provider rejection is classified normally, without stranding siblings.

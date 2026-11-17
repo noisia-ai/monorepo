@@ -364,3 +364,143 @@ test('reserved admission wake requeues a failed Mark handoff once without sendin
 test('reserved admission wake waits safely when feeding alone owns the missing response budget',async()=>{
  const x=await exerciseAdmissionWake('feed_memory_only');assert.equal(x.result.error,undefined);assert.equal(x.result.value?.status,'completed');assert.equal(x.sent.length,1);assert.equal(x.result.value?.labeled,1);assert.deepEqual(x.requeued,[]);assert.equal(x.memory.at(-1),0);
 });
+
+/** While the second native authority fence waits, one paid sibling completes
+ * and one future input page commits. Neither requires another physical send. */
+async function exerciseLateMark(mode:'progress'|'future_pending'|'memory_limited'|'abort_before_selection'|'abort_after_selection'|'ack_lost'|'authority_failed'|'invalid_handoff'){
+ const {processJevStreamingWindowV2}=await import('./signal-jev-streaming-window');
+ type Store=Parameters<typeof processJevStreamingWindowV2<FacetInput,string>>[0]['store'];
+ const make=(i:number)=>({id:`late-${i}`,request_digest:`late-${i}`,status:'reserved',raw_body:null,results_applied:false,
+  request:{model:'jev-1.13.0',state:String(i),questions:{q:{type:'noul',instructions:'configured'}}},
+  inputs:[{root_id:String(i),text:String(i)}]})as unknown as LabelingCallV1<FacetInput>;
+ const initial=[make(0),make(1),make(2)],future=make(3),all=[...initial,future];
+ const httpStarted=deferredFrontier(),firstResponse=deferredFrontier(),secondResponse=deferredFrontier(),
+  secondMarkStarted=deferredFrontier(),futureCommit=deferredFrontier(),futureReturned=deferredFrontier(),
+  secondBuffered=deferredFrontier(),selectionGate=deferredFrontier(),selected=deferredFrontier(),commitGate=deferredFrontier(),applyGate=deferredFrontier();
+ const cancellation=new AbortController(),events:string[]=[],sent:string[]=[],memory:number[]=[],cohorts:string[][]=[],requeued:string[]=[],raw:string[]=[],settled:string[]=[],applied:string[]=[];
+ const budget=mode==='memory_limited'?552*1024:2*1024*1024,responseBytes=4096*24+64*1024;
+ const credits:Array<{at:'before_authority_wait'|'after_authority_wait';in_flight:number;response_slots:number;committed_reserved:number}>=[];
+ let observed={in_flight:0,reserved_working_bytes:0};
+ const captureCredit=(at:typeof credits[number]['at'])=>credits.push({at,in_flight:observed.in_flight,
+  response_slots:Math.min(2-observed.in_flight,Math.floor((budget-observed.reserved_working_bytes)/responseBytes)),
+  committed_reserved:all.filter(row=>row.status==='reserved'&&(row!==future||events.includes('future:commit'))).length});
+ let marks=0,reads=0,inFlight=0,peak=0,nativeSelections=0;
+ const mark=async(select:()=>ReadonlyArray<LabelingCallV1<FacetInput>>,native:boolean)=>{
+  const index=++marks;events.push(`authority:${index}`);
+  if(index===2){captureCredit('before_authority_wait');secondMarkStarted.resolve();await selectionGate.promise;captureCredit('after_authority_wait');}
+  if(index===2&&mode==='authority_failed')throw Error('authority_revoked');
+  if(native)nativeSelections++;
+  const rows=[...select()];cohorts.push(rows.map(row=>row.id));events.push(`select:${index}`);
+  if(index===2){selected.resolve();await commitGate.promise;}
+  for(const row of rows)row.status='submitting';
+  events.push(`commit:${index}`);
+  if(index===2&&mode==='ack_lost')throw Error('submitting_ack_lost');
+  if(index===2&&mode==='invalid_handoff')return rows.slice(0,1);
+  return rows;
+ };
+ const store={
+  // The legacy mock deliberately preserves its early fixed cohort. Running the
+  // regression against the previous driver therefore records [0,1],[2],[3].
+  markSubmitting:async(_run:unknown,rows:LabelingCallV1<FacetInput>[])=>{await mark(()=>rows,false);},
+  markSubmittingSelected:async(_run:unknown,select:()=>ReadonlyArray<LabelingCallV1<FacetInput>>)=>mark(select,true),
+  requeueUnsent:async(_run:unknown,rows:LabelingCallV1<FacetInput>[])=>{
+   for(const row of rows){assert.ok(!sent.includes(row.id),'only physically unsent identities can requeue');requeued.push(row.id);row.status='reserved';}
+  },
+  persistRawPage:async(_run:unknown,rows:Array<{call:LabelingCallV1<FacetInput>;raw:string}>)=>{
+   for(const row of rows){raw.push(row.call.id);row.call.raw_body=row.raw;}
+  },
+  settlePage:async(_run:unknown,rows:Array<{call:LabelingCallV1<FacetInput>}>)=>{
+   for(const row of rows){assert.ok(raw.includes(row.call.id));settled.push(row.call.id);row.call.status='settled';}
+  },
+  apply:async(_run:unknown,rows:Array<{call:LabelingCallV1<FacetInput>}>)=>{
+   if(mode==='memory_limited')await applyGate.promise;
+   for(const row of rows){assert.ok(settled.includes(row.call.id));applied.push(row.call.id);row.call.results_applied=true;}
+  },
+  finish:async()=>all.every(row=>row.results_applied)?'completed':'running',
+  markFailed:async()=>{throw Error('no paid receipt may be replaced by a technical result');},
+ }as unknown as Store;
+ const pending=processJevStreamingWindowV2({run:{}as LabelingRunV1,calls:initial,store,cancellation,
+  price:llmPriceV1('typesafe','jev-1.13.0','sync',.042),
+  execution:{max_in_flight:2,window_size:4,flush_size:2,max_flushes:1,max_buffered_bytes:budget,flush_interval_ms:60000},
+  feed_next:async()=>{
+   if(++reads>1)return{closed:true};
+   await futureCommit.promise;events.push('future:commit');futureReturned.resolve();return[future];
+  },
+  observe_stream:m=>{observed=m;memory.push(m.reserved_working_bytes);if(m.buffered_responses===2)secondBuffered.resolve();},
+  provider:{max_concurrency:2,max_response_bytes:4096,async evaluate(request){
+   const id=`late-${request.state}`;sent.push(id);events.push(`http:${id}`);inFlight++;peak=Math.max(peak,inFlight);
+   if(sent.length===2)httpStarted.resolve();
+   try{
+    if(request.state==='0')await firstResponse.promise;
+    if(request.state==='1')await secondResponse.promise;
+    const body=JSON.stringify({model:request.model,usage:{input_tokens:1,output_tokens:0},answers:{q:{type:'noul',noul:.8}}});
+    return{http_status:200,latency_ms:1,body:mode==='memory_limited'&&request.state==='1'?' '.repeat(4096-Buffer.byteLength(body))+body:body};
+   }finally{inFlight--;}
+  }},hooks:{map:(_run,call)=>[call.id],error:()=>{throw Error('no invented result');},labeled:()=>true,fail_on_error:true},
+ }).then(value=>({value,error:undefined}),error=>({value:undefined,error}));
+ try{
+  await httpStarted.promise;firstResponse.resolve();await secondMarkStarted.promise;
+  assert.deepEqual(sent,['late-0','late-1']);
+  // The second response and the future committed page arrive while authority
+  // still owns its gate. A checkpoint observes their completed continuations.
+  secondResponse.resolve();await secondBuffered.promise;
+  if(mode!=='future_pending'){futureCommit.resolve();await futureReturned.promise;}
+  await new Promise<void>(resolve=>setImmediate(resolve));
+  assert.equal(events.includes('http:late-3'),false,'future reservation is not submitting authority');
+  if(mode==='abort_before_selection')cancellation.abort();
+  selectionGate.resolve();
+  if(mode!=='authority_failed'){
+   await selected.promise;
+   assert.deepEqual(sent,['late-0','late-1'],'no selected sibling is sent before COMMIT acknowledgement');
+   if(mode==='abort_after_selection')cancellation.abort();
+  }
+ }finally{
+  firstResponse.resolve();secondResponse.resolve();futureCommit.resolve();selectionGate.resolve();commitGate.resolve();applyGate.resolve();await pending;
+ }
+ const result=await pending;
+ assert.ok(peak<=2);assert.ok(memory.every(bytes=>bytes>=0&&bytes<=budget),'all input, HTTP and response custody share the same bound');
+ assert.equal(new Set(sent).size,sent.length);assert.equal(new Set(requeued).size,requeued.length);
+ assert.deepEqual([...raw].sort(),[...sent].sort());assert.deepEqual([...settled].sort(),[...raw].sort());assert.deepEqual([...applied].sort(),[...raw].sort());
+ for(const id of sent){const index=cohorts.findIndex(rows=>rows.includes(id));assert.ok(index>=0);assert.ok(events.indexOf(`commit:${index+1}`)<events.indexOf(`http:${id}`));}
+ return{result,cohorts,sent,requeued,memory,nativeSelections,events,all,credits};
+}
+test('native late Mark incorporates HTTP capacity and only already committed future calls after authority waits',{timeout:3000},async()=>{
+ const x=await exerciseLateMark('progress');assert.equal(x.result.error,undefined);assert.equal(x.result.value?.status,'completed');
+ assert.deepEqual(x.cohorts,[['late-0','late-1'],['late-2','late-3']]);assert.equal(x.nativeSelections,2);
+ assert.equal(x.result.value?.labeled,4);assert.deepEqual(x.requeued,[]);assert.equal(x.memory.at(-1),0);
+ assert.ok(x.events.indexOf('future:commit')<x.events.indexOf('select:2'));
+ assert.deepEqual(x.credits,[{at:'before_authority_wait',in_flight:1,response_slots:1,committed_reserved:1},
+  {at:'after_authority_wait',in_flight:0,response_slots:2,committed_reserved:2}]);
+});
+test('native late Mark abort before selection keeps new calls reserved and drains paid siblings',{timeout:3000},async()=>{
+ const x=await exerciseLateMark('abort_before_selection');assert.equal(x.result.error,undefined);assert.deepEqual(x.sent,['late-0','late-1']);
+ assert.deepEqual(x.cohorts,[['late-0','late-1'],[]]);assert.deepEqual(x.requeued,[]);assert.equal(x.memory.at(-1),0);
+ assert.ok(x.all.slice(2).every(row=>row.status==='reserved'&&!row.results_applied));
+});
+test('native late Mark cannot consume a future page whose reservation acknowledgement is still pending',{timeout:3000},async()=>{
+ const x=await exerciseLateMark('future_pending');assert.equal(x.result.error,undefined);assert.equal(x.result.value?.status,'completed');
+ assert.deepEqual(x.cohorts,[['late-0','late-1'],['late-2'],['late-3']]);
+ assert.ok(x.events.indexOf('select:2')<x.events.indexOf('future:commit'));assert.ok(x.events.indexOf('future:commit')<x.events.indexOf('select:3'));
+ assert.equal(x.credits[1]?.response_slots,2);assert.equal(x.credits[1]?.committed_reserved,1);assert.equal(x.memory.at(-1),0);
+});
+test('native late Mark keeps paid response custody charged even when HTTP capacity is free',{timeout:3000},async()=>{
+ const x=await exerciseLateMark('memory_limited');assert.equal(x.result.error,undefined);assert.equal(x.result.value?.status,'completed');
+ assert.deepEqual(x.cohorts,[['late-0','late-1'],['late-2'],['late-3']]);
+ assert.equal(x.credits[1]?.in_flight,0);assert.equal(x.credits[1]?.response_slots,1);assert.equal(x.credits[1]?.committed_reserved,2);
+ assert.equal(x.memory.at(-1),0);
+});
+test('native late Mark delivers every committed selected sibling despite abort before its acknowledgement',{timeout:3000},async()=>{
+ const x=await exerciseLateMark('abort_after_selection');assert.equal(x.result.error,undefined);
+ assert.deepEqual(x.cohorts,[['late-0','late-1'],['late-2','late-3']]);assert.deepEqual(x.sent,['late-0','late-1','late-2','late-3']);
+ assert.deepEqual(x.requeued,[]);assert.equal(x.memory.at(-1),0);
+});
+for(const mode of ['ack_lost','invalid_handoff']as const)test(`native late Mark ${mode} reconciles its exact unsent cohort without another physical attempt`,{timeout:3000},async()=>{
+ const x=await exerciseLateMark(mode);assert.equal(x.result.error?.message,mode==='ack_lost'?'submitting_ack_lost':'jev_stream_selection_handoff_invalid');
+ assert.deepEqual(x.sent,['late-0','late-1']);assert.deepEqual(x.requeued,['late-2','late-3']);
+ assert.ok(x.all.slice(2).every(row=>row.status==='reserved'&&!row.results_applied));
+});
+test('native late Mark rejected authority never selects or charges response memory for new calls',{timeout:3000},async()=>{
+ const x=await exerciseLateMark('authority_failed');assert.equal(x.result.error?.message,'authority_revoked');
+ assert.deepEqual(x.cohorts,[['late-0','late-1']]);assert.deepEqual(x.sent,['late-0','late-1']);assert.deepEqual(x.requeued,[]);
+ assert.ok(x.all.slice(2).every(row=>row.status==='reserved'&&!row.results_applied));
+});
