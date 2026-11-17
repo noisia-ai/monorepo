@@ -1290,7 +1290,9 @@ jobs:
     name: R16 Listening startup prefix diagnostic (isolated lab)
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.scope == 'listening-smoke' && inputs.listening_startup_prefix }}
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # Match the harness soft caps in seconds: setup 1,800, prefix 120, total 1,920.
+    # The 40-minute job timeout is an external hard watchdog, not a benchmark budget.
+    timeout-minutes: 40
     env:
       R16BENCH_RUN_ID: benchmark-pg17
       R16BENCH_SERVICES: postgres,redis
