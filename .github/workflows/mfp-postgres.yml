@@ -508,6 +508,67 @@ jobs:
           export DATABASE_SSL=false
           export NOISIA_R16_LOCAL_PG_LAB=r16-benchmark-pg17
           pnpm --filter @noisia/db db:smoke:migrations
+      - name: Verify processing projection on native PostgreSQL
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.scope == 'listening-smoke' }}
+        env:
+          NOISIA_R16_PROCESSING_PROJECTION_PG: 'true'
+          R16_PROCESSING_PROJECTION_EVIDENCE_DIR: .data/piloto-masivo/r16/processing-projection-native-evidence
+        run: |
+          set -o pipefail
+          connection_file=.data/piloto-masivo/r16/labs/benchmark-pg17/connection.env
+          test -f "$connection_file"
+          set -a
+          source "$connection_file"
+          set +a
+          export DATABASE_SSL=false
+          export NOISIA_R16_LOCAL_PG_LAB=r16-benchmark-pg17
+          evidence_file="$R16_PROCESSING_PROJECTION_EVIDENCE_DIR/processing-projection.json"
+          set +e
+          pnpm exec node --test --test-concurrency=1 --import tsx \
+            infrastructure/db/migrations/signal-listening-processing-projection.postgres.test.ts | tee r16-listening-processing-projection.tap
+          test_status=${PIPESTATUS[0]}
+          set -e
+          if [[ "$test_status" -ne 0 ]] \
+            || ! grep -qx '# tests 2' r16-listening-processing-projection.tap \
+            || ! grep -qx '# pass 2' r16-listening-processing-projection.tap \
+            || ! grep -qx '# fail 0' r16-listening-processing-projection.tap \
+            || ! grep -qx '# cancelled 0' r16-listening-processing-projection.tap \
+            || ! grep -qx '# skipped 0' r16-listening-processing-projection.tap \
+            || ! grep -Fqx '# Subtest: processing projection preserves all native population fields bytes and budgets across full processing and census modes' r16-listening-processing-projection.tap \
+            || ! grep -Fqx '# Subtest: processing projection paired queries preserve narrow outputs and full population controls' r16-listening-processing-projection.tap; then
+            echo '::error::R16 processing-projection native tests failed, were omitted, or were skipped'
+            exit 1
+          fi
+          evidence_valid=false
+          if [[ -s "$evidence_file" ]] && python3 - "$evidence_file" <<'PY'
+          import json
+          import sys
+
+          try:
+              with open(sys.argv[1], encoding="utf-8") as evidence_file:
+                  receipt = json.load(evidence_file)
+          except (OSError, UnicodeError, json.JSONDecodeError):
+              sys.exit(1)
+          if not isinstance(receipt, dict) or receipt.get("contract") != "r16-processing-projection-oracle-v1":
+              sys.exit(1)
+          PY
+          then
+            evidence_valid=true
+          fi
+          if [[ "$evidence_valid" != true ]]; then
+            echo '::error::R16 processing-projection evidence is missing, empty, invalid, or has an unexpected contract'
+            exit 1
+          fi
+      - name: Persist processing-projection native evidence
+        if: ${{ always() && github.event_name == 'workflow_dispatch' && inputs.scope == 'listening-smoke' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: r16-processing-projection-native-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            .data/piloto-masivo/r16/processing-projection-native-evidence/processing-projection.json
+            r16-listening-processing-projection.tap
+          if-no-files-found: error
+          retention-days: 14
       - name: Run the 4096-root custom-plan scale contract
         env:
           NOISIA_R16_LISTENING_BOUNDED_CUSTOM_PLAN_PG: 'true'
