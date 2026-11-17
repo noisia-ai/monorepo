@@ -4,9 +4,8 @@ import {readFile,mkdir,open,realpath} from 'node:fs/promises';
 import {resolve,join,relative} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {execFileSync} from 'node:child_process';
-import type {Pool,PoolClient} from 'pg';
+import type {PoolClient} from 'pg';
 import {runMassLabelingAcceptanceFixtureV1} from './signal-mass-labeling-acceptance.synthetic.fixture';
-import {assertR16LocalPostgresPoolV1} from './signal-r16-local-pg.fixture';
 import {saveSignalListeningConfigurationV1} from '../signal-listening-configuration';
 import {requestSignalListeningV1} from '../signal-listening-runs';
 import {signalListeningBaseTemplateV1} from '@noisia/query-engine';
@@ -42,13 +41,25 @@ export async function installManualLatestV1(c:PoolClient){
  assert.deepEqual(await defaults(c),before,'install never replaces public population or Mark guards');
  installations.set(c,{defaults:before,source_sha256:sha(source),candidate_sha256:sha(candidate),body_sha256:sha(body)});
 }
+const uncertainClients=new WeakSet<PoolClient>();
+export function releaseManualLatestClientV1(c:PoolClient){c.release(uncertainClients.has(c));}
+export async function manualLatestReadOnlyTransactionV1(c:PoolClient,body:()=>Promise<void>){
+ let failed=false,primary:unknown;
+ try{await c.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');await body();}
+ catch(error){failed=true;primary=error;}
+ try{await c.query('ROLLBACK');}catch(rollback){
+  uncertainClients.add(c);
+  if(failed)throw new AggregateError([primary,rollback],'manual latest body and rollback failed',{cause:primary});
+  throw rollback;
+ }
+ if(failed)throw primary;
+}
 export async function withManualLatestSnapshotV1(c:PoolClient,body:()=>Promise<void>){
  const installed=installations.get(c);assert.ok(installed);
- await c.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
- try{
+ await manualLatestReadOnlyTransactionV1(c,async()=>{
   assert.deepEqual((await c.query("SELECT current_setting('transaction_isolation') isolation,current_setting('transaction_read_only') readonly")).rows[0],{isolation:'repeatable read',readonly:'on'});
   await body();assert.deepEqual(await defaults(c),installed.defaults,'defaultC/Mark metadata preserved within snapshot');
- }finally{await c.query('ROLLBACK');}
+ });
  assert.deepEqual(await defaults(c),installed.defaults,'defaultC/Mark metadata preserved after rollback');
 }
 export async function manualLatestReadV1(c:PoolClient,scope:unknown[],roots:Array<string|null>|null,effective=false){
@@ -101,7 +112,7 @@ type Measurement={scenario:'empty'|'historical';query:'census'|'metadata';arm:'o
 export type ManualLatestEvidenceV1={contract:'r16-manual-latest-oracle-v1';status:'observed';query_only:true;h1_accepted:false;cpu:'UNKNOWN';manual_probes:'UNKNOWN';
  preregistration:typeof preregistration;shared_digest_coverage:'isolated_sql_kernel_only_not_admitted_API';effective_coverage:'unchanged_public_wrapper_and_temp_composition';oracle_sha256:string;acceptance_sha256:string;
  source_sha256:string;candidate_sha256:string;source_body_sha256:string;mark_body_sha256:string;census_sql_sha256:string;metadata_sql_sha256:string;target_sha:string;
- runtime:{postgres_version:number;database:string;system_identifier_sha256:string};fixture:{roots:4096;questions:4;base_questions:2;discovered_questions:2;scope_all_questions:4;history_roots:number;history_rows:number;text_bytes_min:number;text_bytes_max:number};
+ runtime:{postgres_version:number;database:'owned_isolated_clone';database_sha256:string;system_identifier_sha256:string};fixture:{roots:4096;questions:4;base_questions:2;discovered_questions:2;scope_all_questions:4;history_roots:number;history_rows:number;text_bytes_min:number;text_bytes_max:number};
  parity:{raw14:true;effective20:true;except_all:true;record_send:true};measurements:Measurement[];plans:Array<{scenario:string;query:string;arm:string;plan:unknown}>;
  gates:Array<{scenario:string;query:string;old_median_ms:number;new_median_ms:number;median_ratio:number;max_paired_ratio:number;median_10pct:boolean;no_regression_10pct:boolean}>;
  primary_candidate:boolean;diagnosis:'eligible_query_only'|'rejected_query_only';default_unchanged:true};
@@ -115,8 +126,7 @@ function median(a:number[]){assert.equal(a.length,2);return(a[0]!+a[1]!)/2;}
 export async function runManualLatest4096V1():Promise<ManualLatestEvidenceV1>{
  assert.equal(process.env.GITHUB_ACTIONS,'true','measurement only in existing owned CI lab');
  let receipt:ManualLatestEvidenceV1|undefined;
- await runMassLabelingAcceptanceFixtureV1('product-recovery',{seed_published_at:'2026-01-01T00:00:00.123456Z',benchmark:{root_count:4096,execution_cap_micro_usd:1000000,import_batch_size:256,preparation_page_size:100,embedding_page_limit:264,beforeProcessing:async f=>{
-  assertR16LocalPostgresPoolV1(f.database as Pool);
+ await runMassLabelingAcceptanceFixtureV1('product-recovery',{seed_published_at:'2026-01-01T00:00:00.123456Z',benchmark:{isolated:true,root_count:4096,execution_cap_micro_usd:1000000,import_batch_size:256,preparation_page_size:100,embedding_page_limit:264,beforeProcessing:async f=>{
   const access={database:f.database,workspace_id:f.workspace_id,actor_user_id:f.actor_user_id};
   assert.equal((await f.database.query("UPDATE signal_labeling_runs r SET status='canceled' WHERE id=$1 AND workspace_id=$2 AND status='queued' AND NOT EXISTS(SELECT 1 FROM signal_labeling_calls WHERE run_id=r.id) RETURNING id",[f.run_id,f.workspace_id])).rows.length,1);
   const base=signalListeningBaseTemplateV1({category:'synthetic fixture category',lexicon_terms:['synthetic']});
@@ -145,6 +155,8 @@ export async function runManualLatest4096V1():Promise<ManualLatestEvidenceV1>{
    const fixed=Buffer.byteLength(JSON.stringify(identity))+Buffer.byteLength(JSON.stringify(owner.context))+Buffer.byteLength(JSON.stringify(cfg.configuration));
    const params={census:[...scope,roots],metadata:[...scope,requested.run_id,4096,fixed,roots,String(512*1024*1024)]};
    const runtime=(await c.query('SELECT current_database() database,current_setting(\'server_version_num\')::int postgres_version,system_identifier::text FROM pg_control_system()')).rows[0];
+   assert.match(runtime.database,/^noisia_mfp_recovery_[a-f0-9]{32}$/u,'existing fixture owns a migrated template0 clone');
+   assert.notEqual(runtime.database,new URL(process.env.DATABASE_URL!).pathname.slice(1),'admin base is never the seeded/measured database');
    const mark=installed.defaults.find(r=>r.proname==='signal_listening_statement_money_v1');assert.ok(mark);
    const markSource=await readFile(new URL('./0331_signal_listening_statement_payload.sql',import.meta.url),'utf8');
    assert.equal(mark.prosrc,markSource.split('AS $$')[1]!.split('$$;')[0]!,'installed Mark stays exact0331');
@@ -153,7 +165,7 @@ export async function runManualLatest4096V1():Promise<ManualLatestEvidenceV1>{
    receipt={contract:'r16-manual-latest-oracle-v1',status:'observed',query_only:true,h1_accepted:false,cpu:'UNKNOWN',manual_probes:'UNKNOWN',
     preregistration,shared_digest_coverage:'isolated_sql_kernel_only_not_admitted_API',effective_coverage:'unchanged_public_wrapper_and_temp_composition',oracle_sha256:sha(await readFile(fileURLToPath(import.meta.url))),acceptance_sha256:sha(await readFile(new URL('./signal-listening-manual-latest.postgres.test.ts',import.meta.url))),
     source_sha256:installed.source_sha256,candidate_sha256:installed.candidate_sha256,source_body_sha256:installed.body_sha256,mark_body_sha256:sha(mark.prosrc),
-    census_sql_sha256:sha(census),metadata_sql_sha256:sha(metadata),target_sha:targetSha,runtime:{postgres_version:runtime.postgres_version,database:runtime.database,system_identifier_sha256:sha(runtime.system_identifier)},
+    census_sql_sha256:sha(census),metadata_sql_sha256:sha(metadata),target_sha:targetSha,runtime:{postgres_version:runtime.postgres_version,database:'owned_isolated_clone',database_sha256:sha(runtime.database),system_identifier_sha256:sha(runtime.system_identifier)},
     fixture:{roots:4096,questions:4,base_questions:2,discovered_questions:2,scope_all_questions:4,history_roots:256,history_rows:1536,text_bytes_min:lengths.minimum,text_bytes_max:lengths.maximum},
     parity:{raw14:true,effective20:true,except_all:true,record_send:true},measurements:[],plans:[],gates:[],primary_candidate:false,diagnosis:'rejected_query_only',default_unchanged:true};
    for(const scenario of ['empty','historical'] as const){
@@ -191,7 +203,7 @@ export async function runManualLatest4096V1():Promise<ManualLatestEvidenceV1>{
    }
    receipt.primary_candidate=receipt.gates.every(g=>g.median_10pct&&g.no_regression_10pct);receipt.diagnosis=receipt.primary_candidate?'eligible_query_only':'rejected_query_only';
    assert.deepEqual(await defaults(c),installed.defaults);
-  }finally{c.release();}
+  }finally{releaseManualLatestClientV1(c);}
  }}});
  assert.ok(receipt);return receipt;
 }

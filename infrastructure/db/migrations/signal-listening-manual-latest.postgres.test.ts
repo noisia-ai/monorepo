@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
 import test from 'node:test';
+import type {PoolClient} from 'pg';
 import {withInitialDiscoveryFixtureV1} from './signal-listening-discovery-initial.synthetic.fixture';
 import {withDiscoveryAdvanceFixtureV1} from './signal-listening-discovery-advance.synthetic.fixture';
 import {localizeSyntheticListeningConfigurationV1} from './signal-listening-localized.synthetic.fixture';
@@ -11,6 +12,7 @@ import {saveSignalListeningConfigurationV1} from '../signal-listening-configurat
 import {setSignalListeningDiscoveryManualV1} from '../signal-listening-discovery';
 import * as human from '../signal-listening-human-edits';
 import {installManualLatestV1,manualLatestReadV1,manualLatestKernelV1,withManualLatestSnapshotV1,
+ manualLatestReadOnlyTransactionV1,releaseManualLatestClientV1,
  runManualLatest4096V1,writeManualLatestEvidenceV1} from './signal-listening-manual-latest.fixture';
 const enabled=process.env.NOISIA_R16_MANUAL_LATEST_PG==='true';
 // No provider, product function replacement, GUC authority or trigger disabling.
@@ -66,7 +68,7 @@ test('manual latest relation preserves all native population bytes for full and 
     assert.equal((await manualLatestReadV1(c,scope,null)).rows,0);
     assert.equal((await manualLatestReadV1(c,scope,roots)).rows,0);
    });
-  }finally{c.release();}
+  }finally{releaseManualLatestClientV1(c);}
  },{prototypes:true});
  await withDiscoveryAdvanceFixtureV1(async f=>{
   const access={database:f.database,workspace_id:f.workspace_id,actor_user_id:f.actor_user_id};
@@ -88,7 +90,7 @@ test('manual latest relation preserves all native population bytes for full and 
      assert.equal(row.candidate,true);assert.equal(row.answer.noul,belongs?1:0);assert.equal(row.cache_call_id,null);
     });
    }
-  }finally{c.release();}
+  }finally{releaseManualLatestClientV1(c);}
  });
  // Real H5 decisions and the native serving snapshot travel through the same
  // unchanged effective wrapper; compare its20 fields as well as the raw14.
@@ -102,10 +104,25 @@ test('manual latest relation preserves all native population bytes for full and 
     await manualLatestReadV1(c,[f.workspace_id,cid,f.map_id,ctx],null,true);
     await manualLatestReadV1(c,[f.workspace_id,cid,f.map_id,ctx],f.roots,true);
    }});
-  }finally{c.release();}
+  }finally{releaseManualLatestClientV1(c);}
  },{complete_listening:true,additional_defined_topic:true});
 });
 
 test('manual latest relation paired queries preserve snapshots with empty and historical manual decisions',{
  skip:!enabled,timeout:900000,
 },async()=>{const receipt=await runManualLatest4096V1();await writeManualLatestEvidenceV1(receipt);});
+
+// Explicit local pure mode never enables either PostgreSQL acceptance title.
+// Ordinary native CI registers exactly the two titles above.
+if(process.env.NOISIA_R16_MANUAL_LATEST_PURE==='true')test('manual latest transaction preserves primary errors and discards only uncertain clients',async()=>{
+ for(const failure of ['none','body','dual','rollback'] as const){
+  const primary=new Error('body sentinel'),secondary=new Error('rollback sentinel'),releases:boolean[]=[];
+  const c={query:async(sql:string)=>{if(sql==='ROLLBACK'&&(failure==='rollback'||failure==='dual'))throw secondary;return{rows:[]};},release:(destroy:boolean)=>{releases.push(destroy);}} as unknown as PoolClient;
+  let caught:unknown;
+  try{await manualLatestReadOnlyTransactionV1(c,async()=>{if(failure==='body'||failure==='dual')throw primary;});}
+  catch(error){caught=error;}finally{releaseManualLatestClientV1(c);}
+  if(failure==='dual'){assert.ok(caught instanceof AggregateError);assert.deepEqual(caught.errors,[primary,secondary]);assert.equal(caught.cause,primary);}
+  else assert.equal(caught,failure==='none'?undefined:failure==='body'?primary:secondary);
+  assert.deepEqual(releases,[failure==='rollback'||failure==='dual'],'release exactly once; destroy only after failed rollback');
+ }
+});
