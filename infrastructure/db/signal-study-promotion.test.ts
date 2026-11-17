@@ -50,3 +50,11 @@ test('promotion rederives original metadata, requires actual localizations and b
  const prior=fixture({prior:true});await prior.api.promoteSignalStudyMotivesV1(prior.args);assert.equal(prior.sourceReads,0,'an already-published historical ACK does not acquire new localization requirements');
  await assert.rejects(prior.api.promoteSignalStudyMotivesV1({...prior.args,localizations:{leisure:localization}}),/idempotency_conflict/);
 });
+test('provided localization maps reject foreign, malformed and excessive entries before native replay or INSERT',async()=>{
+ const oversized=Object.fromEntries(Array.from({length:257},(_,i)=>['motive_'+i,localization]));
+ for(const localizations of [{leisure:localization,foreign:localization},oversized,{},
+  {'bad-key':localization},{leisure:{...localization,es:{name:'',definition:''}}}]){
+  const f=fixture();await assert.rejects(f.api.promoteSignalStudyMotivesV1({...f.args,localizations}),/promotion_localization_invalid|promotion_localization_required/);
+  assert.equal(f.sourceReads,0);assert.equal(f.calls.some(sql=>sql.startsWith('INSERT')),false);assert.equal(f.saved,undefined);
+ }
+});

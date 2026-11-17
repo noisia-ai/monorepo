@@ -8,9 +8,19 @@ const subject=z.object({kind:z.enum(['category','own_brand','alternative']),name
 export const studyCreateRequestSchemaV1=z.object({source:z.object({binding_kind:z.enum(['serving','human_edit']),snapshot_id:uuid,configuration_id:uuid,configuration_digest:sha}).strict(),
  subject,business_question:text(2000),cut:z.object({start_at:z.string().datetime({offset:true}),end_at:z.string().datetime({offset:true}),timezone:text(100)}).strict()}).strict();
 const execution=z.object({operation:z.literal('execute'),configuration_id:uuid,cap_micro_usd:z.number().int().positive().safe()}).strict();
-const promotion=z.object({operation:z.literal('promote'),execution_id:uuid,motive_keys:z.array(z.string().regex(/^[a-z][a-z0-9_]{0,63}$/u)).min(1).max(256),expected_listening_revision:z.number().int().positive().safe(),localizations:z.record(signalListeningTopicLocalizationSchemaV1).optional()}).strict();
+// Bound the container before parsing any localization blocks. Cross-field
+// membership is checked below before the request reaches the native store.
+const promotionLocalizations=z.custom<Record<string,unknown>>(value=>{
+ if(!value||typeof value!=='object'||Array.isArray(value))return false;
+ const keys=Object.keys(value);return keys.length>=1&&keys.length<=256&&keys.every(key=>/^[a-z][a-z0-9_]{0,63}$/u.test(key));
+}).pipe(z.record(signalListeningTopicLocalizationSchemaV1));
+const promotion=z.object({operation:z.literal('promote'),execution_id:uuid,motive_keys:z.array(z.string().regex(/^[a-z][a-z0-9_]{0,63}$/u)).min(1).max(256),expected_listening_revision:z.number().int().positive().safe(),localizations:promotionLocalizations.optional()}).strict();
 const promotionContext=z.object({promotion_context:z.literal('true'),execution_id:uuid,motive_keys:z.string().min(1).max(2079).transform(value=>value.split(',')).pipe(z.array(z.string().regex(/^[a-z][a-z0-9_]{0,63}$/u)).min(1).max(32))}).strict();
-const mutation=z.discriminatedUnion('operation',[execution,promotion]);
+const mutation=z.discriminatedUnion('operation',[execution,promotion]).superRefine((value,ctx)=>{
+ if(value.operation==='promote'&&value.localizations!==undefined){const keys=Object.keys(value.localizations);
+  if(keys.length!==value.motive_keys.length||keys.some(key=>!value.motive_keys.includes(key)))ctx.addIssue({code:z.ZodIssueCode.custom,path:['localizations'],message:'Localizations must match the requested motives.'});
+ }
+});
 const page=z.object({execution_id:uuid,section:z.enum(['motives','topics','channels','series','evidence']),offset:z.coerce.number().int().min(0).max(100000000).default(0),limit:z.coerce.number().int().min(1).max(100).default(30)}).strict();
 export type StudyCreateRequestV1=z.infer<typeof studyCreateRequestSchemaV1>;
 export type StudySourceV1=StudyCreateRequestV1['source']&{revision:number;configuration_is_latest:boolean;category:string};

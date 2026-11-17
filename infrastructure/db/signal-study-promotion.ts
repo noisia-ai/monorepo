@@ -1,5 +1,5 @@
 import type {PoolClient} from 'pg';
-import{signalStudyPromotionProposalV1,type SignalListeningTopicLocalizationV1}from'@noisia/query-engine';
+import{signalStudyPromotionProposalV1,validateSignalListeningTopicLocalizationV1,type SignalListeningTopicLocalizationV1}from'@noisia/query-engine';
 import{studyTransactionV1,studyAuthorizeV1,studyFailV1 as fail,studyDigestV1 as digest,studyUuidV1,type StudyAccessV1,type SignalStudyExecutionRecordV1}from'./signal-study-core';
 import{loadSignalListeningConfigurationWithClientV1,saveSignalListeningConfigurationWithClientV1}from'./signal-listening-configuration';
 import{withSignalStudySourceWithClientV1}from'./signal-study-source';
@@ -29,6 +29,15 @@ export async function readSignalStudyPromotionContextV1(args:StudyAccessV1&{exec
 export async function promoteSignalStudyMotivesV1(args:StudyAccessV1&{execution_id:string;motive_keys:string[];expected_listening_revision:number;idempotency_key:string;localizations?:Record<string,SignalListeningTopicLocalizationV1>}){
  if(!studyUuidV1.test(args.execution_id)||!Number.isSafeInteger(args.expected_listening_revision)||args.expected_listening_revision<1||!/^[A-Za-z0-9._:-]{8,200}$/u.test(args.idempotency_key)
   ||!args.motive_keys.length||args.motive_keys.length>256||new Set(args.motive_keys).size!==args.motive_keys.length||args.motive_keys.some(key=>!/^[a-z][a-z0-9_]{0,63}$/u.test(key)))fail('promotion_invalid',422);
+ // A supplied map is new input, not a historical-replay requirement. Bound its
+ // shape and exact requested keys before hashing, opening a transaction or replay.
+ if(args.localizations!==undefined){
+  if(!args.localizations||typeof args.localizations!=='object'||Array.isArray(args.localizations))fail('promotion_localization_invalid',422);
+  const supplied=Object.keys(args.localizations),requested=new Set(args.motive_keys);
+  if(supplied.length!==requested.size||supplied.length>256||supplied.some(key=>!/^[a-z][a-z0-9_]{0,63}$/u.test(key)||!requested.has(key)))fail('promotion_localization_invalid',422);
+  for(const key of supplied)try{validateSignalListeningTopicLocalizationV1(args.localizations[key]);}
+  catch{fail('promotion_localization_required',422);}
+ }
  const keys=[...args.motive_keys].sort(),request_digest=digest({execution_id:args.execution_id,motive_keys:keys,expected_listening_revision:args.expected_listening_revision,...(args.localizations!==undefined?{localizations:args.localizations}:{})});
  return studyTransactionV1(args.database,async c=>{
   // No money mutation: Listening configuration -> actor is the existing native
@@ -38,7 +47,6 @@ export async function promoteSignalStudyMotivesV1(args:StudyAccessV1&{execution_
   if(prior){if(prior.request_digest!==request_digest)fail('idempotency_conflict');return{promotion_id:prior.id,configuration_id:prior.output_configuration_id,configuration_digest:prior.output_configuration_digest};}
   const {p,replay,configuration}=await promotionSource(c,args);
   const current=await loadSignalListeningConfigurationWithClientV1(c,args.workspace_id);if(!current||current.revision!==args.expected_listening_revision)fail('listening_revision_conflict');
-  if(args.localizations&&Object.keys(args.localizations).some(key=>!keys.includes(key)))fail('promotion_localization_invalid',422);
   const proposed=keys.map(key=>{const motive=replay.resolved_motives!.find(m=>m.key===key);if(!motive)fail('motive_unavailable');let proposal:ReturnType<typeof signalStudyPromotionProposalV1>;try{proposal=signalStudyPromotionProposalV1({study:configuration.study,template_snapshot:configuration.template_snapshot,motive,explicit_action:true,target_revision:current.revision,localization:args.localizations?.[key]});}catch(error){
     if(error instanceof Error&&error.message==='listening_topic_localization_required')fail('promotion_localization_required',422);
     if(error instanceof Error&&error.message==='study_promotion_original_mismatch')fail('promotion_original_mismatch',422);throw error;}

@@ -87,3 +87,11 @@ test('explicit promotion carries human localizations without inventing missing t
  assert.equal((await f.invoke('detail','POST',body)).status,200);assert.deepEqual((f.calls[0]!.args as Parameters<StudyApiDependenciesV1['promote']>[1]).localizations,localizations);
  assert.equal((await f.invoke('detail','POST',{...body,localizations:{motive_one:{...localizations.motive_one,es:{name:'',definition:''}}}})).status,422);
 });
+test('promotion localization maps are bounded to exactly the requested valid keys before native calls',async()=>{
+ const localization={original_language:'und',original:{name:'Native name',definition:'Native definition'},en:{name:'Leisure',definition:'A leisure motive.'},es:{name:'Ocio',definition:'Un motivo de ocio.'}};
+ const oversized=Object.fromEntries(Array.from({length:257},(_,i)=>['motive_'+i,localization]));
+ for(const localizations of [{motive_one:localization,foreign:localization},oversized,{}, {'bad-key':localization}]){
+  const f=harness();assert.equal((await f.invoke('detail','POST',{operation:'promote',execution_id:execution,motive_keys:['motive_one'],expected_listening_revision:7,localizations})).status,422);
+  assert.equal(f.calls.length,0);
+ }
+});
