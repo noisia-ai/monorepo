@@ -14,7 +14,10 @@ const loadC=` SELECT * INTO call FROM signal_labeling_calls WHERE id=NEW.call_id
 // run lookup depends on NEW.run_id, independently of whether call was found.
 // Native composites retain their PostgreSQL row types; no JSON conversion.
 const loadE=` /* answer_guard_join_begin */
- SELECT loaded_call AS call_row,loaded_run AS run_row,loaded_owner AS owner_row,loaded_question AS question_row
+ SELECT CASE WHEN loaded_call.id IS NULL THEN ROW(loaded_call.*)::signal_labeling_calls ELSE loaded_call END AS call_row,
+ CASE WHEN loaded_run.id IS NULL THEN ROW(loaded_run.*)::signal_labeling_runs ELSE loaded_run END AS run_row,
+ CASE WHEN loaded_owner.run_id IS NULL THEN ROW(loaded_owner.*)::signal_listening_runs ELSE loaded_owner END AS owner_row,
+ CASE WHEN loaded_question.configuration_id IS NULL THEN ROW(loaded_question.*)::signal_listening_questions ELSE loaded_question END AS question_row
  INTO answer_join FROM (SELECT 1) anchor
  LEFT JOIN signal_labeling_calls loaded_call ON loaded_call.id=NEW.call_id AND loaded_call.workspace_id=NEW.workspace_id AND loaded_call.run_id=NEW.run_id
  LEFT JOIN signal_labeling_runs loaded_run ON loaded_run.id=NEW.run_id

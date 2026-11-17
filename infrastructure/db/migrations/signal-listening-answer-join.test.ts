@@ -23,6 +23,13 @@ test('native composite assignments preserve the final question FOUND without tre
  assert.ok(p.loadE.includes('FOUND:=q.configuration_id IS NOT NULL;'));
  assert.ok(!p.loadE.includes('q.id'));assert.ok(!p.loadE.includes('q IS NOT NULL'));
 });
+test('missing joined rows become typed all-NULL composites while present rows keep their original datum',async()=>{
+ const {c}=await answerGuardSourcesV1(),{loadE}=answerGuardPartsV1(c);
+ for(const [alias,key,type]of [['loaded_call','id','signal_labeling_calls'],['loaded_run','id','signal_labeling_runs'],
+  ['loaded_owner','run_id','signal_listening_runs'],['loaded_question','configuration_id','signal_listening_questions']])
+  assert.ok(loadE.includes(`CASE WHEN ${alias}.${key} IS NULL THEN ROW(${alias}.*)::${type} ELSE ${alias} END`));
+ assert.ok(!loadE.includes('CASE WHEN loaded_question IS NULL'));
+});
 test('receipt error order, root rights, actor locks and answer shape checks remain byte-identical',async()=>{
  const {c,e}=await answerGuardSourcesV1(),p=answerGuardPartsV1(c);
  assert.equal(p.checks,c.slice(c.indexOf(' result:=call.results->0;')));
