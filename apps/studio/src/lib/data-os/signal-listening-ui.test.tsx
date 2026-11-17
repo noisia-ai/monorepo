@@ -5,7 +5,8 @@ import React,{act} from 'react';
 import {createRoot} from 'react-dom/client';
 import {Window} from 'happy-dom';
 import {NextIntlClientProvider} from 'next-intl';
-import {signalListeningBaseTemplateV1} from '@noisia/query-engine';
+import {signalListeningBaseTemplateV1,type SignalListeningConfigurationV1} from '@noisia/query-engine';
+import {Simulate} from 'react-dom/test-utils';
 import {SignalListeningConfiguration} from '../../components/brands/SignalListeningConfiguration';
 import {ListeningLexiconSuggestions} from '../../components/brands/ListeningLexiconSuggestions';
 import {SignalListeningMetricTables,SignalListeningMetrics} from '../../components/signal-v2/SignalListeningMetrics';
@@ -77,6 +78,48 @@ test('Listening mounts in both locales without paid calls and adding a question 
     assert.deepEqual(calls.map(call=>call.method),['GET']);
     await act(async()=>root.unmount());host.remove();
   }}finally{globalThis.fetch=oldFetch;}
+});
+test('legacy topic localization can be completed without changing historical or non-topic questions',async()=>{
+  const messages=JSON.parse(await readFile(new URL('../../../messages/en-US.json',import.meta.url),'utf8'));
+  const base=signalListeningBaseTemplateV1({category:'tea',lexicon_terms:['tea']});
+  const configuration:SignalListeningConfigurationV1={...base,retired_question_keys:['old_topic'],retired_theme_keys:['old_theme'],questions:[...base.questions,
+    {key:'occasion',type:'choice',text:'Which occasion?',scope:'all',origin:'brand_os',human_locked:true,options:[{key:'home',definition:'Home'},{key:'away',definition:'Away'}]},
+    ...(['defined','discovered']as const).map((topic_source,index)=>({key:`legacy_${topic_source}`,type:'noul' as const,text:'Does this concern tea rituals?',positive:'Tea rituals',negative:'Other conversations',scope:'all' as const,origin:index?'agent' as const:'brand_os' as const,human_locked:!index,topic_source,domain:'adjacent' as const})),
+    {key:'localized',type:'noul',text:'Shared tea',positive:'Shared tea',negative:'Other',scope:'all',origin:'agent',human_locked:true,topic_source:'discovered',
+      localization:{original_language:'pt',original:{name:'Chá',definition:'Tomar chá'},en:{name:'Tea',definition:'Drinking tea'},es:{name:'Té',definition:'Tomar té'}}}]};
+  const original=globalThis.fetch;let body:{expected_revision:number;configuration:SignalListeningConfigurationV1}|undefined;
+  globalThis.fetch=withoutHumanContext(async(_input,options)=>{
+    if(options?.method==='PUT'){body=JSON.parse(String(options.body));return Response.json({error:'listening_topic_localization_required'},{status:422});}
+    return Response.json({configuration:{id:'legacy',revision:7,configuration},map:null,run:null,capabilities:{can_edit_topics:true,can_request_processing:false}});
+  });
+  const host=document.createElement('div');document.body.appendChild(host);const root=createRoot(host);
+  const render=(editable:boolean)=><NextIntlClientProvider locale="en-US" messages={messages} timeZone="UTC"><SignalListeningConfiguration workspaceId="workspace" editable={editable}/></NextIntlClientProvider>;
+  try{
+    await act(async()=>{root.render(render(true));});
+    const fields=[...host.querySelectorAll('fieldset')];
+    const localizedFields=(index:number)=>[...fields[index]!.querySelectorAll('label')].filter(label=>label.textContent?.includes(' · '));
+    for(const index of [0,1,2])assert.equal(localizedFields(index).length,0,'base and choice questions gain no topic fields');
+    for(const index of [3,4]){
+      const labels=localizedFields(index);assert.equal(labels.length,6,'legacy topics expose original, English and Spanish name and definition');
+      assert.ok(labels.every(label=>(label.querySelector('input,textarea')as HTMLInputElement).value===''),'missing text is never invented');
+      for(const [field,label]of labels.entries()){
+        const input=label.querySelector('input,textarea')as HTMLInputElement;
+        await act(async()=>{Simulate.change(input,{target:{value:`topic ${index} field ${field}`}}as never);});
+      }
+    }
+    await act(async()=>{[...host.querySelectorAll('button')].find(button=>button.textContent===messages.Listening.save)!.click();});
+    assert.ok(body);assert.equal(body.expected_revision,7);assert.equal(body.configuration.instructions,configuration.instructions);
+    assert.deepEqual(body.configuration.retired_question_keys,configuration.retired_question_keys);assert.deepEqual(body.configuration.retired_theme_keys,configuration.retired_theme_keys);
+    for(const index of [0,1,2,5])assert.deepEqual(body.configuration.questions[index],configuration.questions[index]);
+    for(const index of [3,4]){
+      const saved:SignalListeningConfigurationV1['questions'][number]=body.configuration.questions[index]!;
+      assert.deepEqual(saved,{...configuration.questions[index],human_locked:true,localization:{original_language:'und',original:{name:`topic ${index} field 0`,definition:`topic ${index} field 1`},en:{name:`topic ${index} field 2`,definition:`topic ${index} field 3`},es:{name:`topic ${index} field 4`,definition:`topic ${index} field 5`}}});
+    }
+    assert.ok(host.querySelector('[role="alert"]')?.textContent?.includes(messages.Listening.error),'server validation failures remain visible');
+    await act(async()=>{root.render(render(false));});
+    assert.ok([...host.querySelectorAll('fieldset')].every(field=>field.disabled),'read-only mode disables every topic field');
+    assert.ok(![...host.querySelectorAll('button')].some(button=>button.textContent===messages.Listening.save));
+  }finally{await act(async()=>root.unmount());host.remove();globalThis.fetch=original;}
 });
 test('generic question tables show pending separately and retain no negative placeholder',async()=>{
   const messages=JSON.parse(await readFile(new URL('../../../messages/en-US.json',import.meta.url),'utf8'));

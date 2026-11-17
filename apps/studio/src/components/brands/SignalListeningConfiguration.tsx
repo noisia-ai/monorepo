@@ -115,7 +115,12 @@ export function SignalListeningConfiguration({workspaceId,editable=true}:{worksp
           }
         }}/>:null}
       <label className="admin-form-field"><span>{t('instructions')}</span><textarea value={draft.instructions} disabled={!canEdit||busy} onChange={event=>{updateDraft({...draft,instructions:event.target.value});setSaved(false);}}/></label>
-      {draft.questions.map((question,index)=><fieldset key={`${index}:${question.type}`} disabled={!canEdit||busy} className="admin-section">
+      {draft.questions.map((question,index)=>{
+        // Legacy topics remain untouched until a human fills their missing text.
+        // An unknown original language must not be presented as a translation.
+        const localization=question.localization??(question.type==='noul'&&question.topic_source?{original_language:'und',
+          original:{name:'',definition:''},en:{name:'',definition:''},es:{name:'',definition:''}}:undefined);
+        return <fieldset key={`${index}:${question.type}`} disabled={!canEdit||busy} className="admin-section">
         <legend>{question.topic_source?t('topic'):t('question')}</legend>
         <label className="admin-form-field"><span>{t('key')}</span><input value={question.key} disabled={question.origin==='base'} onChange={event=>change({...question,key:event.target.value},index)}/></label>
         <label className="admin-form-field"><span>{t('wording')}</span><textarea value={question.text} onChange={event=>change({...question,text:event.target.value},index)}/></label>
@@ -127,12 +132,12 @@ export function SignalListeningConfiguration({workspaceId,editable=true}:{worksp
         </div>):<><label className="admin-form-field"><span>{t('positive')}</span><textarea value={question.positive} onChange={event=>change({...question,positive:event.target.value},index)}/></label>
           <label className="admin-form-field"><span>{t('negative')}</span><textarea value={question.negative} onChange={event=>change({...question,negative:event.target.value},index)}/></label></>}
         {question.type==='choice'?<button className="admin-button" type="button" onClick={()=>change({...question,options:[...question.options,{key:`option_${question.options.length+1}`,definition:''}]},index)}>{t('addOption')}</button>:null}
-        {question.localization?(['original','en','es']as const).map(language=><div key={language} className="admin-form">
-          <label className="admin-form-field"><span>{t('nameLanguage',{language})}</span><input value={question.localization![language].name} onChange={event=>change({...question,localization:{...question.localization!,[language]:{...question.localization![language],name:event.target.value}}},index)}/></label>
-          <label className="admin-form-field"><span>{t('definitionLanguage',{language})}</span><textarea value={question.localization![language].definition} onChange={event=>change({...question,localization:{...question.localization!,[language]:{...question.localization![language],definition:event.target.value}}},index)}/></label>
+        {localization?(['original','en','es']as const).map(language=><div key={language} className="admin-form">
+          <label className="admin-form-field"><span>{t('nameLanguage',{language})}</span><input value={localization[language].name} onChange={event=>change({...question,localization:{...localization,[language]:{...localization[language],name:event.target.value}}},index)}/></label>
+          <label className="admin-form-field"><span>{t('definitionLanguage',{language})}</span><textarea value={localization[language].definition} onChange={event=>change({...question,localization:{...localization,[language]:{...localization[language],definition:event.target.value}}},index)}/></label>
         </div>):null}
         {question.origin!=='base'?<button className="admin-button" type="button" onClick={()=>{updateDraft({...draft,questions:draft.questions.filter((_,i)=>i!==index)});setSaved(false);}}>{t('remove')}</button>:null}
-      </fieldset>)}
+      </fieldset>;})}
       {canEdit?<div className="admin-form-actions">
         <button className="admin-button" type="button" disabled={busy} onClick={()=>{updateDraft({...draft,questions:[...draft.questions,{key:`question_${draft.questions.length+1}`,type:'choice',text:'',scope:'all',origin:'brand_os',human_locked:true,options:[{key:'yes',definition:''},{key:'no',definition:''}]}]});setSaved(false);}}>{t('addQuestion')}</button>
         <button className="admin-button" type="button" disabled={busy} onClick={()=>{updateDraft({...draft,questions:[...draft.questions,{key:`topic_${draft.questions.length+1}`,type:'noul',text:'',positive:'',negative:'',scope:'all',origin:'brand_os',human_locked:true,topic_source:'defined',localization:{original_language:'und',original:{name:'',definition:''},en:{name:'',definition:''},es:{name:'',definition:''}}}]});setSaved(false);}}>{t('addTopic')}</button>
