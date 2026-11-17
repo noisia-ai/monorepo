@@ -127,7 +127,10 @@ export type PrefixFunctionProfileReceiptV1={contract:'r16-prefix-function-profil
  source:Record<string,unknown>;setup:Record<string,unknown>;measurement:Record<string,unknown>;
  function_catalog:Awaited<ReturnType<typeof catalogue>>;function_before:PrefixCounterV1[];function_after:PrefixCounterV1[];function_deltas:ReturnType<typeof prefixFunctionDeltasV1>;
  default_witness:{before:Awaited<ReturnType<typeof catalogue>>;after:Awaited<ReturnType<typeof catalogue>>};session_restored:true;unknowns:string[]};
-export async function runPrefixFunctionProfileV1():Promise<PrefixFunctionProfileReceiptV1>{
+export type PrefixNativeProbeV1={install(c:PoolClient):Promise<void>;read(args:{c:PoolClient;params:unknown[];setup:Record<string,unknown>}):Promise<void>};
+export function runPrefixFunctionProfileV1():Promise<PrefixFunctionProfileReceiptV1>;
+export function runPrefixFunctionProfileV1(probe:PrefixNativeProbeV1):Promise<void>;
+export async function runPrefixFunctionProfileV1(probe?:PrefixNativeProbeV1):Promise<PrefixFunctionProfileReceiptV1|void>{
  assert.equal(process.env.GITHUB_ACTIONS,'true','owned CI only');
  const extracted=extractPrefixBoundedV1(await readFile(sourceUrl,'utf8'));
  const workload=r16ListeningWorkloadV2('defined_consumer_second_pass'),started=process.hrtime.bigint();
@@ -168,6 +171,7 @@ export async function runPrefixFunctionProfileV1():Promise<PrefixFunctionProfile
     try{
      const originalSession=await session(c);assert.equal(originalSession.is_superuser,'on');assert.ok(originalSession.postgres_version>=170000&&originalSession.postgres_version<180000);
      assert.match(originalSession.database,/^noisia_mfp_recovery_[a-f0-9]{32}$/u);assert.notEqual(originalSession.database,new URL(process.env.DATABASE_URL!).pathname.slice(1));
+     if(probe)await probe.install(c);
      let observation:Omit<PrefixFunctionProfileReceiptV1,'session_restored'>|undefined;
      await withSharedWireDefaultPostcheckV1(()=>withPrefixReadOnlyV1(c,async()=>{
       await c.query('SET LOCAL search_path=public,extensions,pg_temp');await c.query("SET LOCAL track_functions='none'");
@@ -178,6 +182,14 @@ export async function runPrefixFunctionProfileV1():Promise<PrefixFunctionProfile
       assert.equal((await c.query('SELECT digest FROM signal_entity_context_versions WHERE workspace_id=$1 ORDER BY version_no DESC LIMIT 1',[access.workspace_id])).rows[0].digest,run.entity_context_digest);
       const current=await loadSignalListeningConfigurationWithClientV1(c,access.workspace_id);assert.equal(current?.id,cfg.id);assert.equal(current.configuration_digest,workload.configuration_digest);
       const witnessBefore=await nativeGuard(c,extracted),state=await setupState(c,params,run.id),packetParity=await parity(c,extracted.sql,params);
+      if(probe){
+       await probe.read({c,params,setup:{...state,setup_elapsed_ms:setupElapsed,configuration_digest:workload.configuration_digest}});
+       assert.deepEqual(await snapshot(c),snap);assert.deepEqual(await nativeGuard(c,extracted),witnessBefore);
+       assert.deepEqual(await setupState(c,params,run.id),state);
+       assert.equal((await loadSignalListeningConfigurationWithClientV1(c,access.workspace_id))?.id,cfg.id);
+       await assertMassLabelingMapCurrentV1(c,access.workspace_id,ctx.map_id);
+       assert.equal((await c.query('SELECT digest FROM signal_entity_context_versions WHERE workspace_id=$1 ORDER BY version_no DESC LIMIT 1',[access.workspace_id])).rows[0].digest,run.entity_context_digest);return;
+      }
       const baseCatalog=witnessBefore.filter(r=>functionNames.some(n=>n===r.proname));assert.equal(baseCatalog.length,9);
       const identity=(await c.query('SELECT system_identifier::text FROM pg_catalog.pg_control_system()')).rows[0].system_identifier as string;
       await c.query("SET LOCAL track_functions='all'");assert.equal((await c.query("SELECT current_setting('track_functions') value")).rows[0].value,'all');
@@ -205,11 +217,11 @@ export async function runPrefixFunctionProfileV1():Promise<PrefixFunctionProfile
        function_catalog:allCatalog,function_before:before,function_after:after,function_deltas:deltas,default_witness:{before:witnessBefore,after:witnessAfter},
        unknowns:['missing_function_rows_are_UNKNOWN_not_zero;inlining_or_branch_possible','total_time_includes_children_do_not_sum_parents_and_children','self_time_and_total_time_are_elapsed_not_CPU','EXPLAIN_and_tracking_overhead_not_subtracted','planning_constant_folding_may_contribute_function_calls','TIMING_OFF_has_no_per_node_elapsed_times','no_H1_or_throughput_or_optimization_acceptance']};
      }),async()=>{if(!uncertainClients.has(c))assert.deepEqual(await session(c),originalSession,'ROLLBACK restores all SET LOCAL state');});
-     assert.ok(observation);receipt={...observation,session_restored:true};
+     if(!probe){assert.ok(observation);receipt={...observation,session_restored:true};}
     }finally{releasePrefixClientV1(c);}
    },async()=>{await withSharedWireDefaultPostcheckV1(()=>server.close(),()=>rm(directory,{recursive:true,force:true}));});
   }}});
- assert.ok(receipt);return receipt;
+ if(!probe){assert.ok(receipt);return receipt;}
 }
 export async function writePrefixFunctionProfileV1(receipt:PrefixFunctionProfileReceiptV1){
  const configured=process.env.R16_PREFIX_FUNCTION_PROFILE_EVIDENCE_DIR;assert.ok(configured,'evidence directory required');
