@@ -27,7 +27,7 @@ import {jevUsageV1} from "../../../services/workers/src/workers/signal-jev-label
 import {validateJevResponseV1} from "../../../services/workers/src/providers/typesafe-jev";
 
 export type MassLabelingAcceptanceModeV1="rotation"|"scoped"|"scoped-scale"|"scoped-funding"|"product"|"product-recovery";
-export type R16BenchmarkFixtureV1={root_count:number;execution_cap_micro_usd:number;import_batch_size?:number;preparation_page_size?:number;embedding_page_limit?:number;
+export type R16BenchmarkFixtureV1={isolated?:true;root_count:number;execution_cap_micro_usd:number;import_batch_size?:number;preparation_page_size?:number;embedding_page_limit?:number;
   beforeProcessing:(context:{database:import('../signal-mention-facets').LabelingDatabaseV1;run_id:string;
     workspace_id:string;actor_user_id:string;map_id:string})=>Promise<void>};
 /** Test-only fixture: native admissions, rights, preparation and provider caps
@@ -40,6 +40,7 @@ export async function runMassLabelingAcceptanceFixtureV1(authorization:MassLabel
   if(options.study_text_length!==undefined){assert.equal(authorization,'product');assert.equal(benchmark,undefined);assert.ok(options.population_count!==undefined&&options.beforeProcessing);assert.ok(Number.isInteger(options.study_text_length)&&options.study_text_length>=1000&&options.study_text_length<=13000);}
   if(options.beforeProcessing){assert.ok(authorization==='product'||authorization==='product-recovery');assert.equal(benchmark,undefined);}
   if(benchmark){
+    assert.ok(benchmark.isolated===undefined||benchmark.isolated===true);
     assert.equal(authorization,'product-recovery');
     assert.ok(Number.isInteger(benchmark.root_count)&&benchmark.root_count>=1002&&benchmark.root_count<=100000);
     assert.ok(Number.isSafeInteger(benchmark.execution_cap_micro_usd)&&benchmark.execution_cap_micro_usd>0&&benchmark.execution_cap_micro_usd<=100000000);
@@ -66,8 +67,10 @@ export async function runMassLabelingAcceptanceFixtureV1(authorization:MassLabel
     // The dedicated benchmark already owns its disposable, accredited base
     // database. Keep that exact Pool so all runner authority checks agree;
     // ordinary acceptance cases retain their independent migrated clone.
+    // An explicit test-only isolated benchmark uses that same template0+full
+    // migration lifecycle; its original admin Pool is still accredited above.
     if(benchmark)(await import("./signal-r16-local-pg.fixture")).assertR16LocalPostgresPoolV1(admin);
-    isolated=!benchmark&&(scaledRecovery||authorization==="product")?await createMassLabelingConcurrencyDatabaseV1(admin):null;
+    isolated=(benchmark?.isolated===true||!benchmark&&(scaledRecovery||authorization==="product"))?await createMassLabelingConcurrencyDatabaseV1(admin):null;
     const pool:Pool=isolated?.pool??admin, raw = await pool.connect();
     releaseRaw=async()=>{await raw.query("ROLLBACK").catch(()=>undefined);raw.release();};
     await raw.query("BEGIN");
