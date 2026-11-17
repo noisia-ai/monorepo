@@ -69,3 +69,42 @@ test("R16 SQL profiler keeps concurrent async operation labels isolated", async 
   assert.ok(profile.queries.some(item => item.operation === "finish" && item.sql_template_sha256 === hash("SELECT 'finish'::text")));
   assert.equal(profile.queries.filter(item => item.operation === "unlabeled").length, 0);
 });
+
+test("R16 profiler counts the committed selected Mark cohort under the existing operation without invoking its selector", async () => {
+  const profiler = new R16QueryProfilerV1();
+  const statements: string[] = [];
+  const database = profiler.wrapDatabase({ async query(sql: string) {
+    statements.push(sql); return { rows: [] };
+  } });
+  const chosen = [{ id: "private-committed-a" }, { id: "private-committed-b" }];
+  let selections = 0;
+  const store = profiler.wrapStore({
+    async markSubmitting(_run: unknown, rows: typeof chosen) {
+      await database.query("SELECT 'legacy_mark'::text");
+      return rows.length;
+    },
+    async markSubmittingSelected(_run: unknown, select: () => readonly { id: string }[]) {
+      await database.query("SELECT 'authority_before_selection'::text");
+      const rows = select();
+      await database.query("SELECT 'commit_after_selection'::text");
+      return rows;
+    },
+  });
+  assert.equal(await store.markSubmitting({}, chosen.slice(0, 1)), 1);
+  const result = await store.markSubmittingSelected({}, () => {
+    selections++;
+    assert.deepEqual(statements, ["SELECT 'legacy_mark'::text", "SELECT 'authority_before_selection'::text"]);
+    return chosen;
+  });
+  assert.equal(result, chosen, "observation must forward the exact returned cohort");
+  assert.equal(selections, 1, "only the store invokes the selector");
+  const snapshot = profiler.snapshot();
+  const mark = snapshot.operations.find(row => row.operation === "markSubmitting");
+  assert.equal(mark?.duration_ms.calls, 2);
+  assert.equal(mark?.batch_size?.count, 2);
+  assert.equal(mark?.batch_size?.total, 3);
+  assert.equal(snapshot.operations.length, 1, "old and selected methods measure the same Mark operation");
+  assert.equal(snapshot.queries.length, 3);
+  assert.ok(snapshot.queries.every(row => row.operation === "markSubmitting"));
+  assert.doesNotMatch(JSON.stringify(snapshot), /private-committed|authority_before_selection|commit_after_selection/u);
+});

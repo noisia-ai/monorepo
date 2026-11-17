@@ -35,6 +35,9 @@ function queryTemplateHash(query: unknown): string {
 function batchSize(operation: R16StoreOperationV1, args: readonly unknown[], result: unknown): number | undefined {
   if (operation === "inputs" || operation === "calls") return Array.isArray(result) ? result.length : undefined;
   const rows = args[1];
+  // Selected Mark receives a synchronous callback, and resolves only with its
+  // committed cohort. Observation must never invoke that callback itself.
+  if (operation === "markSubmitting" && typeof rows === "function") return Array.isArray(result) ? result.length : undefined;
   return Array.isArray(rows) ? rows.length : undefined;
 }
 
@@ -69,9 +72,10 @@ export class R16QueryProfilerV1 {
     elapsedMs: () => number = () => performance.now()): T {
     return new Proxy(store, { get: (target, property, receiver) => {
       const value = Reflect.get(target, property, receiver);
-      if (typeof property !== "string" || !(R16_STORE_OPERATIONS_V1 as readonly string[]).includes(property)
+      const operationName = property === "markSubmittingSelected" ? "markSubmitting" : property;
+      if (typeof operationName !== "string" || !(R16_STORE_OPERATIONS_V1 as readonly string[]).includes(operationName)
         || typeof value !== "function") return typeof value === "function" ? value.bind(target) : value;
-      const operation = property as R16StoreOperationV1;
+      const operation = operationName as R16StoreOperationV1;
       return async (...args: unknown[]) => {
         const start_ms = elapsedMs();
         try { return await this.measureStoreOperation(operation, args, () => value.apply(target, args)); }
