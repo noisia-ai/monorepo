@@ -51,8 +51,16 @@ function readDirUncached(dir: string): Story[] {
 async function readDatabase(): Promise<Story[]> {
   const view = showsDrafts() ? "content.review_stories" : "content.published_stories";
   // Video pieces join the feed in a later stage; until then only animated pieces are served.
+  // Newest first: the pieces published on the latest day lead the feed, and within a day the
+  // studies take turns (the first piece of each, then the second of each...) so one study never
+  // fills the screen. Inside a study the pieces keep the order the study gave them.
   const { rows } = await contentDb().query<{ id: string; payload: unknown }>(
-    `select id, payload from ${view} where format = 'animada' order by position, id`
+    `select id, payload from ${view}
+      where format = 'animada'
+      order by (published_at at time zone 'UTC')::date desc nulls last,
+               row_number() over (partition by (published_at at time zone 'UTC')::date, study_id order by position, id),
+               max(published_at) over (partition by study_id) desc nulls last,
+               position, id`
   );
   return rows.flatMap((row) => {
     const parsed = storySchema.safeParse(row.payload);

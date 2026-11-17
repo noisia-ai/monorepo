@@ -142,18 +142,25 @@
   height: 18px;
 }
 
-/* ---------- caption ---------- */
+/* ---------- caption ----------
+ * Phone and tablet: the reel speaks for itself; only a column of round buttons sits on its right
+ * edge, within thumb reach, share at the bottom. The text stays in the DOM for screen readers and
+ * opens in the evidence sheet. Desktop (>= 1100px) shows the text beside the reel (see below).
+ */
 .caption {
   position: absolute;
-  left: 50%;
-  bottom: 0;
-  transform: translateX(-50%);
-  width: min(100%, calc(100svh * 9 / 16));
-  padding: 48px var(--gutter) calc(env(safe-area-inset-bottom) + 20px);
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0) 0px, rgba(255, 255, 255, 0.96) 40px, #fff 56px, #fff 100%);
+  z-index: 2;
+  right: max(12px, calc((100% - min(100%, 100svh * 9 / 16)) / 2 + 12px));
+  bottom: calc(env(safe-area-inset-bottom) + 24px);
+}
+
+.captionText {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
 }
 
 .metaRow {
@@ -194,66 +201,54 @@
   font-size: var(--text-sm);
   color: var(--fg-muted);
   line-height: 1.45;
-  display: -webkit-box;
-  -webkit-line-clamp: 3;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
 }
 
 .actions {
   display: flex;
+  flex-direction: column;
   align-items: center;
-  gap: var(--space-2);
-  margin-top: var(--space-2);
+  gap: 14px;
 }
 
 .action,
-.actionGhost {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  height: 40px;
-  padding: 0 16px;
-  border-radius: var(--radius-pill);
-  font-size: var(--text-sm);
-  font-weight: 500;
-  cursor: pointer;
-  white-space: nowrap;
-}
-
-.action {
-  border: 0;
-  background: var(--ink);
-  color: var(--fg-inverse);
-}
-
-.actionGhost {
-  border: 1px solid var(--line-strong);
-  background: var(--canvas);
-  color: var(--ink);
-}
-
-.actionGhost svg {
-  width: 16px;
-  height: 16px;
-}
-
+.actionGhost,
 .iconAction {
-  margin-left: auto;
-  flex: none;
-  width: 40px;
-  height: 40px;
-  border-radius: 50%;
-  border: 1px solid var(--line-strong);
-  background: var(--canvas);
   display: grid;
   place-items: center;
+  flex: none;
+  width: 48px;
+  height: 48px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.94);
+  color: var(--ink);
+  box-shadow: 0 0 0 1px var(--line), 0 6px 18px rgba(10, 10, 10, 0.14);
+  backdrop-filter: blur(10px);
   cursor: pointer;
+  transition: transform var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out);
 }
 
+.action:active,
+.actionGhost:active,
+.iconAction:active {
+  transform: scale(0.94);
+}
+
+.action svg,
+.actionGhost svg,
 .iconAction svg {
-  width: 18px;
-  height: 18px;
+  width: 22px;
+  height: 22px;
+}
+
+.actionLabel {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
 }
 
 .toast {
@@ -269,38 +264,107 @@
   border-radius: var(--radius-pill);
 }
 
-/* ---------- evidence sheet ---------- */
+/* ---------- evidence sheet ----------
+ * Below 1100px it is a bottom sheet: it rises from the bottom edge, has a grab handle and closes
+ * by dragging it down (or by tapping outside). From 1100px it is a centered dialog.
+ */
 .sheetBackdrop {
   position: fixed;
   inset: 0;
   z-index: var(--z-sheet);
-  background: rgba(6, 18, 24, 0.32);
+  background: rgba(6, 18, 24, 0.36);
   display: flex;
   align-items: flex-end;
   justify-content: center;
+  overscroll-behavior: contain;
+  touch-action: none;
   animation: fade var(--dur-base) var(--ease-out);
+  transition: opacity var(--dur-base) var(--ease-out);
+}
+
+.sheetBackdrop[data-state="closing"] {
+  opacity: 0;
 }
 
 .sheet {
-  width: min(100%, 560px);
-  max-height: 82svh;
-  overflow-y: auto;
+  position: relative;
+  width: min(100%, 640px);
+  max-height: 88svh;
+  display: flex;
+  flex-direction: column;
   background: var(--canvas);
-  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
-  padding: var(--space-5) var(--gutter) calc(env(safe-area-inset-bottom) + var(--space-5));
+  border-radius: 20px 20px 0 0;
+  box-shadow: 0 -12px 40px rgba(10, 10, 10, 0.16);
+  touch-action: pan-y;
+  animation: sheetUp 420ms var(--ease-out);
+  transition: transform 280ms var(--ease-out);
+  will-change: transform;
+}
+
+.sheet[data-dragging="true"] {
+  transition: none;
+}
+
+.sheetBackdrop[data-state="closing"] .sheet {
+  transform: translateY(100%);
+}
+
+.grab {
+  flex: none;
+  display: grid;
+  place-items: center;
+  height: 28px;
+  cursor: grab;
+  touch-action: none;
+}
+
+.grab::before {
+  content: "";
+  width: 40px;
+  height: 5px;
+  border-radius: 3px;
+  background: var(--line-strong);
+}
+
+.sheetBody {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 0 var(--gutter) calc(env(safe-area-inset-bottom) + var(--space-6));
   display: flex;
   flex-direction: column;
   gap: var(--space-5);
-  animation: rise var(--dur-slow) var(--ease-out);
 }
 
-@media (min-width: 768px) {
+@keyframes sheetUp {
+  from {
+    transform: translateY(100%);
+  }
+}
+
+@media (min-width: 1100px) {
   .sheetBackdrop {
     align-items: center;
+    touch-action: auto;
   }
 
   .sheet {
+    max-height: 84svh;
     border-radius: var(--radius-lg);
+    box-shadow: 0 24px 60px rgba(10, 10, 10, 0.18);
+    animation: rise var(--dur-slow) var(--ease-out);
+  }
+
+  .sheetBackdrop[data-state="closing"] .sheet {
+    transform: translateY(16px);
+  }
+
+  .grab {
+    display: none;
+  }
+
+  .sheetBody {
+    padding-top: var(--space-5);
   }
 }
 
@@ -310,13 +374,65 @@
   gap: var(--space-4);
 }
 
+.sheetHead > div {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
 .sheetTitle {
   font-size: var(--text-xl);
+  line-height: 1.15;
 }
 
 .sheetIntro {
   color: var(--fg-muted);
   font-size: var(--text-sm);
+  line-height: 1.5;
+}
+
+.sheetClose {
+  flex: none;
+  width: 36px;
+  height: 36px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 50%;
+  background: var(--surface-2);
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.sheetClose svg {
+  width: 18px;
+  height: 18px;
+}
+
+.sheetSection {
+  font-size: var(--text-md);
+  font-weight: 500;
+}
+
+.sheetReport {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 44px;
+  padding: 0 18px;
+  border-radius: var(--radius-pill);
+  background: var(--ink);
+  color: var(--fg-inverse);
+  font-size: var(--text-sm);
+  font-weight: 500;
+}
+
+.sheetReport svg {
+  width: 16px;
+  height: 16px;
 }
 
 .sourcesBlock {
@@ -483,11 +599,85 @@
 
   .caption {
     position: static;
-    transform: none;
     width: 420px;
-    padding: 0;
-    background: none;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-4);
+  }
+
+  .captionText {
+    position: static;
+    width: auto;
+    height: auto;
+    overflow: visible;
+    clip-path: none;
+    white-space: normal;
+    display: flex;
+    flex-direction: column;
     gap: var(--space-3);
+  }
+
+  .actions {
+    flex-direction: row;
+    gap: var(--space-2);
+  }
+
+  .action,
+  .actionGhost {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    width: auto;
+    height: 40px;
+    padding: 0 16px;
+    border-radius: var(--radius-pill);
+    font-size: var(--text-sm);
+    font-weight: 500;
+    white-space: nowrap;
+    box-shadow: none;
+    backdrop-filter: none;
+  }
+
+  .action {
+    background: var(--ink);
+    color: var(--fg-inverse);
+  }
+
+  .actionGhost {
+    border: 1px solid var(--line-strong);
+    background: var(--canvas);
+  }
+
+  .actionGhost svg {
+    width: 16px;
+    height: 16px;
+  }
+
+  .phoneIcon {
+    display: none;
+  }
+
+  .actionLabel {
+    position: static;
+    width: auto;
+    height: auto;
+    overflow: visible;
+    clip-path: none;
+  }
+
+  .iconAction {
+    width: 40px;
+    height: 40px;
+    margin-left: auto;
+    border: 1px solid var(--line-strong);
+    background: var(--canvas);
+    box-shadow: none;
+    backdrop-filter: none;
+  }
+
+  .iconAction svg {
+    width: 18px;
+    height: 18px;
   }
 
   .title {
