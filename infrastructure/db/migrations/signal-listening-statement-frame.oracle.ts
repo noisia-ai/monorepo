@@ -4,6 +4,13 @@ import {sharedWireShaV1,sharedWireValidationV1} from './signal-listening-stateme
 import {anchorListeningStatementOracleParametersV1,listeningExpectedProjectionOracleSqlV1} from './signal-listening-statement-validator.oracle';
 export const STATEMENT_FRAME_C_SHA_V1='cabed81234f56cf2647368aab03be14817d8de99073929f0d255b2a1f1153cf5';
 export const STATEMENT_FRAME_ORDER_V1=['C','D','D','C']as const;
+/** Both native sessions must finish before the caller restores the test body. */
+export async function drainStatementFrameReservationsV1<T>(attempts:readonly[Promise<T>,Promise<T>]):Promise<[T,T]>{
+ const settled=await Promise.allSettled(attempts),errors=settled.flatMap(result=>result.status==='rejected'?[result.reason]:[]);
+ if(errors.length===1)throw errors[0];
+ if(errors.length>1)throw new AggregateError(errors,'statement_frame_reservations_failed',{cause:errors[0]});
+ const [first,second]=settled;assert.ok(first.status==='fulfilled'&&second.status==='fulfilled');return[first.value,second.value];
+}
 const canonicalBegin='/* statement_shared_wire_canonical_begin */',canonicalEnd='/* statement_shared_wire_canonical_end */';
 const framesBegin='/* statement_frame_ctes_begin */',framesEnd='/* statement_frame_ctes_end */';
 const fallbackBegin='/* statement_frame_fallback_begin */',fallbackEnd='/* statement_frame_fallback_end */';

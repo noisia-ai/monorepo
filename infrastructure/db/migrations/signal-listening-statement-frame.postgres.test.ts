@@ -14,7 +14,7 @@ import {withSharedWireFixtureV1,withSharedWireTxV1,sharedWireProposalsV1,insertS
 import {sharedWireValidationV1,assertSharedWireDefaultRuntimeV1,withSharedWireDefaultPostcheckV1} from './signal-listening-statement-shared-wire.oracle';
 import {anchorListeningStatementOracleParametersV1} from './signal-listening-statement-validator.oracle';
 import {statementFrameSourceV1,restoreStatementFrameSourceV1,compareStatementFrameValidationV1,statementFrameKernelV1,statementFrameDimensionsV1,
- STATEMENT_FRAME_C_SHA_V1,STATEMENT_FRAME_ORDER_V1} from './signal-listening-statement-frame.oracle';
+ STATEMENT_FRAME_C_SHA_V1,STATEMENT_FRAME_ORDER_V1,drainStatementFrameReservationsV1} from './signal-listening-statement-frame.oracle';
 const enabled=process.env.NOISIA_R16_STATEMENT_FRAME_PG==='true';
 const root=resolve(dirname(fileURLToPath(import.meta.url)),'../../..');
 const hash=(s:string)=>createHash('sha256').update(s).digest('hex');
@@ -191,8 +191,8 @@ test('D frame native concurrent same-key reservations remain idempotent',{skip:!
   const f={...whole,inputs:whole.inputs.slice(0,1000)},fixed=sharedWireProposalsV1(f,500);
   // This isolated native clone alone sees the committed test function, allowing
   // two real backend sessions to execute D. Always restore installed C.
-  try{if(arm==='D')await f.database.query(sourceD);
-   const result=await Promise.all([f.store.reserve(f.run,fixed),f.store.reserve(f.run,fixed)]);
+  await withSharedWireDefaultPostcheckV1(async()=>{if(arm==='D')await f.database.query(sourceD);
+   const result=await drainStatementFrameReservationsV1([f.store.reserve(f.run,fixed),f.store.reserve(f.run,fixed)]);
    assert.equal(result[0].length,1000);assert.equal(result[1].length,1000);
    assert.deepEqual(result[0].map(r=>r.id).sort(),result[1].map(r=>r.id).sort());
    const raw=await f.database.connect();try{
@@ -205,6 +205,6 @@ test('D frame native concurrent same-key reservations remain idempotent',{skip:!
    assert.match(String(denied.reason?.message),/labeling_submission_conflict/);
    report.concurrent.push({arm,calls:result[0].length,reserve_attempts:result.length,same_durable_ids:true,exposure_micro_usd:'506012',
     mark_attempts:marks.length,mark_successes:marks.filter(r=>r.status==='fulfilled').length,second_mark_rejected:true,no_provider_attempts:true});
-  }finally{if(arm==='D')await f.database.query(sourceC);}
+  },async()=>{if(arm==='D')await f.database.query(sourceC);});
  },r16ListeningWorkloadV2('defined_consumer_second_pass').configuration,{mode:'scaled_recovery',consumer_category:true});
 }));

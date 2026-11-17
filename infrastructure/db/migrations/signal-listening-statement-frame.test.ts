@@ -2,8 +2,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {readFile} from 'node:fs/promises';
 import {statementFrameSourceV1,restoreStatementFrameSourceV1,statementFramePartsV1,statementFrameCanonicalProjectionV1,
- statementFrameKernelV1,statementFrameDimensionsV1,STATEMENT_FRAME_ORDER_V1} from './signal-listening-statement-frame.oracle';
-import {sharedWireShaV1,sharedWireValidationV1} from './signal-listening-statement-shared-wire.oracle';
+ statementFrameKernelV1,statementFrameDimensionsV1,STATEMENT_FRAME_ORDER_V1,drainStatementFrameReservationsV1} from './signal-listening-statement-frame.oracle';
+import {sharedWireShaV1,sharedWireValidationV1,withSharedWireDefaultPostcheckV1} from './signal-listening-statement-shared-wire.oracle';
 const source=()=>readFile(new URL('./0331_signal_listening_statement_payload.sql',import.meta.url),'utf8');
 test('D is strictly test-only and inverses every byte to frozen installed C',async()=>{
  const c=await source(),d=statementFrameSourceV1(c);
@@ -50,4 +50,25 @@ test('paired order is fixed CDDC and dimensions count actual generated wires wit
  const d=statementFrameDimensionsV1([{request:{model:'jev-1.13.0',state:'private root',questions:{q:{s:'é'},r:{s:'é'}}},inputs:[{question_digests:{q:'a',r:'b'},scope_basis:{q:'dynamic'}}]}]);
  assert.equal(d.calls,1);assert.deepEqual(d.selected_question_counts,[2]);assert.equal(d.distinct_exact_shapes,1);
  assert.ok(!JSON.stringify(d).includes('private root'));assert.ok(d.maximum_questions_wire_bytes>0);
+});
+test('a rejected reservation drains its pending sibling before restore and preserves body plus restore failures',async()=>{
+ const primary=new Error('first reservation failed'),restore=new Error('restore failed'),trace:string[]=[];
+ let finish!:(value:number)=>void,entered=false;
+ const held=new Promise<number>(resolve=>{finish=resolve;}).then(value=>{trace.push('sibling settled');return value;});
+ const run=withSharedWireDefaultPostcheckV1(async()=>{await drainStatementFrameReservationsV1([Promise.reject(primary),held]);entered=true;},async()=>{trace.push('restore');throw restore;});
+ await new Promise<void>(resolve=>setImmediate(resolve));assert.deepEqual(trace,[]);assert.equal(entered,false);
+ finish(1);await assert.rejects(run,error=>{assert.ok(error instanceof AggregateError);assert.deepEqual(error.errors,[primary,restore]);assert.equal(error.cause,primary);return true;});
+ assert.deepEqual(trace,['sibling settled','restore']);assert.equal(entered,false);
+});
+test('two rejected reservations retain both failures after every attempt settles',async()=>{
+ const first=new Error('first'),second=new Error('second');
+ await assert.rejects(drainStatementFrameReservationsV1([Promise.reject(first),Promise.reject(second)]),error=>{
+  assert.ok(error instanceof AggregateError);assert.deepEqual(error.errors,[first,second]);assert.equal(error.cause,first);return true;
+ });
+});
+test('successful reservations preserve ordered values and restore only after the body',async()=>{
+ const trace:string[]=[];
+ const result=await withSharedWireDefaultPostcheckV1(async()=>{const rows=await drainStatementFrameReservationsV1([Promise.resolve(1),Promise.resolve(2)]);
+  assert.deepEqual(rows,[1,2]);trace.push('body');return rows;},async()=>{trace.push('restore');});
+ assert.deepEqual(result,[1,2]);assert.deepEqual(trace,['body','restore']);
 });
