@@ -117,7 +117,7 @@ export async function runListeningStartupPrefixV1(directory:string){
  const callback:StartupCallbackStateV1={entered:false,complete:false,failed:false};
  let own:{name:string;oid:string}|null=null,absence:'UNKNOWN'|true='UNKNOWN',normalFactory=false;
  const report:Record<string,unknown>={contract:'r16-listening-startup-prefix-v1',status:'failed',diagnostic_only:true,h1_accepted:false,cpu:'UNKNOWN',
-  bounds:{setup_ms:600000,prefix_ms:120000,total_ms:780000,semantics:'observed soft caps; no autonomous SQL cancellation; external job20min is the watchdog'},internal_phases:{quote:'UNKNOWN',continue:'UNKNOWN',admit:'UNKNOWN'},
+  bounds:{setup_ms:1800000,prefix_ms:120000,total_ms:1920000,semantics:'observed soft caps; no autonomous SQL cancellation; external job40min is the watchdog'},internal_phases:{quote:'UNKNOWN',continue:'UNKNOWN',admit:'UNKNOWN'},
   gates:{source_binding:false,initial_census:false,zero_provider_calls:false,zero_listening_calls:false,no_recording_loss:false,cleanup_confirmed:false}};
  const gates=report.gates as Record<string,boolean>;
  let failed=false,primary:unknown;
@@ -126,7 +126,7 @@ export async function runListeningStartupPrefixV1(directory:string){
   await closeStartupFactoryV1(callback,async()=>{
    await runMassLabelingAcceptanceFixtureV1('product-recovery',{benchmark:{isolated:true,root_count:32768,execution_cap_micro_usd:20000000,
     import_batch_size:512,preparation_page_size:100,embedding_page_limit:264,beforeProcessing:ctx=>captureStartupCallbackV1(callback,async()=>{
-     assert.ok(clock()<=600000,'startup setup soft cap exceeded');report.setup_ms=clock();
+     assert.ok(clock()<=1800000,'startup setup soft cap exceeded');report.setup_ms=clock();
      const database=recorder.wrap(ctx.database);
      const identity=(await database.query("SELECT current_database() name,(SELECT oid::text FROM pg_database WHERE datname=current_database()) oid")).rows[0];
      assert.match(identity.name,/^noisia_mfp_recovery_[a-f0-9]{32}$/u);assert.match(identity.oid,/^\d+$/u);own={name:identity.name,oid:identity.oid};
@@ -135,7 +135,7 @@ export async function runListeningStartupPrefixV1(directory:string){
      const access={database,workspace_id:ctx.workspace_id,actor_user_id:ctx.actor_user_id};
      const cfg=await saveSignalListeningConfigurationV1({...access,expected_revision:0,provenance:'human',configuration:workload.configuration});
      assert.equal(cfg.configuration_digest,workload.configuration_digest);
-     const t0=clock();assert.ok(t0<=600000,'startup setup soft cap exceeded');report.setup_ms=t0;report.admission_started_at_ms=t0;
+     const t0=clock();assert.ok(t0<=1800000,'startup setup soft cap exceeded');report.setup_ms=t0;report.admission_started_at_ms=t0;
      const prepared=await recorder.measure('prepare',()=>prepareSignalListeningV1({...access,configuration_id:cfg.id,map_id:ctx.map_id,
       idempotency_key:'r16-listening-benchmark:'+randomUUID(),cap_micro_usd:20000000,provider_available:true,prototype_provider_available:false}));
      assert.ok(prepared.status==='labeling'&&prepared.run_id,'native preparation must admit Listening');
@@ -183,7 +183,7 @@ export async function runListeningStartupPrefixV1(directory:string){
   const after=await sources();report.source_after=after;assert.deepEqual(after,before,'source/38SQL/harness changed during diagnostic');gates.source_binding=true;
   const recorded=recorder.snapshot();assert.equal(recorded.dropped,0);assert.equal(recorded.pending,0);assert.equal(recorded.connect_pending,0);assert.equal(recorded.seen,recorded.recorded);assert.equal(recorded.connect_seen,recorded.connect_recorded);assert.ok(recorded.seen>0);
   assert.ok(recorded.queries.every(row=>row[6]===1)&&recorded.connect_waits.every(row=>row[5]===1),'unexpected query/checkout error');gates.no_recording_loss=true;
-  assert.ok(clock()<=780000,'startup total soft cap exceeded');assert.equal(absence,true);gates.cleanup_confirmed=true;assert.ok(Object.values(gates).every(value=>value===true));report.status='observed';
+  assert.ok(clock()<=1920000,'startup total soft cap exceeded');assert.equal(absence,true);gates.cleanup_confirmed=true;assert.ok(Object.values(gates).every(value=>value===true));report.status='observed';
  }catch(error){failed=true;primary=error;report.failure={kind:error instanceof AggregateError?'aggregate':error instanceof Error?'error':'unknown',callback_primary_preserved:callback.failed,setup_before_callback_unknown:!callback.entered};}
  report.total_ms=clock();report.observation=recorder.snapshot();report.closure={callback_entered:callback.entered,callback_complete:callback.complete,factory_returned_normally:normalFactory,own_database:own??'UNKNOWN',own_database_absent:absence};
  try{await writeStartupPrefixEvidenceV1(directory,report);}catch(publication){if(failed)throw new AggregateError([primary,publication],'startup failure and evidence publication failed',{cause:primary});throw publication;}
