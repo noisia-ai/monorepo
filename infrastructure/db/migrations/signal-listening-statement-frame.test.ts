@@ -42,6 +42,8 @@ test('byte projection and representation kernel retain canonical UTF8 and comple
  }
  const kernel=statementFrameKernelV1(c);assert.ok(kernel.includes('native_questions questions,native_digests digests'));
  assert.ok(kernel.includes('c_bytes'));assert.ok(kernel.includes('d_bytes'));assert.ok(kernel.includes('frame_used'));
+ assert.ok(kernel.includes('count(*)=count(DISTINCT id) AND count(*)=count(id)'));
+ assert.equal((kernel.match(/SELECT 1\/denominator FROM statement_frame_kernel_guard/g)??[]).length,2);
 });
 test('paired order is fixed CDDC and dimensions count actual generated wires without recording text',()=>{
  assert.deepEqual(STATEMENT_FRAME_ORDER_V1,['C','D','D','C']);

@@ -90,9 +90,16 @@ export async function compareStatementFrameValidationV1(raw:PoolClient,c:string,
 export function statementFrameKernelV1(c:string){
  const p=statementFramePartsV1(c),sql=sharedWireValidationV1(c),a=sql.indexOf('statement_wire_values AS MATERIALIZED('),b=sql.indexOf(fragmentEnd,a);assert.ok(a>=0&&b>a);
  const wires=sql.slice(a,b);
- return anchorListeningStatementOracleParametersV1(`WITH selected AS MATERIALIZED(
- SELECT id,native_questions questions,native_digests digests FROM jsonb_to_recordset($8::jsonb) e(id uuid,native_questions jsonb,native_digests jsonb)),
- statement_frame_expected AS MATERIALIZED(SELECT id,i,digests,basis,expected_request FROM jsonb_to_recordset($8::jsonb) e(id uuid,i jsonb,digests jsonb,basis jsonb,expected_request jsonb)),${wires}${frames},
+ // A representation probe has no native GROUP BY id. Reject duplicate/NULL
+ // IDs rather than comparing C and D over the same accidentally multiplied bag.
+ // Real bag equivalence is tested by the complete independent C validator.
+ return anchorListeningStatementOracleParametersV1(`WITH statement_frame_kernel_guard AS MATERIALIZED(
+ SELECT CASE WHEN count(*)=count(DISTINCT id) AND count(*)=count(id) THEN 1 ELSE 0 END denominator
+ FROM jsonb_to_recordset($8::jsonb) e(id uuid)),selected AS MATERIALIZED(
+ SELECT id,native_questions questions,native_digests digests FROM jsonb_to_recordset($8::jsonb) e(id uuid,native_questions jsonb,native_digests jsonb)
+ WHERE (SELECT 1/denominator FROM statement_frame_kernel_guard)=1),
+ statement_frame_expected AS MATERIALIZED(SELECT id,i,digests,basis,expected_request FROM jsonb_to_recordset($8::jsonb) e(id uuid,i jsonb,digests jsonb,basis jsonb,expected_request jsonb)
+ WHERE (SELECT 1/denominator FROM statement_frame_kernel_guard)=1),${wires}${frames},
  serialized AS MATERIALIZED(SELECT id,${p.canonicalC} c_canonical,${p.canonicalD} d_canonical,${p.fastPathPredicate} frame_used FROM expected)
  SELECT id,encode(convert_to(c_canonical,'UTF8'),'hex') c_bytes,encode(convert_to(d_canonical,'UTF8'),'hex') d_bytes,
  'sha256:'||encode(sha256(convert_to(c_canonical,'UTF8')),'hex') c_digest,'sha256:'||encode(sha256(convert_to(d_canonical,'UTF8')),'hex') d_digest,
