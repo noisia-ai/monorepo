@@ -224,6 +224,14 @@ try {
     await page.setViewport({ ...size, deviceScaleFactor: 1 });
     const bytes = Buffer.from(await page.screenshot({ type: "webp", quality: 86, omitBackground: true }));
     rendered.push({ path: "hero.webp", contentType: "image/webp", bytes });
+
+    // The same image for the access email, as a 2:3 JPEG on white (classic Outlook shows no webp).
+    await page.setViewport({ width: 264, height: 396, deviceScaleFactor: 1 });
+    await page.setContent(
+      `<html><body style="margin:0;background:#fff"><img src="data:${type};base64,${data}" style="width:264px;height:396px;object-fit:cover;object-position:center top;display:block"></body></html>`,
+      { waitUntil: "load" }
+    );
+    rendered.push({ path: "email.jpg", contentType: "image/jpeg", bytes: Buffer.from(await page.screenshot({ type: "jpeg", quality: 84 })) });
   }
 
   if (!builderPdf) {
