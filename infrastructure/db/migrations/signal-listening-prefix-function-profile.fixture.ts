@@ -87,12 +87,26 @@ async function parity(c:PoolClient,sql:string,params:unknown[]){
  const before=await bytes('old'),after=await bytes('probe');assert.deepEqual(after,before,'all14 ordered native bytes and bag multiplicity');assert.equal(before.length,16384);
  return{rows:before.length,except_all:true,ordered_record_send:true,sha256:sha(before.join('\n'))};
 }
+//0295 stores page identity on the member, not on signal_labeling_calls.
+// Keep the aggregate at call grain: the native page/member identity is an
+// EXISTS witness, so even malformed linkage cannot multiply money or roots.
+export const prefixSetupLedgerSqlV1=`SELECT count(*)::int calls,
+ count(*) FILTER(WHERE c.status='settled' AND c.results_applied AND c.usage IS NOT NULL
+  AND c.raw_sha256 IS NOT NULL AND c.raw_size_bytes>0 AND c.raw_storage_verified_at IS NOT NULL
+  AND c.raw_storage_verified_key=c.raw_storage_key AND EXISTS(
+   SELECT 1 FROM signal_labeling_raw_page_members member JOIN signal_labeling_raw_pages page
+    ON page.id=member.page_id AND page.workspace_id=member.workspace_id AND page.run_id=member.run_id
+   WHERE member.call_id=c.id AND member.workspace_id=c.workspace_id AND member.run_id=c.run_id
+    AND member.request_digest=c.request_digest AND member.raw_sha256=c.raw_sha256 AND member.raw_size_bytes=c.raw_size_bytes
+    AND page.status='verified' AND page.verified_at IS NOT NULL AND page.storage_key=c.raw_storage_key
+    AND member.byte_offset>=0 AND member.byte_length>0 AND member.byte_offset+member.byte_length+1<=page.size_bytes
+  ))::int applied,
+ count(DISTINCT c.inputs->0->>'root_id')::int roots,COALESCE(sum(c.settled_micro_usd),0)::text synthetic_spend_micro_usd,
+ COALESCE(sum(c.reserved_micro_usd) FILTER(WHERE c.status IN('reserved','submitting','submitted')),0)::text reserved_micro_usd,
+ (COALESCE(sum(c.reserved_micro_usd) FILTER(WHERE c.status='unknown'),0)+COALESCE(sum(c.terminal_exposure_micro_usd) FILTER(WHERE c.status IN('settled','failed')),0))::text unknown_micro_usd
+ FROM signal_labeling_calls c WHERE c.workspace_id=$1 AND c.run_id=$2`;
 async function setupState(c:PoolClient,params:unknown[],run_id:string){
- const ledger=(await c.query(`SELECT count(*)::int calls,count(*) FILTER(WHERE status='settled' AND results_applied AND raw_page_id IS NOT NULL AND raw_sha256 IS NOT NULL)::int applied,
-  count(DISTINCT inputs->0->>'root_id')::int roots,COALESCE(sum(settled_micro_usd),0)::text synthetic_spend_micro_usd,
-  COALESCE(sum(reserved_micro_usd) FILTER(WHERE status IN('reserved','submitting','submitted')),0)::text reserved_micro_usd,
-  (COALESCE(sum(reserved_micro_usd) FILTER(WHERE status='unknown'),0)+COALESCE(sum(terminal_exposure_micro_usd) FILTER(WHERE status IN('settled','failed')),0))::text unknown_micro_usd
- FROM signal_labeling_calls WHERE workspace_id=$1 AND run_id=$2`,[params[0],run_id])).rows[0];
+ const ledger=(await c.query(prefixSetupLedgerSqlV1,[params[0],run_id])).rows[0];
  assert.deepEqual(ledger,{calls:4096,applied:4096,roots:4096,synthetic_spend_micro_usd:'24576',reserved_micro_usd:'0',unknown_micro_usd:'0'});
  const state=(await c.query(`WITH population AS MATERIALIZED(${publicRead}),per_root AS(
   SELECT root_id,count(*)::int questions,count(*) FILTER(WHERE question_key IN('voice','promotion') AND answer IS NOT NULL AND cache_call_id IS NOT NULL)::int bases,
