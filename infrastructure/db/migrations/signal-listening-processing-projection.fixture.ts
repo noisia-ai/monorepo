@@ -38,6 +38,13 @@ async function defaults(c:PoolClient){return(await c.query(`SELECT p.oid::text,p
  FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='public'
  AND (p.proname=ANY($1::text[]) OR p.proname LIKE 'signal_listening%statement%') ORDER BY p.oid`,[names])).rows;}
 const installations=new WeakMap<PoolClient,{defaults:Awaited<ReturnType<typeof defaults>>;source_sha256:string;candidate_sha256:string;body_sha256:string}>();
+type EffectiveReferenceAclV1={role:string|null;is_owner:boolean;is_public:boolean;grantor_is_owner:boolean;privilege_type:string;is_grantable:boolean};
+export function assertProcessingProjectionEffectiveAclV1(rows:ReadonlyArray<EffectiveReferenceAclV1>){
+ assert.equal(rows.length,2,'effective reference must expose exactly owner and service_role EXECUTE');
+ assert.ok(rows.every(r=>!r.is_public&&!r.is_grantable&&r.grantor_is_owner&&r.privilege_type==='EXECUTE'),'no PUBLIC, grant option or delegated privileges');
+ assert.equal(rows.filter(r=>r.is_owner).length,1);
+ const reader=rows.filter(r=>!r.is_owner);assert.equal(reader.length,1);assert.equal(reader[0]!.role,'service_role');
+}
 export async function installProcessingProjectionV1(c:PoolClient){
  assert.equal((await c.query('SELECT current_setting(\'transaction_read_only\') readonly')).rows[0].readonly,'off','DDL aliases precede RRRO');
  const source=await readFile(sourceUrl,'utf8'),candidate=await readFile(candidateUrl,'utf8');
@@ -52,9 +59,22 @@ export async function installProcessingProjectionV1(c:PoolClient){
  const effective=await readFile(new URL('./0316_signal_listening_human_revision_plan.sql',import.meta.url),'utf8');
  const effectiveInstalled=before.find(r=>r.proname==='signal_listening_effective_population_roots_v2');assert.ok(effectiveInstalled);
  assert.equal(effectiveInstalled.prosrc,effective.split('AS $$')[1]!.split('$$;')[0]!);
+ assert.notEqual(effectiveInstalled.proacl,null,'effective reference ACL must already be explicit');
+ const effectiveAcl=(await c.query<EffectiveReferenceAclV1>(`SELECT grantee.rolname role,acl.grantee=p.proowner is_owner,acl.grantee=0 is_public,
+  acl.grantor=p.proowner grantor_is_owner,acl.privilege_type,acl.is_grantable
+  FROM pg_catalog.pg_proc p CROSS JOIN LATERAL pg_catalog.aclexplode(p.proacl) acl
+  LEFT JOIN pg_catalog.pg_roles grantee ON grantee.oid=acl.grantee
+  WHERE p.oid='public.signal_listening_effective_population_roots_v2(uuid,uuid,uuid,text,uuid[],text)'::pg_catalog.regprocedure
+  ORDER BY acl.grantee`)).rows;
+ assertProcessingProjectionEffectiveAclV1(effectiveAcl);
+
  for(const arm of ['old','new'])await c.query(effective.replace('CREATE OR REPLACE FUNCTION signal_listening_effective_population_roots_v2(',`CREATE FUNCTION pg_temp.r16_projection_effective_${arm}(`)
   .replace('signal_listening_population_roots_v1(w,cid,mid,ctx,roots,purpose)',`pg_temp.r16_projection_${arm==='old'?'old':'full'}(w,cid,mid,ctx,roots,purpose)`)
   +`\nREVOKE ALL ON FUNCTION pg_temp.r16_projection_effective_${arm}(uuid,uuid,uuid,text,uuid[],text) FROM PUBLIC;`);
+ // Fixed aliases/role only, after proving the native reference already owns
+ // this exact reader privilege. Core/full/processing/census/raw OLD stay owner-only.
+ await c.query(`GRANT EXECUTE ON FUNCTION pg_temp.r16_projection_effective_old(uuid,uuid,uuid,text,uuid[],text) TO service_role;
+GRANT EXECUTE ON FUNCTION pg_temp.r16_projection_effective_new(uuid,uuid,uuid,text,uuid[],text) TO service_role;`);
  const helpers=(await c.query("SELECT proname,prosecdef,provolatile,proconfig,proacl::text FROM pg_proc WHERE pronamespace=pg_my_temp_schema() AND proname IN('r16_projection_core','r16_projection_full','r16_projection_processing','r16_projection_census','r16_projection_old','r16_projection_effective_old','r16_projection_effective_new') ORDER BY proname")).rows;
  assert.equal(helpers.length,7);for(const helper of helpers){
   const reference=helper.proname.startsWith('r16_projection_effective_')?effectiveInstalled:installed;

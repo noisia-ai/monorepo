@@ -13,7 +13,7 @@ import {saveSignalListeningConfigurationV1} from '../signal-listening-configurat
 import {setSignalListeningDiscoveryManualV1} from '../signal-listening-discovery';
 import * as human from '../signal-listening-human-edits';
 import {installProcessingProjectionV1,processingProjectionReadV1,processingProjectionKernelV1,withProcessingProjectionSnapshotV1,
- processingProjectionReadOnlyTransactionV1,releaseProcessingProjectionClientV1,assertProcessingProjectionSourceV1,compareProcessingProjectionBudgetsV1,PROCESSING_PROJECTION_QUERY_ORDER_V1,assertProcessingProjectionMeasurementCountsV1,
+ processingProjectionReadOnlyTransactionV1,releaseProcessingProjectionClientV1,assertProcessingProjectionSourceV1,compareProcessingProjectionBudgetsV1,PROCESSING_PROJECTION_QUERY_ORDER_V1,assertProcessingProjectionMeasurementCountsV1,assertProcessingProjectionEffectiveAclV1,
  runProcessingProjection4096V1,writeProcessingProjectionEvidenceV1} from './signal-listening-processing-projection.fixture';
 const enabled=process.env.NOISIA_R16_PROCESSING_PROJECTION_PG==='true';
 // No provider, product function replacement, GUC authority or trigger disabling.
@@ -182,4 +182,15 @@ if(process.env.NOISIA_R16_PROCESSING_PROJECTION_PURE==='true')test('processing p
  assert.throws(()=>assertProcessingProjectionMeasurementCountsV1(schedule.filter(r=>r.query!=='full14_bounded')));
  assert.throws(()=>assertProcessingProjectionMeasurementCountsV1(schedule.map(r=>r.query==='full14_bounded'?{...r,query:'full14' as const}:r)));
  assert.throws(()=>assertProcessingProjectionMeasurementCountsV1([]));
+});
+
+if(process.env.NOISIA_R16_PROCESSING_PROJECTION_PURE==='true')test('processing projection effective aliases match only the native service_role permission',async()=>{
+ const owner={role:'postgres',is_owner:true,is_public:false,grantor_is_owner:true,privilege_type:'EXECUTE',is_grantable:false},reader={...owner,role:'service_role',is_owner:false};
+ assertProcessingProjectionEffectiveAclV1([owner,reader]);
+ for(const invalid of [[],[owner],[owner,{...reader,is_public:true}],[owner,{...reader,is_grantable:true}],[owner,{...reader,grantor_is_owner:false}],[owner,{...reader,role:'other_role'}],[owner,reader,reader]])assert.throws(()=>assertProcessingProjectionEffectiveAclV1(invalid));
+ const fixture=await readFile(new URL('./signal-listening-processing-projection.fixture.ts',import.meta.url),'utf8');
+ assert.deepEqual(fixture.match(/GRANT EXECUTE ON FUNCTION pg_temp\.r16_projection_.* TO service_role;/gu)??[],[
+  'GRANT EXECUTE ON FUNCTION pg_temp.r16_projection_effective_old(uuid,uuid,uuid,text,uuid[],text) TO service_role;',
+  'GRANT EXECUTE ON FUNCTION pg_temp.r16_projection_effective_new(uuid,uuid,uuid,text,uuid[],text) TO service_role;',
+ ]);
 });
