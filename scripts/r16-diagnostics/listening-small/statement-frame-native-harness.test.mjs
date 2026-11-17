@@ -5,7 +5,8 @@ import {mkdtempSync, rmSync, writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {createHash} from 'node:crypto';
-import {parseStatementFrameNativeTAPV1, parseStatementFramePureTAPV1, STATEMENT_FRAME_NATIVE_TITLES_V1} from './statement-frame-native-harness.mjs';
+import {parseStatementFrameNativeTAPV1, parseStatementFramePureTAPV1, STATEMENT_FRAME_NATIVE_TITLES_V1,
+  STATEMENT_FRAME_PURE_TITLES_V1} from './statement-frame-native-harness.mjs';
 
 const targetSha = 'a'.repeat(40);
 const probeSha = 'b'.repeat(40);
@@ -32,10 +33,10 @@ function report(overrides = {}) {
     {arm:'C',defect:'physical_lease_expired',rejected:true},{arm:'D',defect:'physical_lease_expired',rejected:true},
   ];
   const before = {runtime_kind:'C',metadata:{synthetic:true}};
-  const ownership = {marker_sha256:'sha256:'+'a'.repeat(64),container_id_sha256:'sha256:'+'b'.repeat(64),
-    postgres_system_identifier_sha256:'sha256:'+'c'.repeat(64),image_id:'sha256:'+'d'.repeat(64),started_at:'2026-11-16T00:00:00.000Z'};
+  const ownership = {marker_sha256:'a'.repeat(64),container_id_sha256:'b'.repeat(64),
+    postgres_system_identifier_sha256:'c'.repeat(64),image_id:'sha256:'+'d'.repeat(64),started_at:'2026-11-16T00:00:00.000Z'};
   const owned = {clk_tck:'100',ownership,postmaster:{pid:1,starttime_ticks:'2'},interval_ms:0,stopped_before_queries:true,
-    collector:{docker_endpoint:'unix:///var/run/docker.sock',os_script_sha256:'sha256:'+'e'.repeat(64),inspect_format_sha256:'sha256:'+'f'.repeat(64)},
+    collector:{docker_endpoint:'unix:///var/run/docker.sock',os_script_sha256:'e'.repeat(64),inspect_format_sha256:'f'.repeat(64)},
     brackets:[{label:'collector_start',bracket:{start_ns:'1',end_ns:'2'}},{label:'collector_stop',bracket:{start_ns:'3',end_ns:'4'}}]};
   return {
     contract: 'r16-statement-frame-native-oracle-v1', status: 'observed', test_only: true,
@@ -130,12 +131,45 @@ test('D native harness rejects skips, extra titles, and nonzero TAP summary even
 });
 
 test('D pure receipt binds exact nine-case TAP to target and probe SHA without skip or TODO', () => {
-  const titles = ['one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine'];
-  const tap = Buffer.from(`TAP version 13\n${titles.map((title, i) => `ok ${i + 1} - ${title}`).join('\n')}\n# tests 9\n# pass 9\n# fail 0\n# cancelled 0\n# skipped 0\n`);
+  const tap = pureTap();
   const receipt = parseStatementFramePureTAPV1(tap, {exitStatus: 0, targetSha, probeSha});
   assert.equal(receipt.contract, 'r16-diagnostic-pure-suite-v1');
   assert.equal(receipt.counts.tests, 9);
   assert.equal(receipt.target_git_sha_after, targetSha);
+  assert.deepEqual(receipt.titles, [...STATEMENT_FRAME_PURE_TITLES_V1]);
   assert.throws(() => parseStatementFramePureTAPV1(Buffer.from(tap.toString().replace('# skipped 0', '# skipped 1')),
     {exitStatus: 0, targetSha, probeSha}), /statement_frame_pure_counts_invalid/u);
+  assert.throws(() => parseStatementFramePureTAPV1(Buffer.from(tap.toString().replace(STATEMENT_FRAME_PURE_TITLES_V1[0], 'wrong title')),
+    {exitStatus: 0, targetSha, probeSha}), /statement_frame_pure_titles_invalid/u);
+  assert.throws(() => parseStatementFramePureTAPV1(Buffer.from(tap.toString().replace('ok 1 -', 'ok 2 -')),
+    {exitStatus: 0, targetSha, probeSha}), /statement_frame_pure_test_numbers_invalid/u);
+  assert.throws(() => parseStatementFramePureTAPV1(Buffer.from(tap.toString().replace('1..9', '1..8')),
+    {exitStatus: 0, targetSha, probeSha}), /statement_frame_pure_plan_invalid/u);
+});
+
+function pureTap() {
+  return Buffer.from(`TAP version 13\n${STATEMENT_FRAME_PURE_TITLES_V1.map((title, i) => `ok ${i + 1} - ${title}`).join('\n')}\n1..9\n# tests 9\n# pass 9\n# fail 0\n# cancelled 0\n# skipped 0\n`);
+}
+
+test('D native profile collector accepts producer hash formats and rejects prefixed non-image hashes', () => {
+  const result = report();
+  const tap = nativeTap(result);
+  const receipt = parseStatementFrameNativeTAPV1(tap, {exitStatus: 0, targetSha, probeSha});
+  assert.equal(receipt.status, 'verified');
+  for (const [path, value] of [
+    ['hz_before.collector.os_script_sha256', 'sha256:' + 'e'.repeat(64)],
+    ['hz_before.collector.inspect_format_sha256', 'sha256:' + 'f'.repeat(64)],
+    ['hz_before.ownership.marker_sha256', 'sha256:' + 'a'.repeat(64)],
+    ['hz_before.ownership.container_id_sha256', 'sha256:' + 'b'.repeat(64)],
+    ['hz_before.ownership.postgres_system_identifier_sha256', 'sha256:' + 'c'.repeat(64)],
+  ]) {
+    const changed = structuredClone(result);
+    const [root, child, field] = path.split('.');
+    changed[root][child][field] = value;
+    assert.throws(() => parseStatementFrameNativeTAPV1(nativeTap(changed), {exitStatus: 0, targetSha, probeSha}),
+      /statement_frame_(collector_seal|lab_ownership)_invalid/u, path);
+  }
+  assert.deepEqual([receipt.requested_target_sha, receipt.target_git_sha_before, receipt.target_git_sha_after,
+    receipt.requested_probe_sha, receipt.probe_git_sha_before, receipt.probe_git_sha_after],
+  [targetSha, targetSha, targetSha, probeSha, probeSha, probeSha]);
 });

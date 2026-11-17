@@ -11,6 +11,17 @@ export const STATEMENT_FRAME_NATIVE_TITLES_V1 = Object.freeze([
   'D frame native CDDC compares 1000 consumer calls with complete CPU brackets',
   'D frame native concurrent same-key reservations remain idempotent',
 ]);
+export const STATEMENT_FRAME_PURE_TITLES_V1 = Object.freeze([
+  'D is strictly test-only and inverses every byte to frozen installed C',
+  'fallback is the literal complete C canonical expression and outside SQL restores unchanged',
+  'frame identity uses complete fresh question AND digest UTF8, not keyset, JSONB equality or a hash',
+  'fast frame keeps every dynamic hole and checks exact binding with scalar type fallback',
+  'byte projection and representation kernel retain canonical UTF8 and complete SHA for C and D',
+  'paired order is fixed CDDC and dimensions count actual generated wires without recording text',
+  'a rejected reservation drains its pending sibling before restore and preserves body plus restore failures',
+  'two rejected reservations retain both failures after every attempt settles',
+  'successful reservations preserve ordered values and restore only after the body',
+]);
 
 const sha256 = bytes => createHash('sha256').update(bytes).digest('hex');
 
@@ -197,15 +208,16 @@ export function parseStatementFrameNativeTAPV1(input, {exitStatus, targetSha, pr
     && item.same_durable_ids === true && item.mark_successes === 1 && item.second_mark_rejected === true
     && item.no_provider_attempts === true), 'statement_frame_concurrency_invalid');
   const validHz = sample => {
+    const hex64 = value => /^[0-9a-f]{64}$/.test(value ?? '');
     assert.ok(typeof sample?.clk_tck === 'string' && /^[1-9][0-9]{0,9}$/.test(sample.clk_tck), 'statement_frame_clock_tick_rate_invalid');
     assert.equal(sample.interval_ms, 0, 'statement_frame_cpu_interval_invalid');
     assert.equal(sample.stopped_before_queries, true, 'statement_frame_cpu_sampling_overlap_invalid');
     assert.ok(sample.collector && sample.collector.docker_endpoint === 'unix:///var/run/docker.sock'
-      && /^sha256:[0-9a-f]{64}$/.test(sample.collector.os_script_sha256 ?? '')
-      && /^sha256:[0-9a-f]{64}$/.test(sample.collector.inspect_format_sha256 ?? ''), 'statement_frame_collector_seal_invalid');
-    assert.ok(sample.ownership && /^sha256:[0-9a-f]{64}$/.test(sample.ownership.marker_sha256 ?? '')
-      && /^sha256:[0-9a-f]{64}$/.test(sample.ownership.container_id_sha256 ?? '')
-      && /^sha256:[0-9a-f]{64}$/.test(sample.ownership.postgres_system_identifier_sha256 ?? '')
+      && hex64(sample.collector.os_script_sha256)
+      && hex64(sample.collector.inspect_format_sha256), 'statement_frame_collector_seal_invalid');
+    assert.ok(sample.ownership && hex64(sample.ownership.marker_sha256)
+      && hex64(sample.ownership.container_id_sha256)
+      && hex64(sample.ownership.postgres_system_identifier_sha256)
       && /^sha256:[0-9a-f]{64}$/.test(sample.ownership.image_id ?? '')
       && typeof sample.ownership.started_at === 'string' && !Number.isNaN(Date.parse(sample.ownership.started_at)),
       'statement_frame_lab_ownership_invalid');
@@ -255,9 +267,14 @@ export function parseStatementFramePureTAPV1(input, {exitStatus, targetSha, prob
   assert.match(probeSha ?? '', /^[0-9a-f]{40}$/u, 'statement_frame_probe_sha_invalid');
   const counts = Object.fromEntries(['tests', 'pass', 'fail', 'cancelled', 'skipped'].map(name => [name, readTAPCount(tap, name)]));
   assert.deepEqual(counts, {tests: 9, pass: 9, fail: 0, cancelled: 0, skipped: 0}, 'statement_frame_pure_counts_invalid');
-  const titles = [...tap.matchAll(/^ok \d+ - (.+)$/gmu)].map(match => match[1].replace(/ # (?:SKIP|TODO)(?: .*)?$/u, ''));
-  assert.equal(new Set(titles).size, 9, 'statement_frame_pure_titles_invalid');
-  assert.ok(!/^not ok /mu.test(tap) && !/^ok \d+ - .+ # (?:SKIP|TODO)(?: |$)/mu.test(tap), 'statement_frame_pure_test_not_run');
+  const tests = [...tap.matchAll(/^ok (\d+) - (.+)$/gmu)].map(match => ({number: Number(match[1]),
+    title: match[2].replace(/ # (?:SKIP|TODO)(?: .*)?$/u, ''),
+    skipped: / # SKIP(?: |$)/u.test(match[2]), todo: / # TODO(?: |$)/u.test(match[2])}));
+  assert.deepEqual(tests.map(item => item.number), [1, 2, 3, 4, 5, 6, 7, 8, 9], 'statement_frame_pure_test_numbers_invalid');
+  assert.deepEqual(tests.map(item => item.title), [...STATEMENT_FRAME_PURE_TITLES_V1], 'statement_frame_pure_titles_invalid');
+  assert.ok(tests.every(item => !item.skipped && !item.todo), 'statement_frame_pure_test_not_run');
+  const plans = [...tap.matchAll(/^1\.\.(\d+)$/gmu)].map(match => Number(match[1]));
+  assert.deepEqual(plans, [9], 'statement_frame_pure_plan_invalid');
   return {
     contract: 'r16-diagnostic-pure-suite-v1',
     status: 'verified',
@@ -272,6 +289,7 @@ export function parseStatementFramePureTAPV1(input, {exitStatus, targetSha, prob
     test_file: 'infrastructure/db/migrations/signal-listening-statement-frame.test.ts',
     exit_status: exitStatus,
     counts,
+    titles: tests.map(item => item.title),
     tap_file: 'statement-frame.pure.tap',
     tap_sha256: sha256(tapBytes),
   };
