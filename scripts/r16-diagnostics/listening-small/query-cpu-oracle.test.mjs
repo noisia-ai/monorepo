@@ -4,7 +4,7 @@ import test from 'node:test';
 import { CPU_READ_SQL_V1, TARGET_SHA_V1, SOURCE_DECLARATIONS_V1, parseQueryCpuSampleV1,
   queryCpuDeltaV1, createQueryCpuDriverForTestV1, validateQueryCpuInvocationV1,
   verifyInlineSourcesV1, writeQueryCpuArtifactForTestV1,runQueryCpuPreflightForTestV1,
-  afterQueryCpuPreflightForTestV1,finishQueryCpuPostchecksForTestV1 } from './query-cpu-oracle.mjs';
+  afterQueryCpuPreflightForTestV1,finishQueryCpuPostchecksForTestV1,createQueryCpuBaseReportV1 } from './query-cpu-oracle.mjs';
 
 function stat(pid=263,u='100',s='20',start='52607',comm='postgres') {
   const f=Array(24).fill('0');f[0]='S';f[11]=u;f[12]=s;f[19]=start;
@@ -99,6 +99,8 @@ function preflightPool(readResponse,identityPatch={}) {
   return{pool:{connect:async()=>raw,end:async()=>calls.push('end')},raw,calls};
 }
 const owned={clk_tck:'100',ownership:{postgres_system_identifier_sha256:createHash('sha256').update('7400000000000000001').digest('hex')}};
+const baseReport=()=>createQueryCpuBaseReportV1({targetSha:TARGET_SHA_V1,probeSha:'1'.repeat(40),
+  sources:SOURCE_DECLARATIONS_V1.map(s=>({...s})),inline:{},owned});
 for(const [name,response,reason]of [
  ['permission denied',async()=>{throw Object.assign(Error('private pg file path'),{code:'42501'});},'pg_read_file_sqlstate_42501'],
  ['proc missing',async()=>{throw Object.assign(Error('private pg file path'),{code:'58P01'});},'pg_read_file_sqlstate_58P01'],
@@ -109,10 +111,21 @@ for(const [name,response,reason]of [
   const checks=await runQueryCpuPreflightForTestV1(f.pool,owned,()=>clock++,{next:0});
   assert.equal(checks.length,2);assert.ok(checks.every(c=>c.status==='unavailable'&&c.reason===reason&&c.cpu===null));
   assert.equal(f.calls.filter(c=>c==='ROLLBACK').length,2);assert.equal(f.calls.filter(c=>c==='release').length,2);assert.equal(f.calls.at(-1),'end');
-  const report={preflight:checks,oracles_executed:0,oracle_checks_passed:0};let ran=false;
+  const report=baseReport();assert.deepEqual(report.unavailable_reasons,[]);report.preflight=checks;let ran=false;
   await afterQueryCpuPreflightForTestV1(report,async()=>{ran=true;});
   assert.equal(ran,false);assert.equal(report.status,'unavailable');assert.equal(report.oracles_executed,0);
+  assert.deepEqual(report.unavailable_reasons,[reason,reason]);
   assert.ok(!JSON.stringify(report).includes('private'));
+});
+test('healthy report from the real producer base retains an explicit empty unavailable reasons array',async()=>{
+  const report=baseReport();assert.deepEqual(report.unavailable_reasons,[]);
+  let ticks=100,clock=0n;const f=preflightPool(async()=>({rows:[{pid:263,stat:stat(263,String(ticks++))+'\n'}]}));
+  report.preflight=await runQueryCpuPreflightForTestV1(f.pool,owned,()=>clock++,{next:0});
+  await afterQueryCpuPreflightForTestV1(report,async()=>{report.oracles_executed=6;report.oracle_checks_passed=6;});
+  assert.equal(report.status,'observed');assert.equal(Array.isArray(report.unavailable_reasons),true);
+  assert.deepEqual(JSON.parse(JSON.stringify(report)).unavailable_reasons,[]);
+  assert.equal(report.cpu_pure_query,'unknown');assert.equal(report.worker_cpu,'unknown');assert.equal(report.h1_accepted,false);
+  report.unavailable_reasons.push('isolated_test_value');assert.deepEqual(baseReport().unavailable_reasons,[]);
 });
 test('healthy preflight reads exactly two snapshots in each native isolation and closes the genuine client',async()=>{
   let ticks=100,clock=0n;const f=preflightPool(async()=>({rows:[{pid:263,stat:stat(263,String(ticks++))+'\n'}]}));

@@ -257,6 +257,19 @@ export async function writeQueryCpuArtifactForTestV1(file,report,io=fs){
  if(Buffer.byteLength(text)>MAX_ARTIFACT_BYTES)throw Error('cpu_artifact_limit');
  const handle=await io.open(file,'wx',0o600);try{await handle.writeFile(text,'utf8');await handle.sync();}finally{await handle.close();}
 }
+// Shared by the actual producer and the envelope consumer's pure fixtures.
+// This creates metadata only; it grants no authority and performs no I/O.
+export function createQueryCpuBaseReportV1({targetSha,probeSha,sources,inline,owned}){
+ return{contract:'r16-native-query-cpu-oracle-v1',status:'running',diagnostic_only:true,target_sha:targetSha,probe_sha:probeSha,
+  source6:sources,inline_sql:inline,cpu_read_sql_sha256:sha(CPU_READ_SQL_V1),oracles_executed:0,oracle_checks_passed:0,
+  unavailable_reasons:[],h1_accepted:false,gain_claim:false,native46_reexecuted:false,only_installed_C:true,function_replaced:false,
+  hz_before:owned,hz_after:null,preflight:[],controls:[],select:[],dml:[],cpu_pure_query:'unknown',worker_cpu:'unknown',
+  sql_function_cpu:'unknown',cpu_scope:'leader_backend_brackets_include_probes',control_subtracted:false,
+  limits:{artifact_bytes:MAX_ARTIFACT_BYTES,repetitions:3,selected_calls:1000,proc_read_bytes:8192},
+  limitations:['CPU snapshots include probe/protocol CPU; controls are observed, never subtracted.',
+   'Ticks are quantized; zero increment is not proof of zero CPU.','Leader only; parallel workers and SQL function CPU unknown.',
+   'Instrumented wall times are not capacity evidence. No H1 or new Native46 claim.'],failure:null,secondary_failures:[]};
+}
 async function run(o){
  validateQueryCpuInvocationV1(o,process.env,process.platform);
  const sealed=await checkSources(o);await artifactDirectory(o);
@@ -274,15 +287,7 @@ async function run(o){
    env:process.env,inspectFormat:PG_CPU_INSPECT_FORMAT_V1});
   owned=await ownedHz(o);
  }catch(e){await pool.end();throw e;}
- const report={contract:'r16-native-query-cpu-oracle-v1',status:'running',diagnostic_only:true,target_sha:o.targetSha,probe_sha:o.probeSha,
-  source6:sealed.sources,inline_sql:sealed.inline,cpu_read_sql_sha256:sha(CPU_READ_SQL_V1),oracles_executed:0,oracle_checks_passed:0,
-  h1_accepted:false,gain_claim:false,native46_reexecuted:false,only_installed_C:true,function_replaced:false,
-  hz_before:owned,hz_after:null,preflight:[],controls:[],select:[],dml:[],cpu_pure_query:'unknown',worker_cpu:'unknown',
-  sql_function_cpu:'unknown',cpu_scope:'leader_backend_brackets_include_probes',control_subtracted:false,
-  limits:{artifact_bytes:MAX_ARTIFACT_BYTES,repetitions:3,selected_calls:1000,proc_read_bytes:8192},
-  limitations:['CPU snapshots include probe/protocol CPU; controls are observed, never subtracted.',
-   'Ticks are quantized; zero increment is not proof of zero CPU.','Leader only; parallel workers and SQL function CPU unknown.',
-   'Instrumented wall times are not capacity evidence. No H1 or new Native46 claim.'],failure:null,secondary_failures:[]};
+ const report=createQueryCpuBaseReportV1({targetSha:o.targetSha,probeSha:o.probeSha,sources:sealed.sources,inline:sealed.inline,owned});
  let phase='preflight';const clock=()=>process.hrtime.bigint(),sequence={next:0};
  try{
   poolTransferred=true;report.preflight=await preflight(pool,owned,clock,sequence);
