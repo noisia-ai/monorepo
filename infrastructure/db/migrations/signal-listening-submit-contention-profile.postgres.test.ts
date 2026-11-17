@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {createHash} from 'node:crypto';
 import {readFile} from 'node:fs/promises';
-import {submitSqlHashV1,SubmitWorkerGateV1,submitBlockingEvidenceV1,submitCounterDeltaV1,runSubmitContentionProfileV1,writeSubmitContentionProfileV1} from './signal-listening-submit-contention-profile.synthetic.fixture';
+import {submitSqlHashV1,submitQueryFailureV1,SubmitWorkerGateV1,submitBlockingEvidenceV1,submitCounterDeltaV1,runSubmitContentionProfileV1,writeSubmitContentionProfileV1} from './signal-listening-submit-contention-profile.synthetic.fixture';
 const native=process.env.NOISIA_R16_SUBMIT_CONTENTION_PG==='true',pure=process.env.NOISIA_R16_SUBMIT_CONTENTION_PURE==='true';assert.ok(!(native&&pure));
 test('native Reserve and Mark expose policy contention with transaction-local counters',{skip:!native,timeout:780000},async()=>writeSubmitContentionProfileV1(await runSubmitContentionProfileV1()));
 if(pure){
@@ -13,6 +13,11 @@ if(pure){
  test('only a fresh stable owned B to A advisory edge supports a native phase',()=>{const before=states(),after=states();assert.equal(submitBlockingEvidenceV1(wait,11,22,before,after).supported,true);assert.equal(submitBlockingEvidenceV1([wait[0]!,{...wait[1]!,blockers:[99]}],11,22,before,after).supported,false);assert.equal(submitBlockingEvidenceV1(wait,null,22,before,after).supported,false);assert.equal(submitBlockingEvidenceV1([{...wait[0]!,state:'idle in transaction'},wait[1]!],11,22,before,after).reason,'A_idle_client_or_unknown');assert.equal(submitBlockingEvidenceV1(wait,11,11,before,after).supported,false);});
  test('diagnostic counter hold and boundary crossings cannot be attributed to native INSERT or COMMIT',()=>{const before=states();before.A.phase='diagnostic_stats';assert.equal(submitBlockingEvidenceV1(wait,11,22,before,structuredClone(before)).reason,'blocked_during_diagnostic_stats');const changed=states();changed.A.seq++;assert.equal(submitBlockingEvidenceV1(wait,11,22,states(),changed).reason,'phase_changed_during_sample');});
  test('transaction function counters preserve absent baseline and reject decreasing snapshots',()=>{const row={funcid:'1',schemaname:'public',funcname:'synthetic',calls:'4',total_time:2,self_time:1};assert.equal(submitCounterDeltaV1([],[row])[0]!.delta,null);assert.deepEqual(submitCounterDeltaV1([{...row,calls:'2',total_time:1,self_time:.5}],[row])[0]!.delta,{calls:'2',total_time_ms:1,self_time_ms:.5});assert.throws(()=>submitCounterDeltaV1([row],[{...row,calls:'1'}]));});
+ test('uncertain transaction boundaries discard and query plus rollback preserve the primary',()=>{
+  const primary=Error('primary'),rollback=Error('rollback'),clean={error:null as unknown,discard:false};assert.equal(clean.discard,false);
+  for(const boundary of ['BEGIN','COMMIT','ROLLBACK']){const state={error:null as unknown,discard:false};assert.equal(submitQueryFailureV1(state,boundary,primary),primary);assert.equal(state.discard,true);}
+  const state={error:null as unknown,discard:false};assert.equal(submitQueryFailureV1(state,'INSERT',primary),primary);assert.equal(state.discard,false);const both=submitQueryFailureV1(state,'ROLLBACK',rollback)as AggregateError;assert.deepEqual(both.errors,[primary,rollback]);assert.equal(both.cause,primary);assert.equal(state.discard,true);
+ });
  test('optional diagnostic seam reverses byte-exactly to the existing acceptance source',async()=>{
   let source=await readFile(new URL('./signal-listening-flat-prefix.synthetic.fixture.ts',import.meta.url),'utf8');
   source=source.replace(/^export type FlatPrefixReadyFixtureV1=.*\n/mu,'').replace('testCase:FlatPrefixNativeCaseV1|{afterSetup:(f:FlatPrefixReadyFixtureV1)=>Promise<void>}','testCase:FlatPrefixNativeCaseV1').replace(/^    if\('afterSetup'in testCase\).*\n/mu,'').replace('\nexport {setupState as readFlatPrefixSetupStateV1};\n','');

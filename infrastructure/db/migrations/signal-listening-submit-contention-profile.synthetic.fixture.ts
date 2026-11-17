@@ -20,6 +20,11 @@ export function submitCounterDeltaV1(before:Counter[],after:Counter[]){
   assert.ok(BigInt(r.calls)>=BigInt(b.calls)&&r.total_time>=b.total_time&&r.self_time>=b.self_time);
   return{funcid:r.funcid,status:'observed_elapsed_delta',delta:{calls:String(BigInt(r.calls)-BigInt(b.calls)),total_time_ms:r.total_time-b.total_time,self_time_ms:r.self_time-b.self_time},phase_counter:null};});
 }
+export function submitQueryFailureV1(state:{error:unknown;discard:boolean},sql:string,error:unknown){
+ if(['BEGIN','COMMIT','ROLLBACK'].includes(sql))state.discard=true;
+ if(sql==='ROLLBACK'&&state.error!==null)return new AggregateError([state.error,error],'diagnostic native query and rollback failed',{cause:state.error});
+ state.error??=error;return error;
+}
 export class SubmitWorkerGateV1{private active=new Set<string>();enter(name:string){assert.ok(!this.active.has(name)&&this.active.size<2,'only two logical writers');this.active.add(name);let released=false;return()=>{assert.equal(released,false);released=true;assert.ok(this.active.delete(name));};}}
 type Phase={phase:string;seq:number;hash:string|null};
 type Writer={transaction_role:string;label:'A'|'B';pid:number|null;state:Phase;spans:Array<Record<string,unknown>>;snapshots:Array<{label:string;rows:Counter[];start_ms:number;end_ms:number}>;deltas:ReturnType<typeof submitCounterDeltaV1>[];error:unknown;discard:boolean};
@@ -37,10 +42,10 @@ async function sources(c:PoolClient){
  for(const [file,name,tag]of [['0331_signal_listening_statement_payload.sql','signal_listening_statement_money_v1','$$'],['0332_signal_listening_flat_prefix_preimages.sql','signal_listening_population_roots_v1','$function$']]){const source=await readFile(new URL('./'+file,import.meta.url),'utf8');assert.equal(rows.find(r=>r.proname===name)!.prosrc,source.split('AS '+tag)[1]!.split(tag+';')[0]);}
  return rows.map(({prosrc,...r})=>({...r,body_sha256:sha(prosrc)}));
 }
-async function ledger(c:PoolClient,f:FlatPrefixReadyFixtureV1,runId:string){return(await c.query(`SELECT count(*)::int calls,count(DISTINCT inputs->0->>'root_id')::int roots,
- count(*) FILTER(WHERE status='reserved')::int reserved,count(*) FILTER(WHERE status='submitting')::int submitting,
- count(*) FILTER(WHERE status='settled' AND results_applied)::int applied,
- COALESCE(sum(settled_micro_usd),0)::text spend,COALESCE(sum(CASE WHEN status IN('settled','failed') THEN COALESCE(settled_micro_usd,0)+terminal_exposure_micro_usd ELSE reserved_micro_usd END),0)::text run_exposure,
+async function ledger(c:PoolClient,f:FlatPrefixReadyFixtureV1,runId:string){return(await c.query(`SELECT count(*)::int calls,count(DISTINCT c.inputs->0->>'root_id')::int roots,
+ count(*) FILTER(WHERE c.status='reserved')::int reserved,count(*) FILTER(WHERE c.status='submitting')::int submitting,
+ count(*) FILTER(WHERE c.status='settled' AND c.results_applied)::int applied,
+ COALESCE(sum(c.settled_micro_usd),0)::text spend,COALESCE(sum(CASE WHEN c.status IN('settled','failed') THEN COALESCE(c.settled_micro_usd,0)+c.terminal_exposure_micro_usd ELSE c.reserved_micro_usd END),0)::text run_exposure,
  (SELECT total_micro_usd::text FROM signal_processing_org_exposure_v1(w.organization_id,(now() AT TIME ZONE p.budget_timezone)::date,p.budget_timezone)) org_exposure
  FROM signal_labeling_calls c JOIN signal_workspaces w ON w.id=c.workspace_id JOIN signal_processing_admissions a ON a.id=$3 JOIN signal_processing_policy_versions p ON p.id=a.policy_version_id WHERE c.workspace_id=$1 AND c.run_id=$2 GROUP BY w.organization_id,p.budget_timezone`,[f.run.workspace_id,runId,f.run.processing_admission_id])).rows[0];}
 const sleep=(ms:number)=>new Promise<void>(r=>setTimeout(r,ms));
@@ -62,7 +67,7 @@ export async function runSubmitContentionProfileV1(){
    function writer(label:'A'|'B',signalPolicy=false){
     const w:Writer={transaction_role:mode+':'+label,label,pid:null,state:{phase:'idle',seq:0,hash:null},spans:[],snapshots:[],deltas:[],error:null,discard:false};writers.push(w);
     const phase=(kind:string,hash:string|null=null)=>{w.state={phase:kind,seq:w.state.seq+1,hash};};
-    const database={query:f.database.query.bind(f.database),connect:async()=>{const leave=gate.enter(label);let raw:PoolClient;try{raw=await f.database.connect();}catch(e){leave();throw e;}
+    const database={query:f.database.query.bind(f.database),connect:async()=>{const leave=gate.enter(label);phase('acquiring_pool');const acquireStart=clock();let raw:PoolClient;try{raw=await f.database.connect();}catch(e){w.spans.push({phase:'acquire_pool',start_ms:acquireStart,end_ms:clock(),failed:true});leave();phase('failed');throw e;}w.spans.push({phase:'acquire_pool',start_ms:acquireStart,end_ms:clock(),failed:false});phase('client_identity');
      const query=raw.query.bind(raw)as(...a:any[])=>Promise<any>;let busy=false,released=false,transaction=false;
      let id:any;try{id=(await query("SELECT pg_backend_pid()::int pid,current_database() database,current_setting('track_functions') tracking")).rows[0];assert.equal(id.database,identity.database);w.pid=id.pid;}catch(e){raw.release(true);leave();throw e;}
      const stats=async(name:string)=>{phase('diagnostic_stats');const start_ms=clock(),rows=(await query(statsSQL)).rows as Counter[];const snapshot={label:name,rows,start_ms,end_ms:clock()};const prior=w.snapshots.at(-1);if(prior)w.deltas.push(submitCounterDeltaV1(prior.rows,rows));w.snapshots.push(snapshot);w.spans.push({phase:'diagnostic_stats',label:name,start_ms,end_ms:clock()});phase('between_native');};
@@ -77,7 +82,7 @@ export async function runSubmitContentionProfileV1(){
         else if(hash===HASH.policy){if(signalPolicy)readyResolve();await stats('after_policy');}
         else if(hash===HASH.reserve||hash===HASH.mark)await stats('after_dml');
         return value;
-       }catch(e){if(sql==='ROLLBACK')w.discard=true;w.error??=e;phase('failed');throw e;}finally{busy=false;}
+       }catch(e){phase('failed');throw submitQueryFailureV1(w,sql,e);}finally{busy=false;}
       };
      }});
     }};
@@ -102,7 +107,7 @@ export async function runSubmitContentionProfileV1(){
    for(const w of writers){assert.equal(w.spans.filter(s=>s.phase==='dml').length,1);assert.equal(w.spans.filter(s=>s.phase==='commit').length,1);assert.equal(w.spans.filter(s=>s.phase==='policy_lock').length,w.label==='A'?2:1);}
    assert.deepEqual(await sources(observer),sourceBefore);const final=await ledger(observer,f,held.id);assert.equal(final.calls,8096);assert.equal(final.applied,4096);assert.equal(final.submitting,0);assert.equal(final.reserved,4000);assert.equal(final.spend,'24576');
    const catalog=(await observer.query(`SELECT p.oid::text,p.proname,p.prosrc,p.provolatile,p.prosecdef,p.proconfig FROM pg_proc p WHERE p.oid=ANY($1::oid[]) ORDER BY p.oid`,[[...new Set(writers.flatMap(w=>w.snapshots.flatMap(s=>s.rows.map(r=>r.funcid))))]])).rows.map(({prosrc,...r})=>({...r,body_sha256:sha(prosrc)}));
-   receipt={contract:'r16-submit-contention-profile-v1',status:'observed',diagnostic_only:true,h1_accepted:false,cpu:'UNKNOWN',diagnosis:samples.some(s=>s.mode==='concurrent'&&(s.evidence as {supported:boolean}).supported)?'supported':'inconclusive',source_sha:execFileSync('git',['rev-parse','HEAD'],{cwd:fileURLToPath(new URL('../../../',import.meta.url)),encoding:'utf8',timeout:5000}).trim(),source_witness:sourceBefore,setup:{...setupState,roots:4096,questions:4,base_calls:4096,base_answers:8192,consumer_calls_reserved_before_bracket:2000,cohorts:4,cohort_size:1000,disjoint_roots:4000,clone_pool_max_unchanged:8,logical_writer_gate:2,observer_pool:'same_owned_clone',observer_autocommit:true,memory_cap_bytes:512*1024*1024,execution_cap_micro_usd:20000000},modes,final_ledger:final,writers:writers.map(({error,discard,...w})=>({...w,discarded:discard})),function_catalog:catalog,samples,sample_ticks:ticks,bracket_ms:bracketEnd,unknowns:['ledger grows between modes; no speedup comparison','diagnostic_stats extends lock hold; not native DML or COMMIT cost','sample phase boundaries ambiguous if seq changed','function total/self are elapsed not CPU; missing rows UNKNOWN','COMMIT deferred functions not measured by precommit xact counters','no JEV HTTP/provider sends; loopback RAW storage setup only; no H1 claim']};
+   receipt={contract:'r16-submit-contention-profile-v1',status:'observed',diagnostic_only:true,h1_accepted:false,cpu:'UNKNOWN',diagnosis:samples.some(s=>s.mode==='concurrent'&&(s.evidence as {supported:boolean}).supported)?'supported':'inconclusive',source_sha:execFileSync('git',['rev-parse','HEAD'],{cwd:fileURLToPath(new URL('../../../',import.meta.url)),encoding:'utf8',timeout:5000}).trim(),source_witness:sourceBefore,setup:{...setupState,roots:4096,questions:4,base_calls:4096,base_answers:8192,consumer_calls_reserved_before_bracket:2000,cohorts:4,cohort_size:1000,disjoint_roots:4000,clone_pool_max_unchanged:8,logical_writer_gate:2,observer_pool:'same_owned_clone',observer_autocommit:true,memory_cap_bytes:512*1024*1024,execution_cap_micro_usd:20000000},modes,final_ledger:final,writers:writers.map(({error,discard,...w})=>({...w,discarded:discard})),function_catalog:catalog,samples,sample_ticks:ticks,bracket_ms:bracketEnd,unknowns:['Reserve historical tx cannot expose a JS-only callback primary if its rollback also fails; known query or stats primary is preserved','ledger grows between modes; no speedup comparison','diagnostic_stats extends lock hold; not native DML or COMMIT cost','sample phase boundaries ambiguous if seq changed','function total/self are elapsed not CPU; missing rows UNKNOWN','COMMIT deferred functions not measured by precommit xact counters','no JEV HTTP/provider sends; loopback RAW storage setup only; no H1 claim']};
   }catch(e){observerDiscard=true;throw e;}finally{await withSharedWireDefaultPostcheckV1(async()=>{if(run)await f.store.release(run);},async()=>observer.release(observerDiscard));}
  }});assert.ok(receipt);return receipt;
 }
