@@ -46,14 +46,22 @@ export async function installProcessingProjectionV1(c:PoolClient){
  const before=await defaults(c),body=source.split('AS $function$')[1]!.split('$function$;')[0]!;
  const installed=before.find(r=>r.proname==='signal_listening_population_roots_v1');assert.ok(installed);assert.equal(installed.prosrc,body,'real installed default matches0326, not a caller flag');
  await c.query('CREATE TEMP TABLE r16_processing_projection_alias_lifetime(probe boolean)');
- await c.query(source.replace('CREATE OR REPLACE FUNCTION signal_listening_population_roots_v1(','CREATE FUNCTION pg_temp.r16_projection_old('));
+ await c.query(source.replace('CREATE OR REPLACE FUNCTION signal_listening_population_roots_v1(','CREATE FUNCTION pg_temp.r16_projection_old(')
+  +'\nREVOKE ALL ON FUNCTION pg_temp.r16_projection_old(uuid,uuid,uuid,text,uuid[],text) FROM PUBLIC;');
  await c.query(candidate);
- const helpers=(await c.query("SELECT proname,prosecdef,provolatile,proconfig,proacl::text FROM pg_proc WHERE pronamespace=pg_my_temp_schema() AND proname IN('r16_projection_core','r16_projection_full','r16_projection_processing','r16_projection_census') ORDER BY proname")).rows;
- assert.equal(helpers.length,4);for(const helper of helpers){assert.equal(helper.prosecdef,false);assert.equal(helper.provolatile,installed.provolatile);assert.deepEqual(helper.proconfig,installed.proconfig);assert.equal(helper.proacl,installed.proacl,'no additional helper ACL');}
  const effective=await readFile(new URL('./0316_signal_listening_human_revision_plan.sql',import.meta.url),'utf8');
- assert.equal(before.find(r=>r.proname==='signal_listening_effective_population_roots_v2')?.prosrc,effective.split('AS $$')[1]!.split('$$;')[0]!);
+ const effectiveInstalled=before.find(r=>r.proname==='signal_listening_effective_population_roots_v2');assert.ok(effectiveInstalled);
+ assert.equal(effectiveInstalled.prosrc,effective.split('AS $$')[1]!.split('$$;')[0]!);
  for(const arm of ['old','new'])await c.query(effective.replace('CREATE OR REPLACE FUNCTION signal_listening_effective_population_roots_v2(',`CREATE FUNCTION pg_temp.r16_projection_effective_${arm}(`)
-  .replace('signal_listening_population_roots_v1(w,cid,mid,ctx,roots,purpose)',`pg_temp.r16_projection_${arm==='old'?'old':'full'}(w,cid,mid,ctx,roots,purpose)`));
+  .replace('signal_listening_population_roots_v1(w,cid,mid,ctx,roots,purpose)',`pg_temp.r16_projection_${arm==='old'?'old':'full'}(w,cid,mid,ctx,roots,purpose)`)
+  +`\nREVOKE ALL ON FUNCTION pg_temp.r16_projection_effective_${arm}(uuid,uuid,uuid,text,uuid[],text) FROM PUBLIC;`);
+ const helpers=(await c.query("SELECT proname,prosecdef,provolatile,proconfig,proacl::text FROM pg_proc WHERE pronamespace=pg_my_temp_schema() AND proname IN('r16_projection_core','r16_projection_full','r16_projection_processing','r16_projection_census','r16_projection_old','r16_projection_effective_old','r16_projection_effective_new') ORDER BY proname")).rows;
+ assert.equal(helpers.length,7);for(const helper of helpers){
+  const reference=helper.proname.startsWith('r16_projection_effective_')?effectiveInstalled:installed;
+  assert.equal(helper.prosecdef,false);assert.equal(helper.provolatile,reference.provolatile);assert.deepEqual(helper.proconfig,reference.proconfig);
+  assert.notEqual(helper.proacl,null,'helper ACL must be explicit, never default PUBLIC');
+  assert.equal(helper.proacl,reference.proacl,'no additional helper ACL');
+ }
  assert.deepEqual(await defaults(c),before,'install never replaces public population or Mark guards');
  installations.set(c,{defaults:before,source_sha256:sha(source),candidate_sha256:sha(candidate),body_sha256:sha(body)});
 }

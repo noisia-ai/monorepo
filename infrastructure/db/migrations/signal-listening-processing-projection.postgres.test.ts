@@ -165,6 +165,13 @@ if(process.env.NOISIA_R16_PROCESSING_PROJECTION_PURE==='true')test('processing p
  assert.throws(()=>assertProcessingProjectionSourceV1(source,candidate.replace('ORDER BY d.created_at DESC,d.id DESC','ORDER BY d.created_at DESC,d.id ASC')));
  assert.throws(()=>assertProcessingProjectionSourceV1(source,candidate.replace("m.inclusion_status='included'","m.inclusion_status='excluded'")));
  assert.equal((candidate.match(/CREATE FUNCTION pg_temp\.r16_projection_/gu)??[]).length,4);
+ const revokes=candidate.match(/^REVOKE ALL ON FUNCTION pg_temp\.r16_projection_.* FROM PUBLIC;$/gmu)??[];
+ assert.deepEqual(revokes,[
+  'REVOKE ALL ON FUNCTION pg_temp.r16_projection_core(uuid,uuid,uuid,text,uuid[],text,text) FROM PUBLIC;',
+  'REVOKE ALL ON FUNCTION pg_temp.r16_projection_full(uuid,uuid,uuid,text,uuid[],text) FROM PUBLIC;',
+  'REVOKE ALL ON FUNCTION pg_temp.r16_projection_processing(uuid,uuid,uuid,text,uuid[],text) FROM PUBLIC;',
+  'REVOKE ALL ON FUNCTION pg_temp.r16_projection_census(uuid,uuid,uuid,text,uuid[],text) FROM PUBLIC;',
+ ]);
  assert.ok(!/SECURITY DEFINER|CREATE OR REPLACE|CREATE FUNCTION public\.|GRANT |ALTER FUNCTION/u.test(candidate));
 });
 

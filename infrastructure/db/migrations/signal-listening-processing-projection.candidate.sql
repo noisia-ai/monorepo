@@ -198,3 +198,8 @@ CREATE FUNCTION pg_temp.r16_projection_census(w uuid,cid uuid,mid uuid,ctx text,
 RETURNS TABLE(root_id uuid,question_key text,candidate boolean,scope_state text,answered boolean) LANGUAGE sql STABLE SET search_path=public,extensions,pg_temp AS $$
  SELECT * FROM pg_temp.r16_projection_core(w,cid,mid,ctx,roots,purpose,'census') AS p(root_id uuid,question_key text,candidate boolean,scope_state text,answered boolean)
 $$;
+-- Match the installed native owner-only execution boundary for temp helpers.
+REVOKE ALL ON FUNCTION pg_temp.r16_projection_core(uuid,uuid,uuid,text,uuid[],text,text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION pg_temp.r16_projection_full(uuid,uuid,uuid,text,uuid[],text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION pg_temp.r16_projection_processing(uuid,uuid,uuid,text,uuid[],text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION pg_temp.r16_projection_census(uuid,uuid,uuid,text,uuid[],text) FROM PUBLIC;
