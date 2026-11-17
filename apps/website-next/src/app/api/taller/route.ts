@@ -69,7 +69,7 @@ export async function POST(request: NextRequest) {
     method: "POST",
     headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
     body: JSON.stringify({
-      from: process.env.WORKSHOP_FROM_EMAIL || "contacto@noisia.ai",
+      from: process.env.WORKSHOP_FROM_EMAIL || "Noisia <contacto@hey.noisia.ai>",
       to: [process.env.WORKSHOP_TO_EMAIL || "hola@noisia.ai"],
       reply_to: body.email,
       subject: `Taller: ${body.company} · ${body.name}`,

@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useId, useRef, useState, useSyncExternalStore } from "react";
-import { Download, Lock, Minus, NavArrowLeft, NavArrowRight, Plus, Presentation, ShareIos, SidebarCollapse, SidebarExpand, Xmark } from "iconoir-react";
+import { Download, Lock, Mail, Minus, NavArrowLeft, NavArrowRight, Plus, Presentation, ShareIos, SidebarCollapse, SidebarExpand, Xmark } from "iconoir-react";
 import styles from "./viewer.module.css";
 
 /**
@@ -59,11 +59,16 @@ type Props = {
 };
 
 export type Unlock = {
+  /** Step 1 (form → code by email); step 2 is `${endpoint}/verify`. */
   endpoint: string;
   locale: "es" | "en";
   /** How many slides show before the form. */
   preview: number;
   privacyHref: string;
+  /** This browser already asked for a code (the pending cookie is there). */
+  pending: boolean;
+  /** The code from the email's button, in the address. */
+  code: string | null;
   copy: {
     title: string;
     /** "14 more slides. Leave your details…" */
@@ -77,7 +82,20 @@ export type Unlock = {
     submit: string;
     sending: string;
     error: string;
+    emailError: string;
     locked: string;
+    codeTitle: string;
+    /** With {email}. */
+    codeText: string;
+    codeTextNoEmail: string;
+    codeLabel: string;
+    verify: string;
+    verifying: string;
+    wrong: string;
+    tooMany: string;
+    expired: string;
+    spam: string;
+    restart: string;
   };
 };
 
@@ -133,7 +151,37 @@ function Logo() {
 }
 
 function UnlockCard({ unlock, slide, autoFocus = true }: { unlock: Unlock; slide: number; autoFocus?: boolean }) {
-  const [state, setState] = useState<"idle" | "sending" | "error">("idle");
+  const [step, setStep] = useState<"form" | "code">(unlock.pending ? "code" : "form");
+  const [email, setEmail] = useState<string | null>(null);
+  if (step === "code") {
+    return (
+      <CodeStep
+        unlock={unlock}
+        slide={slide}
+        email={email}
+        autoFocus={autoFocus || email !== null}
+        onRestart={() => {
+          setEmail(null);
+          setStep("form");
+        }}
+      />
+    );
+  }
+  return (
+    <FormStep
+      unlock={unlock}
+      slide={slide}
+      autoFocus={autoFocus}
+      onSent={(sentTo) => {
+        setEmail(sentTo);
+        setStep("code");
+      }}
+    />
+  );
+}
+
+function FormStep({ unlock, slide, autoFocus, onSent }: { unlock: Unlock; slide: number; autoFocus: boolean; onSent: (email: string) => void }) {
+  const [state, setState] = useState<"idle" | "sending" | "error" | "emailError">("idle");
   const first = useRef<HTMLInputElement>(null);
   const c = unlock.copy;
   const id = useId();
@@ -146,27 +194,27 @@ function UnlockCard({ unlock, slide, autoFocus = true }: { unlock: Unlock; slide
   const submit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
+    const email = String(form.get("email") ?? "").trim();
     setState("sending");
     const response = await fetch(unlock.endpoint, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         name: String(form.get("name") ?? ""),
-        email: String(form.get("email") ?? ""),
+        email,
         company: String(form.get("company") ?? ""),
         marketing: form.get("marketing") === "on",
         website: String(form.get("website") ?? ""),
-        locale: unlock.locale
+        locale: unlock.locale,
+        slide: slide + 1
       })
     }).catch(() => null);
     if (!response?.ok) {
-      setState("error");
+      const error = (await response?.json().catch(() => null))?.error;
+      setState(error === "email_failed" ? "emailError" : "error");
       return;
     }
-    // The cookies are set: reload on the slide the reader was going to see.
-    const url = new URL(window.location.href);
-    url.searchParams.set("slide", String(slide + 1));
-    window.location.replace(url);
+    onSent(email);
   };
 
   return (
@@ -199,9 +247,9 @@ function UnlockCard({ unlock, slide, autoFocus = true }: { unlock: Unlock; slide
       <button type="submit" className={styles.unlockButton} disabled={state === "sending"}>
         {state === "sending" ? c.sending : c.submit}
       </button>
-      {state === "error" ? (
+      {state === "error" || state === "emailError" ? (
         <p className={styles.unlockError} role="alert">
-          {c.error}
+          {state === "emailError" ? c.emailError : c.error}
         </p>
       ) : null}
       <p className={styles.unlockSmall}>
@@ -210,6 +258,111 @@ function UnlockCard({ unlock, slide, autoFocus = true }: { unlock: Unlock; slide
           {c.privacyLink}
         </a>
         .
+      </p>
+    </form>
+  );
+}
+
+function CodeStep({ unlock, slide, email, autoFocus, onRestart }: { unlock: Unlock; slide: number; email: string | null; autoFocus: boolean; onRestart: () => void }) {
+  const [code, setCode] = useState(unlock.pending && unlock.code && /^\d{4}$/.test(unlock.code) ? unlock.code : "");
+  const [state, setState] = useState<"idle" | "checking" | "wrong" | "locked" | "expired" | "error">("idle");
+  const input = useRef<HTMLInputElement>(null);
+  const tried = useRef<string | null>(null);
+  const c = unlock.copy;
+  const id = useId();
+
+  useEffect(() => {
+    if (autoFocus) input.current?.focus({ preventScroll: true });
+  }, [autoFocus]);
+
+  const check = useCallback(
+    async (value: string) => {
+      if (!/^\d{4}$/.test(value) || tried.current === value) return;
+      tried.current = value;
+      setState("checking");
+      const response = await fetch(`${unlock.endpoint}/verify`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code: value })
+      }).catch(() => null);
+      if (response?.ok) {
+        // The cookies are set: reload on the slide the reader was going to see, without the code.
+        const url = new URL(window.location.href);
+        url.searchParams.delete("code");
+        url.searchParams.set("slide", String(slide + 1));
+        window.location.replace(url);
+        return;
+      }
+      const error = (await response?.json().catch(() => null))?.error;
+      setState(error === "wrong" ? "wrong" : error === "locked" ? "locked" : error === "expired" ? "expired" : "error");
+      if (error === "wrong") {
+        setCode("");
+        input.current?.focus({ preventScroll: true });
+      }
+    },
+    [unlock.endpoint, slide]
+  );
+
+  // The email's button brings the code in the address: in this browser the study opens on its own.
+  useEffect(() => {
+    if (code.length === 4) void check(code);
+  }, [code, check]);
+
+  const message =
+    state === "wrong" ? c.wrong : state === "locked" ? c.tooMany : state === "expired" ? c.expired : state === "error" ? c.error : null;
+  const dead = state === "locked" || state === "expired";
+
+  return (
+    <form
+      className={styles.unlock}
+      aria-labelledby={`${id}-title`}
+      onSubmit={(event) => {
+        event.preventDefault();
+        tried.current = null;
+        void check(code);
+      }}
+    >
+      <span className={styles.unlockIcon} aria-hidden>
+        <Mail />
+      </span>
+      <h2 id={`${id}-title`} className={styles.unlockTitle}>
+        {c.codeTitle}
+      </h2>
+      <p className={styles.unlockText}>{email ? c.codeText.replace("{email}", email) : c.codeTextNoEmail}</p>
+      <label className={styles.field}>
+        <span>{c.codeLabel}</span>
+        <input
+          ref={input}
+          className={styles.codeInput}
+          name="code"
+          value={code}
+          onChange={(event) => {
+            const value = event.target.value.replace(/\D/g, "").slice(0, 4);
+            if (state === "wrong" || state === "error") setState("idle");
+            setCode(value);
+          }}
+          inputMode="numeric"
+          autoComplete="one-time-code"
+          pattern="\d{4}"
+          maxLength={4}
+          placeholder="····"
+          disabled={dead}
+          required
+        />
+      </label>
+      <button type="submit" className={styles.unlockButton} disabled={state === "checking" || dead || code.length !== 4}>
+        {state === "checking" ? c.verifying : c.verify}
+      </button>
+      {message ? (
+        <p className={styles.unlockError} role="alert">
+          {message}
+        </p>
+      ) : null}
+      <p className={styles.unlockSmall}>
+        {c.spam}{" "}
+        <button type="button" className={styles.linkButton} onClick={onRestart}>
+          {c.restart}
+        </button>
       </p>
     </form>
   );
