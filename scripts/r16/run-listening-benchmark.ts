@@ -7,6 +7,7 @@ import {captureR16SourceProvenanceV1} from './source-provenance';
 import {getSignalListeningStatusV1,readSignalListeningQuestionMetricsV1,readSignalListeningQuestionsMetricsV1} from '../../infrastructure/db/signal-listening-serving';
 import {signalWorkspaceEmbeddingDigestV1 as digest} from '../../packages/query-engine/src/index';
 import {signalListeningJevJobV1,createSignalListeningRuntimeStoreV1} from '../../services/workers/src/workers/signal-listening-jev';
+import type {JevStreamingMetricsV2} from '../../services/workers/src/workers/signal-jev-streaming-window';
 import {createCalibratedJevRuntimeProviderV2,jevStreamingExecutionFromEnvV2} from '../../services/workers/src/providers/jev-streaming-runtime';
 import {createWorkspaceEngineStorageV1,type WorkspaceEngineStorageV1} from '../../services/workers/src/workers/signal-workspace-engine-storage';
 import {createSyntheticJevFetchV1,deterministicR16LatencyV1} from './synthetic-jev';
@@ -22,6 +23,34 @@ export type R16ListeningRuntimeWitnessV1={
  before:R16ListeningRuntimeReceiptV1|null;
  after:R16ListeningRuntimeReceiptV1|null;
 };
+export type R16ListeningResourceObservationV1={
+ sampling:'sparse_start_after_each_job_and_final';
+ rss_is_peak:false;
+ limits:{max_in_flight:number;window_size:number;max_buffered_bytes:number;flush_size:number;max_flushes:number;flush_interval_ms:number};
+ rss_samples:Array<{at_ms:number;rss_bytes:number}>;
+ stream_peaks:{in_flight:number;reserved_working_bytes:number;buffered_responses:number;active_flushes:number};
+};
+/** Sparse process observations are descriptive only: RSS is not a stream-budget
+ * measurement and this helper never participates in any acceptance gate. */
+export function createR16ListeningResourceObservationV1(readRss:()=>number=()=>process.memoryUsage().rss){
+ const stream_peaks={in_flight:0,reserved_working_bytes:0,buffered_responses:0,active_flushes:0};
+ const rss_samples:Array<{at_ms:number;rss_bytes:number}>=[];
+ return{
+  observeStream(metrics:JevStreamingMetricsV2){
+   try{
+    for(const key of Object.keys(stream_peaks) as Array<keyof typeof stream_peaks>){
+     const value=metrics[key];if(Number.isFinite(value)&&value>=0)stream_peaks[key]=Math.max(stream_peaks[key],value);
+    }
+   }catch{/* Measurements cannot change a provider attempt or its receipt. */}
+  },
+  sampleRss(at_ms:number){
+   try{const rss_bytes=readRss();if(Number.isFinite(at_ms)&&at_ms>=0&&Number.isSafeInteger(rss_bytes)&&rss_bytes>=0)
+    rss_samples.push({at_ms,rss_bytes});}catch{/* Sparse process observation only. */}
+  },
+  snapshot(limits:R16ListeningResourceObservationV1['limits']):R16ListeningResourceObservationV1{return{sampling:'sparse_start_after_each_job_and_final',rss_is_peak:false,limits:{...limits},
+   rss_samples:rss_samples.map(sample=>({...sample})),stream_peaks:{...stream_peaks}};},
+ };
+}
 export async function withR16ListeningRuntimeWitnessV1<T>(database:R16ListeningRuntimeDatabaseV1,
  body:(witness:R16ListeningRuntimeWitnessV1,captureAfter:()=>Promise<R16ListeningRuntimeReceiptV1>)=>Promise<T>){
  const witness:R16ListeningRuntimeWitnessV1={contract:'r16-listening-runtime-witness-v1',before:null,after:null};
@@ -94,6 +123,8 @@ export async function runR16ListeningBenchmarkV1(args:{arm:R16ListeningArmV1;obj
   const latency_ms:number[]=[],calibration:Array<{at_ms:number;warmup:boolean;selected_roots:number;max_in_flight:number;shape_digests:string[]}>=[];
   const providerFetch=createSyntheticJevFetchV1({latencyForRequest:deterministicR16LatencyV1});
   const job_spans:Array<{start_ms:number;end_ms:number;warmup:boolean}>=[];
+  const resources=createR16ListeningResourceObservationV1(),sampleResources=()=>resources.sampleRss(performance.now()-start);
+  sampleResources();
   let requests=0;const resolved=new Set<string>(),commits:Array<{at_ms:number;roots:number}>=[];
   const measuredFetch:typeof fetch=async(...params)=>{requests++;const began=performance.now();try{return await providerFetch(...params);}finally{latency_ms.push(performance.now()-began);}};
   const calibrated_provider_factory:typeof createCalibratedJevRuntimeProviderV2=opts=>createCalibratedJevRuntimeProviderV2({...opts,
@@ -117,10 +148,13 @@ export async function runR16ListeningBenchmarkV1(args:{arm:R16ListeningArmV1;obj
   for(;jobs<(args.max_jobs??10000)&&resolved.size<expected.size;jobs++){
     const jobStart=performance.now()-start,calibrationIndex=calibration.length;
     const outcome=await signalListeningJevJobV1(f.run_id,{database:f.access.database,store,execution,preflight:()=>assertR16ListeningSyntheticPreflightV1({storage,storage_url:storageServer.base_url,configuration:workload.configuration,configuration_digest:workload.configuration_digest,env:process.env}),calibrated_provider_factory,
+     observe_stream:metrics=>resources.observeStream(metrics),
      observe_calibration:event=>calibration.push({...event,at_ms:performance.now()-start})});
     job_spans.push({start_ms:jobStart,end_ms:performance.now()-start,warmup:calibration.slice(calibrationIndex).some(event=>event.warmup)});
+    sampleResources();
     if(['failed','outcome_unknown','lease_lost'].includes(outcome.status))break;
    }
+  sampleResources();
   // The job promise has drained native apply/settlement, calibration and provider
   // cleanup. Confirm its completed identity/exposure before closing active time.
   const processingStatus=await getSignalListeningStatusV1(f.access);
@@ -146,7 +180,10 @@ export async function runR16ListeningBenchmarkV1(args:{arm:R16ListeningArmV1;obj
   return{contract_version:'r16-listening-capacity-measurement-v2',acceptance:'pending_native_fault_and_census_validation',
    capacity_gates,capacity,source_provenance,job_spans,warmup_wall_ms:job_spans.filter(span=>span.warmup).reduce((sum,span)=>sum+span.end_ms-span.start_ms,0),workload,root_census_digest:digest([...expected].sort()),cold_elapsed_ms:performance.now()-coldStart,wall_elapsed_ms,classification_wall_elapsed_ms,
    fully_resolved_distinct_roots:resolved.size,requests,requests_per_resolved_root:resolved.size?requests/resolved.size:null,latency_ms,calibration,commits,jobs,metrics,storage:storageServer.metrics(),
-   unresolved_roots:expected.size-resolved.size,storage_spans,sql_profile:args.query_profiler?.snapshot()??null};
+   unresolved_roots:expected.size-resolved.size,storage_spans,sql_profile:args.query_profiler?.snapshot()??null,
+   resource_observation:resources.snapshot({max_in_flight:execution.max_in_flight,window_size:execution.window_size,
+    max_buffered_bytes:execution.max_buffered_bytes,flush_size:execution.flush_size,max_flushes:execution.max_flushes,
+    flush_interval_ms:execution.flush_interval_ms})};
   });
   return{...observed.value,runtime_witness:observed.runtime_witness};
   });

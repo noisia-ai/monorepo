@@ -3,7 +3,7 @@ import test from 'node:test';
 import {validateSignalListeningConfigurationV1,signalWorkspaceEmbeddingDigestV1 as digest} from '../../packages/query-engine/src/index';
 import {R16_LISTENING_PREREGISTRATION_V1 as registration,r16ListeningWorkloadV1,
  R16_LISTENING_PREREGISTRATION_V2,r16ListeningWorkloadV2,summarizeR16ListeningCapacityV1,summarizeR16ListeningCapacityV2} from './listening-workload';
-import {assertR16ListeningAdmissionClockV1,reconcileR16ListeningResolvedRootsV1} from './run-listening-benchmark';
+import {assertR16ListeningAdmissionClockV1,createR16ListeningResourceObservationV1,reconcileR16ListeningResolvedRootsV1} from './run-listening-benchmark';
 test('preregistered R16 workloads bind generic Listening identity and consumer second pass, without legacy T&B',()=>{
  const a=r16ListeningWorkloadV1('defined_consumer_second_pass'),b=r16ListeningWorkloadV1('discovered_four');
  for(const w of[a,b]){assert.deepEqual(validateSignalListeningConfigurationV1(w.configuration),w.configuration);assert.equal(w.configuration_digest,digest(w.configuration));
@@ -21,6 +21,28 @@ test('native resolved census is DISTINCT roots, never two-pass HTTP calls; no mi
  for(const rows of[['root-a','root-a'],['root-b'],['root-a','foreign']])
   assert.throws(()=>reconcileR16ListeningResolvedRootsV1(expected,previous,rows),/census_invalid/);
  assert.deepEqual(reconcileR16ListeningResolvedRootsV1(expected,previous,['root-a']),[]);
+});
+
+test('sparse resource witness preserves exact stream peaks and labels process RSS samples as non-peak without changing gates',()=>{
+ let rss=12_000;
+ const witness=createR16ListeningResourceObservationV1(()=>rss);
+ witness.sampleRss(0);
+ witness.observeStream({in_flight:8,reserved_working_bytes:4096,buffered_responses:3,active_flushes:1});
+ rss=18_000;witness.sampleRss(3200);
+ witness.observeStream({in_flight:2,reserved_working_bytes:1024,buffered_responses:1,active_flushes:0});
+ const limits={max_in_flight:1024,window_size:4096,max_buffered_bytes:512*1024*1024,flush_size:1024,max_flushes:2,flush_interval_ms:250};
+ assert.deepEqual(witness.snapshot(limits),{sampling:'sparse_start_after_each_job_and_final',rss_is_peak:false,limits,
+  rss_samples:[{at_ms:0,rss_bytes:12_000},{at_ms:3200,rss_bytes:18_000}],
+  stream_peaks:{in_flight:8,reserved_working_bytes:4096,buffered_responses:3,active_flushes:1}});
+ const commits=Array.from({length:25},(_,i)=>({at_ms:i*1000+500,roots:i===0?2768:1250}));
+ const measurement={wall_elapsed_ms:30000,processing_elapsed_ms:25000,native_processing_complete:true,
+  resolved_roots:32768,commits,latency_ms:[100,300,500]};
+ const gatesBefore=summarizeR16ListeningCapacityV2(measurement).gates;
+ witness.observeStream({in_flight:1025,reserved_working_bytes:512*1024*1024+1,buffered_responses:4,active_flushes:3});
+ assert.deepEqual(summarizeR16ListeningCapacityV2(measurement).gates,gatesBefore,
+  'observational fields do not enter the acceptance calculation');
+ assert.deepEqual(witness.snapshot(limits).stream_peaks,{in_flight:1025,reserved_working_bytes:512*1024*1024+1,buffered_responses:4,active_flushes:3},
+  'observations retain a limit breach for audit instead of clamping it');
 });
 
 test('all fixed sustained windows and cold wall throughput remain mandatory despite plentiful two-pass HTTP',async()=>{
