@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import {mkdir,mkdtemp,readFile,rm,writeFile} from 'node:fs/promises';
+import {execFileSync} from 'node:child_process';
 import {join,resolve} from 'node:path';
 import test from 'node:test';
 import {
@@ -10,6 +11,7 @@ import {
   type ConsumerCpuBackendV1,
 } from './signal-listening-consumer-main-thread-cpu.synthetic.fixture';
 import {runListeningPipelineProfileV1} from './signal-listening-pipeline-profile.synthetic.fixture';
+import {captureR16ExpectedGitProvenanceV1,captureR16SourceProvenanceV1} from '../../../scripts/r16/source-provenance';
 
 const native=process.env.NOISIA_R16_CONSUMER_MAIN_THREAD_CPU_PG==='true';
 const pure=process.env.NOISIA_R16_CONSUMER_MAIN_THREAD_CPU_PURE==='true';
@@ -71,6 +73,12 @@ test(nativeTitle,{skip:!native},async()=>{
   assert.equal(snapshot.hard_duration_bound,false);
   const persisted=JSON.parse(await readFile(join(directory,'listening-main-thread-cpu.json'),'utf8')) as typeof snapshot;
   const pipeline=JSON.parse(await readFile(join(directory,'listening-pipeline-profile.json'),'utf8'));
+  const sourceBinding=pipeline.source_binding as {status:string;matches_expected_git:boolean;expected_git:unknown;runtime_before:unknown;runtime_after:unknown};
+  assert.equal(sourceBinding.status,'observed','CPU acceptance requires complete full-source provenance');
+  assert.equal(sourceBinding.matches_expected_git,true);
+  assert.deepEqual(sourceBinding.runtime_before,sourceBinding.expected_git,'runtime source before setup must match immutable Git');
+  assert.deepEqual(sourceBinding.runtime_after,sourceBinding.expected_git,'runtime source after factory cleanup must match immutable Git');
+  assert.equal((sourceBinding.expected_git as {head_sha:string}).head_sha,process.env.GITHUB_SHA);
   const events=pipeline.events as Record<string,unknown>;
   const counters=events.event_counts as Record<string,{seen:number;recorded:number;dropped:number}>;
   for(const [name,count] of Object.entries(counters)){
@@ -83,6 +91,21 @@ test(nativeTitle,{skip:!native},async()=>{
   const correlation=pipeline.correlation as Record<string,unknown>;
   assert.equal(correlation.provider_events_unmatched,0);
   assert.equal(correlation.durability_events_unmatched,0);
+  const timeline=events.events as Record<string,number[][]>;
+  const storeEvents=timeline.store??[];
+  const inputBatches=storeEvents.filter(row=>row[2]===1);
+  const reserveBatches=storeEvents.filter(row=>row[2]===3);
+  const calibrationEvents=timeline.calibration??[];
+  const measuredCalibration=calibrationEvents.find(row=>row[1]===0);
+  assert.equal(inputBatches[0]?.[3],4096,'the complete calibrated selection remains present before the first reservation');
+  assert.ok(reserveBatches.length>0,'the native consumer must record its reservations');
+  assert.ok(reserveBatches.every(row=>(row[3]??0)>0),'every reservation must contain only its observed proposals');
+  assert.ok(measuredCalibration,'the unbounded continuous measured phase must remain observable after warmup');
+  const measuredAt=measuredCalibration?.[0];assert.equal(typeof measuredAt,'number');
+  const nextCalibration=calibrationEvents.find(row=>(row[0]??-1)>measuredAt!);
+  const firstMeasuredReserve=reserveBatches.find(row=>(row[0]??-1)>=measuredAt!&&(!nextCalibration||(row[0]??Infinity)<(nextCalibration[0]??-1)));
+  assert.ok(firstMeasuredReserve&&(firstMeasuredReserve[3]??Infinity)<=1024,'the first measured reservation stays inside the 1,024-call handoff bound');
+  assert.equal(reserveBatches.reduce((sum,row)=>sum+(row[3]??0),0),4096,'all 4,096 selected consumers are reserved exactly once');
   assert.deepEqual(persisted,snapshot,'persisted CPU evidence must equal the safe observer snapshot');
   const capture=persisted.capture;
   assert.ok(capture,'successful CPU observation must retain a profile');
@@ -93,6 +116,41 @@ test(nativeTitle,{skip:!native},async()=>{
 });
 
 if(pure){
+  test('source provenance expected manifest comes from immutable Git objects, not the measured checkout',async()=>{
+    const privateParent=join(repoRoot,'.data','piloto-masivo','r16');
+    await mkdir(privateParent,{recursive:true,mode:0o700});
+    const temp=await mkdtemp(join(privateParent,'consumer-source-provenance-'));
+    try{
+      const git=(...args:string[])=>execFileSync('git',args,{cwd:temp,encoding:'utf8',stdio:['ignore','pipe','pipe']});
+      await mkdir(join(temp,'infrastructure','db'),{recursive:true});
+      await mkdir(join(temp,'scripts','r16'),{recursive:true});
+      await writeFile(join(temp,'infrastructure','db','included.ts'),'export const value = 1;\n');
+      await writeFile(join(temp,'infrastructure','db','excluded.md'),'private docs are not source inputs\n');
+      git('init','--quiet');
+      git('config','user.email','r16-source-provenance-test@invalid');
+      git('config','user.name','R16 source provenance test');
+      git('add','infrastructure/db/included.ts','infrastructure/db/excluded.md');
+      git('commit','--quiet','-m','source provenance fixture');
+      const expectedCommit=git('rev-parse','HEAD').trim();
+      const expected=captureR16ExpectedGitProvenanceV1(temp,expectedCommit);
+      const before=await captureR16SourceProvenanceV1(temp);
+      assert.equal(expected.head_sha,expectedCommit);
+      assert.deepEqual(expected.file_manifest,before.file_manifest);
+      assert.equal(expected.source_tree_sha256,before.source_tree_sha256);
+      assert.equal(expected.file_count,1);
+      assert.equal(expected.tree_status_sha256,before.tree_status_sha256);
+
+      await writeFile(join(temp,'infrastructure','db','included.ts'),'export const value = 2;\n');
+      await writeFile(join(temp,'scripts','r16','untracked.ts'),'export const untracked = true;\n');
+      const after=await captureR16SourceProvenanceV1(temp);
+      const independentlyRecomputed=captureR16ExpectedGitProvenanceV1(temp,expectedCommit);
+      assert.deepEqual(independentlyRecomputed,expected,'expectedGit must remain anchored to the immutable commit');
+      assert.notDeepEqual(after.file_manifest,expected.file_manifest,'dirty and untracked runtime source must not be self-expected');
+      assert.notEqual(after.source_tree_sha256,expected.source_tree_sha256);
+      assert.notEqual(after.tree_status_sha256,expected.tree_status_sha256);
+    }finally{await rm(temp,{recursive:true,force:true});}
+  });
+
   test('native CPU acceptance rejects a watchdog-stopped partial interval',()=>{
     assert.equal(nativeCpuCaptureComplete({status:'observed',stop_reason:'job_drained'}),true);
     assert.equal(nativeCpuCaptureComplete({status:'observed',stop_reason:'watchdog'}),false);

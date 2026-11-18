@@ -5,6 +5,7 @@ import {open,mkdir,realpath} from 'node:fs/promises';
 import {relative,resolve,join} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {performance} from 'node:perf_hooks';
+import {captureR16ExpectedGitProvenanceV1,captureR16SourceProvenanceV1} from '../../../scripts/r16/source-provenance';
 import {readSignalListeningQuestionsMetricsV1,getSignalListeningStatusV1} from '../signal-listening-serving';
 import {createSignalListeningStoreV1} from '../signal-listening-runs';
 import {loadR16ListeningNativeCensusV1} from '../../../scripts/r16/listening-native-census';
@@ -27,6 +28,12 @@ const STORE_METHODS=new Map<string,number>([['inputs',OP.inputs],['calls',OP.cal
  ['claim',OP.claim],['renew',OP.renew],['release',OP.release]]);
 const sha=(text:string)=>`sha256:${createHash('sha256').update(text.replace(/\s+/gu,' ').trim(),'utf8').digest('hex')}`;
 const roundMs=(value:number)=>Math.round(value*10)/10;
+function sameSourceManifest(left:Awaited<ReturnType<typeof captureR16SourceProvenanceV1>>|ReturnType<typeof captureR16ExpectedGitProvenanceV1>|null,
+ right:Awaited<ReturnType<typeof captureR16SourceProvenanceV1>>|ReturnType<typeof captureR16ExpectedGitProvenanceV1>|null){
+ return !!left&&!!right&&left.head_sha===right.head_sha&&left.source_tree_sha256===right.source_tree_sha256&&
+  left.tree_status_sha256===right.tree_status_sha256&&left.file_count===right.file_count&&
+  JSON.stringify(left.file_manifest)===JSON.stringify(right.file_manifest);
+}
 
 /** Bounded append-only counters preserve loss explicitly; no event is silently truncated. */
 function createProfileRecorder(){
@@ -173,7 +180,22 @@ export async function runListeningPipelineProfileV1(options?:{observeWorker?:(bo
   unknowns:['serialized_response_envelope_bytes','initial_metadata_vs_feed_metadata_vs_http_potential_vs_response_custody_bytes',
    'CPU','causal_wait_or_dominant_stage','base_admission_and_fixture_setup']};
  let primaryError:unknown,primaryFailed=false;
- try{await withFlatPrefixFullFixtureV1({afterSetup:async f=>{
+ const repoRoot=resolve(fileURLToPath(new URL('../../../',import.meta.url)),process.cwd());
+ const cpuObservation=Boolean(options?.observeWorker);
+ type SourceManifest=Awaited<ReturnType<typeof captureR16SourceProvenanceV1>>;
+ let expectedGit:ReturnType<typeof captureR16ExpectedGitProvenanceV1>|null=null;
+ let runtimeBefore:SourceManifest|null=null,runtimeAfter:SourceManifest|null=null;
+ const sourceCaptureErrors:string[]=[];
+ let sourceCaptureStage='expected_git';
+ try{
+  if(cpuObservation){
+   expectedGit=captureR16ExpectedGitProvenanceV1(repoRoot,process.env.GITHUB_SHA??'');
+   sourceCaptureStage='runtime_before';
+   runtimeBefore=await captureR16SourceProvenanceV1(repoRoot);
+   if(!sameSourceManifest(runtimeBefore,expectedGit))throw Error('r16_source_binding_before_mismatch');
+  }
+  sourceCaptureStage='fixture';
+  await withFlatPrefixFullFixtureV1({afterSetup:async f=>{
   partialSetup.native_fixture_started=true;
   const roots=f.params[4] as string[];assert.equal(roots.length,4096);assert.equal(new Set(roots).size,4096);
   const initial=await readFlatPrefixSetupStateV1(f.database as unknown as Parameters<typeof readFlatPrefixSetupStateV1>[0],f.params,f.run.id);
@@ -261,21 +283,35 @@ export async function runListeningPipelineProfileV1(options?:{observeWorker?:(bo
    unknowns:['serialized_response_envelope_bytes','initial_metadata_vs_feed_metadata_vs_http_potential_vs_response_custody_bytes',
     'CPU','causal_wait_or_dominant_stage','base_admission_and_fixture_setup'],
    jobs,events:recorder.snapshot()};
- }});}catch(error){primaryFailed=true;primaryError=error;receipt.status='inconclusive';receipt.failure='native_profile_or_cleanup_incomplete';}
+ }});
+ }catch(error){primaryFailed=true;primaryError=error;receipt.status='inconclusive';receipt.failure='native_profile_or_cleanup_incomplete';
+  if(cpuObservation&&sourceCaptureStage!=='fixture')sourceCaptureErrors.push(sourceCaptureStage);}
+ finally{
+  if(cpuObservation){
+   try{sourceCaptureStage='runtime_after';runtimeAfter=await captureR16SourceProvenanceV1(repoRoot);}
+   catch{sourceCaptureErrors.push('runtime_after');}
+   const sourceVerified=sameSourceManifest(runtimeBefore,expectedGit)&&sameSourceManifest(runtimeAfter,expectedGit);
+   receipt={...receipt,source_binding:{status:sourceVerified?'observed':'INCONCLUSIVE',matches_expected_git:sourceVerified,
+    expected_git:expectedGit,runtime_before:runtimeBefore,runtime_after:runtimeAfter,
+    capture_error_stages:[...new Set(sourceCaptureErrors)]}};
+  }
+ }
  try{
- const root=resolve(fileURLToPath(new URL('../../../',import.meta.url)),process.cwd());
+ const root=repoRoot;
  const configured=process.env.R16_LISTENING_PIPELINE_PROFILE_EVIDENCE_DIR;assert.ok(configured);
  const dir=resolve(root,configured),relativeDir=relative(join(root,'.data'),dir);
  assert.ok(relativeDir&&!relativeDir.startsWith('..')&&!relativeDir.startsWith('/'),'private .data path required');
  await mkdir(dir,{recursive:true,mode:0o700});assert.equal(await realpath(dir),dir);
  const file=join(dir,'listening-pipeline-profile.json');
  let bytes=Buffer.from(JSON.stringify(receipt)+'\n');
- while(bytes.length>MAX_ARTIFACT_BYTES){
-  const eventSets=receipt.events as ReturnType<typeof recorder.snapshot>;
-  const candidates=(Object.keys(eventSets.events) as Array<keyof typeof eventSets.events>).sort((a,b)=>eventSets.events[b].length-eventSets.events[a].length);
-  const target=candidates.find(key=>eventSets.events[key].length>0);if(!target)throw Error('r16_pipeline_profile_artifact_over_2mib');
-  eventSets.events[target].pop();eventSets.event_counts[target].recorded--;eventSets.event_counts[target].dropped++;
-  bytes=Buffer.from(JSON.stringify(receipt)+'\n');
+ if(!cpuObservation){
+  while(bytes.length>MAX_ARTIFACT_BYTES){
+   const eventSets=receipt.events as ReturnType<typeof recorder.snapshot>;
+   const candidates=(Object.keys(eventSets.events) as Array<keyof typeof eventSets.events>).sort((a,b)=>eventSets.events[b].length-eventSets.events[a].length);
+   const target=candidates.find(key=>eventSets.events[key].length>0);if(!target)throw Error('r16_pipeline_profile_artifact_over_2mib');
+   eventSets.events[target].pop();eventSets.event_counts[target].recorded--;eventSets.event_counts[target].dropped++;
+   bytes=Buffer.from(JSON.stringify(receipt)+'\n');
+  }
  }
  const finalEvents=receipt.events as ReturnType<typeof recorder.snapshot>;
  const finalProvider=finalEvents.events.provider,finalStore=finalEvents.events.store;

@@ -504,3 +504,110 @@ test('native late Mark rejected authority never selects or charges response memo
  assert.deepEqual(x.cohorts,[['late-0','late-1']]);assert.deepEqual(x.sent,['late-0','late-1']);assert.deepEqual(x.requeued,[]);
  assert.ok(x.all.slice(2).every(row=>row.status==='reserved'&&!row.results_applied));
 });
+
+test('Listening first reserve is capped and feeder handoff waits for every committed evaluate call',{timeout:15000},async()=>{
+ type Args=Parameters<typeof processJevLabelingPageV1<FacetInput,string>>[0];
+ const run={id:'first-reserve',lease_token:'lease',error_code:null,status:'running'}as LabelingRunV1;
+ const corpus=Array.from({length:4096},(_,index)=>({root_id:`first-${index}`,text:`mention-${index}`}))as FacetInput[];
+ const calls:LabelingCallV1<FacetInput>[]=[],events:string[]=[],reserveProposalCounts:number[]=[];
+ let storeReads=0,feedReads=0,providerStarted=0,physicalFetchStarted=0;
+ let releaseRateGate:(()=>void)|undefined,releaseFeedObserved:(()=>void)|undefined;
+ const rateGate=new Promise<void>(resolve=>{releaseRateGate=resolve;});
+ const feedObserved=new Promise<void>(resolve=>{releaseFeedObserved=resolve;});
+ const store={claim:async()=>run,renew:async()=>{},release:async()=>{},calls:async()=>calls.filter(call=>!call.results_applied),
+  inputs:async()=>{storeReads++;return corpus;},
+  reserve:async(_run:unknown,proposals:unknown[])=>{reserveProposalCounts.push(proposals.length);events.push(`reserve:${proposals.length}`);
+   const rows=proposals.map((proposal,index)=>({...proposal as object,id:`first-call-${calls.length+index}`,status:'reserved',raw_body:null,results_applied:false}))as LabelingCallV1<FacetInput>[];
+   calls.push(...rows);return rows;},
+  markSubmittingSelected:async(_run:unknown,select:()=>ReadonlyArray<LabelingCallV1<FacetInput>>)=>{
+   const selected=select();events.push(`mark:${selected.length}`);for(const call of selected)call.status='submitting';return selected;},
+  requeueUnsent:async(_run:unknown,rows:LabelingCallV1<FacetInput>[])=>{for(const call of rows)call.status='reserved';},
+  persistRawPage:async(_run:unknown,rows:Array<{call:LabelingCallV1<FacetInput>;raw:string}>)=>{for(const row of rows)row.call.raw_body=row.raw;},
+  settlePage:async(_run:unknown,rows:Array<{call:LabelingCallV1<FacetInput>}>)=>{for(const row of rows)row.call.status='settled';},
+  apply:async(_run:unknown,rows:Array<{call:LabelingCallV1<FacetInput>;results:string[]}>)=>{for(const row of rows)row.call.results_applied=true;},
+  finish:async()=>{run.status='running';return'running';},fail:async()=>{},markFailed:async()=>{},
+ }as unknown as Args['store'];
+ const provider:Args['provider']={max_concurrency:1024,max_response_bytes:16384,async evaluate(request){
+  providerStarted++;events.push(`evaluate:${providerStarted}`);await rateGate;physicalFetchStarted++;
+  return{http_status:200,latency_ms:1,body:JSON.stringify({model:request.model,usage:{input_tokens:1,output_tokens:0},answers:{q:{type:'noul',noul:.8}}})};
+ }};
+ let released=0;
+ const hooks:Args['hooks']={continuous_windows:()=>true,revisit_empty_after_apply:true,
+  price:()=>llmPriceV1('typesafe','jev-1.13.0','sync',.042),
+  propose:(_run,inputs)=>inputs.map(input=>({request:{model:'jev-1.13.0',state:input.text,questions:{q:{type:'noul',instructions:'configured'}}},
+   request_digest:input.root_id,custom_id:input.root_id,inputs:[input],reserved_micro_usd:100})),
+  map:(_run,call)=>[call.inputs[0]!.root_id],error:()=>[],labeled:()=>true,fail_on_error:true};
+ const pending=processJevLabelingPageV1({run_id:run.id,store,provider,hooks,
+  execution:{max_in_flight:1024,window_size:4096,flush_size:1024,max_flushes:2,max_buffered_bytes:512*1024*1024,flush_interval_ms:60_000},
+  initial_reservation:{max_calls:1024,release_selection:()=>{released++;events.push('selection:released');}},
+  read_next_inputs:async(_leased,bounds)=>{feedReads++;assert.ok(bounds.max_rows<=4096&&bounds.max_working_bytes>0);
+   if(feedReads===1){assert.equal(providerStarted,1024,'every first-cohort call must reach evaluate before fresh prefetch');
+    assert.equal(physicalFetchStarted,0,'handoff must not wait for provider rate admission or physical fetch');releaseFeedObserved?.();}
+   return[];
+  }});
+ await feedObserved;
+ assert.equal(storeReads,1);assert.equal(reserveProposalCounts[0],1024);
+ assert.equal(events.indexOf('selection:released')<events.indexOf('mark:1024'),true);
+ assert.equal(providerStarted,1024);assert.equal(physicalFetchStarted,0);
+ releaseRateGate?.();
+ const result=await pending;
+ assert.equal(result.status,'running');assert.equal(providerStarted,1024);assert.equal(calls.length,1024);
+ assert.equal(calls.filter(call=>call.results_applied).length,1024);assert.equal(released>=1,true);
+});
+
+test('a partial initial reservation sends only the authorized prefix and preserves later admission',{timeout:10000},async()=>{
+ type Args=Parameters<typeof processJevLabelingPageV1<FacetInput,string>>[0];
+ const run={id:'partial-first-reserve',lease_token:'lease',error_code:null,status:'running'}as LabelingRunV1;
+ const inputs=Array.from({length:16},(_,index)=>({root_id:`partial-${index}`,text:`mention-${index}`}))as FacetInput[];
+ const calls:LabelingCallV1<FacetInput>[]=[],proposed:number[]=[],sent:string[]=[];let released=0,feedReads=0;
+ const store={claim:async()=>run,renew:async()=>{},release:async()=>{},calls:async()=>calls.filter(call=>!call.results_applied),inputs:async()=>inputs,
+  reserve:async(_run:unknown,proposals:unknown[])=>{proposed.push(proposals.length);const rows=proposals.slice(0,3).map((proposal,index)=>({...proposal as object,
+    id:`partial-call-${index}`,status:'reserved',raw_body:null,results_applied:false}))as LabelingCallV1<FacetInput>[];calls.push(...rows);return rows;},
+  markSubmittingSelected:async(_run:unknown,select:()=>ReadonlyArray<LabelingCallV1<FacetInput>>)=>{const rows=select();for(const row of rows)row.status='submitting';return rows;},
+  requeueUnsent:async(_run:unknown,rows:LabelingCallV1<FacetInput>[])=>{for(const row of rows)row.status='reserved';},
+  persistRawPage:async(_run:unknown,rows:Array<{call:LabelingCallV1<FacetInput>;raw:string}>)=>{for(const row of rows)row.call.raw_body=row.raw;},
+  settlePage:async(_run:unknown,rows:Array<{call:LabelingCallV1<FacetInput>}>)=>{for(const row of rows)row.call.status='settled';},
+  apply:async(_run:unknown,rows:Array<{call:LabelingCallV1<FacetInput>}>)=>{for(const row of rows)row.call.results_applied=true;},
+  finish:async()=>{run.status='running';return'running';},fail:async()=>{},markFailed:async()=>{},
+ }as unknown as Args['store'];
+ const provider:Args['provider']={max_concurrency:8,max_response_bytes:4096,async evaluate(request){sent.push(String(request.state));return{http_status:200,latency_ms:1,
+  body:JSON.stringify({model:request.model,usage:{input_tokens:1,output_tokens:0},answers:{q:{type:'noul',noul:.8}}})};}};
+ const hooks:Args['hooks']={continuous_windows:()=>true,revisit_empty_after_apply:true,price:()=>llmPriceV1('typesafe','jev-1.13.0','sync',.042),
+  propose:(_run,rows)=>rows.map(input=>({request:{model:'jev-1.13.0',state:input.text,questions:{q:{type:'noul',instructions:'configured'}}},
+   request_digest:input.root_id,custom_id:input.root_id,inputs:[input],reserved_micro_usd:100})),map:(_run,call)=>[call.inputs[0]!.root_id],error:()=>[],labeled:()=>true};
+ const result=await processJevLabelingPageV1({run_id:run.id,store,provider,hooks,
+  execution:{max_in_flight:8,window_size:16,flush_size:8,max_flushes:1,max_buffered_bytes:16*1024*1024,flush_interval_ms:60_000},
+  initial_reservation:{max_calls:1024,release_selection:()=>{released++;}},
+  read_next_inputs:async()=>{feedReads++;return[];}});
+ assert.equal(proposed[0],8,'initial proposal count is bounded by max_in_flight as well as 1,024');
+ assert.deepEqual(sent,['mention-0','mention-1','mention-2'],'only committed reservation rows may reach the provider');
+ assert.equal(calls.length,3);assert.equal(calls.every(call=>call.results_applied),true);assert.equal(feedReads>=1,true);
+ assert.equal(released>=1,true);assert.equal(result.status,'running');
+});
+
+test('selection is released after reserve when the first Mark acknowledgement is lost',{timeout:5000},async()=>{
+ type Args=Parameters<typeof processJevLabelingPageV1<FacetInput,string>>[0];
+ const run={id:'lost-first-mark',lease_token:'lease',error_code:null,status:'running'}as LabelingRunV1;
+ const input={root_id:'lost-first-mark-root',text:'mention'} as FacetInput;
+ const calls:LabelingCallV1<FacetInput>[]=[],events:string[]=[];let sent=0;
+ const store={claim:async()=>run,renew:async()=>{},release:async()=>{},calls:async()=>calls.filter(call=>!call.results_applied),inputs:async()=>[input],
+  reserve:async(_run:unknown,proposals:unknown[])=>{events.push('reserve');const rows=proposals.map((proposal,index)=>({...proposal as object,
+    id:`lost-call-${index}`,status:'reserved',raw_body:null,results_applied:false}))as LabelingCallV1<FacetInput>[];calls.push(...rows);return rows;},
+  markSubmittingSelected:async(_run:unknown,select:()=>ReadonlyArray<LabelingCallV1<FacetInput>>)=>{assert.equal(select().length,1);events.push('mark_ack_lost');throw Error('submitting_ack_lost');},
+  requeueUnsent:async(_run:unknown,rows:LabelingCallV1<FacetInput>[])=>{events.push('requeue');for(const row of rows)row.status='reserved';},
+  persistRawPage:async()=>{},settlePage:async()=>{},apply:async()=>{},finish:async()=>{run.status='running';return'running';},
+  fail:async()=>{},markFailed:async()=>{},
+ }as unknown as Args['store'];
+ const provider:Args['provider']={max_concurrency:4,max_response_bytes:4096,async evaluate(){sent++;throw Error('must not hand off without known Mark acknowledgement');}};
+ const hooks:Args['hooks']={continuous_windows:()=>true,revisit_empty_after_apply:true,price:()=>llmPriceV1('typesafe','jev-1.13.0','sync',.042),
+  propose:(_run,rows)=>rows.map(value=>({request:{model:'jev-1.13.0',state:value.text,questions:{q:{type:'noul',instructions:'configured'}}},
+   request_digest:value.root_id,custom_id:value.root_id,inputs:[value],reserved_micro_usd:100})),map:()=>[],error:()=>[],labeled:()=>true};
+ let released=0;
+ await assert.rejects(processJevLabelingPageV1({run_id:run.id,store,provider,hooks,
+  execution:{max_in_flight:4,window_size:8,flush_size:4,max_flushes:1,max_buffered_bytes:16*1024*1024,flush_interval_ms:60_000},
+  initial_reservation:{max_calls:1024,release_selection:()=>{released++;events.push('selection_released');}},
+  read_next_inputs:async()=>{throw Error('feeder must not start before successful Mark handoff');}}),/submitting_ack_lost/u);
+ assert.deepEqual(events.slice(0,3),['reserve','selection_released','mark_ack_lost']);
+ assert.equal(events.includes('requeue'),true);assert.equal(sent,0);assert.equal(released,1);
+ assert.equal(calls.length,1);assert.equal(calls[0]?.status,'reserved');assert.equal(calls[0]?.results_applied,false);
+});

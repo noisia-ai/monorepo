@@ -2324,6 +2324,39 @@ jobs:
               or pipeline.get('interpretation') != 'provider_store_query_correlated_http_spans_independent_no_causal_claim' \
               or pipeline.get('h1_accepted') is not False or pipeline.get('cpu') != 'UNKNOWN':
               raise SystemExit('Original synthetic pipeline oracles are incomplete or inconclusive')
+          source_binding = pipeline.get('source_binding')
+          if type(source_binding) is not dict or source_binding.get('status') != 'observed' \
+              or source_binding.get('matches_expected_git') is not True or source_binding.get('capture_error_stages') != []:
+              raise SystemExit('Full source provenance must be captured before and after the fixture')
+          expected_source = source_binding.get('expected_git')
+          before_source = source_binding.get('runtime_before')
+          after_source = source_binding.get('runtime_after')
+          def validate_source_manifest(value):
+              if type(value) is not dict or set(value) != {'head_sha', 'source_tree_sha256', 'tree_status_sha256', 'file_count', 'file_manifest'}:
+                  return False
+              if value.get('head_sha') != os.environ.get('GITHUB_SHA'):
+                  return False
+              count, manifest = value.get('file_count'), value.get('file_manifest')
+              if type(count) is not int or count <= 0 or type(manifest) is not list or len(manifest) != count:
+                  return False
+              paths, tuples = [], []
+              for entry in manifest:
+                  if type(entry) is not dict or set(entry) != {'path', 'sha256'} or type(entry.get('path')) is not str \
+                      or type(entry.get('sha256')) is not str or len(entry['sha256']) != 71 \
+                      or not entry['sha256'].startswith('sha256:') \
+                      or any(ch not in '0123456789abcdef' for ch in entry['sha256'][7:]):
+                      return False
+                  paths.append(entry['path'])
+                  tuples.append([entry['path'], entry['sha256']])
+              if paths != sorted(set(paths)):
+                  return False
+              digest = 'sha256:' + __import__('hashlib').sha256(
+                  json.dumps(tuples, ensure_ascii=False, separators=(',', ':')).encode('utf-8')).hexdigest()
+              empty_status = 'sha256:' + __import__('hashlib').sha256(b'').hexdigest()
+              return value.get('source_tree_sha256') == digest and value.get('tree_status_sha256') == empty_status
+          if not all(validate_source_manifest(item) for item in (expected_source, before_source, after_source)) \
+              or before_source != expected_source or after_source != expected_source:
+              raise SystemExit('Full expected-Git and runtime before/after manifests must match exactly')
           events = pipeline.get('events')
           event_counts = events.get('event_counts') if type(events) is dict else None
           if type(event_counts) is not dict:
