@@ -59,10 +59,13 @@ async function setupState(c:PoolClient,params:unknown[],run_id:string){
  const run=(await c.query('SELECT status,lease_token IS NULL released FROM signal_labeling_runs WHERE id=$1',[run_id])).rows[0];assert.equal(run.status,'running');assert.equal(run.released,true,'setup releases its lease before measurement');
  return{...ledger,base_answers:answers,consumer_pending:8192,raw14_rows:state.rows,basis_fresh:true,run_status:run.status,open_exposure_micro_usd:String(BigInt(ledger.reserved_micro_usd)+BigInt(ledger.unknown_micro_usd)),external_spend_micro_usd:0};
 }
+export type FlatPrefixReadyFixtureV1={database:SharedWireFixtureV1['database'];run:SharedWireFixtureV1['run'];store:SharedWireFixtureV1['store'];rawPages:SharedWireFixtureV1['rawPages'];configuration:SharedWireFixtureV1['configuration'];configuration_id:string;map_id:string;params:unknown[];assertRawReady:()=>Promise<void>;deadline:()=>void};
+export type FlatPrefixAfterSetupCaseV1={afterSetup:(f:FlatPrefixReadyFixtureV1)=>Promise<void>;install?:never;read?:never;bounded?:never;markValidation?:never};
 export type FlatPrefixNativeCaseV1={install(c:PoolClient):Promise<void>;read(args:{c:PoolClient;params:unknown[];setup:Record<string,unknown>}):Promise<void>;
  bounded?:{callback(database:SharedWireFixtureV1['database'],body:()=>Promise<void>):Promise<void>;roster(roots:ReadonlyArray<string>):void;state(c:PoolClient,params:unknown[],run_id:string):Promise<Record<string,unknown>>};
  markValidation?:(f:SharedWireFixtureV1,storageMetrics:()=>Record<string,number>)=>Promise<void>};
-export async function withFlatPrefixFullFixtureV1(testCase:FlatPrefixNativeCaseV1,variant?:'bounded_1000_of_32768'|'mark_validation_enr_1000_of_32768'){
+export async function withFlatPrefixFullFixtureV1(testCase:FlatPrefixNativeCaseV1|FlatPrefixAfterSetupCaseV1,variant?:'bounded_1000_of_32768'|'mark_validation_enr_1000_of_32768'){
+ if('afterSetup'in testCase)assert.ok(variant===undefined&&typeof testCase.afterSetup==='function'&&!('install'in testCase)&&!('read'in testCase)&&!('bounded'in testCase)&&!('markValidation'in testCase),'afterSetup is exclusive to the released 4096 base fixture');
  assert.ok(variant===undefined||variant==='bounded_1000_of_32768'||variant==='mark_validation_enr_1000_of_32768','unknown finite flat-prefix fixture variant');
  const markValidation=variant==='mark_validation_enr_1000_of_32768';if(markValidation)assert.ok(testCase.markValidation,'ENR fixture requires its finite mutation callback');
  const bounded=variant!==undefined;if(bounded)assert.ok(testCase.bounded,'bounded fixture requires its native state and lifecycle witnesses');
@@ -105,6 +108,7 @@ export async function withFlatPrefixFullFixtureV1(testCase:FlatPrefixNativeCaseV
     // original roster, not a new consumer read, supplies the one fixed scope.
     deadline();const roots=Object.freeze(initial.map(i=>i.root_id));
     const params:unknown[]=[access.workspace_id,cfg.id,ctx.map_id,run.entity_context_digest,roots,'llm-processing'];
+    if('afterSetup'in testCase){await testCase.afterSetup({database,run,store,rawPages,configuration:cfg.configuration,configuration_id:cfg.id,map_id:ctx.map_id,params,assertRawReady:()=>storage.assertReady!(),deadline});return;}
     const c=await database.connect();
     try{
      const original=(await c.query("SELECT current_setting('search_path') search_path,current_setting('track_functions') track_functions,current_database() database,current_setting('server_version_num')::int version")).rows[0];
@@ -128,3 +132,5 @@ export async function withFlatPrefixFullFixtureV1(testCase:FlatPrefixNativeCaseV
    if(bounded)await testCase.bounded!.callback(ctx.database,body);else await body();
   }}});
 }
+
+export {setupState as readFlatPrefixSetupStateV1};
