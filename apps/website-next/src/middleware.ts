@@ -38,6 +38,15 @@ export default function middleware(request: NextRequest) {
       return new NextResponse("Noisia UAT", { status: 401, headers: { "WWW-Authenticate": 'Basic realm="Noisia UAT", charset="UTF-8"' } });
     }
   }
+  // noisia.ai/agenda is the address printed in the study decks (slide and QR) to book a call. It
+  // points at the booking page in NOISIA_AGENDA_URL, so the tool can change without reprinting a
+  // deck; until there is one, it opens the contact form.
+  const { pathname } = request.nextUrl;
+  if (pathname === "/agenda" || pathname === "/en/agenda") {
+    const english = pathname === "/en/agenda" || request.nextUrl.searchParams.get("lang") === "en";
+    const target = process.env.NOISIA_AGENDA_URL || new URL(english ? "/en/workshop" : "/taller", request.nextUrl.origin).toString();
+    return NextResponse.redirect(target, 302);
+  }
   // Personal links (/e/<token>) are a route of their own, outside the locale tree.
   if (request.nextUrl.pathname.startsWith("/e/")) return NextResponse.next();
   if (request.nextUrl.pathname === "/" && preferredHomeLocale(request) === "en") {

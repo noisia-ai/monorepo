@@ -28,6 +28,8 @@ export type Study = {
   coverPath: string | null;
   /** The study's own image (public, like the cover); null until one is generated. */
   heroPath: string | null;
+  /** Its horizontal version, for the card and the email (content-db/STUDY_IMAGES.md); null without one. */
+  heroWidePath: string | null;
   pdfPath: string | null;
   slideCount: number;
   version: number;
@@ -81,6 +83,7 @@ function fromRow(row: Row): Study | null {
     fullLanguage: row.full_language,
     coverPath: row.cover_path,
     heroPath: row.hero_path ?? null,
+    heroWidePath: null,
     pdfPath: row.pdf_path,
     slideCount: row.slide_count,
     version: row.version,
@@ -91,8 +94,16 @@ function fromRow(row: Row): Study | null {
 
 async function readStudies(): Promise<Study[]> {
   const view = showsDrafts() ? "content.review_studies" : "content.published_studies";
-  const { rows } = await contentDb().query<Row>(`select * from ${view} order by published_at desc nulls first, id`);
-  return rows.flatMap((row) => fromRow(row) ?? []);
+  const files = showsDrafts() ? "content.review_study_files" : "content.published_study_files";
+  const [{ rows }, wide] = await Promise.all([
+    contentDb().query<Row>(`select * from ${view} order by published_at desc nulls first, id`),
+    contentDb().query<{ study_id: string }>(`select study_id from ${files} where path = 'hero-wide.webp'`)
+  ]);
+  const withWide = new Set(wide.rows.map((row) => row.study_id));
+  return rows.flatMap((row) => {
+    const study = fromRow(row);
+    return study ? [{ ...study, heroWidePath: withWide.has(study.id) ? "hero-wide.webp" : null }] : [];
+  });
 }
 
 const cachedStudies = unstable_cache(readStudies, ["content-studies"], { tags: [STUDIES_TAG] });
@@ -176,7 +187,38 @@ export async function getStudyFile(study: Study, path: string): Promise<StudyFil
   return file;
 }
 
+/**
+ * A study can carry a second deck in English beside its main one (`web/deck-en/` in the study's
+ * folder). Both have the same slides; the English one lives under these prefixes.
+ */
+export type DeckLang = "main" | "en";
+export function deckPaths(study: Study, deck: DeckLang) {
+  return deck === "en"
+    ? { index: "deck-en/index.html", slides: "slides-en/", pdf: `pdf-en/${study.id}.pdf` }
+    : { index: "deck/index.html", slides: "slides/", pdf: study.pdfPath };
+}
+
+const englishCache = new Map<string, boolean>();
+
+/** Whether the study has its deck in English too. */
+export async function hasEnglishDeck(study: Study): Promise<boolean> {
+  const key = `${study.id}:${study.version}`;
+  const hit = englishCache.get(key);
+  if (hit !== undefined) return hit;
+  const view = showsDrafts() ? "content.review_study_files" : "content.published_study_files";
+  const { rows } = await contentDb().query(`select 1 from ${view} where study_id = $1 and path = 'deck-en/index.html'`, [study.id]);
+  if (englishCache.size > 500) englishCache.clear();
+  englishCache.set(key, rows.length > 0);
+  return rows.length > 0;
+}
+
+/** The deck a reader sees: the English one on the English site when there is one. */
+export async function deckFor(study: Study, locale: string): Promise<DeckLang> {
+  return locale === "en" && study.fullLanguage !== "en" && (await hasEnglishDeck(study)) ? "en" : "main";
+}
+
 /** Paths of the slide images of a study, in order. */
-export function slidePaths(study: Study): string[] {
-  return Array.from({ length: study.slideCount }, (_, i) => `slides/${String(i + 1).padStart(2, "0")}.webp`);
+export function slidePaths(study: Study, deck: DeckLang = "main"): string[] {
+  const prefix = deckPaths(study, deck).slides;
+  return Array.from({ length: study.slideCount }, (_, i) => `${prefix}${String(i + 1).padStart(2, "0")}.webp`);
 }
