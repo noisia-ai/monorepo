@@ -3,6 +3,7 @@ import {execFileSync} from 'node:child_process';
 import {mkdir,open,readFile,realpath} from 'node:fs/promises';
 import {dirname,extname,relative,resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
+import type {QueryResult} from 'pg';
 import {captureR16SourceProvenanceV1} from '../../../scripts/r16/source-provenance';
 import {runListeningStartupPrefixV1,startupErrorTreeV1,type StartupRosterObserverV1} from './signal-listening-startup-prefix.synthetic.fixture';
 import {sanitizeBoundedPopulationPlanV1} from './signal-listening-bounded-population-plan.synthetic.fixture';
@@ -76,7 +77,7 @@ export function createRosterQueryObserverV1(clock:()=>number=()=>performance.now
    stage='tracking_enable';await client.query("SET LOCAL track_functions='all'");
    stage='original_query';const result=await measure('original_roster_instrumented_ms',()=>Promise.resolve(forward()));known(result&&Array.isArray(result.rows)&&result.rows.length<=32768,'roster_original_rows');const roots=result.rows.map((r:any)=>r.root_id);known(roots.every(uuid),'roster_original_root');original.success=true;original.roster_count=roots.length;original.ordered_root_sha256=sha(JSON.stringify(roots));original.bag_root_sha256=sha(JSON.stringify([...roots].sort()));
    stage='counter_before';const beforeStats=await measure('diagnostic_counter_before_ms',()=>readStats(client,catBefore.identities));
-   stage='explain';plan.explain_count=1;const explained=await measure('diagnostic_explain_ms',()=>client.query('EXPLAIN (ANALYZE,BUFFERS,TIMING ON,FORMAT JSON) '+rosterExactSqlV1,args[1]));
+   stage='explain';plan.explain_count=1;const explained=await measure<QueryResult<Record<string,unknown>>>('diagnostic_explain_ms',()=>client.query('EXPLAIN (ANALYZE,BUFFERS,TIMING ON,FORMAT JSON) '+rosterExactSqlV1,args[1]));
    stage='counter_after';const afterStats=await measure('diagnostic_counter_after_ms',()=>readStats(client,catBefore.identities));
    const deltas=rosterFunctionDeltasV1(beforeStats,afterStats,catBefore.identities);stats={...stats,status:deltas.every(d=>d.status==='known')?'known':'UNKNOWN',before:beforeStats,after:afterStats,deltas,baseline_required_present:catBefore.identities.every(i=>beforeStats.some(r=>r.oid===i.oid)),backend_same:false,transaction_same:false};
    stage='plan_sanitize';known(explained.rows.length===1&&Array.isArray(explained.rows[0]['QUERY PLAN']),'roster_explain_document');
