@@ -1587,6 +1587,9 @@ jobs:
           path = Path(os.environ['R16_BOUNDED_POPULATION_PLAN_EVIDENCE_DIR']) / 'bounded-population-plan.json'
           if os.environ.get('PROFILE_CONCLUSION') != 'success' or os.environ.get('CLEANUP_CONCLUSION') != 'success':
               raise SystemExit('bounded population plan evidence is not accepted unless the native test and owned-lab cleanup both pass')
+          tap = Path('bounded-population-plan.tap')
+          if not tap.is_file() or tap.stat().st_size <= 0 or tap.stat().st_size > 1024 * 1024:
+              raise SystemExit('bounded population plan TAP receipt is missing, empty, or exceeds 1 MiB')
           if not path.is_file() or path.stat().st_size <= 0 or path.stat().st_size > 2 * 1024 * 1024:
               raise SystemExit('bounded population plan JSON is missing, empty, or exceeds 2 MiB')
           with path.open(encoding='utf-8') as stream:
