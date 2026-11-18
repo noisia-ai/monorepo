@@ -4,7 +4,8 @@ import { z } from "zod";
 import { getStudy } from "@/content/studies";
 import { CODE_MINUTES, newCode, pendingCookieName, startSignup } from "@/lib/content/access";
 import { studyCodeEmail } from "@/lib/content/study-code-email";
-import { clientIp, rateLimiter, sendEmail } from "@/lib/content/send-email";
+import { LOGO_PNG_BASE64 } from "@/lib/content/email-logo";
+import { clientIp, inlineAttachments, rateLimiter, sendEmail } from "@/lib/content/send-email";
 import { requestOrigin } from "@/lib/site";
 
 /**
@@ -68,7 +69,13 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     }
     // Local development without email: the code shows in the server log.
     console.log(`[unlock] dev code for ${study.id}: ${code}`);
-  } else if (!(await sendEmail({ to: [body.email], subject: email.subject, html: email.html, text: email.text }))) {
+  } else if (!(await sendEmail({
+      to: [body.email],
+      subject: email.subject,
+      html: email.html,
+      text: email.text,
+      attachments: inlineAttachments([{ id: "noisia", filename: "noisia.png", bytes: LOGO_PNG_BASE64, contentType: "image/png" }])
+    }))) {
     console.error(`[unlock] Could not send the code for ${study.id}`);
     return NextResponse.json({ ok: false, error: "email_failed" }, { status: 502 });
   }

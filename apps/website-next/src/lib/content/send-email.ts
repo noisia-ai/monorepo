@@ -7,6 +7,23 @@ import "server-only";
 
 export const FROM_EMAIL = () => process.env.STUDY_FROM_EMAIL || "Noisia <estudios@hey.noisia.ai>";
 export const TEAM_EMAIL = () => process.env.WORKSHOP_TO_EMAIL || "hola@noisia.ai";
+/** Where a reader's reply to a study email lands. Its own variable, so the workshop form keeps its address. */
+export const STUDY_REPLY_TO = () => process.env.STUDY_REPLY_TO || TEAM_EMAIL();
+/** Who gets the "Registro: …" note when someone opens a study. */
+export const STUDY_NOTIFY_TO = () => process.env.STUDY_NOTIFY_TO || STUDY_REPLY_TO();
+
+/** An image sent inside the email (`<img src="cid:<id>">`), so clients that block remote images still show it. */
+export type InlineImage = { id: string; filename: string; bytes: Buffer | string; contentType: string };
+
+/** Resend attachments for inline images. */
+export function inlineAttachments(images: InlineImage[]) {
+  return images.map((image) => ({
+    filename: image.filename,
+    content: typeof image.bytes === "string" ? image.bytes : image.bytes.toString("base64"),
+    content_type: image.contentType,
+    content_id: image.id
+  }));
+}
 
 export async function sendEmail(message: Record<string, unknown>): Promise<boolean> {
   const apiKey = process.env.RESEND_API_KEY;

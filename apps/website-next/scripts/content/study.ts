@@ -225,7 +225,22 @@ try {
     const bytes = Buffer.from(await page.screenshot({ type: "webp", quality: 86, omitBackground: true }));
     rendered.push({ path: "hero.webp", contentType: "image/webp", bytes });
 
-    // The same image for the access email, as a 2:3 JPEG on white (classic Outlook shows no webp).
+    // The banner of the access email (content-db/STUDY_EMAIL.md): 1040 × 560, shown at 520 × 280,
+    // a JPEG flattened on white (email clients show transparency as black and classic Outlook shows
+    // no webp). The image melts into white with multiply over a faint cyan and red aura, the brand's
+    // neon used as glow, never as a fill.
+    await page.setViewport({ width: 1040, height: 560, deviceScaleFactor: 1 });
+    await page.setContent(
+      `<html><body style="margin:0;width:1040px;height:560px;background:#fff;position:relative;overflow:hidden">
+        <div style="position:absolute;left:250px;top:150px;width:300px;height:380px;border-radius:50%;background:#009CA8;opacity:.2;filter:blur(70px)"></div>
+        <div style="position:absolute;left:490px;top:120px;width:300px;height:380px;border-radius:50%;background:#D91441;opacity:.1;filter:blur(70px)"></div>
+        <img src="data:${type};base64,${data}" style="position:absolute;left:50%;bottom:0;max-width:980px;max-height:556px;transform:translateX(-50%);mix-blend-mode:multiply">
+      </body></html>`,
+      { waitUntil: "load" }
+    );
+    rendered.push({ path: "email-banner.jpg", contentType: "image/jpeg", bytes: Buffer.from(await page.screenshot({ type: "jpeg", quality: 86 })) });
+
+    // The 2:3 thumbnail of the first access emails, kept so the emails already sent still show it.
     await page.setViewport({ width: 264, height: 396, deviceScaleFactor: 1 });
     await page.setContent(
       `<html><body style="margin:0;background:#fff"><img src="data:${type};base64,${data}" style="width:264px;height:396px;object-fit:cover;object-position:center top;display:block"></body></html>`,

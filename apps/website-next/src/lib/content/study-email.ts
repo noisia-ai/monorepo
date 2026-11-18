@@ -1,62 +1,195 @@
 /**
- * The email a reader gets after unlocking a study: their personal link, in Noisia's email design
- * (the same system as the Data API notifications, pitch-kit NOTIFICATIONS.md §2). Tables and inline
- * CSS so Gmail, Outlook and Apple Mail draw it; light mode forced. Generated from the templates in
- * the website-2026 working folder; edit there and regenerate, or edit here with care.
+ * The email a reader gets after opening a `registro` study: their personal link, in Noisia's email
+ * system (pitch-kit NOTIFICATIONS.md §2: white 600 px card on #f4f4f4, Google Sans, black pill,
+ * tables and inline styles, light mode forced).
  *
- * Placeholders: {{name}}, {{title}}, {{link}}, {{cover}}, {{slides}}. The block between
- * <!--cover:start--> and <!--cover:end--> goes away when the study has no email image.
+ * The study's image and the logo go inside the email by CID (`cid:study`, `cid:noisia`), never by
+ * URL: Outlook.com, Hotmail and many company clients block remote images until the reader allows
+ * them. The route attaches them (send-email.ts `inlineAttachments`). Design notes and the image
+ * rules: content-db/STUDY_EMAIL.md.
  */
 
-type Template = { subject: string; html: string; text: string };
+type Email = { subject: string; html: string; text: string };
 
-const templates: Record<"es" | "en", Template> = {
+export type StudyEmailVars = {
+  name: string;
+  title: string;
+  dek: string;
+  /** "Triggers & Barriers · ene–oct 2026" */
+  eyebrow: string;
+  slides: number;
+  link: string;
+  /** Up to two key figures of the study. */
+  stats: { value: string; label: string }[];
+  /** The study's banner, attached as `cid:study`. Null leaves the email without it. */
+  image: { alt: string } | null;
+};
+
+const copy = {
   es: {
-    subject: "{{title}} · tu link personal",
-    html: '<!DOCTYPE html>\n<html lang="es" xmlns="http://www.w3.org/1999/xhtml" xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office">\n<head>\n<meta charset="utf-8">\n<meta name="viewport" content="width=device-width,initial-scale=1">\n<meta http-equiv="X-UA-Compatible" content="IE=edge">\n<meta name="color-scheme" content="light only">\n<meta name="supported-color-schemes" content="light only">\n<meta name="x-apple-disable-message-reformatting">\n<title>{{title}}</title>\n<!--[if mso]><noscript><xml><o:OfficeDocumentSettings><o:PixelsPerInch>96</o:PixelsPerInch></o:OfficeDocumentSettings></xml></noscript><![endif]-->\n<style>\n  :root { color-scheme: light only; supported-color-schemes: light only; }\n  body { margin:0; padding:0; background:#f4f4f4; }\n  a { color:#008a8a; }\n  @media (max-width:620px) {\n    .card { width:100% !important; border-radius:0 !important; }\n    .pad { padding-left:24px !important; padding-right:24px !important; }\n    .cover-cell { display:block !important; width:100% !important; padding:0 0 20px 0 !important; }\n    .info-cell { display:block !important; width:100% !important; padding:0 !important; }\n  }\n</style>\n</head>\n<body style="margin:0;padding:0;background:#f4f4f4;">\n<!-- Preheader: lo que se lee en la bandeja -->\n<div style="display:none;max-height:0;overflow:hidden;opacity:0;mso-hide:all;font-size:1px;line-height:1px;color:#f4f4f4;">Tu link personal para volver al estudio cuando quieras, desde cualquier dispositivo.&#8199;&#847;&#8199;&#847;&#8199;&#847;&#8199;&#847;&#8199;&#847;&#8199;&#847;&#8199;&#847;&#8199;&#847;</div>\n\n<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#f4f4f4;">\n<tr><td align="center" style="padding:32px 12px;">\n\n  <table role="presentation" class="card" width="600" cellpadding="0" cellspacing="0" border="0" style="width:600px;max-width:600px;background:#ffffff;border:1px solid #e6e6e6;border-radius:14px;">\n\n    <!-- Logo -->\n    <tr><td class="pad" style="padding:28px 40px 8px 40px;">\n      <a href="https://noisia.ai" style="text-decoration:none;"><img src="https://noisia.ai/brand/noisia-email-2x.png" width="110" height="38" alt="Noisia" style="display:block;border:0;width:110px;height:38px;"></a>\n    </td></tr>\n\n    <!-- Saludo -->\n    <tr><td class="pad" style="padding:20px 40px 0 40px;font-family:\'Google Sans\',\'Helvetica Neue\',Helvetica,Arial,sans-serif;">\n      <p style="margin:0 0 12px 0;font-size:15px;line-height:23px;color:#2b2b2b;">Hola, {{name}}.</p>\n      <p style="margin:0;font-size:15px;line-height:23px;color:#2b2b2b;">Este es tu link para volver al estudio cuando quieras, desde cualquier dispositivo.</p>\n    </td></tr>\n\n    <!-- Estudio -->\n    <tr><td class="pad" style="padding:28px 40px 0 40px;">\n      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">\n        <tr>\n          <!--cover:start-->\n          <td class="cover-cell" width="132" valign="top" style="width:132px;padding:0 24px 0 0;">\n            <a href="{{link}}" style="text-decoration:none;"><img src="{{cover}}" width="132" height="198" alt="" style="display:block;border:0;width:132px;height:198px;border-radius:8px;background:#f4f4f4;object-fit:cover;"></a>\n          </td>\n          <!--cover:end-->\n          <td class="info-cell" valign="middle" style="font-family:\'Google Sans\',\'Helvetica Neue\',Helvetica,Arial,sans-serif;">\n            <p style="margin:0 0 8px 0;font-size:11px;line-height:16px;letter-spacing:.1em;text-transform:uppercase;color:#6d6d6d;">Estudio · {{slides}} láminas</p>\n            <h1 style="margin:0 0 24px 0;font-size:24px;line-height:32px;font-weight:700;color:#0a0a0a;">{{title}}</h1>\n\n            <!-- Botón (VML para Outlook, enlace para el resto) -->\n            <!--[if mso]>\n            <v:roundrect xmlns:v="urn:schemas-microsoft-com:vml" xmlns:w="urn:schemas-microsoft-com:office:word" href="{{link}}" style="height:46px;v-text-anchor:middle;width:200px;" arcsize="50%" stroke="f" fillcolor="#0a0a0a">\n              <w:anchorlock/>\n              <center style="color:#ffffff;font-family:Arial,sans-serif;font-size:15px;font-weight:bold;">Abrir el estudio</center>\n            </v:roundrect>\n            <![endif]-->\n            <!--[if !mso]><!-->\n            <a href="{{link}}" style="display:inline-block;background:#0a0a0a;color:#ffffff;font-family:\'Google Sans\',\'Helvetica Neue\',Helvetica,Arial,sans-serif;font-size:15px;font-weight:700;line-height:46px;padding:0 28px;border-radius:999px;text-decoration:none;mso-hide:all;">Abrir el estudio</a>\n            <!--<![endif]-->\n          </td>\n        </tr>\n      </table>\n    </td></tr>\n\n    <!-- Nota del link -->\n    <tr><td class="pad" style="padding:28px 40px 0 40px;font-family:\'Google Sans\',\'Helvetica Neue\',Helvetica,Arial,sans-serif;">\n      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#eef8f8;border-radius:10px;">\n        <tr><td style="padding:16px 20px;font-size:14px;line-height:21px;color:#2b2b2b;">\n          Este link es solo tuyo y funciona durante un año. Si el botón no abre, copia esta dirección en tu navegador:<br>\n          <a href="{{link}}" style="color:#008a8a;word-break:break-all;">{{link}}</a>\n        </td></tr>\n      </table>\n    </td></tr>\n\n    <!-- Invitación -->\n    <tr><td class="pad" style="padding:24px 40px 32px 40px;font-family:\'Google Sans\',\'Helvetica Neue\',Helvetica,Arial,sans-serif;">\n      <p style="margin:0;font-size:15px;line-height:23px;color:#2b2b2b;">Si te gustaría ver algo así sobre tu marca o tu categoría, responde a este correo y lo platicamos.</p>\n    </td></tr>\n\n    <!-- Pie -->\n    <tr><td class="pad" style="padding:20px 40px 28px 40px;border-top:1px solid #e6e6e6;font-family:\'Google Sans\',\'Helvetica Neue\',Helvetica,Arial,sans-serif;">\n      <p style="margin:0 0 4px 0;font-size:12px;line-height:18px;color:#6d6d6d;">Noisia · social intelligence architects · <a href="https://noisia.ai" style="color:#6d6d6d;text-decoration:underline;">noisia.ai</a></p>\n      <p style="margin:0;font-size:12px;line-height:18px;color:#6d6d6d;">Recibes este correo porque abriste un estudio en noisia.ai.</p>\n    </td></tr>\n\n  </table>\n\n</td></tr>\n</table>\n</body>\n</html>\n',
-    text: "Hola, {{name}}.\n\nEste es tu link para volver al estudio cuando quieras, desde cualquier dispositivo.\n\n{{title}}\nEstudio · {{slides}} láminas\n\nAbrir el estudio:\n{{link}}\n\nEste link es solo tuyo y funciona durante un año.\n\nSi te gustaría ver algo así sobre tu marca o tu categoría, responde a este correo y lo platicamos.\n\n--\nNoisia · social intelligence architects · https://noisia.ai\nRecibes este correo porque abriste un estudio en noisia.ai.\n",
+    subject: (title: string) => `${title} · tu link personal`,
+    preheader: (slides: number) => `Ya puedes ver las ${slides} láminas. Guarda este correo: tu link funciona un año.`,
+    hello: (name: string) => `Hola, ${name}.`,
+    intro: "Ya tienes acceso completo al estudio. Guarda este correo: el botón te regresa a él cuando quieras, desde cualquier dispositivo.",
+    slides: (n: number) => `${n} láminas`,
+    button: "Abrir el estudio completo",
+    note: "Este link es solo tuyo y funciona durante un año. Si el botón no abre, copia esta dirección en tu navegador:",
+    noteText: "Este link es solo tuyo y funciona durante un año.",
+    invite: "¿Te gustaría ver algo así sobre tu marca o tu categoría? Responde a este correo y lo platicamos.",
+    footer: "Recibes este correo porque abriste un estudio en noisia.ai."
   },
   en: {
-    subject: "{{title}} · your personal link",
-    html: '<!DOCTYPE html>\n<html lang="en" xmlns="http://www.w3.org/1999/xhtml" xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office">\n<head>\n<meta charset="utf-8">\n<meta name="viewport" content="width=device-width,initial-scale=1">\n<meta http-equiv="X-UA-Compatible" content="IE=edge">\n<meta name="color-scheme" content="light only">\n<meta name="supported-color-schemes" content="light only">\n<meta name="x-apple-disable-message-reformatting">\n<title>{{title}}</title>\n<!--[if mso]><noscript><xml><o:OfficeDocumentSettings><o:PixelsPerInch>96</o:PixelsPerInch></o:OfficeDocumentSettings></xml></noscript><![endif]-->\n<style>\n  :root { color-scheme: light only; supported-color-schemes: light only; }\n  body { margin:0; padding:0; background:#f4f4f4; }\n  a { color:#008a8a; }\n  @media (max-width:620px) {\n    .card { width:100% !important; border-radius:0 !important; }\n    .pad { padding-left:24px !important; padding-right:24px !important; }\n    .cover-cell { display:block !important; width:100% !important; padding:0 0 20px 0 !important; }\n    .info-cell { display:block !important; width:100% !important; padding:0 !important; }\n  }\n</style>\n</head>\n<body style="margin:0;padding:0;background:#f4f4f4;">\n<!-- Preheader: what shows in the inbox -->\n<div style="display:none;max-height:0;overflow:hidden;opacity:0;mso-hide:all;font-size:1px;line-height:1px;color:#f4f4f4;">Your personal link to come back to the study any time, from any device.&#8199;&#847;&#8199;&#847;&#8199;&#847;&#8199;&#847;&#8199;&#847;&#8199;&#847;&#8199;&#847;&#8199;&#847;</div>\n\n<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#f4f4f4;">\n<tr><td align="center" style="padding:32px 12px;">\n\n  <table role="presentation" class="card" width="600" cellpadding="0" cellspacing="0" border="0" style="width:600px;max-width:600px;background:#ffffff;border:1px solid #e6e6e6;border-radius:14px;">\n\n    <!-- Logo -->\n    <tr><td class="pad" style="padding:28px 40px 8px 40px;">\n      <a href="https://noisia.ai" style="text-decoration:none;"><img src="https://noisia.ai/brand/noisia-email-2x.png" width="110" height="38" alt="Noisia" style="display:block;border:0;width:110px;height:38px;"></a>\n    </td></tr>\n\n    <!-- Greeting -->\n    <tr><td class="pad" style="padding:20px 40px 0 40px;font-family:\'Google Sans\',\'Helvetica Neue\',Helvetica,Arial,sans-serif;">\n      <p style="margin:0 0 12px 0;font-size:15px;line-height:23px;color:#2b2b2b;">Hi {{name}},</p>\n      <p style="margin:0;font-size:15px;line-height:23px;color:#2b2b2b;">Here is your link to come back to the study any time, from any device.</p>\n    </td></tr>\n\n    <!-- Study -->\n    <tr><td class="pad" style="padding:28px 40px 0 40px;">\n      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">\n        <tr>\n          <!--cover:start-->\n          <td class="cover-cell" width="132" valign="top" style="width:132px;padding:0 24px 0 0;">\n            <a href="{{link}}" style="text-decoration:none;"><img src="{{cover}}" width="132" height="198" alt="" style="display:block;border:0;width:132px;height:198px;border-radius:8px;background:#f4f4f4;object-fit:cover;"></a>\n          </td>\n          <!--cover:end-->\n          <td class="info-cell" valign="middle" style="font-family:\'Google Sans\',\'Helvetica Neue\',Helvetica,Arial,sans-serif;">\n            <p style="margin:0 0 8px 0;font-size:11px;line-height:16px;letter-spacing:.1em;text-transform:uppercase;color:#6d6d6d;">Study · {{slides}} slides</p>\n            <h1 style="margin:0 0 24px 0;font-size:24px;line-height:32px;font-weight:700;color:#0a0a0a;">{{title}}</h1>\n\n            <!-- Button (VML for Outlook, a link for everyone else) -->\n            <!--[if mso]>\n            <v:roundrect xmlns:v="urn:schemas-microsoft-com:vml" xmlns:w="urn:schemas-microsoft-com:office:word" href="{{link}}" style="height:46px;v-text-anchor:middle;width:210px;" arcsize="50%" stroke="f" fillcolor="#0a0a0a">\n              <w:anchorlock/>\n              <center style="color:#ffffff;font-family:Arial,sans-serif;font-size:15px;font-weight:bold;">Open the study</center>\n            </v:roundrect>\n            <![endif]-->\n            <!--[if !mso]><!-->\n            <a href="{{link}}" style="display:inline-block;background:#0a0a0a;color:#ffffff;font-family:\'Google Sans\',\'Helvetica Neue\',Helvetica,Arial,sans-serif;font-size:15px;font-weight:700;line-height:46px;padding:0 28px;border-radius:999px;text-decoration:none;mso-hide:all;">Open the study</a>\n            <!--<![endif]-->\n          </td>\n        </tr>\n      </table>\n    </td></tr>\n\n    <!-- Link note -->\n    <tr><td class="pad" style="padding:28px 40px 0 40px;font-family:\'Google Sans\',\'Helvetica Neue\',Helvetica,Arial,sans-serif;">\n      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#eef8f8;border-radius:10px;">\n        <tr><td style="padding:16px 20px;font-size:14px;line-height:21px;color:#2b2b2b;">\n          This link is yours alone and works for one year. If the button does not open, paste this address into your browser:<br>\n          <a href="{{link}}" style="color:#008a8a;word-break:break-all;">{{link}}</a>\n        </td></tr>\n      </table>\n    </td></tr>\n\n    <!-- Invitation -->\n    <tr><td class="pad" style="padding:24px 40px 32px 40px;font-family:\'Google Sans\',\'Helvetica Neue\',Helvetica,Arial,sans-serif;">\n      <p style="margin:0;font-size:15px;line-height:23px;color:#2b2b2b;">If you would like to see something like this for your brand or your category, reply to this email and we can talk.</p>\n    </td></tr>\n\n    <!-- Footer -->\n    <tr><td class="pad" style="padding:20px 40px 28px 40px;border-top:1px solid #e6e6e6;font-family:\'Google Sans\',\'Helvetica Neue\',Helvetica,Arial,sans-serif;">\n      <p style="margin:0 0 4px 0;font-size:12px;line-height:18px;color:#6d6d6d;">Noisia · social intelligence architects · <a href="https://noisia.ai" style="color:#6d6d6d;text-decoration:underline;">noisia.ai</a></p>\n      <p style="margin:0;font-size:12px;line-height:18px;color:#6d6d6d;">You are receiving this email because you opened a study on noisia.ai.</p>\n    </td></tr>\n\n  </table>\n\n</td></tr>\n</table>\n</body>\n</html>\n',
-    text: "Hi {{name}},\n\nHere is your link to come back to the study any time, from any device.\n\n{{title}}\nStudy · {{slides}} slides\n\nOpen the study:\n{{link}}\n\nThis link is yours alone and works for one year.\n\nIf you would like to see something like this for your brand or your category, reply to this email and we can talk.\n\n--\nNoisia · social intelligence architects · https://noisia.ai\nYou are receiving this email because you opened a study on noisia.ai.\n",
-  },
+    subject: (title: string) => `${title} · your personal link`,
+    preheader: (slides: number) => `All ${slides} slides are open to you. Keep this email: your link works for a year.`,
+    hello: (name: string) => `Hi ${name},`,
+    intro: "You now have full access to the study. Keep this email: the button brings you back to it any time, from any device.",
+    slides: (n: number) => `${n} slides`,
+    button: "Open the full study",
+    note: "This link is yours alone and works for one year. If the button does not open, paste this address into your browser:",
+    noteText: "This link is yours alone and works for one year.",
+    invite: "Would you like to see something like this for your brand or your category? Reply to this email and we can talk.",
+    footer: "You are receiving this email because you opened a study on noisia.ai."
+  }
 };
 
 const escapeHtml = (value: string) =>
-  value
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
+  value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 
-export function studyAccessEmail(
-  lang: "es" | "en",
-  vars: {
-    name: string;
-    title: string;
-    link: string;
-    cover: string | null;
-    slides: number;
-  },
-): Template {
-  const t = templates[lang];
-  const fill = (source: string, escape: boolean) => {
-    const e = escape ? escapeHtml : (value: string) => value;
-    return source
-      .replaceAll("{{name}}", e(vars.name))
-      .replaceAll("{{title}}", e(vars.title))
-      .replaceAll("{{link}}", e(vars.link))
-      .replaceAll("{{cover}}", e(vars.cover ?? ""))
-      .replaceAll("{{slides}}", String(vars.slides));
-  };
-  const html = vars.cover
-    ? t.html
-    : t.html.replace(/<!--cover:start-->.*?<!--cover:end-->/s, "");
-  return {
-    subject: fill(t.subject, false),
-    html: fill(html, true),
-    text: fill(t.text, false),
-  };
+const FONT = "'Google Sans','Helvetica Neue',Helvetica,Arial,sans-serif";
+const INK = "#0a0a0a";
+const BODY = "#2b2b2b";
+const MUTED = "#6d6d6d";
+const LINE = "#e6e6e6";
+
+export function studyAccessEmail(lang: "es" | "en", vars: StudyEmailVars): Email {
+  const c = copy[lang];
+  const name = escapeHtml(vars.name);
+  const title = escapeHtml(vars.title);
+  const link = escapeHtml(vars.link);
+  const eyebrow = escapeHtml(`${vars.eyebrow} · ${c.slides(vars.slides)}`);
+  const stats = vars.stats.slice(0, 2);
+
+  const image = vars.image
+    ? `<tr><td class="pad" style="padding:24px 40px 0 40px;">
+      <a href="${link}" style="text-decoration:none;"><img src="cid:study" width="520" height="280" alt="${escapeHtml(vars.image.alt)}" style="display:block;border:0;width:100%;max-width:520px;height:auto;border-radius:12px;background:#ffffff;color:${MUTED};font-family:${FONT};font-size:13px;"></a>
+    </td></tr>`
+    : "";
+
+  const width = stats.length === 1 ? "100%" : "50%";
+  const tile = (stat: { value: string; label: string }, padding: string) => `<td class="tile" width="${width}" valign="top" style="width:${width};padding:${padding};">
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border:1px solid ${LINE};border-radius:10px;">
+            <tr><td style="padding:14px 16px;font-family:${FONT};">
+              <p style="margin:0 0 4px 0;font-size:22px;line-height:28px;font-weight:700;color:${INK};">${escapeHtml(stat.value)}</p>
+              <p style="margin:0;font-size:13px;line-height:18px;color:${MUTED};">${escapeHtml(stat.label)}</p>
+            </td></tr>
+          </table>
+        </td>`;
+  const tiles =
+    stats.length === 0
+      ? ""
+      : `<tr><td class="pad" style="padding:20px 40px 0 40px;">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
+        ${stats.length === 1 ? tile(stats[0]!, "0") : `${tile(stats[0]!, "0 6px 0 0")}\n        ${tile(stats[1]!, "0 0 0 6px")}`}
+      </tr></table>
+    </td></tr>`;
+
+  const html = `<!DOCTYPE html>
+<html lang="${lang}" xmlns="http://www.w3.org/1999/xhtml" xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="X-UA-Compatible" content="IE=edge">
+<meta name="color-scheme" content="light only">
+<meta name="supported-color-schemes" content="light only">
+<meta name="x-apple-disable-message-reformatting">
+<meta name="format-detection" content="telephone=no">
+<title>${title}</title>
+<!--[if mso]><noscript><xml><o:OfficeDocumentSettings><o:PixelsPerInch>96</o:PixelsPerInch></o:OfficeDocumentSettings></xml></noscript><![endif]-->
+<style>
+  :root { color-scheme: light only; supported-color-schemes: light only; }
+  body { margin:0; padding:0; background:#f4f4f4; }
+  a { color:#008a8a; }
+  @media (max-width:620px) {
+    .card { width:100% !important; border-radius:0 !important; }
+    .pad { padding-left:24px !important; padding-right:24px !important; }
+    .tile { display:block !important; width:100% !important; padding:0 0 10px 0 !important; }
+    .h1 { font-size:24px !important; line-height:31px !important; }
+  }
+</style>
+</head>
+<body style="margin:0;padding:0;background:#f4f4f4;">
+<div style="display:none;max-height:0;overflow:hidden;opacity:0;mso-hide:all;font-size:1px;line-height:1px;color:#f4f4f4;">${escapeHtml(c.preheader(vars.slides))}&#8199;&#847;&#8199;&#847;&#8199;&#847;&#8199;&#847;&#8199;&#847;&#8199;&#847;&#8199;&#847;&#8199;&#847;</div>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#f4f4f4;">
+<tr><td align="center" style="padding:32px 12px;">
+  <table role="presentation" class="card" width="600" cellpadding="0" cellspacing="0" border="0" style="width:600px;max-width:600px;background:#ffffff;border:1px solid ${LINE};border-radius:14px;">
+    <tr><td class="pad" style="padding:28px 40px 4px 40px;">
+      <a href="https://noisia.ai" style="text-decoration:none;"><img src="cid:noisia" width="110" height="38" alt="Noisia" style="display:block;border:0;width:110px;height:38px;color:${INK};font-family:${FONT};font-size:20px;font-weight:700;"></a>
+    </td></tr>
+    <tr><td class="pad" style="padding:20px 40px 0 40px;font-family:${FONT};">
+      <p style="margin:0 0 10px 0;font-size:15px;line-height:23px;color:${BODY};">${c.hello(name)}</p>
+      <p style="margin:0;font-size:15px;line-height:23px;color:${BODY};">${c.intro}</p>
+    </td></tr>
+    ${image}
+    <tr><td class="pad" style="padding:22px 40px 0 40px;font-family:${FONT};">
+      <p style="margin:0 0 8px 0;font-size:11px;line-height:16px;letter-spacing:.1em;text-transform:uppercase;color:${MUTED};">${eyebrow}</p>
+      <h1 class="h1" style="margin:0 0 10px 0;font-size:26px;line-height:34px;font-weight:700;color:${INK};">${title}</h1>
+      <p style="margin:0;font-size:15px;line-height:23px;color:${BODY};">${escapeHtml(vars.dek)}</p>
+    </td></tr>
+    ${tiles}
+    <tr><td class="pad" style="padding:24px 40px 0 40px;font-family:${FONT};">
+      <!--[if mso]>
+      <v:roundrect xmlns:v="urn:schemas-microsoft-com:vml" xmlns:w="urn:schemas-microsoft-com:office:word" href="${link}" style="height:48px;v-text-anchor:middle;width:270px;" arcsize="50%" stroke="f" fillcolor="${INK}">
+        <w:anchorlock/>
+        <center style="color:#ffffff;font-family:Arial,sans-serif;font-size:15px;font-weight:bold;">${c.button}</center>
+      </v:roundrect>
+      <![endif]-->
+      <!--[if !mso]><!-->
+      <a href="${link}" style="display:inline-block;background:${INK};color:#ffffff;font-family:${FONT};font-size:15px;font-weight:700;line-height:48px;padding:0 30px;border-radius:999px;text-decoration:none;mso-hide:all;">${c.button}</a>
+      <!--<![endif]-->
+    </td></tr>
+    <tr><td class="pad" style="padding:28px 40px 0 40px;font-family:${FONT};">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#eef8f8;border-radius:10px;">
+        <tr><td style="padding:16px 20px;font-size:14px;line-height:21px;color:${BODY};">
+          ${c.note}<br>
+          <a href="${link}" style="color:#008a8a;word-break:break-all;">${link}</a>
+        </td></tr>
+      </table>
+    </td></tr>
+    <tr><td class="pad" style="padding:24px 40px 32px 40px;font-family:${FONT};">
+      <p style="margin:0;font-size:15px;line-height:23px;color:${BODY};">${c.invite}</p>
+    </td></tr>
+    <tr><td class="pad" style="padding:20px 40px 28px 40px;border-top:1px solid ${LINE};font-family:${FONT};">
+      <p style="margin:0 0 4px 0;font-size:12px;line-height:18px;color:${MUTED};">Noisia · social intelligence architects · <a href="https://noisia.ai" style="color:${MUTED};text-decoration:underline;">noisia.ai</a></p>
+      <p style="margin:0;font-size:12px;line-height:18px;color:${MUTED};">${c.footer}</p>
+    </td></tr>
+  </table>
+</td></tr>
+</table>
+</body>
+</html>
+`;
+
+  const text = [
+    c.hello(vars.name),
+    "",
+    c.intro,
+    "",
+    `${vars.eyebrow} · ${c.slides(vars.slides)}`,
+    vars.title,
+    vars.dek,
+    ...stats.map((stat) => `- ${stat.value}: ${stat.label}`),
+    "",
+    `${c.button}:`,
+    vars.link,
+    "",
+    c.noteText,
+    "",
+    c.invite,
+    "",
+    "--",
+    "Noisia · social intelligence architects · https://noisia.ai",
+    c.footer
+  ].join("\n");
+
+  return { subject: c.subject(vars.title), html, text };
 }
