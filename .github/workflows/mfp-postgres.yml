@@ -37,6 +37,11 @@ on:
         type: boolean
         default: false
         required: false
+      consumer_main_thread_cpu_probe:
+        description: Run the isolated native Listening consumer main-thread CPU sampling diagnostic
+        type: boolean
+        default: false
+        required: false
 
 permissions:
   contents: read
@@ -2156,6 +2161,210 @@ jobs:
           path: |
             mark-validation-enr-v2.tap
             .data/piloto-masivo/r16/mark-validation-enr-v2-native-evidence/mark-validation-enr.json
+          if-no-files-found: ignore
+          retention-days: 14
+          include-hidden-files: true
+
+  consumer-main-thread-cpu-probe-experimental:
+    name: R16 Listening consumer main-thread CPU sample (isolated lab)
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.scope == 'listening-smoke' && inputs.consumer_main_thread_cpu_probe }}
+    runs-on: ubuntu-latest
+    # The profiler timer observes a sample window but cannot interrupt a blocked JS thread.
+    # This outer timeout only bounds the isolated CI job; it is not a CPU or memory claim.
+    timeout-minutes: 40
+    env:
+      R16BENCH_RUN_ID: benchmark-pg17
+      R16BENCH_SERVICES: postgres,redis
+      NOISIA_R16_LOCAL_PG_LAB: r16-benchmark-pg17
+      DATABASE_SSL: 'false'
+      R16_LISTENING_PIPELINE_PROFILE_EVIDENCE_DIR: .data/piloto-masivo/r16/consumer-main-thread-cpu-native-evidence
+    steps:
+      - uses: actions/checkout@v4
+      - name: Initialize an empty consumer CPU TAP receipt
+        run: printf '%s\n' '# native Listening consumer CPU profile did not start' > listening-main-thread-cpu.tap
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+      - name: Install frozen Node workspace dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Require the owned consumer CPU lab and evidence path to be absent
+        run: |
+          set -euo pipefail
+          if docker inspect r16-benchmark-pg17 >/dev/null 2>&1; then
+            echo '::error::The named R16 consumer CPU PostgreSQL container already exists'
+            exit 1
+          fi
+          if docker volume inspect r16bench-benchmark-pg17_postgres-data >/dev/null 2>&1; then
+            echo '::error::The named R16 consumer CPU PostgreSQL volume already exists'
+            exit 1
+          fi
+          lab_dir=.data/piloto-masivo/r16/labs/benchmark-pg17
+          evidence_dir=.data/piloto-masivo/r16/consumer-main-thread-cpu-native-evidence
+          if [[ -e "$lab_dir/private.env" || -e "$lab_dir/connection.env" || -e "$evidence_dir" ]]; then
+            echo '::error::Private files for the named R16 consumer CPU lab already exist'
+            exit 1
+          fi
+      - name: Start the owned official PostgreSQL 17 and Redis consumer CPU lab
+        run: |
+          set -euo pipefail
+          printf '%s\n' 'R16_CONSUMER_MAIN_THREAD_CPU_LAB_OWNED=true' >> "$GITHUB_ENV"
+          scripts/r16/lab-up.sh
+      - name: Apply migrations to the fresh consumer CPU lab
+        env:
+          NOISIA_DB_SMOKE_RESET_SCHEMA: 'true'
+          NOISIA_DB_SMOKE_EMULATE_SUPABASE_ROLES: 'true'
+          NOISIA_MFP_PG_CI: 'true'
+        run: |
+          set -euo pipefail
+          connection_file=.data/piloto-masivo/r16/labs/benchmark-pg17/connection.env
+          test -f "$connection_file"
+          set -a
+          source "$connection_file"
+          set +a
+          export DATABASE_SSL=false
+          export NOISIA_R16_LOCAL_PG_LAB=r16-benchmark-pg17
+          pnpm --filter @noisia/db db:smoke:migrations
+      - name: Run the native consumer pipeline and main-thread CPU profile
+        id: profile
+        env:
+          NOISIA_R16_LISTENING_PIPELINE_PROFILE_PG: 'true'
+          NOISIA_R16_LISTENING_PIPELINE_PROFILE_PURE: 'false'
+          NOISIA_R16_CONSUMER_MAIN_THREAD_CPU_PG: 'true'
+          NOISIA_R16_CONSUMER_MAIN_THREAD_CPU_PURE: 'false'
+          NOISIA_R16_NATIVE_FIXTURE_PG: 'true'
+          NOISIA_MASS_LABELING_ENABLED: 'true'
+          NOISIA_SIGNAL_LISTENING_ENABLED: 'true'
+          NOISIA_JEV_PROVIDER_ENABLED: 'true'
+          NOISIA_JEV_STREAMING_V2_ENABLED: 'true'
+        run: |
+          set -o pipefail
+          connection_file=.data/piloto-masivo/r16/labs/benchmark-pg17/connection.env
+          test -f "$connection_file"
+          set -a
+          source "$connection_file"
+          set +a
+          export DATABASE_SSL=false
+          export NOISIA_R16_LOCAL_PG_LAB=r16-benchmark-pg17
+          set +e
+          pnpm exec node --test --test-concurrency=1 --import tsx \
+            infrastructure/db/migrations/signal-listening-consumer-main-thread-cpu.postgres.test.ts \
+            2>&1 | tee listening-main-thread-cpu.tap
+          test_status=${PIPESTATUS[0]}
+          set -e
+          if [[ "$test_status" -ne 0 ]] \
+            || ! grep -qx '# tests 1' listening-main-thread-cpu.tap \
+            || ! grep -qx '# pass 1' listening-main-thread-cpu.tap \
+            || ! grep -qx '# fail 0' listening-main-thread-cpu.tap \
+            || ! grep -qx '# cancelled 0' listening-main-thread-cpu.tap \
+            || ! grep -qx '# skipped 0' listening-main-thread-cpu.tap \
+            || ! grep -qx '# Subtest: native Listening main-thread CPU profile brackets the drained synthetic consumer pipeline' listening-main-thread-cpu.tap; then
+            echo '::error::The native consumer pipeline CPU profile failed, was skipped, or did not execute the exact test'
+            exit 1
+          fi
+      - name: Stop and remove only the owned consumer CPU lab
+        id: cleanup
+        if: ${{ always() && env.R16_CONSUMER_MAIN_THREAD_CPU_LAB_OWNED == 'true' }}
+        run: |
+          set -euo pipefail
+          lab_dir=.data/piloto-masivo/r16/labs/benchmark-pg17
+          if [[ -f "$lab_dir/private.env" ]]; then
+            scripts/r16/lab-down.sh
+          fi
+          if docker inspect r16-benchmark-pg17 >/dev/null 2>&1; then
+            echo '::error::Owned R16 consumer CPU PostgreSQL container survived cleanup'
+            exit 1
+          fi
+          if docker volume inspect r16bench-benchmark-pg17_postgres-data >/dev/null 2>&1; then
+            echo '::error::Owned R16 consumer CPU PostgreSQL volume survived cleanup'
+            exit 1
+          fi
+      - name: Validate the native consumer CPU and pipeline evidence
+        if: always()
+        env:
+          PROFILE_CONCLUSION: ${{ steps.profile.conclusion }}
+          CLEANUP_CONCLUSION: ${{ steps.cleanup.conclusion }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import math
+          import os
+          from pathlib import Path
+
+          directory = Path(os.environ['R16_LISTENING_PIPELINE_PROFILE_EVIDENCE_DIR'])
+          cpu_path = directory / 'listening-main-thread-cpu.json'
+          pipeline_path = directory / 'listening-pipeline-profile.json'
+          tap = Path('listening-main-thread-cpu.tap')
+          if os.environ.get('PROFILE_CONCLUSION') != 'success' or os.environ.get('CLEANUP_CONCLUSION') != 'success':
+              raise SystemExit('Consumer CPU evidence requires a passing profile and owned-lab cleanup')
+          for path, cap in ((cpu_path, 2 * 1024 * 1024), (pipeline_path, 2 * 1024 * 1024), (tap, 1024 * 1024)):
+              if not path.is_file() or path.is_symlink() or path.stat().st_size <= 0 or path.stat().st_size > cap:
+                  raise SystemExit('Consumer CPU evidence file is missing, unsafe, empty, or over its cap')
+          if cpu_path.stat().st_size + pipeline_path.stat().st_size > 2 * 1024 * 1024:
+              raise SystemExit('Combined consumer CPU and pipeline evidence exceeds 2 MiB')
+          with cpu_path.open(encoding='utf-8') as stream:
+              cpu = json.load(stream)
+          with pipeline_path.open(encoding='utf-8') as stream:
+              pipeline = json.load(stream)
+          if type(cpu) is not dict or type(pipeline) is not dict:
+              raise SystemExit('Consumer CPU and pipeline receipts must each be a single JSON object')
+          expected = {'contract': 'r16-consumer-main-thread-cpu-v1', 'status': 'observed', 'diagnostic_only': True,
+              'h1_accepted': False, 'cpu': 'SAMPLED_NOT_EXACT', 'hard_duration_bound': False,
+              'internal_profiler_memory_bound': 'UNKNOWN'}
+          if any(type(cpu.get(key)) is not type(expected_value) or cpu.get(key) != expected_value
+                 for key, expected_value in expected.items()):
+              raise SystemExit('Consumer CPU receipt does not match its diagnostic-only contract')
+          if 'candidate_accepted' in cpu or 'speedup_claim' in cpu:
+              raise SystemExit('Consumer CPU receipt must not add candidate or speedup claims')
+          if pipeline.get('status') != 'observed' or pipeline.get('root_count') != 4096 \
+              or pipeline.get('h1_accepted') is not False or pipeline.get('cpu') != 'UNKNOWN':
+              raise SystemExit('Original synthetic pipeline oracles did not complete unchanged')
+          if cpu.get('stop_reason') not in {'job_drained', 'watchdog'} or type(cpu.get('stop_commands')) is not int \
+              or cpu.get('stop_commands') != 1 or cpu.get('worker') != 'drained':
+              raise SystemExit('Consumer CPU profile did not stop once after worker drain or the observed watchdog')
+          cleanup = cpu.get('cleanup')
+          if type(cleanup) is not dict or cleanup.get('disable_confirmed') is not True \
+              or cleanup.get('disconnect_confirmed') is not True or cleanup.get('watchdog_cleared') is not True:
+              raise SystemExit('Consumer CPU profiler/session cleanup is incomplete')
+          capture = cpu.get('capture')
+          if type(capture) is not dict or type(capture.get('profile')) is not dict or type(capture.get('summary')) is not dict:
+              raise SystemExit('Sanitized CPU capture or summary is missing')
+          profile, summary = capture['profile'], capture['summary']
+          nodes, samples, deltas = profile.get('nodes'), profile.get('samples'), profile.get('time_deltas_us')
+          if type(nodes) is not list or not 1 <= len(nodes) <= 8192 or type(samples) is not list \
+              or not 1 <= len(samples) <= 65536 or type(deltas) is not list or len(deltas) != len(samples):
+              raise SystemExit('CPU profile node/sample bounds are invalid')
+          duration = profile.get('duration_us')
+          if type(duration) not in (int, float) or not math.isfinite(duration) or duration < 0 or duration > 60_000_000:
+              raise SystemExit('Observed CPU profile duration is invalid or exceeds 60 seconds')
+          if summary.get('sample_count') != len(samples) or summary.get('positions') != 'GENERATED_NO_SOURCE_MAP' \
+              or summary.get('attribution') != 'main_thread_samples_not_exact_cpu' \
+              or summary.get('inclusive_samples') != 'NOT_COMPUTED':
+              raise SystemExit('CPU summary semantics or counts are invalid')
+          if capture.get('profile_bytes', 0) > 1_048_576 or capture.get('summary_bytes', 0) > 131_072:
+              raise SystemExit('Sanitized CPU profile/summary retention limit exceeded')
+          manifest = cpu.get('source_manifest')
+          if type(manifest) is not list or len(manifest) != 15:
+              raise SystemExit('CPU profile source manifest is incomplete')
+          for item in manifest:
+              if type(item) is not dict or set(item) != {'path', 'sha256'} or type(item.get('path')) is not str \
+                  or type(item.get('sha256')) is not str or len(item['sha256']) != 64 \
+                  or any(ch not in '0123456789abcdef' for ch in item['sha256']):
+                  raise SystemExit('CPU profile source manifest entry is malformed')
+          PY
+      - name: Upload native consumer CPU profile evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: r16-consumer-main-thread-cpu-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            listening-main-thread-cpu.tap
+            .data/piloto-masivo/r16/consumer-main-thread-cpu-native-evidence/listening-pipeline-profile.json
+            .data/piloto-masivo/r16/consumer-main-thread-cpu-native-evidence/listening-main-thread-cpu.json
           if-no-files-found: ignore
           retention-days: 14
           include-hidden-files: true
