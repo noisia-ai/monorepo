@@ -26,7 +26,7 @@ function samplingOwnType(object:unknown,key:string):WriteFunctionSampleTypeV1{co
  * proof of execution/authorization. DDL tokens inside comments/strings may
  * match. No live catalog lookup is used. */
 export function extractListeningWriteFunctionNamesV1(sql:string):string[]{
- const names=new Set<string>();for(const match of sql.matchAll(/CREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+(?:public\.)?([a-z][a-z0-9_]*)\s*\(/giu))names.add(match[1]!);
+ const names=new Set<string>();for(const match of sql.matchAll(/\bFUNCTION\s+(?:IF\s+EXISTS\s+)?(?:public\.)?([a-z][a-z0-9_]*)\s*\(/giu))names.add(match[1]!.toLowerCase());
  for(const match of sql.matchAll(/\bALTER\s+FUNCTION\s+(?:public\.)?[a-z][a-z0-9_]*\s*\([^;]*?\)\s+RENAME\s+TO\s+([a-z][a-z0-9_]*)\s*;/giu))names.add(match[1]!.toLowerCase());
  return[...names].sort();
 }
