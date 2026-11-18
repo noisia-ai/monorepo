@@ -22,6 +22,13 @@ export type WriteFunctionSamplingV1={stage:'query'|'row_count'|'catalog_name'|'c
 function samplingOwn(object:unknown,key:string):{present:true;value:unknown}|{present:false}{try{if(object===null||typeof object!=='object')return{present:false};const d=Object.getOwnPropertyDescriptor(object,key);return d&&'value'in d?{present:true,value:d.value}:{present:false};}catch{return{present:false};}}
 function samplingOwnType(object:unknown,key:string):WriteFunctionSampleTypeV1{const d=samplingOwn(object,key);return d.present?writeFunctionSampleTypeV1(d.value):'UNKNOWN';}
 
+/** Registry provenance is numbered migration DDL, including renamed originals.
+ * References/call tokens never register a function. No live catalog expansion. */
+export function extractListeningWriteFunctionNamesV1(sql:string):string[]{
+ const names=new Set<string>();for(const match of sql.matchAll(/CREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+(?:public\.)?([a-z][a-z0-9_]*)\s*\(/giu))names.add(match[1]!);
+ for(const match of sql.matchAll(/\bALTER\s+FUNCTION\s+(?:public\.)?[a-z][a-z0-9_]*\s*\([^;]*?\)\s+RENAME\s+TO\s+([a-z][a-z0-9_]*)\s*;/giu))names.add(match[1]!.toLowerCase());
+ return[...names].sort();
+}
 export function extractListeningWriteTemplatesV1(source:{labeling:string;listening:string}):ListeningWriteTemplatesV1{
  const literals=(text:string)=>[...text.matchAll(/`([^`]+)`/gu)].map(match=>match[1]!);
  const reserve=literals(source.labeling).filter(sql=>sql.startsWith('INSERT INTO signal_labeling_calls(run_id,workspace_id,provider,model,transport,custom_id,request_digest,request,inputs,reserved_micro_usd,retry_depth,budget_date,budget_timezone)'));

@@ -6,7 +6,7 @@ import {dirname,isAbsolute,join,relative,resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import type {Pool,PoolClient} from 'pg';
 import {runMassLabelingAcceptanceFixtureV1} from './signal-mass-labeling-acceptance.synthetic.fixture';
-import {createListeningWriteFunctionObserverV1,extractListeningWriteTemplatesV1} from './signal-listening-write-functions.synthetic.fixture';
+import {createListeningWriteFunctionObserverV1,extractListeningWriteTemplatesV1,extractListeningWriteFunctionNamesV1} from './signal-listening-write-functions.synthetic.fixture';
 import {flatPrefixLedgerSqlV1} from './signal-listening-flat-prefix.synthetic.fixture';
 import {captureStartupCallbackV1,closeStartupFactoryV1,assertStartupOwnedAbsentV1,startupErrorTreeV1,type StartupCallbackStateV1} from './signal-listening-startup-prefix.synthetic.fixture';
 import {withSharedWireDefaultPostcheckV1} from './signal-listening-statement-shared-wire.oracle';
@@ -97,7 +97,7 @@ export async function runListeningPartialAdmissionV1(directory:string):Promise<P
      known(row&&row.configuration_id===cfg.id&&row.map_id===ctx.map_id&&row.actor_user_id===ctx.actor_user_id,'partial_admission_run_identity');return hash(JSON.stringify(row));};
     const originalIdentity=await runIdentity();report.native_run_identity_sha256=originalIdentity;
     let warmup=true;const callRoots=new Map<string,string>();
-    const migrations=join(repo,'infrastructure/db/migrations'),knownFunctions=new Set<string>();for(const name of (await readdir(migrations)).filter(name=>/^\d{4}_.+\.sql$/u.test(name))){const sql=await readFile(join(migrations,name),'utf8');for(const match of sql.matchAll(/CREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+(?:public\.)?([a-z][a-z0-9_]*)\s*\(/giu))knownFunctions.add(match[1]!);}
+    const migrations=join(repo,'infrastructure/db/migrations'),knownFunctions=new Set<string>();for(const name of (await readdir(migrations)).filter(name=>/^\d{4}_.+\.sql$/u.test(name))){const sql=await readFile(join(migrations,name),'utf8');for(const functionName of extractListeningWriteFunctionNamesV1(sql))knownFunctions.add(functionName);}
     const templates=extractListeningWriteTemplatesV1({labeling:await readFile(join(repo,'infrastructure/db/signal-labeling-runs.ts'),'utf8'),listening:await readFile(join(repo,'infrastructure/db/signal-listening-runs.ts'),'utf8')});
     writes=createListeningWriteFunctionObserverV1({database,eligible:()=>!warmup,templates,known_function_names:[...knownFunctions],roots_for_mark:ids=>ids.map(id=>{const root=callRoots.get(id);known(root,'partial_admission_mark_root_missing');return root;})});report.write_functions=writes.snapshot();
     const base=createSignalListeningStoreV1({database:writes.database,page_size:4096,rawPages,assertRawReady:()=>storage.assertReady!(),storeRawVerified:true,storeRaw:async()=>{throw new Error('partial_admission_native_pages_required');}});
