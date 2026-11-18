@@ -96,6 +96,8 @@ export const storySchema = z.object({
   sources: z.array(z.string()).default([]),
   period: z.string().max(40).optional(),
   report: z.string().optional(),
+  /** Optional image behind the lower part of the story, in the study image style (content-db/STUDY_IMAGES.md). */
+  image: z.string().optional(),
   es: localizedSchema,
   en: localizedSchema
 });

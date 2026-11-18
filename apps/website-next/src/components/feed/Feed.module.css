@@ -115,6 +115,9 @@
   position: relative;
   height: 100%;
   width: min(100%, calc(100svh * 9 / 16));
+  /* The canvas is pinned to the top; when the screen is taller than 9:16 the rest continues the
+     canvas's own bottom tint (a story image fades into it too), so no band shows. */
+  background: #f1f9f9;
 }
 
 .stage {

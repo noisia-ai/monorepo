@@ -245,7 +245,7 @@ export function Feed({ stories, collections = [], initialId, initialFilter, init
                     frame={isActive && !reduced ? 0 : posterFrame(story.content)}
                     label={story.content.title}
                   >
-                    <StoryComposition story={story.content} locale={locale} tag={story.tag} mode="feed" />
+                    <StoryComposition story={story.content} locale={locale} tag={story.tag} mode="feed" image={story.image} />
                   </Stage>
                 ) : null}
                 {isActive ? (

@@ -12,6 +12,7 @@ export type FeedStory = {
   period?: string;
   reportHref?: string;
   tag: string;
+  image?: string;
   content: StoryLocale;
 };
 

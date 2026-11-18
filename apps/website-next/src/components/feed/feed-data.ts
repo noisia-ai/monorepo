@@ -34,6 +34,7 @@ export async function getFeedStories(locale: string): Promise<FeedStory[]> {
     period: story.period,
     reportHref: localizeReportHref(story.report ?? (studyOf.has(story.id) ? `/insights/estudios/${studyOf.get(story.id)}` : undefined), locale),
     tag: `${t(story.industry)} · ${story.market}`,
+    ...(story.image ? { image: story.image } : {}),
     content: locale === "en" ? story.en : story.es
   }));
 }
