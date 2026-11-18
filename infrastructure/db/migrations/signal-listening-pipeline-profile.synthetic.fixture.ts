@@ -172,7 +172,7 @@ export async function runListeningPipelineProfileV1(options?:{observeWorker?:(bo
   clock:'monotonic_ms_since_first_worker_invocation_after_fixture_setup',observer_overhead:'included_unsubtracted',
   unknowns:['serialized_response_envelope_bytes','initial_metadata_vs_feed_metadata_vs_http_potential_vs_response_custody_bytes',
    'CPU','causal_wait_or_dominant_stage','base_admission_and_fixture_setup']};
- let primaryError:unknown;
+ let primaryError:unknown,primaryFailed=false;
  try{await withFlatPrefixFullFixtureV1({afterSetup:async f=>{
   partialSetup.native_fixture_started=true;
   const roots=f.params[4] as string[];assert.equal(roots.length,4096);assert.equal(new Set(roots).size,4096);
@@ -261,7 +261,7 @@ export async function runListeningPipelineProfileV1(options?:{observeWorker?:(bo
    unknowns:['serialized_response_envelope_bytes','initial_metadata_vs_feed_metadata_vs_http_potential_vs_response_custody_bytes',
     'CPU','causal_wait_or_dominant_stage','base_admission_and_fixture_setup'],
    jobs,events:recorder.snapshot()};
- }});}catch(error){primaryError=error;receipt.status='inconclusive';receipt.failure='native_profile_or_cleanup_incomplete';}
+ }});}catch(error){primaryFailed=true;primaryError=error;receipt.status='inconclusive';receipt.failure='native_profile_or_cleanup_incomplete';}
  try{
  const root=resolve(fileURLToPath(new URL('../../../',import.meta.url)),process.cwd());
  const configured=process.env.R16_LISTENING_PIPELINE_PROFILE_EVIDENCE_DIR;assert.ok(configured);
@@ -289,9 +289,9 @@ export async function runListeningPipelineProfileV1(options?:{observeWorker?:(bo
  bytes=Buffer.from(JSON.stringify(receipt)+'\n');
  assert.ok(bytes.length<=MAX_ARTIFACT_BYTES,'r16_pipeline_profile_artifact_over_2mib');
  const handle=await open(file,'wx',0o600);try{await handle.writeFile(bytes);await handle.sync();}finally{await handle.close();}
- }catch(publicationError){if(primaryError)throw new AggregateError([primaryError,publicationError],
+ }catch(publicationError){if(primaryFailed)throw new AggregateError([primaryError,publicationError],
    'r16_pipeline_profile_execution_and_receipt_publication_failed',{cause:primaryError});throw publicationError;}
- if(primaryError)throw primaryError;
+ if(primaryFailed)throw primaryError;
  assert.equal(receipt.status,'observed','native profile must complete all required semantic checks');
  return receipt;
 }
