@@ -12,6 +12,7 @@ for(const [name,dynamic] of [
  ['0321_signal_listening_bounded_custom_plan.sql',true],
  ['0326_signal_listening_final_answer_slice.sql',true],
  ['0332_signal_listening_flat_prefix_preimages.sql',true],
+ ['0333_signal_listening_bounded_mentions.sql',true],
 ] as const)test('extracts the actual bounded SQL bytes from '+name,async()=>{
  const prosrc=await migrationBody(name),actual=extract({prosrc,lanname:'plpgsql'});
  const start=dynamic?'RETURN QUERY EXECUTE $bounded$':'ELSE\n  RETURN QUERY\n';

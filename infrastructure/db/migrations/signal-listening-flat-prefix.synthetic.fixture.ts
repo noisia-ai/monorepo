@@ -16,9 +16,9 @@ import {createWorkspaceEngineStorageV1} from '../../../services/workers/src/work
 import {createLabelingRawPagesStorageV1} from '../../../services/workers/src/workers/signal-labeling-receipt-storage';
 const uncertainClients=new WeakSet<PoolClient>();
 export function releaseFlatPrefixClientV1(c:PoolClient){c.release(uncertainClients.has(c));}
-export async function withFlatPrefixReadOnlyV1(c:PoolClient,body:()=>Promise<void>,variant?:'bounded_1000_of_32768'){
+export async function withFlatPrefixReadOnlyV1(c:PoolClient,body:()=>Promise<void>,variant?:'bounded_1000_of_32768'|'bounded_3508_of_32768'){
  let failed=false,primary:unknown,begun=false;
- try{await c.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');begun=true;await body();}catch(error){if(variant==='bounded_1000_of_32768'&&!begun)uncertainClients.add(c);failed=true;primary=error;}
+ try{await c.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');begun=true;await body();}catch(error){if((variant==='bounded_1000_of_32768'||variant==='bounded_3508_of_32768')&&!begun)uncertainClients.add(c);failed=true;primary=error;}
  try{await c.query('ROLLBACK');}catch(rollback){uncertainClients.add(c);if(failed)throw new AggregateError([primary,rollback],'prefix body and rollback failed',{cause:primary});throw rollback;}
  if(failed)throw primary;
 }
@@ -64,12 +64,12 @@ export type FlatPrefixAfterSetupCaseV1={afterSetup:(f:FlatPrefixReadyFixtureV1)=
 export type FlatPrefixNativeCaseV1={install(c:PoolClient):Promise<void>;read(args:{c:PoolClient;params:unknown[];setup:Record<string,unknown>}):Promise<void>;
  bounded?:{callback(database:SharedWireFixtureV1['database'],body:()=>Promise<void>):Promise<void>;roster(roots:ReadonlyArray<string>):void;state(c:PoolClient,params:unknown[],run_id:string):Promise<Record<string,unknown>>};
  markValidation?:(f:SharedWireFixtureV1,storageMetrics:()=>Record<string,number>)=>Promise<void>};
-export async function withFlatPrefixFullFixtureV1(testCase:FlatPrefixNativeCaseV1|FlatPrefixAfterSetupCaseV1,variant?:'bounded_1000_of_32768'|'mark_validation_enr_1000_of_32768'){
+export async function withFlatPrefixFullFixtureV1(testCase:FlatPrefixNativeCaseV1|FlatPrefixAfterSetupCaseV1,variant?:'bounded_1000_of_32768'|'bounded_3508_of_32768'|'mark_validation_enr_1000_of_32768'){
  if('afterSetup'in testCase)assert.ok(variant===undefined&&typeof testCase.afterSetup==='function'&&!('install'in testCase)&&!('read'in testCase)&&!('bounded'in testCase)&&!('markValidation'in testCase),'afterSetup is exclusive to the released 4096 base fixture');
- assert.ok(variant===undefined||variant==='bounded_1000_of_32768'||variant==='mark_validation_enr_1000_of_32768','unknown finite flat-prefix fixture variant');
+ assert.ok(variant===undefined||variant==='bounded_1000_of_32768'||variant==='bounded_3508_of_32768'||variant==='mark_validation_enr_1000_of_32768','unknown finite flat-prefix fixture variant');
  const markValidation=variant==='mark_validation_enr_1000_of_32768';if(markValidation)assert.ok(testCase.markValidation,'ENR fixture requires its finite mutation callback');
  const bounded=variant!==undefined;if(bounded)assert.ok(testCase.bounded,'bounded fixture requires its native state and lifecycle witnesses');
- const initialCount=bounded?1000:4096;
+ const initialCount=variant==='bounded_3508_of_32768'?3508:bounded?1000:4096;
  assert.equal(process.env.GITHUB_ACTIONS,'true','owned CI only');
  const workload=r16ListeningWorkloadV2('defined_consumer_second_pass'),started=process.hrtime.bigint();
  const elapsed=()=>Number(process.hrtime.bigint()-started)/1e6;
@@ -98,7 +98,7 @@ export async function withFlatPrefixFullFixtureV1(testCase:FlatPrefixNativeCaseV
       await store.renew(run);deadline();
       const f:SharedWireFixtureV1={database,run,inputs:inputs.slice(offset,offset+1024),configuration:cfg.configuration,configuration_id:cfg.id,map_id:ctx.map_id,store,rawPages};
       const outcomes=await prepareSharedWireRawV1(f,500);deadline();
-      assert.equal(outcomes.length,bounded?1000:1024);await store.apply(run,outcomes.map(o=>({call:o.call,results:[o.result]})));deadline();
+      assert.equal(outcomes.length,bounded?Math.min(1024,inputs.length-offset):1024);await store.apply(run,outcomes.map(o=>({call:o.call,results:[o.result]})));deadline();
      }
      if(markValidation){await store.renew(run);await testCase.markValidation!({database,run,inputs,configuration:cfg.configuration,configuration_id:cfg.id,map_id:ctx.map_id,store,rawPages},()=>server.metrics());}
      return inputs;
@@ -125,7 +125,7 @@ export async function withFlatPrefixFullFixtureV1(testCase:FlatPrefixNativeCaseV
       assert.deepEqual((await c.query('SELECT pg_current_snapshot()::text snapshot')).rows[0],snapshot);assert.deepEqual(await readState(),state);
       await authorizeSignalListeningV1(c,access,'view');await assertMassLabelingMapCurrentV1(c,access.workspace_id,ctx.map_id);
       assert.equal((await loadSignalListeningConfigurationWithClientV1(c,access.workspace_id))?.id,cfg.id);
-     },variant==='bounded_1000_of_32768'?variant:undefined),async()=>{if(!uncertainClients.has(c))assert.deepEqual((await c.query("SELECT current_setting('search_path') search_path,current_setting('track_functions') track_functions,current_database() database,current_setting('server_version_num')::int version")).rows[0],original);});
+     },variant==='bounded_1000_of_32768'||variant==='bounded_3508_of_32768'?variant:undefined),async()=>{if(!uncertainClients.has(c))assert.deepEqual((await c.query("SELECT current_setting('search_path') search_path,current_setting('track_functions') track_functions,current_database() database,current_setting('server_version_num')::int version")).rows[0],original);});
     }finally{releaseFlatPrefixClientV1(c);}
    },async()=>{await withSharedWireDefaultPostcheckV1(()=>server.close(),()=>rm(directory,{recursive:true,force:true}));});
    };
