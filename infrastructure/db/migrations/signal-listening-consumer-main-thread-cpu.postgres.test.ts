@@ -20,7 +20,8 @@ const repoRoot=resolve(process.cwd());
 let sourcesPromise:ReturnType<typeof loadConsumerCpuSourcesV1>|undefined;
 const sources=()=>sourcesPromise??=loadConsumerCpuSourcesV1(repoRoot);
 
-function validProfile(endTime=2_000):unknown{
+type CpuRawProfile={nodes:unknown[];startTime:number;endTime:number;samples:unknown[];timeDeltas:unknown[]};
+function validProfile(endTime=2_000):CpuRawProfile{
   return{nodes:[{id:1,callFrame:{url:'',functionName:'(root)',lineNumber:-1,columnNumber:-1},children:[]}],
     startTime:0,endTime,samples:[1],timeDeltas:[endTime]};
 }
@@ -65,7 +66,7 @@ test(nativeTitle,{skip:!native},async()=>{
   assert.equal(snapshot.h1_accepted,false);
   assert.equal(snapshot.cpu,'SAMPLED_NOT_EXACT');
   assert.equal(snapshot.hard_duration_bound,false);
-  const persisted=JSON.parse(await readFile(join(directory,'listening-main-thread-cpu.json'),'utf8'));
+  const persisted=JSON.parse(await readFile(join(directory,'listening-main-thread-cpu.json'),'utf8')) as typeof snapshot;
   const pipeline=JSON.parse(await readFile(join(directory,'listening-pipeline-profile.json'),'utf8'));
   const events=pipeline.events as Record<string,unknown>;
   const counters=events.event_counts as Record<string,{seen:number;recorded:number;dropped:number}>;
@@ -80,10 +81,12 @@ test(nativeTitle,{skip:!native},async()=>{
   assert.equal(correlation.provider_events_unmatched,0);
   assert.equal(correlation.durability_events_unmatched,0);
   assert.deepEqual(persisted,snapshot,'persisted CPU evidence must equal the safe observer snapshot');
-  assert.equal(persisted.capture.summary.positions,'GENERATED_NO_SOURCE_MAP');
-  assert.equal(persisted.capture.summary.attribution,'main_thread_samples_not_exact_cpu');
-  assert.equal(persisted.capture.summary.inclusive_samples,'NOT_COMPUTED');
-  assert.ok(persisted.capture.profile.duration_us<=CONSUMER_CPU_LIMITS_V1.observed_ms*1000);
+  const capture=persisted.capture;
+  assert.ok(capture,'successful CPU observation must retain a profile');
+  assert.equal(capture.summary.positions,'GENERATED_NO_SOURCE_MAP');
+  assert.equal(capture.summary.attribution,'main_thread_samples_not_exact_cpu');
+  assert.equal(capture.summary.inclusive_samples,'NOT_COMPUTED');
+  assert.ok(capture.profile.duration_us<=CONSUMER_CPU_LIMITS_V1.observed_ms*1000);
 });
 
 if(pure){
@@ -148,8 +151,8 @@ if(pure){
 
   test('CPU sanitizer drops dynamic frame strings and rejects malformed or over-limit profiles',async()=>{
     const manifest=await sources();
-    const dynamic=validProfile() as {nodes:Array<{callFrame:Record<string,unknown>}>};
-    dynamic.nodes[0]!.callFrame={url:'/tmp/PRIVATE_SENTINEL/path.js',functionName:'privateCustomerName',lineNumber:9,columnNumber:3};
+    const dynamic=validProfile();
+    (dynamic.nodes[0] as Record<string,unknown>).callFrame={url:'/tmp/PRIVATE_SENTINEL/path.js',functionName:'privateCustomerName',lineNumber:9,columnNumber:3};
     const safe=sanitizeConsumerCpuProfileV1(dynamic,repoRoot,manifest);
     const encoded=JSON.stringify(safe);
     assert.doesNotMatch(encoded,/PRIVATE_SENTINEL|privateCustomerName|path\.js/u);
