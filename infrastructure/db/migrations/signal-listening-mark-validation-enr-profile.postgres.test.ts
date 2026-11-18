@@ -17,7 +17,7 @@ const native=process.env.NOISIA_R16_MARK_VALIDATION_ENR_PG==='true';
 const pure=process.env.NOISIA_R16_MARK_VALIDATION_ENR_PURE==='true';
 assert.ok(!(native&&pure),'native and pure Mark ENR modes must remain separate');
 
-test('native Mark ENR probe observes the statement validator for 1000 reserved consumer calls before unchanged guards',{
+test('native Mark ENR v2 observes bounded scan geometry without per-alias identity',{
   skip:!native,
 },async()=>{
   assert.equal(process.env.GITHUB_ACTIONS,'true','native Mark ENR is authorized only in CI');
@@ -25,7 +25,7 @@ test('native Mark ENR probe observes the statement validator for 1000 reserved c
   const directory=process.env.R16_MARK_VALIDATION_ENR_EVIDENCE_DIR;
   assert.ok(directory,'native Mark ENR evidence directory is required');
   const receipt=await runMarkValidationEnrProfileV1(directory);
-  assert.equal(receipt.contract,'r16-listening-mark-validation-enr-v1');
+  assert.equal(receipt.contract,'r16-listening-mark-validation-enr-v2');
   assert.equal(receipt.status,'observed');
   assert.equal(receipt.diagnostic_only,true);
   assert.equal(receipt.h1_accepted,false);
@@ -44,16 +44,37 @@ test('native Mark ENR probe observes the statement validator for 1000 reserved c
   const probe=receipt.probe as Record<string,unknown>;
   for(const [key,expected] of Object.entries({
     target_count:1,batch_transition_count:1000,old_status:'reserved',new_status:'submitting',
-    explain_count:1,plain_warmups:0,enr_node_type:'Named Tuplestore Scan',
+    old_count:1000,new_count:1000,root_count:1000,explain_count:1,plain_warmups:0,
+    enr_node_type:'Named Tuplestore Scan',enr_individual_identity:'UNOBSERVABLE',
+    alias_exactness:'NOT_ASSERTED_BY_V2',enr_scan_count:2,
   }))assert.equal(probe[key],expected,key+' must match the exact native probe');
-  assert.deepEqual(probe.enr_names_exactly_once,['listening_old_calls','listening_new_calls']);
+  assert.ok(!Object.hasOwn(probe,'enr_names_exactly_once'),'V2 must not claim individual scan-to-alias identity');
+  const scans=probe.enr_scans as Array<Record<string,unknown>>;
+  assert.equal(scans.length,2,'V2 must retain exactly two physical scan observations');
+  const scanCollection=probe.scan_collection as Record<string,unknown>;
+  assert.equal(scanCollection.status,'complete');
+  assert.equal(scanCollection.traversal_complete,true);
+  assert.equal(scanCollection.visited_named_nodes,2);
+  assert.equal(scanCollection.invalid_name_count,0);
+  assert.equal(scanCollection.missing_name_count,scans.filter(scan=>scan.name_status==='missing').length);
+  assert.equal(scanCollection.old_count,scans.filter(scan=>scan.name==='listening_old_calls').length);
+  assert.equal(scanCollection.new_count,scans.filter(scan=>scan.name==='listening_new_calls').length);
+  for(const scan of scans){
+    assert.ok(scan.name_status==='missing'||scan.name_status==='allowed');
+    assert.equal(scan.name_status==='missing'?scan.name===null:scan.name==='listening_old_calls'||scan.name==='listening_new_calls',true);
+    for(const metric of ['actual_rows','actual_loops']){
+      const value=scan[metric];
+      assert.ok(value==='UNKNOWN'||(typeof value==='number'&&Number.isFinite(value)&&value>=0),metric+' must remain observed or UNKNOWN');
+    }
+    assert.ok(['observed','not_executed','UNKNOWN'].includes(String(scan.execution)));
+  }
   const expectedGates=[
-    'catalog_restored','closure_confirmed','cohort_transition_exact','enr_scans_exact',
+    'catalog_restored','closure_confirmed','cohort_transition_exact','source_bound_enr_scan_geometry',
     'original_catalog_unchanged_on_install','original_guard_commit_ack','post_commit_state_exact',
     'probe_catalog_order','probe_plan_once','requeue_open_exposure_preserved','same_client_pin',
     'selector_once','source_binding','zero_target_control',
   ] as const;
-  assert.deepEqual(Object.keys(receipt.gates).sort(),expectedGates);
+  assert.deepEqual(Object.keys(receipt.gates).sort(),[...expectedGates].sort());
   for(const key of expectedGates)assert.equal(receipt.gates[key],true,key+' must be explicitly observed');
   const persisted=JSON.parse(await readFile(join(directory,'mark-validation-enr.json'),'utf8'));
   assert.deepEqual(persisted,receipt,'persisted native evidence must match the returned receipt');
