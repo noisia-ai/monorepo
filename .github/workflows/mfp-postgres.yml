@@ -2452,6 +2452,10 @@ jobs:
           cache: pnpm
       - name: Install frozen Node workspace dependencies
         run: pnpm install --frozen-lockfile
+      - name: Typecheck database package on the remote runner
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
+        run: pnpm --filter @noisia/db typecheck
       - name: Run pure Listening write-function observation contracts
         env:
           NOISIA_R16_LISTENING_WRITE_FUNCTIONS_PURE: 'true'
