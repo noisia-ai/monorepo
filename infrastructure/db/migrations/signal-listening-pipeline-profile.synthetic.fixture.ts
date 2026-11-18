@@ -159,7 +159,7 @@ async function countResolved(access:{database:FlatPrefixReadyFixtureV1['database
  assert.ok([...resolved].every(root=>expected.has(root)),'profile resolved roots stay within initial roster');return resolved.size;
 }
 
-export async function runListeningPipelineProfileV1(){
+export async function runListeningPipelineProfileV1(options?:{observeWorker?:(body:()=>Promise<void>,clock:()=>number)=>Promise<void>}){
  assert.equal(process.env.GITHUB_ACTIONS,'true','owned CI only');
  assert.equal(process.env.NOISIA_R16_LISTENING_PIPELINE_PROFILE_PG,'true','explicit diagnostic profile flag required');
  const redisUrl=process.env.R16BENCH_REDIS_URL;assert.ok(redisUrl,'owned loopback Redis is required');
@@ -202,6 +202,7 @@ export async function runListeningPipelineProfileV1(){
   const providerFactory=instrumentProviderFactory({redisUrl,organizationId:initialCensus.organization_id,recorder,clock,fetch:measuredFetch});
   const access={...baseAccess,database:database as unknown as FlatPrefixReadyFixtureV1['database']};
   let completed=false,priorRequests=0,priorApplied=0,invocations=0,lastOutcome='unknown';
+  const runWorker=async()=>{
   while(!completed){
    deadline();assert.ok(invocations<MAX_JOB_INVOCATIONS,'diagnostic job invocation cap reached');invocations++;
    const start=clock();
@@ -221,6 +222,8 @@ export async function runListeningPipelineProfileV1(){
     throw Error('r16_pipeline_profile_no_native_progress');
    priorRequests=requestCount;priorApplied=applied;
   }
+  };
+  if(options?.observeWorker)await options.observeWorker(runWorker,clock);else await runWorker();
   deadline();
   const finalStatus=await recorder.context.run({operation:OP.verify,batch:0},()=>getSignalListeningStatusV1(access));
   assert.equal(finalStatus.run?.id,f.run.id);assert.equal(finalStatus.run?.status,'completed');
