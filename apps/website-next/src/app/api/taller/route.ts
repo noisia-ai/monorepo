@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
+import { addresses, LEADS_CC } from "@/lib/content/send-email";
 
 const schema = z.object({
   name: z.string().trim().min(2).max(120),
@@ -71,8 +72,8 @@ export async function POST(request: NextRequest) {
     body: JSON.stringify({
       from: process.env.WORKSHOP_FROM_EMAIL || "Noisia <contacto@hey.noisia.ai>",
       // One or more addresses; LEADS_CC is copied (content-db/STUDY_EMAIL.md).
-      to: (process.env.WORKSHOP_TO_EMAIL || "hola@noisia.ai").split(",").map((item) => item.trim()).filter(Boolean),
-      ...(process.env.LEADS_CC ? { cc: process.env.LEADS_CC.split(",").map((item) => item.trim()).filter(Boolean) } : {}),
+      to: addresses(process.env.WORKSHOP_TO_EMAIL || "hola@noisia.ai"),
+      ...(LEADS_CC().length ? { cc: LEADS_CC() } : {}),
       reply_to: body.email,
       subject: `Taller: ${body.company} · ${body.name}`,
       text
