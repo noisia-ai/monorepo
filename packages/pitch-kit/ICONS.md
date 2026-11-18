@@ -9,6 +9,12 @@ Two libraries, two jobs:
 | **Semantic / UI icons** (eyebrows, KPIs, notes, glossary, bar labels) | **Iconoir** — `icons/regular/<name>.svg` | `npm i iconoir` |
 | **Brand / platform logos** (X, YouTube, Reddit, Facebook, Instagram, Apple, Sonos, Google…) | **Simple Icons** — `icons/<slug>.svg` | `npm i simple-icons` |
 
+**Look in the repo before you install or ask for a download.** After `pnpm install` at the repo root,
+Simple Icons is already there (the website and `packages/motion` depend on it):
+`node_modules/.pnpm/simple-icons@*/node_modules/simple-icons/icons/<slug>.svg`. A case that asked
+the user to approve a download for a platform mark had it on disk the whole time. Iconoir is only
+there as `iconoir-react`; its raw SVGs still come from `npm i iconoir` in a scratch folder.
+
 ## How to inline
 
 **Iconoir (semantic).** 24×24, `stroke`, `fill="none"`. Keep your own `<svg class="ic" …>` wrapper (it sets size + color) and drop in Iconoir's inner paths. Its children carry `stroke="currentColor"` and inherit `stroke-width` from the parent — so the icon takes the parent's `color`.

@@ -14,7 +14,7 @@ hard rules, where everything lives). Then invoke the skill `.claude/skills/noisi
 ```
 engine/      brand engine: noisia-tokens.css, deck.css, deck-stage.js, deck-template.html
 slides/      reusable slide templates + catalog.json (the index of what's available)
-builders/    build-pdf.mjs (→ PDF, needs Chrome) · build-pptx.py (→ editable PPTX, needs python-pptx) · build-portable.mjs (→ ONE self-contained .html; no repo/Node needed to view+print) · qa-render.py (→ renders every slide, flags overflow, builds contact sheets) · gen-backgrounds.py (→ a background blob per slide, plus the grain tile) · check-queries.py (→ validates queries before pasting) · check-delivery.py (→ data delivery gates and manifest)
+builders/    build-pdf.mjs (→ PDF, needs Chrome) · build-pptx.py (→ editable PPTX, needs python-pptx) · build-portable.mjs (→ ONE self-contained .html; no repo/Node needed to view+print) · qa-render.py (→ renders every slide, flags overflow, builds contact sheets) · gen-backgrounds.py (→ a background blob per slide, plus the grain tile) · check-queries.py (→ validates queries before pasting) · check-styles.py (→ fails the build on forbidden styles) · wait-export.py (→ waits for an export, counts and archives it) · sentione-api.js (→ dashboard totals without downloading) · check-delivery.py (→ data delivery gates and manifest)
 signal/      fetch-insights.mjs (pull metrics/quotes from the Signal public API)
 assets/      brand logos / backgrounds / icons.json (95 Iconoir glyphs + 6 Simple Icons, already extracted)
 templates/   PROVENANCE_AND_CHANGELOG.md + GUION_POR_SLIDE.md, copied into each working folder
@@ -48,6 +48,7 @@ python3 builders/build-pptx.py examples/_local/mydeck/deck.json examples/_local/
 | `CHARTS.md` | Bars, lines, axes, platform colour, and the no-gradient rule |
 | `METHODOLOGY.md` | What you may claim and how strongly |
 | `DATA.md` | How the corpus is processed: ETL, quality gates, output contracts |
+| `SENTIONE.md` | Operating the listening tool end to end from the chat: projects, totals, exports, what the user does |
 | `commercial/` | Sales decks in native, editable PPTX: openers, tailored overview, offer with prices, proposal, one-pager. `COMMERCIAL.md` is the rulebook; `build_skill.py` packages it as the claude.ai skill `noisia-comercial` |
 | `INTERNAL.md` | Decks for the team: status, operation, product and its state |
 | `DATA_DELIVERY.md` | The Data family: samples in the client's schema, data packages, what never goes out, the delivery gates |
