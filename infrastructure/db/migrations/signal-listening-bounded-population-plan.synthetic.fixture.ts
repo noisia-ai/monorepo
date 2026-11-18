@@ -46,7 +46,8 @@ export function boundedPopulationCounterDeltaV1(before:ReadonlyArray<BoundedPopu
 }
 const staticSql=readFileSync(sourceUrl,'utf8');
 const sourceIdentifiers=new Set([...staticSql.matchAll(/\b(?:FROM|JOIN)\s+([a-z_][a-z0-9_]*)/gu),...staticSql.matchAll(/\b([a-z_][a-z0-9_]*) AS(?: MATERIALIZED)?\(/gu),...staticSql.matchAll(/\b([a-z_][a-z0-9_]*)\(/gu)].map(m=>m[1]!));
-const nodes=new Set(['Named Tuplestore Scan','Nested Loop','Hash Join','Merge Join','Aggregate','Group','Unique','SetOp','WindowAgg','Seq Scan','Index Scan','Index Only Scan','Bitmap Heap Scan','Bitmap Index Scan','BitmapAnd','BitmapOr','Tid Scan','Tid Range Scan','CTE Scan','Function Scan','Table Function Scan','Values Scan','Subquery Scan','WorkTable Scan','Foreign Scan','Custom Scan','Sample Scan','Hash','Sort','Incremental Sort','Limit','Result','Materialize','Memoize','Append','Merge Append','Recursive Union','Gather','Gather Merge','ProjectSet','LockRows','ModifyTable']);
+const planNodeTypes=['Named Tuplestore Scan','Nested Loop','Hash Join','Merge Join','Aggregate','Group','Unique','SetOp','WindowAgg','Seq Scan','Index Scan','Index Only Scan','Bitmap Heap Scan','Bitmap Index Scan','BitmapAnd','BitmapOr','Tid Scan','Tid Range Scan','CTE Scan','Function Scan','Table Function Scan','Values Scan','Subquery Scan','WorkTable Scan','Foreign Scan','Custom Scan','Sample Scan','Hash','Sort','Incremental Sort','Limit','Result','Materialize','Memoize','Append','Merge Append','Recursive Union','Gather','Gather Merge','ProjectSet','LockRows','ModifyTable'] as const;
+const nodes=new Set<string>(planNodeTypes);
 const numbers=new Set(['Startup Cost','Total Cost','Plan Rows','Plan Width','Actual Startup Time','Actual Total Time','Actual Rows','Actual Loops','Rows Removed by Filter','Rows Removed by Join Filter','Rows Removed by Index Recheck','Rows Removed by Conflict Filter','Heap Fetches','Shared Hit Blocks','Shared Read Blocks','Shared Dirtied Blocks','Shared Written Blocks','Local Hit Blocks','Local Read Blocks','Local Dirtied Blocks','Local Written Blocks','Temp Read Blocks','Temp Written Blocks','I/O Read Time','I/O Write Time','Temp I/O Read Time','Temp I/O Write Time','Workers Planned','Workers Launched','Worker Number','Hash Buckets','Original Hash Buckets','Hash Batches','Original Hash Batches','Peak Memory Usage','Memory Usage','Disk Usage','HashAgg Batches','Sort Space Used','Cache Hits','Cache Misses','Cache Evictions','Cache Overflows','Exact Heap Blocks','Lossy Heap Blocks','Planning Time','Execution Time','Tuples Inserted','Conflicting Tuples','Subplans Removed','Planned Partitions']);
 const enums:Record<string,ReadonlySet<string>>={
  'Node Type':nodes,'Parent Relationship':new Set(['Outer','Inner','InitPlan','SubPlan','Member','Subquery']),Strategy:new Set(['Plain','Sorted','Hashed','Mixed']),
@@ -54,23 +55,35 @@ const enums:Record<string,ReadonlySet<string>>={
  'Scan Direction':new Set(['Forward','Backward','NoMovement']),'Sort Method':new Set(['quicksort','top-N heapsort','external merge','external sort','still in progress']),
  'Sort Space Type':new Set(['Memory','Disk']),Operation:new Set(['Select','Insert','Update','Delete','Merge'])};
 const redacted=new Set(['One-Time Filter','Filter','Output','Index Cond','Recheck Cond','Hash Cond','Merge Cond','Join Filter','Sort Key','Presorted Key','Group Key','Hash Key','Run Condition','Cache Key','Function Call','Remote SQL','Conflict Filter','Alias','Query Identifier']);
+const rejectionCodes=['bounded_population_plan_object','bounded_population_plan_prototype','bounded_population_plan_accessor','bounded_population_plan_number','bounded_population_plan_array','bounded_population_plan_array_property','bounded_population_plan_array_hole','bounded_population_plan_expression_depth','bounded_population_jit_functions','bounded_population_jit_option','bounded_population_jit_timing','bounded_population_jit_generation','bounded_population_jit_structure','bounded_population_plan_depth','bounded_population_plan_node','bounded_population_plan_enum','bounded_population_plan_boolean','bounded_population_plan_tuplestore','bounded_population_plan_identifier','bounded_population_plan_subplan','bounded_population_plan_structure','bounded_population_plan_document','bounded_population_plan_select_trigger','bounded_population_plan_document_structure','bounded_population_plan_missing_root','bounded_population_plan_bytes','bounded_population_plan_invalid_or_over_limit'] as const;
+const diagnosticProperties=['root','node','Node Type','Plan','Plans','Workers','Planning','JIT','Relation Name','Index Name','CTE Name','Function Name','Subplan Name','Tuplestore Name','Functions','Options','Timing','Generation','Deform','Total','Full-sort Groups','Pre-sorted Groups','Shared I/O Read Time','Shared I/O Write Time','Local I/O Read Time','Local I/O Write Time','numeric_metric','closed_enum','boolean_metric','redacted_expression','UNRECOGNIZED_KEY','UNKNOWN'] as const;
+export type BoundedPopulationPlanRejectionV1={reason_code:typeof rejectionCodes[number]|'UNKNOWN';location:'document'|'node'|'worker'|'planning'|'jit'|'jit_options'|'jit_timing'|'jit_generation'|'redacted_expression'|'UNKNOWN';property:typeof diagnosticProperties[number];value_type:'number'|'string'|'boolean'|'null'|'array'|'object'|'undefined'|'unsafe';identifier_class:'relation'|'index'|'cte'|'function'|'subplan'|'none'|'UNKNOWN';identifier_membership:'allowed'|'not_allowlisted'|'non_string'|'not_checked'|'UNKNOWN';node_type:typeof planNodeTypes[number]|'UNRECOGNIZED'|'UNKNOWN';nodes_seen:number;depth_bucket:'within32'|'above32'|'UNKNOWN';array_size_bucket:'within512'|'above512'|'UNKNOWN'};
 /** Plain EXPLAIN JSON only. No messages, expressions or arbitrary identifiers
  * are emitted. Unknown structure is a static failure, never a partial plan. */
-export function sanitizeBoundedPopulationPlanV1(plan:unknown,identifiers:ReadonlySet<string>=sourceIdentifiers){
+export function sanitizeBoundedPopulationPlanV1(plan:unknown,identifiers:ReadonlySet<string>=sourceIdentifiers,observeRejection?:(reason:BoundedPopulationPlanRejectionV1)=>void){
  let count=0,jitSeen=false,workersPlanned=0,workersLaunched=0;const seen=new WeakSet<object>();
+ let checkpoint:Omit<BoundedPopulationPlanRejectionV1,'reason_code'|'nodes_seen'>={location:'UNKNOWN',property:'UNKNOWN',value_type:'undefined',identifier_class:'none',identifier_membership:'not_checked',node_type:'UNKNOWN',depth_bucket:'UNKNOWN',array_size_bucket:'UNKNOWN'};
+ const at=(location:BoundedPopulationPlanRejectionV1['location'],key:string,value:unknown,depth?:number,nodeType?:unknown)=>{
+  if(!observeRejection)return;try{
+   const property=diagnosticProperties.find(p=>p===key)??(numbers.has(key)?'numeric_metric':Object.hasOwn(enums,key)?'closed_enum':redacted.has(key)?'redacted_expression':['Parallel Aware','Async Capable','Inner Unique','Single Copy'].includes(key)?'boolean_metric':'UNRECOGNIZED_KEY');
+   const array=Array.isArray(value);const value_type:BoundedPopulationPlanRejectionV1['value_type']=value===null?'null':array?'array':typeof value==='string'?'string':typeof value==='number'?'number':typeof value==='boolean'?'boolean':typeof value==='object'?'object':typeof value==='undefined'?'undefined':'unsafe';
+   const identifier_class:BoundedPopulationPlanRejectionV1['identifier_class']=key==='Relation Name'?'relation':key==='Index Name'?'index':key==='CTE Name'?'cte':key==='Function Name'?'function':key==='Subplan Name'?'subplan':'none';
+   checkpoint={location,property,value_type,identifier_class,identifier_membership:'not_checked',node_type:typeof nodeType==='string'&&nodes.has(nodeType)?nodeType as typeof planNodeTypes[number]:nodeType===undefined?'UNKNOWN':'UNRECOGNIZED',depth_bucket:depth===undefined?'UNKNOWN':depth<=32?'within32':'above32',array_size_bucket:'UNKNOWN'};
+  }catch{checkpoint={...checkpoint,value_type:'unsafe'};}
+ };
  const own=(value:unknown)=>{requireKnown(value!==null&&typeof value==='object'&&!seen.has(value),'bounded_population_plan_object');seen.add(value);const prototype=Object.getPrototypeOf(value);requireKnown(prototype===Object.prototype||prototype===Array.prototype||prototype===null,'bounded_population_plan_prototype');const fields=Object.getOwnPropertyDescriptors(value);requireKnown(Object.values(fields).every(d=>'value'in d),'bounded_population_plan_accessor');return fields;};
  const finite=(value:unknown)=>{requireKnown(typeof value==='number'&&Number.isFinite(value)&&value>=0,'bounded_population_plan_number');return value;};
  const boundedArray=(value:unknown)=>{requireKnown(Array.isArray(value)&&value.length<=512,'bounded_population_plan_array');const fields=own(value);requireKnown(Object.keys(fields).every(k=>k==='length'||/^(?:0|[1-9][0-9]*)$/u.test(k)),'bounded_population_plan_array_property');return Array.from({length:value.length},(_,i)=>{const d=fields[String(i)];requireKnown(d&&'value'in d,'bounded_population_plan_array_hole');return d.value as unknown;});};
- const expression=(value:unknown,depth=0):void=>{requireKnown(depth<=8,'bounded_population_plan_expression_depth');if(typeof value==='string')return;if(typeof value==='number'){finite(value);return;}for(const child of boundedArray(value))expression(child,depth+1);};
- const jit=(value:unknown)=>{jitSeen=true;const result:Record<string,unknown>={};for(const[k,d]of Object.entries(own(value))){
+ const expression=(value:unknown,depth=0):void=>{at('redacted_expression','redacted_expression',value);requireKnown(depth<=8,'bounded_population_plan_expression_depth');if(typeof value==='string')return;if(typeof value==='number'){finite(value);return;}for(const child of boundedArray(value))expression(child,depth+1);};
+ const jit=(value:unknown)=>{at('jit','JIT',value);jitSeen=true;const result:Record<string,unknown>={};for(const[k,d]of Object.entries(own(value))){at('jit',k,d.value);
   if(k==='Functions'){const n=finite(d.value);requireKnown(Number.isSafeInteger(n),'bounded_population_jit_functions');result[k]=n;}
-  else if(k==='Options'){const options:Record<string,boolean>={};for(const[name,field]of Object.entries(own(d.value))){requireKnown(['Inlining','Optimization','Expressions','Deforming'].includes(name)&&typeof field.value==='boolean','bounded_population_jit_option');options[name]=field.value;}result[k]=options;}
+  else if(k==='Options'){const options:Record<string,boolean>={};for(const[name,field]of Object.entries(own(d.value))){at('jit_options','Options',field.value);requireKnown(['Inlining','Optimization','Expressions','Deforming'].includes(name)&&typeof field.value==='boolean','bounded_population_jit_option');options[name]=field.value;}result[k]=options;}
   else if(k==='Timing'){
    const timing:Record<string,number|{Deform:number;Total:number}>={};
    for(const[name,field]of Object.entries(own(d.value))){
-    requireKnown(['Generation','Inlining','Optimization','Emission','Total'].includes(name),'bounded_population_jit_timing');
+    at('jit_timing',name,field.value);requireKnown(['Generation','Inlining','Optimization','Emission','Total'].includes(name),'bounded_population_jit_timing');
     if(name==='Generation'&&typeof field.value!=='number'){
-     const generation=own(field.value);
+     at('jit_generation','Generation',field.value);const generation=own(field.value);
      requireKnown(!Array.isArray(field.value)&&Reflect.ownKeys(generation).length===2&&Object.hasOwn(generation,'Deform')&&Object.hasOwn(generation,'Total'),'bounded_population_jit_generation');
      timing[name]={Deform:finite(generation.Deform!.value),Total:finite(generation.Total!.value)};
     }else timing[name]=finite(field.value);
@@ -80,9 +93,10 @@ export function sanitizeBoundedPopulationPlanV1(plan:unknown,identifiers:Readonl
   else throw new Error('bounded_population_jit_structure');
  }return result;};
  const walk=(value:unknown,depth:number,kind:'node'|'worker'|'planning'='node'):Record<string,unknown>=>{
-  requireKnown(depth<=32,'bounded_population_plan_depth');const fields=own(value),result:Record<string,unknown>={};
+  at(kind,'node',value,depth);requireKnown(depth<=32,'bounded_population_plan_depth');const fields=own(value),result:Record<string,unknown>={};
+  at(kind,'Node Type',fields['Node Type']?.value,depth,fields['Node Type']?.value);
   if(kind==='node'){requireKnown(++count<=512&&typeof fields['Node Type']?.value==='string'&&nodes.has(fields['Node Type'].value),'bounded_population_plan_node');}
-  for(const[k,d]of Object.entries(fields)){const x=d.value as unknown;
+  for(const[k,d]of Object.entries(fields)){const x=d.value as unknown;at(kind,k,x,depth,fields['Node Type']?.value);
    if(redacted.has(k)){expression(x);continue;}
    if(numbers.has(k)){const n=finite(x);result[k]=n;if(k==='Workers Planned')workersPlanned=Math.max(workersPlanned,n);if(k==='Workers Launched')workersLaunched=Math.max(workersLaunched,n);}
    else if(enums[k]){requireKnown(typeof x==='string'&&enums[k]!.has(x),'bounded_population_plan_enum');result[k]=x;}
@@ -97,8 +111,8 @@ export function sanitizeBoundedPopulationPlanV1(plan:unknown,identifiers:Readonl
   }return result;
  };
  try{
-  const top=boundedArray(plan);requireKnown(top.length===1,'bounded_population_plan_document');const document:Record<string,unknown>={};
-  for(const[k,d]of Object.entries(own(top[0]))){
+  at('document','root',plan,0);const top=boundedArray(plan);requireKnown(top.length===1,'bounded_population_plan_document');const document:Record<string,unknown>={};
+  for(const[k,d]of Object.entries(own(top[0]))){at('document',k,d.value,0);
    if(k==='Plan')document[k]=walk(d.value,0);
    else if(k==='JIT')document[k]=jit(d.value);
    else if(k==='Planning')document[k]=walk(d.value,0,'planning');
@@ -108,7 +122,10 @@ export function sanitizeBoundedPopulationPlanV1(plan:unknown,identifiers:Readonl
   }
   requireKnown(document.Plan&&count>0,'bounded_population_plan_missing_root');const serialized=JSON.stringify(document),bytes=Buffer.byteLength(serialized);requireKnown(bytes<=1024*1024,'bounded_population_plan_bytes');
   return{plan:document,nodes:count,bytes,plan_sha256:sha(JSON.stringify(plan)),sanitized_sha256:sha(serialized),jit:jitSeen?'observed' as const:'UNKNOWN' as const,parallel:{workers_planned:workersPlanned,workers_launched:workersLaunched,coverage:workersLaunched?'leader_only_workers_UNKNOWN':'no_workers_observed'}};
- }catch{throw new Error('bounded_population_plan_invalid_or_over_limit');}
+ }catch(error){
+  if(observeRejection){try{let reason_code:BoundedPopulationPlanRejectionV1['reason_code']='UNKNOWN';const message=error!==null&&typeof error==='object'?Object.getOwnPropertyDescriptor(error,'message'):undefined;if(message&&'value'in message&&typeof message.value==='string'&&rejectionCodes.some(code=>code===message.value))reason_code=message.value as typeof rejectionCodes[number];const identifier_membership=reason_code==='bounded_population_plan_identifier'?checkpoint.value_type==='string'?'not_allowlisted':'non_string':checkpoint.identifier_membership;observeRejection({...checkpoint,reason_code,identifier_membership,nodes_seen:count});}catch{/* Observation cannot replace the original rejection. */}}
+  throw new Error('bounded_population_plan_invalid_or_over_limit');
+ }
 }
 const protectedNames=['signal_listening_population_roots_v1','signal_listening_effective_population_roots_v2','signal_listening_statement_money_v1','signal_listening_call_guard_v1','signal_labeling_json_v1','signal_labeling_digest_v1','signal_listening_input_digest_v1','signal_mass_labeling_lexical_text_v1','signal_mass_labeling_category_pattern_v1','signal_mass_labeling_category_pattern_matches_v1','signal_mass_labeling_r13_hashtags_v1','signal_listening_root_right_v1','signal_listening_discovery_candidates_v1'];
 async function catalog(c:PoolClient,extracted:ReturnType<typeof extractCurrentBoundedPopulationV1>){
