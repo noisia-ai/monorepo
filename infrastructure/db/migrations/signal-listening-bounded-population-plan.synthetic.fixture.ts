@@ -65,7 +65,18 @@ export function sanitizeBoundedPopulationPlanV1(plan:unknown,identifiers:Readonl
  const jit=(value:unknown)=>{jitSeen=true;const result:Record<string,unknown>={};for(const[k,d]of Object.entries(own(value))){
   if(k==='Functions'){const n=finite(d.value);requireKnown(Number.isSafeInteger(n),'bounded_population_jit_functions');result[k]=n;}
   else if(k==='Options'){const options:Record<string,boolean>={};for(const[name,field]of Object.entries(own(d.value))){requireKnown(['Inlining','Optimization','Expressions','Deforming'].includes(name)&&typeof field.value==='boolean','bounded_population_jit_option');options[name]=field.value;}result[k]=options;}
-  else if(k==='Timing'){const timing:Record<string,number>={};for(const[name,field]of Object.entries(own(d.value))){requireKnown(['Generation','Inlining','Optimization','Emission','Total'].includes(name),'bounded_population_jit_timing');timing[name]=finite(field.value);}result[k]=timing;}
+  else if(k==='Timing'){
+   const timing:Record<string,number|{Deform:number;Total:number}>={};
+   for(const[name,field]of Object.entries(own(d.value))){
+    requireKnown(['Generation','Inlining','Optimization','Emission','Total'].includes(name),'bounded_population_jit_timing');
+    if(name==='Generation'&&typeof field.value!=='number'){
+     const generation=own(field.value);
+     requireKnown(!Array.isArray(field.value)&&Reflect.ownKeys(generation).length===2&&Object.hasOwn(generation,'Deform')&&Object.hasOwn(generation,'Total'),'bounded_population_jit_generation');
+     timing[name]={Deform:finite(generation.Deform!.value),Total:finite(generation.Total!.value)};
+    }else timing[name]=finite(field.value);
+   }
+   result[k]=timing;
+  }
   else throw new Error('bounded_population_jit_structure');
  }return result;};
  const walk=(value:unknown,depth:number,kind:'node'|'worker'|'planning'='node'):Record<string,unknown>=>{
