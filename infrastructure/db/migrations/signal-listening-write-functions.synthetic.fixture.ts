@@ -54,7 +54,8 @@ const countersSql=`SELECT s.funcid::text oid,p.proname name,s.calls::float8 call
 const restoreTracking={none:"SET LOCAL track_functions='none'",pl:"SET LOCAL track_functions='pl'",all:"SET LOCAL track_functions='all'"} as const;
 export type WriteFunctionsReceiptV1={contract:'r16-listening-write-functions-v1';status:'observed'|'failed'|'INCONCLUSIVE';diagnostic_only:true;h1_accepted:false;cpu:'UNKNOWN';closed:boolean;function_coverage:'TRACKED_PUBLIC_ROWS_ONLY_MISSING_UNKNOWN';captures:Array<Record<string,unknown>>;gates:{three_original_statements:boolean;native_commit_ack:boolean;identity_and_settings_restored:boolean;counters_known:boolean;no_recording_loss:boolean}};
 /** Financial acceptance may tolerate absent statistics, never a missing or
- * failed write observation. Read only own data fields; no diagnostic getters. */
+ * failed write observation. Serialization accepts only the factory's own JSON
+ * receipt, not externally supplied JS graphs with getters or toJSON hooks. */
 export function assertListeningWriteStructureV1(value:unknown):asserts value is WriteFunctionsReceiptV1{
  const bytes=(object:unknown)=>{let json:string|undefined;try{json=JSON.stringify(object);}catch{throw new Error('write_functions_structure_serialization');}known(typeof json==='string','write_functions_structure_serialization');return Buffer.byteLength(json);};
  const read=(object:unknown,key:string,optional=false):unknown=>{known(object!==null&&typeof object==='object','write_functions_structure_object');const d=Object.getOwnPropertyDescriptor(object,key);if(!d&&optional)return undefined;known(d&&'value'in d,'write_functions_structure_data');return d.value;};
@@ -68,7 +69,7 @@ export function assertListeningWriteStructureV1(value:unknown):asserts value is 
   for(const key of ['safe_error_tree','failure_stage','transaction_rolled_back','capture_payload_rejected_over_bytes','capture_bytes_observed'])known(read(row,key,true)===undefined,'write_functions_structure_failure');
   const proposed=read(row,'proposed_rows'),roots=read(row,'batch_roots'),changed=read(row,'row_count'),elapsed=read(row,'elapsed_dml_ms');known(typeof proposed==='number'&&Number.isSafeInteger(proposed)&&proposed>0&&proposed<=512&&typeof roots==='number'&&Number.isSafeInteger(roots)&&roots>0&&roots<=proposed,'write_functions_structure_batch');
   known(typeof changed==='number'&&Number.isSafeInteger(changed)&&changed>=0&&typeof elapsed==='number'&&Number.isFinite(elapsed)&&elapsed>=0&&read(row,'bind_count')===(phase==='reserve'?8:phase==='mark'?2:4),'write_functions_structure_result');
-  array(read(row,'before'),64);array(read(row,'after'),64);const deltas=array(read(row,'deltas'),64);if(!deltas.length)allKnown=false;
+  const before=array(read(row,'before'),64),after=array(read(row,'after'),64),deltas=array(read(row,'deltas'),64);if(!deltas.length){known(before.length===0&&after.length===0,'write_functions_structure_missing_deltas');allKnown=false;}
   for(const delta of deltas){const status=read(delta,'status');if(status==='UNKNOWN'){allKnown=false;known(['baseline_absent','after_absent'].includes(read(delta,'reason') as string),'write_functions_structure_unknown_reason');for(const key of ['calls','total_time','self_time'])known(read(delta,key)==='UNKNOWN','write_functions_structure_unknown_not_zero');}else{known(status==='known','write_functions_structure_delta');for(const key of ['calls','total_time','self_time']){const n=read(delta,key);known(typeof n==='number'&&Number.isFinite(n)&&n>=0,'write_functions_structure_delta_value');}}}
  }
  known(countersKnown===allKnown&&read(value,'status')===(countersKnown?'observed':'INCONCLUSIVE'),'write_functions_structure_status');
