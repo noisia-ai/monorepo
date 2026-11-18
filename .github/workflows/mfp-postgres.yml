@@ -22,6 +22,11 @@ on:
         type: boolean
         default: false
         required: false
+      bounded_population_plan:
+        description: Run the isolated native bounded population plan diagnostic
+        type: boolean
+        default: false
+        required: false
 
 permissions:
   contents: read
@@ -1449,6 +1454,177 @@ jobs:
           path: |
             listening-startup-prefix.tap
             .data/piloto-masivo/r16/listening-startup-prefix-native-evidence/listening-startup-prefix.json
+          if-no-files-found: ignore
+          retention-days: 14
+          include-hidden-files: true
+
+  bounded-population-plan-experimental:
+    name: R16 bounded population provenance diagnostic (isolated lab)
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.scope == 'listening-smoke' && inputs.bounded_population_plan }}
+    runs-on: ubuntu-latest
+    # Soft caps are measured by the harness: setup 1,800s, read 120s, total 1,920s.
+    # The 40-minute job timeout is an external hard watchdog, not a benchmark budget.
+    timeout-minutes: 40
+    env:
+      R16BENCH_RUN_ID: benchmark-pg17
+      R16BENCH_SERVICES: postgres,redis
+      NOISIA_R16_LOCAL_PG_LAB: r16-benchmark-pg17
+      DATABASE_SSL: 'false'
+      R16_BOUNDED_POPULATION_PLAN_EVIDENCE_DIR: .data/piloto-masivo/r16/bounded-population-plan-native-evidence
+    steps:
+      - uses: actions/checkout@v4
+      - name: Initialize an empty bounded population plan TAP receipt
+        run: printf '%s\n' '# native bounded population plan did not start' > bounded-population-plan.tap
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+      - name: Install frozen Node workspace dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Require the owned bounded population lab and private files to be absent
+        run: |
+          set -euo pipefail
+          if docker inspect r16-benchmark-pg17 >/dev/null 2>&1; then
+            echo '::error::The named R16 bounded population PostgreSQL container already exists'
+            exit 1
+          fi
+          if docker volume inspect r16bench-benchmark-pg17_postgres-data >/dev/null 2>&1; then
+            echo '::error::The named R16 bounded population PostgreSQL volume already exists'
+            exit 1
+          fi
+          lab_dir=.data/piloto-masivo/r16/labs/benchmark-pg17
+          if [[ -e "$lab_dir/private.env" || -e "$lab_dir/connection.env" ]]; then
+            echo '::error::Private files for the named R16 bounded population lab already exist'
+            exit 1
+          fi
+      - name: Start the owned official PostgreSQL 17 and Redis lab
+        run: |
+          set -euo pipefail
+          printf '%s\n' 'R16_BOUNDED_POPULATION_PLAN_LAB_OWNED=true' >> "$GITHUB_ENV"
+          scripts/r16/lab-up.sh
+      - name: Apply migrations to the fresh bounded population lab
+        env:
+          NOISIA_DB_SMOKE_RESET_SCHEMA: 'true'
+          NOISIA_DB_SMOKE_EMULATE_SUPABASE_ROLES: 'true'
+          NOISIA_MFP_PG_CI: 'true'
+        run: |
+          set -euo pipefail
+          connection_file=.data/piloto-masivo/r16/labs/benchmark-pg17/connection.env
+          test -f "$connection_file"
+          set -a
+          source "$connection_file"
+          set +a
+          export DATABASE_SSL=false
+          export NOISIA_R16_LOCAL_PG_LAB=r16-benchmark-pg17
+          pnpm --filter @noisia/db db:smoke:migrations
+      - name: Run the exact native bounded population plan profile
+        id: profile
+        env:
+          NOISIA_R16_BOUNDED_POPULATION_PLAN_PG: 'true'
+          NOISIA_R16_BOUNDED_POPULATION_PLAN_PURE: 'false'
+          NOISIA_R16_NATIVE_FIXTURE_PG: 'true'
+          NOISIA_MASS_LABELING_ENABLED: 'true'
+          NOISIA_SIGNAL_LISTENING_ENABLED: 'true'
+          NOISIA_JEV_PROVIDER_ENABLED: 'true'
+          NOISIA_JEV_STREAMING_V2_ENABLED: 'true'
+        run: |
+          set -o pipefail
+          connection_file=.data/piloto-masivo/r16/labs/benchmark-pg17/connection.env
+          test -f "$connection_file"
+          set -a
+          source "$connection_file"
+          set +a
+          export DATABASE_SSL=false
+          export NOISIA_R16_LOCAL_PG_LAB=r16-benchmark-pg17
+          set +e
+          pnpm exec node --test --test-concurrency=1 --import tsx \
+            infrastructure/db/migrations/signal-listening-bounded-population-plan.postgres.test.ts \
+            2>&1 | tee bounded-population-plan.tap
+          test_status=${PIPESTATUS[0]}
+          set -e
+          if [[ "$test_status" -ne 0 ]] \
+            || ! grep -qx '# tests 1' bounded-population-plan.tap \
+            || ! grep -qx '# pass 1' bounded-population-plan.tap \
+            || ! grep -qx '# fail 0' bounded-population-plan.tap \
+            || ! grep -qx '# cancelled 0' bounded-population-plan.tap \
+            || ! grep -qx '# skipped 0' bounded-population-plan.tap \
+            || ! grep -qx '# Subtest: native bounded population exposes provenance work for 1000 consumer roots in a 32768-root corpus' bounded-population-plan.tap; then
+            echo '::error::The native bounded population plan profile failed, was skipped, or did not execute the exact test'
+            exit 1
+          fi
+      - name: Stop and remove only the owned bounded population lab
+        id: cleanup
+        if: ${{ always() && env.R16_BOUNDED_POPULATION_PLAN_LAB_OWNED == 'true' }}
+        run: |
+          set -euo pipefail
+          lab_dir=.data/piloto-masivo/r16/labs/benchmark-pg17
+          if [[ -f "$lab_dir/private.env" ]]; then
+            scripts/r16/lab-down.sh
+          fi
+          if docker inspect r16-benchmark-pg17 >/dev/null 2>&1; then
+            echo '::error::Owned R16 bounded population PostgreSQL container survived cleanup'
+            exit 1
+          fi
+          if docker volume inspect r16bench-benchmark-pg17_postgres-data >/dev/null 2>&1; then
+            echo '::error::Owned R16 bounded population PostgreSQL volume survived cleanup'
+            exit 1
+          fi
+      - name: Validate the native bounded population plan evidence
+        if: always()
+        env:
+          PROFILE_CONCLUSION: ${{ steps.profile.conclusion }}
+          CLEANUP_CONCLUSION: ${{ steps.cleanup.conclusion }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          path = Path(os.environ['R16_BOUNDED_POPULATION_PLAN_EVIDENCE_DIR']) / 'bounded-population-plan.json'
+          if os.environ.get('PROFILE_CONCLUSION') != 'success' or os.environ.get('CLEANUP_CONCLUSION') != 'success':
+              raise SystemExit('bounded population plan evidence is not accepted unless the native test and owned-lab cleanup both pass')
+          if not path.is_file() or path.stat().st_size <= 0 or path.stat().st_size > 2 * 1024 * 1024:
+              raise SystemExit('bounded population plan JSON is missing, empty, or exceeds 2 MiB')
+          with path.open(encoding='utf-8') as stream:
+              value = json.load(stream)
+          if type(value) is not dict:
+              raise SystemExit('bounded population plan JSON must be a single object')
+          expected = {
+              'contract': 'r16-bounded-population-plan-v1',
+              'status': 'observed',
+              'diagnostic_only': True,
+              'h1_accepted': False,
+              'cpu': 'UNKNOWN',
+              'speedup_claim': False,
+          }
+          if any(value.get(key) != expected_value for key, expected_value in expected.items()):
+              raise SystemExit('bounded population plan JSON does not match its diagnostic contract')
+          if 'candidate_accepted' in value:
+              raise SystemExit('bounded population plan JSON must not claim candidate acceptance')
+          gates = value.get('gates')
+          required_gates = {
+              'source_binding',
+              'native_state',
+              'projection_parity',
+              'snapshot_binding',
+              'plan_complete',
+              'closure_confirmed',
+          }
+          if type(gates) is not dict or set(gates) != required_gates or any(gates.get(key) is not True for key in required_gates):
+              raise SystemExit('bounded population plan JSON must explicitly pass every registered evidence gate')
+          PY
+      - name: Upload bounded population plan diagnostic evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: r16-bounded-population-plan-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            bounded-population-plan.tap
+            .data/piloto-masivo/r16/bounded-population-plan-native-evidence/bounded-population-plan.json
           if-no-files-found: ignore
           retention-days: 14
           include-hidden-files: true
