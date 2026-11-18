@@ -1,7 +1,8 @@
 # The image of a study
 
 Each study has its own image. It opens the study's page, next to the title, and is the study's card
-in the index. Until a study has one, the page shows the deck's cover.
+in the index. Until a study has one, the page shows the deck's cover. The access email carries it
+as a banner (`STUDY_EMAIL.md`).
 
 ## What it looks like
 

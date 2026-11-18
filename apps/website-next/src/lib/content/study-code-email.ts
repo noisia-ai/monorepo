@@ -1,6 +1,6 @@
 /**
  * The email with the 4-digit code that opens a `registro` study. Same look as the access email
- * (study-email.ts): white card, Noisia logo, Google Sans, black pill button, tables for Outlook.
+ * (study-email.ts): white card, Noisia logo (inline, `cid:noisia`), Google Sans, black pill button, tables for Outlook.
  *
  * The code goes first in the subject so it reads in the notification, and alone in its own block so
  * Gmail and Apple Mail offer to copy it. The button goes back to the study with the code in the
@@ -75,7 +75,7 @@ export function studyCodeEmail(lang: "es" | "en", vars: { name: string; title: s
 <tr><td align="center" style="padding:32px 12px;">
   <table role="presentation" class="card" width="600" cellpadding="0" cellspacing="0" border="0" style="width:600px;max-width:600px;background:#ffffff;border:1px solid #e6e6e6;border-radius:14px;">
     <tr><td class="pad" style="padding:28px 40px 8px 40px;">
-      <a href="https://noisia.ai" style="text-decoration:none;"><img src="https://noisia.ai/brand/noisia-email-2x.png" width="110" height="38" alt="Noisia" style="display:block;border:0;width:110px;height:38px;"></a>
+      <a href="https://noisia.ai" style="text-decoration:none;"><img src="cid:noisia" width="110" height="38" alt="Noisia" style="display:block;border:0;width:110px;height:38px;color:#0a0a0a;font-family:${FONT};font-size:20px;font-weight:700;"></a>
     </td></tr>
     <tr><td class="pad" style="padding:20px 40px 0 40px;font-family:${FONT};">
       ${p(c.hello(name), "0 0 12px 0")}

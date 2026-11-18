@@ -5,7 +5,8 @@ import { z } from "zod";
 import { getStudy, getStudyFile } from "@/content/studies";
 import { ACCESS_COOKIE_DAYS, accessCookieName, pendingCookieName, READER_COOKIE, readerValid, verifySignup } from "@/lib/content/access";
 import { studyAccessEmail } from "@/lib/content/study-email";
-import { clientIp, rateLimiter, sendEmail, TEAM_EMAIL } from "@/lib/content/send-email";
+import { LOGO_PNG_BASE64 } from "@/lib/content/email-logo";
+import { clientIp, inlineAttachments, rateLimiter, sendEmail, STUDY_NOTIFY_TO, STUDY_REPLY_TO, type InlineImage } from "@/lib/content/send-email";
 import { requestOrigin } from "@/lib/site";
 
 /**
@@ -62,15 +63,26 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   const { person } = result;
   const lang = person.lang;
   const link = `${origin.origin}/e/${token}${lang === "en" ? "?lang=en" : ""}`;
-  const hasCover = Boolean(await getStudyFile(study, "email.jpg").catch(() => null));
-  const cover = hasCover ? `${origin.origin}/api/content/studies/${study.id}/email.jpg?v=${study.version}` : null;
-  const email = studyAccessEmail(lang, { name: person.name, title: study.summary[lang].title, link, cover, slides: study.slideCount });
-  const team = TEAM_EMAIL();
+  const summary = study.summary[lang];
+  // The banner (1040 × 560) goes inside the email; studies loaded before it existed go without it.
+  const banner = await getStudyFile(study, "email-banner.jpg").catch(() => undefined);
+  const images: InlineImage[] = [{ id: "noisia", filename: "noisia.png", bytes: LOGO_PNG_BASE64, contentType: "image/png" }];
+  if (banner) images.push({ id: "study", filename: `${study.id}.jpg`, bytes: banner.bytes, contentType: "image/jpeg" });
+  const email = studyAccessEmail(lang, {
+    name: person.name,
+    title: summary.title,
+    dek: summary.dek,
+    eyebrow: [study.method, summary.period_label ?? study.periodLabel].filter(Boolean).join(" · "),
+    slides: study.slideCount,
+    link,
+    stats: summary.stats.map((stat) => ({ value: stat.value, label: stat.label })),
+    image: banner ? { alt: summary.image_alt ?? summary.title } : null
+  });
   const [readerOk, teamOk] = await Promise.all([
-    // Replies go to the team: the email invites the reader to answer.
-    sendEmail({ to: [person.email], reply_to: team, subject: email.subject, html: email.html, text: email.text }),
+    // The email invites the reader to answer; replies go to STUDY_REPLY_TO.
+    sendEmail({ to: [person.email], reply_to: STUDY_REPLY_TO(), subject: email.subject, html: email.html, text: email.text, attachments: inlineAttachments(images) }),
     sendEmail({
-      to: [team],
+      to: [STUDY_NOTIFY_TO()],
       reply_to: person.email,
       subject: `Registro: ${study.id} · ${person.company}`,
       text: [`Nombre: ${person.name}`, `Correo: ${person.email} (verificado con código)`, `Empresa: ${person.company}`, `Estudio: ${study.id}`, `Idioma: ${lang}`, `Acepta más estudios: ${person.marketing ? "sí" : "no"}`].join("\n")
