@@ -1608,7 +1608,7 @@ jobs:
           if type(value) is not dict:
               raise SystemExit('Roster query-plan JSON must be a single object')
           expected = {
-              'contract': 'r16-roster-query-plan-v1',
+              'contract': 'r16-roster-query-plan-v2',
               'status': 'observed',
               'diagnostic_only': True,
               'h1_accepted': False,
@@ -1620,6 +1620,42 @@ jobs:
               raise SystemExit('Roster query-plan JSON does not match its diagnostic-only contract')
           if 'candidate_accepted' in value:
               raise SystemExit('Roster query-plan diagnostic must not claim candidate acceptance')
+          preflight = value.get('format_preflight')
+          if type(preflight) is not dict or preflight.get('status') != 'observed' \
+              or preflight.get('format_only') is not True or preflight.get('analyze') is not False \
+              or type(preflight.get('seeded_roots')) is not int or preflight.get('seeded_roots') != 0 \
+              or preflight.get('placeholder_not_admitted') is not True \
+              or type(preflight.get('explain_count')) is not int or preflight.get('explain_count') != 1 \
+              or type(preflight.get('provider_http_calls')) is not int or preflight.get('provider_http_calls') != 0 \
+              or preflight.get('sanitizer_rejection') is not None \
+              or preflight.get('own_database_absent') is not True or preflight.get('admin_end_awaited') is not True:
+              raise SystemExit('Roster format preflight must prove one schema-only query and owned-clone cleanup')
+          preflight_catalog = preflight.get('catalog_binding')
+          if type(preflight_catalog) is not dict or preflight_catalog.get('unchanged') is not True \
+              or preflight_catalog.get('source_declared_bodies_and_attrs_match') is not True:
+              raise SystemExit('Roster format preflight must preserve the source-bound catalog')
+          preflight_source = preflight.get('source_binding')
+          if type(preflight_source) is not dict or preflight_source.get('matches_before') is not True:
+              raise SystemExit('Roster format preflight must bind to the captured immutable source')
+          preflight_plan = preflight.get('plan')
+          if type(preflight_plan) is not dict or preflight_plan.get('format_only') is not True \
+              or preflight_plan.get('query_template_sha256') != 'sha256:0e4f7d9708942def156838e598672ee5302c8932e332c3378b42c70dff3bd4f2' \
+              or type(preflight_plan.get('bind_count')) is not int or preflight_plan.get('bind_count') != 1 \
+              or type(preflight_plan.get('explain_count')) is not int or preflight_plan.get('explain_count') != 1 \
+              or type(preflight_plan.get('nodes')) is not int or preflight_plan.get('nodes') < 1 \
+              or preflight_plan.get('nodes') > 512 or type(preflight_plan.get('bytes')) is not int \
+              or preflight_plan.get('bytes') < 1 or preflight_plan.get('bytes') > 1024 * 1024 \
+              or type(preflight_plan.get('sanitized_sha256')) is not str \
+              or len(preflight_plan.get('sanitized_sha256')) != 71 \
+              or not preflight_plan.get('sanitized_sha256').startswith('sha256:') \
+              or any(character not in '0123456789abcdef' for character in preflight_plan.get('sanitized_sha256')[7:]):
+              raise SystemExit('Roster format preflight must retain one bounded sanitized plan summary')
+          for key in ('elapsed_ms', 'explain_elapsed_ms', 'format_read_elapsed_ms'):
+              elapsed = preflight.get(key)
+              if type(elapsed) not in (int, float) or not math.isfinite(elapsed) or elapsed < 0:
+                  raise SystemExit('Roster format preflight timing is missing or invalid: '+key)
+          if preflight.get('elapsed_ms') > 1800000:
+              raise SystemExit('Roster format preflight exceeded the observed setup cap')
           gates = value.get('gates')
           required_gates = {
               'source_binding', 'exact_original_call_once', 'native_context_preserved',
@@ -1659,10 +1695,16 @@ jobs:
           clock = value.get('clock')
           if type(clock) is not dict:
               raise SystemExit('Roster query-plan clock evidence is missing')
+          for key in ('runtime_started_at_ms', 'combined_setup_ms'):
+              observed = clock.get(key)
+              if type(observed) not in (int, float) or not math.isfinite(observed) or observed < 0 or observed > 1800000:
+                  raise SystemExit('Roster query-plan combined setup cap failed: '+key)
           for key, limit in (('setup_ms', 1800000), ('prefix_instrumented_ms', 120000), ('total_ms', 1920000)):
               observed = clock.get(key)
               if type(observed) not in (int, float) or not math.isfinite(observed) or observed < 0 or observed > limit:
                   raise SystemExit('Roster query-plan observed elapsed cap failed: '+key)
+          if clock.get('combined_setup_ms') != clock.get('runtime_started_at_ms') + clock.get('setup_ms'):
+              raise SystemExit('Roster query-plan combined setup must join preflight offset and runtime setup')
           closure = value.get('closure')
           if type(closure) is not dict or closure.get('callback_complete') is not True \
               or closure.get('factory_returned_normally') is not True or closure.get('own_database_absent') is not True \

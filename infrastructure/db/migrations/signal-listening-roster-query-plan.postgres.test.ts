@@ -3,6 +3,10 @@ import {readFile} from 'node:fs/promises';
 import {join} from 'node:path';
 import test from 'node:test';
 import {
+  sanitizeBoundedPopulationPlanV1,
+  type BoundedPopulationPlanRejectionV1,
+} from './signal-listening-bounded-population-plan.synthetic.fixture';
+import {
   createRosterQueryObserverV1,
   rosterExactSqlV1,
   rosterFindingsV1,
@@ -10,6 +14,8 @@ import {
   rosterGateNamesV1,
   rosterQueryMatchesV1,
   rosterStaticBindingV1,
+  readRosterFormatPlanV1,
+  rosterFormatPlaceholderV1,
   runRosterExactQueryObserverV1,
   type RosterFunctionIdentityV1,
   type RosterFunctionRowV1,
@@ -31,7 +37,7 @@ test(nativeTitle,{skip:!native},async()=>{
   const receipt=await runRosterExactQueryObserverV1(directory);
   const persisted=JSON.parse(await readFile(join(directory,'roster-exact-plan.json'),'utf8'));
   assert.deepEqual(persisted,receipt,'persisted native evidence must match the returned receipt');
-  assert.equal(receipt.contract,'r16-roster-query-plan-v1');
+  assert.equal(receipt.contract,'r16-roster-query-plan-v2');
   assert.equal(receipt.status,'observed');
   assert.equal(receipt.diagnostic_only,true);
   assert.equal(receipt.h1_accepted,false);
@@ -86,9 +92,127 @@ test(nativeTitle,{skip:!native},async()=>{
   assert.equal(closure.factory_returned_normally,true);
   assert.equal(closure.own_database_absent,true);
   assert.equal(closure.admin_end_awaited,true);
+
+  const preflight=receipt.format_preflight as Record<string,unknown>;
+  assert.equal(preflight.status,'observed');
+  assert.equal(preflight.format_only,true);
+  assert.equal(preflight.analyze,false);
+  assert.equal(preflight.seeded_roots,0);
+  assert.equal(preflight.placeholder_not_admitted,true);
+  assert.equal(preflight.explain_count,1);
+  assert.equal(preflight.own_database_absent,true);
+  assert.equal(preflight.admin_end_awaited,true);
+  const catalogBinding=preflight.catalog_binding as Record<string,unknown>;
+  assert.equal(catalogBinding.unchanged,true);
+  const preflightSource=preflight.source_binding as Record<string,unknown>;
+  assert.equal(preflightSource.matches_before,true);
+  const preflightPlan=preflight.plan as Record<string,unknown>;
+  assert.ok(Number.isSafeInteger(preflightPlan.nodes)&&Number(preflightPlan.nodes)>0&&Number(preflightPlan.nodes)<=512);
+  assert.ok(Number.isSafeInteger(preflightPlan.bytes)&&Number(preflightPlan.bytes)>0&&Number(preflightPlan.bytes)<=1024*1024);
+  assert.match(String(preflightPlan.sanitized_sha256),/^sha256:[a-f0-9]{64}$/u);
+  const clock=receipt.clock as Record<string,unknown>;
+  assert.ok(typeof clock.runtime_started_at_ms==='number'&&Number.isFinite(clock.runtime_started_at_ms)&&clock.runtime_started_at_ms>=0);
+  assert.ok(typeof clock.setup_ms==='number'&&Number.isFinite(clock.setup_ms)&&clock.setup_ms>=0);
+  assert.ok(typeof clock.combined_setup_ms==='number'&&Number.isFinite(clock.combined_setup_ms));
+  assert.equal(clock.combined_setup_ms,Number(clock.runtime_started_at_ms)+Number(clock.setup_ms));
+  assert.ok(Number(clock.combined_setup_ms)<=1800000,'combined preflight plus runtime setup must meet the global setup cap');
 });
 
 if(pure){
+  test('C rejection observer preserves successful sanitizer bytes and emits only closed failure context',()=>{
+    const safePlan=[{Plan:{'Node Type':'Seq Scan','Relation Name':'mentions','Actual Rows':1,'Actual Loops':1},'Planning Time':1,'Execution Time':2}];
+    const identifiers=new Set(['mentions']);
+    const withoutObserver=sanitizeBoundedPopulationPlanV1(safePlan,identifiers);
+    let successfulObserverCalls=0;
+    const withObserver=sanitizeBoundedPopulationPlanV1(safePlan,identifiers,()=>{successfulObserverCalls++;});
+    assert.equal(JSON.stringify(withObserver),JSON.stringify(withoutObserver),'observer presence must not change accepted sanitizer bytes');
+    assert.equal(successfulObserverCalls,0,'successful sanitization has no rejection event');
+
+    const rejected=(plan:unknown,allowed:ReadonlySet<string>)=>{
+      let reason:BoundedPopulationPlanRejectionV1|undefined;
+      assert.throws(()=>sanitizeBoundedPopulationPlanV1(plan,allowed,value=>{reason=value;}),error=>
+        error instanceof Error&&error.message==='bounded_population_plan_invalid_or_over_limit');
+      assert.ok(reason,'a rejected plan must leave one closed-format diagnosis');
+      assert.deepEqual(Object.keys(reason).sort(),[
+        'array_size_bucket','depth_bucket','identifier_class','identifier_membership','location','node_type',
+        'nodes_seen','property','reason_code','value_type',
+      ]);
+      assert.doesNotMatch(JSON.stringify(reason),/PRIVATE_SENTINEL|PRIVATE_RELATION|privateCustomer/u);
+      return reason;
+    };
+    const identifierReason=rejected([{Plan:{'Node Type':'Seq Scan','Relation Name':'PRIVATE_RELATION_SENTINEL','Actual Rows':1,'Actual Loops':1}}],new Set());
+    assert.deepEqual(identifierReason,{
+      reason_code:'bounded_population_plan_identifier',location:'node',property:'Relation Name',value_type:'string',
+      identifier_class:'relation',identifier_membership:'not_allowlisted',node_type:'Seq Scan',nodes_seen:1,
+      depth_bucket:'within32',array_size_bucket:'UNKNOWN',
+    });
+    const structureReason=rejected([{Plan:{'Node Type':'Result','PRIVATE_SENTINEL_KEY':'PRIVATE_SENTINEL_VALUE'}}],new Set());
+    assert.equal(structureReason.reason_code,'bounded_population_plan_structure');
+    assert.equal(structureReason.property,'UNRECOGNIZED_KEY');
+    assert.equal(structureReason.identifier_class,'none');
+    assert.equal(structureReason.identifier_membership,'not_checked');
+    assert.equal(structureReason.node_type,'Result');
+    const overflowReason=rejected([{Plan:{'Node Type':'Append',Plans:Array.from({length:513},()=>({'Node Type':'Seq Scan'}))}}],new Set());
+    assert.equal(overflowReason.reason_code,'bounded_population_plan_array');
+    assert.equal(overflowReason.location,'node');
+    assert.equal(overflowReason.property,'Plans');
+    assert.equal(overflowReason.value_type,'array');
+    assert.equal(overflowReason.array_size_bucket,'above512');
+  });
+
+  test('C rejection observer preserves generic errors across invalid plans and cannot replace the primary',()=>{
+    const node=(type='Seq Scan'):Record<string,unknown>=>({'Node Type':type,'Actual Rows':1,'Actual Loops':1});
+    let getterCalls=0;
+    const accessor=Object.defineProperty({'Node Type':'Seq Scan'},'Actual Rows',{enumerable:true,get(){getterCalls++;return 1;}});
+    const inherited=Object.assign(Object.create({PRIVATE_SENTINEL:true}),node());
+    const cyclic:Record<string,unknown>=node('Nested Loop');cyclic.Plans=[cyclic];
+    const tooMany=Array.from({length:513},()=>node());
+    const invalidPlans:unknown[]=[
+      [{Plan:{'Node Type':'Seq Scan','Actual Rows':Number.NaN,'Actual Loops':1}}],
+      [{Plan:{'Node Type':'Append',Plans:tooMany}}],
+      [{Plan:accessor}],
+      [{Plan:inherited}],
+      [{Plan:cyclic}],
+    ];
+    for(const plan of invalidPlans){
+      let originalMessage='';
+      assert.throws(()=>sanitizeBoundedPopulationPlanV1(plan),error=>{
+        assert.ok(error instanceof Error);originalMessage=error.message;return true;
+      });
+      assert.equal(originalMessage,'bounded_population_plan_invalid_or_over_limit');
+      let observerCalls=0;
+      assert.throws(()=>sanitizeBoundedPopulationPlanV1(plan,undefined,()=>{
+        observerCalls++;
+        throw new Error('PRIVATE_SENTINEL observer failure');
+      }),error=>error instanceof Error&&error.message===originalMessage);
+      assert.equal(observerCalls,1,'a rejected parse reports once even when the observer fails');
+    }
+    assert.equal(getterCalls,0,'diagnostic capture must not invoke getters');
+  });
+
+  test('schema-only roster preflight sends one exact EXPLAIN bind and sanitizes its plan',async()=>{
+    const calls:Array<{text:string;values:unknown}>=[];
+    const client={query:async(text:string,values?:unknown[])=>{
+      calls.push({text,values});
+      if(text.startsWith('EXPLAIN '))return{rows:[{'QUERY PLAN':[{Plan:{'Node Type':'Result','Actual Rows':0,'Actual Loops':1},'Planning Time':1,'Execution Time':2}]}]};
+      return{rows:[]};
+    }};
+    const result=await readRosterFormatPlanV1(client as never);
+    assert.equal(calls.length,2,'one EXPLAIN plus one catalog allowlist read');
+    assert.equal(calls[0]?.text,'EXPLAIN (FORMAT JSON) '+rosterExactSqlV1);
+    assert.deepEqual(calls[0]?.values,[rosterFormatPlaceholderV1]);
+    assert.equal(result.status,'observed');
+    assert.equal(result.format_only,true);
+    assert.equal(result.analyze,false);
+    assert.equal(result.placeholder_not_admitted,true);
+    assert.equal(result.bind_count,1);
+    assert.equal(result.explain_count,1);
+    assert.equal(result.sanitized.nodes,1);
+    const sanitizedPlan=result.sanitized.plan as Record<string,unknown>;
+    assert.equal((sanitizedPlan.Plan as Record<string,unknown>)['Node Type'],'Result');
+    assert.doesNotMatch(JSON.stringify(result),/00000000-0000-4000-8000-000000000000|PRIVATE/u);
+  });
+
   test('exact roster matcher binds the original SQL and one original workspace value',()=>{
     assert.equal(rosterQueryMatchesV1(rosterExactSqlV1,[workspace],workspace),true);
     assert.equal(rosterQueryMatchesV1('SELECT root_id  FROM signal_mention_facets_current_v1 WHERE workspace_id=$1',[workspace],workspace),false);
