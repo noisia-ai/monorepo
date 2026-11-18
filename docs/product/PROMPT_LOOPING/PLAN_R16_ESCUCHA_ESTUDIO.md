@@ -12,6 +12,8 @@ No hay aprobaciones humanas intermedias en los procesos de análisis: Sonnet 4.6
 
 ## Progreso
 
+- Revisión combinada de fuente, harness y recibos cerrada sin P0/P1. Se precisó un P2: el test llamado partial reservation devuelve menos filas y termina el feeder; no simula agotamiento de cuota en una reserva posterior. Esa cobertura monetaria sigue pendiente y no se atribuye a los 69 PASS. El FULL experimental sin proveedor pagado puede medir la nueva versión; merge y proveedor real conservan el requisito Native adicional de parcialidad.
+
 - Cierre local verificado por Root: 69 PASS, un Native omitido, TSC DB y workers exit0; logs y recibos finales cotejados, intentos fallidos preservados. Composición local84c0e0ce reproduce exactamente el tree9212bd3d del autorc5192f8f en once archivos. No hay PostgreSQL Native nuevo ni aceptación de capacidad; revisión conjunta final y freeze/prerregistro FULL pendientes.
 
 - Pruebas focales reportadas: 69 PASS (50 de page/calibration, 12 del cierre real de preparación con cliente simulado y siete de CPU/procedencia); una prueba CPU Native omitida. TSC aún no cerrado: el primer intento DB detectó dependencias locales sin enlazar. Se reutilizan paquetes existentes del mismo lock mediante enlaces propios temporales, sin instalar ni iniciar PostgreSQL/Docker. Recibos finales y revisión combinada pendientes; no es CI verde ni evidencia Native.
@@ -271,6 +273,8 @@ Recibo: separar Voyage/JEV por raíz de Claude por número de grupos y vueltas; 
 - La frontera persistRawPage no era sólo registro DB: el método rodea planificación, upload/readback y attach. Las etiquetas de método no sirven para atribuir todo su tiempo a SQL. El H0 privado distingue esa frontera compuesta y conserva nearest-rank como estimador único; no completa los relojes faltantes con sumas ni medianas sin pares.
 
 ## Registro de decisiones
+
+- 2026-11-18: declarar explícitamente la limitación P2 del mock de reserva parcial; no presentarlo como prueba de cuota ni como cobertura Native. El código conserva revisión favorable para un FULL sintético sin pago, con fuente y protocolo congelados antes del envío. La admisión monetaria parcial permanece pendiente antes de adopción.
 
 - 2026-11-18: el próximo ensayo de capacidad, tras checks, revisión y prerregistro exactos, será el FULL sintético de 32,768 raíces del workflow418751222; no repetir perfiles para volver verdes diagnósticos históricos. Se mantienen los diez fallos y todas las barras H1. Un caso Native adicional de parcialidad y recuperación será requisito antes de merge/proveedor real; no impide un FULL experimental sin proveedor pagado. No hay nuevo envío autorizado todavía.
 
