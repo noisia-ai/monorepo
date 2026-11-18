@@ -9,6 +9,7 @@ import {
   boundedMentionsParityV1,
   boundedMentionsSourceV1,
   installBoundedMentionsV1,
+  orderedRecordHexSha256V1,
 } from './signal-listening-flat-prefix.oracle';
 import {
   boundedPopulationRootSetHashV1,
@@ -137,6 +138,8 @@ if(pure){
     const value=boundedPopulationRootSetHashV1(roots);
     assert.equal(value,boundedPopulationRootSetHashV1([...roots].reverse()));
     assert.throws(()=>boundedPopulationRootSetHashV1([...roots,roots[0]!]));
+    for(const records of [[],['00'],['00','ff','ca']])
+      assert.equal(orderedRecordHexSha256V1(records),sha(records.join('\n')),'incremental digest preserves empty, singleton and ordered newline-delimited bytes');
   });
 
   test('3508 bounded fixture destroys an uncertain client when BEGIN fails',async()=>{
