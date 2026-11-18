@@ -1,4 +1,5 @@
 import { SITE_URL } from "@/lib/site";
+import { CONTACT_EMAIL } from "@/lib/contact";
 
 export { SITE_URL };
 
@@ -20,7 +21,7 @@ export const OG_LOCALE: Record<Lang, string> = { es: "es_MX", en: "en_US" };
 export const SITE_UPDATED = "2026-10-19";
 
 export const ORG_NAME = "Noisia";
-export const ORG_EMAIL = "hola@noisia.ai";
+export const ORG_EMAIL = CONTACT_EMAIL;
 /** Only profiles that exist and are linked from the site (footer). */
 export const ORG_SAME_AS = ["https://www.linkedin.com/company/29118513/"];
 

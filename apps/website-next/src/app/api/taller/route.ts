@@ -70,7 +70,9 @@ export async function POST(request: NextRequest) {
     headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
     body: JSON.stringify({
       from: process.env.WORKSHOP_FROM_EMAIL || "Noisia <contacto@hey.noisia.ai>",
-      to: [process.env.WORKSHOP_TO_EMAIL || "hola@noisia.ai"],
+      // One or more addresses; LEADS_CC is copied (content-db/STUDY_EMAIL.md).
+      to: (process.env.WORKSHOP_TO_EMAIL || "hola@noisia.ai").split(",").map((item) => item.trim()).filter(Boolean),
+      ...(process.env.LEADS_CC ? { cc: process.env.LEADS_CC.split(",").map((item) => item.trim()).filter(Boolean) } : {}),
       reply_to: body.email,
       subject: `Taller: ${body.company} · ${body.name}`,
       text

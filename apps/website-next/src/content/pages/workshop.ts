@@ -1,4 +1,5 @@
 import type { Localized, PageContent } from "./types";
+import { CONTACT_EMAIL } from "@/lib/contact";
 
 export type WorkshopForm = {
   name: string;
@@ -71,7 +72,7 @@ export const workshop: Localized<PageContent & { form: WorkshopForm }> = {
       submit: "Agendar el taller",
       sending: "Enviando…",
       success: "Listo. Te escribimos en menos de un día hábil para proponer horario.",
-      error: "No se pudo enviar. Escríbenos a hola@noisia.ai.",
+      error: `No se pudo enviar. Escríbenos a ${CONTACT_EMAIL}.`,
       privacy: "Usamos tus datos solo para contactarte sobre el taller."
     }
   },
@@ -128,7 +129,7 @@ export const workshop: Localized<PageContent & { form: WorkshopForm }> = {
       submit: "Book the workshop",
       sending: "Sending…",
       success: "Got it. We'll get back to you within one business day to set a time.",
-      error: "It didn't go through. Write to us at hola@noisia.ai.",
+      error: `It didn't go through. Write to us at ${CONTACT_EMAIL}.`,
       privacy: "We use your data only to contact you about the workshop."
     }
   }

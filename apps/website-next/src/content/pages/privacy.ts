@@ -1,5 +1,6 @@
 import type { LearnIcon } from "@/components/learn/icons";
 import type { Localized } from "./types";
+import { ADMIN_EMAIL } from "@/lib/contact";
 
 /**
  * Privacy notice (simplified, under Mexico's LFPDPPP). Read like a support article: a short
@@ -19,7 +20,8 @@ export type PrivacyCopy = {
   updated: string;
 };
 
-export const PRIVACY_EMAIL = "hola@noisia.ai";
+/** Where privacy requests go (src/lib/contact.ts). */
+export const PRIVACY_EMAIL = ADMIN_EMAIL;
 
 export const privacy: Localized<PrivacyCopy> = {
   es: {
@@ -41,7 +43,7 @@ export const privacy: Localized<PrivacyCopy> = {
         title: "Responsable",
         icon: "user",
         paragraphs: [
-          "Noisia es responsable del tratamiento de los datos personales que recaba a través de este sitio. Para cualquier asunto relacionado con este aviso puedes escribir a hola@noisia.ai."
+          `Noisia es responsable del tratamiento de los datos personales que recaba a través de este sitio. Para cualquier asunto relacionado con este aviso puedes escribir a ${PRIVACY_EMAIL}.`
         ]
       },
       {
@@ -77,7 +79,7 @@ export const privacy: Localized<PrivacyCopy> = {
         title: "Tus derechos",
         icon: "rights",
         paragraphs: [
-          "Puedes acceder a tus datos, rectificarlos, cancelarlos u oponerte a su tratamiento, y también revocar el consentimiento que nos hayas dado, escribiendo a hola@noisia.ai. Te responderemos en los plazos que marca la ley y te pediremos acreditar tu identidad para atender la solicitud.",
+          `Puedes acceder a tus datos, rectificarlos, cancelarlos u oponerte a su tratamiento, y también revocar el consentimiento que nos hayas dado, escribiendo a ${PRIVACY_EMAIL}. Te responderemos en los plazos que marca la ley y te pediremos acreditar tu identidad para atender la solicitud.`,
           "Conservamos tus datos mientras exista una relación o una conversación activa contigo, y después por el tiempo que la ley nos obligue. Luego los eliminamos."
         ]
       },
@@ -96,7 +98,7 @@ export const privacy: Localized<PrivacyCopy> = {
         paragraphs: ["Si este aviso cambia, publicaremos la versión actualizada en esta misma página con su fecha."]
       }
     ],
-    updated: "Última actualización: octubre de 2026."
+    updated: "Última actualización: noviembre de 2026."
   },
   en: {
     metaTitle: "Privacy notice",
@@ -117,7 +119,7 @@ export const privacy: Localized<PrivacyCopy> = {
         title: "Data controller",
         icon: "user",
         paragraphs: [
-          "Noisia is responsible for the processing of the personal data collected through this site. For any matter related to this notice you can write to hola@noisia.ai."
+          `Noisia is responsible for the processing of the personal data collected through this site. For any matter related to this notice you can write to ${PRIVACY_EMAIL}.`
         ]
       },
       {
@@ -153,7 +155,7 @@ export const privacy: Localized<PrivacyCopy> = {
         title: "Your rights",
         icon: "rights",
         paragraphs: [
-          "You can access your data, correct it, delete it or object to its processing, and also withdraw any consent you have given us, by writing to hola@noisia.ai. We will answer within the deadlines set by law and will ask you to verify your identity to handle the request.",
+          `You can access your data, correct it, delete it or object to its processing, and also withdraw any consent you have given us, by writing to ${PRIVACY_EMAIL}. We will answer within the deadlines set by law and will ask you to verify your identity to handle the request.`,
           "We keep your data while there is an active relationship or conversation with you, and afterwards for as long as the law requires. Then we delete it."
         ]
       },
@@ -172,6 +174,6 @@ export const privacy: Localized<PrivacyCopy> = {
         paragraphs: ["If this notice changes, we will publish the updated version on this same page with its date."]
       }
     ],
-    updated: "Last updated: October 2026."
+    updated: "Last updated: November 2026."
   }
 };

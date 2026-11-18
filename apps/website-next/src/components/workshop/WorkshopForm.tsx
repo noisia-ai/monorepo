@@ -3,6 +3,7 @@
 import { useState, type FormEvent } from "react";
 import { useLocale } from "next-intl";
 import type { WorkshopForm as Copy } from "@/content/pages/workshop";
+import { CONTACT_EMAIL, mailto as mailtoLink } from "@/lib/contact";
 import styles from "./WorkshopForm.module.css";
 
 type Status = "idle" | "sending" | "done" | "error";
@@ -11,7 +12,7 @@ export function WorkshopForm({ copy }: { copy: Copy }) {
   const locale = useLocale();
   const [status, setStatus] = useState<Status>("idle");
   // If delivery fails, the error turns into an email with everything the reader already wrote.
-  const [mailto, setMailto] = useState("mailto:hola@noisia.ai");
+  const [mailto, setMailto] = useState(mailtoLink(CONTACT_EMAIL));
 
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -20,7 +21,7 @@ export function WorkshopForm({ copy }: { copy: Copy }) {
     const lines = Object.entries(data)
       .filter(([key, value]) => key !== "website" && String(value).trim())
       .map(([key, value]) => `${key}: ${String(value)}`);
-    setMailto(`mailto:hola@noisia.ai?subject=${encodeURIComponent(`Taller: ${String(data.company ?? "")}`)}&body=${encodeURIComponent(lines.join("\n"))}`);
+    setMailto(mailtoLink(CONTACT_EMAIL, { subject: `Taller: ${String(data.company ?? "")}`, body: lines.join("\n") }));
     try {
       const response = await fetch("/api/taller", {
         method: "POST",
