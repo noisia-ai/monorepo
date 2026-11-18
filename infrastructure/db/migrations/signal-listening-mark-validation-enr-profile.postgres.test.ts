@@ -104,6 +104,29 @@ if(pure){
     assert.ok(!encoded.includes('PRIVATE_OLD_TEXT')&&!encoded.includes('PRIVATE_NEW_TEXT'));
     assert.ok(!encoded.includes('Filter')&&!encoded.includes('Output'));
     assert.ok(encoded.includes('listening_old_calls')&&encoded.includes('listening_new_calls'));
+
+    const timing=(generation:unknown)=>({Generation:generation,Inlining:0.1,Optimization:0.2,Emission:0.3,Total:0.6});
+    const pg17RootGeneration={Deform:0.04,Total:0.1};
+    const pg17WorkerGeneration={Deform:0.01,Total:0.03};
+    const pg17=sanitizeBoundedPopulationPlanV1([{
+      Plan:{'Node Type':'Gather','Workers Planned':1,'Workers Launched':1,Workers:[{
+        'Worker Number':0,JIT:{Functions:1,Options:{Inlining:false,Optimization:true,Expressions:true,Deforming:true},Timing:timing(pg17WorkerGeneration)},
+      }]},
+      JIT:{Functions:4,Options:{Inlining:false,Optimization:true,Expressions:true,Deforming:true},Timing:timing(pg17RootGeneration)},
+      'Planning Time':1,'Execution Time':2,
+    }]);
+    const pg17Document=pg17.plan as Record<string,unknown>;
+    const rootJit=pg17Document.JIT as {Timing:Record<string,unknown>};
+    const rootGeneration=rootJit.Timing.Generation as Record<string,number>;
+    assert.deepEqual(rootGeneration,{Deform:0.04,Total:0.1});
+    const pg17Plan=pg17Document.Plan as {Workers:Array<{JIT:{Timing:Record<string,unknown>}}>};
+    assert.deepEqual(pg17Plan.Workers[0]!.JIT.Timing.Generation,{Deform:0.01,Total:0.03});
+    assert.equal(pg17.jit,'observed');
+
+    const legacy=sanitizeBoundedPopulationPlanV1([{
+      Plan:{'Node Type':'Result'},JIT:{Functions:1,Timing:timing(0.12)},'Planning Time':1,'Execution Time':2,
+    }]);
+    assert.equal((legacy.plan as {JIT:{Timing:Record<string,unknown>}}).JIT.Timing.Generation,0.12);
   });
 
   test('C plan sanitizer rejects poisoned ENR aliases and unknown structural nodes',()=>{
@@ -111,6 +134,35 @@ if(pure){
       'Node Type':'Named Tuplestore Scan','Tuplestore Name':'private_customer_table','Actual Rows':1,'Actual Loops':1,
     }}]));
     assert.throws(()=>sanitizeBoundedPopulationPlanV1([{Plan:{'Node Type':'Private Executor','Actual Rows':1,'Actual Loops':1}}]));
+
+    const makeJitPlan=(generation:unknown)=>[{
+      Plan:{'Node Type':'Result'},JIT:{Functions:1,Timing:{Generation:generation}},'Planning Time':1,'Execution Time':2,
+    }];
+    for(const invalid of ['0.1',Number.NaN,Number.POSITIVE_INFINITY,-0.1]){
+      assert.throws(()=>sanitizeBoundedPopulationPlanV1(makeJitPlan(invalid)));
+    }
+    for(const invalid of [
+      {Deform:'0.1',Total:0.2},
+      {Deform:Number.NaN,Total:0.2},
+      {Deform:Number.POSITIVE_INFINITY,Total:0.2},
+      {Deform:-0.1,Total:0.2},
+      {Deform:[0.1],Total:0.2},
+    ])assert.throws(()=>sanitizeBoundedPopulationPlanV1(makeJitPlan(invalid)));
+    assert.throws(()=>sanitizeBoundedPopulationPlanV1(makeJitPlan([0.1,0.2])));
+    assert.throws(()=>sanitizeBoundedPopulationPlanV1(makeJitPlan({Deform:0.1,Total:0.2,Extra:0})));
+    const symbolGeneration=Object.assign({Deform:0.1,Total:0.2},{[Symbol('private')]:0});
+    assert.throws(()=>sanitizeBoundedPopulationPlanV1(makeJitPlan(symbolGeneration)));
+    let getterCalls=0;
+    const accessorGeneration=Object.defineProperty({Total:0.2},'Deform',{enumerable:true,get(){getterCalls++;return 0.1;}});
+    assert.throws(()=>sanitizeBoundedPopulationPlanV1(makeJitPlan(accessorGeneration)));
+    assert.equal(getterCalls,0,'poisoned JIT fields must be rejected without invoking getters');
+    const inheritedGeneration=Object.assign(Object.create({private:true}),{Deform:0.1,Total:0.2});
+    assert.throws(()=>sanitizeBoundedPopulationPlanV1(makeJitPlan(inheritedGeneration)));
+    const cyclicJit:Record<string,unknown>={};cyclicJit.Timing=cyclicJit;
+    assert.throws(()=>sanitizeBoundedPopulationPlanV1([{Plan:{'Node Type':'Result'},JIT:cyclicJit,'Planning Time':1,'Execution Time':2}]));
+    assert.throws(()=>sanitizeBoundedPopulationPlanV1([{Plan:{'Node Type':'Gather',Workers:[{
+      'Worker Number':0,JIT:{Functions:1,Timing:{Generation:{Deform:-0.1,Total:0.2}}},
+    }]},'Planning Time':1,'Execution Time':2}]));
   });
 
   test('finite connect pin lends the original client once, restores descriptors, and releases it exactly once',async()=>{
