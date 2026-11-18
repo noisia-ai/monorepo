@@ -29,7 +29,7 @@ test('native bounded population exposes provenance work for 1000 consumer roots 
   assert.equal(receipt.cpu,'UNKNOWN');
   assert.equal(receipt.speedup_claim,false);
   assert.ok(!Object.hasOwn(receipt,'candidate_accepted'));
-  const expectedGates=['closure_confirmed','native_state','plan_complete','projection_parity','snapshot_binding','source_binding'];
+  const expectedGates=['closure_confirmed','native_state','plan_complete','projection_parity','snapshot_binding','source_binding'] as const;
   assert.deepEqual(Object.keys(receipt.gates).sort(),expectedGates);
   for(const key of expectedGates)assert.equal(receipt.gates[key],true,key+' must be explicitly observed');
   const persisted=JSON.parse(await readFile(join(directory,'bounded-population-plan.json'),'utf8'));
@@ -77,14 +77,14 @@ if(pure){
 
   test('function counter deltas keep absent baselines UNKNOWN and require monotonic values',()=>{
     const after=[{funcid:'24680',schemaname:'public',funcname:'signal_listening_population_roots_v1',calls:'4',total_time:8,self_time:3}];
-    const absent=boundedPopulationCounterDeltaV1([],after,'24680');
+    const absent=boundedPopulationCounterDeltaV1([],after);
     assert.equal(absent[0]?.status,'entry_created_baseline_absent');
     assert.equal(absent[0]?.delta,null);
     const before=[{...after[0]!,calls:'2',total_time:3,self_time:1}];
-    const observed=boundedPopulationCounterDeltaV1(before,after,'24680');
+    const observed=boundedPopulationCounterDeltaV1(before,after);
     assert.equal(observed[0]?.status,'observed_delta');
     assert.deepEqual(observed[0]?.delta,{calls:'2',total_time_ms:5,self_time_ms:2});
-    assert.throws(()=>boundedPopulationCounterDeltaV1(after,before,'24680'));
+    assert.throws(()=>boundedPopulationCounterDeltaV1(after,before));
   });
 
   test('consumer root set hash is order independent and rejects duplicates',()=>{
@@ -100,6 +100,6 @@ if(pure){
     cyclic.Plans=[cyclic];
     assert.throws(()=>sanitizeBoundedPopulationPlanV1([{Plan:cyclic}]));
     const bad=[{funcid:'24680',schemaname:'public',funcname:'signal_listening_population_roots_v1',calls:'NaN',total_time:1,self_time:1}];
-    assert.throws(()=>boundedPopulationCounterDeltaV1(bad,bad,'24680'));
+    assert.throws(()=>boundedPopulationCounterDeltaV1(bad,bad));
   });
 }
