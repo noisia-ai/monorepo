@@ -3,8 +3,10 @@ import {readFile} from 'node:fs/promises';
 import {join} from 'node:path';
 import test from 'node:test';
 import {
+  createMarkValidationObservationV1,
   extractMarkValidationEnrSourceV1,
   markValidationSafeFailureV1,
+  markValidationRootGenerationKindV1,
   retainMarkValidationClientV1,
   runMarkValidationEnrProfileV1,
   sanitizeBoundedPopulationPlanV1,
@@ -127,6 +129,17 @@ if(pure){
       Plan:{'Node Type':'Result'},JIT:{Functions:1,Timing:timing(0.12)},'Planning Time':1,'Execution Time':2,
     }]);
     assert.equal((legacy.plan as {JIT:{Timing:Record<string,unknown>}}).JIT.Timing.Generation,0.12);
+
+    const generation=(value:unknown)=>[{JIT:{Timing:{Generation:value}}}];
+    const rootKinds=[
+      markValidationRootGenerationKindV1(generation(0.12)),
+      markValidationRootGenerationKindV1(generation({Deform:0.04,Total:0.1,PRIVATE:'PRIVATE_JIT_VALUE'})),
+      markValidationRootGenerationKindV1([{}]),
+      markValidationRootGenerationKindV1(generation('PRIVATE_JIT_VALUE')),
+      markValidationRootGenerationKindV1(generation(['PRIVATE_JIT_VALUE'])),
+    ];
+    assert.deepEqual(rootKinds,['number','object','missing','other','other']);
+    assert.doesNotMatch(JSON.stringify(rootKinds),/PRIVATE/u,'root JIT classifier must return only closed enums');
   });
 
   test('C plan sanitizer rejects poisoned ENR aliases and unknown structural nodes',()=>{
@@ -163,6 +176,16 @@ if(pure){
     assert.throws(()=>sanitizeBoundedPopulationPlanV1([{Plan:{'Node Type':'Gather',Workers:[{
       'Worker Number':0,JIT:{Functions:1,Timing:{Generation:{Deform:-0.1,Total:0.2}}},
     }]},'Planning Time':1,'Execution Time':2}]));
+
+    let rootGenerationGetterCalls=0;
+    const rootTiming=Object.defineProperty({},'Generation',{enumerable:true,get(){rootGenerationGetterCalls++;return{Deform:0.1,Total:0.2};}});
+    const accessorPlan=[{JIT:{Timing:rootTiming}}];
+    assert.equal(markValidationRootGenerationKindV1(accessorPlan),'unsafe');
+    assert.equal(rootGenerationGetterCalls,0,'root JIT classifier must inspect descriptors without invoking getters');
+    const inheritedPlan=[{JIT:{Timing:{Generation:Object.assign(Object.create({private:true}),{Deform:0.1,Total:0.2})}}}];
+    assert.equal(markValidationRootGenerationKindV1(inheritedPlan),'unsafe');
+    const accessorPlanJson=JSON.stringify(markValidationRootGenerationKindV1(accessorPlan));
+    assert.doesNotMatch(accessorPlanJson,/PRIVATE|Deform|Total|0\.1|0\.2/u);
   });
 
   test('finite connect pin lends the original client once, restores descriptors, and releases it exactly once',async()=>{
@@ -213,15 +236,26 @@ if(pure){
   });
 
   test('safe failure tree retains bounded codes without messages or mutable error descriptors',()=>{
-    const leaf=Object.assign(new Error('PRIVATE SQL and customer text'),{code:'23514'});
-    const cause=new AggregateError([leaf],'PRIVATE aggregate',{cause:leaf});
-    const before=[cause,leaf].map(error=>Object.getOwnPropertyDescriptors(error));
+    const primary=Object.assign(new Error('PRIVATE primary SQL and customer text'),{code:'23514'});
+    const secondary=Object.assign(new Error('PRIVATE secondary cleanup detail'),{code:'XX000'});
+    const cause=new AggregateError([primary,secondary],'PRIVATE aggregate',{cause:primary});
+    const before=[cause,primary,secondary].map(error=>Object.getOwnPropertyDescriptors(error));
     const safe=markValidationSafeFailureV1(cause);
     assert.equal(safe.message,'mark_validation_enr_diagnostic_failed_see_safe_evidence');
     const encoded=JSON.stringify(safe.cause);
     assert.ok(encoded);
     assert.doesNotMatch(encoded,/PRIVATE|customer|SELECT|SQL/u);
     assert.match(encoded,/23514/u);
-    assert.deepEqual([cause,leaf].map(error=>Object.getOwnPropertyDescriptors(error)),before);
+    assert.match(encoded,/XX000/u,'secondary failure may add a safe code without replacing the primary');
+    assert.deepEqual([cause,primary,secondary].map(error=>Object.getOwnPropertyDescriptors(error)),before);
+
+    const observation=createMarkValidationObservationV1();
+    observation.enter('capture_read');
+    observation.fail();
+    observation.enter('probe_cleanup');
+    observation.fail();
+    assert.deepEqual(observation.snapshot(),{observation_stage:'probe_cleanup',failure_stage:'capture_read'});
+    assert.throws(()=>observation.enter('PRIVATE_STAGE' as never),/mark_enr_observation_stage/u);
+    assert.deepEqual(observation.snapshot(),{observation_stage:'probe_cleanup',failure_stage:'capture_read'});
   });
 }
