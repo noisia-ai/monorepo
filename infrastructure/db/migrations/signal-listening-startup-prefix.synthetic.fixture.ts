@@ -21,6 +21,7 @@ type Phase=typeof STARTUP_PHASES[number];
 type QueryTuple=[number,number,number,number,number,number,0|1];
 type ConnectTuple=[number,number,number,number,number,0|1];
 type Queryable={query:(...args:any[])=>any;connect?: (...args:any[])=>any};
+export type StartupRosterObserverV1={kind:'roster_exact_query_observer';bindWorkspace(workspace:string):void;query(client:Queryable,args:any[],forward:()=>any,borrowedClient:boolean):any;release(client:object,args:any[],forward:(args:any[])=>any):any;capture(report:Record<string,unknown>):void};
 export function startupClientPidV1(client:object):number|'UNKNOWN'{
  try{const field=Object.getOwnPropertyDescriptor(client,'processID');return field&&'value'in field&&typeof field.value==='number'&&Number.isSafeInteger(field.value)&&field.value>0&&field.value<=2147483647?field.value:'UNKNOWN';}catch{return'UNKNOWN';}
 }
@@ -35,7 +36,7 @@ export class StartupPrefixRecorderV1{
  private readonly queries:QueryTuple[]=[];private readonly connects:ConnectTuple[]=[];
  private seen=0;private dropped=0;private pending=0;private connectSeen=0;private connectPending=0;
  readonly spans:Array<[number,number,number,0|1]>=[];
- constructor(private readonly clock:()=>number,private readonly limits={queries:16000,templates:1024,bytes:8*1024*1024}){}
+ constructor(private readonly clock:()=>number,private readonly limits={queries:16000,templates:1024,bytes:8*1024*1024},private readonly rosterObserver?:StartupRosterObserverV1){}
  private retain(value:unknown){const bytes=Buffer.byteLength(JSON.stringify(value));if(this.bytes+bytes>this.limits.bytes){this.dropped++;return false;}this.bytes+=bytes;return true;}
  async measure<T>(phase:Phase,body:()=>Promise<T>):Promise<T>{
   const previous=this.phase,index=STARTUP_PHASES.indexOf(phase),start=this.clock();this.phase=index;
@@ -56,7 +57,7 @@ export class StartupPrefixRecorderV1{
   const forwarded=[...args],callback=forwarded.at(-1);
   if(typeof callback==='function')forwarded[forwarded.length-1]=function(this:unknown,...values:any[]){finish(values[0]?0:1);return callback.apply(this,values);};
   try{
-   const result=target.query.apply(target,forwarded);
+   const result=this.rosterObserver?this.rosterObserver.query(target,forwarded,()=>target.query.apply(target,forwarded),id>0):target.query.apply(target,forwarded);
    if(typeof callback==='function')return result;
    if(result&&typeof result.then==='function')return result.then((value:unknown)=>{finish(1);return value;},(error:unknown)=>{finish(0);throw error;});
    // Current public entrypoints use promises. Preserve any other driver return
@@ -69,6 +70,7 @@ export class StartupPrefixRecorderV1{
   const id=++this.nextConnection,proxy=new Proxy(client,{get:(target,key)=>{
    const value=Reflect.get(target,key,target);
    if(key==='query')return(...args:any[])=>this.query(target as T&Queryable,id,args);
+   if(key==='release'&&typeof value==='function'&&this.rosterObserver)return(...args:any[])=>this.rosterObserver!.release(target,args,next=>value.apply(target,next));
    return typeof value==='function'?value.bind(target):value;
   }});this.clients.set(client,{id,proxy});const pid=startupClientPidV1(client);if(this.retain([id,pid]))this.backends.set(id,pid);return proxy;
  }
@@ -94,6 +96,8 @@ export class StartupPrefixRecorderV1{
 }
 
 const startupErrorPaths=new Set([
+ 'infrastructure/db/migrations/signal-listening-roster-query-plan.synthetic.fixture.ts',
+ 'infrastructure/db/migrations/signal-listening-roster-query-plan.postgres.test.ts',
  'infrastructure/db/migrations/signal-listening-startup-prefix.synthetic.fixture.ts',
  'infrastructure/db/migrations/signal-listening-startup-prefix.postgres.test.ts',
  'infrastructure/db/migrations/signal-mass-labeling-acceptance.synthetic.fixture.ts',
@@ -245,9 +249,10 @@ async function sources(){
  assert.equal(migrations.length,38);return{head_sha:all.head_sha,source_tree_sha256:all.source_tree_sha256,tree_status_sha256:all.tree_status_sha256,file_count:all.file_count,
   migration38:migrations,harness:all.file_manifest.filter(row=>row.path.startsWith('scripts/r16/')||/^services\/workers\/src\/(?:workers\/signal-(?:jev|listening)|providers\/jev-streaming)/u.test(row.path))};
 }
-export async function runListeningStartupPrefixV1(directory:string){
+export async function runListeningStartupPrefixV1(directory:string,rosterObserver?:StartupRosterObserverV1){
  assert.equal(process.env.GITHUB_ACTIONS,'true','owned CI only');
- const started=performance.now(),clock=()=>performance.now()-started,recorder=new StartupPrefixRecorderV1(clock),workload=r16ListeningWorkloadV2('defined_consumer_second_pass');
+ assert.ok(rosterObserver===undefined||rosterObserver.kind==='roster_exact_query_observer','unknown finite startup observer');
+ const started=performance.now(),clock=()=>performance.now()-started,recorder=new StartupPrefixRecorderV1(clock,undefined,rosterObserver),workload=r16ListeningWorkloadV2('defined_consumer_second_pass');
  const callback:StartupCallbackStateV1={entered:false,complete:false,failed:false};
  let own:{name:string;oid:string}|null=null,absence:'UNKNOWN'|true='UNKNOWN',normalFactory=false;
  const report:Record<string,unknown>={contract:'r16-listening-startup-prefix-v1',status:'failed',diagnostic_only:true,h1_accepted:false,cpu:'UNKNOWN',
@@ -261,7 +266,7 @@ export async function runListeningStartupPrefixV1(directory:string){
    await runMassLabelingAcceptanceFixtureV1('product-recovery',{benchmark:{isolated:true,root_count:32768,execution_cap_micro_usd:20000000,
     import_batch_size:512,preparation_page_size:100,embedding_page_limit:264,beforeProcessing:ctx=>captureStartupCallbackV1(callback,async()=>{
      assert.ok(clock()<=1800000,'startup setup soft cap exceeded');report.setup_ms=clock();
-     const database=recorder.wrap(ctx.database);
+     rosterObserver?.bindWorkspace(ctx.workspace_id);const database=recorder.wrap(ctx.database);
      const identity=(await database.query("SELECT current_database() name,(SELECT oid::text FROM pg_database WHERE datname=current_database()) oid")).rows[0];
      assert.match(identity.name,/^noisia_mfp_recovery_[a-f0-9]{32}$/u);assert.match(identity.oid,/^\d+$/u);own={name:identity.name,oid:identity.oid};
      assert.equal((await database.query(`UPDATE signal_labeling_runs r SET status='canceled' WHERE r.id=$1
@@ -321,6 +326,6 @@ export async function runListeningStartupPrefixV1(directory:string){
   assert.ok(clock()<=1920000,'startup total soft cap exceeded');assert.equal(absence,true);gates.cleanup_confirmed=true;assert.ok(Object.values(gates).every(value=>value===true));report.status='observed';
  }catch(error){failed=true;primary=error;const tree=startupErrorTreeV1(error),kind=tree.nodes[0]?.kind;report.failure={kind:kind==='aggregate'?'aggregate':kind==='error'?'error':'unknown',error_tree:tree,callback_primary_preserved:callback.failed,setup_before_callback_unknown:!callback.entered};}
  report.total_ms=clock();report.observation=recorder.snapshot();report.closure={callback_entered:callback.entered,callback_complete:callback.complete,factory_returned_normally:normalFactory,own_database:own??'UNKNOWN',own_database_absent:absence};
- try{await writeStartupPrefixEvidenceV1(directory,report);}catch(publication){if(failed)throw new AggregateError([primary,publication],'startup failure and evidence publication failed',{cause:primary});throw publication;}
+ try{if(rosterObserver)rosterObserver.capture(report);else await writeStartupPrefixEvidenceV1(directory,report);}catch(publication){if(failed)throw new AggregateError([primary,publication],'startup failure and evidence publication failed',{cause:primary});throw publication;}
  if(failed)throw primary;return report;
 }
