@@ -12,7 +12,7 @@ import {captureR16SourceProvenanceV1} from '../../../scripts/r16/source-provenan
 const repo=resolve(dirname(fileURLToPath(import.meta.url)),'../../..');
 const sha=(value:string)=>createHash('sha256').update(value).digest('hex');
 function requireKnown(ok:unknown,code:string):asserts ok{if(!ok)throw new Error(code);}
-const sourceUrl=new URL('./0332_signal_listening_flat_prefix_preimages.sql',import.meta.url);
+const sourceUrl=new URL('./0333_signal_listening_bounded_mentions.sql',import.meta.url);
 const sourceSha='f981643c8f7f76f576b2d0a54920cb3107d8d9c50b8eab9a882f9d323aedc5c2';
 const boundedSha='85840aacf572aac049341aced0901252701f7b09042b5fef75ffec48d12d397a';
 const publicRead='SELECT * FROM public.signal_listening_population_roots_v1($1::uuid,$2::uuid,$3::uuid,$4::text,$5::uuid[],$6::text)';
@@ -25,6 +25,17 @@ export function extractCurrentBoundedPopulationV1(source:string){
  requireKnown(Buffer.byteLength(sql)===8859&&sha(sql)===boundedSha,'bounded_population_literal_mismatch');
  const parts=source.split('AS $function$');requireKnown(parts.length===2,'bounded_population_body_marker');
  return{sql,body:parts[1]!.split('$function$;')[0]!,source_sha256:sourceSha,sql_sha256:boundedSha};
+}
+/** Current0333 only. Keep the historical0332 extractor unchanged for its pure tests. */
+export function extractCurrentBoundedMentionsV1(source:string){
+ const currentSha='45666196078c2c0d130298863569b1a1a49c281bbcafe6a440c6cc1bbd42eb6f',literalSha='c88515724bacd82cb61b8b87ac18808483ed8a972437260bd3b64c05ec181090';
+ requireKnown(sha(source)===currentSha,'bounded_population0333_source_mismatch');
+ const clause=' AND m.id=ANY($5)';requireKnown(source.split(clause).length===2,'bounded_population0333_clause');
+ const prior=extractCurrentBoundedPopulationV1(source.replace(clause,''));
+ const start='RETURN QUERY EXECUTE $bounded$',end='$bounded$ USING w,cid,mid,ctx,roots,purpose;';
+ const sql=source.split(start)[1]!.split(end)[0]!;
+ requireKnown(Buffer.byteLength(sql)===8876&&sha(sql)===literalSha&&sql.replace(clause,'')===prior.sql,'bounded_population0333_literal_mismatch');
+ return{sql,body:source.split('AS $function$')[1]!.split('$function$;')[0]!,source_sha256:currentSha,sql_sha256:literalSha,source_version:'0333' as const};
 }
 export function boundedPopulationRootSetHashV1(roots:ReadonlyArray<string>):string{
  requireKnown(Array.isArray(roots)&&roots.length>0&&roots.length<=32768,'bounded_population_root_count');
@@ -190,7 +201,7 @@ async function nativeState(c:PoolClient,params:unknown[],run_id:string,rootHash:
  requireKnown(corpus.roots===32768&&corpus.no_base===31768&&run.status==='running'&&run.released===true,'bounded_population_corpus_or_lease');
  return{...ledger,corpus_roots:32768,remaining_no_base_this_run:31768,base_answers:2000,consumer_pending_selected:2000,consumer_reserved:0,raw14_rows:4000,basis_fresh:true,selected_root_set_sha256:rootHash,base_call_root_set_sha256:boundedPopulationRootSetHashV1(calls.roots),base_answer_root_set_sha256:boundedPopulationRootSetHashV1(a.roots_set),base_answers_outside_selected:0,run_status:run.status,lease_released:true,provider_http:0,external_spend_micro_usd:0,not_actual_mark_cohort:true};
 }
-async function sources(){const all=await captureR16SourceProvenanceV1(repo),migration38=all.file_manifest.filter(r=>/^infrastructure\/db\/migrations\/(?:029[5-9]|03[0-2][0-9]|033[0-2])_.+\.sql$/u.test(r.path));requireKnown(migration38.length===38,'bounded_population_migration_inventory');return{head_sha:all.head_sha,source_tree_sha256:all.source_tree_sha256,tree_status_sha256:all.tree_status_sha256,migration38,harness:all.file_manifest.filter(r=>r.path.startsWith('scripts/r16/')||/^services\/workers\/src\/(?:workers\/signal-(?:jev|listening)|providers\/jev-streaming)/u.test(r.path))};}
+async function sources(){const all=await captureR16SourceProvenanceV1(repo),migration39=all.file_manifest.filter(r=>/^infrastructure\/db\/migrations\/(?:029[5-9]|03[0-2][0-9]|033[0-3])_.+\.sql$/u.test(r.path));requireKnown(migration39.length===39,'bounded_population_migration_inventory');return{head_sha:all.head_sha,source_tree_sha256:all.source_tree_sha256,tree_status_sha256:all.tree_status_sha256,migration39,harness:all.file_manifest.filter(r=>r.path.startsWith('scripts/r16/')||/^services\/workers\/src\/(?:workers\/signal-(?:jev|listening)|providers\/jev-streaming)/u.test(r.path))};}
 export type BoundedPopulationPlanReceiptV1={contract:'r16-bounded-population-plan-v1';status:'failed'|'observed';diagnostic_only:true;h1_accepted:false;cpu:'UNKNOWN';speedup_claim:false;gates:Record<'source_binding'|'native_state'|'projection_parity'|'snapshot_binding'|'plan_complete'|'closure_confirmed',boolean>}&Record<string,unknown>;
 // A publication failure may leave no JSON. Expose only the existing bounded,
 // plain error tree as cause; never attach the original Error or its messages.
@@ -211,7 +222,7 @@ export async function runBoundedPopulation32kPlanV1(directory:string):Promise<Bo
  gates:{source_binding:false,native_state:false,projection_parity:false,snapshot_binding:false,plan_complete:false,closure_confirmed:false},bounds:{setup_ms:1800000,read_ms:120000,total_ms:1920000,external_job_minutes:40,maximum_nodes:512,maximum_depth:32,plan_bytes:1048576,json_bytes:2097152},unknowns:['No actual consumer Mark or full statement_money plan','No CPU, throughput, H1, causal wait or speedup claim','Missing JIT or function rows are UNKNOWN, not zero','TIMING ON and tracking overhead are not subtracted; elapsed includes possible planning','Function children must not be added to parents; workers are not fully covered']};
  let failed=false,primary:unknown;
  try{
-  const sourceBefore=await sources(),extracted=extractCurrentBoundedPopulationV1(await readFile(sourceUrl,'utf8'));report.source_before=sourceBefore;
+  const sourceBefore=await sources(),extracted=extractCurrentBoundedMentionsV1(await readFile(sourceUrl,'utf8'));report.source_before=sourceBefore;
   await closeStartupFactoryV1(callback,async()=>{
    await withFlatPrefixFullFixtureV1({
     bounded:{
@@ -250,7 +261,7 @@ export async function runBoundedPopulation32kPlanV1(directory:string):Promise<Bo
      const {raw_storage,...baseSetup}=setup;
      requireKnown(JSON.stringify(stateAfter)===JSON.stringify(baseSetup),'bounded_population_native_state_changed');
      report.default_after=after;report.native_state=setup;report.loopback_storage={metrics:raw_storage,scope:'object PUT/GET and byte counters only; health checks not counted; not provider HTTP'};report.parity={before:parityBefore,after:parityAfter};report.phases=phases;
-     report.measurement={query:'current0332_bounded_literal14',explain_count:1,plain_warmups:1,explain:'ANALYZE,BUFFERS,TIMING ON,FORMAT JSON',client_wall_ms:clientWall,...sanitized,counter_before:counterBefore,counter_after:counterAfter,counter_deltas:boundedPopulationCounterDeltaV1(counterBefore,counterAfter),counter_scope:'same leader backend/RR transaction; elapsed includes possible planning; not CPU',snapshot_sha256:sha(original.snapshot),backend:original.backend,role_sha256:sha(original.role),params_sha256:paramsHash,param_types:['uuid','uuid','uuid','text','uuid[]','text'],purpose:'llm-processing',selected_root_set_sha256:rootHash,settings:{jit:original.jit,jit_above_cost:original.jit_above_cost,jit_inline_above_cost:original.jit_inline_above_cost,jit_optimize_above_cost:original.jit_optimize_above_cost},source_file_sha256:extracted.source_sha256,literal_sha256:extracted.sql_sha256,literal_bytes:Buffer.byteLength(extracted.sql)};
+     report.measurement={query:'current0333_bounded_literal14',explain_count:1,plain_warmups:1,explain:'ANALYZE,BUFFERS,TIMING ON,FORMAT JSON',client_wall_ms:clientWall,...sanitized,counter_before:counterBefore,counter_after:counterAfter,counter_deltas:boundedPopulationCounterDeltaV1(counterBefore,counterAfter),counter_scope:'same leader backend/RR transaction; elapsed includes possible planning; not CPU',snapshot_sha256:sha(original.snapshot),backend:original.backend,role_sha256:sha(original.role),params_sha256:paramsHash,param_types:['uuid','uuid','uuid','text','uuid[]','text'],purpose:'llm-processing',selected_root_set_sha256:rootHash,settings:{jit:original.jit,jit_above_cost:original.jit_above_cost,jit_inline_above_cost:original.jit_inline_above_cost,jit_optimize_above_cost:original.jit_optimize_above_cost},source_file_sha256:extracted.source_sha256,literal_sha256:extracted.sql_sha256,literal_bytes:Buffer.byteLength(extracted.sql)};
      report.gates.native_state=true;report.gates.projection_parity=true;report.gates.snapshot_binding=true;report.gates.plan_complete=true;
     }
    },'bounded_1000_of_32768');normal=true;

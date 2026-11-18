@@ -11,6 +11,7 @@ import {localizeSyntheticListeningConfigurationV1} from './signal-listening-loca
 const sha=(s:string|Buffer)=>createHash('sha256').update(s).digest('hex');
 const sourceURL=new URL('./0326_signal_listening_final_answer_slice.sql',import.meta.url);
 const candidateURL=new URL('./0332_signal_listening_flat_prefix_preimages.sql',import.meta.url);
+const boundedURL=new URL('./0333_signal_listening_bounded_mentions.sql',import.meta.url);
 const sourceSHA='7ee6911c892e8633725c5d1ad48d2f257b344d9d7a7a07f5346f9d4142e734ed';
 const inputOld='signal_listening_input_digest_v1(i)',basisOld="signal_labeling_digest_v1(jsonb_build_object('voice',v.call_id,'promotion',p.call_id))";
 const revoke='\nREVOKE ALL ON FUNCTION pg_temp.r16_flat_new(uuid,uuid,uuid,text,uuid[],text) FROM PUBLIC;\n';
@@ -29,8 +30,25 @@ export function flatPreimageSourceV1(source:string,candidate:string){
 }
 async function defaults(c:PoolClient){return(await c.query(`SELECT p.oid::text,p.proname,p.prosrc,p.proowner::text,p.proisstrict,p.proparallel,p.proleakproof,p.prokind,p.pronargs,l.lanname,p.provolatile,p.prosecdef,p.proconfig,p.proacl::text,p.proargtypes::text,p.prorettype::text,p.proallargtypes::text,p.proargmodes,p.proargnames,p.proretset
  FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace JOIN pg_language l ON l.oid=p.prolang WHERE n.nspname='public' AND p.proname IN('signal_listening_population_roots_v1','signal_listening_statement_money_v1','signal_listening_input_digest_v1','signal_labeling_json_v1','signal_labeling_digest_v1') ORDER BY p.oid`)).rows;}
-export async function installFlatPreimageV1(c:PoolClient){
- const source=await readFile(sourceURL,'utf8'),candidate=await readFile(candidateURL,'utf8'),expressions=flatPreimageSourceV1(source,candidate),before=await defaults(c);
+export function boundedMentionsSourceV1(source:string,candidate:string){
+ assert.equal(sha(source),'f981643c8f7f76f576b2d0a54920cb3107d8d9c50b8eab9a882f9d323aedc5c2','exact native0332 source');
+ assert.equal(sha(candidate),'45666196078c2c0d130298863569b1a1a49c281bbcafe6a440c6cc1bbd42eb6f','exact native0333 candidate');
+ const clause=' AND m.id=ANY($5)',start='RETURN QUERY EXECUTE $bounded$',end='$bounded$ USING w,cid,mid,ctx,roots,purpose;';
+ assert.equal(source.split(clause).length,1);assert.equal(candidate.split(clause).length,2);
+ assert.equal(Buffer.byteLength(candidate)-Buffer.byteLength(source),17);
+ assert.equal(candidate.replace(clause,''),source,'inverse recovers every0332 byte');
+ assert.equal(source.split(start).length,2);assert.equal(candidate.split(start).length,2);
+ assert.equal(source.split(end).length,2);assert.equal(candidate.split(end).length,2);
+ assert.equal(candidate.split(start)[0],source.split(start)[0],'NULL branch and declaration remain exact');
+ const source_sql=source.split(start)[1]!.split(end)[0]!,candidate_sql=candidate.split(start)[1]!.split(end)[0]!;
+ assert.equal(Buffer.byteLength(source_sql),8859);assert.equal(sha(source_sql),'85840aacf572aac049341aced0901252701f7b09042b5fef75ffec48d12d397a');
+ assert.equal(Buffer.byteLength(candidate_sql),8876);assert.equal(sha(candidate_sql),'c88515724bacd82cb61b8b87ac18808483ed8a972437260bd3b64c05ec181090');
+ assert.equal(source.split('CREATE OR REPLACE FUNCTION ').length,2);assert.equal(candidate.split('CREATE OR REPLACE FUNCTION ').length,2);
+ assert.ok(!/\b(?:GRANT|SECURITY\s+DEFINER|ALTER)\b/iu.test(candidate));
+ return{source_sha256:sha(source),candidate_sha256:sha(candidate),source_sql,candidate_sql};
+}
+async function nativeFlatCatalogV1(c:PoolClient,candidate:string){
+ const before=await defaults(c);
  assert.equal(before.length,5);
  const mark=await readFile(new URL('./0331_signal_listening_statement_payload.sql',import.meta.url),'utf8');assert.equal(before.find(r=>r.proname==='signal_listening_statement_money_v1')!.prosrc,mark.split('AS $$')[1]!.split('$$;')[0]);
  const runtime=(await c.query("SELECT current_database() database,current_setting('server_version_num')::int version")).rows[0];assert.match(runtime.database,/^noisia_mfp_recovery_[a-f0-9]{32}$/u);assert.notEqual(runtime.database,new URL(process.env.DATABASE_URL!).pathname.slice(1));assert.ok(runtime.version>=170000&&runtime.version<180000);
@@ -39,6 +57,49 @@ export async function installFlatPreimageV1(c:PoolClient){
  for(const [key,value]of Object.entries({provolatile:'s',proisstrict:false,proparallel:'u',proleakproof:false,prokind:'f',pronargs:6,prosecdef:false,lanname:'plpgsql',proconfig:['search_path=public, extensions, pg_temp']}))assert.deepEqual(native[key],value,key+' strict native metadata');
  const canonical=await readFile(new URL('./0223_signal_mention_facets.sql',import.meta.url),'utf8'),inputSource=await readFile(new URL('./0296_signal_listening_configuration.sql',import.meta.url),'utf8');
  for(const [name,sql]of [['signal_labeling_json_v1',canonical],['signal_labeling_digest_v1',canonical],['signal_listening_input_digest_v1',inputSource]]){const declaration=sql!.slice(sql!.indexOf('CREATE FUNCTION '+name)),body=declaration.split('AS $$')[1]!.split('$$;')[0];assert.equal(before.find(r=>r.proname===name)!.prosrc,body,'unchanged public '+name);}
+
+ return before;
+}
+async function effectiveSqlV1(c:PoolClient){
+ const effectiveSource=await readFile(new URL('./0316_signal_listening_human_revision_plan.sql',import.meta.url),'utf8');
+ const reference=(await c.query("SELECT prosrc FROM pg_proc WHERE oid='public.signal_listening_effective_population_roots_v2(uuid,uuid,uuid,text,uuid[],text)'::regprocedure")).rows[0];
+ const effectiveBody=effectiveSource.split('AS $$')[1]!.split('$$;')[0]!;assert.equal(reference.prosrc,effectiveBody);
+ let effective=effectiveBody;for(const [name,param]of [['purpose','$6::text'],['roots','$5::uuid[]'],['ctx','$4::text'],['mid','$3::uuid'],['cid','$2::uuid'],['w','$1::uuid']])effective=effective.replace(new RegExp('\\b'+name+'\\b','gu'),param!);
+ return effective;
+}
+async function boundedAliasesV1(c:PoolClient){return(await c.query(`SELECT p.oid::text,p.proname,p.prosrc,p.proowner::text,p.proisstrict,p.proparallel,p.proleakproof,p.prokind,p.pronargs,l.lanname,p.provolatile,p.prosecdef,p.proconfig,p.proacl::text,p.proargtypes::text,p.prorettype::text,p.proallargtypes::text,p.proargmodes,p.proargnames,p.proretset
+ FROM pg_proc p JOIN pg_language l ON l.oid=p.prolang WHERE p.pronamespace=pg_my_temp_schema() AND p.proname IN('r16_bounded_old','r16_bounded_new') ORDER BY p.proname`)).rows;}
+async function boundedEffectiveCatalogV1(c:PoolClient){return(await c.query(`SELECT p.oid::text,p.prosrc,p.proowner::text,p.proisstrict,p.proparallel,p.proleakproof,p.prokind,p.pronargs,l.lanname,p.provolatile,p.prosecdef,p.proconfig,p.proacl::text,p.proargtypes::text,p.prorettype::text,p.proallargtypes::text,p.proargmodes,p.proargnames,p.proretset
+ FROM pg_proc p JOIN pg_language l ON l.oid=p.prolang WHERE p.oid='public.signal_listening_effective_population_roots_v2(uuid,uuid,uuid,text,uuid[],text)'::regprocedure`)).rows;}
+type BoundedMentionsCatalogV1={native:Awaited<ReturnType<typeof defaults>>;aliases:Awaited<ReturnType<typeof boundedAliasesV1>>;effective:Awaited<ReturnType<typeof boundedEffectiveCatalogV1>>};
+export async function assertBoundedMentionsCatalogV1(c:PoolClient,before:BoundedMentionsCatalogV1){
+ assert.deepEqual({native:await defaults(c),aliases:await boundedAliasesV1(c),effective:await boundedEffectiveCatalogV1(c)},before,'native and alias catalogue unchanged');
+}
+export async function installBoundedMentionsV1(c:PoolClient){
+ const source=await readFile(candidateURL,'utf8'),candidate=await readFile(boundedURL,'utf8'),binding=boundedMentionsSourceV1(source,candidate);
+ const nativeBefore=await nativeFlatCatalogV1(c,candidate),native=nativeBefore.find(r=>r.proname==='signal_listening_population_roots_v1')!;
+ const effective=await effectiveSqlV1(c);
+ // CREATE FUNCTION must precede the caller's REPEATABLE READ READ ONLY block.
+ assert.equal((await c.query("SELECT current_setting('transaction_read_only') value")).rows[0].value,'off');
+ await c.query('CREATE TEMP TABLE r16_bounded_alias_lifetime(probe boolean)');
+ for(const name of ['r16_bounded_old','r16_bounded_new'] as const)await c.query(source.replace('CREATE OR REPLACE FUNCTION signal_listening_population_roots_v1','CREATE FUNCTION pg_temp.'+name)+`\nREVOKE ALL ON FUNCTION pg_temp.${name}(uuid,uuid,uuid,text,uuid[],text) FROM PUBLIC;`);
+ const initial=await boundedAliasesV1(c);assert.equal(initial.length,2);
+ await c.query(candidate.replace('CREATE OR REPLACE FUNCTION signal_listening_population_roots_v1','CREATE OR REPLACE FUNCTION pg_temp.r16_bounded_new'));
+ const aliases=await boundedAliasesV1(c);assert.equal(aliases.length,2);
+ for(const a of aliases){
+  const prior=initial.find(r=>r.proname===a.proname)!;assert.ok(prior);
+  for(const key of Object.keys(a).filter(k=>k!=='prosrc'))assert.deepEqual(a[key],prior[key],key+' replace retains OID/owner/ACL/attributes');
+  for(const key of Object.keys(a).filter(k=>!['oid','proname','prosrc'].includes(k)))assert.deepEqual(a[key],native[key],key+' exact native alias attribute/ACL');
+  assert.equal(a.prosrc,(a.proname==='r16_bounded_old'?source:candidate).split('AS $function$')[1]!.split('$function$;')[0]);
+ }
+ assert.deepEqual(await defaults(c),nativeBefore,'install never replaces a public function');
+ const before:BoundedMentionsCatalogV1={native:nativeBefore,aliases,effective:await boundedEffectiveCatalogV1(c)};
+ await assertBoundedMentionsCatalogV1(c,before);
+ return{before,effective,...binding};
+}
+export async function installFlatPreimageV1(c:PoolClient){
+ const source=await readFile(sourceURL,'utf8'),candidate=await readFile(candidateURL,'utf8'),current=await readFile(boundedURL,'utf8'),expressions=flatPreimageSourceV1(source,candidate);
+ boundedMentionsSourceV1(candidate,current);const before=await nativeFlatCatalogV1(c,current),native=before.find(r=>r.proname==='signal_listening_population_roots_v1')!;
 
  assert.equal((await c.query("SELECT current_setting('transaction_read_only') value")).rows[0].value,'off');
  await c.query('CREATE TEMP TABLE r16_flat_alias_lifetime(probe boolean)');
@@ -49,14 +110,11 @@ export async function installFlatPreimageV1(c:PoolClient){
  const replacementBefore=await replacementCatalogue();assert.notEqual(replacementBefore.proacl,null);assert.equal(replacementBefore.proacl,native.proacl);
  await c.query(candidate.replace('CREATE OR REPLACE FUNCTION signal_listening_population_roots_v1','CREATE OR REPLACE FUNCTION pg_temp.r16_flat_replacement'));
  assert.deepEqual(await replacementCatalogue(),replacementBefore,'replace preserves native ACL/owner/OID and every function attribute');
- assert.equal((await c.query("SELECT prosrc FROM pg_proc WHERE oid='pg_temp.r16_flat_replacement(uuid,uuid,uuid,text,uuid[],text)'::regprocedure")).rows[0].prosrc,native.prosrc);
+ assert.equal((await c.query("SELECT prosrc FROM pg_proc WHERE oid='pg_temp.r16_flat_replacement(uuid,uuid,uuid,text,uuid[],text)'::regprocedure")).rows[0].prosrc,candidate.split('AS $function$')[1]!.split('$function$;')[0]);
  const aliases=(await c.query(`SELECT p.proname,p.proowner::text,p.proisstrict,p.proparallel,p.proleakproof,p.prokind,p.pronargs,l.lanname,p.provolatile,p.prosecdef,p.proconfig,p.proacl::text,p.proargtypes::text,p.prorettype::text,p.proallargtypes::text,p.proargmodes,p.proargnames,p.proretset
  FROM pg_proc p JOIN pg_language l ON l.oid=p.prolang WHERE p.pronamespace=pg_my_temp_schema() AND p.proname IN('r16_flat_old','r16_flat_replacement') ORDER BY p.proname`)).rows;
  assert.equal(aliases.length,2);for(const a of aliases)for(const key of Object.keys(a).filter(k=>k!=='proname'))assert.deepEqual(a[key],native[key],key+' exact native attribute/ACL');
- const effectiveSource=await readFile(new URL('./0316_signal_listening_human_revision_plan.sql',import.meta.url),'utf8');
- const reference=(await c.query("SELECT prosrc FROM pg_proc WHERE oid='public.signal_listening_effective_population_roots_v2(uuid,uuid,uuid,text,uuid[],text)'::regprocedure")).rows[0];
- const effectiveBody=effectiveSource.split('AS $$')[1]!.split('$$;')[0]!;assert.equal(reference.prosrc,effectiveBody);
- let effective=effectiveBody;for(const [name,param]of [['purpose','$6::text'],['roots','$5::uuid[]'],['ctx','$4::text'],['mid','$3::uuid'],['cid','$2::uuid'],['w','$1::uuid']])effective=effective.replace(new RegExp('\\b'+name+'\\b','gu'),param!);
+ const bounded=await installBoundedMentionsV1(c),effective=bounded.effective;assert.deepEqual(bounded.before.native,before);
  return{before,expressions,effective,source_sha256:sha(source),candidate_sha256:sha(candidate)};
 }
 export async function flatScalarKernelV1(c:PoolClient,e:ReturnType<typeof flatPreimageSourceV1>){
@@ -75,11 +133,19 @@ export async function flatScalarKernelV1(c:PoolClient,e:ReturnType<typeof flatPr
  }
  return{cases,input_cases:texts.length*4+1,basis_cases:4,preimage_utf8_equal:true,digest_equal:true};
 }
-const read=(arm:'old'|'new')=>`SELECT * FROM ${arm==='old'?'pg_temp.r16_flat_old':'public.signal_listening_population_roots_v1'}($1::uuid,$2::uuid,$3::uuid,$4::text,$5::uuid[],$6::text)`;
-async function parity(c:PoolClient,args:unknown[],effective?:string){
- const a=effective?effective.replace('signal_listening_population_roots_v1(','pg_temp.r16_flat_old('):read('old'),b=effective?effective:read('new');assert.equal((await c.query(`WITH a AS MATERIALIZED(${a}),b AS MATERIALIZED(${b}) SELECT count(*)::int n FROM((TABLE a EXCEPT ALL TABLE b)UNION ALL(TABLE b EXCEPT ALL TABLE a))d`,args)).rows[0].n,0);
+const parityAliases={flat:['pg_temp.r16_flat_old','pg_temp.r16_flat_replacement'],bounded:['pg_temp.r16_bounded_old','pg_temp.r16_bounded_new']} as const;
+const read=(arm:'old'|'new',family:'flat'|'bounded')=>`SELECT * FROM ${parityAliases[family][arm==='old'?0:1]}($1::uuid,$2::uuid,$3::uuid,$4::text,$5::uuid[],$6::text)`;
+async function parity(c:PoolClient,args:unknown[],effective?:string,family:'flat'|'bounded'='flat'){
+ const bind=(name:string)=>{assert.equal(effective!.split('signal_listening_population_roots_v1(').length,2);return effective!.replace('signal_listening_population_roots_v1(',name+'(');};
+ const a=effective?bind(parityAliases[family][0]):read('old',family),b=effective?bind(parityAliases[family][1]):read('new',family);assert.equal((await c.query(`WITH a AS MATERIALIZED(${a}),b AS MATERIALIZED(${b}) SELECT count(*)::int n FROM((TABLE a EXCEPT ALL TABLE b)UNION ALL(TABLE b EXCEPT ALL TABLE a))d`,args)).rows[0].n,0);
  const bytes=async(sql:string)=>(await c.query(`SELECT encode(record_send(ROW(p.*)),'hex') value FROM(${sql})p ORDER BY root_id,question_key,encode(record_send(ROW(p.*)),'hex')`,args)).rows.map(r=>r.value as string);
- const old=await bytes(a),next=await bytes(b);assert.deepEqual(next,old);if(effective)assert.deepEqual(await bytes('SELECT * FROM public.signal_listening_effective_population_roots_v2($1::uuid,$2::uuid,$3::uuid,$4::text,$5::uuid[],$6::text)'),old,'native effective20 reference bytes');return{rows:old.length,bytes:old.reduce((n,s)=>n+s.length/2,0),sha256:sha(old.join('\n')),except_all:true,ordered_record_send:true};
+ const old=await bytes(a),next=await bytes(b);assert.deepEqual(next,old);
+ if(family==='flat')await boundedMentionsParityV1(c,args,effective);
+ else assert.deepEqual(await bytes(effective?'SELECT * FROM public.signal_listening_effective_population_roots_v2($1::uuid,$2::uuid,$3::uuid,$4::text,$5::uuid[],$6::text)':'SELECT * FROM public.signal_listening_population_roots_v1($1::uuid,$2::uuid,$3::uuid,$4::text,$5::uuid[],$6::text)'),next,effective?'native effective20 reference bytes':'native raw14 reference bytes');
+ return{rows:old.length,bytes:old.reduce((n,s)=>n+s.length/2,0),sha256:sha(old.join('\n')),except_all:true,ordered_record_send:true};
+}
+export async function boundedMentionsParityV1(c:PoolClient,params:unknown[],effective?:string){
+ assert.equal(params.length,6);return parity(c,params,effective,'bounded');
 }
 async function scopeParityV1(c:PoolClient,params:unknown[],effective:string){
  const roots=params[4] as string[],cases=[['empty',[]],['duplicates_and_null',[roots[0],roots[0],null,roots[1]]]]as const;
