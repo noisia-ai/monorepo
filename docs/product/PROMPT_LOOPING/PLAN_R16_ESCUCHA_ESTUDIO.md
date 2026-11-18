@@ -19,8 +19,10 @@ Goal activo; R16 H0–H6 incompleto. No hay ensayo remoto vivo. Root trabaja en 
 - [x] Registro de firmas estáticas corregido y prioridad de memoria de respuestas listas integrados/revisados en44e76966. Se conservan todos los recibos de fallos previos y la frontera léxica del registro. No cambios SQL ni permisos por ese trabajo.
 - [x] Cesión cooperativa del feeder entregada en411ac399 por mfp_estandar: pausa cada64propuestas efectivas antes de reserva, sin cambiar bytes/digests/orden, selección fresca, presupuesto ni COMMIT→evaluate. OLDfalla/NEWpasa, foco2/2 y77/77puras serial384;64aliases propios retirados. Revisor favorable sin P0/P1/P2 nuevos. Root integró byteidéntico en e81dd6e6; sólo este plan difiere respecto al autor. No se atribuye aún mejora H1.
 - [x] Mapa de consultas/locks cerrado: e2a1d2ae es metadata de población RR READ ONLY,130ejecuciones/36.804s agregados; no es el mutex financiero. Los tiempos se solapan y no miden CPU. selected_items ya es tabla y el hash Listening ya usa preimagen plana: no repetir esas optimizaciones especulativas.
-- [ ] Diagnóstico acotado en implementación: captar con auto_explain la65.ª consulta e2 original del driver32768/65536 existente, conservando referencia/rol/backend/TX/texto/binds y sólo planes saneados. No matriz de fallos ni aceptación H1 para este diagnóstico. Captura incompleta = INCONCLUSIVE. Crit posee helper, Mec tests/WF opt-in y revisor sólo lectura. Fuente/checks/revisión/prerregistro antes de un único dispatch Root.
+- [ ] Diagnóstico acotado integrado y revisado, Native pendiente: captar con auto_explain la65.ª consulta e2 original del driver32768/65536 existente, conservando referencia/rol/backend/TX/texto/binds y sólo planes saneados. No matriz de fallos ni aceptación H1 para este diagnóstico. Captura incompleta = INCONCLUSIVE. Crit posee helper, Mec tests/WF opt-in y revisor sólo lectura. Fuente/checks/revisión/prerregistro antes de un único dispatch Root.
 - [x] Recibos H0 históricos recuperados READ ONLY en UAT y revisados:15imports(11completed/4failed), preparación y Voyage con IDs/procedencia privados. Última importación es reanudación insert0/resume81393, no cold; import envelope incluye fallos/gaps. Derivados privados sellados con4SHA y refs supplemental historical_reused/include_in_current_totals=false; tarifa de ledger separada de cash e incrementalR16. No nuevas llamadas/importaciones ni medicióncold actual.
+- [x] Fuente final del observador y sus tests/WF entregada enfd36c35b (helper f2dd0922), revisión estática sin P0/P1/P2 nuevos. Tres P2 concretos corregidos: listener antes de controles, primary falsy conservado ante rollback/release y hash/bytes del plan retenido exactos. Cleanup Storage UUID propio y cierre PG/Redis separados. Workflow opt-in14jobs conserva defaults; diagnóstico exige funcional32k/65k y7gates, nunca H1.
+- [x] Checks focales cerrados/revisados:11tests/10PASS/0FAIL/1NativeSKIP, Node20.20.2 serial384. Tres intentos previos fallaron durante carga y permanecen íntegros como0tests; no fueron fallos de producto. Inventario12importers/102deps exact-lock y retiro102links+14dirs confirmados, cero restantes. Recibo v2 SHA4bb1b22036ebb7d5d32d63fdd3a9920154dd56a4ba786df683a3b933206ed2b6; copia privada central con8archivos/SHA256SUMS f3cd0a336c680b8bd7202a3ff79590055589c3e67e46d224a32084ef43522331. Root integró los cuatro archivos byteidénticos a fd36c35b, sólo este plan difiere. TSC DB/workers y Native reales quedan para CI remoto antes de aceptar el método.
 - [ ] H1 real y todos los hitos de aceptación siguientes continúan pendientes. No sustituirlos por un diagnóstico, pruebas locales, revisión estática o aceptación histórica R15.
 
 ## H0 · Medición y presupuesto antes de cambiar código
@@ -103,6 +105,10 @@ Cada autor usa su worktree y rama existentes, conserva cambios ajenos y entrega 
 
 ## Sorpresas y descubrimientos
 
+- El observador registra el ordinal total visto durante todo el pipeline, que puede superar65; la captura elegida sigue siendo exactamente una en65. El test Native no debe truncar el trabajo ni exigir ordinal total65: comprueba total≥65, selección1 y original1, con pura de consultas posteriores sin retarget.
+- Poblar aliases de sólo DB/workers/Studio no cubre imports transitivos del helper que también recorren packages/query-engine. Los tres intentos no alcanzaron tests. El inventario completo por package.json/lock, con cero faltantes antes de ejecutar, sustituye reparaciones de un módulo por vez.
+
+
 - Full44 completó funcionalmente pero rechazó capacidad:147ventanas completas de procesamiento, no las20del prefijo diagnóstico;142bajo1000 y56vacías. Conservar análisis original y corrección append-only, sin sustituir evidencia.
 - El driver Full usa directamente el laboratorio acreditado noisia_mfp_ci y termina admin.end(); no crea cloneSQL. El diagnóstico debe acreditar cierre de sus PID/clientes y retirada del laboratorio remoto, sin afirmar own_database_absent ni cambiar factory para fabricar ese gate.
 
@@ -126,6 +132,9 @@ Cada autor usa su worktree y rama existentes, conserva cambios ajenos y entrega 
 - CPU44295181232 sigue INCONCLUSIVE por manifiestos íntegros ausentes; ROSTER del mismo run FAILED por cierre. Sus jobs verdes o planes parciales no rescatan el método. No repetirlos sólo para verde ni forzar DROP/elevar deadline.
 
 ## Registro de decisiones vigente
+
+- 2026-11-18: corregir los tres P2 del observador antes de Native y añadir cleanup Storage exacto de su directorio UUID nuevo, sin cambiar factory/driver. Modo sintético y cero externo se acreditan por fuente/configuración inmutable, no como contador de red o cash observado. Pruebas/configuración local fallidas se preservan como0tests ejecutados; tras tercer fallo de carga, cambiar a precheck de todo el grafo de12importers y102deps disponibles exact-lock, sin instalaciones ni stores compartidos. Un único intento local adicional sólo si ese precheck queda completo; de lo contrario checks remotos, nunca retries ciegos.
+
 
 - 2026-11-18: recuperar tiempos y procedencia de CSV/preparación/Voyage mediante metadata READ ONLY del UAT exacto; ningún replay pagado. Conservar recibos históricos aparte y no sumar spans superpuestos ni uso a tarifa como cash. El último intento exitoso reutilizó81393filas y no insertó nuevas: no presentarlo como rendimiento de carga cold. El exporter admite refs suplementarios con hash/0600/historical_reused; no incluirlos en totales incrementalesR16.
 
@@ -161,7 +170,7 @@ Cada autor usa su worktree y rama existentes, conserva cambios ajenos y entrega 
 
 ## Ruta restante de ejecución
 
-1. Integrar411 revisado; terminar helper de captura de plan e2 y sus tests/WF opt-in. Root espera entregas/checks/revisión exacta, conserva proofs históricos y sella fuente/prerregistro antes de un único Native remoto. Ningún PG/TSC pesado local.
+1. Congelar la composición Root ya integrada con411 y observador/tests/WF fd36c35b byteidénticos tras checks/revisión. Captura canónica única y cotejo íntegro contra Git, revisión HEAD/prerregistro y publicación exacta antes de un único Native remoto opt-in. Ningún PG/TSC pesado local.
 2. Leer el plan original completo y sus límites para escoger UNA optimización SQL material; no otra sucesión de microajustes. Conservar oráculos de presupuesto/autoridad/durabilidad, OLD/NEW controlados y revisión antes de adoptar. El diagnóstico no rescata H1 rechazado.
 3. Componer fuente final, revisión/CI/PG y Full H1 con barras intactas. Si rechaza, conservar resultado y decidir con evidencia; si pasa, no extrapolar automáticamente al proveedor real.
 4. Revalidar38SQL exactos y permisos/copia; revisar PR198 completo, integrar únicamente a develop con CI/PG verdes. Readiness física fresca antes de aplicar SQL una vez en UAT, flagsOFF/colas censadas. Desplegar sólo studio-uat/workers-uat y verificar.
