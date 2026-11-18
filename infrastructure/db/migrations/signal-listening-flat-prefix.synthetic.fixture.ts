@@ -60,10 +60,12 @@ async function setupState(c:PoolClient,params:unknown[],run_id:string){
  return{...ledger,base_answers:answers,consumer_pending:8192,raw14_rows:state.rows,basis_fresh:true,run_status:run.status,open_exposure_micro_usd:String(BigInt(ledger.reserved_micro_usd)+BigInt(ledger.unknown_micro_usd)),external_spend_micro_usd:0};
 }
 export type FlatPrefixNativeCaseV1={install(c:PoolClient):Promise<void>;read(args:{c:PoolClient;params:unknown[];setup:Record<string,unknown>}):Promise<void>;
- bounded?:{callback(database:SharedWireFixtureV1['database'],body:()=>Promise<void>):Promise<void>;roster(roots:ReadonlyArray<string>):void;state(c:PoolClient,params:unknown[],run_id:string):Promise<Record<string,unknown>>}};
-export async function withFlatPrefixFullFixtureV1(testCase:FlatPrefixNativeCaseV1,variant?:'bounded_1000_of_32768'){
- assert.ok(variant===undefined||variant==='bounded_1000_of_32768','unknown finite flat-prefix fixture variant');
- const bounded=variant==='bounded_1000_of_32768';if(bounded)assert.ok(testCase.bounded,'bounded fixture requires its native state and lifecycle witnesses');
+ bounded?:{callback(database:SharedWireFixtureV1['database'],body:()=>Promise<void>):Promise<void>;roster(roots:ReadonlyArray<string>):void;state(c:PoolClient,params:unknown[],run_id:string):Promise<Record<string,unknown>>};
+ markValidation?:(f:SharedWireFixtureV1,storageMetrics:()=>Record<string,number>)=>Promise<void>};
+export async function withFlatPrefixFullFixtureV1(testCase:FlatPrefixNativeCaseV1,variant?:'bounded_1000_of_32768'|'mark_validation_enr_1000_of_32768'){
+ assert.ok(variant===undefined||variant==='bounded_1000_of_32768'||variant==='mark_validation_enr_1000_of_32768','unknown finite flat-prefix fixture variant');
+ const markValidation=variant==='mark_validation_enr_1000_of_32768';if(markValidation)assert.ok(testCase.markValidation,'ENR fixture requires its finite mutation callback');
+ const bounded=variant!==undefined;if(bounded)assert.ok(testCase.bounded,'bounded fixture requires its native state and lifecycle witnesses');
  const initialCount=bounded?1000:4096;
  assert.equal(process.env.GITHUB_ACTIONS,'true','owned CI only');
  const workload=r16ListeningWorkloadV2('defined_consumer_second_pass'),started=process.hrtime.bigint();
@@ -95,8 +97,10 @@ export async function withFlatPrefixFullFixtureV1(testCase:FlatPrefixNativeCaseV
       const outcomes=await prepareSharedWireRawV1(f,500);deadline();
       assert.equal(outcomes.length,bounded?1000:1024);await store.apply(run,outcomes.map(o=>({call:o.call,results:[o.result]})));deadline();
      }
+     if(markValidation){await store.renew(run);await testCase.markValidation!({database,run,inputs,configuration:cfg.configuration,configuration_id:cfg.id,map_id:ctx.map_id,store,rawPages},()=>server.metrics());}
      return inputs;
     },()=>store.release(run));
+    if(markValidation)return;
     // Every setup promise and the normal lease release have completed. The
     // original roster, not a new consumer read, supplies the one fixed scope.
     deadline();const roots=Object.freeze(initial.map(i=>i.root_id));
@@ -117,7 +121,7 @@ export async function withFlatPrefixFullFixtureV1(testCase:FlatPrefixNativeCaseV
       assert.deepEqual((await c.query('SELECT pg_current_snapshot()::text snapshot')).rows[0],snapshot);assert.deepEqual(await readState(),state);
       await authorizeSignalListeningV1(c,access,'view');await assertMassLabelingMapCurrentV1(c,access.workspace_id,ctx.map_id);
       assert.equal((await loadSignalListeningConfigurationWithClientV1(c,access.workspace_id))?.id,cfg.id);
-     },variant),async()=>{if(!uncertainClients.has(c))assert.deepEqual((await c.query("SELECT current_setting('search_path') search_path,current_setting('track_functions') track_functions,current_database() database,current_setting('server_version_num')::int version")).rows[0],original);});
+     },variant==='bounded_1000_of_32768'?variant:undefined),async()=>{if(!uncertainClients.has(c))assert.deepEqual((await c.query("SELECT current_setting('search_path') search_path,current_setting('track_functions') track_functions,current_database() database,current_setting('server_version_num')::int version")).rows[0],original);});
     }finally{releaseFlatPrefixClientV1(c);}
    },async()=>{await withSharedWireDefaultPostcheckV1(()=>server.close(),()=>rm(directory,{recursive:true,force:true}));});
    };
