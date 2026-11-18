@@ -16,6 +16,7 @@ on:
           - policy-smoke
           - listening-smoke
           - partial-admission-only
+          - input-plan-only
         default: full
         required: true
       listening_startup_prefix:
@@ -48,18 +49,23 @@ on:
         type: boolean
         default: false
         required: false
+      listening_input_plan_probe:
+        description: Run the isolated native Listening input plan diagnostic
+        type: boolean
+        default: false
+        required: false
 
 permissions:
   contents: read
 
 concurrency:
-  group: mfp-postgres-${{ github.ref }}${{ github.event_name == 'workflow_dispatch' && inputs.scope == 'policy-smoke' && '-policy-smoke' || github.event_name == 'workflow_dispatch' && inputs.scope == 'listening-smoke' && '-listening-smoke' || github.event_name == 'workflow_dispatch' && inputs.scope == 'partial-admission-only' && '-partial-admission-only' || '' }}
+  group: mfp-postgres-${{ github.ref }}${{ github.event_name == 'workflow_dispatch' && inputs.scope == 'policy-smoke' && '-policy-smoke' || github.event_name == 'workflow_dispatch' && inputs.scope == 'listening-smoke' && '-listening-smoke' || github.event_name == 'workflow_dispatch' && inputs.scope == 'partial-admission-only' && '-partial-admission-only' || github.event_name == 'workflow_dispatch' && inputs.scope == 'input-plan-only' && '-input-plan-only' || '' }}
   cancel-in-progress: true
 
 jobs:
   numeric-python:
-    name: ${{ github.event_name == 'workflow_dispatch' && inputs.scope == 'policy-smoke' && 'policy-smoke-numeric-python' || github.event_name == 'workflow_dispatch' && inputs.scope == 'listening-smoke' && 'listening-smoke-numeric-python' || github.event_name == 'workflow_dispatch' && inputs.scope == 'partial-admission-only' && 'partial-admission-only-numeric-python-not-run' || 'numeric-python' }}
-    if: ${{ github.event_name != 'workflow_dispatch' || (inputs.scope != 'listening-smoke' && inputs.scope != 'partial-admission-only') }}
+    name: ${{ github.event_name == 'workflow_dispatch' && inputs.scope == 'policy-smoke' && 'policy-smoke-numeric-python' || github.event_name == 'workflow_dispatch' && inputs.scope == 'listening-smoke' && 'listening-smoke-numeric-python' || github.event_name == 'workflow_dispatch' && inputs.scope == 'partial-admission-only' && 'partial-admission-only-numeric-python-not-run' || github.event_name == 'workflow_dispatch' && inputs.scope == 'input-plan-only' && 'input-plan-only-numeric-python-not-run' || 'numeric-python' }}
+    if: ${{ github.event_name != 'workflow_dispatch' || (inputs.scope != 'listening-smoke' && inputs.scope != 'partial-admission-only' && inputs.scope != 'input-plan-only') }}
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -344,8 +350,8 @@ jobs:
           retention-days: 14
 
   migrated-schema:
-    name: ${{ github.event_name == 'workflow_dispatch' && inputs.scope == 'policy-smoke' && 'policy-smoke-migrated-schema-not-run' || github.event_name == 'workflow_dispatch' && inputs.scope == 'listening-smoke' && 'listening-smoke-migrated-schema' || github.event_name == 'workflow_dispatch' && inputs.scope == 'partial-admission-only' && 'partial-admission-only-migrated-schema-not-run' || 'migrated-schema' }}
-    if: ${{ github.event_name != 'workflow_dispatch' || (inputs.scope != 'policy-smoke' && inputs.scope != 'partial-admission-only') }}
+    name: ${{ github.event_name == 'workflow_dispatch' && inputs.scope == 'policy-smoke' && 'policy-smoke-migrated-schema-not-run' || github.event_name == 'workflow_dispatch' && inputs.scope == 'listening-smoke' && 'listening-smoke-migrated-schema' || github.event_name == 'workflow_dispatch' && inputs.scope == 'partial-admission-only' && 'partial-admission-only-migrated-schema-not-run' || github.event_name == 'workflow_dispatch' && inputs.scope == 'input-plan-only' && 'input-plan-only-migrated-schema-not-run' || 'migrated-schema' }}
+    if: ${{ github.event_name != 'workflow_dispatch' || (inputs.scope != 'policy-smoke' && inputs.scope != 'partial-admission-only' && inputs.scope != 'input-plan-only') }}
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -2819,6 +2825,296 @@ jobs:
           path: |
             listening-partial-admission.tap
             .data/piloto-masivo/r16/partial-admission-native-evidence/listening-partial-admission.json
+          if-no-files-found: ignore
+          retention-days: 14
+          include-hidden-files: true
+
+  listening-input-plan-probe-experimental:
+    name: R16 Listening original input-plan observer (isolated lab)
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.scope == 'input-plan-only' && inputs.listening_input_plan_probe }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      R16BENCH_RUN_ID: benchmark-pg17
+      R16BENCH_SERVICES: postgres,redis
+      NOISIA_R16_LOCAL_PG_LAB: r16-benchmark-pg17
+      DATABASE_SSL: 'false'
+      R16_LISTENING_INPUT_PLAN_EVIDENCE_DIR: .data/piloto-masivo/r16/input-plan-native-evidence
+    steps:
+      - uses: actions/checkout@v4
+      - name: Initialize input-plan observer TAP receipt
+        run: printf '%s\n' '# native Listening input-plan observer did not start' > input-plan-observer.tap
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+      - name: Install frozen Node workspace dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Typecheck database package on the remote runner
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
+        run: pnpm --filter @noisia/db typecheck
+      - name: Typecheck workers package on the remote runner
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
+        run: pnpm --filter @noisia/workers typecheck
+      - name: Run pure input-plan observation contracts
+        env:
+          NOISIA_R16_LISTENING_INPUT_PLAN_PURE: 'true'
+        run: |
+          set -euo pipefail
+          pnpm exec node --test --test-concurrency=1 --import tsx \
+            infrastructure/db/migrations/signal-listening-input-plan.synthetic.fixture.test.ts \
+            infrastructure/db/migrations/signal-listening-input-plan.postgres.test.ts \
+            | tee input-plan-observer-pure.tap
+          if ! grep -qx '# tests 11' input-plan-observer-pure.tap \
+            || ! grep -qx '# pass 10' input-plan-observer-pure.tap \
+            || ! grep -qx '# fail 0' input-plan-observer-pure.tap \
+            || ! grep -qx '# skipped 1' input-plan-observer-pure.tap \
+            || ! grep -qx '# cancelled 0' input-plan-observer-pure.tap; then
+            echo '::error::Input-plan observer pure contracts did not run the exact eleven-test, ten-pass, one-skip census'
+            exit 1
+          fi
+      - name: Require the owned input-plan lab and private evidence to be absent
+        run: |
+          set -euo pipefail
+          if docker inspect r16-benchmark-pg17 >/dev/null 2>&1; then
+            echo '::error::The named R16 input-plan PostgreSQL container already exists'
+            exit 1
+          fi
+          if docker volume inspect r16bench-benchmark-pg17_postgres-data >/dev/null 2>&1; then
+            echo '::error::The named R16 input-plan PostgreSQL volume already exists'
+            exit 1
+          fi
+          remaining_containers="$(docker ps -aq --filter label=com.docker.compose.project=r16bench-benchmark-pg17)"
+          remaining_volumes="$(docker volume ls -q --filter label=com.docker.compose.project=r16bench-benchmark-pg17)"
+          if [[ -n "$remaining_containers" || -n "$remaining_volumes" ]]; then
+            echo '::error::An R16 input-plan PostgreSQL or Redis lab resource already exists for this exact compose project'
+            exit 1
+          fi
+          lab_dir=.data/piloto-masivo/r16/labs/benchmark-pg17
+          evidence_dir=.data/piloto-masivo/r16/input-plan-native-evidence
+          if [[ -e "$lab_dir/private.env" || -e "$lab_dir/connection.env" || -e "$evidence_dir" ]]; then
+            echo '::error::Private files for the named R16 input-plan lab already exist'
+            exit 1
+          fi
+      - name: Start the owned official PostgreSQL 17 and Redis input-plan lab
+        run: |
+          set -euo pipefail
+          printf '%s\n' 'R16_LISTENING_INPUT_PLAN_LAB_OWNED=true' >> "$GITHUB_ENV"
+          scripts/r16/lab-up.sh
+      - name: Apply migrations to the fresh input-plan lab
+        env:
+          NOISIA_DB_SMOKE_RESET_SCHEMA: 'true'
+          NOISIA_DB_SMOKE_EMULATE_SUPABASE_ROLES: 'true'
+          NOISIA_MFP_PG_CI: 'true'
+        run: |
+          set -euo pipefail
+          connection_file=.data/piloto-masivo/r16/labs/benchmark-pg17/connection.env
+          test -f "$connection_file"
+          set -a
+          source "$connection_file"
+          set +a
+          export DATABASE_SSL=false
+          export NOISIA_R16_LOCAL_PG_LAB=r16-benchmark-pg17
+          pnpm --filter @noisia/db db:smoke:migrations
+      - name: Run the original Listening input-plan observer
+        id: profile
+        env:
+          NOISIA_R16_LISTENING_INPUT_PLAN_PG: 'true'
+          NOISIA_R16_LISTENING_INPUT_PLAN_PURE: 'false'
+          NOISIA_R16_NATIVE_FIXTURE_PG: 'true'
+          NOISIA_MASS_LABELING_ENABLED: 'true'
+          NOISIA_SIGNAL_LISTENING_ENABLED: 'true'
+          NOISIA_JEV_PROVIDER_ENABLED: 'true'
+          NOISIA_JEV_STREAMING_V2_ENABLED: 'true'
+        run: |
+          set -o pipefail
+          connection_file=.data/piloto-masivo/r16/labs/benchmark-pg17/connection.env
+          test -f "$connection_file"
+          set -a
+          source "$connection_file"
+          set +a
+          export DATABASE_SSL=false
+          export NOISIA_R16_LOCAL_PG_LAB=r16-benchmark-pg17
+          set +e
+          pnpm exec node --test --test-concurrency=1 --import tsx \
+            infrastructure/db/migrations/signal-listening-input-plan.postgres.test.ts \
+            2>&1 | tee input-plan-observer.tap
+          test_status=${PIPESTATUS[0]}
+          set -e
+          if [[ "$test_status" -ne 0 ]] \
+            || ! grep -qx '# tests 1' input-plan-observer.tap \
+            || ! grep -qx '# pass 1' input-plan-observer.tap \
+            || ! grep -qx '# fail 0' input-plan-observer.tap \
+            || ! grep -qx '# cancelled 0' input-plan-observer.tap \
+            || ! grep -qx '# skipped 0' input-plan-observer.tap \
+            || ! grep -qx '# Subtest: native Listening input plan observes the original RR read without replay' input-plan-observer.tap; then
+            echo '::error::The native input-plan observer failed, was skipped, or did not execute exactly once'
+            exit 1
+          fi
+      - name: Stop and remove only the owned input-plan lab
+        id: cleanup
+        if: ${{ always() && env.R16_LISTENING_INPUT_PLAN_LAB_OWNED == 'true' }}
+        run: |
+          set -euo pipefail
+          lab_dir=.data/piloto-masivo/r16/labs/benchmark-pg17
+          if [[ -f "$lab_dir/private.env" ]]; then
+            scripts/r16/lab-down.sh
+          fi
+          if docker inspect r16-benchmark-pg17 >/dev/null 2>&1; then
+            echo '::error::Owned R16 input-plan PostgreSQL container survived cleanup'
+            exit 1
+          fi
+          if docker volume inspect r16bench-benchmark-pg17_postgres-data >/dev/null 2>&1; then
+            echo '::error::Owned R16 input-plan PostgreSQL volume survived cleanup'
+            exit 1
+          fi
+          remaining_containers="$(docker ps -aq --filter label=com.docker.compose.project=r16bench-benchmark-pg17)"
+          remaining_volumes="$(docker volume ls -q --filter label=com.docker.compose.project=r16bench-benchmark-pg17)"
+          if [[ -n "$remaining_containers" || -n "$remaining_volumes" ]]; then
+            echo '::error::An owned R16 input-plan PostgreSQL or Redis lab resource survived cleanup'
+            exit 1
+          fi
+      - name: Validate the input-plan receipt and original workload evidence
+        if: always()
+        env:
+          PROFILE_CONCLUSION: ${{ steps.profile.conclusion }}
+          CLEANUP_CONCLUSION: ${{ steps.cleanup.conclusion }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import hashlib
+          import json
+          import math
+          import os
+          from pathlib import Path
+
+          evidence = Path(os.environ['R16_LISTENING_INPUT_PLAN_EVIDENCE_DIR'])
+          observer_path = evidence / 'input-plan-observer.json'
+          measurement_path = evidence / 'input-plan-measurement.json'
+          tap = Path('input-plan-observer.tap')
+          profile_succeeded = os.environ.get('PROFILE_CONCLUSION') == 'success'
+          cleanup_succeeded = os.environ.get('CLEANUP_CONCLUSION') == 'success'
+          for path, cap in ((observer_path, 4 * 1024 * 1024), (measurement_path, 4 * 1024 * 1024), (tap, 1024 * 1024)):
+              if not path.is_file() or path.is_symlink() or path.stat().st_size <= 0 or path.stat().st_size > cap:
+                  raise SystemExit('Input-plan evidence file is missing, unsafe, empty, or exceeds its individual cap')
+          if observer_path.stat().st_size + measurement_path.stat().st_size > 4 * 1024 * 1024:
+              raise SystemExit('Combined sanitized input-plan JSON exceeds 4 MiB')
+          observer = json.loads(observer_path.read_text(encoding='utf-8'))
+          measured = json.loads(measurement_path.read_text(encoding='utf-8'))
+          if type(observer) is not dict or type(measured) is not dict:
+              raise SystemExit('Input-plan evidence must contain two JSON objects')
+          for value in (observer, measured):
+              expected = {'diagnostic_only': True, 'h1_accepted': False, 'cpu': 'UNKNOWN',
+                  'provider_mode': 'unmodified_driver_synthetic_transport',
+                  'external_provider_spend_micro_usd': 0, 'external_provider_requests': 0}
+              if any(type(value.get(key)) is not type(expected_value) or value.get(key) != expected_value
+                     for key, expected_value in expected.items()):
+                  raise SystemExit('Input-plan evidence does not match its non-paid diagnostic contract')
+              if type(value.get('evidence_basis')) is not str or not value['evidence_basis']:
+                  raise SystemExit('Synthetic transport evidence basis is missing')
+          if observer.get('contract') != 'r16-listening-input-plan-v1' \
+              or observer.get('findings') != 'INCONCLUSIVE' \
+              or observer.get('owned_scope') != 'accredited_ci_lab_database' \
+              or measured.get('contract') != 'r16-listening-input-plan-measurement-v1':
+              raise SystemExit('Input-plan evidence contract or database scope is invalid')
+          if 'candidate_accepted' in observer or 'own_database_absent' in observer.get('closure', {}):
+              raise SystemExit('Input-plan evidence must not claim adoption or disposable-clone absence')
+          status = observer.get('status')
+          if status not in ('observed', 'failed', 'INCONCLUSIVE') or measured.get('status') != status:
+              raise SystemExit('Observer and measurement statuses are invalid or inconsistent')
+          source = observer.get('source')
+          def valid_source(value):
+              if type(value) is not dict or set(value) != {'head_sha', 'source_tree_sha256', 'tree_status_sha256', 'file_count', 'file_manifest'}:
+                  return False
+              if value.get('head_sha') != os.environ.get('GITHUB_SHA'):
+                  return False
+              count, manifest = value.get('file_count'), value.get('file_manifest')
+              if type(count) is not int or count <= 0 or type(manifest) is not list or len(manifest) != count:
+                  return False
+              paths, pairs = [], []
+              for entry in manifest:
+                  if type(entry) is not dict or set(entry) != {'path', 'sha256'} or type(entry.get('path')) is not str \
+                      or type(entry.get('sha256')) is not str or len(entry['sha256']) != 71 \
+                      or not entry['sha256'].startswith('sha256:') \
+                      or any(ch not in '0123456789abcdef' for ch in entry['sha256'][7:]):
+                      return False
+                  paths.append(entry['path']); pairs.append([entry['path'], entry['sha256']])
+              if paths != sorted(set(paths)):
+                  return False
+              tree = 'sha256:' + hashlib.sha256(json.dumps(pairs, ensure_ascii=False, separators=(',', ':')).encode('utf-8')).hexdigest()
+              empty_status = 'sha256:' + hashlib.sha256(b'').hexdigest()
+              return value.get('source_tree_sha256') == tree and value.get('tree_status_sha256') == empty_status
+          if type(source) is not dict or not all(valid_source(source.get(key)) for key in ('expected_git', 'before', 'after')) \
+              or source['before'] != source['expected_git'] or source['after'] != source['expected_git']:
+              raise SystemExit('Full expected Git and before/after source manifests must match exactly')
+          if status != 'observed' or not profile_succeeded or not cleanup_succeeded:
+              raise SystemExit('The original input-plan observation did not complete with owned-lab cleanup')
+          gates = observer.get('gates')
+          expected_gates = {'original_query', 'parent_and_nested', 'rr_identity', 'controls_closed',
+              'source_binding', 'factory_closed', 'recording_complete'}
+          if type(gates) is not dict or set(gates) != expected_gates or any(type(v) is not bool or v is not True for v in gates.values()):
+              raise SystemExit('All seven input-plan observation gates must be explicitly true')
+          observation = observer.get('observation')
+          if type(observation) is not dict or observation.get('status') != 'observed' \
+              or type(observation.get('ordinal_seen')) is not int or observation['ordinal_seen'] < 65 \
+              or observation.get('selected_count') != 1 \
+              or observation.get('original_executions') != 1 or observation.get('original_succeeded') is not True \
+              or observation.get('result_reference_preserved') is not True or observation.get('query_raw_match') is not True \
+              or observation.get('bind_count') != 9 or type(observation.get('root_argument_count')) is not int \
+              or observation['root_argument_count'] <= 0 or type(observation.get('returned_rows')) is not int \
+              or observation['returned_rows'] < 0 or observation.get('rr_read_only') is not True \
+              or observation.get('context_stable') is not True or observation.get('settings_restored') is not True \
+              or observation.get('loss') is not False or observation.get('parent_present') is not True \
+              or observation.get('nested_present') is not True or observation.get('library_loaded') is not True \
+              or observation.get('library_unloaded') is not False:
+              raise SystemExit('The original read, RR context, plan parent/nested capture, or controls are incomplete')
+          closure = observer.get('closure')
+          required_closure = {'callback_entered': True, 'callback_complete': True, 'factory_returned_normally': True,
+              'observed_backends_absent': True, 'admin_closed': True, 'database_identity_matched': True,
+              'active_borrowed': 0, 'release_failures': 0}
+          if type(closure) is not dict or any(type(closure.get(key)) is not type(expected) or closure.get(key) != expected
+                                             for key, expected in required_closure.items()) \
+              or type(closure.get('observed_backends')) is not int or closure['observed_backends'] <= 0:
+              raise SystemExit('Accredited CI database/backend post-check and closure are incomplete')
+          storage = observer.get('storage')
+          if type(storage) is not dict or storage != {'storage_owned': True, 'storage_closed': True, 'storage_absent': True}:
+              raise SystemExit('Input-plan synthetic storage ownership or cleanup is incomplete')
+          plans = observation.get('plans')
+          if type(plans) is not list or not 2 <= len(plans) <= 128 \
+              or not any(type(p) is dict and p.get('query_template_sha256') == 'sha256:e2a1d2ae7cc6917e1b58de56e7d3a2ad108e902feeb46d5d1dd1559644421f42' for p in plans) \
+              or not any(type(p) is dict and p.get('query_template_sha256') != 'sha256:e2a1d2ae7cc6917e1b58de56e7d3a2ad108e902feeb46d5d1dd1559644421f42' for p in plans):
+              raise SystemExit('Input-plan parent and nested query templates were not both observed')
+          for item in plans:
+              if type(item) is not dict or item.get('variants') != 'NOT_COLLECTED' \
+                  or type(item.get('occurrences')) is not int or item['occurrences'] <= 0:
+                  raise SystemExit('Deduplicated plan occurrence metadata is malformed')
+              first = item.get('first')
+              if type(first) is not dict or type(first.get('plan')) is not dict or type(first.get('nodes')) is not int \
+                  or not 1 <= first['nodes'] <= 512 or type(first.get('bytes')) is not int or not 1 <= first['bytes'] <= 4 * 1024 * 1024:
+                  raise SystemExit('Sanitized plan exceeds the closed node or byte bounds')
+          measurement = measured.get('measurement')
+          if type(measurement) is not dict or measurement.get('roots') != 32768 or measurement.get('requests') != 65536 \
+              or measurement.get('unresolved_roots') != 0:
+              raise SystemExit('The original synthetic population and request census are incomplete')
+          capacity = measurement.get('unmodified_driver_capacity_gates_not_acceptance')
+          if type(capacity) is not dict or any(capacity.get(key) is not True for key in ('native_processing_complete', 'serving', 'expected_primary_request_count')):
+              raise SystemExit('Original native processing, serving, or request-count verification is incomplete')
+          print('Input-plan diagnostic: seven observation gates, full source binding and workload completion verified; findings remain INCONCLUSIVE')
+          PY
+      - name: Upload native input-plan observer evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: r16-listening-input-plan-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            input-plan-observer.tap
+            .data/piloto-masivo/r16/input-plan-native-evidence/input-plan-observer.json
+            .data/piloto-masivo/r16/input-plan-native-evidence/input-plan-measurement.json
           if-no-files-found: ignore
           retention-days: 14
           include-hidden-files: true
