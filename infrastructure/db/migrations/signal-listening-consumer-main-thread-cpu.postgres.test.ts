@@ -54,6 +54,8 @@ test(nativeTitle,{skip:!native},async()=>{
   );
   assert.ok(pipelineReceipt,'native pipeline receipt must exist');
   assert.equal(pipelineReceipt.status,'observed');
+  assert.equal(pipelineReceipt.interpretation,'provider_store_query_correlated_http_spans_independent_no_causal_claim',
+    'CPU evidence requires the original timeline to be complete, untrimmed, and fully correlated');
   assert.ok(observer,'native CPU observer must be created immediately before the worker');
   const snapshot=observer.snapshot();
   assert.equal(snapshot.status,'observed');
@@ -64,6 +66,19 @@ test(nativeTitle,{skip:!native},async()=>{
   assert.equal(snapshot.cpu,'SAMPLED_NOT_EXACT');
   assert.equal(snapshot.hard_duration_bound,false);
   const persisted=JSON.parse(await readFile(join(directory,'listening-main-thread-cpu.json'),'utf8'));
+  const pipeline=JSON.parse(await readFile(join(directory,'listening-pipeline-profile.json'),'utf8'));
+  const events=pipeline.events as Record<string,unknown>;
+  const counters=events.event_counts as Record<string,{seen:number;recorded:number;dropped:number}>;
+  for(const [name,count] of Object.entries(counters)){
+    assert.equal(count.dropped,0,name+' timeline events must not be dropped');
+    assert.equal(count.recorded,count.seen,name+' timeline events must all be retained');
+  }
+  const templateCounts=events.query_template_counts as {seen:number;recorded:number;dropped:number};
+  assert.equal(templateCounts.dropped,0,'timeline query templates must not be dropped');
+  assert.equal(templateCounts.recorded,templateCounts.seen,'timeline query templates must all be retained');
+  const correlation=pipeline.correlation as Record<string,unknown>;
+  assert.equal(correlation.provider_events_unmatched,0);
+  assert.equal(correlation.durability_events_unmatched,0);
   assert.deepEqual(persisted,snapshot,'persisted CPU evidence must equal the safe observer snapshot');
   assert.equal(persisted.capture.summary.positions,'GENERATED_NO_SOURCE_MAP');
   assert.equal(persisted.capture.summary.attribution,'main_thread_samples_not_exact_cpu');

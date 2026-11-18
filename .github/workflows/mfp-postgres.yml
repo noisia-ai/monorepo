@@ -2321,8 +2321,27 @@ jobs:
           if 'candidate_accepted' in cpu or 'speedup_claim' in cpu:
               raise SystemExit('Consumer CPU receipt must not add candidate or speedup claims')
           if pipeline.get('status') != 'observed' or pipeline.get('root_count') != 4096 \
+              or pipeline.get('interpretation') != 'provider_store_query_correlated_http_spans_independent_no_causal_claim' \
               or pipeline.get('h1_accepted') is not False or pipeline.get('cpu') != 'UNKNOWN':
-              raise SystemExit('Original synthetic pipeline oracles did not complete unchanged')
+              raise SystemExit('Original synthetic pipeline oracles are incomplete or inconclusive')
+          events = pipeline.get('events')
+          event_counts = events.get('event_counts') if type(events) is dict else None
+          if type(event_counts) is not dict:
+              raise SystemExit('Original pipeline event completeness counters are missing')
+          for counter in event_counts.values():
+              if type(counter) is not dict or type(counter.get('seen')) is not int \
+                  or type(counter.get('recorded')) is not int or type(counter.get('dropped')) is not int \
+                  or counter.get('dropped') != 0 or counter.get('recorded') != counter.get('seen'):
+                  raise SystemExit('Original pipeline timeline contains dropped or unretained events')
+          template_counts = events.get('query_template_counts')
+          if type(template_counts) is not dict or type(template_counts.get('seen')) is not int \
+              or type(template_counts.get('recorded')) is not int or type(template_counts.get('dropped')) is not int \
+              or template_counts.get('dropped') != 0 or template_counts.get('recorded') != template_counts.get('seen'):
+              raise SystemExit('Original pipeline query-template census is incomplete')
+          correlation = pipeline.get('correlation')
+          if type(correlation) is not dict or correlation.get('provider_events_unmatched') != 0 \
+              or correlation.get('durability_events_unmatched') != 0:
+              raise SystemExit('Original pipeline spans must remain fully correlated')
           if cpu.get('stop_reason') not in {'job_drained', 'watchdog'} or type(cpu.get('stop_commands')) is not int \
               or cpu.get('stop_commands') != 1 or cpu.get('worker') != 'drained':
               raise SystemExit('Consumer CPU profile did not stop once after worker drain or the observed watchdog')
