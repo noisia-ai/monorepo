@@ -3,6 +3,7 @@ import {readFile} from 'node:fs/promises';
 import {join} from 'node:path';
 import test from 'node:test';
 import {
+  collectMarkValidationEnrScansV1,
   createMarkValidationObservationV1,
   extractMarkValidationEnrSourceV1,
   markValidationSafeFailureV1,
@@ -106,6 +107,20 @@ if(pure){
     assert.ok(!encoded.includes('PRIVATE_OLD_TEXT')&&!encoded.includes('PRIVATE_NEW_TEXT'));
     assert.ok(!encoded.includes('Filter')&&!encoded.includes('Output'));
     assert.ok(encoded.includes('listening_old_calls')&&encoded.includes('listening_new_calls'));
+    const sanitizedBeforeCollection=JSON.stringify(sanitized.plan);
+    const collection=collectMarkValidationEnrScansV1(sanitized);
+    assert.deepEqual(collection,{
+      status:'complete',traversal_complete:true,visited_named_nodes:2,old_count:1,new_count:1,
+      missing_name_count:0,invalid_name_count:0,
+      scans:[
+        {name_status:'allowed',name:'listening_old_calls',actual_rows:1000,actual_loops:1,execution:'observed'},
+        {name_status:'allowed',name:'listening_new_calls',actual_rows:1000,actual_loops:1,execution:'observed'},
+      ],
+    });
+    assert.equal(JSON.stringify(sanitized.plan),sanitizedBeforeCollection,'scan census must not mutate the sanitized plan');
+    assert.deepEqual(Object.keys(collection).sort(),[
+      'invalid_name_count','missing_name_count','new_count','old_count','scans','status','traversal_complete','visited_named_nodes',
+    ]);
 
     const timing=(generation:unknown)=>({Generation:generation,Inlining:0.1,Optimization:0.2,Emission:0.3,Total:0.6});
     const pg17RootGeneration={Deform:0.04,Total:0.1};
@@ -186,6 +201,79 @@ if(pure){
     assert.equal(markValidationRootGenerationKindV1(inheritedPlan),'unsafe');
     const accessorPlanJson=JSON.stringify(markValidationRootGenerationKindV1(accessorPlan));
     assert.doesNotMatch(accessorPlanJson,/PRIVATE|Deform|Total|0\.1|0\.2/u);
+
+    const planWithScans=(scans:Array<Record<string,unknown>>)=>sanitizeBoundedPopulationPlanV1([{
+      Plan:{'Node Type':'Nested Loop',Plans:scans},'Planning Time':1,'Execution Time':2,
+    }]);
+    const scan=(name:unknown,rows:unknown,loops:unknown):Record<string,unknown>=>({
+      'Node Type':'Named Tuplestore Scan','Tuplestore Name':name,'Actual Rows':rows,'Actual Loops':loops,
+    });
+
+    const empty=planWithScans([{'Node Type':'Result'}]);
+    const emptyBefore=JSON.stringify(empty.plan);
+    const emptyCollection=collectMarkValidationEnrScansV1(empty);
+    assert.deepEqual(emptyCollection,{
+      status:'complete',traversal_complete:true,visited_named_nodes:0,old_count:0,new_count:0,
+      missing_name_count:0,invalid_name_count:0,scans:[],
+    },'a completed empty scan census keeps zero distinct from not_started UNKNOWNs');
+    assert.equal(JSON.stringify(empty.plan),emptyBefore);
+
+    const duplicate=planWithScans([
+      scan('listening_old_calls',3,2),scan('listening_old_calls',0,0),scan('listening_new_calls',7.5,0.5),
+    ]);
+    const duplicateBefore=JSON.stringify(duplicate.plan);
+    const duplicateCollection=collectMarkValidationEnrScansV1(duplicate);
+    assert.deepEqual(duplicateCollection,{
+      status:'complete',traversal_complete:true,visited_named_nodes:3,old_count:2,new_count:1,
+      missing_name_count:0,invalid_name_count:0,
+      scans:[
+        {name_status:'allowed',name:'listening_old_calls',actual_rows:3,actual_loops:2,execution:'observed'},
+        {name_status:'allowed',name:'listening_old_calls',actual_rows:0,actual_loops:0,execution:'not_executed'},
+        {name_status:'allowed',name:'listening_new_calls',actual_rows:7.5,actual_loops:0.5,execution:'observed'},
+      ],
+    },'the collector records actual multiplicity and finite noncanonical rows/loops without accepting the shape');
+    assert.equal(JSON.stringify(duplicate.plan),duplicateBefore);
+    assert.ok(!Object.hasOwn(duplicateCollection,'gates'),'scan census must not promote a method gate');
+
+    const scanNodes=(result:ReturnType<typeof planWithScans>)=>(((result.plan as Record<string,unknown>).Plan as Record<string,unknown>).Plans as Array<Record<string,unknown>>);
+    const missing=planWithScans([scan('listening_old_calls',9,1)]);
+    const missingNode=scanNodes(missing)[0]!;
+    delete missingNode['Tuplestore Name'];
+    const missingBefore=JSON.stringify(missing.plan);
+    const missingCollection=collectMarkValidationEnrScansV1(missing);
+    assert.deepEqual(missingCollection.scans,[{name_status:'missing',name:null,actual_rows:9,actual_loops:1,execution:'observed'}]);
+    assert.equal(missingCollection.missing_name_count,1);
+    assert.equal(missingCollection.old_count,0);
+    assert.equal(JSON.stringify(missing.plan),missingBefore);
+
+    const invalid=planWithScans([scan('listening_new_calls',5,1)]);
+    const invalidNode=scanNodes(invalid)[0]!;
+    invalidNode['Tuplestore Name']='PRIVATE_UNKNOWN_ENR_ALIAS';
+    const invalidBefore=JSON.stringify(invalid.plan);
+    const invalidCollection=collectMarkValidationEnrScansV1(invalid);
+    assert.deepEqual(invalidCollection.scans,[{name_status:'invalid',name:null,actual_rows:5,actual_loops:1,execution:'observed'}]);
+    assert.equal(invalidCollection.invalid_name_count,1);
+    assert.doesNotMatch(JSON.stringify(invalidCollection),/PRIVATE_UNKNOWN_ENR_ALIAS/u);
+    assert.equal(JSON.stringify(invalid.plan),invalidBefore);
+    assert.throws(()=>sanitizeBoundedPopulationPlanV1([{Plan:{'Node Type':'Named Tuplestore Scan','Tuplestore Name':'PRIVATE_UNKNOWN_ENR_ALIAS','Actual Rows':5,'Actual Loops':1}}]),/bounded_population_plan_invalid_or_over_limit/u,'the census does not widen the original sanitizer allowlist');
+
+    const unknownMetrics=planWithScans([scan('listening_old_calls',1,1)]);
+    const unknownNode=scanNodes(unknownMetrics)[0]!;
+    delete unknownNode['Actual Rows'];
+    delete unknownNode['Actual Loops'];
+    const unknownCollection=collectMarkValidationEnrScansV1(unknownMetrics);
+    assert.deepEqual(unknownCollection.scans,[{name_status:'allowed',name:'listening_old_calls',actual_rows:'UNKNOWN',actual_loops:'UNKNOWN',execution:'UNKNOWN'}]);
+
+    for(const poison of [-1,Number.NaN,Number.POSITIVE_INFINITY,'PRIVATE_METRIC']){
+      const poisoned=planWithScans([scan('listening_old_calls',1,1)]);
+      scanNodes(poisoned)[0]!['Actual Loops']=poison;
+      assert.throws(()=>collectMarkValidationEnrScansV1(poisoned));
+    }
+
+    const cyclic=planWithScans([scan('listening_old_calls',1,1)]);
+    const cyclicPlan=(cyclic.plan as Record<string,unknown>).Plan as Record<string,unknown>;
+    (cyclicPlan.Plans as unknown[]).push(cyclicPlan);
+    assert.throws(()=>collectMarkValidationEnrScansV1(cyclic),'collector must fail closed on cyclic plan input');
   });
 
   test('finite connect pin lends the original client once, restores descriptors, and releases it exactly once',async()=>{
