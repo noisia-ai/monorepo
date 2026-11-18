@@ -1,5 +1,5 @@
 import {createHash,randomUUID} from 'node:crypto';
-import {readFile,mkdir,open,realpath} from 'node:fs/promises';
+import {readFile,mkdir,open,realpath,rm,lstat} from 'node:fs/promises';
 import {dirname,join,relative,resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {performance} from 'node:perf_hooks';
@@ -180,8 +180,10 @@ export function createListeningInputPlanObserverV1(options:{target_sql:string}){
    const previous=report.plans.find(p=>p.query_template_sha256===sqlHash);
    if(previous){previous.occurrences++;return;}
    known(report.plans.length<INPUT_PLAN_LIMITS_V1.templates);
+   const retainedPlan={...sanitized.plan,server_duration_ms:elapsed,node_elapsed_ms:'UNKNOWN'};
+   const retainedJson=JSON.stringify(retainedPlan);
    const next={query_template_sha256:sqlHash,occurrences:1,variants:'NOT_COLLECTED' as const,
-    first:{...sanitized,plan:{...sanitized.plan,server_duration_ms:elapsed,node_elapsed_ms:'UNKNOWN'}}};
+    first:{...sanitized,plan:retainedPlan,bytes:Buffer.byteLength(retainedJson),sanitized_sha256:hash(retainedJson)}};
    known(Buffer.byteLength(JSON.stringify({...report,plans:[...report.plans,next]}))<=INPUT_PLAN_LIMITS_V1.output_bytes);
    report.plans.push(next);
   }catch{failure(stage);}
@@ -198,11 +200,14 @@ export function createListeningInputPlanObserverV1(options:{target_sql:string}){
  const borrowed=async(client:InputPlanClientV1):Promise<InputPlanClientV1>=>{
   let released=false,uncertain=false,inTransaction=false,aborted=false,selectedOnClient=false;
   let originalFailureKnown=false,originalFailure:unknown;
+  const originalSecondaries:unknown[]=[];
+  const rememberFailure=(error:unknown)=>{if(!originalFailureKnown){originalFailureKnown=true;originalFailure=error;}else originalSecondaries.push(error);};
   const originalQuery=client.query.bind(client),originalRelease=client.release.bind(client);
   const control:InputPlanClientV1={query:originalQuery,release:originalRelease,on:client.on.bind(client),
    removeListener:client.removeListener.bind(client),listenerCount:client.listenerCount.bind(client)};
   let baseline:string[]=[];
   try{
+   if(control.listenerCount('notice')!==0){failure('listener');known(false);}
    const before=await session(control);known(before.superuser==='on');pids.add(before.pid);
    await originalQuery("LOAD 'auto_explain'");report.library_loaded=true;
    baseline=await readSettings(control);
@@ -211,7 +216,7 @@ export function createListeningInputPlanObserverV1(options:{target_sql:string}){
   const release=(destroy?:boolean)=>{
    if(released){failure('release');known(false);}released=true;
    const discard=Boolean(destroy||uncertain||inTransaction||aborted);if(discard){report.discarded=true;if(selectedOnClient&&!report.settings_restored&&!report.rollback_reset_confirmed)failure('release');}
-   try{return originalRelease(discard);}catch(error){releaseFailures++;failure('release');if(originalFailureKnown)throw new AggregateError([originalFailure,error],'r16_input_plan_primary_and_release_failed',{cause:originalFailure});throw error;}
+   try{return originalRelease(discard);}catch(error){releaseFailures++;failure('release');if(originalFailureKnown)throw new AggregateError([originalFailure,...originalSecondaries,error],'r16_input_plan_primary_and_release_failed',{cause:originalFailure});throw error;}
    finally{activeBorrowed--;}
   };
   const wrapQuery=async(...args:any[]):Promise<QueryResultV1>=>{
@@ -227,12 +232,13 @@ export function createListeningInputPlanObserverV1(options:{target_sql:string}){
       inTransaction=false;aborted=false;
       if(normalized==='ROLLBACK'&&selectedOnClient&&!report.settings_restored){
        try{known(JSON.stringify(await readSettings(control))===JSON.stringify(baseline));report.rollback_reset_confirmed=true;}
-       catch{uncertain=true;failure('rollback');}
+       catch(error){rememberFailure(error);uncertain=true;failure('rollback');}
       }
      }
      return result;
-    }catch(error){originalFailureKnown=true;originalFailure=error;aborted=inTransaction;
+    }catch(error){const priorKnown=originalFailureKnown;rememberFailure(error);aborted=inTransaction;
      if(normalized==='COMMIT'||normalized==='ROLLBACK'||normalized==='BEGIN'||normalized?.startsWith('BEGIN '))uncertain=true;
+     if(normalized==='ROLLBACK'&&priorKnown)throw new AggregateError([originalFailure,...originalSecondaries],'r16_input_plan_primary_and_rollback_failed',{cause:originalFailure});
      throw error;}
    }
    report.selected_count++;selectedOnClient=true;
@@ -241,6 +247,7 @@ export function createListeningInputPlanObserverV1(options:{target_sql:string}){
    const secondary:unknown[]=[];
    try{
     report.query_raw_match=text===options.target_sql;known(report.query_raw_match&&inTransaction&&!aborted);
+    controlStage='listener';known(control.listenerCount('notice')===0);controlStage='context';
     const binds=typeof args[0]==='string'?args[1]:args[0].values;
     known(Array.isArray(binds)&&binds.length===9&&Array.isArray(binds[7]));
     report.bind_count=binds.length;report.root_argument_count=binds[7].length;
@@ -255,7 +262,7 @@ export function createListeningInputPlanObserverV1(options:{target_sql:string}){
     controlStage='listener';known(control.listenerCount('notice')===0);control.on('notice',collect);listener=true;
     controlStage='original';report.original_executions++;
     try{result=await originalQuery(...args);report.original_succeeded=true;}
-    catch(error){originalKnown=true;originalError=error;originalFailureKnown=true;originalFailure=error;aborted=true;failure('original');}
+    catch(error){originalKnown=true;originalError=error;rememberFailure(error);aborted=true;failure('original');}
     finally{control.removeListener('notice',collect);listener=false;}
     if(!originalKnown){
      // No observation SQL runs in a transaction aborted by the original.
@@ -272,8 +279,8 @@ export function createListeningInputPlanObserverV1(options:{target_sql:string}){
    finally{
     if(listener){try{control.removeListener('notice',collect);}catch(error){secondary.push(error);uncertain=true;failure('listener');}}
    }
-   if(originalKnown){if(secondary.length)throw new AggregateError([originalError,...secondary],'r16_input_plan_original_and_observer_failed',{cause:originalError});throw originalError;}
-   if(secondary.length){originalFailureKnown=true;originalFailure=secondary.length===1?secondary[0]:new AggregateError(secondary,'r16_input_plan_observer_controls_failed');throw originalFailure;}
+   if(originalKnown){if(secondary.length){for(const error of secondary)rememberFailure(error);throw new AggregateError([originalError,...secondary],'r16_input_plan_original_and_observer_failed',{cause:originalError});}throw originalError;}
+   if(secondary.length){const error=secondary.length===1?secondary[0]:new AggregateError(secondary,'r16_input_plan_observer_controls_failed');rememberFailure(error);throw error;}
    known(result);report.result_reference_preserved=true;return result;
   };
   return new Proxy(client,{get(target,key){if(key==='query')return wrapQuery;if(key==='release')return release;
@@ -296,9 +303,34 @@ export const INPUT_PLAN_GATES_V1=['original_query','parent_and_nested','rr_ident
 type SourceV1=Awaited<ReturnType<typeof captureR16SourceProvenanceV1>>;
 type ExpectedV1=ReturnType<typeof captureR16ExpectedGitProvenanceV1>;
 function sameSource(a:SourceV1|ExpectedV1|null,b:SourceV1|ExpectedV1|null){return!!a&&!!b&&a.head_sha===b.head_sha&&a.source_tree_sha256===b.source_tree_sha256&&a.tree_status_sha256===b.tree_status_sha256&&a.file_count===b.file_count&&JSON.stringify(a.file_manifest)===JSON.stringify(b.file_manifest);}
+export type InputPlanStorageV1={storage_owned:boolean;storage_closed:boolean|null;storage_absent:boolean|null};
+/** Only a newly created UUID directory is owned. The body's normal return
+ * acknowledges the benchmark's awaited HTTP finally. On rejection that ACK is
+ * UNKNOWN, even if exact-directory removal succeeds. No parent/glob cleanup. */
+export async function withListeningInputPlanStorageV1<T>(evidenceDirectory:string,state:InputPlanStorageV1,body:(directory:string)=>Promise<T>):Promise<T>{
+ const parent=dirname(resolve(evidenceDirectory));known(await realpath(parent)===parent);
+ const directory=join(parent,'input-plan-storage-'+randomUUID());let owned=false,primaryKnown=false,primary:unknown,value:T|undefined;
+ try{
+  await mkdir(directory,{mode:0o700});
+  known(await realpath(directory)===directory&&await realpath(dirname(directory))===parent);
+  owned=true;state.storage_owned=true;
+  try{value=await body(directory);state.storage_closed=true;}
+  catch(error){primaryKnown=true;primary=error;state.storage_closed=null;}
+ }catch(error){primaryKnown=true;primary=error;}
+ finally{
+  if(owned){try{
+   known(await realpath(directory)===directory&&await realpath(dirname(directory))===parent);
+   await rm(directory,{recursive:true,force:false});
+   try{await lstat(directory);known(false);}catch(error){known(error!==null&&typeof error==='object'&&Object.getOwnPropertyDescriptor(error,'code')?.value==='ENOENT');}
+   state.storage_absent=true;
+  }catch(error){state.storage_absent=false;if(primaryKnown)throw new AggregateError([primary,error],'r16_input_plan_storage_and_execution_failed',{cause:primary});throw error;}}
+ }
+ if(primaryKnown)throw primary;return value as T;
+}
 export type InputPlanProbeReceiptV1={
  contract:'r16-listening-input-plan-v1';status:'observed'|'failed'|'INCONCLUSIVE';findings:'INCONCLUSIVE';
  diagnostic_only:true;h1_accepted:false;cpu:'UNKNOWN';owned_scope:'accredited_ci_lab_database';
+ provider_mode:'unmodified_driver_synthetic_transport';external_provider_spend_micro_usd:0;external_provider_requests:0;evidence_basis:string;storage:InputPlanStorageV1;
  gates:Record<typeof INPUT_PLAN_GATES_V1[number],boolean>;observation:InputPlanObservationV1|null;
  source:{expected_git:ExpectedV1|null;before:SourceV1|null;after:SourceV1|null};
  closure:{callback_entered:boolean;callback_complete:boolean;factory_returned_normally:boolean;observed_backends:number;
@@ -313,8 +345,12 @@ export type InputPlanProbeReceiptV1={
  * no database-absence or library-unload claim is made. */
 export async function runR16ListeningInputPlanProbeV1(directory:string):Promise<InputPlanProbeReceiptV1>{
  const started=performance.now();
+ const providerWitness={provider_mode:'unmodified_driver_synthetic_transport',external_provider_spend_micro_usd:0,external_provider_requests:0,
+  evidence_basis:'immutable source of existing native synthetic fixture and benchmark with injected createSyntheticJevFetchV1; local Storage/PG/Redis; no external provider transport; guarantee by pinned source/configuration, not an observed network counter or cash receipt'} as const;
  const report:InputPlanProbeReceiptV1={contract:'r16-listening-input-plan-v1',status:'INCONCLUSIVE',findings:'INCONCLUSIVE',
   diagnostic_only:true,h1_accepted:false,cpu:'UNKNOWN',owned_scope:'accredited_ci_lab_database',
+  ...providerWitness,
+  storage:{storage_owned:false,storage_closed:null,storage_absent:null},
   gates:{original_query:false,parent_and_nested:false,rr_identity:false,controls_closed:false,source_binding:false,factory_closed:false,recording_complete:false},
   observation:null,source:{expected_git:null,before:null,after:null},
   closure:{callback_entered:false,callback_complete:false,factory_returned_normally:false,observed_backends:0,
@@ -366,15 +402,16 @@ export async function runR16ListeningInputPlanProbeV1(directory:string):Promise<
     });report.closure.factory_returned_normally=true;return value;
    }catch(error){if(callbackPrimaryKnown&&error!==callbackPrimary)throw new AggregateError([callbackPrimary,error],'r16_input_plan_callback_and_factory_failed',{cause:callbackPrimary});throw error;}
   };
-  measurement=await runR16ListeningBenchmarkV1({arm:'defined_consumer_second_pass',object_directory:join(dir,'..','input-plan-storage-'+randomUUID()),
+  measurement=await withListeningInputPlanStorageV1(dir,report.storage,objectDirectory=>runR16ListeningBenchmarkV1({arm:'defined_consumer_second_pass',object_directory:objectDirectory,
    redis_url:process.env.R16BENCH_REDIS_URL!,query_profiler:queryProfiler,withNativeFixture,
    writePreregistration:async value=>{preregistration={contract:'r16-input-plan-driver-registration-v1',
     registration:value.registration,workload_sha256:hash(JSON.stringify(value)),expected_source_tree_sha256:report.source.expected_git!.source_tree_sha256,
     target_template_sha256:INPUT_PLAN_TARGET_SHA_V1,ordinal:INPUT_PLAN_LIMITS_V1.ordinal,limits:INPUT_PLAN_LIMITS_V1,
-    note:'unmodified_driver_registration_not_H1_acceptance'};}});
+    note:'unmodified_driver_registration_not_H1_acceptance'};}}));
   known(measurement.fully_resolved_distinct_roots===32768&&measurement.requests===65536&&measurement.unresolved_roots===0&&
-   measurement.capacity_gates.native_processing_complete===true);
- }catch(error){retainFailure(error);}
+   measurement.capacity_gates.native_processing_complete===true&&measurement.capacity_gates.serving===true&&
+   measurement.capacity_gates.expected_primary_request_count===true);
+ }catch(error){retainFailure(callbackPrimaryKnown&&error!==callbackPrimary?new AggregateError([callbackPrimary,error],'r16_input_plan_callback_and_driver_failed',{cause:callbackPrimary}):error);}
  finally{
   if(observer){report.observation=observer.snapshot();const state=observer.lifecycle();
    report.closure.active_borrowed=state.active_borrowed;report.closure.release_failures=state.release_failures;
@@ -406,13 +443,18 @@ export async function runR16ListeningInputPlanProbeV1(directory:string):Promise<
  report.gates.controls_closed=!!observation&&(observation.settings_restored||observation.rollback_reset_confirmed||observation.discarded)&&report.closure.active_borrowed===0&&report.closure.release_failures===0;
  report.gates.source_binding=sameSource(report.source.before,report.source.expected_git)&&sameSource(report.source.after,report.source.expected_git);
  report.gates.factory_closed=report.closure.callback_entered&&report.closure.callback_complete&&report.closure.factory_returned_normally&&
-  report.closure.observed_backends>0&&report.closure.observed_backends_absent===true&&report.closure.admin_closed&&report.closure.database_identity_matched;
- report.gates.recording_complete=!!observation&&!observation.loss&&observation.status==='observed';
+  report.closure.observed_backends>0&&report.closure.observed_backends_absent===true&&report.closure.admin_closed&&report.closure.database_identity_matched&&
+  report.storage.storage_owned&&report.storage.storage_closed===true&&report.storage.storage_absent===true;
+ report.gates.recording_complete=!!observation&&!observation.loss&&observation.status==='observed'&&measurement!==null&&
+  measurement.fully_resolved_distinct_roots===32768&&measurement.requests===65536&&measurement.unresolved_roots===0&&
+  measurement.capacity_gates.native_processing_complete===true&&measurement.capacity_gates.serving===true&&
+  measurement.capacity_gates.expected_primary_request_count===true;
  report.status=primaryKnown?'failed':Object.values(report.gates).every(v=>v===true)?'observed':'INCONCLUSIVE';
  if(primaryKnown)report.error=startupErrorTreeV1(failures.length?new AggregateError([primary,...failures],'r16_input_plan_execution_failed',{cause:primary}):primary);
  // A compact, explicitly diagnostic projection of the original measurement.
  // Configuration/metric labels, request objects and storage bodies are omitted.
  const measurementReceipt={contract:'r16-listening-input-plan-measurement-v1',diagnostic_only:true,h1_accepted:false,cpu:'UNKNOWN',
+  ...providerWitness,
   status:report.status,driver:'runR16ListeningBenchmarkV1',registration:preregistration,
   measurement:measurement?{original_measurement_sha256:hash(JSON.stringify(measurement)),
    source_tree_sha256:measurement.source_provenance.source_tree_sha256,roots:measurement.fully_resolved_distinct_roots,
