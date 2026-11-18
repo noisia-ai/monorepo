@@ -88,7 +88,12 @@ export async function planSignalListeningCalibrationV1(args:Access&{configuratio
  * a profile's scope digest, not a new app tenant or key, identifies its TPS model. */
 export function createSignalListeningCalibratedProviderV1(args:{plan:SignalListeningCalibrationPlanV1;env?:NodeJS.ProcessEnv;
   factory?:typeof createCalibratedJevRuntimeProviderV2}){
-  const {plan}=args,baseEnv=args.env??process.env,clients=new Map<string,JevProviderV1>(),clientsByScope=new Map<string,JevProviderV1>(),usedShapes=new Set<string>();
+  // Runtime clients must not keep a planned page's selected_inputs alive
+  // after its committed prefix transfers to the stream. Do not capture args.
+  const {scope,configuration,snapshot,profiles,execution,warmup,response_bound_bytes}=args.plan;
+  const plan={scope,configuration,snapshot,profiles,execution,warmup,response_bound_bytes};
+  const factory=args.factory??createCalibratedJevRuntimeProviderV2,baseEnv=args.env??process.env;
+  const clients=new Map<string,JevProviderV1>(),clientsByScope=new Map<string,JevProviderV1>(),usedShapes=new Set<string>();
   const state=readSignalListeningSnapshotV1(plan.snapshot);
   if(state.configuration_digest!==digest(plan.configuration))fail('listening_request_plan_changed');
   const shapeCompiler=createSignalListeningShapeCompilerV1(plan.snapshot);
@@ -106,7 +111,7 @@ export function createSignalListeningCalibratedProviderV1(args:{plan:SignalListe
       :{kind:'official_context_bound',source:'Official default request context; not measured or tokenized',source_url:'https://docs.typesafe.ai/models',
         model:'jev-1.13.0',fixed_input_tokens:65536,input_tokens_per_utf8_byte:0,max_request_bytes:SIGNAL_LISTENING_HTTP_BODY_BYTES_V1};
     const cacheKey=`${id}:${measured?.source_digest??'bootstrap'}`;
-    if(!clients.has(cacheKey))clients.set(cacheKey,(args.factory??createCalibratedJevRuntimeProviderV2)({labeler_digest:id,
+    if(!clients.has(cacheKey))clients.set(cacheKey,factory({labeler_digest:id,
       execution:plan.execution,env:{...baseEnv,
         NOISIA_JEV_MAX_RESPONSE_BYTES:String(plan.response_bound_bytes),NOISIA_JEV_TOKEN_CALIBRATIONS_JSON:JSON.stringify({[id]:calibration})}}));
     clientsByScope.set(id,clients.get(cacheKey)!);

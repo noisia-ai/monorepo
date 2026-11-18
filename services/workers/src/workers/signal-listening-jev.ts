@@ -61,6 +61,8 @@ export function processSignalListeningJevV1(args:{run_id:string;store:Store;prov
   observe_stream?:(metrics:JevStreamingMetricsV2)=>void;
   prepare?(run:Readonly<LabelingRunV1>):Promise<JevPreparedExecutionV1>;
   selection?:()=>SignalListeningInputV1[]|undefined;
+  /** Transfer selection ownership after proposals/reservation, not authorization. */
+  release_selection?:()=>void;
   read_next_inputs?(run:LabelingRunV1,bounds:JevNextInputBoundsV2):Promise<SignalListeningInputV1[]>;
   prepare_next?(run:LabelingRunV1,inputs:SignalListeningInputV1[]):Promise<boolean>;
   compiled_snapshot?:()=>SignalListeningCompiledSnapshotV1|undefined}){
@@ -93,6 +95,7 @@ export function processSignalListeningJevV1(args:{run_id:string;store:Store;prov
       .sort((a,b)=>Number(Boolean(b.raw_body))-Number(Boolean(a.raw_body))||(a.inputs[0]?order.get(key(a.inputs[0]))??-1:-1)-(b.inputs[0]?order.get(key(b.inputs[0]))??-1:-1));
   }};
   return processJevLabelingPageV1<SignalListeningInputV1,SignalListeningResultV1>({...args,store:schedulerStore,
+    initial_reservation:args.release_selection?{max_calls:1024,release_selection:()=>{selectionIndex.invalidate();args.release_selection!();}}:undefined,
     // Subsequent windows must read fresh native pending identities, never the
     // retained initial calibration selection.
     read_next_inputs:(run,bounds)=>args.read_next_inputs?args.read_next_inputs(run,readBounds(bounds)):args.store.inputs(run,readBounds({...bounds,on_oversize:'empty' as const})),
@@ -170,6 +173,7 @@ export async function signalListeningJevJobV1(run_id:string,options:{
   }};
   try{
     return await processSignalListeningJevV1({run_id,execution,observe_stream:options.observe_stream,store:boundedStore,provider:unavailable,recovery_only:run.recovery_only,selection:()=>selection,compiled_snapshot:()=>jobContext?.snapshot,
+      release_selection:()=>{selection=undefined;},
       prepare_next:async(_leased,inputs)=>{
         if(!jobContext)throw Error('listening_identity_invalid');jobContext.assert(_leased);
         const {snapshot,configuration,configuration_digest}=jobContext,next=inputs.slice(0,execution.window_size);

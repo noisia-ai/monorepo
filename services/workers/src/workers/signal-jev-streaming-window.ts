@@ -44,6 +44,8 @@ export async function processJevStreamingWindowV2<I extends FacetInput, R>(args:
   feed_next?(available_bytes:number,max_calls:number,admission_signal:AbortSignal):Promise<LabelingCallV1<I>[] | { closed:true }>;
   /** Listening native pending eligibility can advance only after durable apply. */
   revisit_empty_after_apply?:boolean;
+  /** Scheduling only: evaluate handoff is not proof of physical fetch/rate admission. */
+  defer_initial_prefetch_until_handoff?:boolean;
   hooks: { map(run: LabelingRunV1, call: LabelingCallV1<I>, raw: JevResponseV1): R[];
     error(run: LabelingRunV1, call: LabelingCallV1<I>, code: string, unknown: boolean): R[];
     labeled(result: R): boolean; invalidUsage?(failure: JevProviderErrorV1): JevResponseV1['usage'] | undefined;
@@ -175,7 +177,9 @@ export async function processJevStreamingWindowV2<I extends FacetInput, R>(args:
   }
   // Track the exact live send frontier even when raw recovery fails before HTTP.
   const reserved=(args.send_calls??calls.filter(call=>call.status==='reserved')).filter(call=>!call.raw_body);
+  let initialHandoffComplete=!args.defer_initial_prefetch_until_handoff||!reserved.length;
   function prefetch(){
+    if(!initialHandoffComplete)return;
     if(feedClosed||feeding||fatal||admission.signal.aborted||cancellation.signal.aborted||reserved.length>workers||reserved.length>=e.window_size)return;
     // One fresh read per acknowledged apply epoch; never poll an empty SQL frontier.
     if(emptyAtEpoch!==undefined&&durableEpoch===emptyAtEpoch)return;
@@ -320,6 +324,9 @@ export async function processJevStreamingWindowV2<I extends FacetInput, R>(args:
       // provider rejection is classified normally, without stranding siblings.
       reserved.splice(0,cohort.length);markingUnsent=[];
       for(const call of cohort){const task=send(call).finally(()=>{activeSends.delete(task);});activeSends.add(task);}
+      // No physical-fetch promise: providers may still await account quotas.
+      // Open only after EVERY committed cohort member has been handed off.
+      if(cohort.length)initialHandoffComplete=true;
     }
     await Promise.all(activeSends);
     // No HTTP was attempted for reserved calls left behind by cancellation or write failure.
