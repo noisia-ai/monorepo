@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import {test} from 'node:test';
 import {mkdtemp,readFile,rm,stat} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {dirname,join,resolve} from 'node:path';
@@ -43,6 +44,11 @@ if(process.env.NOISIA_R16_FACET_INPUT_PREIMAGE_PURE==='true'){
    {arm:'old',ms:100},{arm:'new',ms:91},{arm:'new',ms:91},{arm:'old',ms:100},
   ]);
   assert.equal(medianReject.passed,false);
+  const pairReject=facetPairVerdictV1([
+   {arm:'old',ms:100},{arm:'new',ms:111},{arm:'new',ms:60},{arm:'old',ms:100},
+  ]);
+  assert.ok(pairReject.median_ratio<=.90,'median passes independently');
+  assert.equal(pairReject.passed,false,'one pair above 1.10 rejects despite passing median');
   assert.throws(()=>facetPairVerdictV1([
    {arm:'old',ms:100},{arm:'new',ms:90},{arm:'old',ms:100},{arm:'new',ms:90},
   ]));
