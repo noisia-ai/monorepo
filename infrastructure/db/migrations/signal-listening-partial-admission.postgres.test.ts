@@ -19,6 +19,7 @@ test('native Listening partial admission preserves committed money and terminal 
  const gates=report.gates as Record<string,boolean>;
  assert.deepEqual(Object.keys(gates).sort(),['source_binding','native_cap_interval','committed_before_fetch','delivered_drain','terminal_idempotency','closure_confirmed'].sort());
  assert.ok(Object.values(gates).every(v=>v===true));assert.equal(report.recovery_execution_claimed,false);
+ const functions=report.write_functions as {contract:string;status:string;captures:unknown[];closed:boolean};assert.equal(functions.contract,'r16-listening-write-functions-v1');assert.ok(['observed','INCONCLUSIVE'].includes(functions.status));assert.equal(functions.closed,true);assert.ok(functions.captures.length<=3);
  const terminal=report.terminal_restart as {claim_attempted:boolean;claimed:boolean;status:string;new_physical_fetches:number;recovery_execution_claimed:boolean};
  assert.deepEqual(terminal,{claim_attempted:true,claimed:false,status:'not_claimed',new_physical_fetches:0,recovery_execution_claimed:false});
  const persisted=JSON.parse(await readFile(join(directory,'listening-partial-admission.json'),'utf8'));

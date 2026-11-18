@@ -1,11 +1,12 @@
 import {AsyncLocalStorage} from 'node:async_hooks';
 import {createHash,randomUUID} from 'node:crypto';
-import {mkdir,mkdtemp,open,realpath,rm} from 'node:fs/promises';
+import {mkdir,mkdtemp,open,readFile,readdir,realpath,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {dirname,isAbsolute,join,relative,resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import type {Pool,PoolClient} from 'pg';
 import {runMassLabelingAcceptanceFixtureV1} from './signal-mass-labeling-acceptance.synthetic.fixture';
+import {createListeningWriteFunctionObserverV1,extractListeningWriteTemplatesV1} from './signal-listening-write-functions.synthetic.fixture';
 import {flatPrefixLedgerSqlV1} from './signal-listening-flat-prefix.synthetic.fixture';
 import {captureStartupCallbackV1,closeStartupFactoryV1,assertStartupOwnedAbsentV1,startupErrorTreeV1,type StartupCallbackStateV1} from './signal-listening-startup-prefix.synthetic.fixture';
 import {withSharedWireDefaultPostcheckV1} from './signal-listening-statement-shared-wire.oracle';
@@ -68,7 +69,7 @@ export async function runListeningPartialAdmissionV1(directory:string):Promise<P
  known(process.env.NOISIA_SIGNAL_LISTENING_ENABLED==='true'&&process.env.NOISIA_JEV_PROVIDER_ENABLED==='true'&&process.env.NOISIA_R16_LOCAL_PG_LAB==='r16-benchmark-pg17','partial_admission_runtime_flags');
  const redis=process.env.R16BENCH_REDIS_URL;known(redis,'partial_admission_redis_missing');known(['127.0.0.1','localhost','[::1]'].includes(new URL(redis).hostname),'partial_admission_redis_loopback');
  const gates={source_binding:false,native_cap_interval:false,committed_before_fetch:false,delivered_drain:false,terminal_idempotency:false,closure_confirmed:false};
- const report:PartialAdmissionReceiptV1={contract:'r16-listening-partial-admission-v1',status:'failed',diagnostic_only:true,h1_accepted:false,scope:'functional240_not_H1_or_scale1024_4096',cap_micro_usd:String(CAP),execution,gates,source:{before:null,after:null,expected:null},claims:[],reserve_events:[],jobs:[],physical_fetches:[],recovery_execution_claimed:false,external_spend_micro_usd:'0'};
+ const report:PartialAdmissionReceiptV1={contract:'r16-listening-partial-admission-v1',status:'failed',diagnostic_only:true,h1_accepted:false,scope:'functional240_not_H1_or_scale1024_4096',cap_micro_usd:String(CAP),execution,gates,source:{before:null,after:null,expected:null},claims:[],reserve_events:[],jobs:[],physical_fetches:[],recovery_execution_claimed:false,external_spend_micro_usd:'0',write_functions:{contract:'r16-listening-write-functions-v1',status:'INCONCLUSIVE',diagnostic_only:true,h1_accepted:false,cpu:'UNKNOWN',closed:false,captures:[],reason:'observer_not_constructed'}};
  const callback:StartupCallbackStateV1={entered:false,complete:false,failed:false};let own:{name:string;oid:string}|undefined,normal=false,absence=false,failed=false,primary:unknown;
  const expected=()=>{known(typeof process.env.GITHUB_SHA==='string','partial_admission_expected_sha');return captureR16ExpectedGitProvenanceV1(repo,process.env.GITHUB_SHA);};
  let bound:ReturnType<typeof captureR16ExpectedGitProvenanceV1>|undefined,before:Awaited<ReturnType<typeof captureR16SourceProvenanceV1>>|undefined;
@@ -76,6 +77,7 @@ export async function runListeningPartialAdmissionV1(directory:string):Promise<P
   bound=expected();before=await captureR16SourceProvenanceV1(repo);report.source={expected:bound,before,after:null,external_root_binding:'Root_must_compare_preregistered_source'};known(JSON.stringify(before)===JSON.stringify(bound),'partial_admission_source_before');
   await closeStartupFactoryV1(callback,async()=>{await runMassLabelingAcceptanceFixtureV1('product',{population_count:ROOTS,beforeProcessing:ctx=>captureStartupCallbackV1(callback,async()=>{
    const database=ctx.database as Pool,observer=await database.connect();let observerOk=false;
+   let writes:ReturnType<typeof createListeningWriteFunctionObserverV1>|undefined;
    let dir:string|undefined,server:Awaited<ReturnType<typeof startR16HttpFilesystemStorageV1>>|undefined;
    await withSharedWireDefaultPostcheckV1(async()=>{await withSharedWireDefaultPostcheckV1(async()=>{
     dir=await mkdtemp(join(tmpdir(),'r16-partial-admission-'));const activeServer=server=await startR16HttpFilesystemStorageV1(dir);
@@ -94,14 +96,18 @@ export async function runListeningPartialAdmissionV1(directory:string):Promise<P
       JOIN signal_labeler_versions l ON l.id=r.labeler_version_id WHERE r.workspace_id=$1 AND r.id=$2`,[ctx.workspace_id,runId])).rows[0];
      known(row&&row.configuration_id===cfg.id&&row.map_id===ctx.map_id&&row.actor_user_id===ctx.actor_user_id,'partial_admission_run_identity');return hash(JSON.stringify(row));};
     const originalIdentity=await runIdentity();report.native_run_identity_sha256=originalIdentity;
-    const base=createSignalListeningStoreV1({database,page_size:4096,rawPages,assertRawReady:()=>storage.assertReady!(),storeRawVerified:true,storeRaw:async()=>{throw new Error('partial_admission_native_pages_required');}});
+    let warmup=true;const callRoots=new Map<string,string>();
+    const migrations=join(repo,'infrastructure/db/migrations'),knownFunctions=new Set<string>();for(const name of (await readdir(migrations)).filter(name=>/^\d{4}_.+\.sql$/u.test(name))){const sql=await readFile(join(migrations,name),'utf8');for(const match of sql.matchAll(/CREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+(?:public\.)?([a-z][a-z0-9_]*)\s*\(/giu))knownFunctions.add(match[1]!);}
+    const templates=extractListeningWriteTemplatesV1({labeling:await readFile(join(repo,'infrastructure/db/signal-labeling-runs.ts'),'utf8'),listening:await readFile(join(repo,'infrastructure/db/signal-listening-runs.ts'),'utf8')});
+    writes=createListeningWriteFunctionObserverV1({database,eligible:()=>!warmup,templates,known_function_names:[...knownFunctions],roots_for_mark:ids=>ids.map(id=>{const root=callRoots.get(id);known(root,'partial_admission_mark_root_missing');return root;})});report.write_functions=writes.snapshot();
+    const base=createSignalListeningStoreV1({database:writes.database,page_size:4096,rawPages,assertRawReady:()=>storage.assertReady!(),storeRawVerified:true,storeRaw:async()=>{throw new Error('partial_admission_native_pages_required');}});
     const calls=new WeakMap<object,{id:string;digest:string}>(),dispatch=new AsyncLocalStorage<{id:string;digest:string}>(),fetched=new Set<string>(),events:ReserveEvent[]=[],claims:Array<{claimed:boolean;identity_exact:boolean}>=[];
-    const fetchRows:Array<{call_sha256:string;request_digest_sha256:string}>=[],jobs:Array<{warmup:boolean;selected_roots:number;status:string}>=[];let warmup=true,selected=0,firstMeasuredIds:Set<string>|undefined;
+    const fetchRows:Array<{call_sha256:string;request_digest_sha256:string}>=[],jobs:Array<{warmup:boolean;selected_roots:number;status:string}>=[];let selected=0,firstMeasuredIds:Set<string>|undefined;
     report.reserve_events=events;report.claims=claims;report.jobs=jobs;report.physical_fetches=fetchRows;
     const store={...base,async claim(id:string){const value=await base.claim(id);known(id===runId,'partial_admission_claim_identity');claims.push({claimed:!!value,identity_exact:!value||value.id===runId});return value;},async reserve(run:Parameters<typeof base.reserve>[0],proposals:Parameters<typeof base.reserve>[1]){
      known(events.length<MAX_EVENTS,'partial_admission_event_cap');const before=await money(observer,ctx.workspace_id,runId),amount=proposals.reduce((s,p)=>s+partialAdmissionAmountV1(String(p.reserved_micro_usd)),0n);
      const existing=(await observer.query('SELECT count(*)::int n FROM signal_labeling_calls WHERE run_id=$1 AND custom_id=ANY($2::text[])',[runId,proposals.map(p=>p.custom_id)])).rows[0].n;
-     try{const result=await base.reserve(run,proposals);if(!warmup&&!firstMeasuredIds&&result.length)firstMeasuredIds=new Set(result.map(call=>call.id));for(const call of result){known(call.request&&typeof call.request==='object','partial_admission_request_object');calls.set(call.request,{id:call.id,digest:call.request_digest});}
+     try{const result=await base.reserve(run,proposals);if(!warmup&&!firstMeasuredIds&&result.length)firstMeasuredIds=new Set(result.map(call=>call.id));for(const call of result){known(call.request&&typeof call.request==='object','partial_admission_request_object');known(call.inputs.length===1&&typeof call.inputs[0]?.root_id==='string','partial_admission_native_call_root');callRoots.set(call.id,call.inputs[0]!.root_id);calls.set(call.request,{id:call.id,digest:call.request_digest});}
       const after=await money(observer,ctx.workspace_id,runId);events.push({warmup,count:proposals.length,amount:String(amount),existing,before,after,outcome:'committed'});return result;
      }catch(error){if(partialAdmissionErrorKindV1(error)!=='labeling_cap_exhausted')throw error;const after=await money(observer,ctx.workspace_id,runId);events.push({warmup,count:proposals.length,amount:String(amount),existing,before,after,outcome:'labeling_cap_exhausted'});throw error;}
     }};
@@ -141,7 +147,7 @@ export async function runListeningPartialAdmissionV1(directory:string):Promise<P
     }
     report.storage_loopback_metrics=activeServer.metrics();observerOk=true;
    },async()=>{await withSharedWireDefaultPostcheckV1(()=>server?server.close():Promise.resolve(),()=>dir?rm(dir,{recursive:true,force:true}):Promise.resolve());});
-   },async()=>{observer.release(!observerOk);report.observer_released=true;});
+   },async()=>{await withSharedWireDefaultPostcheckV1(async()=>{writes?.close();},async()=>{if(writes)report.write_functions=writes.snapshot();observer.release(!observerOk);report.observer_released=true;});});
   })});normal=true;},async()=>{if(!own)return;const admin=await openR16CiPostgresV1();await withSharedWireDefaultPostcheckV1(async()=>{assertR16LocalPostgresPoolV1(admin);const c=await admin.connect();try{await assertStartupOwnedAbsentV1(c,own!,()=>undefined);absence=true;}finally{c.release();}},()=>admin.end());});
   gates.closure_confirmed=normal&&absence&&callback.complete;
  }catch(error){failed=true;primary=error;report.safe_error_tree=startupErrorTreeV1(error);}
