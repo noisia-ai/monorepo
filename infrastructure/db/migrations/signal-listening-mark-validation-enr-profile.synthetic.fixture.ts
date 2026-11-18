@@ -89,6 +89,31 @@ export function markValidationRootGenerationKindV1(plan:unknown):'missing'|'numb
   return'other';
  }catch{return'unsafe';}
 }
+export type MarkValidationEnrScanV1={name_status:'allowed'|'missing'|'invalid';name:'listening_old_calls'|'listening_new_calls'|null;actual_rows:number|'UNKNOWN';actual_loops:number|'UNKNOWN';execution:'observed'|'not_executed'|'UNKNOWN'};
+export type MarkValidationEnrScanCollectionV1={status:'not_started'|'collecting'|'complete'|'incomplete';traversal_complete:boolean;visited_named_nodes:number|'UNKNOWN';old_count:number|'UNKNOWN';new_count:number|'UNKNOWN';missing_name_count:number|'UNKNOWN';invalid_name_count:number|'UNKNOWN';scans:MarkValidationEnrScanV1[]};
+/** Summarize only an already-sanitized plan. Names are data, not acceptance;
+ * the caller attaches this complete census before its unchanged assertions. */
+export function collectMarkValidationEnrScansV1(sanitized:ReturnType<typeof sanitizeBoundedPopulationPlanV1>):MarkValidationEnrScanCollectionV1{
+ const result={status:'complete' as const,traversal_complete:true,visited_named_nodes:0,old_count:0,new_count:0,missing_name_count:0,invalid_name_count:0,scans:[] as MarkValidationEnrScanV1[]},seen=new WeakSet<object>();let nodes=0;
+ const field=(value:unknown,key:string)=>{
+  known(value!==null&&typeof value==='object','mark_enr_collection_object');const prototype=Object.getPrototypeOf(value);
+  known(prototype===Object.prototype||prototype===Array.prototype||prototype===null,'mark_enr_collection_prototype');
+  const property=Object.getOwnPropertyDescriptor(value,key);known(!property||'value'in property,'mark_enr_collection_accessor');return property;
+ };
+ const metric=(node:unknown,key:string):number|'UNKNOWN'=>{const property=field(node,key);if(!property)return'UNKNOWN';const value=property.value;known(typeof value==='number'&&Number.isFinite(value)&&value>=0,'mark_enr_collection_number');return value;};
+ const visit=(node:unknown,depth:number)=>{
+  known(depth<=32&&node!==null&&typeof node==='object'&&!seen.has(node)&&++nodes<=512,'mark_enr_collection_bounds');seen.add(node);
+  if(field(node,'Node Type')?.value==='Named Tuplestore Scan'){
+   const property=field(node,'Tuplestore Name'),name=property?.value;
+   const name_status=name==='listening_old_calls'||name==='listening_new_calls'?'allowed':property?'invalid':'missing';
+   result.visited_named_nodes++;if(name_status==='missing')result.missing_name_count++;else if(name_status==='invalid')result.invalid_name_count++;else if(name==='listening_old_calls')result.old_count++;else result.new_count++;
+   const actual_rows=metric(node,'Actual Rows'),actual_loops=metric(node,'Actual Loops');
+   result.scans.push({name_status,name:name_status==='allowed'?name as 'listening_old_calls'|'listening_new_calls':null,actual_rows,actual_loops,execution:actual_loops===0?'not_executed':actual_loops==='UNKNOWN'?'UNKNOWN':'observed'});
+  }
+  const children=field(node,'Plans');if(children){known(Array.isArray(children.value),'mark_enr_collection_children');const length=field(children.value,'length')?.value;known(Number.isSafeInteger(length)&&length>=0&&length<=512,'mark_enr_collection_children');for(let i=0;i<length;i++){const child=field(children.value,String(i));known(child,'mark_enr_collection_hole');visit(child.value,depth+1);}}
+ };
+ visit(field(sanitized.plan,'Plan')?.value,0);return result;
+}
 function probeFunctionSql(extracted:ReturnType<typeof extractMarkValidationEnrSourceV1>){
  return `CREATE FUNCTION public.${functionName}() RETURNS trigger LANGUAGE plpgsql VOLATILE SET search_path=public,extensions,pg_temp AS $r16_probe$
 DECLARE targets uuid[];target uuid;r signal_labeling_runs;owner signal_listening_runs;c signal_listening_configurations;
@@ -242,9 +267,13 @@ export async function runMarkValidationEnrProfileV1(directory:string):Promise<Ma
       const catalogNames=(await raw.query(`SELECT c.relname name FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND
        (c.relname=ANY($1::text[]) OR c.oid IN(SELECT i.indexrelid FROM pg_index i JOIN pg_class t ON t.oid=i.indrelid WHERE t.relname=ANY($1::text[]) AND t.relnamespace=n.oid))`,[[...identifiers]])).rows;for(const r of catalogNames)identifiers.add(r.name);
       observation.enter('sanitizer');const sanitized=sanitizeBoundedPopulationPlanV1(capture[0].plan_json,identifiers),enrCounts=new Map<string,number>(),enrScans:Array<Record<string,unknown>>=[];
-      observation.enter('enr_scans');const visit=(node:Record<string,unknown>)=>{if(node['Node Type']==='Named Tuplestore Scan'){const name=node['Tuplestore Name'] as string;known(name==='listening_old_calls'||name==='listening_new_calls','mark_enr_scan_name');enrCounts.set(name,(enrCounts.get(name)??0)+1);enrScans.push({name,actual_rows:node['Actual Rows']??'UNKNOWN',actual_loops:node['Actual Loops']??'UNKNOWN',execution:node['Actual Loops']===0?'not_executed':typeof node['Actual Loops']==='number'?'observed':'UNKNOWN'});}for(const child of(node.Plans as Record<string,unknown>[]|undefined)??[])visit(child);};visit(sanitized.plan.Plan as Record<string,unknown>);
+      const pendingCollection:MarkValidationEnrScanCollectionV1={status:'not_started',traversal_complete:false,visited_named_nodes:'UNKNOWN',old_count:'UNKNOWN',new_count:'UNKNOWN',missing_name_count:'UNKNOWN',invalid_name_count:'UNKNOWN',scans:[]};
+      const attempt={observation_kind:'partial_unaccepted',capture_count:capture.length,query_sha256:extracted.query_sha256,sanitized,scan_collection:pendingCollection};report.probe_attempt=attempt;
+      observation.enter('enr_scans');attempt.scan_collection.status='collecting';
+      try{attempt.scan_collection=collectMarkValidationEnrScansV1(sanitized);}catch(error){attempt.scan_collection.status='incomplete';throw error;}
+      for(const scan of attempt.scan_collection.scans){const name=scan.name;known(name==='listening_old_calls'||name==='listening_new_calls','mark_enr_scan_name');enrCounts.set(name,(enrCounts.get(name)??0)+1);enrScans.push({name,actual_rows:scan.actual_rows,actual_loops:scan.actual_loops,execution:scan.execution});}
       known(enrCounts.size===2&&enrCounts.get('listening_old_calls')===1&&enrCounts.get('listening_new_calls')===1,'mark_enr_scans_not_exact');report.gates.enr_scans_exact=true;report.gates.probe_plan_once=true;
-      observation.enter('probe_summary');report.probe={target_count:1,batch_transition_count:1000,old_count:1000,new_count:1000,root_count:1000,old_status:'reserved',new_status:'submitting',explain_count:1,plain_warmups:0,enr_node_type:'Named Tuplestore Scan',enr_names_exactly_once:['listening_old_calls','listening_new_calls'],enr_scans:enrScans,query_sha256:extracted.query_sha256,...sanitized,backend_sha256:sha(backend),transaction_id_sha256:sha(capture[0].transaction_id),probe_snapshot_sha256:sha(capture[0].probe_snapshot),original_guard_snapshot:'UNOBSERVABLE',settings:{jit:sessionBefore.jit,jit_above_cost:sessionBefore.jit_above_cost,jit_inline_above_cost:sessionBefore.jit_inline_above_cost,jit_optimize_above_cost:sessionBefore.jit_optimize_above_cost,session_replication_role:'origin'}};
+      observation.enter('probe_summary');report.probe={target_count:1,batch_transition_count:1000,old_count:1000,new_count:1000,root_count:1000,old_status:'reserved',new_status:'submitting',explain_count:1,plain_warmups:0,enr_node_type:'Named Tuplestore Scan',enr_names_exactly_once:['listening_old_calls','listening_new_calls'],enr_scans:enrScans,query_sha256:extracted.query_sha256,...sanitized,backend_sha256:sha(backend),transaction_id_sha256:sha(capture[0].transaction_id),probe_snapshot_sha256:sha(capture[0].probe_snapshot),original_guard_snapshot:'UNOBSERVABLE',settings:{jit:sessionBefore.jit,jit_above_cost:sessionBefore.jit_above_cost,jit_inline_above_cost:sessionBefore.jit_inline_above_cost,jit_optimize_above_cost:sessionBefore.jit_optimize_above_cost,session_replication_role:'origin'}};delete report.probe_attempt;
       observation.enter('probe_cleanup');await raw.query(`DROP TRIGGER ${triggerName} ON public.signal_labeling_calls`);await raw.query(`DROP FUNCTION public.${functionName}()`);await raw.query(`DROP TABLE pg_temp.${captureName}`);
       observation.enter('catalog_restore');const restored=await triggerCatalog(raw),defaultsAfter=await defaultCatalog(raw);same(restored,triggersBefore,'mark_enr_triggers_not_restored');same(defaultsAfter,defaultBefore,'mark_enr_functions_not_restored');
       known((await raw.query('SELECT count(*)::int n FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname=\'public\' AND p.proname=$1',[functionName])).rows[0].n===0,'mark_enr_function_not_removed');report.catalog_after_restore_sha256=sha(JSON.stringify({defaults:defaultsAfter,triggers:restored}));same(report.catalog_after_restore_sha256,report.catalog_before_sha256,'mark_enr_catalogue_restore_hash');report.gates.catalog_restored=true;
