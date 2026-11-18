@@ -126,6 +126,10 @@ una vez, arma las queries y escribe el `queries.md` con la tabla de interfaz. An
 herramienta no soporta, em dash y el gemelo sin acento de cada término acentuado. Dos casos
 atraparon con eso errores que habrían llegado a la interfaz.
 
+**Se pegan desde el archivo, no a mano.** Una query universo puede ser una sola línea de 8 mil
+caracteres. Si el chat opera la herramienta, la copia con `LANG=en_US.UTF-8 pbcopy` desde lo que
+generó el script y compara la longitud del campo después de pegar (`SENTIONE.md` §3).
+
 ## 4. Lectura segura del archivo
 
 Configuración típica de una exportación de listening: codificación `utf-8-sig` para absorber el
@@ -207,10 +211,24 @@ real, el reparto por canal se calculó sobre el subconjunto codificado en lugar 
 depurado y el titular de la slide salió invertido: 42% contra 68%. La cobertura del clasificador
 es una base válida para lo que se codificó, nunca para describir dónde vive la conversación.
 
+**La participación por capa se calcula por mención única, con su assert.** Una mención con dos temas
+de la misma capa cuenta una vez en esa capa. En un caso la primera versión sumó por tema y entregó
+56% donde el dato era 37%. El build verifica que cada participación salga de menciones únicas y que
+el denominador sea el declarado.
+
 **Un archivo con más filas que el tablero** (de 108% a 119% en un caso) es una diferencia de
-definición, no un error, y se reporta así. Tampoco hay tope fijo: una exportación salió con 226 mil
-filas. Lo que sí pasa es que, después de muchas descargas seguidas, algunas fallan sin aviso; se
-verifica el conteo de cada archivo contra su manifiesto.
+definición, no un error, y se reporta así; unas pocas filas de más (+1, +11, +189) son menciones
+indexadas entre el conteo y la descarga. **Tramos de menos de 100 mil filas y una exportación a la
+vez en toda la cuenta**: en una cuenta salieron completos archivos de 164 mil filas, pero en otras un
+export de 216 mil se cortó a los 40 MB, uno de 97 mil falló sin aviso y cuatro pedidos seguidos se
+cancelaron entre sí. Cada archivo se cuenta con lector CSV contra el contador de la vista, con
+`builders/wait-export.py` (`SENTIONE.md` §5).
+
+**Una sola vista para los totales, dicha en el método.** El resumen del tablero y el contador de la
+vista de menciones difirieron 3% para el mismo proyecto y ventana, y la API del tablero otro tanto. Se
+elige una por estudio y no se mezclan; para el corpus manda la exportación. Si los totales salen por
+la API, se comprueba que el filtro movió el número: un parámetro mal escrito devuelve el total sin
+filtrar, sin error (`SENTIONE.md` §4B).
 
 **La exportación recortada es un caso esperado, no una anomalía.** Un proveedor puede entregar una
 fracción de lo que su propio tablero reporta, y no avisa: en un caso medido, 87,843 filas contra
@@ -677,6 +695,12 @@ slide de embudo, al inicio del método o en la slide de corpus:
 2. **Menciones únicas** del universo del estudio.
 3. **Posts de fans analizados:** la voz que queda después de la limpieza. Es la base que se vende como analizada.
 
+Si el tema existe fuera del corpus (un evento global, una categoría en varios idiomas), el embudo
+puede abrir con una **capa 0 de escala**: la conversación del tema en el mundo y en los idiomas del
+estudio, leída por la API del tablero, junto a lo recolectado. Va como escala, nunca como total de un
+país: la herramienta no da totales por país para redes. En un caso, 4.0 millones en el mundo contra
+417 mil recolectadas.
+
 En el deck client-facing no aparece la mecánica interna: ni tamaños de muestra, ni "random sample",
 ni "coded/read by hand", ni "posts read on it: N". Tono y subtemas se presentan sobre la base
 analizada.
@@ -694,9 +718,9 @@ Salió de tres estudios de un mismo tema en tres países, con idiomas locales me
 ### 26.1 Queries
 
 - **Un solo `AND` por query.** Para cruzar dos conceptos se corren dos queries.
-- **La geografía va en la query.** Las anclas del país a la izquierda del `AND`: selección, ligas,
-  clubes, estadios, palabras locales. El filtro de país de la herramienta dejó más de la mitad de las
-  filas sin país.
+- **La geografía va en la query.** Las anclas del país son su propia cláusula del único `AND`:
+  selección, ligas, clubes, estadios, palabras locales. El filtro de país de la herramienta no sirve
+  para redes (`METHODOLOGY.md` §1).
 - **No se filtra por idioma.** Las lenguas locales salen etiquetadas como inglés u otra cosa. Se
   capturan con palabras locales en la query.
 - **Una query por pregunta de negocio**, no una general. En el mercado chico así se pasó de unas
@@ -704,11 +728,9 @@ Salió de tres estudios de un mismo tema en tres países, con idiomas locales me
   (`METHODOLOGY.md` §1), una sola query universo con las anclas de todos los tópicos recupera lo
   mismo y da una sola definición por tópico; en un estudio de 45 tópicos evitó 45 pares de queries.
   Sin un filtro de idioma confiable, no aplica.
-- **Se baja por momentos, no por volumen.** Si una exportación pasa del límite de la herramienta se
-  parte por momento (torneo, eliminatorias, liga), y se revisa que el rango de fechas sea el acordado.
-  Si el tablero pasa de 50 mil menciones, se baja **por mes desde el principio**: una exportación de
-  216 mil filas se cortó sin aviso a los 40 MB, y las mensuales salieron completas. Cada archivo se
-  verifica contra su conteo del tablero.
+- **Se baja por momentos, no por volumen.** Si una exportación pasa del tope se parte por momento
+  (torneo, eliminatorias, liga) y, dentro del momento, en tramos de menos de 100 mil filas (§7). Se
+  revisa que el rango de fechas sea el acordado y cada archivo se verifica contra su contador.
 - **Antes de bajar un pico raro, se pregunta si es ruido.** Un pico de tres meses era una liga de otro
   deporte y otro país con la misma sigla. Se corrigió la query con el nombre actual de la liga.
 

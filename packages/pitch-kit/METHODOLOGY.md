@@ -41,9 +41,9 @@ Hard rules, learned the hard way:
   (e.g. the housing/tax/objects senses of a rental word) and say what you cut.
 - **Accents are not documented, so cover both spellings.** The LQL reference says nothing about how
   accented characters are matched. Assume they are not folded: every accented term goes in twice,
-  with and without the accent, or half a Spanish-language corpus never shows up. One case saw the
-  tool fold accents; until a controlled test settles it, both spellings still go in, since it
-  costs nothing.
+  with and without the accent, or half a Spanish-language corpus never shows up. The tool has been seen
+  folding accents, Latin diacritics included (`ă` matched `a`); until a controlled test settles it, both spellings still go in, since it costs nothing. In a
+  Cyrillic-script query, `й` is a letter, not an accent: it does not get a twin.
 - **The unaccented variant can be a word of another language.** In a Portuguese query, `diaria`,
   `salario` and `migrantes` without their accents are Spanish words, and they brought in more
   Spanish (7,885) than Portuguese (2,386). When a query covers a language that shares roots with
@@ -59,8 +59,9 @@ Hard rules, learned the hard way:
   markers (`<<<...>>>`), turn `-(...)` into `NOT (...)`, expand single-character wildcards (`?`) by
   hand, and remove field operators (`title:`, `author:`, `site:`, `subreddit:`, `url:`,
   `engagingWith:`) and every proximity operator. None of them parse.
-- **"Invalid query format" does not say where.** Split the query in halves and paste each half
-  until the broken clause shows up. In practice it is almost always a leftover `NEAR` or a field
+- **"Invalid query format" does not say where.** First rule out the editor: typing or pasting over a
+  selection deletes the opening `("`, so clear the field with Delete and paste again. Then split the
+  query in halves and paste each half until the broken clause shows up: a leftover `NEAR` or a field
   operator.
 - **One query per client subcategory, each anchored to the brand.** When the study will be compared
   against a client metric with its own categories, each query is `(brand anchor) AND (that
@@ -71,20 +72,21 @@ Hard rules, learned the hard way:
   of the main query's rows carried the anchor only in the parent post, and the export weighed
   1.42 GB. Wrapping **only the anchor** in `rawText:(...)` in Advanced Query fixed it; the context
   can still come from the parent, which is what lets "mine is X" under a category post come in.
-  Two warnings, both confirmed: **Advanced Query ignores the interface's language and country
-  filters** (with Spanish and Mexico ticked, 901 of 1,535 mentions came back in English and 3,407
-  of a category query in Portuguese), so the ETL resolves language and market every time; and the
-  gate C check in the ETL stays as the net. A "with and without country" capture does not catch
-  this, since both give the same total; the language and country profile of the first export does.
-  (In another case, with `rawText:` in Advanced Query, 99% came back in the right language. And in a
-  study in a Cyrillic-script language the **language** filter did apply with Advanced Query: a topic
-  went from 8,105 to 2,523 mentions with the language ticked, keeping 99.3% of the forms that exist
-  only in that language, while the
-  **country** filter stayed greyed out with no effect.) The evidence is mixed, so test it per study
-  in the preview, which costs nothing: run one anchor with and without the language ticked. If the
-  total drops and the sample is in the right language, the filter works and the query does not need
-  language anchors; if it does not move, anchor the language in the query. Country is never trusted
-  to the filter. Profile the first export every time either way.
+  Language and country behave differently, and the kit used to say both were ignored:
+  - **Country never filters social.** With Advanced Query the country rule greys out or does not
+    move the count; as a source rule it covers news sites almost only (2,555 mentions against
+    626,363 unfiltered over three months); with Mexico ticked in the mentions view, TikTok, Reddit
+    and video drop to zero. The market goes in the query as anchors and is resolved in the ETL
+    (`Country` column plus text signals). A total is reported by language, never as a country's
+    total.
+  - **Language is mixed, so test it per study.** It applied in one case (a topic went from 8,105 to
+    2,523 with the language ticked, keeping 99.3% of the forms that exist only in that language), and
+    the edit screen says Advanced Query respects it; in another, with Spanish ticked, 901 of 1,535
+    mentions came back in English. Run one anchor in the preview with and without the language; if
+    the total drops and the sample is right, the filter works. "Spanish (es-mx)" is a separate value
+    from "Spanish": tick both. Profile the first export every time either way, and keep the gate C
+    check in the ETL as the net.
+  How to operate the tool, read its totals and export: `SENTIONE.md`.
 - **Every query in two versions:** without `rawText:` for the total volume, with it for the analysis.
   One query brought 1,019,192 mentions in the first and 173,214 in the second, with the subject in the
   post's own text in over 99%. The client needed to see the total; the analysis needed the clean one.
