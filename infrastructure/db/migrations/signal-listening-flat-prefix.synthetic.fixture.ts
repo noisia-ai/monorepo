@@ -16,9 +16,9 @@ import {createWorkspaceEngineStorageV1} from '../../../services/workers/src/work
 import {createLabelingRawPagesStorageV1} from '../../../services/workers/src/workers/signal-labeling-receipt-storage';
 const uncertainClients=new WeakSet<PoolClient>();
 export function releaseFlatPrefixClientV1(c:PoolClient){c.release(uncertainClients.has(c));}
-export async function withFlatPrefixReadOnlyV1(c:PoolClient,body:()=>Promise<void>){
- let failed=false,primary:unknown;
- try{await c.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');await body();}catch(error){failed=true;primary=error;}
+export async function withFlatPrefixReadOnlyV1(c:PoolClient,body:()=>Promise<void>,variant?:'bounded_1000_of_32768'){
+ let failed=false,primary:unknown,begun=false;
+ try{await c.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');begun=true;await body();}catch(error){if(variant==='bounded_1000_of_32768'&&!begun)uncertainClients.add(c);failed=true;primary=error;}
  try{await c.query('ROLLBACK');}catch(rollback){uncertainClients.add(c);if(failed)throw new AggregateError([primary,rollback],'prefix body and rollback failed',{cause:primary});throw rollback;}
  if(failed)throw primary;
 }
@@ -59,15 +59,20 @@ async function setupState(c:PoolClient,params:unknown[],run_id:string){
  const run=(await c.query('SELECT status,lease_token IS NULL released FROM signal_labeling_runs WHERE id=$1',[run_id])).rows[0];assert.equal(run.status,'running');assert.equal(run.released,true,'setup releases its lease before measurement');
  return{...ledger,base_answers:answers,consumer_pending:8192,raw14_rows:state.rows,basis_fresh:true,run_status:run.status,open_exposure_micro_usd:String(BigInt(ledger.reserved_micro_usd)+BigInt(ledger.unknown_micro_usd)),external_spend_micro_usd:0};
 }
-export type FlatPrefixNativeCaseV1={install(c:PoolClient):Promise<void>;read(args:{c:PoolClient;params:unknown[];setup:Record<string,unknown>}):Promise<void>};
-export async function withFlatPrefixFullFixtureV1(testCase:FlatPrefixNativeCaseV1){
+export type FlatPrefixNativeCaseV1={install(c:PoolClient):Promise<void>;read(args:{c:PoolClient;params:unknown[];setup:Record<string,unknown>}):Promise<void>;
+ bounded?:{callback(database:SharedWireFixtureV1['database'],body:()=>Promise<void>):Promise<void>;roster(roots:ReadonlyArray<string>):void;state(c:PoolClient,params:unknown[],run_id:string):Promise<Record<string,unknown>>}};
+export async function withFlatPrefixFullFixtureV1(testCase:FlatPrefixNativeCaseV1,variant?:'bounded_1000_of_32768'){
+ assert.ok(variant===undefined||variant==='bounded_1000_of_32768','unknown finite flat-prefix fixture variant');
+ const bounded=variant==='bounded_1000_of_32768';if(bounded)assert.ok(testCase.bounded,'bounded fixture requires its native state and lifecycle witnesses');
+ const initialCount=bounded?1000:4096;
  assert.equal(process.env.GITHUB_ACTIONS,'true','owned CI only');
  const workload=r16ListeningWorkloadV2('defined_consumer_second_pass'),started=process.hrtime.bigint();
  const elapsed=()=>Number(process.hrtime.bigint()-started)/1e6;
- const deadline=()=>assert.ok(elapsed()<=600000,'prefix setup deadline600s exceeded; no measurement');
+ const deadline=()=>assert.ok(elapsed()<=(bounded?1800000:600000),bounded?'bounded population setup soft cap exceeded':'prefix setup deadline600s exceeded; no measurement');
  const {withSharedWireDefaultPostcheckV1}=await import('./signal-listening-statement-shared-wire.oracle');
- await runMassLabelingAcceptanceFixtureV1('product-recovery',{benchmark:{isolated:true,root_count:4096,execution_cap_micro_usd:20000000,
-  import_batch_size:256,preparation_page_size:100,embedding_page_limit:264,beforeProcessing:async ctx=>{
+ await runMassLabelingAcceptanceFixtureV1('product-recovery',{benchmark:{isolated:true,root_count:bounded?32768:4096,execution_cap_micro_usd:20000000,
+  import_batch_size:bounded?512:256,preparation_page_size:100,embedding_page_limit:264,beforeProcessing:async ctx=>{
+   const body=async()=>{
    deadline();const database=ctx.database,access={database,workspace_id:ctx.workspace_id,actor_user_id:ctx.actor_user_id};
    assert.equal((await database.query("UPDATE signal_labeling_runs r SET status='canceled' WHERE id=$1 AND workspace_id=$2 AND status='queued' AND NOT EXISTS(SELECT 1 FROM signal_labeling_calls WHERE run_id=r.id) RETURNING id",[ctx.run_id,ctx.workspace_id])).rows.length,1);
    const cfg=await saveSignalListeningConfigurationV1({...access,expected_revision:0,provenance:'human',configuration:workload.configuration});assert.equal(cfg.configuration_digest,workload.configuration_digest);
@@ -80,14 +85,15 @@ export async function withFlatPrefixFullFixtureV1(testCase:FlatPrefixNativeCaseV
     const store=createSignalListeningStoreV1({database,page_size:4096,rawPages,assertRawReady:()=>storage.assertReady!(),storeRawVerified:true,storeRaw:async()=>{throw Error('acceptance requires native multipart RAW');}});
     const run=await store.claim(prepared.run_id!);assert.ok(run);
     const initial=await withSharedWireDefaultPostcheckV1(async()=>{
-     deadline();const inputs=await store.inputs(run,{max_rows:4096,max_working_bytes:512*1024*1024,on_oversize:'error'});deadline();
-     assert.equal(inputs.length,4096);assert.equal(new Set(inputs.map(i=>i.root_id)).size,4096);
+     deadline();const inputs=await store.inputs(run,{max_rows:initialCount,max_working_bytes:512*1024*1024,on_oversize:'error'});deadline();
+     assert.equal(inputs.length,initialCount);assert.equal(new Set(inputs.map(i=>i.root_id)).size,initialCount);
      assert.ok(inputs.every(i=>i.question_keys.length===2&&[...i.question_keys].sort().join(',')==='promotion,voice'),'capture the entire base roster before applying any chunk');
+     if(bounded)testCase.bounded!.roster(inputs.map(i=>i.root_id));
      for(let offset=0;offset<inputs.length;offset+=1024){
       await store.renew(run);deadline();
       const f:SharedWireFixtureV1={database,run,inputs:inputs.slice(offset,offset+1024),configuration:cfg.configuration,configuration_id:cfg.id,map_id:ctx.map_id,store,rawPages};
       const outcomes=await prepareSharedWireRawV1(f,500);deadline();
-      assert.equal(outcomes.length,1024);await store.apply(run,outcomes.map(o=>({call:o.call,results:[o.result]})));deadline();
+      assert.equal(outcomes.length,bounded?1000:1024);await store.apply(run,outcomes.map(o=>({call:o.call,results:[o.result]})));deadline();
      }
      return inputs;
     },()=>store.release(run));
@@ -105,13 +111,16 @@ export async function withFlatPrefixFullFixtureV1(testCase:FlatPrefixNativeCaseV
       await authorizeSignalListeningV1(c,access,'view');await assertMassLabelingMapCurrentV1(c,access.workspace_id,ctx.map_id);
       assert.equal((await loadSignalListeningConfigurationWithClientV1(c,access.workspace_id))?.id,cfg.id);
       assert.equal((await c.query('SELECT digest FROM signal_entity_context_versions WHERE workspace_id=$1 ORDER BY version_no DESC LIMIT 1',[access.workspace_id])).rows[0].digest,run.entity_context_digest);
-      const state=await setupState(c,params,run.id),snapshot=(await c.query('SELECT pg_current_snapshot()::text snapshot')).rows[0];
+      const readState=async()=>bounded?{...await testCase.bounded!.state(c,params,run.id),raw_storage:server.metrics()}:setupState(c,params,run.id);
+      const state=await readState(),snapshot=(await c.query('SELECT pg_current_snapshot()::text snapshot')).rows[0];
       await testCase.read({c,params,setup:state});
-      assert.deepEqual((await c.query('SELECT pg_current_snapshot()::text snapshot')).rows[0],snapshot);assert.deepEqual(await setupState(c,params,run.id),state);
+      assert.deepEqual((await c.query('SELECT pg_current_snapshot()::text snapshot')).rows[0],snapshot);assert.deepEqual(await readState(),state);
       await authorizeSignalListeningV1(c,access,'view');await assertMassLabelingMapCurrentV1(c,access.workspace_id,ctx.map_id);
       assert.equal((await loadSignalListeningConfigurationWithClientV1(c,access.workspace_id))?.id,cfg.id);
-     }),async()=>{if(!uncertainClients.has(c))assert.deepEqual((await c.query("SELECT current_setting('search_path') search_path,current_setting('track_functions') track_functions,current_database() database,current_setting('server_version_num')::int version")).rows[0],original);});
+     },variant),async()=>{if(!uncertainClients.has(c))assert.deepEqual((await c.query("SELECT current_setting('search_path') search_path,current_setting('track_functions') track_functions,current_database() database,current_setting('server_version_num')::int version")).rows[0],original);});
     }finally{releaseFlatPrefixClientV1(c);}
    },async()=>{await withSharedWireDefaultPostcheckV1(()=>server.close(),()=>rm(directory,{recursive:true,force:true}));});
+   };
+   if(bounded)await testCase.bounded!.callback(ctx.database,body);else await body();
   }}});
 }
