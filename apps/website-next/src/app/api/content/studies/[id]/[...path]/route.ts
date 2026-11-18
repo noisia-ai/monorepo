@@ -6,7 +6,7 @@ import { accessCookieName, canOpen, isPreviewSlide, READER_COOKIE, recordEvent }
  * Serves the files of a study: the deck the builder made, its slide images, the PDF, the cover and
  * the study's image, and the same for its English deck when it has one (deck-en/, slides-en/, pdf-en).
  *
- * The cover, the image (and its email JPEG) and the preview slides of a `registro` study are public. Everything else checks access first and goes out with
+ * The cover, the image (vertical and wide, and its email JPEG) and the preview slides of a `registro` study are public. Everything else checks access first and goes out with
  * `Cache-Control: private`, so Cloudflare never keeps a gated study and serves it to someone
  * who did not unlock it. The browser gets these paths, never a direct link to the storage.
  */
@@ -31,7 +31,7 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
   const study = await getStudy(id).catch(() => undefined);
   if (!study) return deny(404);
 
-  if (path === "cover.webp" || path === "email.jpg" || (path === "hero.webp" && study.heroPath === path)) {
+  if (path === "cover.webp" || path === "email.jpg" || (path === "hero.webp" && study.heroPath === path) || (path === "hero-wide.webp" && study.heroWidePath === path)) {
     const cover = await getStudyFile(study, path);
     if (!cover) return deny(404);
     return new Response(new Uint8Array(cover.bytes), {

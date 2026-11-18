@@ -43,10 +43,11 @@ export const studySchema = z.object({
   access: z.enum(ACCESS_MODES),
   full_language: z.enum(FULL_LANGUAGES),
   /**
-   * The brief for the study's image (content-db/STUDY_IMAGES.md): who is in it and what they are
-   * doing, in English. `pnpm content:image` turns it into the full prompt.
+   * The scene of the study's image (content-db/STUDY_IMAGES.md), in English. `brief`: who is in it
+   * and the moment they are living. `place`: where it happens and what is behind them. `pnpm
+   * content:image` adds the house style and writes the prompts.
    */
-  image: z.object({ brief: text }).optional(),
+  image: z.object({ brief: text, place: text.optional() }).optional(),
   es: studySummarySchema,
   en: studySummarySchema
 });

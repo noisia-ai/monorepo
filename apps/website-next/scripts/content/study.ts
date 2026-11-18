@@ -19,7 +19,8 @@ import { lintDeckHtml, lintTexts } from "./lint";
  *   deck-en/       optional, the same deck in English, with as many slides as deck/ (README.md)
  *   piezas.json    optional, the Insights pieces of the study
  *   portada.png    optional cover; without it, the first slide is the cover
- *   imagen.png     optional image of the study for its page and its card (content-db/STUDY_IMAGES.md);
+ *   imagen.png     optional image of the study for its page, vertical (content-db/STUDY_IMAGES.md);
+ *   imagen-wide.png optional horizontal version for its card and its access email;
  *                  needs `image_alt` in both languages. `pnpm content:image` writes its prompt.
  *
  * Nothing is written unless everything passes: the schema, the privacy checks on the summary,
@@ -95,6 +96,10 @@ if (imagen && study) {
   }
   if (statSync(imagen).size > MAX_FILE) problems.push(`${relative(folder, imagen)}: over the 15 MB limit`);
 }
+// The horizontal version, for the card and the email. It needs the vertical one.
+const imagenWide = ["imagen-wide.png", "imagen-wide.jpg", "imagen-wide.jpeg", "imagen-wide.webp"].map((name) => join(folder, name)).find((file) => existsSync(file));
+if (imagenWide && !imagen) problems.push(`${relative(folder, imagenWide)}: the folder has the horizontal image but not imagen.png`);
+if (imagenWide && statSync(imagenWide).size > MAX_FILE) problems.push(`${relative(folder, imagenWide)}: over the 15 MB limit`);
 
 // ---------- deck (and its English twin) ----------
 type Deck = { name: "deck" | "deck-en"; dir: string; files: File[]; pdf: File | null };
@@ -229,10 +234,10 @@ try {
   }
   rendered.push({ path: "cover.webp", contentType: "image/webp", bytes: Buffer.from(await page.screenshot({ type: "webp", quality: 85 })) });
 
-  if (imagen) {
-    // Kept at its own proportions, at most 1600 px on the long side, with its transparency.
-    const data = readFileSync(imagen).toString("base64");
-    const type = TYPES[extname(imagen).toLowerCase()];
+  /** An image at its own proportions, at most 1600 px on the long side, as webp. */
+  async function webp(file: string): Promise<Buffer> {
+    const data = readFileSync(file).toString("base64");
+    const type = TYPES[extname(file).toLowerCase()];
     await page.setViewport({ width: 1600, height: 1600, deviceScaleFactor: 1 });
     await page.setContent(`<html><body style="margin:0;background:transparent"><img id="i" src="data:${type};base64,${data}"></body></html>`, { waitUntil: "load" });
     const size = await page.evaluate(() => {
@@ -244,16 +249,26 @@ try {
       return { width, height };
     });
     await page.setViewport({ ...size, deviceScaleFactor: 1 });
-    const bytes = Buffer.from(await page.screenshot({ type: "webp", quality: 86, omitBackground: true }));
-    rendered.push({ path: "hero.webp", contentType: "image/webp", bytes });
+    return Buffer.from(await page.screenshot({ type: "webp", quality: 86, omitBackground: true }));
+  }
+
+  if (imagen) {
+    const data = readFileSync(imagen).toString("base64");
+    const type = TYPES[extname(imagen).toLowerCase()];
+    rendered.push({ path: "hero.webp", contentType: "image/webp", bytes: await webp(imagen) });
+    if (imagenWide) rendered.push({ path: "hero-wide.webp", contentType: "image/webp", bytes: await webp(imagenWide) });
 
     // The banner of the access email (content-db/STUDY_EMAIL.md): 1040 × 560, shown at 520 × 280,
     // a JPEG flattened on white (email clients show transparency as black and classic Outlook shows
     // no webp). The image melts into white with multiply over a faint cyan and red aura, the brand's
     // neon used as glow, never as a fill.
+    // With the horizontal image, the banner is that photograph, cropped to fill the frame.
+    const wide = imagenWide ? { data: readFileSync(imagenWide).toString("base64"), type: TYPES[extname(imagenWide).toLowerCase()] } : null;
     await page.setViewport({ width: 1040, height: 560, deviceScaleFactor: 1 });
     await page.setContent(
-      `<html><body style="margin:0;width:1040px;height:560px;background:#fff;position:relative;overflow:hidden">
+      wide
+        ? `<html><body style="margin:0;width:1040px;height:560px;background:#fff;overflow:hidden"><img src="data:${wide.type};base64,${wide.data}" style="display:block;width:1040px;height:560px;object-fit:cover;object-position:center 40%"></body></html>`
+        : `<html><body style="margin:0;width:1040px;height:560px;background:#fff;position:relative;overflow:hidden">
         <div style="position:absolute;left:250px;top:150px;width:300px;height:380px;border-radius:50%;background:#009CA8;opacity:.2;filter:blur(70px)"></div>
         <div style="position:absolute;left:490px;top:120px;width:300px;height:380px;border-radius:50%;background:#D91441;opacity:.1;filter:blur(70px)"></div>
         <img src="data:${type};base64,${data}" style="position:absolute;left:50%;bottom:0;max-width:980px;max-height:556px;transform:translateX(-50%);mix-blend-mode:multiply">
