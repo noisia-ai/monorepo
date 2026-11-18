@@ -9,12 +9,13 @@ on:
   workflow_dispatch:
     inputs:
       scope:
-        description: Run the full suite or a focused R16 policy or listening smoke
+        description: Run the full suite or a focused R16 policy, listening, or partial-admission smoke
         type: choice
         options:
           - full
           - policy-smoke
           - listening-smoke
+          - partial-admission-only
         default: full
         required: true
       listening_startup_prefix:
@@ -52,13 +53,13 @@ permissions:
   contents: read
 
 concurrency:
-  group: mfp-postgres-${{ github.ref }}${{ github.event_name == 'workflow_dispatch' && inputs.scope == 'policy-smoke' && '-policy-smoke' || github.event_name == 'workflow_dispatch' && inputs.scope == 'listening-smoke' && '-listening-smoke' || '' }}
+  group: mfp-postgres-${{ github.ref }}${{ github.event_name == 'workflow_dispatch' && inputs.scope == 'policy-smoke' && '-policy-smoke' || github.event_name == 'workflow_dispatch' && inputs.scope == 'listening-smoke' && '-listening-smoke' || github.event_name == 'workflow_dispatch' && inputs.scope == 'partial-admission-only' && '-partial-admission-only' || '' }}
   cancel-in-progress: true
 
 jobs:
   numeric-python:
-    name: ${{ github.event_name == 'workflow_dispatch' && inputs.scope == 'policy-smoke' && 'policy-smoke-numeric-python' || github.event_name == 'workflow_dispatch' && inputs.scope == 'listening-smoke' && 'listening-smoke-numeric-python' || 'numeric-python' }}
-    if: ${{ github.event_name != 'workflow_dispatch' || inputs.scope != 'listening-smoke' }}
+    name: ${{ github.event_name == 'workflow_dispatch' && inputs.scope == 'policy-smoke' && 'policy-smoke-numeric-python' || github.event_name == 'workflow_dispatch' && inputs.scope == 'listening-smoke' && 'listening-smoke-numeric-python' || github.event_name == 'workflow_dispatch' && inputs.scope == 'partial-admission-only' && 'partial-admission-only-numeric-python-not-run' || 'numeric-python' }}
+    if: ${{ github.event_name != 'workflow_dispatch' || (inputs.scope != 'listening-smoke' && inputs.scope != 'partial-admission-only') }}
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -343,8 +344,8 @@ jobs:
           retention-days: 14
 
   migrated-schema:
-    name: ${{ github.event_name == 'workflow_dispatch' && inputs.scope == 'policy-smoke' && 'policy-smoke-migrated-schema-not-run' || github.event_name == 'workflow_dispatch' && inputs.scope == 'listening-smoke' && 'listening-smoke-migrated-schema' || 'migrated-schema' }}
-    if: ${{ github.event_name != 'workflow_dispatch' || inputs.scope != 'policy-smoke' }}
+    name: ${{ github.event_name == 'workflow_dispatch' && inputs.scope == 'policy-smoke' && 'policy-smoke-migrated-schema-not-run' || github.event_name == 'workflow_dispatch' && inputs.scope == 'listening-smoke' && 'listening-smoke-migrated-schema' || github.event_name == 'workflow_dispatch' && inputs.scope == 'partial-admission-only' && 'partial-admission-only-migrated-schema-not-run' || 'migrated-schema' }}
+    if: ${{ github.event_name != 'workflow_dispatch' || (inputs.scope != 'policy-smoke' && inputs.scope != 'partial-admission-only') }}
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -2428,7 +2429,7 @@ jobs:
 
   listening-partial-admission-probe-experimental:
     name: R16 Listening partial admission cap (isolated lab)
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.scope == 'listening-smoke' && inputs.listening_partial_admission_probe }}
+    if: ${{ github.event_name == 'workflow_dispatch' && (inputs.scope == 'listening-smoke' || inputs.scope == 'partial-admission-only') && inputs.listening_partial_admission_probe }}
     runs-on: ubuntu-latest
     # Bounds the isolated PostgreSQL/Redis job; it is not a throughput claim.
     timeout-minutes: 40
@@ -2454,10 +2455,21 @@ jobs:
       - name: Run pure Listening write-function observation contracts
         env:
           NOISIA_R16_LISTENING_WRITE_FUNCTIONS_PURE: 'true'
+          NOISIA_R16_LISTENING_PARTIAL_ADMISSION_PURE: 'true'
         run: |
           set -euo pipefail
           pnpm exec node --test --test-concurrency=1 --import tsx \
-            infrastructure/db/migrations/signal-listening-write-functions.test.ts
+            infrastructure/db/migrations/signal-listening-write-functions.test.ts \
+            infrastructure/db/migrations/signal-listening-partial-admission.postgres.test.ts \
+            | tee listening-partial-admission-pure.tap
+          if ! grep -qx '# tests 19' listening-partial-admission-pure.tap \
+            || ! grep -qx '# pass 18' listening-partial-admission-pure.tap \
+            || ! grep -qx '# fail 0' listening-partial-admission-pure.tap \
+            || ! grep -qx '# cancelled 0' listening-partial-admission-pure.tap \
+            || ! grep -qx '# skipped 1' listening-partial-admission-pure.tap; then
+            echo '::error::Pure Listening observation contracts did not run the exact 19-test, 18-pass, 1-skip census'
+            exit 1
+          fi
       - name: Require the owned partial admission lab and private files to be absent
         run: |
           set -euo pipefail
@@ -2563,8 +2575,8 @@ jobs:
 
           evidence = Path(os.environ['R16_LISTENING_PARTIAL_ADMISSION_EVIDENCE_DIR']) / 'listening-partial-admission.json'
           tap = Path('listening-partial-admission.tap')
-          if os.environ.get('PROFILE_CONCLUSION') != 'success' or os.environ.get('CLEANUP_CONCLUSION') != 'success':
-              raise SystemExit('Partial admission evidence requires a passing native test and owned-lab cleanup')
+          profile_succeeded = os.environ.get('PROFILE_CONCLUSION') == 'success'
+          cleanup_succeeded = os.environ.get('CLEANUP_CONCLUSION') == 'success'
           for path, cap in ((evidence, 2 * 1024 * 1024), (tap, 1024 * 1024)):
               if not path.is_file() or path.is_symlink() or path.stat().st_size <= 0 or path.stat().st_size > cap:
                   raise SystemExit('Partial admission evidence file is missing, unsafe, empty, or over its cap')
@@ -2572,27 +2584,34 @@ jobs:
               report = json.load(stream)
           if type(report) is not dict:
               raise SystemExit('Partial admission receipt must be one JSON object')
-          expected = {'contract': 'r16-listening-partial-admission-v1', 'status': 'observed',
+          expected = {'contract': 'r16-listening-partial-admission-v1',
               'diagnostic_only': True, 'h1_accepted': False, 'scope': 'functional240_not_H1_or_scale1024_4096',
               'cap_micro_usd': '50000', 'native_population_roots': 240, 'recovery_execution_claimed': False,
               'external_spend_micro_usd': '0'}
           if any(type(report.get(key)) is not type(value) or report.get(key) != value for key, value in expected.items()):
               raise SystemExit('Partial admission receipt does not match its diagnostic-only contract')
+          if report.get('status') not in ('observed', 'failed'):
+              raise SystemExit('Partial admission receipt status is not recognized')
           if 'candidate_accepted' in report or 'speedup_claim' in report:
               raise SystemExit('Partial admission receipt must not claim candidate acceptance or speedup')
           gates = report.get('gates')
           required_gates = {'source_binding', 'native_cap_interval', 'committed_before_fetch', 'delivered_drain',
               'terminal_idempotency', 'closure_confirmed'}
           if type(gates) is not dict or set(gates) != required_gates \
-              or any(type(value) is not bool or value is not True for value in gates.values()):
-              raise SystemExit('All six partial admission gates must be explicit true booleans')
-          terminal = report.get('terminal_restart')
-          expected_terminal = {'claim_attempted': True, 'claimed': False, 'status': 'not_claimed',
-              'new_physical_fetches': 0, 'recovery_execution_claimed': False}
-          if type(terminal) is not dict or set(terminal) != set(expected_terminal) \
-              or any(type(terminal.get(key)) is not type(value) or terminal.get(key) != value
-                     for key, value in expected_terminal.items()):
-              raise SystemExit('Partial admission terminal idempotency witness is incomplete')
+              or any(type(value) is not bool for value in gates.values()):
+              raise SystemExit('Partial admission gates must be exactly six booleans')
+          if report['status'] == 'observed':
+              if not profile_succeeded or not cleanup_succeeded or any(value is not True for value in gates.values()):
+                  raise SystemExit('Observed partial admission requires a passing profile, cleanup and six true gates')
+              terminal = report.get('terminal_restart')
+              expected_terminal = {'claim_attempted': True, 'claimed': False, 'status': 'not_claimed',
+                  'new_physical_fetches': 0, 'recovery_execution_claimed': False}
+              if type(terminal) is not dict or set(terminal) != set(expected_terminal) \
+                  or any(type(terminal.get(key)) is not type(value) or terminal.get(key) != value
+                         for key, value in expected_terminal.items()):
+                  raise SystemExit('Partial admission terminal idempotency witness is incomplete')
+          elif profile_succeeded or not cleanup_succeeded:
+              raise SystemExit('A failed receipt requires a failed native profile and successful owned-lab cleanup')
           source = report.get('source')
           if type(source) is not dict:
               raise SystemExit('Full immutable Git source binding is missing')
@@ -2627,7 +2646,7 @@ jobs:
               'h1_accepted': False, 'cpu': 'UNKNOWN', 'closed': True,
               'function_coverage': 'TRACKED_PUBLIC_ROWS_ONLY_MISSING_UNKNOWN'}
           if any(type(writes.get(key)) is not type(value) or writes.get(key) != value
-                 for key, value in write_expected.items()) or writes.get('status') not in ('observed', 'INCONCLUSIVE'):
+                 for key, value in write_expected.items()) or writes.get('status') not in ('observed', 'INCONCLUSIVE', 'failed'):
               raise SystemExit('Write-function observation does not match its diagnostic-only contract')
           write_json = json.dumps(writes, ensure_ascii=False, separators=(',', ':')).encode('utf-8')
           if len(write_json) > 2 * 1024 * 1024:
@@ -2635,9 +2654,73 @@ jobs:
           write_gates = writes.get('gates')
           write_gate_names = {'three_original_statements', 'native_commit_ack', 'identity_and_settings_restored',
               'counters_known', 'no_recording_loss'}
+          sample_types = {'null', 'undefined', 'string', 'boolean', 'bigint', 'symbol', 'function', 'array', 'object',
+              'number_safe_integer_nonnegative', 'number_unsafe_integer_nonnegative', 'number_fraction_nonnegative',
+              'number_negative', 'number_nonfinite', 'UNKNOWN'}
+          sample_stages = {'query', 'row_count', 'catalog_name', 'catalog_shape', 'counter_values', 'done'}
           if type(write_gates) is not dict or set(write_gates) != write_gate_names \
-              or any(type(write_gates.get(name)) is not bool for name in write_gate_names) \
-              or any(write_gates[name] is not True for name in write_gate_names - {'counters_known'}):
+              or any(type(write_gates.get(name)) is not bool for name in write_gate_names):
+              raise SystemExit('Write-function observation gates must be exactly five booleans')
+          if report['status'] == 'failed':
+              if writes.get('status') != 'failed':
+                  raise SystemExit('A failed Native receipt must retain a failed write-function observation')
+              captures = writes.get('captures')
+              if type(captures) is not list or len(captures) > 3:
+                  raise SystemExit('Failed write-function diagnostics exceed the three-phase cap')
+              phases = {'reserve', 'mark', 'apply'}
+              seen_phases = set()
+              for capture in captures:
+                  if type(capture) is not dict or capture.get('phase') not in phases or capture['phase'] in seen_phases:
+                      raise SystemExit('Failed write-function diagnostic phase is malformed or repeated')
+                  seen_phases.add(capture['phase'])
+                  if 'failure_reason' in capture:
+                      reason = capture.get('failure_reason')
+                      if type(reason) is not str or reason != 'UNKNOWN' and not (reason.startswith('write_functions_') and reason.replace('_', '').isalnum()):
+                          raise SystemExit('Write-function failure reason is not a safe code token')
+                  sampling = capture.get('sampling')
+                  if type(sampling) is not dict or set(sampling) != {'before', 'after'}:
+                      raise SystemExit('Write-function sampling checkpoints are missing or malformed')
+                  for checkpoint in sampling.values():
+                      if checkpoint is None:
+                          continue
+                      required = {'stage', 'rows_seen', 'row_index'}
+                      optional = {'oid_type', 'name_membership', 'unknown_catalog_name', 'catalog_types', 'counter_types'}
+                      if type(checkpoint) is not dict or not required.issubset(checkpoint) or set(checkpoint) - required - optional:
+                          raise SystemExit('Write-function sampling checkpoint contains unrecognized fields')
+                      if checkpoint.get('stage') not in sample_stages:
+                          raise SystemExit('Write-function sampling stage is unrecognized')
+                      rows_seen = checkpoint.get('rows_seen')
+                      if rows_seen != 'UNKNOWN' and (type(rows_seen) is not int or not 0 <= rows_seen <= 65):
+                          raise SystemExit('Write-function sample row count is outside its diagnostic cap')
+                      row_index = checkpoint.get('row_index')
+                      if row_index is not None and (type(row_index) is not int or not 1 <= row_index <= 64):
+                          raise SystemExit('Write-function sample row index is outside its diagnostic cap')
+                      if 'oid_type' in checkpoint and checkpoint['oid_type'] not in sample_types:
+                          raise SystemExit('Write-function OID type is not in its closed enum')
+                      if 'name_membership' in checkpoint and checkpoint['name_membership'] not in ('known', 'unknown', 'not_string', 'UNKNOWN'):
+                          raise SystemExit('Write-function name membership is not in its closed enum')
+                      if 'unknown_catalog_name' in checkpoint:
+                          item = checkpoint['unknown_catalog_name']
+                          if type(item) is not dict or set(item) != {'sha256', 'value_type'} or item.get('value_type') not in sample_types:
+                              raise SystemExit('Unknown catalog-name diagnostic is malformed')
+                          digest = item.get('sha256')
+                          if digest is not None and (type(digest) is not str or len(digest) != 64 or any(ch not in '0123456789abcdef' for ch in digest)):
+                              raise SystemExit('Unknown catalog-name digest is malformed')
+                      for key, fields in (('catalog_types', {'language', 'volatility', 'security_definer', 'prosrc', 'signature', 'proconfig'}),
+                                          ('counter_types', {'calls', 'total_time', 'self_time'})):
+                          if key in checkpoint and (type(checkpoint[key]) is not dict or set(checkpoint[key]) != fields
+                              or any(value not in sample_types for value in checkpoint[key].values())):
+                              raise SystemExit('Write-function sampled type tags are malformed')
+                  for sample_name in ('before', 'after', 'deltas'):
+                      if sample_name in capture and (type(capture[sample_name]) is not list or len(capture[sample_name]) > 64):
+                          raise SystemExit('Failed write-function row samples exceed their 64-row cap')
+              if not profile_succeeded and cleanup_succeeded:
+                  print('Partial admission safe failure diagnostics validated; the Native profile remains failed')
+                  raise SystemExit('Native partial admission profile failed; safe diagnostic evidence retained')
+              raise SystemExit('A failed write-function receipt cannot pass Native validation')
+          if not cleanup_succeeded or not profile_succeeded:
+              raise SystemExit('Observed partial admission requires a passing native profile and owned-lab cleanup')
+          if any(write_gates[name] is not True for name in write_gate_names - {'counters_known'}):
               raise SystemExit('All three original writes, commit acknowledgements, restoration and recording must be observed')
           captures = writes.get('captures')
           if type(captures) is not list or len(captures) != 3:
@@ -2668,6 +2751,27 @@ jobs:
               if any(key in capture for key in ('safe_error_tree', 'failure_stage', 'transaction_rolled_back',
                     'capture_payload_rejected_over_bytes', 'capture_bytes_observed')):
                   raise SystemExit('A write-function capture records a failed or truncated observation')
+              sampling = capture.get('sampling')
+              if type(sampling) is not dict or set(sampling) != {'before', 'after'}:
+                  raise SystemExit('Successful write-function sampling checkpoints are missing')
+              for checkpoint in sampling.values():
+                  if type(checkpoint) is not dict or set(checkpoint) - {'stage', 'rows_seen', 'row_index', 'oid_type',
+                          'name_membership', 'unknown_catalog_name', 'catalog_types', 'counter_types'} \
+                      or not {'stage', 'rows_seen', 'row_index'}.issubset(checkpoint) or checkpoint.get('stage') != 'done':
+                      raise SystemExit('Successful write-function sampling checkpoint is malformed or incomplete')
+                  rows_seen, row_index = checkpoint.get('rows_seen'), checkpoint.get('row_index')
+                  if type(rows_seen) is not int or not 0 <= rows_seen <= 64 \
+                      or row_index is not None and (type(row_index) is not int or not 1 <= row_index <= 64):
+                      raise SystemExit('Successful write-function sample counters exceed their closed bounds')
+                  if 'oid_type' in checkpoint and checkpoint['oid_type'] not in sample_types:
+                      raise SystemExit('Successful write-function OID type is not in its closed enum')
+                  if 'name_membership' in checkpoint and checkpoint['name_membership'] not in ('known', 'unknown', 'not_string', 'UNKNOWN'):
+                      raise SystemExit('Successful write-function name membership is not in its closed enum')
+                  for key, fields in (('catalog_types', {'language', 'volatility', 'security_definer', 'prosrc', 'signature', 'proconfig'}),
+                                      ('counter_types', {'calls', 'total_time', 'self_time'})):
+                      if key in checkpoint and (type(checkpoint[key]) is not dict or set(checkpoint[key]) != fields
+                          or any(value not in sample_types for value in checkpoint[key].values())):
+                          raise SystemExit('Successful write-function sampled type tags are malformed')
               for samples_name in ('before', 'after'):
                   samples = capture.get(samples_name)
                   if type(samples) is not list or len(samples) > 64:

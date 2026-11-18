@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import {createHash} from 'node:crypto';
 import {readFile} from 'node:fs/promises';
 import type {Pool,PoolClient} from 'pg';
 import test from 'node:test';
@@ -8,7 +9,9 @@ import {
   createListeningWriteFunctionObserverV1,
   extractListeningWriteTemplatesV1,
   listeningWriteBatchV1,
+  writeFunctionFailureReasonV1,
   writeFunctionDeltasV1,
+  writeFunctionSampleTypeV1,
   type ListeningWriteTemplatesV1,
   type WriteFunctionCounterV1,
 } from './signal-listening-write-functions.synthetic.fixture';
@@ -30,7 +33,7 @@ function counter(calls:number,overrides:Partial<WriteFunctionCounterV1>={}):Writ
   prosrc_sha256:'b'.repeat(64),signature_sha256:'c'.repeat(64),...overrides};
 }
 
-function nativeMock(templates:ListeningWriteTemplatesV1,args:{baseline?:boolean;emptyCounters?:boolean;rollbackFails?:boolean;releaseFails?:boolean;catalogChanges?:boolean;restoreFails?:boolean;failure?:{phase:string;value:unknown}}={}){
+function nativeMock(templates:ListeningWriteTemplatesV1,args:{baseline?:boolean;emptyCounters?:boolean;rollbackFails?:boolean;releaseFails?:boolean;catalogChanges?:boolean;restoreFails?:boolean;unknownCatalogNameAfter?:string;overCapAfter?:boolean;failure?:{phase:string;value:unknown}}={}){
  let tracked:'none'|'pl'|'all'='none',calls=0,counterReads=0,releases=0;const releaseArgs:Array<unknown>=[];
  const identity={backend:'4242',database:'synthetic_db',invoker:'synthetic_role',session_role:'synthetic_role',
   isolation:'read committed',read_only:'off',search_path:'public',transaction_started:'2030-01-01T00:00:00Z',
@@ -45,11 +48,14 @@ function nativeMock(templates:ListeningWriteTemplatesV1,args:{baseline?:boolean;
     counterReads++;
     if(args.emptyCounters)return{rows:[],rowCount:0};
     if(args.baseline===false&&counterReads%2===1)return{rows:[],rowCount:0};
+    if(args.overCapAfter&&counterReads%2===0)return{rows:Array.from({length:65},(_,index)=>({oid:String(index+1)})),rowCount:65};
     const c=counter(calls);
-    return{rows:[{oid:c.oid,name:c.name,calls:c.calls,total_time:c.total_time,self_time:c.self_time,
+    const row=(oid:string,name:string)=>({oid,name,calls:c.calls,total_time:c.total_time,self_time:c.self_time,
      language:c.language,volatility:c.volatility,security_definer:c.security_definer,proconfig:null,
      prosrc:args.catalogChanges&&counterReads%2===0?'changed synthetic function body':'synthetic function body',
-     signature:'synthetic_write_function()'}],rowCount:1};
+     signature:'synthetic_write_function()'});
+    if(args.unknownCatalogNameAfter&&counterReads%2===0)return{rows:[row(c.oid,c.name),row('9002',args.unknownCatalogNameAfter)],rowCount:2};
+    return{rows:[row(c.oid,c.name)],rowCount:1};
    }
    if(sql==="SET LOCAL track_functions='all'"){tracked='all';return{rows:[],rowCount:null};}
    if(sql==="SET LOCAL track_functions='none'"){if(!args.restoreFails)tracked='none';return{rows:[],rowCount:null};}
@@ -269,5 +275,65 @@ if(pure){
   assert.equal((caught as AggregateError).errors[0],null);assert.equal((caught as AggregateError).cause,null);
   assert.equal(releaseCalls,1);assert.equal(releaseArgument,true);
   observer.close();
+ });
+
+ test('failure reasons expose only locally registered codes and classify arbitrary samples without values',()=>{
+  let local:unknown;try{writeFunctionDeltasV1([counter(2)],[counter(-1)]);}catch(error){local=error;}
+  assert.equal(writeFunctionFailureReasonV1(local),'write_functions_counter_invalid');
+  const privateMessage='PRIVATE_DATABASE_FUNCTION_NAME';let messageReads=0;
+  const external=Object.defineProperty(new Error('private'), 'message',{get(){messageReads++;return privateMessage;}});
+  assert.equal(writeFunctionFailureReasonV1(external),'UNKNOWN');assert.equal(messageReads,0);
+  assert.equal(writeFunctionFailureReasonV1(null),'UNKNOWN');
+  const cases:Array<[unknown,string]>=[
+   [null,'null'],[undefined,'undefined'],[privateMessage,'string'],[true,'boolean'],[1n,'bigint'],
+   [Symbol(privateMessage),'symbol'],[()=>undefined,'function'],[[],'array'],[{},'object'],[0,'number_safe_integer_nonnegative'],
+   [Number.MAX_SAFE_INTEGER+1,'number_unsafe_integer_nonnegative'],[0.5,'number_fraction_nonnegative'],[-1,'number_negative'],[NaN,'number_nonfinite'],[Infinity,'number_nonfinite'],
+  ];
+  for(const [value,kind] of cases)assert.equal(writeFunctionSampleTypeV1(value),kind);
+  let proxyReads=0;const proxyArray=new Proxy([],{get(){proxyReads++;throw new Error(privateMessage);}});
+  assert.equal(writeFunctionSampleTypeV1(proxyArray),'array');assert.equal(proxyReads,0);
+  const receipt=JSON.stringify({reason:writeFunctionFailureReasonV1(external),sample_type:writeFunctionSampleTypeV1(privateMessage)});
+  assert.equal(receipt.includes(privateMessage),false);
+ });
+
+ test('unknown catalog names retain only a hash and closed sampling context after the original write',async()=>{
+  const templates=await productTemplates(),batch=batches(templates),unknown='private_unknown_function_name';
+  const mock=nativeMock(templates,{unknownCatalogNameAfter:unknown});
+  const observer=createListeningWriteFunctionObserverV1({database:mock.database,eligible:()=>true,templates,
+   known_function_names:['synthetic_write_function'],roots_for_mark:ids=>ids.map((_,index)=>batch.roots[index]!)});
+  const client=await observer.database.connect();await client.query('BEGIN');
+  await assert.rejects(client.query(templates.reserve,batch.reserve),/write_functions_unknown_catalog_function/);
+  await client.query('ROLLBACK');await client.release(true);observer.close();
+  const receipt=observer.snapshot(),capture=receipt.captures[0]!;
+  assert.equal(receipt.status,'failed');assert.equal(capture.failure_stage,'after');
+  assert.equal(capture.failure_reason,'write_functions_unknown_catalog_function');
+  assert.equal(capture.original_executions,1);assert.equal(capture.original_succeeded,true);
+  assert.equal(capture.transaction_rolled_back,true);assert.equal(capture.rollback_reset_confirmed,true);
+  assert.equal(capture.native_commit_ack,false);
+  const sampling=capture.sampling as {before:{stage:string;rows_seen:number|'UNKNOWN';row_index:number|null};after:{stage:string;rows_seen:number|'UNKNOWN';row_index:number|null;name_membership:string;unknown_catalog_name:{sha256:string|null;value_type:string}}};
+  assert.equal(sampling.before.stage,'done');assert.equal(sampling.before.rows_seen,1);
+  assert.equal(sampling.after.stage,'catalog_name');assert.equal(sampling.after.rows_seen,2);assert.equal(sampling.after.row_index,2);
+  assert.equal(sampling.after.name_membership,'unknown');
+  assert.equal(sampling.after.unknown_catalog_name.value_type,'string');
+  assert.equal(sampling.after.unknown_catalog_name.sha256,createHash('sha256').update(unknown).digest('hex'));
+  assert.equal('catalog_types' in sampling.after,false);assert.equal('counter_types' in sampling.after,false);
+  const serialized=JSON.stringify(receipt);assert.equal(serialized.includes(unknown),false);
+  assert.equal(serialized.includes('PRIVATE_DATABASE_FUNCTION_NAME'),false);
+ });
+
+ test('65 counter rows fail at the bounded row-count checkpoint before any rows are attached',async()=>{
+  const templates=await productTemplates(),batch=batches(templates),mock=nativeMock(templates,{overCapAfter:true});
+  const observer=createListeningWriteFunctionObserverV1({database:mock.database,eligible:()=>true,templates,
+   known_function_names:['synthetic_write_function'],roots_for_mark:ids=>ids.map((_,index)=>batch.roots[index]!)});
+  const client=await observer.database.connect();await client.query('BEGIN');
+  await assert.rejects(client.query(templates.reserve,batch.reserve),/write_functions_counter_cap/);
+  await client.query('ROLLBACK');await client.release(true);observer.close();
+  const receipt=observer.snapshot(),capture=receipt.captures[0]!;
+  assert.equal(receipt.status,'failed');assert.equal(capture.failure_reason,'write_functions_counter_cap');
+  assert.equal(capture.failure_stage,'after');assert.equal(capture.original_succeeded,true);
+  const sampling=capture.sampling as {after:{stage:string;rows_seen:number|'UNKNOWN';row_index:number|null}};
+  assert.equal(sampling.after.stage,'row_count');assert.equal(sampling.after.rows_seen,65);assert.equal(sampling.after.row_index,null);
+  assert.equal('after' in capture,false);assert.equal('deltas' in capture,false);
+  assert.equal(capture.transaction_rolled_back,true);assert.equal(capture.rollback_reset_confirmed,true);
  });
 }
