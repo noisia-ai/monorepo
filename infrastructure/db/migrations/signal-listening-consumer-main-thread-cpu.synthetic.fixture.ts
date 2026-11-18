@@ -40,7 +40,8 @@ function record(value:unknown):Record<string,unknown>{known(value!==null&&typeof
  const proto=Object.getPrototypeOf(value);known(proto===Object.prototype||proto===null);return value as Record<string,unknown>;}
 function own(value:unknown,key:string):unknown{const d=Object.getOwnPropertyDescriptor(record(value),key);known(d&&'value'in d);return d.value;}
 function array(value:unknown,cap:number):unknown[]{known(Array.isArray(value)&&Object.getPrototypeOf(value)===Array.prototype);
- const d=Object.getOwnPropertyDescriptor(value,'length');known(d&&'value'in d&&Number.isSafeInteger(d.value)&&d.value>=0&&d.value<=cap);return value;}
+ const d=Object.getOwnPropertyDescriptor(value,'length');known(d&&'value'in d);const length=integer(d.value);known(length<=cap);
+ const dense:unknown[]=[];for(let i=0;i<length;i++){const field=Object.getOwnPropertyDescriptor(value,String(i));known(field&&'value'in field);dense.push(field.value);}return dense;}
 function item(value:unknown[],index:number):unknown{const d=Object.getOwnPropertyDescriptor(value,String(index));known(d&&'value'in d);return d.value;}
 function number(value:unknown,min=0):number{known(typeof value==='number'&&Number.isFinite(value)&&value>=min);return value;}
 function integer(value:unknown,min=0):number{const n=number(value,min);known(Number.isSafeInteger(n));return n;}
