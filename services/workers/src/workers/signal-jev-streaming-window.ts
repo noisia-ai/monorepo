@@ -63,7 +63,6 @@ export async function processJevStreamingWindowV2<I extends FacetInput, R>(args:
   let totalRoots=calls.length,feedClosed=!args.feed_next,feeding:Promise<void>|undefined;
   let durableEpoch=0,emptyAtEpoch:number|undefined;
   const roster=new Map(calls.map(call=>[call.id,call])),initialIds=new Set(calls.map(call=>call.id));
-  const initialMetadata=calls.reduce((n,call)=>n+jevCallWorkingBytesV2(call),0);
   let recentIdentities=new Set(calls.map(call=>call.request_digest));
   let totalCost = 0, labeled = 0; const latencies: number[] = [];
   const errors = new Map<string, { call: LabelingCallV1<I>; unknown: boolean; code: string; write_result: boolean }>();
@@ -185,12 +184,17 @@ export async function processJevStreamingWindowV2<I extends FacetInput, R>(args:
     if(emptyAtEpoch!==undefined&&durableEpoch===emptyAtEpoch)return;
     // Do not read another full input page while paid responses own all memory.
     const free=e.max_buffered_bytes-memory;if(free<8192+reservationBytes)return;
-    // Future input copies cannot take the response allowance of calls already
-    // ready for Mark. This is scheduling headroom, not another memory charge;
-    // the fresh native selection still owns the actual response reservation.
-    const readySlots=Math.min(reserved.length,Math.max(0,workers-inFlight),Math.floor(free/reservationBytes));
+    // Future input copies cannot take the response allowance of committed
+    // reserved calls, including those waiting for an occupied HTTP slot. A
+    // completed response must be able to wake their Mark while this read waits.
+    // This is scheduling headroom, not another memory charge; the fresh native
+    // selection still owns the actual response reservation.
+    const readySlots=Math.min(reserved.length,workers,Math.floor(free/reservationBytes));
     const headroom=readySlots*reservationBytes;
-    const available=Math.min(free-headroom,Math.max(e.window_size*16384,initialMetadata*2));
+    // The bounded reader and compiler use the actual remaining shared budget,
+    // rather than a second heuristic page ceiling. Larger native reservations
+    // can reject a different prefix at a financial boundary; caps are unchanged.
+    const available=free-headroom;
     if(readySlots&&available<8192)return;
     // Hold the input/serialization budget while SQL is pending. HTTP/flushes
     // share the same counter and cannot consume bytes promised to this page.

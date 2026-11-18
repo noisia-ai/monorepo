@@ -292,7 +292,8 @@ async function exerciseAdmissionWake(mode:'http'|'apply'|'cancel'|'feed_failure'
  const feedStarted=deferredFrontier(),feedGate=deferredFrontier(),firstResponse=deferredFrontier(),secondResponse=deferredFrontier(),
   firstBuffered=deferredFrontier(),applyStarted=deferredFrontier(),applyGate=deferredFrontier();
  const cancellation=new AbortController(),events:string[]=[],memory:number[]=[],sent:string[]=[],raw:string[]=[],settled:string[]=[],applied:string[]=[],requeued:string[]=[];
- let reads=0,feedReleased=false,rawPages=0,finished=0,active=0,peak=0;
+ let reads=0,feedReleased=false,secondResponseReleased=false,rawPages=0,finished=0,active=0,peak=0;
+ const releaseSecondResponse=()=>{secondResponseReleased=true;secondResponse.resolve();};
  const store={markSubmitting:async(_run:unknown,calls:typeof rows)=>{
    for(const call of calls){events.push(`mark:${call.id}`);call.status='submitting';}
    if(mode==='mark_failure'&&calls.some(call=>call.id==='wake-2'))throw Error('mark_ack_lost');
@@ -307,7 +308,9 @@ async function exerciseAdmissionWake(mode:'http'|'apply'|'cancel'|'feed_failure'
  const budget=mode==='feed_memory_only'?210000:552*1024;
  const pending=processJevStreamingWindowV2({run:{}as LabelingRunV1,calls:rows,store,cancellation,price:llmPriceV1('typesafe','jev-1.13.0','sync',.042),
   execution:{max_in_flight:2,window_size:3,flush_size:2,max_flushes:1,max_buffered_bytes:budget,flush_interval_ms:60000},
-  revisit_empty_after_apply:true,feed_next:async()=>{reads++;assert.equal(reads,1,'one feeder, no repeated SQL while its read is pending');feedStarted.resolve();await feedGate.promise;
+  revisit_empty_after_apply:true,feed_next:async()=>{reads++;assert.equal(reads,1,'one feeder, no repeated SQL while its read is pending');
+   if(mode==='http'){assert.equal(active,2);assert.equal(rows[2]!.status,'reserved','the pending feeder must leave room for the waiting committed call');}
+   feedStarted.resolve();await feedGate.promise;
    if(mode==='feed_failure')throw Error('feed_read_failed');return{closed:true};},
   observe_stream:m=>{memory.push(m.reserved_working_bytes);if(m.buffered_responses===1)firstBuffered.resolve();},
   provider:{max_concurrency:2,max_response_bytes:4096,async evaluate(request){const id=String(request.state);sent.push(id);events.push(`send:${id}`);active++;peak=Math.max(peak,active);
@@ -325,7 +328,7 @@ async function exerciseAdmissionWake(mode:'http'|'apply'|'cancel'|'feed_failure'
   if(mode==='cancel')cancellation.abort();
   if(mode!=='feed_memory_only'){firstResponse.resolve();await firstBuffered.promise;}
   if(mode==='apply'){
-   secondResponse.resolve();await applyStarted.promise;
+   releaseSecondResponse();await applyStarted.promise;
    assert.equal(rawPages,1,'ordinary size-two batching, not a forced first-response flush');
    assert.equal(sent.includes('2'),false,'response custody remains charged while APPLY is pending');applyGate.resolve();
   }
@@ -336,12 +339,13 @@ async function exerciseAdmissionWake(mode:'http'|'apply'|'cancel'|'feed_failure'
   if(mode==='http'||mode==='apply'||mode==='feed_failure'){
    assert.ok(observedBeforeFeed,'already reserved remainder must be marked before the future read completes');
    assert.ok(sent.includes('2'),'the old reserved remainder must reach HTTP without waiting for future read');
+   if(mode==='http')assert.equal(secondResponseReleased,false,'the first response alone must wake Mark while both the feeder and the second HTTP remain pending');
   }else if(mode==='mark_failure'){
    assert.ok(observedBeforeFeed,'Mark failure must be reached without waiting on the unrelated read');assert.equal(sent.includes('2'),false,'failed Mark cannot hand off HTTP');
   }else{assert.equal(observedBeforeFeed,false);assert.equal(sent.includes('2'),false,'no premature handoff');if(mode==='feed_memory_only')assert.equal(sent.length,1,'future input custody must leave response headroom for the already reserved call');}
   assert.equal(feedReleased,false);assert.equal(drainedBeforeFeed,false,'drain must still wait for the owned pending feed');
  }finally{
-  feedReleased=true;events.push('release:feed');feedGate.resolve();firstResponse.resolve();secondResponse.resolve();applyGate.resolve();await pending;
+  feedReleased=true;events.push('release:feed');feedGate.resolve();firstResponse.resolve();releaseSecondResponse();applyGate.resolve();await pending;
  }
  const result=await pending;
  assert.equal(reads,1);assert.ok(peak<=2);assert.ok(memory.every(bytes=>bytes>=0&&bytes<=budget),'same shared byte budget throughout');assert.ok(finished>0);
@@ -364,6 +368,76 @@ test('reserved admission wake requeues a failed Mark handoff once without sendin
 
 test('reserved admission wake keeps ready response headroom while the future read remains pending',async()=>{
  const x=await exerciseAdmissionWake('feed_memory_only');assert.equal(x.result.error,undefined);assert.equal(x.result.value?.status,'completed');assert.equal(x.sent.length,1);assert.equal(x.result.value?.labeled,1);assert.deepEqual(x.requeued,[]);assert.equal(x.memory.at(-1),0);
+});
+
+test('a bounded feeder uses the free byte budget for a larger ordered prefix without blocking committed handoff',{timeout:5000},async context=>{
+ const {processJevStreamingWindowV2,jevCallWorkingBytesV2}=await import('./signal-jev-streaming-window');
+ const {selectLabelingInputPrefixV1}=await import('../../../../infrastructure/db/signal-labeling-input-bounds');
+ type Store=Parameters<typeof processJevStreamingWindowV2<FacetInput,string>>[0]['store'];
+ const make=(index:number):LabelingCallV1<FacetInput>=>{
+  const input={root_id:`prefix-${index}`,text:`configured mention ${index}`}as FacetInput;
+  const request={model:'jev-1.13.0',state:input.text,questions:{q:{type:'noul',instructions:'configured question'}}};
+  return{id:input.root_id,custom_id:input.root_id,request_digest:createHash('sha256').update(JSON.stringify({input,request})).digest('hex'),
+   request,inputs:[input],reserved_micro_usd:100,status:'reserved',raw_body:null,results_applied:false,provider_batch_id:null,retry_depth:0};
+ };
+ const initial=make(0),future=Array.from({length:6},(_,index)=>make(index+1)),all=[initial,...future];
+ const identity=(call:typeof initial)=>JSON.stringify({custom_id:call.custom_id,request_digest:call.request_digest,request:call.request,
+  inputs:call.inputs,reserved_micro_usd:call.reserved_micro_usd});
+ const identities=new Map(all.map(call=>[call.id,identity(call)]));
+ const bounds={max_in_flight:2,window_size:8,flush_size:2,max_flushes:2,max_buffered_bytes:2*1024*1024,flush_interval_ms:60000};
+ const initialBytes=jevCallWorkingBytesV2(initial),responseBytes=4096*24+64*1024;
+ // Model the bounded reader's conservative metadata, not an allocation or a
+ // throughput result. Every retained call fits below its metadata allowance.
+ const metadata=future.map(call=>({root_id:call.id,working_bytes:96*1024}));
+ assert.ok(all.every(call=>jevCallWorkingBytesV2(call)<=96*1024));
+ const oldAvailable=Math.min(bounds.max_buffered_bytes-initialBytes-responseBytes,Math.max(bounds.window_size*16384,initialBytes*2));
+ const oldPrefix=selectLabelingInputPrefixV1(metadata,{max_rows:7,max_working_bytes:oldAvailable,on_oversize:'empty'});
+ assert.deepEqual(oldPrefix,[future[0]!.id]);
+ const feedStarted=deferredFrontier(),feedGate=deferredFrontier(),initialStarted=deferredFrontier(),responseGate=deferredFrontier();
+ const sent:string[]=[],raw:string[]=[],settled:string[]=[],applied:string[]=[],memory:number[]=[],events:string[]=[];
+ let reads=0,feedReleased=false,selected:string[]=[],firstAvailable=0,firstMaxCalls=0,active=0,peak=0;
+ let rejectWait!:(error:unknown)=>void;const interrupted=new Promise<never>((_resolve,reject)=>{rejectWait=reject;});
+ const interrupt=()=>rejectWait(context.signal.reason);context.signal.addEventListener('abort',interrupt,{once:true});
+ const store={markSubmittingSelected:async(_run:unknown,select:()=>ReadonlyArray<LabelingCallV1<FacetInput>>)=>{
+   const rows=select();for(const call of rows){assert.equal(call.status,'reserved');call.status='submitting';events.push(`commit:${call.id}`);}return rows;
+  },persistRawPage:async(_run:unknown,rows:Array<{call:LabelingCallV1<FacetInput>;raw:string}>)=>{
+   for(const row of rows){assert.ok(sent.includes(row.call.id));assert.ok(!raw.includes(row.call.id));raw.push(row.call.id);row.call.raw_body=row.raw;}
+  },settlePage:async(_run:unknown,rows:Array<{call:LabelingCallV1<FacetInput>}>)=>{
+   for(const row of rows){assert.ok(raw.includes(row.call.id));assert.ok(!settled.includes(row.call.id));settled.push(row.call.id);row.call.status='settled';}
+  },apply:async(_run:unknown,rows:Array<{call:LabelingCallV1<FacetInput>}>)=>{
+   for(const row of rows){assert.ok(settled.includes(row.call.id));assert.ok(!applied.includes(row.call.id));applied.push(row.call.id);row.call.results_applied=true;}
+  },finish:async()=>all.every(call=>call.results_applied)?'completed':'running',
+  requeueUnsent:async()=>{throw Error('unexpected requeue');},markFailed:async()=>{throw Error('no invented failure');},
+ }as unknown as Store;
+ const pending=processJevStreamingWindowV2({run:{}as LabelingRunV1,calls:[initial],store,cancellation:new AbortController(),execution:bounds,
+  revisit_empty_after_apply:true,feed_next:async(available,maxCalls)=>{
+   if(++reads>1)return{closed:true};
+   firstAvailable=available;firstMaxCalls=maxCalls;
+   selected=selectLabelingInputPrefixV1(metadata,{max_rows:maxCalls,max_working_bytes:available,on_oversize:'empty'});
+   feedStarted.resolve();await feedGate.promise;
+   return selected.map(id=>future.find(call=>call.id===id)!);
+  },observe_stream:metrics=>memory.push(metrics.reserved_working_bytes),
+  provider:{max_concurrency:2,max_response_bytes:4096,async evaluate(request){
+   const call=all.find(call=>call.request===request)!;assert.ok(events.includes(`commit:${call.id}`));assert.ok(!sent.includes(call.id));
+   sent.push(call.id);active++;peak=Math.max(peak,active);
+   try{if(call===initial){initialStarted.resolve();await responseGate.promise;}
+    return{http_status:200,latency_ms:1,body:JSON.stringify({model:request.model,usage:{input_tokens:1,output_tokens:0},answers:{q:{type:'noul',noul:.8}}})};
+   }finally{active--;}
+  }},price:llmPriceV1('typesafe','jev-1.13.0','sync',.042),
+  hooks:{map:(_run,call)=>[call.id],error:()=>{throw Error('no invented result');},labeled:()=>true,fail_on_error:true},
+ }).then(value=>({value,error:undefined}),error=>({value:undefined,error}));
+ try{
+  const early=await Promise.race([Promise.all([feedStarted.promise,initialStarted.promise]).then(()=>null),pending,interrupted]);
+  assert.equal(early,null,'committed initial HTTP must start while the owned feeder is still held');
+  assert.equal(firstMaxCalls,7);assert.ok(firstAvailable>oldAvailable,'the old heuristic must not truncate this otherwise fitting prefix');
+  assert.deepEqual(selected,future.map(call=>call.id));
+  assert.equal(feedReleased,false);assert.deepEqual(sent,[initial.id]);assert.ok(firstAvailable<=bounds.max_buffered_bytes-initialBytes-responseBytes);
+ }finally{context.signal.removeEventListener('abort',interrupt);feedReleased=true;feedGate.resolve();responseGate.resolve();await pending;}
+ const result=await pending;assert.equal(result.error,undefined);assert.equal(result.value?.status,'completed');assert.equal(result.value?.labeled,all.length);
+ assert.deepEqual(selected,future.map(call=>call.id));assert.deepEqual(sent,all.map(call=>call.id));assert.ok(reads<=2);assert.ok(peak<=bounds.max_in_flight);
+ for(const call of all)assert.equal(identity(call),identities.get(call.id),'batch width must not change request, input, digest, order or reservation identity');
+ for(const rows of [raw,settled,applied])assert.deepEqual([...rows].sort(),[...sent].sort());
+ assert.ok(memory.every(bytes=>bytes>=0&&bytes<=bounds.max_buffered_bytes));assert.equal(memory.at(-1),0);
 });
 
 test('a later ready cohort reaches committed handoff without releasing the next feeder',{timeout:5000},async()=>{
