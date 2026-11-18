@@ -48,7 +48,7 @@ export function PhoneStory({ story, playing, reduced, reply }: { story: FeedStor
               label={story.content.title}
               className={styles.phoneStage}
             >
-              <StoryComposition story={story.content} locale={locale} tag={story.tag} mode="video" />
+              <StoryComposition story={story.content} locale={locale} tag={story.tag} mode="video" image={story.image} />
             </Stage>
           </div>
           <div className={styles.reply} aria-hidden>

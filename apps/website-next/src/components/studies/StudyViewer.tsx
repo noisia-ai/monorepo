@@ -225,7 +225,7 @@ function FormStep({ unlock, slide, autoFocus, onSent }: { unlock: Unlock; slide:
       <h2 id={`${id}-title`} className={styles.unlockTitle}>
         {c.title}
       </h2>
-      <p className={styles.unlockText}>{c.text}</p>
+      {c.text ? <p className={styles.unlockText}>{c.text}</p> : null}
       <label className={styles.field}>
         <span>{c.name}</span>
         <input ref={first} name="name" autoComplete="name" required maxLength={120} />
@@ -253,11 +253,10 @@ function FormStep({ unlock, slide, autoFocus, onSent }: { unlock: Unlock; slide:
         </p>
       ) : null}
       <p className={styles.unlockSmall}>
-        {c.privacy}{" "}
+        {c.privacy ? `${c.privacy} ` : null}
         <a href={unlock.privacyHref} target="_blank" rel="noopener">
           {c.privacyLink}
         </a>
-        .
       </p>
     </form>
   );
@@ -651,7 +650,7 @@ function StackViewer({ title, studyHref, shareUrl, slides, pdfHref, labels, unlo
           <ShareIos aria-hidden />
         </button>
       </header>
-      <p className={styles.hint}>{labels.tapHint}</p>
+      {labels.tapHint ? <p className={styles.hint}>{labels.tapHint}</p> : null}
       <ol className={styles.stack}>
         {shown.map((src, i) => (
           <li key={src} id={`slide-${i + 1}`}>

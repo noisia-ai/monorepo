@@ -24,7 +24,8 @@ export const font = "var(--font-google-sans), 'Google Sans', system-ui, sans-ser
 
 // Safe area: the top strip holds the progress segments; in the feed the bottom of the
 // frame sits under the caption overlay, so scenes keep their content above SAFE_BOTTOM.
-export const SAFE = { top: 150, side: 84, bottomFeed: 640, bottomVideo: 360 } as const;
+/** bottomFeed leaves room for the round buttons on a phone (the text lives in the evidence sheet). */
+export const SAFE = { top: 150, side: 84, bottomFeed: 380, bottomVideo: 360 } as const;
 
 export const SCENE_FRAMES: Record<string, number> = {
   hook: 84,

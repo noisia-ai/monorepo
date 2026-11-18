@@ -11,25 +11,25 @@ type Email = { subject: string; html: string; text: string };
 
 const copy = {
   es: {
-    subject: (code: string) => `${code} es tu código para abrir el estudio`,
-    preheader: "Escríbelo en la página del estudio. Vence en 30 minutos.",
+    subject: (code: string) => `${code} es tu código de Noisia`,
+    preheader: "Vence en 30 minutos.",
     hello: (name: string) => `Hola, ${name}.`,
-    intro: "Este es tu código para abrir el estudio",
-    use: "Escríbelo en la página del estudio, o toca el botón y se abre solo.",
+    intro: "Tu código para",
+    use: "",
     button: "Abrir el estudio",
-    expires: "El código vence en 30 minutos. Al abrir el estudio te mandamos tu link personal para volver cuando quieras.",
-    ignore: "Si no pediste este código, ignora este correo.",
+    expires: "Vence en 30 minutos.",
+    ignore: "Si no lo pediste, ignora este correo.",
     footer: "Recibes este correo porque pediste abrir un estudio en noisia.ai."
   },
   en: {
-    subject: (code: string) => `${code} is your code to open the study`,
-    preheader: "Type it on the study page. It expires in 30 minutes.",
+    subject: (code: string) => `${code} is your Noisia code`,
+    preheader: "It expires in 30 minutes.",
     hello: (name: string) => `Hi ${name},`,
-    intro: "Here is your code to open the study",
-    use: "Type it on the study page, or tap the button and it opens on its own.",
+    intro: "Your code for",
+    use: "",
     button: "Open the study",
-    expires: "The code expires in 30 minutes. Once the study opens we send you your personal link to come back any time.",
-    ignore: "If you did not ask for this code, ignore this email.",
+    expires: "It expires in 30 minutes.",
+    ignore: "If you did not ask for it, ignore this email.",
     footer: "You are receiving this email because you asked to open a study on noisia.ai."
   }
 };
@@ -87,7 +87,7 @@ export function studyCodeEmail(lang: "es" | "en", vars: { name: string; title: s
       </table>
     </td></tr>
     <tr><td class="pad" style="padding:20px 40px 0 40px;font-family:${FONT};">
-      ${p(c.use, "0 0 20px 0")}
+      ${c.use ? p(c.use, "0 0 20px 0") : ""}
       <!--[if mso]>
       <v:roundrect xmlns:v="urn:schemas-microsoft-com:vml" xmlns:w="urn:schemas-microsoft-com:office:word" href="${link}" style="height:46px;v-text-anchor:middle;width:210px;" arcsize="50%" stroke="f" fillcolor="#0a0a0a">
         <w:anchorlock/>
@@ -120,7 +120,7 @@ export function studyCodeEmail(lang: "es" | "en", vars: { name: string; title: s
     "",
     vars.code,
     "",
-    c.use,
+    ...(c.use ? [c.use] : []),
     `${c.button}: ${vars.link}`,
     "",
     c.expires,

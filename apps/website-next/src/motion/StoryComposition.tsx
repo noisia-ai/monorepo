@@ -14,6 +14,8 @@ export type StoryCompositionProps = {
   tag: string;
   /** Feed mode keeps the bottom free for the caption overlay; video mode draws the title itself. */
   mode: "feed" | "video";
+  /** Optional image that fills the lower part of the canvas and fades into it at the top. */
+  image?: string;
 };
 
 export function sceneFrames(scene: Scene): number {
@@ -104,13 +106,42 @@ function VideoCaption({ story }: { story: StoryLocale }) {
   );
 }
 
-export function StoryComposition({ story, locale, tag, mode }: StoryCompositionProps) {
+/** The story's image: the lower part of the canvas, fading in from the canvas at its top edge. */
+function StoryImage({ src }: { src: string }) {
+  // Fades in from the canvas at the top and back into its tint at the bottom, so on a screen
+  // taller than 9:16 the image meets the band below the canvas without an edge.
+  const fade = "linear-gradient(180deg, transparent 0%, #000 38%, #000 86%, transparent 100%)";
+  return (
+    // eslint-disable-next-line @next/next/no-img-element
+    <img
+      src={src}
+      alt=""
+      style={{
+        position: "absolute",
+        left: 0,
+        bottom: 0,
+        width: CANVAS.width,
+        height: Math.round(CANVAS.height * IMAGE_SHARE),
+        objectFit: "cover",
+        objectPosition: "center bottom",
+        WebkitMaskImage: fade,
+        maskImage: fade
+      }}
+    />
+  );
+}
+
+/** How much of the canvas height the image takes; the scenes keep the space above it. */
+const IMAGE_SHARE = 0.6;
+
+export function StoryComposition({ story, locale, tag, mode, image }: StoryCompositionProps) {
   const lengths = story.scenes.map(sceneFrames);
-  const bottomSafe = mode === "feed" ? SAFE.bottomFeed : SAFE.bottomVideo;
+  const bottomSafe = image ? Math.round(CANVAS.height * (IMAGE_SHARE - 0.12)) : mode === "feed" ? SAFE.bottomFeed : SAFE.bottomVideo;
   let from = 0;
   return (
     <AbsoluteFill style={{ width: CANVAS.width, height: CANVAS.height }}>
       <Canvas />
+      {image ? <StoryImage src={image} /> : null}
       {story.scenes.map((scene, i) => {
         const start = from;
         from += lengths[i]!;

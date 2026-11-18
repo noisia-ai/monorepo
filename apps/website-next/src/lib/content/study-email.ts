@@ -28,26 +28,26 @@ export type StudyEmailVars = {
 const copy = {
   es: {
     subject: (title: string) => `${title} · tu link personal`,
-    preheader: (slides: number) => `Ya puedes ver las ${slides} láminas. Guarda este correo: tu link funciona un año.`,
+    preheader: () => "Tu link personal al estudio completo.",
     hello: (name: string) => `Hola, ${name}.`,
-    intro: "Ya tienes acceso completo al estudio. Guarda este correo: el botón te regresa a él cuando quieras, desde cualquier dispositivo.",
+    intro: "Ya tienes el estudio completo. Guarda este correo para volver.",
     slides: (n: number) => `${n} láminas`,
     button: "Abrir el estudio completo",
-    note: "Este link es solo tuyo y funciona durante un año. Si el botón no abre, copia esta dirección en tu navegador:",
-    noteText: "Este link es solo tuyo y funciona durante un año.",
-    invite: "¿Te gustaría ver algo así sobre tu marca o tu categoría? Responde a este correo y lo platicamos.",
+    note: "Tu link personal, válido por un año:",
+    noteText: "Tu link personal, válido por un año.",
+    invite: "¿Quieres algo así para tu marca? Responde este correo.",
     footer: "Recibes este correo porque abriste un estudio en noisia.ai."
   },
   en: {
     subject: (title: string) => `${title} · your personal link`,
-    preheader: (slides: number) => `All ${slides} slides are open to you. Keep this email: your link works for a year.`,
+    preheader: () => "Your personal link to the full study.",
     hello: (name: string) => `Hi ${name},`,
-    intro: "You now have full access to the study. Keep this email: the button brings you back to it any time, from any device.",
+    intro: "You have the full study. Keep this email to come back.",
     slides: (n: number) => `${n} slides`,
     button: "Open the full study",
-    note: "This link is yours alone and works for one year. If the button does not open, paste this address into your browser:",
-    noteText: "This link is yours alone and works for one year.",
-    invite: "Would you like to see something like this for your brand or your category? Reply to this email and we can talk.",
+    note: "Your personal link, valid for a year:",
+    noteText: "Your personal link, valid for a year.",
+    invite: "Want this for your brand? Reply to this email.",
     footer: "You are receiving this email because you opened a study on noisia.ai."
   }
 };
@@ -118,7 +118,7 @@ export function studyAccessEmail(lang: "es" | "en", vars: StudyEmailVars): Email
 </style>
 </head>
 <body style="margin:0;padding:0;background:#f4f4f4;">
-<div style="display:none;max-height:0;overflow:hidden;opacity:0;mso-hide:all;font-size:1px;line-height:1px;color:#f4f4f4;">${escapeHtml(c.preheader(vars.slides))}&#8199;&#847;&#8199;&#847;&#8199;&#847;&#8199;&#847;&#8199;&#847;&#8199;&#847;&#8199;&#847;&#8199;&#847;</div>
+<div style="display:none;max-height:0;overflow:hidden;opacity:0;mso-hide:all;font-size:1px;line-height:1px;color:#f4f4f4;">${escapeHtml(c.preheader())}&#8199;&#847;&#8199;&#847;&#8199;&#847;&#8199;&#847;&#8199;&#847;&#8199;&#847;&#8199;&#847;&#8199;&#847;</div>
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#f4f4f4;">
 <tr><td align="center" style="padding:32px 12px;">
   <table role="presentation" class="card" width="600" cellpadding="0" cellspacing="0" border="0" style="width:600px;max-width:600px;background:#ffffff;border:1px solid ${LINE};border-radius:14px;">
