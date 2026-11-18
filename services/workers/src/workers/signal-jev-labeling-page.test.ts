@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import {createHash} from 'node:crypto';
 import test from 'node:test';
 import {llmPriceV1,type FacetInput} from '@noisia/query-engine';
 import type {LabelingRunV1,LabelingCallV1} from '@noisia/db';
@@ -672,4 +673,75 @@ test('selection is released after reserve when the first Mark acknowledgement is
  assert.deepEqual(events.slice(0,3),['reserve','selection_released','mark_ack_lost']);
  assert.equal(events.includes('requeue'),true);assert.equal(sent,0);assert.equal(released,1);
  assert.equal(calls.length,1);assert.equal(calls[0]?.status,'reserved');assert.equal(calls[0]?.results_applied,false);
+});
+
+async function exerciseFeederProposalYield(cancelDuringYield:boolean){
+ type Args=Parameters<typeof processJevLabelingPageV1<FacetInput,string>>[0];
+ const {jevCallWorkingBytesV2}=await import('./signal-jev-streaming-window');
+ const control=new AbortController(),run={id:'proposal-yield',lease_token:'lease',error_code:null,status:'running'}as LabelingRunV1;
+ const initial=Array.from({length:cancelDuringYield?1:1024},(_,index)=>({root_id:`initial-${index}`,text:`initial-${index} `+'x'.repeat(3600)}))as FacetInput[];
+ const future=Array.from({length:4096},(_,index)=>({root_id:`future-${String(index).padStart(4,'0')}`,text:`future-${String(index).padStart(4,'0')}`}))as FacetInput[];
+ const proposal=(input:FacetInput)=>{
+  const request={model:'jev-1.13.0',state:input.text,questions:{q:{type:'noul',instructions:'configured'}}};
+  return{request,request_digest:createHash('sha256').update(JSON.stringify(request)).digest('hex'),custom_id:input.root_id,inputs:[input],reserved_micro_usd:100};
+ };
+ const expected=future.map(proposal),calls:LabelingCallV1<FacetInput>[]=[],marked=new Set<string>(),sent:string[]=[],raw:string[]=[],settled:string[]=[],applied:string[]=[],requeued:string[]=[],memory:number[]=[];
+ let futureProposed=0,sentinelAt:number|undefined,reads=0,futureReserves=0,selectionReleases=0,leaseReleases=0,active=0,peak=0;
+ let sentinel:ReturnType<typeof setImmediate>|undefined;
+ const store={claim:async()=>run,renew:async()=>{},release:async()=>{leaseReleases++;},calls:async()=>calls.filter(call=>!call.results_applied),inputs:async()=>initial,
+  reserve:async(_run:unknown,proposals:ReturnType<typeof proposal>[])=>{
+   if(proposals[0]?.inputs[0]?.root_id.startsWith('future-')){
+    futureReserves++;assert.equal(cancelDuringYield,false,'cancellation during the compiler yield must not reserve this cohort');
+    assert.equal(sentinelAt,64,'the first event-loop sentinel must run after 64 admitted proposals, before reservation');
+    assert.equal(futureProposed,4096);assert.equal(proposals.length,4096);
+    assert.equal(JSON.stringify(proposals),JSON.stringify(expected),'yield preserves every proposal byte, digest and its original order');
+   }
+   const reserved=proposals.map(value=>({...value,id:`call-${value.custom_id}`,status:'reserved',raw_body:null,results_applied:false}))as LabelingCallV1<FacetInput>[];
+   calls.push(...reserved);return reserved;
+  },markSubmittingSelected:async(_run:unknown,select:()=>ReadonlyArray<LabelingCallV1<FacetInput>>)=>{
+   const rows=select();for(const call of rows){assert.ok(!marked.has(call.id));marked.add(call.id);call.status='submitting';}return rows;
+  },requeueUnsent:async(_run:unknown,rows:LabelingCallV1<FacetInput>[])=>{requeued.push(...rows.map(call=>call.id));for(const call of rows)call.status='reserved';},
+  persistRawPage:async(_run:unknown,rows:Array<{call:LabelingCallV1<FacetInput>;raw:string}>)=>{
+   for(const row of rows){assert.ok(sent.includes(row.call.id));assert.ok(!raw.includes(row.call.id));raw.push(row.call.id);row.call.raw_body=row.raw;}
+  },settlePage:async(_run:unknown,rows:Array<{call:LabelingCallV1<FacetInput>}>)=>{
+   for(const row of rows){assert.ok(raw.includes(row.call.id));assert.ok(!settled.includes(row.call.id));settled.push(row.call.id);row.call.status='settled';}
+  },apply:async(_run:unknown,rows:Array<{call:LabelingCallV1<FacetInput>}>)=>{
+   for(const row of rows){assert.ok(settled.includes(row.call.id));assert.ok(!applied.includes(row.call.id));applied.push(row.call.id);row.call.results_applied=true;}
+  },finish:async()=>calls.every(call=>call.results_applied)?'completed':'running',fail:async()=>{throw Error('unexpected failure');},markFailed:async()=>{throw Error('unexpected failure');},
+ }as unknown as Args['store'];
+ const hooks:Args['hooks']={continuous_windows:()=>true,revisit_empty_after_apply:true,price:()=>llmPriceV1('typesafe','jev-1.13.0','sync',.042),
+  propose:(_run,inputs)=>inputs.map(input=>{
+   if(input.root_id.startsWith('future-')){
+    futureProposed++;if(futureProposed===1)sentinel=setImmediate(()=>{sentinel=undefined;sentinelAt=futureProposed;if(cancelDuringYield)control.abort();});
+   }return proposal(input);
+  }),map:(_run,call)=>[call.inputs[0]!.root_id],error:()=>{throw Error('no invented technical result');},labeled:()=>true,fail_on_error:true};
+ const provider:Args['provider']={max_concurrency:cancelDuringYield?1:1024,max_response_bytes:4096,async evaluate(request){
+  const call=calls.find(call=>call.request===request)!;assert.ok(call&&marked.has(call.id),'committed Mark must precede every evaluate');assert.ok(!sent.includes(call.id));
+  sent.push(call.id);active++;peak=Math.max(peak,active);
+  try{return{http_status:200,latency_ms:1,body:JSON.stringify({model:request.model,usage:{input_tokens:1,output_tokens:0},answers:{q:{type:'noul',noul:.8}}})};}
+  finally{active--;}
+ }};
+ const bounds={max_in_flight:1024,window_size:4096,flush_size:1024,max_flushes:2,max_buffered_bytes:512*1024*1024,flush_interval_ms:250};
+ const pending=processJevLabelingPageV1({run_id:run.id,store,provider,hooks,execution:bounds,signal:control.signal,
+  initial_reservation:{max_calls:1024,release_selection:()=>{selectionReleases++;}},observe_stream:metrics=>memory.push(metrics.reserved_working_bytes),
+  read_next_inputs:async(_run,limits)=>{
+   if(reads++>0)return[];
+   assert.equal(limits.max_rows,4096);
+   if(!cancelDuringYield)assert.ok(expected.reduce((sum,value)=>sum+jevCallWorkingBytesV2(value)+8192,0)<=limits.max_working_bytes,'all 4096 exact proposals fit the existing feeder byte budget');
+   return future;
+  }}).then(value=>({value,error:undefined}),error=>({value:undefined,error}));
+ let result:Awaited<typeof pending>;
+ try{result=await pending;}finally{if(sentinel!==undefined)clearImmediate(sentinel);control.abort();await pending;}
+ assert.equal(result.error,undefined);assert.equal(result.value?.status,cancelDuringYield?'stopped':'completed');assert.equal(sentinelAt,64);
+ assert.equal(futureReserves,cancelDuringYield?0:1);assert.equal(futureProposed,cancelDuringYield?64:4096);
+ assert.equal(sent.filter(id=>id.startsWith('call-future-')).length,cancelDuringYield?0:4096);
+ assert.equal(leaseReleases,1);assert.ok(selectionReleases>=2,'initial and feeder selection ownership is released');assert.deepEqual(requeued,[]);
+ assert.ok(peak<=bounds.max_in_flight);assert.ok(memory.every(bytes=>bytes>=0&&bytes<=bounds.max_buffered_bytes));assert.equal(memory.at(-1),0);
+ assert.equal(new Set(sent).size,sent.length);assert.deepEqual([...raw].sort(),[...sent].sort());assert.deepEqual([...settled].sort(),[...raw].sort());assert.deepEqual([...applied].sort(),[...raw].sort());
+}
+test('the 4096-proposal feeder yields before reservation without changing bytes, digests or order',{timeout:15000},async()=>{
+ await exerciseFeederProposalYield(false);
+});
+test('cancellation during a feeder compiler yield reserves and sends none of that cohort',{timeout:5000},async()=>{
+ await exerciseFeederProposalYield(true);
 });

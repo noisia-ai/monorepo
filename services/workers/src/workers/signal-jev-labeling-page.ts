@@ -1,5 +1,6 @@
 import { assertJevStreamingExecutionV2, jevCallWorkingBytesV2, processJevStreamingWindowV2, type JevStreamingExecutionV2, type JevStreamingMetricsV2 } from './signal-jev-streaming-window';
 import { setMaxListeners } from "node:events";
+import { setImmediate as yieldToEventLoop } from "node:timers/promises";
 import { llmCostMicroUsdV1, type FacetInput, type LlmPriceV1, type LlmUsageV1 } from "@noisia/query-engine";
 import type { createSignalLabelingStoreV1, LabelingRunV1, LabelingCallV1, LabelingCallProposalV1 } from "@noisia/db";
 import { validateJevResponseV1, jevProviderErrorV1, type JevProviderV1, type JevRawResponseV1,
@@ -149,6 +150,12 @@ export async function processJevLabelingPageV1<Input extends FacetInput,Result>(
                 const cost=jevCallWorkingBytesV2(proposal)+8192;
                 if(bytes+cost>available||bounded.length>=maxCalls)break outer;
                 bytes+=cost;bounded.push(proposal);
+                // Compile outside the native reservation transaction without
+                // monopolizing the event loop while other HTTP timers run.
+                if(bounded.length%64===0){
+                  await yieldToEventLoop();
+                  if(admissionSignal.aborted||cancellation.signal.aborted)return{closed:true};
+                }
               }
               if(!bounded.length||admissionSignal.aborted||cancellation.signal.aborted)return{closed:true};
               const next=await store.reserve(run,bounded);fedWindows++;
