@@ -50,8 +50,8 @@ export function retainMarkValidationClientV1(database:{connect:unknown},client:{
      if(args.length!==0||borrowed||connectCalls!==0){violation=true;uncertain=true;throw new Error('mark_enr_unexpected_connect');}connectCalls++;borrowed=true;return Promise.resolve(client);
     }});
     Object.defineProperty(client,'release',{...releaseOwn,value:(error?:Error|boolean)=>{releaseRequests++;if(!borrowed||releaseRequests!==1)violation=true;borrowed=false;if(error)uncertain=true;}});
-    running=Promise.resolve().then(body);value=await running;
-    known(connectCalls===1&&releaseRequests===1&&!borrowed&&!violation&&!uncertain,'mark_enr_pin_incomplete');
+    const execution:Promise<T>=Promise.resolve().then(body);running=execution;value=await execution;
+    const completed=snapshot();known(completed.connect_calls===1&&completed.release_requests===1&&!borrowed&&!violation&&!uncertain,'mark_enr_pin_incomplete');
    }catch(error){uncertain=true;failed=true;primary=error;}
    try{restore();}catch(cleanup){uncertain=true;active=false;if(failed)throw new AggregateError([primary,cleanup],'mark_enr_pin_body_and_restore_failed',{cause:primary});throw cleanup;}
    active=false;if(failed)throw primary;return value as T;
