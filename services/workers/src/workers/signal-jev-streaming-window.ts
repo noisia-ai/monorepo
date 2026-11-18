@@ -185,7 +185,13 @@ export async function processJevStreamingWindowV2<I extends FacetInput, R>(args:
     if(emptyAtEpoch!==undefined&&durableEpoch===emptyAtEpoch)return;
     // Do not read another full input page while paid responses own all memory.
     const free=e.max_buffered_bytes-memory;if(free<8192+reservationBytes)return;
-    const available=Math.min(free,Math.max(e.window_size*16384,initialMetadata*2));
+    // Future input copies cannot take the response allowance of calls already
+    // ready for Mark. This is scheduling headroom, not another memory charge;
+    // the fresh native selection still owns the actual response reservation.
+    const readySlots=Math.min(reserved.length,Math.max(0,workers-inFlight),Math.floor(free/reservationBytes));
+    const headroom=readySlots*reservationBytes;
+    const available=Math.min(free-headroom,Math.max(e.window_size*16384,initialMetadata*2));
+    if(readySlots&&available<8192)return;
     // Hold the input/serialization budget while SQL is pending. HTTP/flushes
     // share the same counter and cannot consume bytes promised to this page.
     memory+=available;observe();let retained=0;

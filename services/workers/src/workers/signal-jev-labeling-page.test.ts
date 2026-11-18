@@ -337,7 +337,7 @@ async function exerciseAdmissionWake(mode:'http'|'apply'|'cancel'|'feed_failure'
    assert.ok(sent.includes('2'),'the old reserved remainder must reach HTTP without waiting for future read');
   }else if(mode==='mark_failure'){
    assert.ok(observedBeforeFeed,'Mark failure must be reached without waiting on the unrelated read');assert.equal(sent.includes('2'),false,'failed Mark cannot hand off HTTP');
-  }else{assert.equal(observedBeforeFeed,false);assert.equal(sent.includes('2'),false,'no premature handoff');if(mode==='feed_memory_only')assert.equal(sent.length,0,'the pending read is the only owner that can release the needed bytes');}
+  }else{assert.equal(observedBeforeFeed,false);assert.equal(sent.includes('2'),false,'no premature handoff');if(mode==='feed_memory_only')assert.equal(sent.length,1,'future input custody must leave response headroom for the already reserved call');}
   assert.equal(feedReleased,false);assert.equal(drainedBeforeFeed,false,'drain must still wait for the owned pending feed');
  }finally{
   feedReleased=true;events.push('release:feed');feedGate.resolve();firstResponse.resolve();secondResponse.resolve();applyGate.resolve();await pending;
@@ -361,8 +361,70 @@ test('reserved admission wake requeues a failed Mark handoff once without sendin
  const x=await exerciseAdmissionWake('mark_failure');assert.equal(x.result.error?.message,'mark_ack_lost');assert.equal(x.sent.length,2);assert.deepEqual(x.requeued,['wake-2']);assert.equal(x.rows[2]!.status,'reserved');assert.equal(x.rows[2]!.results_applied,false);
 });
 
-test('reserved admission wake waits safely when feeding alone owns the missing response budget',async()=>{
+test('reserved admission wake keeps ready response headroom while the future read remains pending',async()=>{
  const x=await exerciseAdmissionWake('feed_memory_only');assert.equal(x.result.error,undefined);assert.equal(x.result.value?.status,'completed');assert.equal(x.sent.length,1);assert.equal(x.result.value?.labeled,1);assert.deepEqual(x.requeued,[]);assert.equal(x.memory.at(-1),0);
+});
+
+test('a later ready cohort reaches committed handoff without releasing the next feeder',{timeout:5000},async()=>{
+ const {processJevStreamingWindowV2,jevCallWorkingBytesV2}=await import('./signal-jev-streaming-window');
+ type Store=Parameters<typeof processJevStreamingWindowV2<FacetInput,string>>[0]['store'];
+ for(const futureCount of [1,2]){
+  const make=(index:number)=>({id:`headroom-${index}`,request_digest:`headroom-${index}`,status:'reserved',raw_body:null,results_applied:false,
+   request:{model:'jev-1.13.0',state:String(index),questions:{q:{type:'noul',instructions:'configured'}}},
+   inputs:[{root_id:String(index),text:String(index)}]})as unknown as LabelingCallV1<FacetInput>;
+  const initial=make(0),future=Array.from({length:futureCount},(_,index)=>make(index+1)),all=[initial,...future];
+  const initialApplied=deferredFrontier(),secondFeedStarted=deferredFrontier(),secondFeedGate=deferredFrontier(),
+   futureResponses=deferredFrontier(),allFutureStarted=deferredFrontier();
+  const responseBytes=4096*24+64*1024;
+  // One case leaves enough input room to overlap the feeder with Mark; the
+  // other leaves <8192 bytes after two ready response allowances and defers it.
+  const budget=futureCount===1?210000:all.reduce((sum,call)=>sum+jevCallWorkingBytesV2(call),0)+2*responseBytes+4096;
+  const events:string[]=[],memory:number[]=[],sent:string[]=[],raw:string[]=[],settled:string[]=[],applied:string[]=[],requeued:string[]=[];
+  let feeds=0,active=0,peak=0,feedReleased=false;
+  const store={markSubmittingSelected:async(_run:unknown,select:()=>ReadonlyArray<LabelingCallV1<FacetInput>>)=>{
+    const rows=select();for(const call of rows){call.status='submitting';events.push(`commit:${call.id}`);}return rows;
+   },persistRawPage:async(_run:unknown,rows:Array<{call:LabelingCallV1<FacetInput>;raw:string}>)=>{
+    for(const row of rows){assert.ok(sent.includes(row.call.id));assert.ok(!raw.includes(row.call.id));row.call.raw_body=row.raw;raw.push(row.call.id);}
+   },settlePage:async(_run:unknown,rows:Array<{call:LabelingCallV1<FacetInput>}>)=>{
+    for(const row of rows){assert.ok(raw.includes(row.call.id));assert.ok(!settled.includes(row.call.id));settled.push(row.call.id);row.call.status='settled';}
+   },apply:async(_run:unknown,rows:Array<{call:LabelingCallV1<FacetInput>}>)=>{
+    for(const row of rows){assert.ok(settled.includes(row.call.id));assert.ok(!applied.includes(row.call.id));applied.push(row.call.id);row.call.results_applied=true;
+     if(row.call===initial)initialApplied.resolve();}
+   },finish:async()=>all.every(call=>call.results_applied)?'completed':'running',
+   requeueUnsent:async(_run:unknown,rows:Array<LabelingCallV1<FacetInput>>)=>{requeued.push(...rows.map(call=>call.id));},
+   markFailed:async()=>{throw Error('unexpected persistence failure');},
+  }as unknown as Store;
+  const pending=processJevStreamingWindowV2({run:{}as LabelingRunV1,calls:[initial],store,cancellation:new AbortController(),
+   execution:{max_in_flight:futureCount,window_size:3,flush_size:1,max_flushes:2,max_buffered_bytes:budget,flush_interval_ms:60000},
+   defer_initial_prefetch_until_handoff:true,revisit_empty_after_apply:true,
+   feed_next:async()=>{
+    feeds++;if(feeds===1){await initialApplied.promise;return future;}
+    assert.equal(feeds,2,'one pending future feeder');events.push('feed:2:start');secondFeedStarted.resolve();await secondFeedGate.promise;return{closed:true};
+   },observe_stream:metrics=>memory.push(metrics.reserved_working_bytes),
+   provider:{max_concurrency:futureCount,max_response_bytes:4096,async evaluate(request){
+    const call=all.find(call=>String(request.state)===String(call.request.state))!;
+    assert.ok(events.includes(`commit:${call.id}`),'native Mark ACK precedes every evaluate');assert.ok(!sent.includes(call.id));
+    sent.push(call.id);events.push(`evaluate:${call.id}`);active++;peak=Math.max(peak,active);
+    try{if(call!==initial){if(future.every(row=>sent.includes(row.id)))allFutureStarted.resolve();await futureResponses.promise;}
+     return{http_status:200,latency_ms:1,body:JSON.stringify({model:request.model,usage:{input_tokens:1,output_tokens:0},answers:{q:{type:'noul',noul:.8}}})};
+    }finally{active--;}
+   }},price:llmPriceV1('typesafe','jev-1.13.0','sync',.042),hooks:{map:(_run,call)=>[call.id],error:()=>{throw Error('no invented technical result');},labeled:()=>true,fail_on_error:true},
+  }).then(value=>({value,error:undefined}),error=>({value:undefined,error}));
+  try{
+   await Promise.race([secondFeedStarted.promise,allFutureStarted.promise,pending]);
+   await new Promise<void>(resolve=>setImmediate(resolve));
+   assert.equal(feedReleased,false);assert.ok(initial.results_applied,'this is a later frontier, not the initial handoff');
+   assert.ok(future.every(call=>sent.includes(call.id)),'all ready calls must reach committed handoff while the next feeder is still pending');
+   if(futureCount===1)assert.ok(events.includes('feed:2:start'),'a smaller concurrent input budget still permits prefetch');
+   else assert.ok(!events.includes('feed:2:start'),'insufficient remaining input headroom defers prefetch rather than starving the ready cohort');
+  }finally{
+   initialApplied.resolve();futureResponses.resolve();feedReleased=true;events.push('feed:2:release');secondFeedGate.resolve();await pending;
+  }
+  const result=await pending;assert.equal(result.error,undefined);assert.equal(result.value?.status,'completed');assert.equal(result.value?.labeled,all.length);
+  assert.equal(feeds,2);assert.ok(peak<=futureCount);assert.ok(memory.every(bytes=>bytes>=0&&bytes<=budget));assert.equal(memory.at(-1),0);
+  assert.deepEqual([...sent].sort(),all.map(call=>call.id).sort());assert.deepEqual([...raw].sort(),[...sent].sort());
+  assert.deepEqual([...settled].sort(),[...raw].sort());assert.deepEqual([...applied].sort(),[...raw].sort());assert.deepEqual(requeued,[]);
+ }
 });
 
 /** While the second native authority fence waits, one paid sibling completes
