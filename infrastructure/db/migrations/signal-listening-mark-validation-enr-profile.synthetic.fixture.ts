@@ -66,6 +66,29 @@ export function markValidationSafeFailureV1(error:unknown):Error{
  const tree=startupErrorTreeV1(error),cause=Buffer.byteLength(JSON.stringify(tree))<=24576?tree:{truncated:true,root:{omitted:'safe_error_tree_over_limit'}};
  return new Error('mark_validation_enr_diagnostic_failed_see_safe_evidence',{cause});
 }
+const observationStages=['source_binding','fixture_setup','consumer_reserve','catalog_before','probe_install','probe_catalog','zero_target_control','native_mark','post_commit_state','capture_read','capture_identity','catalog_names','sanitizer','enr_scans','probe_summary','probe_cleanup','catalog_restore','requeue','requeue_state','client_release','lease_release','factory_cleanup','source_after','complete'] as const;
+type MarkValidationObservationStageV1=typeof observationStages[number];
+export function createMarkValidationObservationV1(){
+ let stage:MarkValidationObservationStageV1='source_binding',failure:MarkValidationObservationStageV1|null=null;
+ return{enter(next:MarkValidationObservationStageV1){known(observationStages.includes(next),'mark_enr_observation_stage');stage=next;},fail(){failure??=stage;},snapshot(){return{observation_stage:stage,failure_stage:failure};}};
+}
+/** Classify only the root JIT Generation shape; never read getters or emit values. */
+export function markValidationRootGenerationKindV1(plan:unknown):'missing'|'number'|'object'|'other'|'unsafe'{
+ try{
+  if(!Array.isArray(plan)||Object.getPrototypeOf(plan)!==Array.prototype)return'unsafe';
+  let value:unknown=plan;
+  for(const key of ['0','JIT','Timing','Generation']){
+   if(value===null||typeof value!=='object')return'other';
+   const prototype=Object.getPrototypeOf(value);if(prototype!==Object.prototype&&prototype!==Array.prototype&&prototype!==null)return'unsafe';
+   const field=Object.getOwnPropertyDescriptor(value,key);if(!field)return'missing';if(!('value'in field))return'unsafe';value=field.value;
+  }
+  if(typeof value==='number')return'number';
+  if(value!==null&&typeof value==='object'&&!Array.isArray(value)){
+   const prototype=Object.getPrototypeOf(value);return prototype===Object.prototype||prototype===null?'object':'unsafe';
+  }
+  return'other';
+ }catch{return'unsafe';}
+}
 function probeFunctionSql(extracted:ReturnType<typeof extractMarkValidationEnrSourceV1>){
  return `CREATE FUNCTION public.${functionName}() RETURNS trigger LANGUAGE plpgsql VOLATILE SET search_path=public,extensions,pg_temp AS $r16_probe$
 DECLARE targets uuid[];target uuid;r signal_labeling_runs;owner signal_listening_runs;c signal_listening_configurations;
@@ -154,7 +177,9 @@ export async function runMarkValidationEnrProfileV1(directory:string):Promise<Ma
  const report:MarkValidationEnrReceiptV1={contract:'r16-listening-mark-validation-enr-v1',status:'failed',diagnostic_only:true,h1_accepted:false,cpu:'UNKNOWN',speedup_claim:false,gates:Object.fromEntries(gateNames.map(n=>[n,false])) as MarkValidationEnrReceiptV1['gates'],synthetic_native_mark_executed:false,actual_full_workload_cohort:false,assert_raw_ready_original_preserved:false,provider_http_calls:0,safe_failure_code_tree:null,function_counters:'UNKNOWN_not_collected',
  unknowns:['Probe is a separate pre-guard reexecution and warms the original','Original guard snapshot is UNOBSERVABLE; no same-snapshot claim','EXPLAIN does not return either validation flag values','All instrumented time is elapsed, not CPU or original Mark/FULL attribution','No throughput, H1, causal subtraction, speedup or optimization acceptance'],bounds:{setup_ms:1800000,mark_read_ms:120000,total_ms:1920000,job_minutes:40,plan_nodes:512,plan_depth:32,plan_bytes:1048576,json_bytes:2097152}};
  let own:{name:string;oid:string}|null=null,absence:'UNKNOWN'|true='UNKNOWN',normal=false,failed=false,primary:unknown,rootHash='',runBinding:{workspace:string;id:string}|undefined;
- let boundSource:Awaited<ReturnType<typeof sourceWitness>>|undefined;
+ let boundSource:Awaited<ReturnType<typeof sourceWitness>>|undefined,markReadStarted:number|undefined;
+ const observation=createMarkValidationObservationV1();
+ const observeFailure=()=>{observation.fail();if(markReadStarted!==undefined&&report.mark_read_ms===undefined)report.mark_read_ms=clock()-markReadStarted;};
  try{
   const beforeSource=await sourceWitness(),source=await readFile(new URL('./0331_signal_listening_statement_payload.sql',import.meta.url),'utf8'),extracted=extractMarkValidationEnrSourceV1(source);
   boundSource=beforeSource;report.source_before=beforeSource;report.source0331_sha256=extracted.source_sha256;
@@ -162,13 +187,13 @@ export async function runMarkValidationEnrProfileV1(directory:string):Promise<Ma
   known(methodStart>=0&&methodEnd>methodStart&&method.indexOf('await options.assertRawReady?.();')>=0&&method.indexOf('await options.assertRawReady?.();')<method.indexOf('const c=await db.connect()'),'mark_enr_original_raw_ready_source');
   const update="UPDATE signal_labeling_calls SET status='submitting',updated_at=now() WHERE run_id=$1 AND id=ANY($2::uuid[]) AND status='reserved' RETURNING id";
   known(method.includes('`'+update+'`'),'mark_enr_original_update_source');report.node_store_source_sha256=sha(storeSource);report.original_update_sha256=sha(update);
-  await closeStartupFactoryV1(callback,async()=>{
+  observation.enter('fixture_setup');await closeStartupFactoryV1(callback,async()=>{
    await withFlatPrefixFullFixtureV1({
     bounded:{
      async callback(database,body){await captureStartupCallbackV1(callback,async()=>{
       const row=(await database.query('SELECT current_database() name,(SELECT oid::text FROM pg_database WHERE datname=current_database()) oid')).rows[0];
       known(/^noisia_mfp_recovery_[a-f0-9]{32}$/u.test(row.name)&&/^\d+$/u.test(row.oid),'mark_enr_owned_database');own={name:row.name,oid:row.oid};await body();
-      known(runBinding,'mark_enr_missing_run_binding');const released=(await database.query('SELECT status,lease_token IS NULL AND lease_until IS NULL released FROM signal_labeling_runs WHERE workspace_id=$1 AND id=$2',[runBinding.workspace,runBinding.id])).rows[0];known(released?.status==='running'&&released.released===true,'mark_enr_lease_release_unconfirmed');report.lease_release_confirmed=true;
+      observation.enter('lease_release');known(runBinding,'mark_enr_missing_run_binding');const released=(await database.query('SELECT status,lease_token IS NULL AND lease_until IS NULL released FROM signal_labeling_runs WHERE workspace_id=$1 AND id=$2',[runBinding.workspace,runBinding.id])).rows[0];known(released?.status==='running'&&released.released===true,'mark_enr_lease_release_unconfirmed');report.lease_release_confirmed=true;observation.enter('factory_cleanup');
      });},
      roster(roots){known(roots.length===1000,'mark_enr_base_roster');rootHash=boundedPopulationRootSetHashV1(roots);},
      async state(){throw new Error('mark_enr_unexpected_readonly_state');}
@@ -181,64 +206,65 @@ export async function runMarkValidationEnrProfileV1(directory:string):Promise<Ma
      const raw=await f.database.connect();let pin:ReturnType<typeof retainMarkValidationClientV1>|undefined,released=false;
      try{
       pin=retainMarkValidationClientV1(f.database,raw);
-      const baseState=await ledgerState(raw,f,roots,false);report.base_state=baseState;
+      observation.enter('consumer_reserve');const baseState=await ledgerState(raw,f,roots,false);report.base_state=baseState;
       const inputs=await f.store.inputs(f.run,{max_rows:1000,max_working_bytes:512*1024*1024,on_oversize:'error'});
       const expectedKeys=f.configuration.questions.filter(q=>q.scope==='consumer_category').map(q=>q.key).sort();
       known(inputs.length===1000&&expectedKeys.length===2&&boundedPopulationRootSetHashV1(inputs.map(i=>i.root_id))===rootHash&&inputs.every(i=>JSON.stringify([...i.question_keys].sort())===JSON.stringify(expectedKeys)&&Object.keys(i.scope_basis).length===2),'mark_enr_native_consumer_inputs');
       const calls=await f.store.reserve(f.run,sharedWireProposalsV1({...f,inputs},500));known(calls.length===1000&&calls.every(c=>c.status==='reserved')&&new Set(calls.map(c=>c.id)).size===1000,'mark_enr_native_reservations');
       const ids=calls.map(c=>c.id),pre=await cohortStamp(raw,f,ids),preLedger=await ledgerState(raw,f,roots,true);same(pre.statuses,{reserved:1000},'mark_enr_pre_status');known(pre.root_set_sha256===rootHash&&preLedger.base_answers_sha256===baseState.base_answers_sha256,'mark_enr_reserve_changed_base');
-      report.setup_ms=clock();known(Number(report.setup_ms)<=1800000,'mark_enr_setup_soft_cap');const markStart=clock();
-      const defaultBefore=await defaultCatalog(raw),triggersBefore=await triggerCatalog(raw);report.catalog_before_sha256=sha(JSON.stringify({defaults:defaultBefore,triggers:triggersBefore}));
+      report.setup_ms=clock();known(Number(report.setup_ms)<=1800000,'mark_enr_setup_soft_cap');const markStart=clock();markReadStarted=markStart;
+      observation.enter('catalog_before');const defaultBefore=await defaultCatalog(raw),triggersBefore=await triggerCatalog(raw);report.catalog_before_sha256=sha(JSON.stringify({defaults:defaultBefore,triggers:triggersBefore}));
       known(!triggersBefore.some(t=>t.tgname===triggerName)&&(await raw.query('SELECT count(*)::int n FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname=\'public\' AND p.proname=$1',[functionName])).rows[0].n===0,'mark_enr_probe_name_collision');
       known((await raw.query('SELECT count(*)::int n FROM pg_class WHERE relnamespace=pg_my_temp_schema() AND relname=$1',[captureName])).rows[0].n===0,'mark_enr_capture_collision');
       known(triggersBefore.length>0&&triggersBefore.every(t=>t.tgenabled==='O'),'mark_enr_original_trigger_enablement');
       const originalStatements=triggersBefore.filter(t=>t.tgtype===16&&t.tgenabled==='O').map(t=>t.tgname);same(originalStatements,['listening_statement_money_update','mass_labeling_scoped_update_total'],'mark_enr_original_statement_order');
-      const ddl=probeFunctionSql(extracted);await raw.query(captureSql);await raw.query(ddl);await raw.query(`REVOKE ALL ON FUNCTION public.${functionName}() FROM PUBLIC`);await raw.query(triggerSql);
-      const installed=await triggerCatalog(raw),probe=installed.filter(t=>t.tgname===triggerName);same(installed.filter(t=>t.tgname!==triggerName),triggersBefore,'mark_enr_original_triggers_changed');same(await defaultCatalog(raw),defaultBefore,'mark_enr_original_functions_changed');report.gates.original_catalog_unchanged_on_install=true;
+      observation.enter('probe_install');const ddl=probeFunctionSql(extracted);await raw.query(captureSql);await raw.query(ddl);await raw.query(`REVOKE ALL ON FUNCTION public.${functionName}() FROM PUBLIC`);await raw.query(triggerSql);
+      observation.enter('probe_catalog');const installed=await triggerCatalog(raw),probe=installed.filter(t=>t.tgname===triggerName);same(installed.filter(t=>t.tgname!==triggerName),triggersBefore,'mark_enr_original_triggers_changed');same(await defaultCatalog(raw),defaultBefore,'mark_enr_original_functions_changed');report.gates.original_catalog_unchanged_on_install=true;
       known(probe.length===1&&probe[0].tgtype===16&&probe[0].tgenabled==='O'&&probe[0].tgconstraint==='0'&&!probe[0].tgdeferrable&&!probe[0].tginitdeferred&&probe[0].tgattr===''&&probe[0].tgoldtable==='listening_old_calls'&&probe[0].tgnewtable==='listening_new_calls'&&!probe[0].prosecdef&&probe[0].provolatile==='v'&&JSON.stringify(probe[0].proconfig)===JSON.stringify(['search_path=public, extensions, pg_temp']),'mark_enr_probe_attributes');
       const privateFn=(await raw.query(`SELECT p.prosrc,p.proowner=(SELECT oid FROM pg_roles WHERE rolname=current_user) owner_ci,
        (SELECT bool_and(a.grantee=p.proowner AND a.grantor=p.proowner AND a.privilege_type='EXECUTE' AND NOT a.is_grantable) FROM aclexplode(p.proacl) a) private_acl
        FROM pg_proc p WHERE p.oid=$1::oid`,[probe[0].tgfoid])).rows[0];
       known(privateFn.owner_ci===true&&privateFn.private_acl===true&&privateFn.prosrc===ddl.split('AS $r16_probe$')[1]!.split('$r16_probe$')[0],'mark_enr_probe_function_identity');
       same(installed.filter(t=>t.tgtype===16&&t.tgenabled==='O').map(t=>t.tgname),[triggerName,...originalStatements],'mark_enr_probe_order');report.catalog_installed_sha256=sha(JSON.stringify(installed));report.gates.probe_catalog_order=true;
-      await raw.query('UPDATE public.signal_labeling_calls SET updated_at=updated_at WHERE false');known((await raw.query(`SELECT count(*)::int n FROM pg_temp.${captureName}`)).rows[0].n===0,'mark_enr_zero_target_captured');report.gates.zero_target_control=true;
+      observation.enter('zero_target_control');await raw.query('UPDATE public.signal_labeling_calls SET updated_at=updated_at WHERE false');known((await raw.query(`SELECT count(*)::int n FROM pg_temp.${captureName}`)).rows[0].n===0,'mark_enr_zero_target_captured');report.gates.zero_target_control=true;
       const sessionBefore=(await raw.query("SELECT pg_backend_pid()::text backend,current_setting('session_replication_role') replication_role,current_setting('jit') jit,current_setting('jit_above_cost') jit_above_cost,current_setting('jit_inline_above_cost') jit_inline_above_cost,current_setting('jit_optimize_above_cost') jit_optimize_above_cost")).rows[0],backend=sessionBefore.backend;
       known(sessionBefore.replication_role==='origin'&&['on','off'].includes(sessionBefore.jit)&&['jit_above_cost','jit_inline_above_cost','jit_optimize_above_cost'].every(k=>/^-?\d+(?:\.\d+)?$/u.test(sessionBefore[k])),'mark_enr_session_settings');await f.store.renew(f.run);
       known(typeof f.store.markSubmittingSelected==='function','mark_enr_native_mark_missing');let selected=0;
-      const returned=await pin.run(()=>f.store.markSubmittingSelected!(f.run,()=>{selected++;known(selected===1,'mark_enr_selector_replayed');return calls;}));
+      observation.enter('native_mark');const returned=await pin.run(()=>f.store.markSubmittingSelected!(f.run,()=>{selected++;known(selected===1,'mark_enr_selector_replayed');return calls;}));
       report.gates.original_guard_commit_ack=true;report.synthetic_native_mark_executed=true;report.assert_raw_ready_original_preserved=true;report.pool_connect_borrow_count=pin.snapshot().connect_calls;
       known(selected===1&&returned.length===calls.length&&returned.every((c,i)=>c===calls[i]&&c.status==='reserved'),'mark_enr_selector_return');report.gates.selector_once=true;report.selector_return_statuses={reserved:returned.length};
-      const sessionAfter=(await raw.query("SELECT pg_backend_pid()::text backend,current_setting('session_replication_role') replication_role,current_setting('jit') jit,current_setting('jit_above_cost') jit_above_cost,current_setting('jit_inline_above_cost') jit_inline_above_cost,current_setting('jit_optimize_above_cost') jit_optimize_above_cost")).rows[0];same(sessionAfter,sessionBefore,'mark_enr_backend_or_settings_changed');report.gates.same_client_pin=true;
+      observation.enter('post_commit_state');const sessionAfter=(await raw.query("SELECT pg_backend_pid()::text backend,current_setting('session_replication_role') replication_role,current_setting('jit') jit,current_setting('jit_above_cost') jit_above_cost,current_setting('jit_inline_above_cost') jit_inline_above_cost,current_setting('jit_optimize_above_cost') jit_optimize_above_cost")).rows[0];same(sessionAfter,sessionBefore,'mark_enr_backend_or_settings_changed');report.gates.same_client_pin=true;
       const post=await cohortStamp(raw,f,ids),postLedger=await ledgerState(raw,f,roots,true);const {statuses:preStatus,...preIdentity}=pre,{statuses:postStatus,...postIdentity}=post;same(postIdentity,preIdentity,'mark_enr_transition_identity');same(postStatus,{submitting:1000},'mark_enr_post_status');same(postLedger,preLedger,'mark_enr_post_ledger');report.gates.cohort_transition_exact=true;report.gates.post_commit_state_exact=true;report.post_commit_status_counts=postStatus;
-      const capture=(await raw.query(`SELECT target,old_count,new_count,batch_count,root_count,query_sha256,plan_json,backend::text,transaction_id,statement_at,probe_snapshot FROM pg_temp.${captureName}`)).rows;
-      known(capture.length===1&&capture[0].target===f.run.id&&capture[0].old_count===1000&&capture[0].new_count===1000&&capture[0].batch_count===1000&&capture[0].root_count===1000&&capture[0].query_sha256===extracted.query_sha256&&capture[0].backend===backend,'mark_enr_capture_identity');
-      const identifiers=new Set([...source.matchAll(/\b(?:FROM|JOIN)\s+([a-z_][a-z0-9_]*)/gu),...source.matchAll(/\b([a-z_][a-z0-9_]*) AS(?: MATERIALIZED)?\(/gu),...source.matchAll(/\b([a-z_][a-z0-9_]*)\(/gu)].map(m=>m[1]!));
+      observation.enter('capture_read');const capture=(await raw.query(`SELECT target,old_count,new_count,batch_count,root_count,query_sha256,plan_json,backend::text,transaction_id,statement_at,probe_snapshot FROM pg_temp.${captureName}`)).rows;
+      report.capture_context={capture_count:capture.length,expected_query_sha256:extracted.query_sha256,root_jit_generation_kind:capture.length===1?markValidationRootGenerationKindV1(capture[0].plan_json):'missing'};
+      observation.enter('capture_identity');known(capture.length===1&&capture[0].target===f.run.id&&capture[0].old_count===1000&&capture[0].new_count===1000&&capture[0].batch_count===1000&&capture[0].root_count===1000&&capture[0].query_sha256===extracted.query_sha256&&capture[0].backend===backend,'mark_enr_capture_identity');
+      observation.enter('catalog_names');const identifiers=new Set([...source.matchAll(/\b(?:FROM|JOIN)\s+([a-z_][a-z0-9_]*)/gu),...source.matchAll(/\b([a-z_][a-z0-9_]*) AS(?: MATERIALIZED)?\(/gu),...source.matchAll(/\b([a-z_][a-z0-9_]*)\(/gu)].map(m=>m[1]!));
       const catalogNames=(await raw.query(`SELECT c.relname name FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND
        (c.relname=ANY($1::text[]) OR c.oid IN(SELECT i.indexrelid FROM pg_index i JOIN pg_class t ON t.oid=i.indrelid WHERE t.relname=ANY($1::text[]) AND t.relnamespace=n.oid))`,[[...identifiers]])).rows;for(const r of catalogNames)identifiers.add(r.name);
-      const sanitized=sanitizeBoundedPopulationPlanV1(capture[0].plan_json,identifiers),enrCounts=new Map<string,number>(),enrScans:Array<Record<string,unknown>>=[];
-      const visit=(node:Record<string,unknown>)=>{if(node['Node Type']==='Named Tuplestore Scan'){const name=node['Tuplestore Name'] as string;known(name==='listening_old_calls'||name==='listening_new_calls','mark_enr_scan_name');enrCounts.set(name,(enrCounts.get(name)??0)+1);enrScans.push({name,actual_rows:node['Actual Rows']??'UNKNOWN',actual_loops:node['Actual Loops']??'UNKNOWN',execution:node['Actual Loops']===0?'not_executed':typeof node['Actual Loops']==='number'?'observed':'UNKNOWN'});}for(const child of(node.Plans as Record<string,unknown>[]|undefined)??[])visit(child);};visit(sanitized.plan.Plan as Record<string,unknown>);
+      observation.enter('sanitizer');const sanitized=sanitizeBoundedPopulationPlanV1(capture[0].plan_json,identifiers),enrCounts=new Map<string,number>(),enrScans:Array<Record<string,unknown>>=[];
+      observation.enter('enr_scans');const visit=(node:Record<string,unknown>)=>{if(node['Node Type']==='Named Tuplestore Scan'){const name=node['Tuplestore Name'] as string;known(name==='listening_old_calls'||name==='listening_new_calls','mark_enr_scan_name');enrCounts.set(name,(enrCounts.get(name)??0)+1);enrScans.push({name,actual_rows:node['Actual Rows']??'UNKNOWN',actual_loops:node['Actual Loops']??'UNKNOWN',execution:node['Actual Loops']===0?'not_executed':typeof node['Actual Loops']==='number'?'observed':'UNKNOWN'});}for(const child of(node.Plans as Record<string,unknown>[]|undefined)??[])visit(child);};visit(sanitized.plan.Plan as Record<string,unknown>);
       known(enrCounts.size===2&&enrCounts.get('listening_old_calls')===1&&enrCounts.get('listening_new_calls')===1,'mark_enr_scans_not_exact');report.gates.enr_scans_exact=true;report.gates.probe_plan_once=true;
-      report.probe={target_count:1,batch_transition_count:1000,old_count:1000,new_count:1000,root_count:1000,old_status:'reserved',new_status:'submitting',explain_count:1,plain_warmups:0,enr_node_type:'Named Tuplestore Scan',enr_names_exactly_once:['listening_old_calls','listening_new_calls'],enr_scans:enrScans,query_sha256:extracted.query_sha256,...sanitized,backend_sha256:sha(backend),transaction_id_sha256:sha(capture[0].transaction_id),probe_snapshot_sha256:sha(capture[0].probe_snapshot),original_guard_snapshot:'UNOBSERVABLE',settings:{jit:sessionBefore.jit,jit_above_cost:sessionBefore.jit_above_cost,jit_inline_above_cost:sessionBefore.jit_inline_above_cost,jit_optimize_above_cost:sessionBefore.jit_optimize_above_cost,session_replication_role:'origin'}};
-      await raw.query(`DROP TRIGGER ${triggerName} ON public.signal_labeling_calls`);await raw.query(`DROP FUNCTION public.${functionName}()`);await raw.query(`DROP TABLE pg_temp.${captureName}`);
-      const restored=await triggerCatalog(raw),defaultsAfter=await defaultCatalog(raw);same(restored,triggersBefore,'mark_enr_triggers_not_restored');same(defaultsAfter,defaultBefore,'mark_enr_functions_not_restored');
+      observation.enter('probe_summary');report.probe={target_count:1,batch_transition_count:1000,old_count:1000,new_count:1000,root_count:1000,old_status:'reserved',new_status:'submitting',explain_count:1,plain_warmups:0,enr_node_type:'Named Tuplestore Scan',enr_names_exactly_once:['listening_old_calls','listening_new_calls'],enr_scans:enrScans,query_sha256:extracted.query_sha256,...sanitized,backend_sha256:sha(backend),transaction_id_sha256:sha(capture[0].transaction_id),probe_snapshot_sha256:sha(capture[0].probe_snapshot),original_guard_snapshot:'UNOBSERVABLE',settings:{jit:sessionBefore.jit,jit_above_cost:sessionBefore.jit_above_cost,jit_inline_above_cost:sessionBefore.jit_inline_above_cost,jit_optimize_above_cost:sessionBefore.jit_optimize_above_cost,session_replication_role:'origin'}};
+      observation.enter('probe_cleanup');await raw.query(`DROP TRIGGER ${triggerName} ON public.signal_labeling_calls`);await raw.query(`DROP FUNCTION public.${functionName}()`);await raw.query(`DROP TABLE pg_temp.${captureName}`);
+      observation.enter('catalog_restore');const restored=await triggerCatalog(raw),defaultsAfter=await defaultCatalog(raw);same(restored,triggersBefore,'mark_enr_triggers_not_restored');same(defaultsAfter,defaultBefore,'mark_enr_functions_not_restored');
       known((await raw.query('SELECT count(*)::int n FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname=\'public\' AND p.proname=$1',[functionName])).rows[0].n===0,'mark_enr_function_not_removed');report.catalog_after_restore_sha256=sha(JSON.stringify({defaults:defaultsAfter,triggers:restored}));same(report.catalog_after_restore_sha256,report.catalog_before_sha256,'mark_enr_catalogue_restore_hash');report.gates.catalog_restored=true;
-      await f.store.renew(f.run);await f.store.requeueUnsent!(f.run,calls);const requeued=await cohortStamp(raw,f,ids);same(requeued.statuses,{reserved:1000},'mark_enr_requeue_status');const {statuses:requeueStatus,...requeueIdentity}=requeued;same(requeueIdentity,preIdentity,'mark_enr_requeue_identity');same(await ledgerState(raw,f,roots,true),preLedger,'mark_enr_requeue_exposure');report.gates.requeue_open_exposure_preserved=true;
+      observation.enter('requeue');await f.store.renew(f.run);await f.store.requeueUnsent!(f.run,calls);observation.enter('requeue_state');const requeued=await cohortStamp(raw,f,ids);same(requeued.statuses,{reserved:1000},'mark_enr_requeue_status');const {statuses:requeueStatus,...requeueIdentity}=requeued;same(requeueIdentity,preIdentity,'mark_enr_requeue_identity');same(await ledgerState(raw,f,roots,true),preLedger,'mark_enr_requeue_exposure');report.gates.requeue_open_exposure_preserved=true;
       report.requeue_status_counts=requeueStatus;report.selected_call_count=pre.selected_call_count;report.root_set_sha256=pre.root_set_sha256;report.input_digest_set_sha256=pre.input_digest_set_sha256;report.request_digest_set_sha256=pre.request_digest_set_sha256;report.selected_question_tuple_set_sha256=pre.selected_question_tuple_set_sha256;report.configuration_map_context_set_sha256=pre.configuration_map_context_set_sha256;
       report.settled_micro_usd_synthetic=postLedger.settled_micro_usd_synthetic;report.open_reserved_micro_usd=postLedger.open_reserved_micro_usd;report.unknown_exposure_micro_usd=postLedger.unknown_exposure_micro_usd;report.loopback_storage_metrics=storageMetrics();report.pin=pin.snapshot();
       report.mark_read_ms=clock()-markStart;known(Number(report.mark_read_ms)<=120000,'mark_enr_read_soft_cap');
-     }catch(error){await withSharedWireDefaultPostcheckV1(async()=>{throw error;},async()=>{released=true;if(pin)await pin.release(true);else raw.release(true);});}
-     finally{if(!released){released=true;if(pin)await pin.release();else raw.release(true);}}
-     known(pin&&pin.snapshot().owner_releases===1,'mark_enr_release_count');report.pin=pin.snapshot();
+     }catch(error){observeFailure();observation.enter('client_release');await withSharedWireDefaultPostcheckV1(async()=>{throw error;},async()=>{released=true;if(pin)await pin.release(true);else raw.release(true);});}
+     finally{if(!released){observation.enter('client_release');released=true;if(pin)await pin.release();else raw.release(true);}}
+     known(pin&&pin.snapshot().owner_releases===1,'mark_enr_release_count');report.pin=pin.snapshot();observation.enter('lease_release');
     }
    },'mark_validation_enr_1000_of_32768');normal=true;
   },async()=>{
-   if(!own)return;const admin=await openR16CiPostgresV1();await withSharedWireDefaultPostcheckV1(async()=>{assertR16LocalPostgresPoolV1(admin);const c=await admin.connect();await withSharedWireDefaultPostcheckV1(async()=>{await assertStartupOwnedAbsentV1(c,own!,()=>undefined);absence=true;},async()=>{c.release();});},()=>admin.end());
+   if(!normal)observeFailure();observation.enter('factory_cleanup');if(!own)return;const admin=await openR16CiPostgresV1();await withSharedWireDefaultPostcheckV1(async()=>{assertR16LocalPostgresPoolV1(admin);const c=await admin.connect();await withSharedWireDefaultPostcheckV1(async()=>{await assertStartupOwnedAbsentV1(c,own!,()=>undefined);absence=true;},async()=>{c.release();});},()=>admin.end());
   });
-  report.source_after=await sourceWitness();same(report.source_after,beforeSource,'mark_enr_source_changed');report.gates.source_binding=true;known((absence as true|'UNKNOWN')===true&&normal&&callback.complete,'mark_enr_cleanup_unconfirmed');report.gates.closure_confirmed=true;
-  known(clock()<=1920000,'mark_enr_total_soft_cap');known(Object.values(report.gates).every(value=>value===true),'mark_enr_gate_incomplete');report.status='observed';
- }catch(error){failed=true;primary=error;report.safe_failure_code_tree=startupErrorTreeV1(error);}
- if(!report.source_after){try{const after=await sourceWitness();report.source_after=after;if(boundSource){same(after,boundSource,'mark_enr_source_changed_after_failure');report.gates.source_binding=true;}}catch(afterError){if(failed)primary=new AggregateError([primary,afterError],'mark_enr_primary_and_source_postcheck_failed',{cause:primary});else{failed=true;primary=afterError;report.status='failed';}report.safe_failure_code_tree=startupErrorTreeV1(primary);}}
- report.total_ms=clock();report.callback_complete=callback.complete;report.factory_returned_normally=normal;report.own_database_absent=absence;report.name_oid_sha256=own?sha(JSON.stringify(own)):'UNKNOWN';
+  observation.enter('source_after');report.source_after=await sourceWitness();same(report.source_after,beforeSource,'mark_enr_source_changed');report.gates.source_binding=true;known((absence as true|'UNKNOWN')===true&&normal&&callback.complete,'mark_enr_cleanup_unconfirmed');report.gates.closure_confirmed=true;
+  known(clock()<=1920000,'mark_enr_total_soft_cap');known(Object.values(report.gates).every(value=>value===true),'mark_enr_gate_incomplete');report.status='observed';observation.enter('complete');
+ }catch(error){observeFailure();failed=true;primary=error;report.safe_failure_code_tree=startupErrorTreeV1(error);}
+ if(!report.source_after){try{observation.enter('source_after');const after=await sourceWitness();report.source_after=after;if(boundSource){same(after,boundSource,'mark_enr_source_changed_after_failure');report.gates.source_binding=true;}}catch(afterError){observeFailure();if(failed)primary=new AggregateError([primary,afterError],'mark_enr_primary_and_source_postcheck_failed',{cause:primary});else{failed=true;primary=afterError;report.status='failed';}report.safe_failure_code_tree=startupErrorTreeV1(primary);}}
+ Object.assign(report,observation.snapshot());report.total_ms=clock();report.callback_complete=callback.complete;report.factory_returned_normally=normal;report.own_database_absent=absence;report.name_oid_sha256=own?sha(JSON.stringify(own)):'UNKNOWN';
  try{await writeReceipt(directory,report);}catch(publication){throw markValidationSafeFailureV1(failed?new AggregateError([primary,publication],'mark_enr_primary_and_publication_failed',{cause:primary}):publication);}
  if(failed)throw markValidationSafeFailureV1(primary);return report;
 }
