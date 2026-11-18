@@ -696,7 +696,7 @@ async function exerciseFeederProposalYield(cancelDuringYield:boolean){
     assert.equal(futureProposed,4096);assert.equal(proposals.length,4096);
     assert.equal(JSON.stringify(proposals),JSON.stringify(expected),'yield preserves every proposal byte, digest and its original order');
    }
-   const reserved=proposals.map(value=>({...value,id:`call-${value.custom_id}`,status:'reserved',raw_body:null,results_applied:false}))as LabelingCallV1<FacetInput>[];
+   const reserved=proposals.map<LabelingCallV1<FacetInput>>(value=>({...value,id:`call-${value.custom_id}`,status:'reserved',raw_body:null,results_applied:false,provider_batch_id:null,retry_depth:0}));
    calls.push(...reserved);return reserved;
   },markSubmittingSelected:async(_run:unknown,select:()=>ReadonlyArray<LabelingCallV1<FacetInput>>)=>{
    const rows=select();for(const call of rows){assert.ok(!marked.has(call.id));marked.add(call.id);call.status='submitting';}return rows;
