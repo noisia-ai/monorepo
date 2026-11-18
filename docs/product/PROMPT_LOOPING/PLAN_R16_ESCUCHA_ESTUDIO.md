@@ -14,6 +14,8 @@ No hay aprobaciones humanas intermedias en los procesos de análisis: Sonnet 4.6
 
 Goal activo; R16 H0–H6 incompleto. Este apartado sustituye todos los estados históricos del archivo enlazado al final. Ningún ensayo figura vivo sin comprobación autoritativa del handle.
 
+- [x] Root integró el registro completo de firmas estáticas y su regresión en91ca5036; dos archivos byteidénticos al autor52d7fa58, sólo este plan difiere. Revisor favorable sin P0/P1/P2 nuevos,19purasPASS/1NativeSKIP,64aliases propios retirados. NoTSC local; el siguiente ensayo exige DB y workers typecheck remotos4096 antes del laboratorio.
+- Candidata de rendimiento en implementación aislada mfp_estandar: reservar prioridad de memoria de respuestas para llamadas listas antes del prefetch futuro. Concepto corregido revisado sin P0/P1; falta demostrar OLD falla/NEW pasa y revisar código exacto. Root espera entregas; ningún Native nuevo ni adopción aún. Se combinará con el fix del capturador para evitar ensayos consecutivos de dos heads parciales.
 - Ensayo focal [44345087992](https://github.com/noisia-ai/monorepo/actions/runs/44345087992), attempt1, TERMINAL FAILURE18-nov16:16:58UTC: HEAD e9bc37cd6cedd36d2dcb8bc68c7e24a219d2e8fd,13jobs=1fallido/12skip. TSC remoto4096, puras20/19/1, lab y migraciones PASS; profileNative y validación del recibo fallaron, cleanup/upload PASS. Descarga única con fuente exacta muestra otra omisión del registro: hash coincide con alias copiado por EXECUTE replace de firmaFUNCTION en0306. Primer Reserve4filas ejecutado14.710814ms sin COMMIT; sampler falla23.ªfila de30, rollback/reset confirmados. Sólo source_bindingTRUE, otros5gatesFALSE, Mark/Apply ausentes. Crit amplía registro léxico de firmas de las mismas migraciones, sin rescate del intento ni aceptación financiera/H1.
 - [x] Corrección del registro entregada: CREATE y destinos ALTER FUNCTION RENAME de las mismas migraciones congeladas. Crit1646226a/66c86f98 y Mec4ad950dc;20tests/19PASS/1NativeSKIP. TSC DB local abortó por OOM a1536MiB, sin diagnósticoTS previo; queda pendiente en CI remoto, sin elevar memoria local. Revisión de autores d459c7bc favorable sin P0/P1/P2 nuevos; Root integró los cuatro archivos sin diferencias y congela el HEAD posterior de este hito para un ensayo remoto focal. TSC remoto obligatorio antes de Native; todavía pendiente, sin afirmarlo verde.
 - Ensayo focal [44339348597](https://github.com/noisia-ai/monorepo/actions/runs/44339348597) cerrado FAILURE:13jobs=1Nativefallido/12omitidos; custodia31/31 y preseal10/10 revisados, fuente1626 exacta. El sampler rechazó un nombre al leer30funciones tras el INSERT4filas sinCOMMIT; rollback/reset confirmados. El digest coincide con un alias creado por ALTER FUNCTION RENAME en0176 y omitido por el registro CREATE-only. Fix de extracción léxica entregado; no pruebaOID/prosrc/CPU, no rescata502/703 ni acredita aceptación financiera/H1.
@@ -113,12 +115,14 @@ Cada autor usa su worktree y rama existentes, conserva cambios ajenos y entrega 
 |---|---|
 | Root | Orquestación, evidencia terminal, decisiones, composición después de entregas/revisión; único publica, despacha CI Native, fusiona develop, aplica UAT, despliega y ejecuta etapas pagadas. |
 | explorer | Sólo lectura estrecha de guards de escrituras; terminó mapa efectivo y multiplicidad, sin inferir coste. |
-| mfp_critico | Dos archivos nuevos Nativepartial240 y nuevo observador test-only de funciones sobre las escrituras originales; nunca producto/SQL/WF sin asignación nueva. |
-| mfp_mecanico | Puras384MiB/TSC DB1536MiB seriales, logs y aliases propios temporales; workflow opt-in aislado y pruebas del observador. Sin Docker/PG local, instalación ni red/Native. |
+| mfp_critico | Registro léxico de firmas completado/revisado; sin tarea de escritura activa. No cambios a producto/SQL/guardas. |
+| mfp_mecanico | Único runner de puras locales384MiB y regresión OLD/NEW; aliases propios registrados y retirados. Workflow con TSC DB y workers remotos4096 antes de lab; ningún TSC pesado ni Docker/PG local, instalación o Native propio. |
 | revisor | Sólo lectura de fuente exacta, oráculos, presupuesto/custodia y composición; cerrar P0/P1 antes de cualquier PR/merge y hallazgos del método antes de ejecutar. |
-| mfp_estandar | Hitos motor/producto pendientes se asignan después de resolver capacidad; no cambios concurrentes sin ownership explícito. |
+| mfp_estandar | Implementar únicamente prioridad de memoria para cohorte lista en streaming-window y su test page, en worktree/rama propios; no DB/SQL/harness/guardas/cotas. Esperar resultados y revisión antes de integrar. |
 
 ## Sorpresas y descubrimientos
+
+- Inspección de scheduling: prefetch precede al cálculo de slots y puede cargar todo el presupuesto libre para un feeder futuro; entonces una cohorte ya reservada puede esperar ese feeder por falta de memoria de respuesta. La protección actual sólo abarca el primer handoff. El test existente feed_memory_only consagra esa espera. Es una oportunidad con regresión determinista pendiente, no explicación probada de las71ventanas vacías ni promesa de5×.
 
 - El registro CREATE+RENAME aún omitía copias de definiciones por EXECUTE replace. El ensayo e9 observó b6fbdf36…49b5d16, correspondiente al alias de0306:375 con firmaFUNCTION en el payload y REVOKE explícito:956. Registrar sólo mecanismos CREATE/RENAME era insuficiente para estas fuentes; leer firmasFUNCTION estáticas de las mismas migraciones congeladas evita una lista manual por alias. Se conserva frontera léxica, no prueba de ejecución/identidad PG. row_index es index+1 (uno basado).
 
@@ -137,6 +141,8 @@ Cada autor usa su worktree y rama existentes, conserva cambios ajenos y entrega 
 - CPU44295181232 sigue INCONCLUSIVE por manifiestos íntegros ausentes; ROSTER del mismo run FAILED por cierre. Sus jobs verdes o planes parciales no rescatan el método. No repetirlos sólo para verde ni forzar DROP/elevar deadline.
 
 ## Registro de decisiones vigente
+
+- 2026-11-18: avanzar una candidata de scheduling independiente de los contadores SQL todavía ausentes: prioridad lógica H=N*R para respuestas de llamadas listas, sin cargarH a memoria; prefetch carga sóloA=min(F-H,ceilingactual). Conservar guard originalF<8192+R, N0 original y diferirA<8192 sóloN>0. La selección fresca, COMMIT→evaluate, presupuesto y durabilidad no cambian; menor página puede cambiar orden/admisión, sin prometer paridad universal de pagos/errores. Exigir regresión segunda frontera OLD falla/NEW pasa, cleanup y revisión exacta antes de integrar. No sustituyeFullH1niaceptaciónfinanciera. Combinarla con el capturador corregido antes de la próxima fuente/prerregistro Native para evitar reensayos consecutivos; ésta es una decisión de orden, sin bajar barras.
 
 - 2026-11-18: conservar44345087992 como fallo financiero, sin reenviar ni reinterpretar703. Extender sólo el registro test-only a firmas FUNCTION name( de las mismas migraciones numéricas congeladas (incluyendo payloads de copia y declaraciones de privilegios), más destinosRENAME. No añadir tokens SELECT ni nombres del catálogo vivo; ninguna lógica de producto/guardas/SQL/cotas cambia. Cubrir casos estáticos del árbol de una vez; nueva fuente y pruebas/revisión antes de otro ensayo remoto.
 
@@ -162,7 +168,7 @@ Cada autor usa su worktree y rama existentes, conserva cambios ajenos y entrega 
 
 ## Ruta restante de ejecución
 
-1. Terminar derivación financiera y código del observador; mfp_mecanico verifica puras/TSC, workflow y source; revisor cierra exactos. Root espera entregas, integra en nueva rama sin mover proof histórica y sella prerregistro antes de una ejecución Native remota opt-in. Ningún PG local.
+1. Terminar candidato de prioridad de memoria y demostrar regresión OLD/NEW con puras384; mfp_mecanico prepara TSC DB/workers remotos y revisor cierra fuente exacta. Root espera entregas, integra junto al capturador corregido sin mover proofs históricas y sella fuente/prerregistro antes de un Native remoto opt-in. Ningún PG/TSC pesado local.
 2. Usar deltas de funciones y sus límites para escoger UNA optimización de producto de la operación costosa. Preservar cada invariante y medir OLD/NEW controlados con oráculos originales antes de adopción. Evitar otra ronda de diagnósticos sin decisión material.
 3. Componer fuente final, revisión/CI/PG y Full H1 con barras intactas. Si rechaza, conservar resultado y decidir con evidencia; si pasa, no extrapolar automáticamente al proveedor real.
 4. Revalidar38SQL exactos y permisos/copia; revisar PR198 completo, integrar únicamente a develop con CI/PG verdes. Readiness física fresca antes de aplicar SQL una vez en UAT, flagsOFF/colas censadas. Desplegar sólo studio-uat/workers-uat y verificar.
