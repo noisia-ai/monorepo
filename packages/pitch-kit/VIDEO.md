@@ -121,7 +121,7 @@ música justo en el hallazgo de espacio vacío.
 | **Bloom de Noisia** (el favorito) | Gancho, apertura, cierre, cualquier escena que tenga que sentirse Noisia | El campo de color con grano y blur de `commercial/builder/make_shapes.py`: las cuatro composiciones verticales `v-top`, `v-bottom`, `v-corner` y `v-soft` (`make_shapes.py --vertical`, ya en `packages/motion/public/backgrounds`). El color nace en un borde o una esquina y deja limpia la zona de lectura. Tiene que ser **estático**, o muy lento y moviendo la imagen entera: el grano que cambia en cada cuadro infló un video de 14.7 MB a 415 MB |
 | **Blanco con lavado teal** | Escenas de lectura: cifra, comparación, cita. Lo usan las historias de /insights | `linear-gradient(180deg, #fff 0%, #fff 55%, #f1f9f9 100%)` |
 | **Blanco liso** | Obligatorio en el motion de deck (§5.4) | `#ffffff` exacto |
-| **Imagen de atmósfera** | Apertura, entrada de capítulo, cierre | Una imagen con el lenguaje Kinetic Cinema de `HUMAN_SIGNALS.md` (§4.3), con el texto encima en una zona que la imagen deja limpia |
+| **Imagen de atmósfera** | Apertura, entrada de capítulo, cierre | Una imagen con el lenguaje Kinetic Cinema de `HUMAN_SIGNALS.md` (§4.3), con el texto encima en una zona que la imagen deja limpia. En el video de un estudio, su propia imagen en versión horizontal 3:2 (`HUMAN_SIGNALS.md` §VII.1) |
 
 Los halos radiales con grano que usó el primer video de estudio quedaron atrás: el bloom los
 reemplaza. En noisia.ai/insights, cada historia ajusta su fondo al insight y se renderiza en HTML.
@@ -141,6 +141,8 @@ reemplaza. En noisia.ai/insights, cada historia ajusta su fondo al insight y se 
 - **La atmósfera** puede fotografiarse o generarse con el método y el prompt de `HUMAN_SIGNALS.md`
   (§VI, en 9:16 para video). Pasa su control de calidad (§VIII, sobre todo la integridad anatómica) y
   nunca lleva texto, logos ni datos dentro.
+- **La imagen del estudio** (persona en niebla en el lugar real, `HUMAN_SIGNALS.md` §VII.1) sirve de
+  atmósfera en el video de ese estudio: la horizontal para 16:9 y la vertical para 9:16.
 - Una imagen de atmósfera nunca va junto a una cita como si la ilustrara: la cita es de una persona real
   y la imagen no lo es.
 

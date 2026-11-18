@@ -100,7 +100,7 @@ nothing else (`INTERNAL.md`).
 |---|---|
 | Header left | `logo_norm.svg` |
 | Header right | market and year (`México · 2026`), or the subject. Never the deck type |
-| Illustration | `assets/cover-illustration.png`, bleeding off the right edge (`right:-110px`, `height:113%`), behind the copy (`z-index:0`). The slide carries `atmos plain`: the engine's cyan blob over the art reads as a heavy wash, and the cover keeps only the illustration's own gradient |
+| Illustration | A study with its own image (`HUMAN_SIGNALS.md` §VII.1) uses its **vertical 2:3 version** in this slot; `assets/cover-illustration.png` is for pitch and commercial decks only, since a silhouette on white was dropped for studies on 17 Nov 2026. Either one bleeds off the right edge (`right:-110px`, `height:113%`), behind the copy (`z-index:0`). The slide carries `atmos plain`: the engine's cyan blob over the art reads as a heavy wash, and the cover keeps only the illustration's own gradient |
 | Eyebrow | a short chip on `--teal-soft`: what kind of read this is |
 | Title | the research question, 77–88px, one accent word in `--teal`. Not the document type |
 | Subhead | 25–26px, one sentence: what the deck answers and for whom |
