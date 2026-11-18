@@ -192,6 +192,7 @@ export async function requestSignalListeningV1(args:SignalListeningAccessV1&{con
  const stored=await getForRequest(args),identity=signalListeningJevIdentityV1(stored.configuration);
  return requestMentionFacetsV1({...args,identity,full_recalculation:true,adapter:{
   request_identity:{contract_version:'signal-listening-run-v1',configuration_id:stored.id,map_id:args.map_id,full_corpus:true,...(args.preparation_id?{preparation_id:args.preparation_id}:{}),...(args.initial_discovery?{initial_discovery:true}:{})},
+  context_registration:'change_only',
   policy_action:'mass_labeling_jev',feature:'mass_labeling',select_labeler:false,
   validateIdentity:candidate=>{if(labelerDigestV1(candidate)!==labelerDigestV1(identity))fail('listening_identity_invalid');},
   prepare:async(c,workspace,_run,_labeler,context)=>{

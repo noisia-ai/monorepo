@@ -288,6 +288,11 @@ export async function requestMentionFacetsV1(args: {
   identity?: LabelerIdentity;
   adapter?: {
     request_identity: unknown;
+    /** Internal cohort policy: Listening scans its governed configuration/map/cache
+     * population itself. Keep full intent, but append CE history only on a real
+     * identity change. Classic/Study defaults and superseded-full fences remain.
+     * Future audit trails intentionally contain fewer synthetic identical CEs. */
+    context_registration?: "change_only";
     policy?: (client:PoolClient)=>Promise<LabelingRequestPolicyV1|null>;
     admit?: (client:PoolClient,args:SignalProcessingAdmitArgsV1)=>Promise<LabelingAdmissionRefV1>;
     /** A provider-specific membership stage must use its own governed action. */
@@ -417,10 +422,11 @@ export async function requestMentionFacetsV1(args: {
     if (policyCap !== null && requestedCap !== null && requestedCap > policyCap)
       fail("labeling_policy_cap_exceeded");
     const cap = requestedCap ?? policyCap;
+    const fullIntent = args.full_recalculation ?? false;
     const change = await registerFacetContextV1(
       c,
       args.workspace_id,
-      (args.full_recalculation ?? false) || supersededFull,
+      supersededFull || (fullIntent && args.adapter?.context_registration !== "change_only"),
     );
     if (args.adapter) args.adapter.validateIdentity(identity);
     else if (identity.provider === "anthropic")

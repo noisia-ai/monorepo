@@ -5,7 +5,7 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import test from 'node:test';
 import type {PoolClient} from 'pg';
-import type {LabelingDatabaseV1} from '../signal-mention-facets';
+import {inspectFacetContextChangeV1,registerFacetContextV1,type LabelingDatabaseV1} from '../signal-mention-facets';
 import {runMassLabelingAcceptanceFixtureV1} from './signal-mass-labeling-acceptance.synthetic.fixture';
 import {saveSignalListeningConfigurationV1,getSignalListeningConfigurationV1} from '../signal-listening-configuration';
 import {requestSignalListeningV1,createSignalListeningStoreV1} from '../signal-listening-runs';
@@ -69,7 +69,10 @@ test('listening reuses question receipts across configuration versions with live
    assert.equal((await getSignalListeningConfigurationV1(access))?.id,configuration.id);
    await assert.rejects(getSignalListeningConfigurationV1({...access,workspace_id:randomUUID()}),/listening_forbidden/);
    await assert.rejects(saveSignalListeningConfigurationV1({...access,expected_revision:0,provenance:'human',configuration:configuration.configuration}),/configuration_conflict/);
-   const start=async()=>requestSignalListeningV1({...access,configuration_id:configuration.id,map_id:ctx.map_id,idempotency_key:randomUUID(),cap_micro_usd:1000000,provider_available:true});
+   const start=async(idempotency_key=randomUUID())=>requestSignalListeningV1({...access,configuration_id:configuration.id,map_id:ctx.map_id,idempotency_key,cap_micro_usd:1000000,provider_available:true});
+   const contextRows=async()=>(await database.query('SELECT to_jsonb(v) row FROM signal_entity_context_versions v WHERE workspace_id=$1 ORDER BY version_no',[ctx.workspace_id])).rows;
+   const classicRows=async()=>(await database.query('SELECT root_id,input_digest,status,requires_context_review FROM signal_mention_facets_current_v1 WHERE workspace_id=$1 ORDER BY root_id',[ctx.workspace_id])).rows;
+   const contextBefore=await contextRows(),classicBefore=await classicRows();assert.ok(contextBefore.length>0);assert.ok(classicBefore.length>0);
    let physical=0,phases:string[][]=[];
    async function complete(id:string){
     const run=await store.claim(id);assert.ok(run);
@@ -98,7 +101,12 @@ test('listening reuses question receipts across configuration versions with live
     assert.equal(await store.finish(run),'completed');await store.release(run);
     return run;
    }
-   const admitted=await start();
+   const requestKey=randomUUID(),admitted=await start(requestKey);
+   assert.deepEqual(await contextRows(),contextBefore,'Listening full census must not append a synthetic identical CE');
+   const sealed=(await database.query('SELECT entity_context_version_no,full_recalculation_confirmed,waiting_full_confirmation,request_digest FROM signal_labeling_runs WHERE id=$1',[admitted.run_id])).rows[0]!;
+   assert.equal(sealed.entity_context_version_no,contextBefore.at(-1)!.row.version_no);assert.equal(sealed.full_recalculation_confirmed,true);assert.equal(sealed.waiting_full_confirmation,false);
+   assert.deepEqual(await start(requestKey),{run_id:admitted.run_id,replayed:true},'accepted key preserves the sealed full-intent replay');
+   assert.deepEqual(await contextRows(),contextBefore);assert.deepEqual(await classicRows(),classicBefore);
    const run=await complete(admitted.run_id);
    const shape=signalListeningCalibrationShapeV1(configuration.configuration,{question_keys:['voice','promotion','tone','repair_topic']});
    const sqlShape=(await database.query('SELECT signal_listening_calibration_shape_v1($1::jsonb,$2::text[]) value',[JSON.stringify(configuration.configuration),['voice','promotion','tone','repair_topic']])).rows[0].value;
@@ -125,9 +133,11 @@ test('listening reuses question receipts across configuration versions with live
    const usage=await readSignalListeningQuestionMetricsV1({...access,configuration_id:configuration.id,map_id:ctx.map_id,question_key:'usage'});
    assert.equal(usage.counts.eligible,1);assert.equal(usage.counts.asked,1);assert.equal(usage.counts.excluded_scope,2);
    const previousCalls=physical;await complete((await start()).run_id);assert.equal(physical,previousCalls,'a new run reuses every previous semantic question');
+   assert.deepEqual(await contextRows(),contextBefore,'same configuration and cache keep the actual CE audit trail');assert.deepEqual(await classicRows(),classicBefore,'Listening never creates a full fence for the classic reader');
    const appended={...custom,key:'opinion',text:'Is an opinion expressed?'};
    configuration=await saveSignalListeningConfigurationV1({...access,expected_revision:configuration.revision,provenance:'human',configuration:localizeSyntheticListeningConfigurationV1({...configuration.configuration,
     questions:[...configuration.configuration.questions,appended]})});
+   assert.deepEqual(await contextRows(),contextBefore,'publishing another question is not a Brand OS identity transition');
    const missing=await readSignalListeningQuestionMetricsV1({...access,configuration_id:configuration.id,map_id:ctx.map_id,question_key:'opinion'});
    assert.equal(missing.counts.eligible,3);assert.equal(missing.counts.asked,0);assert.equal(missing.counts.pending,3);
    assert.equal(missing.distribution.reduce((n,d)=>n+d.count,0),0,'unasked roots are not assigned to a negative or other option');
@@ -152,6 +162,7 @@ test('listening reuses question receipts across configuration versions with live
     assert.equal(restricted.counts.eligible,0);}catch(error){assert.match(String(error),/map_stale|context_changed|forbidden/);}
    await database.query('ROLLBACK TO SAVEPOINT rights_revoked');await database.query('RELEASE SAVEPOINT rights_revoked');
    phases=[];await complete((await start()).run_id);assert.equal(physical,previousCalls+3);assert.ok(phases.flat().every(k=>k==='opinion'));
+   assert.deepEqual(await contextRows(),contextBefore);assert.deepEqual(await classicRows(),classicBefore);
    configuration=await saveSignalListeningConfigurationV1({...access,expected_revision:configuration.revision,provenance:'human',configuration:{...configuration.configuration,
     questions:configuration.configuration.questions.map(q=>q.key==='opinion'?{...q,text:'What is the exact opinion?'}:q)}});
    phases=[];await complete((await start()).run_id);assert.ok(phases.flat().every(k=>k==='opinion'));
@@ -174,6 +185,19 @@ test('listening reuses question receipts across configuration versions with live
    assert.equal((await getSignalListeningStatusV1(access)).configuration?.id,configuration.id);
    configuration=await saveSignalListeningConfigurationV1({...access,expected_revision:configuration.revision,provenance:'human',configuration:{...configuration.configuration,
     questions:[...configuration.configuration.questions,{...custom,key:'ambiguous',text:'A new pending question'}]}});
+   await database.query('SAVEPOINT actual_context_change');
+   try{
+    await database.query("UPDATE brands SET display_name='xy' WHERE id=(SELECT brand_id FROM signal_workspaces WHERE id=$1)",[ctx.workspace_id]);
+    const client=await database.connect();try{
+     const changedContext=await inspectFacetContextChangeV1(client,ctx.workspace_id);assert.equal(changedContext.changed,true);assert.equal(changedContext.diff.affected_mode,'full');
+     await assert.rejects(start(),/mass_labeling_context_changed|mass_labeling_map_stale/,'a genuinely changed identity still rejects its obsolete Listening map');
+     assert.deepEqual(await contextRows(),contextBefore,'failed admission rolls back the real CE registration');
+     await client.query("SELECT pg_advisory_xact_lock(hashtextextended('mfp-labeling:'||$1,0))",[ctx.workspace_id]);
+     const registered=await registerFacetContextV1(client,ctx.workspace_id);assert.equal(registered.changed,true);assert.equal(registered.diff.affected_mode,'full');assert.ok(registered.affected.length>0);
+     const rows=await contextRows();assert.equal(rows.length,contextBefore.length+1);assert.equal(rows.at(-1)!.row.digest,registered.digest);assert.notEqual(registered.digest,contextBefore.at(-1)!.row.digest);
+    }finally{client.release();}
+   }finally{await database.query('ROLLBACK TO SAVEPOINT actual_context_change');await database.query('RELEASE SAVEPOINT actual_context_change');}
+   assert.deepEqual(await contextRows(),contextBefore,'the denial fixture leaves no context history behind');
    const ambiguous=await start(),ambiguousRun=await store.claim(ambiguous.run_id);assert.ok(ambiguousRun);
    const ambiguousInput=(await store.inputs(ambiguousRun))[0]!,ambiguousRequest=buildSignalListeningJevRequestV1(ambiguousInput,configuration.configuration);
    const ambiguousDigest=signalListeningRequestDigestV1(ambiguousRun,ambiguousInput,ambiguousRequest);
