@@ -56,7 +56,7 @@ const enums:Record<string,ReadonlySet<string>>={
  'Sort Space Type':new Set(['Memory','Disk']),Operation:new Set(['Select','Insert','Update','Delete','Merge'])};
 const redacted=new Set(['One-Time Filter','Filter','Output','Index Cond','Recheck Cond','Hash Cond','Merge Cond','Join Filter','Sort Key','Presorted Key','Group Key','Hash Key','Run Condition','Cache Key','Function Call','Remote SQL','Conflict Filter','Alias','Query Identifier']);
 const rejectionCodes=['bounded_population_plan_object','bounded_population_plan_prototype','bounded_population_plan_accessor','bounded_population_plan_number','bounded_population_plan_array','bounded_population_plan_array_property','bounded_population_plan_array_hole','bounded_population_plan_expression_depth','bounded_population_jit_functions','bounded_population_jit_option','bounded_population_jit_timing','bounded_population_jit_generation','bounded_population_jit_structure','bounded_population_plan_depth','bounded_population_plan_node','bounded_population_plan_enum','bounded_population_plan_boolean','bounded_population_plan_tuplestore','bounded_population_plan_identifier','bounded_population_plan_subplan','bounded_population_plan_structure','bounded_population_plan_document','bounded_population_plan_select_trigger','bounded_population_plan_document_structure','bounded_population_plan_missing_root','bounded_population_plan_bytes','bounded_population_plan_invalid_or_over_limit'] as const;
-const diagnosticProperties=['root','node','Node Type','Plan','Plans','Workers','Planning','JIT','Relation Name','Index Name','CTE Name','Function Name','Subplan Name','Tuplestore Name','Functions','Options','Timing','Generation','Deform','Total','Full-sort Groups','Pre-sorted Groups','Shared I/O Read Time','Shared I/O Write Time','Local I/O Read Time','Local I/O Write Time','numeric_metric','closed_enum','boolean_metric','redacted_expression','UNRECOGNIZED_KEY','UNKNOWN'] as const;
+const diagnosticProperties=['root','node','Node Type','Plan','Plans','Workers','Planning','JIT','Relation Name','Index Name','CTE Name','Function Name','Subplan Name','Tuplestore Name','Functions','Options','Timing','Generation','Deform','Total','Full-sort Groups','Pre-sorted Groups','Group Count','Sort Methods Used','Sort Space Memory','Sort Space Disk','Average Sort Space Used','Peak Sort Space Used','Shared I/O Read Time','Shared I/O Write Time','Local I/O Read Time','Local I/O Write Time','numeric_metric','closed_enum','boolean_metric','redacted_expression','UNRECOGNIZED_KEY','UNKNOWN'] as const;
 export type BoundedPopulationPlanRejectionV1={reason_code:typeof rejectionCodes[number]|'UNKNOWN';location:'document'|'node'|'worker'|'planning'|'jit'|'jit_options'|'jit_timing'|'jit_generation'|'redacted_expression'|'UNKNOWN';property:typeof diagnosticProperties[number];value_type:'number'|'string'|'boolean'|'null'|'array'|'object'|'undefined'|'unsafe';identifier_class:'relation'|'index'|'cte'|'function'|'subplan'|'none'|'UNKNOWN';identifier_membership:'allowed'|'not_allowlisted'|'non_string'|'not_checked'|'UNKNOWN';node_type:typeof planNodeTypes[number]|'UNRECOGNIZED'|'UNKNOWN';nodes_seen:number;depth_bucket:'within32'|'above32'|'UNKNOWN';array_size_bucket:'within512'|'above512'|'UNKNOWN'};
 /** Plain EXPLAIN JSON only. No messages, expressions or arbitrary identifiers
  * are emitted. Unknown structure is a static failure, never a partial plan. */
@@ -93,7 +93,19 @@ export function sanitizeBoundedPopulationPlanV1(plan:unknown,identifiers:Readonl
   }
   else throw new Error('bounded_population_jit_structure');
  }return result;};
- const walk=(value:unknown,depth:number,kind:'node'|'worker'|'planning'='node'):Record<string,unknown>=>{
+ const incrementalSortGroup=(value:unknown,kind:'node'|'worker',depth:number)=>{
+  const fields=own(value),keys=Reflect.ownKeys(fields);requireKnown(!Array.isArray(value)&&(Object.getPrototypeOf(value)===Object.prototype||Object.getPrototypeOf(value)===null)&&keys.every(k=>typeof k==='string'&&['Group Count','Sort Methods Used','Sort Space Memory','Sort Space Disk'].includes(k))&&Object.hasOwn(fields,'Group Count')&&Object.hasOwn(fields,'Sort Methods Used'),'bounded_population_plan_structure');
+  const result:Record<string,unknown>={};
+  for(const[k,d]of Object.entries(fields)){at(kind,k,d.value,depth,'Incremental Sort');
+   if(k==='Group Count'){const n=finite(d.value);requireKnown(Number.isInteger(n),'bounded_population_plan_number');result[k]=n;}
+   else if(k==='Sort Methods Used'){const methods=boundedArray(d.value);requireKnown(methods.every(m=>typeof m==='string'&&enums['Sort Method']!.has(m))&&new Set(methods).size===methods.length,'bounded_population_plan_enum');result[k]=methods;}
+   else{
+    const space=own(d.value),spaceKeys=Reflect.ownKeys(space);requireKnown(!Array.isArray(d.value)&&(Object.getPrototypeOf(d.value)===Object.prototype||Object.getPrototypeOf(d.value)===null)&&spaceKeys.length===2&&Object.hasOwn(space,'Average Sort Space Used')&&Object.hasOwn(space,'Peak Sort Space Used'),'bounded_population_plan_structure');
+    const metrics:Record<string,number>={};for(const[name,field]of Object.entries(space)){at(kind,name,field.value,depth,'Incremental Sort');const n=finite(field.value);requireKnown(Number.isInteger(n),'bounded_population_plan_number');metrics[name]=n;}result[k]=metrics;
+   }
+  }return result;
+ };
+ const walk=(value:unknown,depth:number,kind:'node'|'worker'|'planning'='node',workerOwnerType?:unknown):Record<string,unknown>=>{
   at(kind,'node',value,depth);requireKnown(depth<=32,'bounded_population_plan_depth');const fields=own(value),result:Record<string,unknown>={};
   at(kind,'Node Type',fields['Node Type']?.value,depth,fields['Node Type']?.value);
   if(kind==='node'){requireKnown(++count<=512&&typeof fields['Node Type']?.value==='string'&&nodes.has(fields['Node Type'].value),'bounded_population_plan_node');}
@@ -106,8 +118,9 @@ export function sanitizeBoundedPopulationPlanV1(plan:unknown,identifiers:Readonl
    else if(['Relation Name','Index Name','CTE Name','Function Name'].includes(k)){requireKnown(typeof x==='string'&&identifiers.has(x),'bounded_population_plan_identifier');result[k]=x;}
    else if(k==='Subplan Name'){requireKnown(typeof x==='string'&&(x.startsWith('CTE ')&&identifiers.has(x.slice(4))||/^(?:SubPlan|InitPlan) \d+(?: \(returns \$\d+\))?$/u.test(x)),'bounded_population_plan_subplan');result[k]=x;}
    else if(k==='Plans')result[k]=boundedArray(x).map(child=>walk(child,depth+1));
-   else if(k==='Workers')result[k]=boundedArray(x).map(child=>walk(child,depth+1,'worker'));
+   else if(k==='Workers')result[k]=boundedArray(x).map(child=>walk(child,depth+1,'worker',kind==='node'?fields['Node Type']?.value:undefined));
    else if(k==='JIT')result[k]=jit(x);
+   else if(k==='Full-sort Groups'||k==='Pre-sorted Groups'){requireKnown(kind==='node'&&fields['Node Type']?.value==='Incremental Sort'||kind==='worker'&&workerOwnerType==='Incremental Sort','bounded_population_plan_structure');result[k]=incrementalSortGroup(x,kind as 'node'|'worker',depth);}
    else throw new Error('bounded_population_plan_structure');
   }return result;
  };
