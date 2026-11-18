@@ -5,8 +5,9 @@
 >
 > **Cómo lo usa el kit.** Las etapas 01 a 07 son el método de guion de todo video (`VIDEO.md` §3) y
 > sirven para cualquier pieza que cuente un hallazgo con una historia humana. Kinetic Cinema (§III) es el
-> lenguaje de las imágenes de atmósfera: portadas, aperturas y entradas de capítulo, fotografiadas o
-> generadas. **La evidencia nunca es una de estas imágenes:** la prueba de un hallazgo es siempre un post,
+> lenguaje de las imágenes de atmósfera de video, aperturas y entradas de capítulo, fotografiadas o
+> generadas. La imagen de un estudio (su página, su tarjeta, su correo y la portada del deck) usa una
+> variante quieta del mismo sistema: §VII.1. **La evidencia nunca es una de estas imágenes:** la prueba de un hallazgo es siempre un post,
 > video o anuncio real con su pie (`LAYOUTS.md`, Quality Gate y Size Gate). Una imagen hecha con este
 > método ilustra lo que Noisia permite comprender; no documenta lo que dijo nadie.
 
@@ -571,6 +572,27 @@ movimiento y una perspectiva agresiva; una sobre la pérdida de confianza en una
 silenciosa y casi inmóvil; una sobre hábitos alimenticios, gestos familiares alrededor de una mesa; una
 sobre belleza, un ritual personal frente a un espejo. Todas pertenecen al mismo sistema sin parecer
 variaciones de una sola imagen.
+
+## VII.1 La imagen de un estudio
+
+Decisión del 17 nov 2026, entre tres estilos probados: **la persona en niebla, en el lugar real.** Las
+siluetas sobre fondo blanco o transparente quedaron fuera porque se sienten imagen hecha por IA, y con
+ellas la ilustración de portada de siempre (`assets/cover-illustration.png`) para los estudios.
+
+| Capa | Cómo es |
+|---|---|
+| **La persona** | De perfil o de tres cuartos por detrás, sin rostro legible. Es lo único con tono y un poco de color. Una niebla luminosa le disuelve la parte baja del cuerpo. El borde anaglifo va solo en la figura: coral `#D91441` de un lado, cyan `#009CA8` del otro |
+| **El lugar** | Reconocible y propio del tema (el comedor de su casa, la sala con el módem, el camión, la farmacia con la puerta del consultorio), en blanco y negro, muy high-key, lavado casi a blanco; los bordes del cuadro se funden a blanco |
+| **El momento** | Una acción clara que es el momento del estudio (§06). Más quieta que Kinetic Cinema: una persona, un momento, niebla |
+| **El acabado** | Grano fotoquímico fino. Nada de texto, logos ni pantallas legibles |
+
+- **Dos formatos de la misma escena:** vertical 2:3 (la página del estudio y la portada del deck) y
+  horizontal 3:2 (la tarjeta 16:9, el banner del correo y la atmósfera de video en 16:9).
+- **La fuente de verdad del prompt** es `apps/website-next/content-db/STUDY_IMAGES.md` y `STYLE` en
+  `apps/website-next/scripts/content/image.ts`, que mantiene Website. Si el kit genera una, copia esos
+  bloques tal cual y cambia solo la escena y el lugar. Pasa el control de calidad de §VIII.
+- Kinetic Cinema (motion blur, flash dirigido) sigue siendo el lenguaje de video y aperturas.
+- Sigue siendo atmósfera: nunca va junto a una cita como si la ilustrara.
 
 ---
 
