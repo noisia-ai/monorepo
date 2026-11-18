@@ -63,6 +63,14 @@ if(pure){
     assert.equal(sanitized.bytes,Buffer.byteLength(encoded));
     assert.match(sanitized.plan_sha256,/^[a-f0-9]{64}$/u);
     assert.match(sanitized.sanitized_sha256,/^[a-f0-9]{64}$/u);
+
+    const pg17Generation=sanitizeBoundedPopulationPlanV1([{Plan:{'Node Type':'Result','Actual Rows':0,'Actual Loops':1},
+      JIT:{Functions:1,Options:{Inlining:false,Optimization:true,Expressions:true,Deforming:true},
+        Timing:{Generation:{Deform:0,Total:0.6},Inlining:0,Optimization:0.2,Emission:0.3,Total:1.1}}}]);
+    const jit=pg17Generation.plan.JIT as Record<string,unknown>;
+    assert.deepEqual((jit.Timing as Record<string,unknown>).Generation,{Deform:0,Total:0.6});
+    assert.throws(()=>sanitizeBoundedPopulationPlanV1([{Plan:{'Node Type':'Result'},JIT:{Functions:1,
+      Timing:{Generation:{Deform:0,Total:0.6,Private:'PRIVATE_SENTINEL'}}}}]));
   });
 
   test('EXPLAIN sanitizer enforces node, depth, and unknown-node bounds',()=>{
@@ -73,6 +81,38 @@ if(pure){
     for(let i=0;i<33;i++)deep={...node('Nested Loop'),Plans:[deep]};
     assert.throws(()=>sanitizeBoundedPopulationPlanV1([{Plan:deep}]));
     assert.throws(()=>sanitizeBoundedPopulationPlanV1([{Plan:node('Private Executor')}]));
+  });
+
+  test('PG17 Incremental Sort group summaries use a closed owner-bound format',()=>{
+    const fullSort={'Group Count':3,'Sort Methods Used':['quicksort','external merge'],
+      'Sort Space Memory':{'Average Sort Space Used':16,'Peak Sort Space Used':20},
+      'Sort Space Disk':{'Average Sort Space Used':4,'Peak Sort Space Used':8}};
+    const preSorted={'Group Count':0,'Sort Methods Used':[]};
+    const source=[{Plan:{'Node Type':'Incremental Sort','Actual Rows':10,'Actual Loops':1,
+      'Full-sort Groups':fullSort,'Pre-sorted Groups':preSorted,
+      Workers:[{'Worker Number':0,'Full-sort Groups':{'Group Count':1,'Sort Methods Used':['top-N heapsort']}}]}}];
+    const accepted=sanitizeBoundedPopulationPlanV1(source);
+    assert.equal(accepted.nodes,1);
+    const encoded=JSON.stringify(accepted.plan);
+    assert.match(encoded,/"Full-sort Groups"/u);
+    assert.match(encoded,/"Pre-sorted Groups"/u);
+    assert.match(encoded,/"Sort Space Disk"/u);
+
+    const malformed:unknown[]=[
+      [{Plan:{'Node Type':'Incremental Sort','Full-sort Groups':{'Group Count':-1,'Sort Methods Used':[]}}}],
+      [{Plan:{'Node Type':'Incremental Sort','Full-sort Groups':{'Group Count':1.5,'Sort Methods Used':[]}}}],
+      [{Plan:{'Node Type':'Incremental Sort','Full-sort Groups':{'Group Count':1,'Sort Methods Used':['unknown method']}}}],
+      [{Plan:{'Node Type':'Incremental Sort','Full-sort Groups':{'Group Count':1,'Sort Methods Used':['quicksort','quicksort']}}}],
+      [{Plan:{'Node Type':'Incremental Sort','Full-sort Groups':{'Group Count':1,'Sort Methods Used':[],'Private Key':'PRIVATE_SENTINEL'}}}],
+      [{Plan:{'Node Type':'Incremental Sort','Full-sort Groups':{'Group Count':1,'Sort Methods Used':[],
+        'Sort Space Memory':{'Average Sort Space Used':1,'Peak Sort Space Used':2,'Private Key':'PRIVATE_SENTINEL'}}}}],
+      [{Plan:{'Node Type':'Seq Scan','Full-sort Groups':fullSort}}],
+      [{Plan:{'Node Type':'Incremental Sort','Shared I/O Read Time':1,'Full-sort Groups':fullSort}}],
+      [{'Planning':{'Node Type':'Incremental Sort','Full-sort Groups':fullSort},Plan:{'Node Type':'Result'}}],
+    ];
+    for(const plan of malformed)assert.throws(()=>sanitizeBoundedPopulationPlanV1(plan));
+    const wrongWorkerOwner=[{Plan:{'Node Type':'Sort',Workers:[{'Worker Number':0,'Full-sort Groups':fullSort}]}}];
+    assert.throws(()=>sanitizeBoundedPopulationPlanV1(wrongWorkerOwner));
   });
 
   test('function counter deltas keep absent baselines UNKNOWN and require monotonic values',()=>{
