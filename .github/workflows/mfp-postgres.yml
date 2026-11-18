@@ -2342,9 +2342,9 @@ jobs:
           if type(correlation) is not dict or correlation.get('provider_events_unmatched') != 0 \
               or correlation.get('durability_events_unmatched') != 0:
               raise SystemExit('Original pipeline spans must remain fully correlated')
-          if cpu.get('stop_reason') not in {'job_drained', 'watchdog'} or type(cpu.get('stop_commands')) is not int \
+          if cpu.get('stop_reason') != 'job_drained' or type(cpu.get('stop_commands')) is not int \
               or cpu.get('stop_commands') != 1 or cpu.get('worker') != 'drained':
-              raise SystemExit('Consumer CPU profile did not stop once after worker drain or the observed watchdog')
+              raise SystemExit('Complete CPU acceptance requires one stop after the full worker drain, not a partial watchdog interval')
           cleanup = cpu.get('cleanup')
           if type(cleanup) is not dict or cleanup.get('disable_confirmed') is not True \
               or cleanup.get('disconnect_confirmed') is not True or cleanup.get('watchdog_cleared') is not True:

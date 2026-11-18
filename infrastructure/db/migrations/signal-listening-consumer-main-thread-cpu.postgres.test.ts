@@ -40,6 +40,10 @@ async function runThenPublish<T>(run:()=>Promise<T>,publish:()=>Promise<void>):P
   return result as T;
 }
 
+function nativeCpuCaptureComplete(value:{status:unknown;stop_reason:unknown}):boolean{
+  return value.status==='observed'&&value.stop_reason==='job_drained';
+}
+
 test(nativeTitle,{skip:!native},async()=>{
   assert.equal(process.env.GITHUB_ACTIONS,'true','native CPU capture is authorized only in CI');
   assert.notEqual(process.env.NOISIA_R16_CONSUMER_MAIN_THREAD_CPU_PURE,'true');
@@ -59,8 +63,7 @@ test(nativeTitle,{skip:!native},async()=>{
     'CPU evidence requires the original timeline to be complete, untrimmed, and fully correlated');
   assert.ok(observer,'native CPU observer must be created immediately before the worker');
   const snapshot=observer.snapshot();
-  assert.equal(snapshot.status,'observed');
-  assert.ok(snapshot.stop_reason==='job_drained'||snapshot.stop_reason==='watchdog');
+  assert.equal(nativeCpuCaptureComplete(snapshot),true,'native acceptance requires profiling through the drained worker');
   assert.equal(snapshot.stop_commands,1);
   assert.equal(snapshot.worker,'drained');
   assert.equal(snapshot.h1_accepted,false);
@@ -90,6 +93,12 @@ test(nativeTitle,{skip:!native},async()=>{
 });
 
 if(pure){
+  test('native CPU acceptance rejects a watchdog-stopped partial interval',()=>{
+    assert.equal(nativeCpuCaptureComplete({status:'observed',stop_reason:'job_drained'}),true);
+    assert.equal(nativeCpuCaptureComplete({status:'observed',stop_reason:'watchdog'}),false);
+    assert.equal(nativeCpuCaptureComplete({status:'INCONCLUSIVE',stop_reason:'job_drained'}),false);
+  });
+
   test('CPU stop latch is shared by watchdog and worker drain, then cleanup runs once',async()=>{
     const calls={stop:0,disable:0,disconnect:0,clear:0};let watchdog:(()=>void)|undefined,releaseBody:(()=>void)|undefined;
     let resolveStarted:(()=>void)|undefined,resolveEntered:(()=>void)|undefined;
