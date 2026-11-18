@@ -35,7 +35,7 @@ export const PREVIEW_SLIDES = 5;
 /** Whether a file is one of the open preview slides of a `registro` study. */
 export function isPreviewSlide(study: Study, path: string): boolean {
   if (study.accessMode !== "registro") return false;
-  const match = /^slides\/(\d{2,3})\.webp$/.exec(path);
+  const match = /^slides(?:-en)?\/(\d{2,3})\.webp$/.exec(path);
   return Boolean(match) && Number(match![1]) >= 1 && Number(match![1]) <= Math.min(PREVIEW_SLIDES, study.slideCount);
 }
 

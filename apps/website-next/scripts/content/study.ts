@@ -16,6 +16,7 @@ import { lintDeckHtml, lintTexts } from "./lint";
  * The folder is what a study agent delivers (estudios/<industria>/web/):
  *   estudio.json   the study page and its access mode (src/content/studies/schema.ts)
  *   deck/          the builder folder as is: index.html, deck-stage.js, css, assets
+ *   deck-en/       optional, the same deck in English, with as many slides as deck/ (README.md)
  *   piezas.json    optional, the Insights pieces of the study
  *   portada.png    optional cover; without it, the first slide is the cover
  *   imagen.png     optional image of the study for its page and its card (content-db/STUDY_IMAGES.md);
@@ -95,46 +96,58 @@ if (imagen && study) {
   if (statSync(imagen).size > MAX_FILE) problems.push(`${relative(folder, imagen)}: over the 15 MB limit`);
 }
 
-// ---------- deck ----------
-const deckDir = join(folder, "deck");
-const deckFiles: File[] = [];
-let builderPdf: File | null = null;
-let deckHtml = "";
-if (!existsSync(join(deckDir, "index.html"))) problems.push("deck/index.html is missing");
-else if (!existsSync(join(deckDir, "deck-stage.js"))) problems.push("deck/deck-stage.js is missing");
-else {
-  for (const full of walk(deckDir).sort()) {
-    const rel = relative(deckDir, full).split("\\").join("/");
+// ---------- deck (and its English twin) ----------
+type Deck = { name: "deck" | "deck-en"; dir: string; files: File[]; pdf: File | null };
+
+function readDeck(name: Deck["name"], pdfPath: string): Deck {
+  const dir = join(folder, name);
+  const deck: Deck = { name, dir, files: [], pdf: null };
+  if (!existsSync(join(dir, "index.html"))) {
+    problems.push(`${name}/index.html is missing`);
+    return deck;
+  }
+  if (!existsSync(join(dir, "deck-stage.js"))) {
+    problems.push(`${name}/deck-stage.js is missing`);
+    return deck;
+  }
+  for (const full of walk(dir).sort()) {
+    const rel = relative(dir, full).split("\\").join("/");
     if (SKIP.test(rel)) continue;
     const ext = extname(rel).toLowerCase();
     const contentType = TYPES[ext];
     if (!contentType) {
-      warnings.push(`deck/${rel}: unknown file type, left out`);
+      warnings.push(`${name}/${rel}: unknown file type, left out`);
       continue;
     }
     const bytes = readFileSync(full);
-    if (bytes.length > MAX_FILE) problems.push(`deck/${rel}: ${(bytes.length / 1e6).toFixed(1)} MB, over the 15 MB limit per file`);
+    if (bytes.length > MAX_FILE) problems.push(`${name}/${rel}: ${(bytes.length / 1e6).toFixed(1)} MB, over the 15 MB limit per file`);
     if (ext === ".pdf") {
-      if (builderPdf) warnings.push(`deck/${rel}: a second PDF, left out`);
-      else builderPdf = { path: `pdf/${study?.id ?? "estudio"}.pdf`, contentType, bytes };
+      if (deck.pdf) warnings.push(`${name}/${rel}: a second PDF, left out`);
+      else deck.pdf = { path: pdfPath, contentType, bytes };
       continue;
     }
     if (/social|tweet|post|captura/i.test(rel) && /^image\//.test(contentType)) {
-      warnings.push(`deck/${rel}: looks like a screenshot of a post. Check that no name, @user or photo of a person shows.`);
+      warnings.push(`${name}/${rel}: looks like a screenshot of a post. Check that no name, @user or photo of a person shows.`);
     }
-    deckFiles.push({ path: `deck/${rel}`, contentType, bytes });
+    deck.files.push({ path: `${name}/${rel}`, contentType, bytes });
   }
-  deckHtml = readFileSync(join(deckDir, "index.html"), "utf8");
-  const { issues, external } = lintDeckHtml(deckHtml);
-  problems.push(...issues);
-  if (external.length) warnings.push(`deck loads files from other sites: ${external.join(", ")}`);
+  const html = readFileSync(join(dir, "index.html"), "utf8");
+  const { issues, external } = lintDeckHtml(html);
+  problems.push(...issues.map((issue) => (name === "deck" ? issue : issue.replace(/^deck:/, `${name}:`))));
+  if (external.length) warnings.push(`${name} loads files from other sites: ${external.join(", ")}`);
   // Speaker notes are for whoever presents, not for readers.
-  const cleaned = deckHtml.replace(/(<script[^>]*id=["']speaker-notes["'][^>]*>)[\s\S]*?(<\/script>)/i, "$1[]$2");
-  const index = deckFiles.find((file) => file.path === "deck/index.html");
+  const cleaned = html.replace(/(<script[^>]*id=["']speaker-notes["'][^>]*>)[\s\S]*?(<\/script>)/i, "$1[]$2");
+  const index = deck.files.find((file) => file.path === `${name}/index.html`);
   if (index) index.bytes = Buffer.from(cleaned, "utf8");
-  const total = deckFiles.reduce((sum, file) => sum + file.bytes.length, 0) + (builderPdf?.bytes.length ?? 0);
-  if (total > MAX_TOTAL) problems.push(`deck: ${(total / 1e6).toFixed(1)} MB in all, over the 60 MB limit`);
+  return deck;
 }
+
+const id = study?.id ?? "estudio";
+const decks: Deck[] = [readDeck("deck", `pdf/${id}.pdf`)];
+if (existsSync(join(folder, "deck-en"))) decks.push(readDeck("deck-en", `pdf-en/${id}.pdf`));
+const deckFiles = decks.flatMap((deck) => deck.files);
+const total = deckFiles.reduce((sum, file) => sum + file.bytes.length, 0) + decks.reduce((sum, deck) => sum + (deck.pdf?.bytes.length ?? 0), 0);
+if (total > MAX_TOTAL) problems.push(`decks: ${(total / 1e6).toFixed(1)} MB in all, over the 60 MB limit`);
 
 // ---------- pieces (validated by content:load, which also writes them) ----------
 const piecesFile = join(folder, "piezas.json");
@@ -160,11 +173,9 @@ const rendered: File[] = [];
 const browser = await puppeteer.launch({ executablePath: chrome, headless: true, args: ["--force-device-scale-factor=1"] });
 try {
   const page = await browser.newPage();
-  const deckUrl = pathToFileURL(join(deckDir, "index.html")).href;
-
-  async function openDeck(width: number, height: number) {
+  async function openDeck(width: number, height: number, deck: Deck = decks[0]!) {
     await page.setViewport({ width, height, deviceScaleFactor: 1 });
-    await page.goto(deckUrl, { waitUntil: "networkidle0" });
+    await page.goto(pathToFileURL(join(deck.dir, "index.html")).href, { waitUntil: "networkidle0" });
     await page.evaluate(() => document.fonts.ready);
     await page.waitForFunction(() => Boolean(customElements.get("deck-stage")) && Boolean(document.querySelector("deck-stage")?.shadowRoot));
     // The slide counter and the tap zones are for whoever navigates, not for an image.
@@ -180,19 +191,30 @@ try {
     await new Promise((done) => setTimeout(done, 700));
   }
 
-  await openDeck(1920, 1080);
-  const indexes = await page.evaluate(() =>
-    Array.from(document.querySelector("deck-stage")?.children ?? [])
-      .filter((el) => !["TEMPLATE", "SCRIPT", "STYLE"].includes(el.tagName))
-      .map((el, i) => (el.hasAttribute("data-deck-skip") ? -1 : i))
-      .filter((i) => i >= 0)
-  );
-  if (indexes.length === 0) throw new Error("The deck has no slides");
-  for (const [n, index] of indexes.entries()) {
-    await showSlide(index);
-    const bytes = Buffer.from(await page.screenshot({ type: "webp", quality: 82 }));
-    rendered.push({ path: `slides/${String(n + 1).padStart(2, "0")}.webp`, contentType: "image/webp", bytes });
-    process.stdout.write(`  slide ${n + 1}/${indexes.length}\n`);
+  // One image per slide, for each deck. The English deck must have as many slides as the main one.
+  const slideCounts: number[] = [];
+  let firstIndex = 0;
+  for (const deck of decks) {
+    await openDeck(1920, 1080, deck);
+    const indexes = await page.evaluate(() =>
+      Array.from(document.querySelector("deck-stage")?.children ?? [])
+        .filter((el) => !["TEMPLATE", "SCRIPT", "STYLE"].includes(el.tagName))
+        .map((el, i) => (el.hasAttribute("data-deck-skip") ? -1 : i))
+        .filter((i) => i >= 0)
+    );
+    if (indexes.length === 0) throw new Error(`${deck.name} has no slides`);
+    if (deck.name === "deck") firstIndex = indexes[0]!;
+    const prefix = deck.name === "deck" ? "slides" : "slides-en";
+    for (const [n, index] of indexes.entries()) {
+      await showSlide(index);
+      const bytes = Buffer.from(await page.screenshot({ type: "webp", quality: 82 }));
+      rendered.push({ path: `${prefix}/${String(n + 1).padStart(2, "0")}.webp`, contentType: "image/webp", bytes });
+      process.stdout.write(`  ${prefix} ${n + 1}/${indexes.length}\n`);
+    }
+    slideCounts.push(indexes.length);
+  }
+  if (slideCounts.length === 2 && slideCounts[0] !== slideCounts[1]) {
+    throw new Error(`deck/ has ${slideCounts[0]} slides and deck-en/ has ${slideCounts[1]}: they must match`);
   }
 
   const portada = ["portada.png", "portada.jpg", "portada.webp"].map((name) => join(folder, name)).find((file) => existsSync(file));
@@ -203,7 +225,7 @@ try {
     await page.setContent(`<html><body style="margin:0"><img src="data:${type};base64,${data}" style="width:1200px;height:675px;object-fit:cover;display:block"></body></html>`, { waitUntil: "load" });
   } else {
     await openDeck(1200, 675);
-    await showSlide(indexes[0]);
+    await showSlide(firstIndex);
   }
   rendered.push({ path: "cover.webp", contentType: "image/webp", bytes: Buffer.from(await page.screenshot({ type: "webp", quality: 85 })) });
 
@@ -249,17 +271,18 @@ try {
     rendered.push({ path: "email.jpg", contentType: "image/jpeg", bytes: Buffer.from(await page.screenshot({ type: "jpeg", quality: 84 })) });
   }
 
-  if (!builderPdf) {
-    console.log("  no PDF in deck/, printing one");
-    await openDeck(1920, 1080);
+  for (const deck of decks) {
+    if (deck.pdf) continue;
+    console.log(`  no PDF in ${deck.name}/, printing one`);
+    await openDeck(1920, 1080, deck);
     const pdf = await page.pdf({ width: "1920px", height: "1080px", printBackground: true, preferCSSPageSize: true });
-    builderPdf = { path: `pdf/${study.id}.pdf`, contentType: "application/pdf", bytes: Buffer.from(pdf) };
+    deck.pdf = { path: deck.name === "deck" ? `pdf/${study.id}.pdf` : `pdf-en/${study.id}.pdf`, contentType: "application/pdf", bytes: Buffer.from(pdf) };
   }
 } finally {
   await browser.close();
 }
 
-const files = [...deckFiles, ...rendered, builderPdf!];
+const files = [...deckFiles, ...rendered, ...decks.map((deck) => deck.pdf!)];
 const slideCount = rendered.filter((file) => file.path.startsWith("slides/")).length;
 const totalMb = (files.reduce((sum, file) => sum + file.bytes.length, 0) / 1e6).toFixed(1);
 console.log(`${study.id}: ${slideCount} slides, ${files.length} files, ${totalMb} MB.`);
@@ -297,7 +320,7 @@ try {
     study.full_language,
     "cover.webp",
     "deck/index.html",
-    builderPdf!.path,
+    decks[0]!.pdf!.path,
     slideCount,
     version,
     studyMarkets(study),

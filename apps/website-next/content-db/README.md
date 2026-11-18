@@ -66,6 +66,17 @@ Google Chrome one image per slide (the phone view), the cover and, when `deck/` 
 Files are stored per study version in `content.study_files`; loading changed files bumps the
 version and removes the old ones.
 
+**A deck in English too.** A `web/` folder may carry `deck-en/` beside `deck/`: the same study in
+English, with its own PDF inside and exactly as many slides as `deck/` (the loader refuses
+otherwise). It is checked and rendered like the main deck and stored as `deck-en/`, `slides-en/`
+and `pdf-en/<id>.pdf`. The English site (`/en/insights/studies/<id>`, and the personal links of
+readers who signed up in English) shows it; the Spanish site keeps `deck/`. The first five
+slides of each are the public preview of a `registro` study.
+
+**Booking a call.** Decks point to `noisia.ai/agenda` (slide and QR). The site sends it to the
+booking page in `NOISIA_AGENDA_URL`; until there is one, to the contact form (`/taller`,
+`/en/workshop`).
+
 `market` is one market (`"MX"`) or a list for a study that reads several side by side
 (`["UK", "DE", "ES", "FR"]`, the main one first). The index filter finds the study under each of
 them; the card shows one or two names, or "4 markets".

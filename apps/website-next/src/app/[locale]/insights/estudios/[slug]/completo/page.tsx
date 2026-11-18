@@ -7,7 +7,7 @@ import { StudyViewer } from "@/components/studies/StudyViewer";
 import styles from "@/components/studies/viewer.module.css";
 import { Button } from "@/components/ui/Button";
 import { studiesPage } from "@/content/pages/studies";
-import { getStudy, slidePaths } from "@/content/studies";
+import { deckFor, deckPaths, getStudy, slidePaths } from "@/content/studies";
 import { getPathname } from "@/i18n/navigation";
 import { accessCookieName, canOpen, pendingCookieName, PREVIEW_SLIDES, READER_COOKIE, recordEvent, recordReaderOpen } from "@/lib/content/access";
 import { SITE_URL } from "@/lib/site";
@@ -48,7 +48,10 @@ export default async function StudyViewerPage({ params, searchParams }: { params
   const reader = jar.get(READER_COOKIE)?.value;
   const access = await canOpen(study, token, reader);
   const base = `/api/content/studies/${study.id}`;
-  const slides = slidePaths(study).map((path) => `${base}/${path}?v=${study.version}`);
+  // The English site shows the English deck when the study has one.
+  const deck = await deckFor(study, locale);
+  const paths = deckPaths(study, deck);
+  const slides = slidePaths(study, deck).map((path) => `${base}/${path}?v=${study.version}`);
   const query = await searchParams;
   const requested = Number.parseInt(query.slide ?? "", 10);
   const initialSlide = Number.isFinite(requested) && requested >= 1 && requested <= slides.length ? requested - 1 : 0;
@@ -56,10 +59,10 @@ export default async function StudyViewerPage({ params, searchParams }: { params
     title,
     studyHref,
     shareUrl: new URL(studyHref, SITE_URL).toString(),
-    deckSrc: `${base}/deck/index.html?v=${study.version}`,
+    deckSrc: `${base}/${paths.index}?v=${study.version}`,
     slides,
     initialSlide,
-    pdfHref: study.pdfPath ? `${base}/pdf?v=${study.version}` : null,
+    pdfHref: paths.pdf ? `${base}/${deck === "en" ? "pdf-en" : "pdf"}?v=${study.version}` : null,
     labels: {
       close: c.close,
       slides: c.slides(slides.length),
