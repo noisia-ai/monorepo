@@ -6,7 +6,7 @@ import {startupErrorTreeV1} from './signal-listening-startup-prefix.synthetic.fi
 export type ListeningWritePhaseV1='reserve'|'mark'|'apply';
 export type ListeningWriteTemplatesV1=Record<ListeningWritePhaseV1,string>;
 const phases:ListeningWritePhaseV1[]=['reserve','mark','apply'];
-const MAX_FUNCTIONS=64,MAX_CAPTURE_BYTES=128*1024;
+const MAX_FUNCTIONS=64,MAX_CAPTURE_BYTES=128*1024,MAX_RECEIPT_BYTES=2*1024*1024;
 const sha=(value:string)=>createHash('sha256').update(value).digest('hex');
 function known(value:unknown,code:string):asserts value{if(!value)throw new Error(code);}
 export function extractListeningWriteTemplatesV1(source:{labeling:string;listening:string}):ListeningWriteTemplatesV1{
@@ -56,12 +56,14 @@ export type WriteFunctionsReceiptV1={contract:'r16-listening-write-functions-v1'
 /** Financial acceptance may tolerate absent statistics, never a missing or
  * failed write observation. Read only own data fields; no diagnostic getters. */
 export function assertListeningWriteStructureV1(value:unknown):asserts value is WriteFunctionsReceiptV1{
+ const bytes=(object:unknown)=>{let json:string|undefined;try{json=JSON.stringify(object);}catch{throw new Error('write_functions_structure_serialization');}known(typeof json==='string','write_functions_structure_serialization');return Buffer.byteLength(json);};
  const read=(object:unknown,key:string,optional=false):unknown=>{known(object!==null&&typeof object==='object','write_functions_structure_object');const d=Object.getOwnPropertyDescriptor(object,key);if(!d&&optional)return undefined;known(d&&'value'in d,'write_functions_structure_data');return d.value;};
  const array=(object:unknown,max:number):unknown[]=>{known(Array.isArray(object),'write_functions_structure_array');const n=read(object,'length');known(typeof n==='number'&&Number.isSafeInteger(n)&&n>=0&&n<=max,'write_functions_structure_array_cap');const rows:unknown[]=[];for(let i=0;i<n;i++)rows.push(read(object,String(i)));return rows;};
  known(read(value,'contract')==='r16-listening-write-functions-v1'&&read(value,'diagnostic_only')===true&&read(value,'h1_accepted')===false&&read(value,'cpu')==='UNKNOWN'&&read(value,'closed')===true,'write_functions_structure_contract');
+ known(bytes(value)<=MAX_RECEIPT_BYTES,'write_functions_structure_receipt_bytes');
  const gates=read(value,'gates');for(const key of ['three_original_statements','native_commit_ack','identity_and_settings_restored','no_recording_loss'])known(read(gates,key)===true,'write_functions_structure_gate');const countersKnown=read(gates,'counters_known');known(typeof countersKnown==='boolean','write_functions_structure_counters_gate');
  const captures=array(read(value,'captures'),3);known(captures.length===3,'write_functions_structure_capture_count');const seen=new Set<string>();let allKnown=true;
- for(const row of captures){const phase=read(row,'phase');known(typeof phase==='string'&&phases.includes(phase as ListeningWritePhaseV1)&&!seen.has(phase),'write_functions_structure_phases');seen.add(phase);
+ for(const row of captures){known(bytes(row)<=MAX_CAPTURE_BYTES,'write_functions_structure_capture_bytes');const phase=read(row,'phase');known(typeof phase==='string'&&phases.includes(phase as ListeningWritePhaseV1)&&!seen.has(phase),'write_functions_structure_phases');seen.add(phase);
   known(read(row,'original_executions')===1&&read(row,'stage')==='committed','write_functions_structure_execution');for(const key of ['original_succeeded','result_reference_preserved','native_commit_ack','identity_same','settings_restored'])known(read(row,key)===true,'write_functions_structure_write');
   for(const key of ['safe_error_tree','failure_stage','transaction_rolled_back','capture_payload_rejected_over_bytes','capture_bytes_observed'])known(read(row,key,true)===undefined,'write_functions_structure_failure');
   const proposed=read(row,'proposed_rows'),roots=read(row,'batch_roots'),changed=read(row,'row_count'),elapsed=read(row,'elapsed_dml_ms');known(typeof proposed==='number'&&Number.isSafeInteger(proposed)&&proposed>0&&proposed<=512&&typeof roots==='number'&&Number.isSafeInteger(roots)&&roots>0&&roots<=proposed,'write_functions_structure_batch');
