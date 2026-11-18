@@ -338,22 +338,30 @@ if(pure){
   assert.equal(capture.transaction_rolled_back,true);assert.equal(capture.rollback_reset_confirmed,true);
  });
 
- test('write-function registry includes static rename targets but not SQL references',async()=>{
+ test('write-function registry includes trusted migration function signatures and rename targets',async()=>{
   const synthetic=`
 CREATE FUNCTION public.synthetic_old_a() RETURNS integer LANGUAGE sql AS $$ SELECT 1 $$;
 ALTER FUNCTION public.synthetic_old_a() RENAME TO synthetic_new_a;
 CREATE OR REPLACE FUNCTION synthetic_old_b(integer) RETURNS integer LANGUAGE sql AS $$ SELECT 1 $$;
 ALTER FUNCTION public.synthetic_old_b(integer) RENAME TO synthetic_new_b;
-ALTER FUNCTION public.not_a_declared_function(integer) OWNER TO synthetic_role;
+REVOKE EXECUTE ON FUNCTION public.synthetic_revoked(text) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION synthetic_granted(uuid) TO synthetic_role;
+COMMENT ON FUNCTION public.synthetic_comment(integer) IS 'synthetic function';
+SELECT replace('FUNCTION public.synthetic_replace_payload(uuid)', 'FUNCTION old', 'FUNCTION new');
 SELECT synthetic_called_only();
+ALTER TABLE public.synthetic_table RENAME TO synthetic_table_new;
 `;
   assert.deepEqual(extractListeningWriteFunctionNamesV1(synthetic),[
-   'synthetic_new_a','synthetic_new_b','synthetic_old_a','synthetic_old_b',
+   'synthetic_comment','synthetic_granted','synthetic_new_a','synthetic_new_b',
+   'synthetic_old_a','synthetic_old_b','synthetic_replace_payload','synthetic_revoked',
   ]);
 
   const migration=await readFile(new URL('./0176_signal_topic_consolidation_editorial.sql',import.meta.url),'utf8');
   const migrationNames=extractListeningWriteFunctionNamesV1(migration);
-  const aliasDigest='9b11bbbb453edc537495a066f2906bc99b6cc4ff08979af90d53d307710e4887';
-  assert.ok(migrationNames.some(name=>createHash('sha256').update(name).digest('hex')===aliasDigest));
+  const migration0306=await readFile(new URL('./0306_signal_studies.sql',import.meta.url),'utf8');
+  const migration0306Names=extractListeningWriteFunctionNamesV1(migration0306);
+  const hasAliasDigest=(names:string[],digest:string)=>names.some(name=>createHash('sha256').update(name).digest('hex')===digest);
+  assert.ok(hasAliasDigest(migrationNames,'9b11bbbb453edc537495a066f2906bc99b6cc4ff08979af90d53d307710e4887'));
+  assert.ok(hasAliasDigest(migration0306Names,'b6fbdf36ef8f3d9223f4260184997205ee0b27e6be09987db70e4752a49b5d16'));
  });
 }
