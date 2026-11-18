@@ -35,6 +35,11 @@ export function studyHero(study: Study): string | null {
   return study.heroPath ? `/api/content/studies/${study.id}/${study.heroPath}?v=${study.version}` : null;
 }
 
+/** The horizontal version of the study's image, for its card. */
+export function studyHeroWide(study: Study): string | null {
+  return study.heroWidePath ? `/api/content/studies/${study.id}/${study.heroWidePath}?v=${study.version}` : null;
+}
+
 export async function studyCardItems(locale: string): Promise<StudyCardItem[]> {
   const lang = locale === "en" ? "en" : "es";
   const c = studiesPage[lang];
@@ -57,7 +62,7 @@ export async function studyCardItems(locale: string): Promise<StudyCardItem[]> {
       meta: [study.method, study.summary[lang].period_label ?? study.periodLabel].filter(Boolean).join(" · "),
       badge: c.access[study.accessMode],
       gated: study.accessMode === "solo_link",
-      cover: studyHero(study) ?? studyCover(study),
+      cover: studyHeroWide(study) ?? studyHero(study) ?? studyCover(study),
       date: study.publishedAt ?? new Date().toISOString(),
       draft: study.draft
     }));

@@ -73,7 +73,7 @@ export async function revalidateSite(): Promise<void> {
 }
 
 /** Flags that take a value (`--study <id>`); every other flag is a switch. */
-const VALUE_FLAGS = ["study", "status", "days", "out", "base", "lang", "revoke", "n"];
+const VALUE_FLAGS = ["shape", "study", "status", "days", "out", "base", "lang", "revoke", "n"];
 
 export function parseArgs(argv: string[]) {
   const flags = new Map<string, string | true>();

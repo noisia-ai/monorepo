@@ -1,45 +1,130 @@
 # The image of a study
 
-Each study has its own image. It opens the study's page, next to the title, and is the study's card
-in the index. Until a study has one, the page shows the deck's cover. The access email carries it
-as a banner (`STUDY_EMAIL.md`).
+Each study has its own image, in two shapes made from the same scene:
 
-## What it looks like
+| Shape | File in the study folder | Loaded as | Where it shows |
+|---|---|---|---|
+| Vertical 2:3 | `imagen.png` | `hero.webp` | The study's page, next to the title |
+| Horizontal 3:2 | `imagen-wide.png` | `hero-wide.webp`, `email-banner.jpg` | The study's card in the index (cropped to 16:9) and the banner of the access email (cropped to 1.85:1) |
 
-The editorial reports set the tone (`public/assets/insights/*-editorial.png`). A study image
-follows the same idea with less treatment:
+Without `imagen-wide.png`, the card and the email use the vertical image. Without either, the page
+and the card show the deck's cover.
 
-- **A real, ordinary person**, photographed naturally: honest expression, real skin, minimal
-  retouching. No poses for the camera and no stock-photo smiles. Silhouettes and the anaglyph
-  effect of the reports are allowed but not required.
-- **Doing the thing the study is about**, at the moment it reads: checking a price, weighing two
-  options, holding the keys. The brief says what that moment is.
-- **Waist-up or three-quarter**, centered, looking slightly away, vertical 2:3.
-- **On seamless white**, without floor, horizon or shadow, with white space on every side. The page
-  melts the image into its white background (`mix-blend-mode: multiply`, soft mask at the edges).
-- **Muted wardrobe**, at most one small accent in the brand's cyan or coral.
-- **People who look like the markets** of the study.
-- **Never**: text, logos, brands, readable screens, watermarks, celebrities or public figures,
-  children.
+## The look: a person in haze, in the real place, washed to white
+
+Chosen by Brandhon on 17 Nov 2026 after a test on the insurance study. The test compared three
+styles and this one won:
+- the documentary cutout used before;
+- a portrait with cyan and coral doubles, like the site's editorials;
+- a person in mist, like the reference images Brandhon chose.
+
+**Why it has a background.** A person on a blank white or transparent background reads as an AI
+image. A photograph has a place. The place is what makes the image believable and tells the reader
+where the moment happens.
+
+What every image has:
+- **A real photograph of a real place.** It must never look like a cutout on blank paper or a
+  digital illustration.
+- **One person, face never readable.** They are seen in profile or three-quarter from behind,
+  looking down or away. They are the only thing in the frame with tone and a little muted color.
+- **Haze around the person.** It dissolves the lower body into light.
+- **The anaglyph edge, on the person only.** A coral-red fringe (`#D91441`) on one side and a cyan
+  one (`#009CA8`) on the other, like a slightly misregistered print. This is the brand's neon, used
+  as glow and never as a fill (`packages/kb/Design.md`).
+- **The place behind them, washed almost to white.** It is in black and white, very high-key and
+  low-contrast, as if the exposure were set for the person. It is still recognizable: a dining
+  room, a pharmacy counter, a branch office. The edges of the frame fade to white, so the image
+  melts into the white page. The page still lays it over white with `multiply` and a soft mask.
+- **One clear human action, the moment of the study.** Not a pose and not a metaphor. It is the
+  instant where the study's tension shows: reading the letter that denies the claim, holding the
+  router while on hold, weighing a medicine box at the counter. This follows Human Signals §06
+  (`packages/pitch-kit/HUMAN_SIGNALS.md`).
+- **Fine film grain** over the whole frame.
+- **Never:** text, letters or numbers, logos or brands, readable documents, labels or screens,
+  watermarks, recognizable faces, public figures, children.
+
+## How the prompt is built
+
+`pnpm content:image` writes one prompt per shape. It joins these blocks, in this order (the model
+weighs the start most):
+
+| # | Block | Comes from | What it says |
+|---|---|---|---|
+| 1 | Photograph | `STYLE.photograph` in `scripts/content/image.ts` | A real documentary photograph on location, large-format film. Never a cutout or an illustration. |
+| 2 | Person | `STYLE.person` | Profile or from behind, face never readable, haze, anaglyph edge on the figure only. |
+| 3 | Place | `STYLE.place` | The real place behind, black and white, high-key, washed to white, recognizable, edges fading to white. |
+| 4 | Finish | `STYLE.finish` | Grain; quiet and cinematic; one clear action. |
+| 5 | Frame | `SHAPES.<shape>.frame` | Vertical: person slightly off-center, room rising behind. Wide: person in a third, the room filling the rest, safe for crops. |
+| 6 | Never | `STYLE.never` | The forbidden list, plus "no person isolated on a blank background". |
+| 7 | Study | `estudio.json` `en.title` + `en.dek` | What the study is about. |
+| 8 | People | `market` in `estudio.json` | "The person looks like an everyday resident of Mexico." |
+| 9 | Moment | `image.brief` | Who, and the moment they are living. |
+| 10 | Place | `image.place` | Where it happens and what is behind them. |
+
+Blocks 1 to 6 are the house style and are the same for every study. **Only blocks 7 to 10 change.**
+If the house style changes, it changes in `STYLE` and in this file together.
+
+### Writing `image.brief` and `image.place`
+
+They are in English, in `estudio.json`:
+
+```json
+"image": {
+  "brief": "A man in his mid forties in a button-down shirt, in profile, reading a single sheet of paper, a thin folder under his arm, shoulders dropped and head lowered, as if his insurance claim was just turned down.",
+  "place": "The small dining room of his apartment in Mexico City, late afternoon: the dining table with a few envelopes, a chair, a kitchen doorway, a window with a sheer curtain."
+}
+```
+
+**`brief` says who and the moment, in one or two sentences:**
+- Age and plain clothes.
+- What they hold: one or two objects, never with a readable label.
+- The body: shoulders, head, hands. The face does not count, because it is not seen.
+- "As if…": the study's tension in one clause.
+
+**`place` says where it happens and lists three to five things behind the person:**
+- Choose the place where the study's moment happens in that market: home, pharmacy counter, bank
+  branch, street, car.
+- Add the time of day.
+- Do not use generic offices or studios.
+
+**Checks before generating:**
+- Can someone read the study's question in the scene without a caption?
+- Is it a real moment rather than a symbol (no scales, no puzzle pieces, no arrows)?
+- Is there nothing with text on it?
+- Could the place be in the study's market?
 
 ## How it is made
 
-1. In `estudio.json`, `image.brief` says in English who is in the picture and what they are doing,
-   in two or three sentences. The house style is added by the script; the brief is only the scene.
-2. `pnpm content:image <web folder>` writes `imagen.prompt.txt` (the full prompt) and asks OpenAI
-   (`gpt-image-2.6-sunburst`, 1024×1536, high quality) for two candidates: `imagen-1.png`,
-   `imagen-2.png`. Each costs about USD 0.20; `--n` goes up to 4, `--dry-run` only writes the
-   prompt. The key is `OPENAI_API_KEY` in the repo root's `.env.local`.
-3. Pick one, rename it to `imagen.png` and describe it in `es.image_alt` and `en.image_alt`.
-4. `pnpm content:study <web folder>` loads it as `hero.webp` (public, like the cover) with the
-   rest of the study.
+1. Write `image.brief` and `image.place` in `estudio.json`.
+2. Run `pnpm content:image <web folder>`. It writes `imagen.prompt.txt` and
+   `imagen-wide.prompt.txt` and asks OpenAI (`gpt-image-2.6-sunburst`, high quality) for two
+   candidates of each shape: `imagen-1.png`, `imagen-2.png`, `imagen-wide-1.png`,
+   `imagen-wide-2.png`. Useful flags:
+   - `--dry-run` only writes the prompts.
+   - `--shape vertical|wide` draws one shape.
+   - `--n` goes up to 4.
 
-The style lives in `scripts/content/image.ts` (`STYLE`); change it there and here together.
+   Each image costs about USD 0.20, so two shapes with two candidates each is about USD 0.80. The
+   script prints the cost before asking. The key is `OPENAI_API_KEY` in the repo root's
+   `.env.local`.
+3. Review the candidates with the quality check in Human Signals §VIII:
+   - Is the moment true and the story legible?
+   - Are the hands, anatomy and perspective right?
+   - Is there any text, any readable face, any AI artifact?
+   - Does the person stand out and does the place read?
 
-## Example brief
+   Pick one of each shape, preferably the same take, and rename them `imagen.png` and
+   `imagen-wide.png`.
+4. Describe the image in `es.image_alt` and `en.image_alt`. Say who it is and what they are doing,
+   not the style.
+5. Run `pnpm content:study <web folder>`. It loads `hero.webp`, `hero-wide.webp` and the email
+   banner with the rest of the study.
 
-Black Friday in Europe (`black-friday-europa-2026`):
+## Reference
 
-> A woman in her early thirties in a wool coat and scarf, a paper shopping bag in one hand and her
-> phone in the other, glancing at the phone with a skeptical, half-amused look, as if checking
-> whether a Black Friday price is really lower than two weeks ago.
+- The insurance study's test: two candidates of the chosen style, kept outside git.
+- The four reference images Brandhon chose (person in mist, anaglyph): `~/Downloads/Noisia
+  imagenes/`, outside git.
+- Human Signals and Kinetic Cinema, the creative direction this style comes from:
+  `packages/pitch-kit/HUMAN_SIGNALS.md`. Kinetic Cinema's motion blur and flash stay for video and
+  atmosphere. The study image is quieter: one person, one moment, haze.

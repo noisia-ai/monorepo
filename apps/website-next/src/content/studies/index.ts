@@ -28,6 +28,8 @@ export type Study = {
   coverPath: string | null;
   /** The study's own image (public, like the cover); null until one is generated. */
   heroPath: string | null;
+  /** Its horizontal version, for the card and the email (content-db/STUDY_IMAGES.md); null without one. */
+  heroWidePath: string | null;
   pdfPath: string | null;
   slideCount: number;
   version: number;
@@ -81,6 +83,7 @@ function fromRow(row: Row): Study | null {
     fullLanguage: row.full_language,
     coverPath: row.cover_path,
     heroPath: row.hero_path ?? null,
+    heroWidePath: null,
     pdfPath: row.pdf_path,
     slideCount: row.slide_count,
     version: row.version,
@@ -91,8 +94,16 @@ function fromRow(row: Row): Study | null {
 
 async function readStudies(): Promise<Study[]> {
   const view = showsDrafts() ? "content.review_studies" : "content.published_studies";
-  const { rows } = await contentDb().query<Row>(`select * from ${view} order by published_at desc nulls first, id`);
-  return rows.flatMap((row) => fromRow(row) ?? []);
+  const files = showsDrafts() ? "content.review_study_files" : "content.published_study_files";
+  const [{ rows }, wide] = await Promise.all([
+    contentDb().query<Row>(`select * from ${view} order by published_at desc nulls first, id`),
+    contentDb().query<{ study_id: string }>(`select study_id from ${files} where path = 'hero-wide.webp'`)
+  ]);
+  const withWide = new Set(wide.rows.map((row) => row.study_id));
+  return rows.flatMap((row) => {
+    const study = fromRow(row);
+    return study ? [{ ...study, heroWidePath: withWide.has(study.id) ? "hero-wide.webp" : null }] : [];
+  });
 }
 
 const cachedStudies = unstable_cache(readStudies, ["content-studies"], { tags: [STUDIES_TAG] });
