@@ -7,8 +7,9 @@
 // 2. Pulsa refrescar en el panel. La app hace sus llamadas y aquí se capturan los NOMBRES de sus
 //    encabezados y la plantilla del cuerpo. __sentione.ready() dice qué falta.
 // 3. await __sentione.poll('source/total', {topicId: ID, from: MS_UTC, to: MS_UTC, language: [...]})
-// 4. Comprueba que el filtro movió el total: __sentione.moved(...) compara contra la misma llamada
-//    sin el filtro. Un parámetro mal escrito no da error, devuelve el total sin filtrar.
+// 4. Comprueba que el filtro movió el total: __sentione.moved(ruta, cuerpo, 'language') compara
+//    contra la misma llamada con ese filtro vacío ([] o null; un cuarto argumento lo cambia). Un
+//    parámetro mal escrito no da error, devuelve el total sin filtrar.
 // 5. __sentione.download('archivo.csv', texto) para sacar resultados largos: la salida de
 //    javascript_tool se corta a unos 1,200 caracteres.
 //
@@ -65,9 +66,12 @@
   const total = (j) => (j && j.result && typeof j.result === 'object')
     ? Object.values(j.result).reduce((a, b) => a + (Number(b) || 0), 0) : null;
 
-  const moved = async (path, body, filterKey) => {
+  // La línea base pone el filtro en su valor vacío ([] o null), no lo borra: call() mezcla el cuerpo
+  // sobre la plantilla capturada, y si el panel ya traía ese filtro, borrarlo lo dejaría puesto.
+  const moved = async (path, body, filterKey, unfiltered) => {
     const withF = total(await poll(path, body));
-    const without = Object.assign({}, body); delete without[filterKey];
+    const empty = unfiltered !== undefined ? unfiltered : (Array.isArray(body[filterKey]) ? [] : null);
+    const without = Object.assign({}, body, { [filterKey]: empty });
     const sinF = total(await poll(path, without));
     return { con_filtro: withF, sin_filtro: sinF, se_movio: withF !== null && withF !== sinF };
   };

@@ -15,8 +15,9 @@ scripts de espera que cada caso escribió por su cuenta.
    Si hay dos con la misma ventana, se detiene.
 3. Espera a que su tamaño deje de cambiar.
 4. Cuenta filas con lector CSV real (';', utf-8-sig, campos multilínea), no con wc -l.
-5. Calcula el sha256, lo mueve a --dest (con la etiqueta delante si se da) y agrega una línea al
-   manifiesto: archivo, etiqueta, ventana, esperado, filas, cuadra, bytes, sha256, hora UTC.
+5. Lo mueve a --dest (con la etiqueta delante si se da), calcula el sha256 del archivo archivado
+   (el .gz si va comprimido) y agrega una línea al manifiesto: archivo, etiqueta, ventana,
+   esperado, filas, cuadra, bytes, sha256, hora UTC.
 
 Salida: 0 si cuadra (o trae de más dentro de --tolerance: menciones indexadas durante el export),
 1 si no cuadra, 2 si se acabó el tiempo, 3 si la ventana es ambigua. Solo biblioteca estándar.
@@ -99,7 +100,6 @@ def main():
         return 2
 
     rows = count_rows(found)
-    digest = sha256(found)
     os.makedirs(a.dest, exist_ok=True)
     name = os.path.basename(found)
     target = os.path.join(a.dest, f"{a.label}__{name}" if a.label else name)
@@ -117,6 +117,9 @@ def main():
     extra = rows - a.expected
     ok = extra == 0 or (extra > 0 and extra <= max(1, round(a.expected * a.tolerance)))
     status = "OK" if extra == 0 else ("OK+" if ok else "MISMATCH")
+    # Huella y tamaño del archivo tal como quedó archivado (el .gz si se comprimió), para que
+    # `shasum -a 256 <archivo>` cuadre con el manifiesto.
+    digest = sha256(target)
     size = os.path.getsize(target)
     if a.manifest:
         new = not os.path.exists(a.manifest)
