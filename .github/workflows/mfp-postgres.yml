@@ -2462,12 +2462,12 @@ jobs:
             infrastructure/db/migrations/signal-listening-write-functions.test.ts \
             infrastructure/db/migrations/signal-listening-partial-admission.postgres.test.ts \
             | tee listening-partial-admission-pure.tap
-          if ! grep -qx '# tests 19' listening-partial-admission-pure.tap \
-            || ! grep -qx '# pass 18' listening-partial-admission-pure.tap \
+          if ! grep -qx '# tests 20' listening-partial-admission-pure.tap \
+            || ! grep -qx '# pass 19' listening-partial-admission-pure.tap \
             || ! grep -qx '# fail 0' listening-partial-admission-pure.tap \
             || ! grep -qx '# cancelled 0' listening-partial-admission-pure.tap \
             || ! grep -qx '# skipped 1' listening-partial-admission-pure.tap; then
-            echo '::error::Pure Listening observation contracts did not run the exact 19-test, 18-pass, 1-skip census'
+            echo '::error::Pure Listening observation contracts did not run the exact 20-test, 19-pass, 1-skip census'
             exit 1
           fi
       - name: Require the owned partial admission lab and private files to be absent

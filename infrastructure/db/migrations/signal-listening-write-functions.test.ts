@@ -8,6 +8,7 @@ import {
   classifyListeningWriteV1,
   createListeningWriteFunctionObserverV1,
   extractListeningWriteTemplatesV1,
+  extractListeningWriteFunctionNamesV1,
   listeningWriteBatchV1,
   writeFunctionFailureReasonV1,
   writeFunctionDeltasV1,
@@ -335,5 +336,24 @@ if(pure){
   assert.equal(sampling.after.stage,'row_count');assert.equal(sampling.after.rows_seen,65);assert.equal(sampling.after.row_index,null);
   assert.equal('after' in capture,false);assert.equal('deltas' in capture,false);
   assert.equal(capture.transaction_rolled_back,true);assert.equal(capture.rollback_reset_confirmed,true);
+ });
+
+ test('write-function registry includes static rename targets but not SQL references',async()=>{
+  const synthetic=`
+CREATE FUNCTION public.synthetic_old_a() RETURNS integer LANGUAGE sql AS $$ SELECT 1 $$;
+ALTER FUNCTION public.synthetic_old_a() RENAME TO synthetic_new_a;
+CREATE OR REPLACE FUNCTION synthetic_old_b(integer) RETURNS integer LANGUAGE sql AS $$ SELECT 1 $$;
+ALTER FUNCTION public.synthetic_old_b(integer) RENAME TO synthetic_new_b;
+ALTER FUNCTION public.not_a_declared_function(integer) OWNER TO synthetic_role;
+SELECT synthetic_called_only();
+`;
+  assert.deepEqual(extractListeningWriteFunctionNamesV1(synthetic),[
+   'synthetic_new_a','synthetic_new_b','synthetic_old_a','synthetic_old_b',
+  ]);
+
+  const migration=await readFile(new URL('./0176_signal_topic_consolidation_editorial.sql',import.meta.url),'utf8');
+  const migrationNames=extractListeningWriteFunctionNamesV1(migration);
+  const aliasDigest='9b11bbbb453edc537495a066f2906bc99b6cc4ff08979af90d53d307710e4887';
+  assert.ok(migrationNames.some(name=>createHash('sha256').update(name).digest('hex')===aliasDigest));
  });
 }
