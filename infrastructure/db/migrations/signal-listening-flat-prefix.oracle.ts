@@ -9,6 +9,11 @@ import {requestSignalListeningV1} from '../signal-listening-runs';
 import {signalListeningBaseTemplateV1} from '@noisia/query-engine';
 import {localizeSyntheticListeningConfigurationV1} from './signal-listening-localized.synthetic.fixture';
 const sha=(s:string|Buffer)=>createHash('sha256').update(s).digest('hex');
+export function orderedRecordHexSha256V1(rows:ReadonlyArray<string>):string{
+ const digest=createHash('sha256');let first=true;
+ for(const row of rows){if(!first)digest.update('\n');digest.update(row);first=false;}
+ return digest.digest('hex');
+}
 const sourceURL=new URL('./0326_signal_listening_final_answer_slice.sql',import.meta.url);
 const candidateURL=new URL('./0332_signal_listening_flat_prefix_preimages.sql',import.meta.url);
 const boundedURL=new URL('./0333_signal_listening_bounded_mentions.sql',import.meta.url);
@@ -142,7 +147,7 @@ async function parity(c:PoolClient,args:unknown[],effective?:string,family:'flat
  const old=await bytes(a),next=await bytes(b);assert.deepEqual(next,old);
  if(family==='flat')await boundedMentionsParityV1(c,args,effective);
  else assert.deepEqual(await bytes(effective?'SELECT * FROM public.signal_listening_effective_population_roots_v2($1::uuid,$2::uuid,$3::uuid,$4::text,$5::uuid[],$6::text)':'SELECT * FROM public.signal_listening_population_roots_v1($1::uuid,$2::uuid,$3::uuid,$4::text,$5::uuid[],$6::text)'),next,effective?'native effective20 reference bytes':'native raw14 reference bytes');
- return{rows:old.length,bytes:old.reduce((n,s)=>n+s.length/2,0),sha256:sha(old.join('\n')),except_all:true,ordered_record_send:true};
+ return{rows:old.length,bytes:old.reduce((n,s)=>n+s.length/2,0),sha256:orderedRecordHexSha256V1(old),except_all:true,ordered_record_send:true};
 }
 export async function boundedMentionsParityV1(c:PoolClient,params:unknown[],effective?:string){
  assert.equal(params.length,6);return parity(c,params,effective,'bounded');
