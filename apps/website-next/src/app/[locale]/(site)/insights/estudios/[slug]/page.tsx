@@ -12,7 +12,7 @@ import ui from "@/components/ui/ui.module.css";
 import { methodKeyByName, methodSheet } from "@/content/pages/method-sheet";
 import { studiesPage } from "@/content/pages/studies";
 import { getStory } from "@/content/stories";
-import { getStudies, getStudy, studyStoryIds } from "@/content/studies";
+import { deckFor, getStudies, getStudy, studyStoryIds } from "@/content/studies";
 import { Link } from "@/i18n/navigation";
 import { routing } from "@/i18n/routing";
 import { articleNode, pageGraph } from "@/lib/seo/jsonld";
@@ -54,7 +54,7 @@ export default async function StudyPage({ params }: { params: Promise<Params> })
   const cover = studyCover(study);
   const hero = studyHero(study);
   const method = methodKeyByName(study.method);
-  const language = c.languages[study.fullLanguage];
+  const language = c.languages[(await deckFor(study, locale)) === "en" ? "en" : study.fullLanguage];
   const period = s.period_label ?? study.periodLabel;
   const mentions = study.base.mentions ? c.mentions(new Intl.NumberFormat(intl).format(study.base.mentions)) : null;
   const viewer = { pathname: "/insights/estudios/[slug]/completo", params: { slug: study.id } } as const;

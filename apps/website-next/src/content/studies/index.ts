@@ -176,7 +176,38 @@ export async function getStudyFile(study: Study, path: string): Promise<StudyFil
   return file;
 }
 
+/**
+ * A study can carry a second deck in English beside its main one (`web/deck-en/` in the study's
+ * folder). Both have the same slides; the English one lives under these prefixes.
+ */
+export type DeckLang = "main" | "en";
+export function deckPaths(study: Study, deck: DeckLang) {
+  return deck === "en"
+    ? { index: "deck-en/index.html", slides: "slides-en/", pdf: `pdf-en/${study.id}.pdf` }
+    : { index: "deck/index.html", slides: "slides/", pdf: study.pdfPath };
+}
+
+const englishCache = new Map<string, boolean>();
+
+/** Whether the study has its deck in English too. */
+export async function hasEnglishDeck(study: Study): Promise<boolean> {
+  const key = `${study.id}:${study.version}`;
+  const hit = englishCache.get(key);
+  if (hit !== undefined) return hit;
+  const view = showsDrafts() ? "content.review_study_files" : "content.published_study_files";
+  const { rows } = await contentDb().query(`select 1 from ${view} where study_id = $1 and path = 'deck-en/index.html'`, [study.id]);
+  if (englishCache.size > 500) englishCache.clear();
+  englishCache.set(key, rows.length > 0);
+  return rows.length > 0;
+}
+
+/** The deck a reader sees: the English one on the English site when there is one. */
+export async function deckFor(study: Study, locale: string): Promise<DeckLang> {
+  return locale === "en" && study.fullLanguage !== "en" && (await hasEnglishDeck(study)) ? "en" : "main";
+}
+
 /** Paths of the slide images of a study, in order. */
-export function slidePaths(study: Study): string[] {
-  return Array.from({ length: study.slideCount }, (_, i) => `slides/${String(i + 1).padStart(2, "0")}.webp`);
+export function slidePaths(study: Study, deck: DeckLang = "main"): string[] {
+  const prefix = deckPaths(study, deck).slides;
+  return Array.from({ length: study.slideCount }, (_, i) => `${prefix}${String(i + 1).padStart(2, "0")}.webp`);
 }
