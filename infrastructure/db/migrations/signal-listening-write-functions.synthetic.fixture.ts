@@ -83,7 +83,7 @@ export function createListeningWriteFunctionObserverV1(args:{database:Pool;eligi
  const database=Object.assign(Object.create(args.database) as Pool,{query:args.database.query.bind(args.database),connect:async()=>{
   known(!closed,'write_functions_closed');const client=await args.database.connect();known(!active.has(client),'write_functions_double_checkout');active.add(client);
   const queryDescriptor=Object.getOwnPropertyDescriptor(client,'query'),releaseDescriptor=Object.getOwnPropertyDescriptor(client,'release'),originalQuery=client.query as unknown as Query,originalRelease=client.release;
-  let begun=false,uncertain=false,released=false,observing=false,primaryKnown=false,primaryError:unknown;const transactionCaptures:Array<Record<string,unknown>>=[];
+  let begun=false,uncertain=false,released=false,observing=false,primaryKnown=false,primaryError:unknown;const transactionCaptures:Array<Record<string,unknown>>=[],rollbackSecondary:unknown[]=[];
   const original=(...values:unknown[])=>Reflect.apply(originalQuery,client,values) as Promise<QueryResult>;
   const identity=async()=>{const result=await original(identitySql);known(result.rows.length===1,'write_functions_identity_rows');const row=result.rows[0]!;
    for(const key of ['backend','database','invoker','session_role','isolation','read_only','search_path','track_functions','transaction_started','backend_transaction_started'])known(typeof row[key]==='string'&&(row[key] as string).length>0,'write_functions_identity_shape');
@@ -106,14 +106,19 @@ export function createListeningWriteFunctionObserverV1(args:{database:Pool;eligi
       known(result.rowCount===null||Number.isSafeInteger(result.rowCount)&&result.rowCount>=0,'write_functions_row_count');row.row_count=result.rowCount;row.result_reference_preserved=true;row.stage='awaiting_native_commit';cap(row);return result;
      }catch(primary){primaryKnown=true;primaryError=primary;failed=true;row.failure_stage=row.stage;row.safe_error_tree=startupErrorTreeV1(primary);row.stage='failed';throw primary;}finally{observing=false;}})();
    }
-   return(async()=>{try{const result=await original(...values);if(/^BEGIN(?:\s|$)/u.test(sql)){known(!begun,'write_functions_nested_begin');begun=true;}else if(sql==='COMMIT'){for(const row of transactionCaptures){row.native_commit_ack=true;row.stage='committed';}transactionCaptures.length=0;begun=false;}else if(sql==='ROLLBACK'){for(const row of transactionCaptures){row.native_commit_ack=false;row.transaction_rolled_back=true;row.rollback_reset_confirmed=true;}transactionCaptures.length=0;begun=false;}return result;
-    }catch(error){if(/^BEGIN(?:\s|$)/u.test(sql)||sql==='COMMIT'||sql==='ROLLBACK')uncertain=true;if(transactionCaptures.length){failed=true;for(const row of transactionCaptures){row.native_commit_ack=false;row.safe_error_tree??=startupErrorTreeV1(error);if(sql==='ROLLBACK')row.rollback_reset_confirmed=false;}}if(sql==='ROLLBACK'&&primaryKnown)throw new AggregateError([primaryError,error],'write_functions_primary_and_rollback_failed',{cause:primaryError});if(!primaryKnown){primaryKnown=true;primaryError=error;}throw error;}})();
+   return(async()=>{try{const result=await original(...values);if(/^BEGIN(?:\s|$)/u.test(sql)){known(!begun,'write_functions_nested_begin');begun=true;}else if(sql==='COMMIT'){for(const row of transactionCaptures){row.native_commit_ack=true;row.stage='committed';}transactionCaptures.length=0;begun=false;primaryKnown=false;primaryError=undefined;}else if(sql==='ROLLBACK'){for(const row of transactionCaptures){row.native_commit_ack=false;row.transaction_rolled_back=true;row.rollback_reset_confirmed=true;}transactionCaptures.length=0;begun=false;}return result;
+    }catch(error){if(/^BEGIN(?:\s|$)/u.test(sql)||sql==='COMMIT'||sql==='ROLLBACK')uncertain=true;if(transactionCaptures.length){failed=true;for(const row of transactionCaptures){row.native_commit_ack=false;row.safe_error_tree??=startupErrorTreeV1(error);if(sql==='ROLLBACK')row.rollback_reset_confirmed=false;}}if(sql==='ROLLBACK'&&primaryKnown){rollbackSecondary.push(error);throw new AggregateError([primaryError,error],'write_functions_primary_and_rollback_failed',{cause:primaryError});}if(!primaryKnown){primaryKnown=true;primaryError=error;}throw error;}})();
   };
-  try{Object.defineProperty(client,'query',{configurable:true,writable:true,value:wrappedQuery});Object.defineProperty(client,'release',{configurable:true,writable:true,value:(error?:Error|boolean)=>{known(!released,'write_functions_release_repeated');released=true;
-    if(queryDescriptor)Object.defineProperty(client,'query',queryDescriptor);else delete(client as unknown as {query?:unknown}).query;
-    if(releaseDescriptor)Object.defineProperty(client,'release',releaseDescriptor);else delete(client as unknown as {release?:unknown}).release;
-    active.delete(client);return originalRelease.call(client,uncertain||begun?true:error);}});return client;
-  }catch(primary){failed=true;try{if(queryDescriptor)Object.defineProperty(client,'query',queryDescriptor);else delete(client as unknown as {query?:unknown}).query;if(releaseDescriptor)Object.defineProperty(client,'release',releaseDescriptor);else delete(client as unknown as {release?:unknown}).release;}finally{active.delete(client);originalRelease.call(client,true);}throw primary;}
+  const releaseOnce=(error?:Error|boolean)=>{
+   known(!released,'write_functions_release_repeated');released=true;const secondary:unknown[]=[];
+   try{if(queryDescriptor)Object.defineProperty(client,'query',queryDescriptor);else delete(client as unknown as {query?:unknown}).query;}catch(restore){secondary.push(restore);}
+   try{if(releaseDescriptor)Object.defineProperty(client,'release',releaseDescriptor);else delete(client as unknown as {release?:unknown}).release;}catch(restore){secondary.push(restore);}
+   try{originalRelease.call(client,uncertain||begun||secondary.length>0?true:error);}catch(release){secondary.push(release);}finally{active.delete(client);}
+   if(secondary.length){failed=true;const combined=primaryKnown?new AggregateError([primaryError,...rollbackSecondary,...secondary],'write_functions_primary_and_cleanup_failed',{cause:primaryError}):secondary.length===1?secondary[0]:new AggregateError(secondary,'write_functions_cleanup_failed');throw combined;}
+  };
+  try{Object.defineProperty(client,'query',{configurable:true,writable:true,value:wrappedQuery});Object.defineProperty(client,'release',{configurable:true,writable:true,value:releaseOnce});return client;
+  }catch(primary){failed=true;uncertain=true;primaryKnown=true;primaryError=primary;releaseOnce(true);throw primary;}
+
  }});
  return{database,snapshot,close(){known(!closed,'write_functions_close_repeated');closed=true;if(active.size!==0)failed=true;known(active.size===0,'write_functions_client_still_borrowed');for(const row of captures)cap(row);snapshot();}};
 }
