@@ -42,6 +42,11 @@ on:
         type: boolean
         default: false
         required: false
+      listening_partial_admission_probe:
+        description: Run the isolated native Listening partial admission cap diagnostic
+        type: boolean
+        default: false
+        required: false
 
 permissions:
   contents: read
@@ -2417,6 +2422,291 @@ jobs:
             listening-main-thread-cpu.tap
             .data/piloto-masivo/r16/consumer-main-thread-cpu-native-evidence/listening-pipeline-profile.json
             .data/piloto-masivo/r16/consumer-main-thread-cpu-native-evidence/listening-main-thread-cpu.json
+          if-no-files-found: ignore
+          retention-days: 14
+          include-hidden-files: true
+
+  listening-partial-admission-probe-experimental:
+    name: R16 Listening partial admission cap (isolated lab)
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.scope == 'listening-smoke' && inputs.listening_partial_admission_probe }}
+    runs-on: ubuntu-latest
+    # Bounds the isolated PostgreSQL/Redis job; it is not a throughput claim.
+    timeout-minutes: 40
+    env:
+      R16BENCH_RUN_ID: benchmark-pg17
+      R16BENCH_SERVICES: postgres,redis
+      NOISIA_R16_LOCAL_PG_LAB: r16-benchmark-pg17
+      DATABASE_SSL: 'false'
+      R16_LISTENING_PARTIAL_ADMISSION_EVIDENCE_DIR: .data/piloto-masivo/r16/partial-admission-native-evidence
+    steps:
+      - uses: actions/checkout@v4
+      - name: Initialize an empty partial admission TAP receipt
+        run: printf '%s\n' '# native Listening partial admission diagnostic did not start' > listening-partial-admission.tap
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+      - name: Install frozen Node workspace dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Run pure Listening write-function observation contracts
+        env:
+          NOISIA_R16_LISTENING_WRITE_FUNCTIONS_PURE: 'true'
+        run: |
+          set -euo pipefail
+          pnpm exec node --test --test-concurrency=1 --import tsx \
+            infrastructure/db/migrations/signal-listening-write-functions.test.ts
+      - name: Require the owned partial admission lab and private files to be absent
+        run: |
+          set -euo pipefail
+          if docker inspect r16-benchmark-pg17 >/dev/null 2>&1; then
+            echo '::error::The named R16 partial admission PostgreSQL container already exists'
+            exit 1
+          fi
+          if docker volume inspect r16bench-benchmark-pg17_postgres-data >/dev/null 2>&1; then
+            echo '::error::The named R16 partial admission PostgreSQL volume already exists'
+            exit 1
+          fi
+          lab_dir=.data/piloto-masivo/r16/labs/benchmark-pg17
+          evidence_dir=.data/piloto-masivo/r16/partial-admission-native-evidence
+          if [[ -e "$lab_dir/private.env" || -e "$lab_dir/connection.env" || -e "$evidence_dir" ]]; then
+            echo '::error::Private files for the named R16 partial admission lab already exist'
+            exit 1
+          fi
+      - name: Start the owned official PostgreSQL 17 and Redis partial admission lab
+        run: |
+          set -euo pipefail
+          printf '%s\n' 'R16_LISTENING_PARTIAL_ADMISSION_LAB_OWNED=true' >> "$GITHUB_ENV"
+          scripts/r16/lab-up.sh
+      - name: Apply migrations to the fresh partial admission lab
+        env:
+          NOISIA_DB_SMOKE_RESET_SCHEMA: 'true'
+          NOISIA_DB_SMOKE_EMULATE_SUPABASE_ROLES: 'true'
+          NOISIA_MFP_PG_CI: 'true'
+        run: |
+          set -euo pipefail
+          connection_file=.data/piloto-masivo/r16/labs/benchmark-pg17/connection.env
+          test -f "$connection_file"
+          set -a
+          source "$connection_file"
+          set +a
+          export DATABASE_SSL=false
+          export NOISIA_R16_LOCAL_PG_LAB=r16-benchmark-pg17
+          pnpm --filter @noisia/db db:smoke:migrations
+      - name: Run the native Listening partial admission profile
+        id: profile
+        env:
+          NOISIA_R16_LISTENING_PARTIAL_ADMISSION_PG: 'true'
+          NOISIA_R16_NATIVE_FIXTURE_PG: 'true'
+          NOISIA_MASS_LABELING_ENABLED: 'true'
+          NOISIA_SIGNAL_LISTENING_ENABLED: 'true'
+          NOISIA_JEV_PROVIDER_ENABLED: 'true'
+          NOISIA_JEV_STREAMING_V2_ENABLED: 'true'
+        run: |
+          set -o pipefail
+          connection_file=.data/piloto-masivo/r16/labs/benchmark-pg17/connection.env
+          test -f "$connection_file"
+          set -a
+          source "$connection_file"
+          set +a
+          export DATABASE_SSL=false
+          export NOISIA_R16_LOCAL_PG_LAB=r16-benchmark-pg17
+          set +e
+          pnpm exec node --test --test-concurrency=1 --import tsx \
+            infrastructure/db/migrations/signal-listening-partial-admission.postgres.test.ts \
+            2>&1 | tee listening-partial-admission.tap
+          test_status=${PIPESTATUS[0]}
+          set -e
+          if [[ "$test_status" -ne 0 ]] \
+            || ! grep -qx '# tests 1' listening-partial-admission.tap \
+            || ! grep -qx '# pass 1' listening-partial-admission.tap \
+            || ! grep -qx '# fail 0' listening-partial-admission.tap \
+            || ! grep -qx '# cancelled 0' listening-partial-admission.tap \
+            || ! grep -qx '# skipped 0' listening-partial-admission.tap \
+            || ! grep -qx '# Subtest: native Listening partial admission preserves committed money and terminal idempotency' listening-partial-admission.tap; then
+            echo '::error::The native partial admission diagnostic failed, was skipped, or did not execute the exact test'
+            exit 1
+          fi
+      - name: Stop and remove only the owned partial admission lab
+        id: cleanup
+        if: ${{ always() && env.R16_LISTENING_PARTIAL_ADMISSION_LAB_OWNED == 'true' }}
+        run: |
+          set -euo pipefail
+          lab_dir=.data/piloto-masivo/r16/labs/benchmark-pg17
+          if [[ -f "$lab_dir/private.env" ]]; then
+            scripts/r16/lab-down.sh
+          fi
+          if docker inspect r16-benchmark-pg17 >/dev/null 2>&1; then
+            echo '::error::Owned R16 partial admission PostgreSQL container survived cleanup'
+            exit 1
+          fi
+          if docker volume inspect r16bench-benchmark-pg17_postgres-data >/dev/null 2>&1; then
+            echo '::error::Owned R16 partial admission PostgreSQL volume survived cleanup'
+            exit 1
+          fi
+      - name: Validate native partial admission evidence
+        if: always()
+        env:
+          PROFILE_CONCLUSION: ${{ steps.profile.conclusion }}
+          CLEANUP_CONCLUSION: ${{ steps.cleanup.conclusion }}
+        run: |
+          set -euo pipefail
+          # Financial acceptance is independent of whether Postgres exposes all counters.
+          python - <<'PY'
+          import hashlib
+          import json
+          import math
+          import os
+          from pathlib import Path
+
+          evidence = Path(os.environ['R16_LISTENING_PARTIAL_ADMISSION_EVIDENCE_DIR']) / 'listening-partial-admission.json'
+          tap = Path('listening-partial-admission.tap')
+          if os.environ.get('PROFILE_CONCLUSION') != 'success' or os.environ.get('CLEANUP_CONCLUSION') != 'success':
+              raise SystemExit('Partial admission evidence requires a passing native test and owned-lab cleanup')
+          for path, cap in ((evidence, 2 * 1024 * 1024), (tap, 1024 * 1024)):
+              if not path.is_file() or path.is_symlink() or path.stat().st_size <= 0 or path.stat().st_size > cap:
+                  raise SystemExit('Partial admission evidence file is missing, unsafe, empty, or over its cap')
+          with evidence.open(encoding='utf-8') as stream:
+              report = json.load(stream)
+          if type(report) is not dict:
+              raise SystemExit('Partial admission receipt must be one JSON object')
+          expected = {'contract': 'r16-listening-partial-admission-v1', 'status': 'observed',
+              'diagnostic_only': True, 'h1_accepted': False, 'scope': 'functional240_not_H1_or_scale1024_4096',
+              'cap_micro_usd': '50000', 'native_population_roots': 240, 'recovery_execution_claimed': False,
+              'external_spend_micro_usd': '0'}
+          if any(type(report.get(key)) is not type(value) or report.get(key) != value for key, value in expected.items()):
+              raise SystemExit('Partial admission receipt does not match its diagnostic-only contract')
+          if 'candidate_accepted' in report or 'speedup_claim' in report:
+              raise SystemExit('Partial admission receipt must not claim candidate acceptance or speedup')
+          gates = report.get('gates')
+          required_gates = {'source_binding', 'native_cap_interval', 'committed_before_fetch', 'delivered_drain',
+              'terminal_idempotency', 'closure_confirmed'}
+          if type(gates) is not dict or set(gates) != required_gates \
+              or any(type(value) is not bool or value is not True for value in gates.values()):
+              raise SystemExit('All six partial admission gates must be explicit true booleans')
+          terminal = report.get('terminal_restart')
+          expected_terminal = {'claim_attempted': True, 'claimed': False, 'status': 'not_claimed',
+              'new_physical_fetches': 0, 'recovery_execution_claimed': False}
+          if type(terminal) is not dict or set(terminal) != set(expected_terminal) \
+              or any(type(terminal.get(key)) is not type(value) or terminal.get(key) != value
+                     for key, value in expected_terminal.items()):
+              raise SystemExit('Partial admission terminal idempotency witness is incomplete')
+          source = report.get('source')
+          if type(source) is not dict:
+              raise SystemExit('Full immutable Git source binding is missing')
+          expected_source, before_source, after_source = source.get('expected'), source.get('before'), source.get('after')
+          def valid_manifest(value):
+              if type(value) is not dict or set(value) != {'head_sha', 'source_tree_sha256', 'tree_status_sha256', 'file_count', 'file_manifest'}:
+                  return False
+              if value.get('head_sha') != os.environ.get('GITHUB_SHA'):
+                  return False
+              count, manifest = value.get('file_count'), value.get('file_manifest')
+              if type(count) is not int or count <= 0 or type(manifest) is not list or len(manifest) != count:
+                  return False
+              paths, pairs = [], []
+              for entry in manifest:
+                  if type(entry) is not dict or set(entry) != {'path', 'sha256'} or type(entry.get('path')) is not str \
+                      or type(entry.get('sha256')) is not str or len(entry['sha256']) != 71 \
+                      or not entry['sha256'].startswith('sha256:') or any(ch not in '0123456789abcdef' for ch in entry['sha256'][7:]):
+                      return False
+                  paths.append(entry['path']); pairs.append([entry['path'], entry['sha256']])
+              if paths != sorted(set(paths)):
+                  return False
+              tree = 'sha256:' + hashlib.sha256(json.dumps(pairs, ensure_ascii=False, separators=(',', ':')).encode('utf-8')).hexdigest()
+              empty_status = 'sha256:' + hashlib.sha256(b'').hexdigest()
+              return value.get('source_tree_sha256') == tree and value.get('tree_status_sha256') == empty_status
+          if not all(valid_manifest(value) for value in (expected_source, before_source, after_source)) \
+              or before_source != expected_source or after_source != expected_source:
+              raise SystemExit('Expected Git and full runtime before/after manifests must match exactly')
+          writes = report.get('write_functions')
+          if type(writes) is not dict:
+              raise SystemExit('Three-phase write-function observation is missing')
+          write_expected = {'contract': 'r16-listening-write-functions-v1', 'diagnostic_only': True,
+              'h1_accepted': False, 'cpu': 'UNKNOWN', 'closed': True,
+              'function_coverage': 'TRACKED_PUBLIC_ROWS_ONLY_MISSING_UNKNOWN'}
+          if any(type(writes.get(key)) is not type(value) or writes.get(key) != value
+                 for key, value in write_expected.items()) or writes.get('status') not in ('observed', 'INCONCLUSIVE'):
+              raise SystemExit('Write-function observation does not match its diagnostic-only contract')
+          write_json = json.dumps(writes, ensure_ascii=False, separators=(',', ':')).encode('utf-8')
+          if len(write_json) > 2 * 1024 * 1024:
+              raise SystemExit('Write-function observation exceeds its 2 MiB JSON cap')
+          write_gates = writes.get('gates')
+          write_gate_names = {'three_original_statements', 'native_commit_ack', 'identity_and_settings_restored',
+              'counters_known', 'no_recording_loss'}
+          if type(write_gates) is not dict or set(write_gates) != write_gate_names \
+              or any(type(write_gates.get(name)) is not bool for name in write_gate_names) \
+              or any(write_gates[name] is not True for name in write_gate_names - {'counters_known'}):
+              raise SystemExit('All three original writes, commit acknowledgements, restoration and recording must be observed')
+          captures = writes.get('captures')
+          if type(captures) is not list or len(captures) != 3:
+              raise SystemExit('Exactly three original write-phase captures are required')
+          phases = {'reserve', 'mark', 'apply'}
+          if {capture.get('phase') for capture in captures if type(capture) is dict} != phases \
+              or any(type(capture) is not dict for capture in captures):
+              raise SystemExit('Write-function phases must be reserve, mark and apply exactly once')
+          all_known = True
+          for capture in captures:
+              encoded_capture = json.dumps(capture, ensure_ascii=False, separators=(',', ':')).encode('utf-8')
+              if len(encoded_capture) > 128 * 1024:
+                  raise SystemExit('A write-function capture exceeds its 128 KiB cap')
+              phase = capture['phase']
+              expected_binds = {'reserve': 8, 'mark': 2, 'apply': 4}[phase]
+              if type(capture.get('original_executions')) is not int or capture['original_executions'] != 1 \
+                  or capture.get('original_succeeded') is not True or capture.get('stage') != 'committed' \
+                  or capture.get('native_commit_ack') is not True or capture.get('identity_same') is not True \
+                  or capture.get('settings_restored') is not True or capture.get('result_reference_preserved') is not True:
+                  raise SystemExit('A native write was missing, repeated, uncommitted or not restored')
+              proposed, roots, row_count = capture.get('proposed_rows'), capture.get('batch_roots'), capture.get('row_count')
+              elapsed, binds = capture.get('elapsed_dml_ms'), capture.get('bind_count')
+              if type(proposed) is not int or not 1 <= proposed <= 512 or type(roots) is not int \
+                  or not 1 <= roots <= proposed or type(row_count) is not int or row_count < 0 \
+                  or type(binds) is not int or binds != expected_binds or type(elapsed) not in (int, float) \
+                  or not math.isfinite(elapsed) or elapsed < 0:
+                  raise SystemExit('Write-function proposal, row or timing summary is malformed')
+              if any(key in capture for key in ('safe_error_tree', 'failure_stage', 'transaction_rolled_back',
+                    'capture_payload_rejected_over_bytes', 'capture_bytes_observed')):
+                  raise SystemExit('A write-function capture records a failed or truncated observation')
+              for samples_name in ('before', 'after'):
+                  samples = capture.get(samples_name)
+                  if type(samples) is not list or len(samples) > 64:
+                      raise SystemExit('Function counter samples are missing or exceed their cap')
+              deltas = capture.get('deltas')
+              if type(deltas) is not list or len(deltas) > 64:
+                  raise SystemExit('Function counter deltas are missing or exceed their cap')
+              if not deltas:
+                  if capture['before'] or capture['after']:
+                      raise SystemExit('Empty function deltas require both public counter samples to be empty')
+                  all_known = False
+              for delta in deltas:
+                  if type(delta) is not dict:
+                      raise SystemExit('Function counter delta is malformed')
+                  if delta.get('status') == 'UNKNOWN':
+                      all_known = False
+                      if delta.get('reason') not in ('baseline_absent', 'after_absent') \
+                          or any(delta.get(key) != 'UNKNOWN' for key in ('calls', 'total_time', 'self_time')):
+                          raise SystemExit('Unknown counters require an explicit absent sample and UNKNOWN values')
+                  elif delta.get('status') == 'known':
+                      for key in ('calls', 'total_time', 'self_time'):
+                          value = delta.get(key)
+                          if type(value) not in (int, float) or not math.isfinite(value) or value < 0:
+                              raise SystemExit('Known function counter delta is invalid')
+                  else:
+                      raise SystemExit('Function counter delta has an unrecognized status')
+          if write_gates['counters_known'] is not all_known \
+              or writes.get('status') != ('observed' if all_known else 'INCONCLUSIVE'):
+              raise SystemExit('INCONCLUSIVE is allowed only when a counter baseline or after sample is absent')
+          print('Partial admission evidence: six gates and immutable full-source binding verified')
+          PY
+      - name: Upload native partial admission evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: r16-listening-partial-admission-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            listening-partial-admission.tap
+            .data/piloto-masivo/r16/partial-admission-native-evidence/listening-partial-admission.json
           if-no-files-found: ignore
           retention-days: 14
           include-hidden-files: true
