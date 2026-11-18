@@ -26,6 +26,7 @@ export default async function RenderPage({
       story={locale === "en" ? story.en : story.es}
       locale={locale}
       tag={`${t(story.industry)} · ${story.market}`}
+      image={story.image}
       frame={Number(frame)}
       mode={mode === "feed" ? "feed" : "video"}
       scale={Number(scale)}

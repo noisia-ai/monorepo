@@ -13,7 +13,7 @@ export function StoryPreview({ story, locale }: { story: FeedStory; locale: stri
     <Link href={{ pathname: "/insights/[slug]", params: { slug: story.id } }} className={styles.story}>
       <div className={styles.storyStage}>
         <Stage durationInFrames={storyDuration(story.content)} frame={posterFrame(story.content)} className={styles.storyCanvas} label={story.content.title}>
-          <StoryComposition story={story.content} locale={locale} tag={story.tag} mode="feed" />
+          <StoryComposition story={story.content} locale={locale} tag={story.tag} mode="feed" image={story.image} />
         </Stage>
         <span className={styles.storyPlay} aria-hidden>
           <Play />
