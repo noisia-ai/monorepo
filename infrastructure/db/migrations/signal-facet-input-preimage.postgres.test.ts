@@ -3,7 +3,7 @@ import {mkdtemp,readFile,rm,stat} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {dirname,join,resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
-import {FACET_ROSTER_SQL,facetCallerRouteV1,facetCounterDeltaV1,facetInputSourcesV1,facetPairVerdictV1,runFacetInputPreimageV1,writeFacetInputEvidenceV1} from './signal-facet-input-preimage.synthetic.fixture';
+import {FACET_ROSTER_SQL,facetCallerRouteV1,facetCounterDeltaV1,facetInputSourcesV1,facetOutcomesEqualV1,facetPairVerdictV1,runFacetInputPreimageV1,writeFacetInputEvidenceV1} from './signal-facet-input-preimage.synthetic.fixture';
 
 if(process.env.NOISIA_R16_FACET_INPUT_PREIMAGE_PURE==='true'){
  test('facet source oracle accepts only the exact one-expression preimage candidate',async()=>{
@@ -56,6 +56,27 @@ if(process.env.NOISIA_R16_FACET_INPUT_PREIMAGE_PURE==='true'){
   });
   assert.deepEqual(facetCounterDeltaV1([],after,'42'),{known:false,calls:null,reason:'absent_UNKNOWN'});
   assert.deepEqual(facetCounterDeltaV1(before,[],'42'),{known:false,calls:null,reason:'absent_UNKNOWN'});
+ });
+
+ test('facet role and error oracle refuses unknown paths and compares valid rejection outcomes',()=>{
+  assert.equal(facetOutcomesEqualV1([
+   {known:false},{known:false},{known:false},
+  ]),false,'three unknown outcomes are not evidence of equal behavior');
+  assert.equal(facetOutcomesEqualV1([
+   {known:true,ok:false,sqlstate:'42501'},
+   {known:true,ok:false,sqlstate:'42501'},
+   {known:true,ok:false,sqlstate:'42501'},
+  ]),true,'the same contractual authorization rejection is comparable');
+  assert.equal(facetOutcomesEqualV1([
+   {known:true,ok:false,sqlstate:'42501'},
+   {known:false},
+   {known:true,ok:false,sqlstate:'42501'},
+  ]),false,'a mixture containing unknown remains inconclusive');
+  assert.equal(facetOutcomesEqualV1([
+   {known:true,ok:false,sqlstate:'SECRET'},
+   {known:true,ok:false,sqlstate:'SECRET'},
+   {known:true,ok:false,sqlstate:'SECRET'},
+  ]),false,'invalid SQLSTATE is never treated as a known rejection');
  });
 
  test('facet evidence writer is private, size-bounded and create-once',async()=>{
