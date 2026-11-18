@@ -5,6 +5,7 @@ import { ArticleToc } from "@/components/learn/ArticleToc";
 import { LearnHero } from "@/components/learn/Learn";
 import { LEARN_ICONS } from "@/components/learn/icons";
 import { PRIVACY_EMAIL, privacy } from "@/content/pages/privacy";
+import { mailto } from "@/lib/contact";
 import styles from "@/components/learn/learn.module.css";
 import { JsonLd } from "@/components/seo/JsonLd";
 import { pageGraph } from "@/lib/seo/jsonld";
@@ -21,7 +22,7 @@ function withEmail(text: string): ReactNode[] {
     i === 0
       ? [part]
       : [
-          <a key={i} href={`mailto:${PRIVACY_EMAIL}`}>
+          <a key={i} href={mailto(PRIVACY_EMAIL)}>
             {PRIVACY_EMAIL}
           </a>,
           part

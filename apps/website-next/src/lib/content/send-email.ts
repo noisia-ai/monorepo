@@ -7,10 +7,16 @@ import "server-only";
 
 export const FROM_EMAIL = () => process.env.STUDY_FROM_EMAIL || "Noisia <estudios@hey.noisia.ai>";
 export const TEAM_EMAIL = () => process.env.WORKSHOP_TO_EMAIL || "hola@noisia.ai";
-/** Where a reader's reply to a study email lands. Its own variable, so the workshop form keeps its address. */
-export const STUDY_REPLY_TO = () => process.env.STUDY_REPLY_TO || TEAM_EMAIL();
-/** Who gets the "Registro: …" note when someone opens a study. */
-export const STUDY_NOTIFY_TO = () => process.env.STUDY_NOTIFY_TO || STUDY_REPLY_TO();
+/** A comma-separated list of addresses from an environment variable. */
+export function addresses(value: string | undefined): string[] {
+  return (value ?? "").split(",").map((item) => item.trim()).filter(Boolean);
+}
+/** Where a reader's reply to a study email lands (one or more). Its own variable, so the workshop form keeps its address. */
+export const STUDY_REPLY_TO = () => (addresses(process.env.STUDY_REPLY_TO).length ? addresses(process.env.STUDY_REPLY_TO) : addresses(TEAM_EMAIL()));
+/** Who gets the "Registro: …" note when someone opens a study (one or more). */
+export const STUDY_NOTIFY_TO = () => (addresses(process.env.STUDY_NOTIFY_TO).length ? addresses(process.env.STUDY_NOTIFY_TO) : STUDY_REPLY_TO());
+/** Who is copied on every lead note: the "Registro" note and the workshop form. */
+export const LEADS_CC = () => addresses(process.env.LEADS_CC);
 
 /** An image sent inside the email (`<img src="cid:<id>">`), so clients that block remote images still show it. */
 export type InlineImage = { id: string; filename: string; bytes: Buffer | string; contentType: string };

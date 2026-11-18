@@ -6,7 +6,7 @@ import { getStudy, getStudyFile } from "@/content/studies";
 import { ACCESS_COOKIE_DAYS, accessCookieName, pendingCookieName, READER_COOKIE, readerValid, verifySignup } from "@/lib/content/access";
 import { studyAccessEmail } from "@/lib/content/study-email";
 import { LOGO_PNG_BASE64 } from "@/lib/content/email-logo";
-import { clientIp, inlineAttachments, rateLimiter, sendEmail, STUDY_NOTIFY_TO, STUDY_REPLY_TO, type InlineImage } from "@/lib/content/send-email";
+import { clientIp, inlineAttachments, LEADS_CC, rateLimiter, sendEmail, STUDY_NOTIFY_TO, STUDY_REPLY_TO, type InlineImage } from "@/lib/content/send-email";
 import { requestOrigin } from "@/lib/site";
 
 /**
@@ -82,7 +82,8 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     // The email invites the reader to answer; replies go to STUDY_REPLY_TO.
     sendEmail({ to: [person.email], reply_to: STUDY_REPLY_TO(), subject: email.subject, html: email.html, text: email.text, attachments: inlineAttachments(images) }),
     sendEmail({
-      to: [STUDY_NOTIFY_TO()],
+      to: STUDY_NOTIFY_TO(),
+      ...(LEADS_CC().length ? { cc: LEADS_CC() } : {}),
       reply_to: person.email,
       subject: `Registro: ${study.id} · ${person.company}`,
       text: [`Nombre: ${person.name}`, `Correo: ${person.email} (verificado con código)`, `Empresa: ${person.company}`, `Estudio: ${study.id}`, `Idioma: ${lang}`, `Acepta más estudios: ${person.marketing ? "sí" : "no"}`].join("\n")

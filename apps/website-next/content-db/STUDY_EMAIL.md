@@ -14,8 +14,15 @@ The verify route also sends a plain "Registro: …" note for each new reader.
 | Variable | What | Falls back to |
 |---|---|---|
 | `STUDY_FROM_EMAIL` | Sender of both emails. It must be on a domain verified in Resend (today only `hey.noisia.ai`; `noisia.ai` answers 403). | `Noisia <estudios@hey.noisia.ai>` |
-| `STUDY_REPLY_TO` | Where a reader's reply to the access email lands (the email invites them to answer). | `WORKSHOP_TO_EMAIL` |
-| `STUDY_NOTIFY_TO` | Who gets the "Registro" note. | `STUDY_REPLY_TO` |
+| `STUDY_REPLY_TO` | Where a reader's reply to the access email lands (the email invites them to answer). One or more, comma-separated. | `WORKSHOP_TO_EMAIL` |
+| `STUDY_NOTIFY_TO` | Who gets the "Registro" note. One or more. | `STUDY_REPLY_TO` |
+| `LEADS_CC` | Copied on every lead note: the "Registro" note and the workshop form. One or more. | nobody |
+
+**Since 18 Nov 2026, while hola@noisia.ai is restored in Google Workspace** (it bounces):
+- leads go to ferdi@, with brandhon@ in copy;
+- `STUDY_REPLY_TO` is both of them;
+- the public addresses of the site live in `src/lib/contact.ts`: contact to ferdi@ and privacy requests to david@, each with brandhon@ in copy.
+When hola@ works again, point both places back to it.
 
 The values live in Railway, not in the repo. `WORKSHOP_TO_EMAIL` stays with the workshop form.
 Before pointing either variable at a new address, check in Resend's log that a test message to it

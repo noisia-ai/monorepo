@@ -1,4 +1,5 @@
 import { useTranslations } from "next-intl";
+import { CONTACT_EMAIL, mailto } from "@/lib/contact";
 import { ArrowRight, Linkedin, Mail } from "iconoir-react";
 import { Link } from "@/i18n/navigation";
 import { Logo } from "@/components/brand/Logo";
@@ -19,7 +20,7 @@ export function SiteFooter() {
               {tNav("cta")} <ArrowRight aria-hidden />
             </Link>
             <div className={styles.social}>
-              <a href="mailto:hola@noisia.ai" aria-label={t("email")} title="hola@noisia.ai">
+              <a href={mailto(CONTACT_EMAIL)} aria-label={t("email")} title={CONTACT_EMAIL}>
                 <Mail aria-hidden />
               </a>
               <a href="https://www.linkedin.com/company/29118513/" rel="noopener" target="_blank" aria-label={t("linkedin")}>
