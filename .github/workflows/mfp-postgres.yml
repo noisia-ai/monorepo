@@ -22,6 +22,11 @@ on:
         type: boolean
         default: false
         required: false
+      facet_input_preimage:
+        description: Run the isolated native facet input preimage diagnostic
+        type: boolean
+        default: false
+        required: false
 
 permissions:
   contents: read
@@ -1449,6 +1454,179 @@ jobs:
           path: |
             listening-startup-prefix.tap
             .data/piloto-masivo/r16/listening-startup-prefix-native-evidence/listening-startup-prefix.json
+          if-no-files-found: ignore
+          retention-days: 14
+          include-hidden-files: true
+
+  facet-input-preimage-experimental:
+    name: R16 facet input preimage diagnostic (isolated lab)
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.scope == 'listening-smoke' && inputs.facet_input_preimage }}
+    runs-on: ubuntu-latest
+    # Match the harness soft caps in seconds: setup 1,800, read 120, total 1,920.
+    # The 40-minute job timeout is an external hard watchdog, not a benchmark budget.
+    timeout-minutes: 40
+    env:
+      R16BENCH_RUN_ID: benchmark-pg17
+      R16BENCH_SERVICES: postgres,redis
+      NOISIA_R16_LOCAL_PG_LAB: r16-benchmark-pg17
+      DATABASE_SSL: 'false'
+      R16_FACET_INPUT_PREIMAGE_EVIDENCE_DIR: .data/piloto-masivo/r16/facet-input-preimage-native-evidence
+    steps:
+      - uses: actions/checkout@v4
+      - name: Initialize a facet input preimage TAP receipt
+        run: printf '%s\n' '# native facet input preimage did not start' > facet-input-preimage.tap
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+      - name: Install frozen Node workspace dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Require the owned facet preimage lab and private files to be absent
+        run: |
+          set -euo pipefail
+          if docker inspect r16-benchmark-pg17 >/dev/null 2>&1; then
+            echo '::error::The named R16 facet input preimage PostgreSQL container already exists'
+            exit 1
+          fi
+          if docker volume inspect r16bench-benchmark-pg17_postgres-data >/dev/null 2>&1; then
+            echo '::error::The named R16 facet input preimage PostgreSQL volume already exists'
+            exit 1
+          fi
+          lab_dir=.data/piloto-masivo/r16/labs/benchmark-pg17
+          if [[ -e "$lab_dir/private.env" || -e "$lab_dir/connection.env" ]]; then
+            echo '::error::Private files for the named R16 facet input preimage lab already exist'
+            exit 1
+          fi
+      - name: Start the owned official PostgreSQL 17 and Redis lab
+        run: |
+          set -euo pipefail
+          printf '%s\n' 'R16_FACET_INPUT_PREIMAGE_LAB_OWNED=true' >> "$GITHUB_ENV"
+          scripts/r16/lab-up.sh
+      - name: Apply migrations to the fresh facet input preimage lab
+        env:
+          NOISIA_DB_SMOKE_RESET_SCHEMA: 'true'
+          NOISIA_DB_SMOKE_EMULATE_SUPABASE_ROLES: 'true'
+          NOISIA_MFP_PG_CI: 'true'
+        run: |
+          set -euo pipefail
+          connection_file=.data/piloto-masivo/r16/labs/benchmark-pg17/connection.env
+          test -f "$connection_file"
+          set -a
+          source "$connection_file"
+          set +a
+          export DATABASE_SSL=false
+          export NOISIA_R16_LOCAL_PG_LAB=r16-benchmark-pg17
+          pnpm --filter @noisia/db db:smoke:migrations
+      - name: Run the exact native facet input preimage profile
+        id: profile
+        env:
+          NOISIA_R16_FACET_INPUT_PREIMAGE_PG: 'true'
+          NOISIA_R16_FACET_INPUT_PREIMAGE_PURE: 'false'
+          NOISIA_R16_NATIVE_FIXTURE_PG: 'true'
+          NOISIA_MASS_LABELING_ENABLED: 'true'
+          NOISIA_SIGNAL_LISTENING_ENABLED: 'true'
+          NOISIA_JEV_PROVIDER_ENABLED: 'true'
+          NOISIA_JEV_STREAMING_V2_ENABLED: 'true'
+        run: |
+          set -o pipefail
+          connection_file=.data/piloto-masivo/r16/labs/benchmark-pg17/connection.env
+          test -f "$connection_file"
+          set -a
+          source "$connection_file"
+          set +a
+          export DATABASE_SSL=false
+          export NOISIA_R16_LOCAL_PG_LAB=r16-benchmark-pg17
+          set +e
+          pnpm exec node --test --test-concurrency=1 --import tsx \
+            infrastructure/db/migrations/signal-facet-input-preimage.postgres.test.ts \
+            2>&1 | tee facet-input-preimage.tap
+          test_status=${PIPESTATUS[0]}
+          set -e
+          if [[ "$test_status" -ne 0 ]] \
+            || ! grep -qx '# tests 1' facet-input-preimage.tap \
+            || ! grep -qx '# pass 1' facet-input-preimage.tap \
+            || ! grep -qx '# fail 0' facet-input-preimage.tap \
+            || ! grep -qx '# cancelled 0' facet-input-preimage.tap \
+            || ! grep -qx '# skipped 0' facet-input-preimage.tap \
+            || ! grep -qx '# Subtest: native facet input preimage preserves view semantics and paired execution' facet-input-preimage.tap; then
+            echo '::error::The native facet input preimage profile failed, was skipped, or did not execute the exact test'
+            exit 1
+          fi
+      - name: Stop and remove only the owned facet input preimage lab
+        id: cleanup
+        if: ${{ always() && env.R16_FACET_INPUT_PREIMAGE_LAB_OWNED == 'true' }}
+        run: |
+          set -euo pipefail
+          lab_dir=.data/piloto-masivo/r16/labs/benchmark-pg17
+          if [[ -f "$lab_dir/private.env" ]]; then
+            scripts/r16/lab-down.sh
+          fi
+          if docker inspect r16-benchmark-pg17 >/dev/null 2>&1; then
+            echo '::error::Owned R16 facet input preimage PostgreSQL container survived cleanup'
+            exit 1
+          fi
+          if docker volume inspect r16bench-benchmark-pg17_postgres-data >/dev/null 2>&1; then
+            echo '::error::Owned R16 facet input preimage PostgreSQL volume survived cleanup'
+            exit 1
+          fi
+      - name: Validate the native facet input preimage evidence
+        if: always()
+        env:
+          PROFILE_CONCLUSION: ${{ steps.profile.conclusion }}
+          CLEANUP_CONCLUSION: ${{ steps.cleanup.conclusion }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          path = Path(os.environ['R16_FACET_INPUT_PREIMAGE_EVIDENCE_DIR']) / 'facet-input-preimage.json'
+          if os.environ.get('PROFILE_CONCLUSION') != 'success' or os.environ.get('CLEANUP_CONCLUSION') != 'success':
+              raise SystemExit('facet input preimage evidence is not accepted unless the native test and owned-lab cleanup both pass')
+          if not path.is_file() or path.stat().st_size <= 0 or path.stat().st_size > 2 * 1024 * 1024:
+              raise SystemExit('facet input preimage JSON is missing, empty, or exceeds 2 MiB')
+          tap_path = Path('facet-input-preimage.tap')
+          if not tap_path.is_file() or tap_path.stat().st_size <= 0 or tap_path.stat().st_size > 1024 * 1024:
+              raise SystemExit('facet input preimage TAP is missing, empty, or exceeds 1 MiB')
+          with path.open(encoding='utf-8') as stream:
+              value = json.load(stream)
+          if type(value) is not dict:
+              raise SystemExit('facet input preimage JSON must be a single object')
+          expected = {
+              'contract': 'r16-facet-input-preimage-v1',
+              'status': 'observed',
+              'diagnostic_only': True,
+              'h1_accepted': False,
+              'cpu': 'UNKNOWN',
+              'candidate_accepted': True,
+          }
+          if any(value.get(key) != expected_value for key, expected_value in expected.items()):
+              raise SystemExit('facet input preimage JSON does not match its diagnostic contract')
+          gates = value.get('gates')
+          required_gates = {
+              'semantics',
+              'roles_errors',
+              'native_counters',
+              'paired_wall',
+              'catalog_unchanged',
+              'closure_confirmed',
+              'source_binding',
+          }
+          if type(gates) is not dict or set(gates) != required_gates or any(gates.get(key) is not True for key in required_gates):
+              raise SystemExit('facet input preimage JSON must explicitly pass every registered evidence gate')
+          PY
+      - name: Upload facet input preimage diagnostic evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: r16-facet-input-preimage-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            facet-input-preimage.tap
+            .data/piloto-masivo/r16/facet-input-preimage-native-evidence/facet-input-preimage.json
           if-no-files-found: ignore
           retention-days: 14
           include-hidden-files: true
