@@ -416,9 +416,16 @@ export async function finishSignalWorkspaceCorpusPreparationV1(args:{database:Si
     const pending=(await client.query<{pending:boolean}>(`SELECT EXISTS(SELECT 1 FROM signal_corpus_preparation_items
       WHERE run_id=$1::uuid AND ($2::uuid IS NULL OR root_id>$2::uuid)) pending`,[run.id,run.cursor_root_id])).rows[0]?.pending;
     if(pending)return fail("corpus_preparation_page_incomplete");
-    await client.query(`UPDATE signal_corpus_preparation_runs SET status='completed',phase='complete',error_code=NULL,
+    const completed=(await client.query<{id:string;status:string}>(`UPDATE signal_corpus_preparation_runs SET status='completed',phase='complete',error_code=NULL,
       completed_at=clock_timestamp(),updated_at=clock_timestamp(),execution_token=NULL,execution_expires_at=NULL,
-      dispatch_status='dispatched',dispatch_token=NULL,dispatch_expires_at=NULL,dispatch_attempts=0 WHERE id=$1::uuid`,[run.id]);
+      dispatch_status='dispatched',dispatch_token=NULL,dispatch_expires_at=NULL,dispatch_attempts=0 WHERE id=$1::uuid RETURNING id,status`,[run.id])).rows;
+    const completedRow=completed[0];
+    if(completed.length!==1||!completedRow||completedRow.id!==run.id||completedRow.status!=='completed')return fail("corpus_preparation_checkpoint_conflict");
+    // Refresh only scalar lookup columns once at successful completion, using
+    // the same maintenance privileges as the materialization ANALYZE above.
+    // Command completion is not proof that PostgreSQL did not skip permission-limited work.
+    await client.query("ANALYZE signal_corpus_preparation_input_state (workspace_id,input_revision)");
+    await client.query("ANALYZE signal_corpus_preparation_runs (workspace_id,input_revision,status,policy_valid_until,completed_at,id)");
     return {status:"completed"};
   });
 }
