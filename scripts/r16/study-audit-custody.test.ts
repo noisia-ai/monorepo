@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
+import { realpathSync } from "node:fs";
 import { link, mkdir, mkdtemp, readFile, rm, symlink, writeFile, chmod } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
@@ -10,7 +11,9 @@ import { readBoundReferenceV1, sealStudyFreezeV1, verifyStudyFreezeV1 } from "./
 const sha = (value: string | Uint8Array) => `sha256:${createHash("sha256").update(value).digest("hex")}`;
 
 async function fixture() {
-  const root = await mkdtemp(resolve(tmpdir(), "r16-study-freeze-"));
+  // macOS exposes tmpdir via /var, a system symlink to /private/var; fixture paths use its canonical root.
+  const canonicalTempRoot = realpathSync(tmpdir());
+  const root = await mkdtemp(resolve(canonicalTempRoot, "r16-study-freeze-"));
   const artifacts = resolve(root, "artifacts");
   const snapshot = resolve(artifacts, "snapshot.json"), source = resolve(artifacts, "source.json");
   const human = resolve(root, "human", "answers.json"), seal = resolve(artifacts, "freeze.json"), receipt = resolve(artifacts, "reads.jsonl");
