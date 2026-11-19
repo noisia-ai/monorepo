@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { constants as bufferConstants } from "node:buffer";
 import { PassThrough } from "node:stream";
 import { once } from "node:events";
@@ -11,6 +12,7 @@ import { streamJsonV1, writePrivateJsonFileV1 } from "./private-json-stream.js";
 
 const seed = "synthetic-seed-for-r16-blind-package-tests-2026";
 const digest = "a".repeat(64);
+const sha256 = (value: string) => createHash("sha256").update(value).digest("hex");
 function syntheticSnapshot(): BlindSnapshotV1 {
   const listening = [] as Array<{ mention_id: string; redacted_text: string; stage: "before" | "after";
     assignments: Array<{ topic_key: string; topic_name: string; topic_definition: string; volume_cohort: string; assigned: boolean }> }>;
@@ -53,7 +55,9 @@ function syntheticSnapshot(): BlindSnapshotV1 {
       not_estimable_reason: null, action: "stable" as const, status: "acceptable" as const, boundary_recoded_count: 2 },
     receipts: { status: "complete" as const, cost_scope: "native_provider_ledgers" as const, total_cost_usd: 0, total_reserved_usd: 0,
       total_elapsed_ms: 0, timing_scope: "wall_span" as const,
-      stages: [{ stage: "synthetic", cost_usd: 0, reserved_usd: 0, elapsed_ms: 0 }] }, listening, study };
+      stages: [{ stage: "synthetic", cost_usd: 0, reserved_usd: 0, elapsed_ms: 0 }] }, listening,
+    official_motive_census: Array.from({ length: 20 }, (_, i) => ({ rank: i + 1, motive_key: `m${i}`, name: `Motive ${i}`,
+      layer: "social", mentions: 100 - i, volume_cohort: LISTENING_COHORTS_V1[Math.min(9, Math.floor(i / 2))]! })), study };
 }
 
 test("same synthetic snapshot and custody seed produce identical blind packets and key", () => {
@@ -63,6 +67,7 @@ test("same synthetic snapshot and custody seed produce identical blind packets a
   assert.equal(a.packets.length, 52);
   assert.ok(a.packets.every(packet => { validatePacketV1(packet); return packet.cases.every(row => !("mention_id" in row)); }));
   assert.equal(a.manifest.completeness, "complete");
+  assert.equal(a.manifest.readiness, "ready");
   assert.equal(a.manifest.source_digest, a.key.custody_manifest.source_digest);
   assert.equal(a.manifest.strata.length, a.key.custody_manifest.strata.length);
   assert.notDeepEqual(a.manifest.strata.map(x => x.packet_ref), a.key.custody_manifest.strata.map(x => x.packet_ref));
@@ -138,6 +143,22 @@ test("private answer key carries identity and labels while blind payloads omit t
   assert.match(layerPacketCase.context ?? "", /otherwise select unclear/u);
   assert.ok((layerRow.answer as { layer?: string }).layer);
   assert.ok(built.key.rows.every(row => row.blind_id && row.mention_id && row.sample_code));
+});
+
+test("motive strata follow the official summary rank and absent official ranks remain shortfalls", () => {
+  const snapshot = syntheticSnapshot();
+  const m0 = snapshot.study.find(row => row.motive_key === "m0")!;
+  for (let i = 0; i < 40; i++) snapshot.study.push({ ...m0, mention_id: `membership-count-dominates-${i}` });
+  snapshot.official_motive_census = [...snapshot.official_motive_census!].reverse().map((motive, index) => ({ ...motive, rank: index + 1 }));
+  const built = buildBlindPackageV1(snapshot, seed);
+  assert.deepEqual(built.key.rows.filter(row => row.sample_code === "M01").map(row => (row.answer as { motive_key: string }).motive_key),
+    Array(10).fill("m19"));
+  snapshot.official_motive_census = snapshot.official_motive_census.slice(0, 2);
+  const short = buildBlindPackageV1(snapshot, seed);
+  assert.equal(short.key.custody_manifest.strata.find(item => item.sample_code === "M03")?.selected, 0);
+  assert.equal(short.manifest.readiness, "not_ready");
+  assert.ok(short.manifest.readiness_reasons.includes("sampling_shortfalls"));
+  assert.ok(short.manifest.readiness_reasons.includes("official_motive_rank_missing"));
 });
 
 test("sampling deduplicates identities across strata and reports census shortfalls", () => {
@@ -315,7 +336,51 @@ test("private writer emits separated custody key, atomic package, and verifiable
     await assert.rejects(() => writeBlindPackageV1({ snapshotPath: snapshotLink, seedPath, packageDir: resolve(temp, "symlink-output"),
       custodyKeyPath: resolve(temp, "custody", "symlink-key.json") }), /symlink_path_rejected/);
     await writeBlindPackageV1({ snapshotPath, seedPath, packageDir, custodyKeyPath: keyPath });
-  assert.deepEqual(await verifyBlindPackageV1(packageDir), { valid: true, files: 53 });
+  assert.deepEqual(await verifyBlindPackageV1(packageDir), { valid: true, files: 53, readiness: "ready", readiness_reasons: [] });
+    const noOfficialRank = syntheticSnapshot(); delete noOfficialRank.official_motive_census;
+    const legacySnapshotPath = resolve(temp, "legacy-snapshot.json"), legacyPackage = resolve(temp, "legacy-auditor");
+    await writeFile(legacySnapshotPath, `${JSON.stringify(noOfficialRank)}\n`, { mode: 0o600 });
+    await writeBlindPackageV1({ snapshotPath: legacySnapshotPath, seedPath, packageDir: legacyPackage,
+      custodyKeyPath: resolve(temp, "custody", "legacy-key.json") });
+    assert.deepEqual(await verifyBlindPackageV1(legacyPackage), { valid: true, files: 53, readiness: "not_ready",
+      readiness_reasons: ["official_motive_rank_missing", "sampling_shortfalls"] });
+
+    const oldManifestPackage = resolve(temp, "legacy-manifest-auditor");
+    await writeBlindPackageV1({ snapshotPath, seedPath, packageDir: oldManifestPackage,
+      custodyKeyPath: resolve(temp, "custody", "legacy-manifest-key.json") });
+    const oldManifestPath = resolve(oldManifestPackage, "manifest.json");
+    const oldManifest = JSON.parse(await readFile(oldManifestPath, "utf8"));
+    delete oldManifest.readiness_protocol; delete oldManifest.readiness; delete oldManifest.readiness_reasons; delete oldManifest.readiness_evidence;
+    const oldManifestText = `${JSON.stringify(oldManifest, null, 2)}\n`;
+    await writeFile(oldManifestPath, oldManifestText, { mode: 0o600 });
+    const oldSumsPath = resolve(oldManifestPackage, "SHA256SUMS");
+    const oldSums = (await readFile(oldSumsPath, "utf8")).trim().split("\n").map(line => line.endsWith("  manifest.json")
+      ? `${sha256(oldManifestText)}  manifest.json` : line);
+    await writeFile(oldSumsPath, `${oldSums.join("\n")}\n`, { mode: 0o600 });
+    assert.deepEqual(await verifyBlindPackageV1(oldManifestPackage), { valid: true, files: 53, readiness: "not_ready",
+      readiness_reasons: ["legacy_readiness_protocol_missing"] });
+
+    const mismatchPackage = resolve(temp, "mismatch-count-auditor");
+    await writeBlindPackageV1({ snapshotPath, seedPath, packageDir: mismatchPackage,
+      custodyKeyPath: resolve(temp, "custody", "mismatch-count-key.json") });
+    const mismatchPacketPath = resolve(mismatchPackage, "packet-01.json");
+    const mismatchPacket = JSON.parse(await readFile(mismatchPacketPath, "utf8")); mismatchPacket.cases.pop();
+    const mismatchPacketText = `${JSON.stringify(mismatchPacket, null, 2)}\n`;
+    await writeFile(mismatchPacketPath, mismatchPacketText, { mode: 0o600 });
+    const mismatchManifestPath = resolve(mismatchPackage, "manifest.json");
+    const mismatchManifest = JSON.parse(await readFile(mismatchManifestPath, "utf8"));
+    mismatchManifest.packet_files.find((file: { name: string }) => file.name === "packet-01.json").sha256 = sha256(mismatchPacketText);
+    mismatchManifest.case_count--;
+    const mismatchManifestText = `${JSON.stringify(mismatchManifest, null, 2)}\n`;
+    await writeFile(mismatchManifestPath, mismatchManifestText, { mode: 0o600 });
+    const sumsPath = resolve(mismatchPackage, "SHA256SUMS");
+    const sums = (await readFile(sumsPath, "utf8")).trim().split("\n").map(line => {
+      if (line.endsWith("  packet-01.json")) return `${sha256(mismatchPacketText)}  packet-01.json`;
+      if (line.endsWith("  manifest.json")) return `${sha256(mismatchManifestText)}  manifest.json`;
+      return line;
+    });
+    await writeFile(sumsPath, `${sums.join("\n")}\n`, { mode: 0o600 });
+    await assert.rejects(() => verifyBlindPackageV1(mismatchPackage), /selected_case_mismatch/u);
     const sums = await readFile(resolve(packageDir, "SHA256SUMS"), "utf8");
     assert.doesNotMatch(sums, /answer-key/u);
     assert.equal((await stat(packageDir)).mode & 0o777, 0o700);
@@ -333,14 +398,14 @@ test("private writer emits separated custody key, atomic package, and verifiable
     assert.equal(winners.length, 1, "exclusive hard-link publication permits only one concurrent custody key owner");
     const loser = racePackages.find(path => path !== winners[0])!;
     await assert.rejects(() => stat(loser), /ENOENT/u);
-    assert.deepEqual(await verifyBlindPackageV1(winners[0]!), { valid: true, files: 53 });
+    assert.deepEqual(await verifyBlindPackageV1(winners[0]!), { valid: true, files: 53, readiness: "ready", readiness_reasons: [] });
     assert.equal((await stat(raceKey)).mode & 0o777, 0o600);
 
     const samePackage = resolve(temp, "same-package"); const sameKey = resolve(temp, "custody", "same-package-key.json");
     const samePackageRace = await Promise.allSettled([1, 2].map(() => writeBlindPackageV1({ snapshotPath, seedPath,
       packageDir: samePackage, custodyKeyPath: sameKey })));
     assert.equal(samePackageRace.filter(x => x.status === "fulfilled").length, 1, "exclusive output lock permits only one directory publisher");
-    assert.deepEqual(await verifyBlindPackageV1(samePackage), { valid: true, files: 53 });
+    assert.deepEqual(await verifyBlindPackageV1(samePackage), { valid: true, files: 53, readiness: "ready", readiness_reasons: [] });
     const sumsBeforeOverwrite = await readFile(resolve(samePackage, "SHA256SUMS"), "utf8");
     const keyBeforeOverwrite = await readFile(sameKey, "utf8");
     await assert.rejects(() => writeBlindPackageV1({ snapshotPath, seedPath, packageDir: samePackage, custodyKeyPath: sameKey }));
@@ -372,7 +437,7 @@ test("exported-object package path checks streamed private bytes before publishi
     const writing = writeBlindPackageFromExportedSnapshotV1(mutableArgs);
     mutableArgs.snapshot = mismatch;
     await writing;
-    assert.deepEqual(await verifyBlindPackageV1(packageDir), { valid: true, files: 53 });
+    assert.deepEqual(await verifyBlindPackageV1(packageDir), { valid: true, files: 53, readiness: "ready", readiness_reasons: [] });
   } finally { await rm(temp, { recursive: true, force: true }); }
 });
 

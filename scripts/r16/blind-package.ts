@@ -36,6 +36,7 @@ export type BlindSnapshotV1 = {
     stages: Array<{ stage: string; cost_usd: number | null; reserved_usd: number | null; elapsed_ms: number | null }> };
   listening: Array<{ mention_id: string; redacted_text: string; stage: "before" | "after";
     assignments: Array<{ topic_key: string; topic_name: string; topic_definition: string; volume_cohort: string; assigned: boolean }> }>;
+  official_motive_census?: Array<{ rank: number; motive_key: string; name: string; layer: string; mentions: number; volume_cohort: string }>;
   study: Array<{ mention_id: string; redacted_text: string; axes_status: "observed" | "not_asked_outside_cut";
     direction: typeof DIRECTIONS[number] | null; target: typeof TARGETS[number] | null; use: typeof USES[number] | null; alternative_inverted?: boolean;
     in_cut: boolean; lexical_filter_match: boolean; base_voice_valid: boolean; review_flags: string[]; motive_key?: string; motive_volume_cohort?: string;
@@ -55,6 +56,17 @@ type KeyV1 = { contract_version: "r16-blind-custody-key-v1"; seed_fingerprint: s
     strata: Array<{ sample_code: string; packet_ref: string } & StratumCount>;
     axis_coverage: Array<{ code: string; ref: string; packet_ref: string; required: number; selected: number; shortfall: number }> };
   layer_agreement: BlindSnapshotV1["layer_agreement"] };
+
+function censusValuesHistogram(census: Record<string, StratumCount>): Record<string, number> {
+  const histogram: Record<string, number> = {};
+  for (const value of Object.values(census)) histogram[String(value.quota)] = (histogram[String(value.quota)] ?? 0) + 1;
+  return histogram;
+}
+function expectedR16QuotaHistogram(): Record<string, number> { return { "10": 20, "20": 10, "30": 1, "50": 20, "200": 1 }; }
+function sameQuotaHistogram(a: Record<string, number>, b: Record<string, number>): boolean {
+  const keys = new Set([...Object.keys(a), ...Object.keys(b)]);
+  return [...keys].every(key => a[key] === b[key]);
+}
 
 export function validateSnapshotV1(value: unknown): BlindSnapshotV1 {
   if (!value || typeof value !== "object") throw new Error("blind_snapshot_invalid");
@@ -169,6 +181,13 @@ export function validateSnapshotV1(value: unknown): BlindSnapshotV1 {
     if (values.definitions.size > 1) throw new Error("blind_snapshot_motive_definition_inconsistent");
     if (values.layers.size > 1) throw new Error("blind_snapshot_motive_layer_inconsistent");
   }
+  if (s.official_motive_census !== undefined && (!Array.isArray(s.official_motive_census)
+    || s.official_motive_census.length > 20
+    || s.official_motive_census.some((m, i) => !m || m.rank !== i + 1 || !m.motive_key?.trim() || !m.name?.trim()
+      || !["psychological", "personal", "social", "cultural", "unclear"].includes(m.layer)
+      || !Number.isSafeInteger(m.mentions) || m.mentions < 0
+      || !LISTENING_COHORTS_V1.includes(m.volume_cohort as typeof LISTENING_COHORTS_V1[number]))
+    || new Set(s.official_motive_census.map(m => m.motive_key)).size !== s.official_motive_census.length)) fail();
   if (new Set(s.listening.map(r => `${r.mention_id}\0${r.stage}`)).size !== s.listening.length) throw new Error("blind_snapshot_duplicate_listening_identity");
   if (new Set(s.study.map(r => r.mention_id)).size !== s.study.length) throw new Error("blind_snapshot_duplicate_study_identity");
   return s;
@@ -308,22 +327,17 @@ export function buildBlindPackageV1(snapshotValue: unknown, seed: string) {
   axisCoverage.push({ code: "outside_lexical_missing_axes", required: 30, selected: Math.min(30, outsideLexical.length),
     shortfall: Math.max(0, 30 - outsideLexical.length) });
 
-  const motiveCounts = new Map<string, number>();
-  for (const row of t) {
-    const keys = new Set([...(row.motive_memberships ?? []).filter(m => m.assigned ?? true).map(m => m.motive_key), ...(row.motive_key ? [row.motive_key] : [])]);
-    for (const key of keys) motiveCounts.set(key, (motiveCounts.get(key) ?? 0) + 1);
-  }
-  const topMotives = [...motiveCounts.keys()].sort((a, b) => motiveCounts.get(b)! - motiveCounts.get(a)!
-    || hash(`${seed}:motive-order:${a}`).localeCompare(hash(`${seed}:motive-order:${b}`))).slice(0, 20);
+  const officialMotives = s.official_motive_census;
   for (let i = 0; i < 20; i++) {
-    const motive = topMotives[i]; const code = `M${String(i + 1).padStart(2, "0")}`;
+    const official = officialMotives?.[i];
+    const motive = official?.motive_key; const code = `M${String(i + 1).padStart(2, "0")}`;
     const rows = motive ? t.filter(r => r.direction !== "none" && (r.motive_memberships?.some(m => m.motive_key === motive && m.layer && (m.assigned ?? true))
       || r.motive_key === motive && r.layer && r.motive_name && r.motive_definition)) : [];
     const detail = (r: typeof t[number]) => r.motive_memberships?.find(m => m.motive_key === motive) ?? (r.motive_key === motive && r.motive_name
       && r.motive_definition && r.motive_volume_cohort && r.layer ? { motive_key: motive!, name: r.motive_name, definition: r.motive_definition,
         volume_cohort: r.motive_volume_cohort, layer: r.layer } : undefined);
     const firstDetail = rows.map(detail).find(Boolean);
-    const layerContext = [`Motive: ${firstDetail?.name ?? ""}. ${firstDetail?.definition ?? ""}`,
+    const layerContext = [`Motive: ${official?.name ?? firstDetail?.name ?? ""}. ${firstDetail?.definition ?? ""}`,
       `Diagnostic layers: ${guidance.layer_diagnostics.map(d => `${d.layer}: ${d.question} ${d.definition}`).join("; ")}`,
       "Select one layer only when supported by the text; otherwise select unclear."].join("\n");
     add(code, rows.map(r => ({ id: r.mention_id, text: r.redacted_text,
@@ -387,10 +401,30 @@ export function buildBlindPackageV1(snapshotValue: unknown, seed: string) {
   const missingAgreementEvidence = !s.layer_agreement || ["not_measured", "insufficient_data"].includes(s.layer_agreement.status)
     || s.receipts.status !== "complete";
   const completeness = totalShortfall ? "census_with_shortfalls" : missingAgreementEvidence ? "evidence_incomplete" : "complete";
+  const officialMotiveRankComplete = officialMotives?.length === 20;
+  const readinessReasons = [
+    ...(!officialMotiveRankComplete ? ["official_motive_rank_missing"] : []),
+    ...(totalShortfall ? ["sampling_shortfalls"] : []),
+    ...(missingAgreementEvidence ? ["required_metric_receipt_missing"] : []),
+  ];
+  const quotaHistogram = censusValuesHistogram(census);
+  if (!sameQuotaHistogram(quotaHistogram, expectedR16QuotaHistogram())) readinessReasons.push("protocol_quotas_mismatch");
+  const axisQuotaHistogram: Record<string, number> = {};
+  for (const item of axisCoverage) axisQuotaHistogram[String(item.required)] = (axisQuotaHistogram[String(item.required)] ?? 0) + 1;
+  if (!sameQuotaHistogram(axisQuotaHistogram, { "30": 4, "40": 4, "50": 1 })) readinessReasons.push("axis_quotas_mismatch");
+  const axisPacketHistogram: Record<string, number> = {};
+  for (const item of axisCoverage) {
+    const packetQuota = item.code === "outside_lexical_missing_axes" ? census["TAX-OUTSIDE"]?.quota : census.TAX?.quota;
+    if (packetQuota !== undefined) axisPacketHistogram[String(packetQuota)] = (axisPacketHistogram[String(packetQuota)] ?? 0) + 1;
+  }
+  if (!sameQuotaHistogram(axisPacketHistogram, { "30": 1, "200": 8 })) readinessReasons.push("axis_references_mismatch");
   const manifest = { contract_version: "r16-blind-manifest-v1", snapshot_contract: s.contract_version,
     source_digest: s.source.export_digest, created_at: s.exported_at, seed_fingerprint: hash(seed),
     strata: blindStrata, axis_coverage: visibleAxisCoverage,
     completeness, incompleteness_reasons: missingAgreementEvidence ? ["required_metric_receipt_missing"] : [],
+    readiness_protocol: "r16-h6-census-readiness-v1", readiness: readinessReasons.length ? "not_ready" : "ready",
+    readiness_reasons: readinessReasons,
+    readiness_evidence: { official_motive_ranked: officialMotiveRankComplete, metric_receipts_complete: !missingAgreementEvidence },
     shortfall_count: totalShortfall, receipts: s.receipts, packet_count: packets.length,
     case_count: packets.reduce((n, p) => n + p.cases.length, 0), answer_key_separate: true };
   const key: KeyV1 = { contract_version: "r16-blind-custody-key-v1", seed_fingerprint: hash(seed), rows: keyRows,
@@ -549,7 +583,7 @@ async function publishBlindPackageV1(prepared: PreparedBlindPackageWriteV1, snap
     await rm(lockPath, { force: true });
     throw error;
   }
-  return { packageDir, custodyKeyPath: keyPath, complete: built.manifest.completeness === "complete", shortfallCount: built.manifest.shortfall_count };
+  return { packageDir, custodyKeyPath: keyPath, complete: built.manifest.readiness === "ready", shortfallCount: built.manifest.shortfall_count };
 }
 
 async function rejectSymlinkComponents(path: string): Promise<void> {
@@ -561,7 +595,8 @@ async function rejectSymlinkComponents(path: string): Promise<void> {
   }
 }
 
-export async function verifyBlindPackageV1(packageDir: string): Promise<{ valid: boolean; files: number }> {
+export async function verifyBlindPackageV1(packageDir: string): Promise<{ valid: boolean; files: number; readiness: "ready" | "not_ready";
+  readiness_reasons: string[] }> {
   const dir = resolve(packageDir); await rejectSymlinkComponents(dir);
   const sums = (await readFile(resolve(dir, "SHA256SUMS"), "utf8")).trim().split("\n");
   if (!sums.length || sums.some(line => !/^[a-f0-9]{64}  [a-z0-9-]+\.json$/u.test(line))) throw new Error("blind_checksums_invalid");
@@ -590,11 +625,12 @@ export async function verifyBlindPackageV1(packageDir: string): Promise<{ valid:
     || !HASH_RE.test(manifest.source_digest) || !HASH_RE.test(manifest.seed_fingerprint)
     || !Number.isFinite(Date.parse(manifest.created_at)) || !Array.isArray(manifest.packet_files) || !rows.length || manifest.answer_key_separate !== true
     || rows.some(x => !/^[a-f0-9]{12}$/u.test(x.packet_ref) || !Number.isSafeInteger(x.quota) || x.quota < 1 || !Number.isSafeInteger(x.available) || x.available < 0
-      || !Number.isSafeInteger(x.selected) || x.selected < 0 || x.selected > x.available
+      || !Number.isSafeInteger(x.selected) || x.selected < 0 || x.selected > x.available || x.selected > x.quota
       || x.shortfall !== Math.max(0, x.quota - x.selected))
     || !axisRows.length || axisRows.some(x => !/^[a-f0-9]{12}$/u.test(x.ref) || !/^[a-f0-9]{12}$/u.test(x.packet_ref)
       || !rows.some(s => s.packet_ref === x.packet_ref) || !Number.isSafeInteger(x.required) || x.required < 0
-      || !Number.isSafeInteger(x.selected) || x.selected < 0 || !Number.isSafeInteger(x.shortfall) || x.shortfall !== Math.max(0, x.required - x.selected))
+      || !Number.isSafeInteger(x.selected) || x.selected < 0 || x.selected > x.required
+      || !Number.isSafeInteger(x.shortfall) || x.shortfall !== Math.max(0, x.required - x.selected))
     || !Array.isArray(manifest.incompleteness_reasons) || manifest.incompleteness_reasons.some((x: string) => x !== "required_metric_receipt_missing")
     || manifest.shortfall_count !== expectedShortfall
     || !["complete", "census_with_shortfalls", "evidence_incomplete"].includes(manifest.completeness)
@@ -605,10 +641,36 @@ export async function verifyBlindPackageV1(packageDir: string): Promise<{ valid:
       || !rows.some(x => x.packet_ref === file.packet_ref) || refs.has(file.packet_ref) || !refs.add(file.packet_ref)
       || observedPackets.get(file.name)?.packet_ref !== file.packet_ref)
     || manifest.packet_files.length !== [...observed.keys()].filter(k => k.startsWith("packet-")).length) throw new Error("blind_manifest_invalid");
+  for (const file of manifest.packet_files as Array<{ name: string; packet_ref: string }>) {
+    const packet = observedPackets.get(file.name), stratum = rows.find(item => item.packet_ref === file.packet_ref);
+    if (!packet || !stratum || stratum.selected !== packet.cases.length) throw new Error("blind_manifest_selected_case_mismatch");
+  }
   if (refs.size !== rows.length || new Set(rows.map(x => x.packet_ref)).size !== rows.length
     || new Set(axisRows.map(x => x.ref)).size !== axisRows.length || manifest.packet_count !== manifest.packet_files.length
     || manifest.case_count !== [...observedPackets.values()].reduce((n, packet) => n + packet.cases.length, 0)) throw new Error("blind_manifest_invalid");
-  return { valid: true, files };
+  const readinessReasons: string[] = [];
+  if (manifest.readiness_protocol !== "r16-h6-census-readiness-v1") readinessReasons.push("legacy_readiness_protocol_missing");
+  else {
+    if (!manifest.readiness_evidence || typeof manifest.readiness_evidence.official_motive_ranked !== "boolean"
+      || typeof manifest.readiness_evidence.metric_receipts_complete !== "boolean"
+      || !Array.isArray(manifest.readiness_reasons)) throw new Error("blind_readiness_evidence_invalid");
+    if (!manifest.readiness_evidence.official_motive_ranked) readinessReasons.push("official_motive_rank_missing");
+    if (expectedShortfall > 0) readinessReasons.push("sampling_shortfalls");
+    if (!manifest.readiness_evidence.metric_receipts_complete) readinessReasons.push("required_metric_receipt_missing");
+    if (!sameQuotaHistogram(Object.fromEntries(rows.reduce((hist, row) => hist.set(String(row.quota), (hist.get(String(row.quota)) ?? 0) + 1),
+      new Map<string, number>())), expectedR16QuotaHistogram())) readinessReasons.push("protocol_quotas_mismatch");
+    if (!sameQuotaHistogram(Object.fromEntries(axisRows.reduce((hist, row) => hist.set(String(row.required), (hist.get(String(row.required)) ?? 0) + 1),
+      new Map<string, number>())), { "30": 4, "40": 4, "50": 1 })) readinessReasons.push("axis_quotas_mismatch");
+    const axisPacketHistogram: Record<string, number> = {};
+    for (const item of axisRows) {
+      const packetQuota = rows.find(stratum => stratum.packet_ref === item.packet_ref)?.quota;
+      if (packetQuota !== undefined) axisPacketHistogram[String(packetQuota)] = (axisPacketHistogram[String(packetQuota)] ?? 0) + 1;
+    }
+    if (!sameQuotaHistogram(axisPacketHistogram, { "30": 1, "200": 8 })) readinessReasons.push("axis_references_mismatch");
+    if (JSON.stringify([...manifest.readiness_reasons].sort()) !== JSON.stringify([...readinessReasons].sort())
+      || manifest.readiness !== (readinessReasons.length ? "not_ready" : "ready")) throw new Error("blind_readiness_manifest_mismatch");
+  }
+  return { valid: true, files, readiness: readinessReasons.length ? "not_ready" : "ready", readiness_reasons: readinessReasons };
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === resolve(new URL(import.meta.url).pathname)) {

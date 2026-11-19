@@ -130,6 +130,16 @@ export function frozenStudyAuthorRosterV1(args: { root_id: string; private_perso
 
 export type NativeAuditMotiveDefinitionV1 = { key: string; name: string; layer: string };
 export type NativeAuditCandidateDefinitionV1 = { motive_key: string; volume_cohort: string; name: string; definition: string };
+export type NativeOfficialMotiveV1 = { key: string; name: string; layer: string; mentions: number };
+
+export function nativeOfficialMotiveOrderV1(input: readonly { key?: unknown; name?: unknown; layer?: unknown; mentions?: unknown }[]): NativeOfficialMotiveV1[] {
+  return input.map(m => {
+    if (typeof m.key !== "string" || !m.key.trim() || typeof m.name !== "string" || !m.name.trim()
+      || !["psychological", "personal", "social", "cultural", "unclear"].includes(String(m.layer))
+      || !Number.isSafeInteger(m.mentions) || Number(m.mentions) < 0) throw new Error("native_audit_study_summary_motive_invalid");
+    return { key: m.key, name: m.name, layer: String(m.layer), mentions: Number(m.mentions) };
+  }).sort((a, b) => b.mentions - a.mentions || a.key.localeCompare(b.key));
+}
 
 /** The persisted question key array is an observed candidate set, not a ranked centroid result. */
 export function nativeNearestCandidateSetV1(args: {
@@ -282,6 +292,7 @@ export async function exportNativeAuditSnapshotV1(args: NativeAuditExportArgsV1)
       stages: collected.receiptRows.stages.length ? collected.receiptRows.stages
         : [{ stage: "native_measurements", cost_usd: null, reserved_usd: null, elapsed_ms: null }] },
     listening: collected.listening,
+    official_motive_census: collected.membershipEvidence.official_motive_census,
     study: collected.studyRows,
   };
   const sourceManifest = {
@@ -511,14 +522,11 @@ async function loadStudyRows(client: ReadClientV1, execution: StudyExecutionRow,
 
 async function loadNativeMembershipEvidence(client: ReadClientV1, execution: StudyExecutionRow, rows: BlindSnapshotV1["study"]): Promise<{
   motive_memberships_available: boolean; nearest_candidate_sets_available: boolean;
+  official_motive_census: NonNullable<BlindSnapshotV1["official_motive_census"]>;
 }> {
   const summary = execution.output?.summary as { motives?: Array<{ key?: unknown; name?: unknown; layer?: unknown; mentions?: unknown }> } | undefined;
   if (!summary || !Array.isArray(summary.motives)) throw new Error("native_audit_study_summary_missing");
-  const motives = summary.motives.map(m => {
-    if (typeof m.key !== "string" || typeof m.name !== "string" || !["psychological", "personal", "social", "cultural", "unclear"].includes(String(m.layer))
-      || !Number.isSafeInteger(m.mentions) || Number(m.mentions) < 0) throw new Error("native_audit_study_summary_motive_invalid");
-    return { key: m.key, name: m.name, layer: String(m.layer), mentions: Number(m.mentions) };
-  }).sort((a, b) => b.mentions - a.mentions || a.key.localeCompare(b.key));
+  const motives = nativeOfficialMotiveOrderV1(summary.motives);
   const cohortByKey = new Map(motives.map((m, index) => [m.key, LISTENING_COHORTS_V1[Math.min(9, Math.floor(index * 10 / Math.max(1, motives.length)))]!]));
   const configRows = (await client.query<{ id: string; stage: string; created_at: Date | string; stage_configuration: Record<string, unknown> }>(`SELECT id,stage,created_at,stage_configuration
     FROM signal_study_jev_batches WHERE execution_id=$1 AND status='completed' AND stage IN('membership','dominance_membership')
@@ -598,6 +606,8 @@ async function loadNativeMembershipEvidence(client: ReadClientV1, execution: Stu
     row.native_nearest_candidate_set = candidateSet;
   }
   return { motive_memberships_available: selectedMemberships.size > 0,
+    official_motive_census: motives.slice(0, 20).map((m, index) => ({ rank: index + 1, motive_key: m.key, name: m.name,
+      layer: m.layer, mentions: m.mentions, volume_cohort: cohortByKey.get(m.key)! })),
     nearest_candidate_sets_available: [...byId.values()].some(row => row.native_nearest_candidate_set?.length === 4) };
 }
 

@@ -15,6 +15,19 @@ export function nativeReceiptManifestCallsV1(events: readonly Event[]) {
 export type NativeListeningRoundPathRowV1 = { id: string; ordinal: number; input_generation_id: string;
   output_generation_id: string | null; status: string };
 
+export function nativeListeningStopEvidenceV1(args: { policy_version_id: string; policy_digest: string; policy: Record<string, unknown>;
+  root_count: number; root_census_digest: string; rounds: readonly (NativeListeningRoundPathRowV1 & { stop_decision?: unknown })[] }) {
+  const last = args.rounds.at(-1)?.stop_decision;
+  const terminalWitness = !!last && typeof last === "object" && !Array.isArray(last)
+    && typeof (last as { stop?: unknown }).stop === "boolean"
+    && typeof (last as { reason?: unknown }).reason === "string" && !!(last as { reason: string }).reason.trim();
+  return { policy_version_id: args.policy_version_id, policy_digest: args.policy_digest, policy: args.policy,
+    denominator: args.root_count, census_digest: args.root_census_digest,
+    rounds: args.rounds.map(round => ({ round_id: round.id, ordinal: round.ordinal, input_generation_id: round.input_generation_id,
+      output_generation_id: round.output_generation_id, stop_decision: round.stop_decision ?? null })),
+    terminal_stop_witness: terminalWitness ? "present" as const : "unknown" as const };
+}
+
 export function nativeListeningRoundPathV1<T extends NativeListeningRoundPathRowV1>(args: { initial_generation_id: string; before_generation_id: string;
   after_generation_id: string; after_round_id: string; rounds: readonly T[] }):
   { rounds: T[]; generation_ids: string[]; before_generation_index: number; after_generation_index: number } | null {
@@ -169,8 +182,10 @@ export async function loadNativeReceiptEvidenceV1(client: Client, before: Genera
       generation_id: study.listening_source_generation_id, round_id: study.listening_source_round_id, verified: false };
   const parents = financialAnchor ? (await client.query<{ id: string; workspace_id: string; map_id: string; initial_configuration_id: string;
     initial_generation_id: string; initial_classification_run_id: string; initial_preparation_id: string | null;
-    configuration_digest: string; root_census_digest: string; root_count: number; status: string }>(`SELECT e.id,e.workspace_id,e.map_id,e.initial_configuration_id,
-      e.initial_generation_id,e.initial_classification_run_id,e.initial_preparation_id,e.configuration_digest,e.root_census_digest,e.root_count,e.status
+    configuration_digest: string; root_census_digest: string; root_count: number; policy_version_id: string; policy_digest: string;
+    policy: Record<string, unknown>; status: string }>(`SELECT e.id,e.workspace_id,e.map_id,e.initial_configuration_id,
+      e.initial_generation_id,e.initial_classification_run_id,e.initial_preparation_id,e.configuration_digest,e.root_census_digest,e.root_count,
+      e.policy_version_id,e.policy_digest,e.policy,e.status
     FROM signal_listening_discovery_executions e WHERE e.workspace_id=$1 AND e.map_id=$2
       AND (e.initial_generation_id=$3 OR EXISTS(SELECT 1 FROM signal_listening_discovery_rounds r WHERE r.execution_id=e.id AND (r.input_generation_id=$3 OR r.output_generation_id=$3)))
       AND (e.initial_generation_id=$4 OR EXISTS(SELECT 1 FROM signal_listening_discovery_rounds r WHERE r.execution_id=e.id AND (r.input_generation_id=$4 OR r.output_generation_id=$4)))
@@ -182,15 +197,18 @@ export async function loadNativeReceiptEvidenceV1(client: Client, before: Genera
     const parent = parents[0]!;
     const rounds = (await client.query<{ id: string; ordinal: number; input_generation_id: string; output_generation_id: string | null;
       configuration_id: string; configuration_digest: string; source_digest: string; output_configuration_id: string | null; output_digest: string | null;
-      classification_run_id: string | null; classification_preparation_id: string | null; status: string }>(`SELECT id,ordinal,input_generation_id,output_generation_id,
+      classification_run_id: string | null; classification_preparation_id: string | null; stop_decision: unknown; status: string }>(`SELECT id,ordinal,input_generation_id,output_generation_id,
         configuration_id,configuration_digest,source_digest,output_configuration_id,output_digest,
-        classification_run_id,classification_preparation_id,status FROM signal_listening_discovery_rounds
+        classification_run_id,classification_preparation_id,stop_decision,status FROM signal_listening_discovery_rounds
       WHERE workspace_id=$1 AND execution_id=$2 ORDER BY ordinal,id`, [before.workspace_id, parent.id])).rows;
     const verifiedPath = !!financialAnchor && parent.workspace_id === before.workspace_id && parent.workspace_id === after.workspace_id
       && parent.map_id === before.map_id && parent.map_id === after.map_id
       ? nativeListeningRoundPathV1({ initial_generation_id: parent.initial_generation_id, before_generation_id: before.id,
         after_generation_id: financialAnchor.generation_id, after_round_id: financialAnchor.round_id, rounds }) : null;
     const path = verifiedPath?.rounds ?? [];
+    const stopEvidence = nativeListeningStopEvidenceV1({ policy_version_id: parent.policy_version_id, policy_digest: parent.policy_digest,
+      policy: parent.policy, root_count: parent.root_count, root_census_digest: parent.root_census_digest, rounds: path });
+    if (path.length && stopEvidence.terminal_stop_witness !== "present") limitations.add("listening_terminal_stop_witness_missing");
     let ancestryProofValid = false;
     if (verifiedPath) {
       const uniqueGenerationIds = [...new Set(verifiedPath.generation_ids)];
@@ -233,13 +251,17 @@ export async function loadNativeReceiptEvidenceV1(client: Client, before: Genera
       ...children.flatMap(x => x.preparation_id ? [x.preparation_id] : [])])];
     manifest.listening_parent = { id: parent.id, initial_generation_id: parent.initial_generation_id,
       initial_configuration_id: parent.initial_configuration_id, configuration_digest: parent.configuration_digest,
-      root_count: parent.root_count, initial_classification_run_id: parent.initial_classification_run_id, status: parent.status,
+      root_count: parent.root_count, root_census_digest: parent.root_census_digest,
+      policy_version_id: parent.policy_version_id, policy_digest: parent.policy_digest, policy: parent.policy,
+      stop_evidence: stopEvidence,
+      initial_classification_run_id: parent.initial_classification_run_id, status: parent.status,
       rounds: path.map(r => ({ id: r.id, ordinal: r.ordinal, input_generation_id: r.input_generation_id,
         output_generation_id: r.output_generation_id, configuration_id: r.configuration_id,
         configuration_digest: r.configuration_digest, source_digest: r.source_digest,
         output_configuration_id: r.output_configuration_id, output_digest: r.output_digest,
         status: r.status, classification_run_id: r.classification_run_id,
-        classification_preparation_id: r.classification_preparation_id })), generation_path_complete: !!verifiedPath && ancestryProofValid,
+        classification_preparation_id: r.classification_preparation_id, stop_decision: r.stop_decision ?? null,
+        denominator: parent.root_count, census_digest: parent.root_census_digest })), generation_path_complete: !!verifiedPath && ancestryProofValid,
       before_generation_index: verifiedPath?.before_generation_index ?? null,
       after_generation_index: verifiedPath?.after_generation_index ?? null,
       generation_ids: verifiedPath?.generation_ids ?? null, listening_source_round_id: financialAnchor?.round_id ?? study.listening_source_round_id,

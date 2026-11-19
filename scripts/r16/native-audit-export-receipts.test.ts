@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { loadNativeReceiptEvidenceV1, nativeListeningFinancialAnchorV1, nativeListeningRoundPathV1, nativeReceiptManifestCallsV1, nativeWallSpanV1 } from "./native-audit-export-receipts.js";
+import { loadNativeReceiptEvidenceV1, nativeListeningFinancialAnchorV1, nativeListeningRoundPathV1, nativeListeningStopEvidenceV1, nativeReceiptManifestCallsV1, nativeWallSpanV1 } from "./native-audit-export-receipts.js";
 import { signalWorkspaceEmbeddingDigestV1 as digest } from "../../packages/query-engine/src/signal-workspace-embeddings-v1.js";
 import { canonicalJsonDigestV1 } from "./private-json-stream.js";
 
@@ -34,6 +34,22 @@ test("receipt ancestry uses the Study's exact terminal round when generations co
   assert.equal(path?.after_generation_index, 2);
   assert.equal(nativeListeningRoundPathV1({ initial_generation_id: "g1", before_generation_id: "g1", after_generation_id: "g1",
     after_round_id: "wrong-round", rounds: [round(1, "g1", "g1")] }), null, "no-op requires the exact frozen round binding");
+});
+
+test("native stop receipt preserves null intermediate decisions and reports an unknown terminal decision", () => {
+  const input = { policy_version_id: "policy-ref", policy_digest: sha("a"), policy: { max_rounds: 3 }, root_count: 500,
+    root_census_digest: sha("b"), rounds: [
+      { ...round(1, "g0", "g1"), stop_decision: null },
+      { ...round(2, "g1", "g2"), stop_decision: { stop: false, reason: "continue" } },
+    ] };
+  const evidence = nativeListeningStopEvidenceV1(input);
+  assert.equal(evidence.terminal_stop_witness, "present");
+  assert.equal(evidence.rounds[0]?.stop_decision, null);
+  assert.equal(evidence.rounds[1]?.stop_decision && (evidence.rounds[1].stop_decision as { stop: boolean }).stop, false);
+  const missing = nativeListeningStopEvidenceV1({ ...input, rounds: [{ ...round(1, "g0", "g1"), stop_decision: null }] });
+  assert.equal(missing.terminal_stop_witness, "unknown");
+  assert.equal(missing.denominator, 500);
+  assert.equal(missing.policy_digest, sha("a"));
 });
 
 test("human edit receipts verify a two-edit source-digest chain and anchor money only to base serving round", () => {

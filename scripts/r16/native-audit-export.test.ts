@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { assertStudyListeningSourceBindingV1, nativeNearestCandidateSetV1, nativeAxisCandidateFlagsV1,
-  nativeLayerAgreementFromProofV1, sourceStudyAxesForAuditV1, validateSupplementalReceiptFilesV1, frozenStudyAuthorRosterV1 } from "./native-audit-export.js";
+  nativeLayerAgreementFromProofV1, nativeOfficialMotiveOrderV1, sourceStudyAxesForAuditV1, validateSupplementalReceiptFilesV1, frozenStudyAuthorRosterV1 } from "./native-audit-export.js";
 import { signalStudyKnownAuthorPrivacyV1 } from "../../infrastructure/db/signal-study-author-privacy.js";
 
 const id = (n: string) => `${n.repeat(8)}-${n.repeat(4)}-${n.repeat(4)}-${n.repeat(4)}-${n.repeat(12)}`;
@@ -37,6 +37,17 @@ test("nearest JEV question keys remain an unordered candidate set with no inferr
   assert.deepEqual(set?.map(m => m.motive_key), ["m_a", "m_b", "m_c", "m_d"]);
   assert.equal(nativeNearestCandidateSetV1({ question_keys: ["m_a", "m_a", "m_c", "m_d"], motives,
     cohorts: new Map(), definitions: new Map() }), null);
+});
+
+test("official motive order is stable by native mention count and key, independent of membership evidence", () => {
+  const ordered = nativeOfficialMotiveOrderV1([
+    { key: "m_b", name: "B", layer: "social", mentions: 8 },
+    { key: "m_c", name: "C", layer: "personal", mentions: 8 },
+    { key: "m_a", name: "A", layer: "cultural", mentions: 12 },
+  ]);
+  assert.deepEqual(ordered.map(item => item.key), ["m_a", "m_b", "m_c"]);
+  assert.throws(() => nativeOfficialMotiveOrderV1([{ key: " ", name: "A", layer: "social", mentions: 2 }]),
+    /summary_motive_invalid/u);
 });
 
 test("audit direction uses the saved source axis rather than alternative inversion", () => {
