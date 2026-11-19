@@ -96,8 +96,8 @@ export const storySchema = z.object({
   sources: z.array(z.string()).default([]),
   period: z.string().max(40).optional(),
   report: z.string().optional(),
-  /** Optional image behind the lower part of the story, in the study image style (content-db/STUDY_IMAGES.md). */
-  image: z.string().optional(),
+  /** Optional photos behind the story, one per scene (experiment; see src/motion/PhotoStory.tsx). */
+  image: z.union([z.string(), z.array(z.string()).min(1).max(7)]).optional(),
   es: localizedSchema,
   en: localizedSchema
 });

@@ -120,6 +120,11 @@
   background: #f1f9f9;
 }
 
+/* A photo story ends in a dark fade, so the rest of the screen continues it. */
+.stageWrapPhoto {
+  background: #0b161b;
+}
+
 .stage {
   position: absolute;
   inset: 0;

@@ -5,7 +5,7 @@ import { Calendar } from "iconoir-react";
 import type { Scene } from "@/content/stories/schema";
 import { SourceIcon, sourceLabel } from "@/components/brand/SourceMark";
 import { interpolate, useCurrentFrame, useVideoConfig } from "./runtime";
-import { color, font, SAFE } from "./theme";
+import { sceneColor as color, font, SAFE } from "./theme";
 import { clamp, countUp, enter, formatNumber, rise } from "./util";
 
 type SceneProps<T extends Scene["type"]> = {
@@ -141,7 +141,7 @@ export function JourneyScene({ scene, locale, bottomSafe }: SceneProps<"journey"
           const isHi = i === scene.highlightIndex;
           const negative = step.value < 0;
           const strong = negative ? color.coral : color.teal;
-          const soft = negative ? "#f3c2b7" : "#a9dada";
+          const soft = negative ? color.coralPale : color.tealPale;
           const share = (Math.abs(step.value) / max) * p;
           return (
             <div

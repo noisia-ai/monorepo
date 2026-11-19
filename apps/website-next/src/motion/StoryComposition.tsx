@@ -6,6 +6,7 @@ import { SceneView } from "./scenes";
 import { CANVAS, OUTRO_FRAMES, SAFE, SCENE_FRAMES, color, font } from "./theme";
 import { clamp, enter } from "./util";
 import { LOGO_RATIO } from "@/components/brand/Logo";
+import { PhotoBackdrop, PhotoPalette } from "./PhotoStory";
 
 export type StoryCompositionProps = {
   story: StoryLocale;
@@ -14,8 +15,8 @@ export type StoryCompositionProps = {
   tag: string;
   /** Feed mode keeps the bottom free for the caption overlay; video mode draws the title itself. */
   mode: "feed" | "video";
-  /** Optional image that fills the lower part of the canvas and fades into it at the top. */
-  image?: string;
+  /** Optional photos (experiment): they fill the screen, one per scene, behind the scenes (PhotoStory). */
+  image?: string | string[];
 };
 
 export function sceneFrames(scene: Scene): number {
@@ -46,7 +47,7 @@ function Canvas() {
 }
 
 /** Story-style progress segments, one per scene, plus the tag chip. */
-function Chrome({ lengths, tag }: { lengths: number[]; tag: string }) {
+function Chrome({ lengths, tag, onPhoto }: { lengths: number[]; tag: string; onPhoto?: boolean }) {
   const frame = useCurrentFrame();
   let start = 0;
   return (
@@ -56,8 +57,8 @@ function Chrome({ lengths, tag }: { lengths: number[]; tag: string }) {
           const fill = interpolate(frame, [start, start + length], [0, 1], clamp);
           start += length;
           return (
-            <div key={i} style={{ flex: 1, height: 8, borderRadius: 4, background: "rgba(10,10,10,0.08)", overflow: "hidden" }}>
-              <div style={{ width: `${fill * 100}%`, height: "100%", background: color.ink, opacity: 0.55 }} />
+            <div key={i} style={{ flex: 1, height: 8, borderRadius: 4, background: onPhoto ? "rgba(255,255,255,0.3)" : "rgba(10,10,10,0.08)", overflow: "hidden" }}>
+              <div style={{ width: `${fill * 100}%`, height: "100%", background: onPhoto ? "#ffffff" : color.ink, opacity: onPhoto ? 0.9 : 0.55 }} />
             </div>
           );
         })}
@@ -68,9 +69,9 @@ function Chrome({ lengths, tag }: { lengths: number[]; tag: string }) {
           fontFamily: font,
           fontSize: 34,
           fontWeight: 500,
-          color: color.teal,
-          background: "rgba(255,255,255,0.8)",
-          border: `2px solid ${color.tealSoft}`,
+          color: onPhoto ? "#ffffff" : color.teal,
+          background: onPhoto ? "rgba(6,18,24,0.35)" : "rgba(255,255,255,0.8)",
+          border: `2px solid ${onPhoto ? "rgba(255,255,255,0.45)" : color.tealSoft}`,
           borderRadius: 999,
           padding: "10px 24px"
         }}
@@ -86,7 +87,7 @@ function Outro({ locale }: { locale: string }) {
   const { fps } = useVideoConfig();
   const p = enter(frame, fps, 0, 20);
   return (
-    <AbsoluteFill style={{ alignItems: "center", justifyContent: "center", gap: 36, opacity: p }}>
+    <AbsoluteFill style={{ alignItems: "center", justifyContent: "center", gap: 36, opacity: p, background: color.canvas }}>
       {/* The real Noisia logo, never typed text. */}
       {/* eslint-disable-next-line @next/next/no-img-element -- fixed-size SVG inside the canvas */}
       <img src="/brand/noisia.svg" alt="Noisia" width={560} height={Math.round(560 / LOGO_RATIO)} style={{ transform: `scale(${0.92 + p * 0.08})` }} />
@@ -106,56 +107,31 @@ function VideoCaption({ story }: { story: StoryLocale }) {
   );
 }
 
-/** The story's image: the lower part of the canvas, fading in from the canvas at its top edge. */
-function StoryImage({ src }: { src: string }) {
-  // Fades in from the canvas at the top and back into its tint at the bottom, so on a screen
-  // taller than 9:16 the image meets the band below the canvas without an edge.
-  const fade = "linear-gradient(180deg, transparent 0%, #000 38%, #000 86%, transparent 100%)";
-  return (
-    // eslint-disable-next-line @next/next/no-img-element
-    <img
-      src={src}
-      alt=""
-      style={{
-        position: "absolute",
-        left: 0,
-        bottom: 0,
-        width: CANVAS.width,
-        height: Math.round(CANVAS.height * IMAGE_SHARE),
-        objectFit: "cover",
-        objectPosition: "center bottom",
-        WebkitMaskImage: fade,
-        maskImage: fade
-      }}
-    />
-  );
-}
-
-/** How much of the canvas height the image takes; the scenes keep the space above it. */
-const IMAGE_SHARE = 0.6;
-
 export function StoryComposition({ story, locale, tag, mode, image }: StoryCompositionProps) {
   const lengths = story.scenes.map(sceneFrames);
-  const bottomSafe = image ? Math.round(CANVAS.height * (IMAGE_SHARE - 0.12)) : mode === "feed" ? SAFE.bottomFeed : SAFE.bottomVideo;
+  const total = lengths.reduce((sum, length) => sum + length, 0) + OUTRO_FRAMES;
+  const images = image ? (Array.isArray(image) ? image : [image]) : [];
+  const onPhoto = images.length > 0;
+  const bottomSafe = mode === "feed" ? SAFE.bottomFeed : SAFE.bottomVideo;
   let from = 0;
+  const scenes = story.scenes.map((scene, i) => {
+    const start = from;
+    from += lengths[i]!;
+    return (
+      <Sequence key={i} from={start} durationInFrames={lengths[i]!}>
+        <SceneView scene={scene} locale={locale} bottomSafe={bottomSafe} />
+      </Sequence>
+    );
+  });
   return (
     <AbsoluteFill style={{ width: CANVAS.width, height: CANVAS.height }}>
-      <Canvas />
-      {image ? <StoryImage src={image} /> : null}
-      {story.scenes.map((scene, i) => {
-        const start = from;
-        from += lengths[i]!;
-        return (
-          <Sequence key={i} from={start} durationInFrames={lengths[i]!}>
-            <SceneView scene={scene} locale={locale} bottomSafe={bottomSafe} />
-          </Sequence>
-        );
-      })}
+      {onPhoto ? <PhotoBackdrop images={images} lengths={lengths} total={total} /> : <Canvas />}
+      {onPhoto ? <PhotoPalette>{scenes}</PhotoPalette> : scenes}
       <Sequence from={from} durationInFrames={OUTRO_FRAMES}>
         <Outro locale={locale} />
       </Sequence>
-      <Chrome lengths={[...lengths, OUTRO_FRAMES]} tag={tag} />
-      {mode === "video" ? <VideoCaption story={story} /> : null}
+      <Chrome lengths={[...lengths, OUTRO_FRAMES]} tag={tag} onPhoto={onPhoto} />
+      {mode === "video" && !onPhoto ? <VideoCaption story={story} /> : null}
     </AbsoluteFill>
   );
 }

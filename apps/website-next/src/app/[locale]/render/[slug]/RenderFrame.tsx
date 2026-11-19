@@ -6,7 +6,7 @@ import { Stage } from "@/motion/runtime";
 import { StoryComposition, storyDuration } from "@/motion/StoryComposition";
 import { CANVAS } from "@/motion/theme";
 
-type Props = { story: StoryLocale; locale: string; tag: string; image?: string; frame: number; mode: "feed" | "video"; scale: number };
+type Props = { story: StoryLocale; locale: string; tag: string; image?: string | string[]; frame: number; mode: "feed" | "video"; scale: number };
 
 declare global {
   interface Window {

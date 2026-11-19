@@ -234,7 +234,7 @@ export function Feed({ stories, collections = [], initialId, initialFilter, init
               aria-setsize={-1}
               aria-labelledby={`${key}-title`}
             >
-              <div className={styles.stageWrap}>
+              <div className={story.image ? `${styles.stageWrap} ${styles.stageWrapPhoto}` : styles.stageWrap}>
                 {near ? (
                   <Stage
                     className={styles.stage}

@@ -127,8 +127,10 @@ export function SourceIcon({ name, size = 16, mono, style }: { name: string; siz
   const { mark } = resolve(name);
   if (!mark) return <ChatLines width={size} height={size} strokeWidth={1.8} aria-hidden style={{ flex: "none", ...style }} />;
   if (mark.kind === "generic") return <mark.Icon width={size} height={size} strokeWidth={1.8} aria-hidden style={{ flex: "none", ...style }} />;
+  // Black marks (X, TikTok) follow --brand-black, so a dark surface can turn them white.
+  const fill = mono ?? (mark.hex === "#000000" ? "var(--brand-black, #000000)" : mark.hex);
   return (
-    <svg viewBox="0 0 24 24" width={size} height={size} fill={mono ?? mark.hex} aria-hidden style={{ flex: "none", ...style }}>
+    <svg viewBox="0 0 24 24" width={size} height={size} aria-hidden style={{ flex: "none", fill, ...style }}>
       <path d={mark.path} />
     </svg>
   );
