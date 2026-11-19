@@ -120,6 +120,46 @@ They are in English, in `estudio.json`:
 5. Run `pnpm content:study <web folder>`. It loads `hero.webp`, `hero-wide.webp` and the email
    banner with the rest of the study.
 
+## Using this look outside the website
+
+Brandhon wants this look in the studies themselves too (the decks), not only on the website
+(19 Nov 2026). There is one route for everyone, so the images match:
+- **The style lives in one place:** the `STYLE` blocks in `scripts/content/image.ts`, mirrored by
+  this file. Pitch Kit, a study agent or the website team do not write their own version of it.
+- **For a study** (website page, card, email and, if the deck wants it, its cover or section
+  images), write `image.brief` and `image.place` in the study's `estudio.json` and run
+  `pnpm content:image <web folder>`. The same `imagen.png` and `imagen-wide.png` can go into the
+  deck.
+- **A deck that needs more scenes** (a cover, section covers) writes one prompt per scene: blocks
+  1 to 6 copied as they are from `image.ts`, and blocks 7 to 10 for each scene. Same model,
+  quality and sizes. This is what Pitch Kit does today. The copy lives in the case's folder,
+  outside git, because the scenes carry client data. When `STYLE` changes, a deck still being
+  built has to copy it again.
+- **Pitch Kit's pointer** is `packages/pitch-kit/HUMAN_SIGNALS.md` §VII.1 ("La imagen de un
+  estudio"). It names this file and `STYLE` as the source of the prompt.
+- **Pitch Kit's own creative direction** (Human Signals, Kinetic Cinema) stays for sales decks,
+  video and atmosphere: `packages/pitch-kit/HUMAN_SIGNALS.md`. This look is the quiet one, one
+  person and one moment in haze, for studies and their pages.
+- **Photos inside Insights pieces** are on hold. See `INSIGHTS_IMAGES_EXPERIMENT.md`.
+
+## What it has cost
+
+At about USD 0.20 per image (high quality). The real spend is in the OpenAI usage panel.
+
+| Date | What | Images | Cost (approx.) |
+|---|---|---|---|
+| 17 Nov 2026 | Style test on the insurance study: three styles, two candidates each | 6 | USD 1.20 |
+| 17–18 Nov 2026 | Images of the four Triggers & Barriers studies, vertical and wide, with candidates | ~16 | USD 3.20 |
+| 17–18 Nov 2026 | Insights experiment (on hold) | 12 | USD 2.40 |
+| 19 Nov 2026 | A paid study deck by Pitch Kit: cover in both shapes (two candidates each) and 8 section covers | 12 | USD 2.40 |
+| | **Total** | **~46** | **~USD 9.20** |
+
+**What to budget:**
+- **A new study:** two candidates of each shape is 4 images, about USD 0.80. With one round of
+  retries, about USD 1.60.
+- **A paid study deck with section covers:** about 10 scenes, USD 2 to 3.
+- Show the figure before generating.
+
 ## Reference
 
 - The insurance study's test: two candidates of the chosen style, kept outside git.
