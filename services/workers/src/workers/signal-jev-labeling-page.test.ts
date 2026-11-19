@@ -553,6 +553,86 @@ test('a later ready cohort reaches committed handoff without releasing the next 
  }
 });
 
+/** Controlled SQL and APPLY waits expose queue refill and actual free-slot
+ * headroom without timing thresholds or provider throughput claims. */
+async function exercisePrefetchReadyCapacity(mode:'early_refill'|'occupied_slots'){
+ const {processJevStreamingWindowV2,jevCallWorkingBytesV2}=await import('./signal-jev-streaming-window');
+ const {selectLabelingInputPrefixV1}=await import('../../../../infrastructure/db/signal-labeling-input-bounds');
+ type Store=Parameters<typeof processJevStreamingWindowV2<FacetInput,string>>[0]['store'];
+ const make=(i:number)=>({id:`refill-${i}`,request_digest:`refill-${i}`,status:'reserved',raw_body:null,results_applied:false,
+  request:{model:'jev-1.13.0',state:String(i),questions:{q:{type:'noul',instructions:'configured'}}},
+  inputs:[{root_id:String(i),text:String(i)}]})as unknown as LabelingCallV1<FacetInput>;
+ const initial=Array.from({length:mode==='early_refill'?8:4},(_,i)=>make(i)),
+  future=mode==='occupied_slots'?[make(8),make(9)]:[],all=[...initial,...future];
+ const responseBytes=4096*24+64*1024,inputBytes=initial.reduce((sum,row)=>sum+jevCallWorkingBytesV2(row),0),budget=inputBytes+5*responseBytes+8192;
+ const firstHttp=deferredFrontier(),firstResponse=deferredFrontier(),otherResponses=deferredFrontier(),thirdHttp=deferredFrontier(),
+  feedGate=deferredFrontier(),applyStarted=deferredFrontier(),applyGate=deferredFrontier();
+ const sent:string[]=[],raw:string[]=[],settled:string[]=[],applied:string[]=[],events:string[]=[],memory:number[]=[],requeued:string[]=[];
+ let reads=0,active=0,peak=0,firstActive=0,firstAvailable=0,firstMaxCalls=0,feedReleased=false;
+ let selected:string[]=[];
+ const store={markSubmittingSelected:async(_run:unknown,select:()=>ReadonlyArray<LabelingCallV1<FacetInput>>)=>{
+   const rows=select();for(const row of rows){assert.equal(row.status,'reserved');row.status='submitting';events.push(`commit:${row.id}`);}return rows;
+  },persistRawPage:async(_run:unknown,rows:Array<{call:LabelingCallV1<FacetInput>;raw:string}>)=>{
+   for(const row of rows){assert.ok(sent.includes(row.call.id));assert.ok(!raw.includes(row.call.id));raw.push(row.call.id);row.call.raw_body=row.raw;}
+  },settlePage:async(_run:unknown,rows:Array<{call:LabelingCallV1<FacetInput>}>)=>{
+   for(const row of rows){assert.ok(raw.includes(row.call.id));settled.push(row.call.id);row.call.status='settled';}
+  },apply:async(_run:unknown,rows:Array<{call:LabelingCallV1<FacetInput>}>)=>{
+   applyStarted.resolve();await applyGate.promise;
+   for(const row of rows){assert.ok(settled.includes(row.call.id));applied.push(row.call.id);row.call.results_applied=true;}
+  },finish:async()=>all.every(row=>row.results_applied)?'completed':'running',
+  requeueUnsent:async(_run:unknown,rows:Array<LabelingCallV1<FacetInput>>)=>{requeued.push(...rows.map(row=>row.id));},
+  markFailed:async()=>{throw Error('paid evidence must drain without invented failure');},
+ }as unknown as Store;
+ const pending=processJevStreamingWindowV2({run:{}as LabelingRunV1,calls:initial,store,cancellation:new AbortController(),
+  execution:{max_in_flight:2,window_size:initial.length,flush_size:1,max_flushes:1,max_buffered_bytes:budget,flush_interval_ms:60000},
+  defer_initial_prefetch_until_handoff:true,revisit_empty_after_apply:true,
+  feed_next:async(available,maxCalls)=>{
+   reads++;if(reads>1)return{closed:true};
+   firstActive=active;firstAvailable=available;firstMaxCalls=maxCalls;
+   selected=selectLabelingInputPrefixV1(future.map(row=>({root_id:row.id,working_bytes:128*1024})),
+    {max_rows:maxCalls,max_working_bytes:available,on_oversize:'empty'});
+   await feedGate.promise;
+   return mode==='early_refill'?{closed:true}:selected.map(id=>future.find(row=>row.id===id)!);
+  },observe_stream:value=>memory.push(value.reserved_working_bytes),
+  provider:{max_concurrency:2,max_response_bytes:4096,async evaluate(request){
+   const row=all.find(call=>call.request===request)!;assert.ok(events.includes(`commit:${row.id}`));assert.ok(!sent.includes(row.id));
+   sent.push(row.id);active++;peak=Math.max(peak,active);if(sent.length===2)firstHttp.resolve();if(row===initial[2])thirdHttp.resolve();
+   try{if(row===initial[0])await firstResponse.promise;else await otherResponses.promise;
+    const body=JSON.stringify({model:request.model,usage:{input_tokens:1,output_tokens:0},answers:{q:{type:'noul',noul:.8}}});
+    const physical={http_status:200,latency_ms:1,body:' '.repeat(4096-Buffer.byteLength(body))+body};
+    assert.ok(Buffer.byteLength(JSON.stringify(physical))*24+64*1024>=responseBytes,'maximum response retains its full allowance through APPLY');
+    return physical;
+   }finally{active--;}
+  }},price:llmPriceV1('typesafe','jev-1.13.0','sync',.042),
+  hooks:{map:(_run,row)=>[row.id],error:()=>{throw Error('no invented technical result');},labeled:()=>true,fail_on_error:true},
+ }).then(value=>({value,error:undefined}),error=>({value:undefined,error}));
+ try{
+  await firstHttp.promise;await new Promise<void>(resolve=>setImmediate(resolve));
+  assert.equal(reads,1,'look-ahead refill must start before the committed backlog shrinks to one HTTP cohort');
+  assert.equal(firstActive,2,'refill starts while both existing HTTP requests are still pending');
+  assert.equal(firstMaxCalls,2,'refill leaves the queue within its existing window');
+  assert.equal(firstAvailable,2*responseBytes+8192,'occupied HTTP slots keep their own allowances; only one waiting reserved slot needs extra protection');
+  if(mode==='occupied_slots')assert.deepEqual(selected,future.map(row=>row.id),'both fitting inputs must be available before an HTTP response or APPLY frees bytes');
+  assert.equal(feedReleased,false);assert.deepEqual(sent,initial.slice(0,2).map(row=>row.id));
+  firstResponse.resolve();await applyStarted.promise;await thirdHttp.promise;
+  assert.equal(feedReleased,false);assert.equal(applied.length,0,'paid maximum response remains owned by a blocked APPLY');
+  assert.deepEqual(sent,initial.slice(0,3).map(row=>row.id),'one protected slot lets the next committed call progress before SQL or APPLY acknowledges');
+  assert.equal(reads,1,'only one feeder owns the future prefix while SQL is held');
+ }finally{
+  feedReleased=true;feedGate.resolve();firstResponse.resolve();otherResponses.resolve();applyGate.resolve();await pending;
+ }
+ const result=await pending;assert.equal(result.error,undefined);assert.equal(result.value?.status,'completed');assert.equal(result.value?.labeled,all.length);
+ assert.ok(reads<=2);assert.ok(peak<=2);assert.equal(new Set(sent).size,sent.length);assert.deepEqual(requeued,[]);
+ for(const list of [sent,raw,settled,applied])assert.deepEqual([...list].sort(),all.map(row=>row.id).sort());
+ assert.ok(memory.every(bytes=>bytes>=0&&bytes<=budget));assert.equal(memory.at(-1),0);
+}
+test('look-ahead refill overlaps occupied HTTP before the reserved queue shrinks to one cohort',{timeout:5000},async()=>{
+ await exercisePrefetchReadyCapacity('early_refill');
+});
+test('occupied HTTP allowances do not crowd a fitting future prefix or a protected maximum-response handoff',{timeout:5000},async()=>{
+ await exercisePrefetchReadyCapacity('occupied_slots');
+});
+
 /** While the second native authority fence waits, one paid sibling completes
  * and one future input page commits. Neither requires another physical send. */
 async function exerciseLateMark(mode:'progress'|'future_pending'|'memory_limited'|'abort_before_selection'|'abort_after_selection'|'ack_lost'|'authority_failed'|'invalid_handoff'){

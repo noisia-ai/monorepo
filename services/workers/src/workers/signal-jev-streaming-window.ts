@@ -179,17 +179,22 @@ export async function processJevStreamingWindowV2<I extends FacetInput, R>(args:
   let initialHandoffComplete=!args.defer_initial_prefetch_until_handoff||!reserved.length;
   function prefetch(){
     if(!initialHandoffComplete)return;
-    if(feedClosed||feeding||fatal||admission.signal.aborted||cancellation.signal.aborted||reserved.length>workers||reserved.length>=e.window_size)return;
+    // Refill while one full HTTP cohort is missing from the bounded queue,
+    // rather than waiting until only one cohort remains. Small windows retain
+    // their original tail/bootstrap behavior instead of requiring a full gap.
+    const refillAt=Math.max(workers,e.window_size-workers);
+    if(feedClosed||feeding||fatal||admission.signal.aborted||cancellation.signal.aborted||reserved.length>refillAt||reserved.length>=e.window_size)return;
     // One fresh read per acknowledged apply epoch; never poll an empty SQL frontier.
     if(emptyAtEpoch!==undefined&&durableEpoch===emptyAtEpoch)return;
     // Do not read another full input page while paid responses own all memory.
     const free=e.max_buffered_bytes-memory;if(free<8192+reservationBytes)return;
-    // Future input copies cannot take the response allowance of committed
-    // reserved calls, including those waiting for an occupied HTTP slot. A
-    // completed response must be able to wake their Mark while this read waits.
-    // This is scheduling headroom, not another memory charge; the fresh native
-    // selection still owns the actual response reservation.
-    const readySlots=Math.min(reserved.length,workers,Math.floor(free/reservationBytes));
+    // Protect currently free HTTP slots, plus at least one waiting committed
+    // call when every slot is occupied. Even a maximum-size paid response can
+    // then wake another Mark while both APPLY and this future read wait. Other
+    // occupied slots already own response allowances in `memory`; protecting
+    // all of them again needlessly prevents a useful input prefix from fitting.
+    // Headroom is not another charge: Mark claims actual response memory later.
+    const readySlots=Math.min(reserved.length,Math.max(1,workers-inFlight),Math.floor(free/reservationBytes));
     const headroom=readySlots*reservationBytes;
     // The bounded reader and compiler use the actual remaining shared budget,
     // rather than a second heuristic page ceiling. Larger native reservations
