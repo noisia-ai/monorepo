@@ -6,6 +6,42 @@ import type {LabelingRunV1,LabelingCallV1} from '@noisia/db';
 import {processJevLabelingPageV1} from './signal-jev-labeling-page';
 import {createTypesafeJevClientV1} from '../providers/typesafe-jev';
 const execution={max_in_flight:1,flush_size:32,max_flushes:1,max_buffered_bytes:16*1024*1024,flush_interval_ms:5,window_size:32};
+test('complete bootstrap override is strictly1..32, window-bounded and only available to continuous native initial reservation',async()=>{
+ type Args=Parameters<typeof processJevLabelingPageV1<FacetInput,string>>[0];
+ for(const invalid of [{bootstrap_initial_calls:0},{bootstrap_initial_calls:33},{bootstrap_initial_calls:1.5},
+  {bootstrap_initial_calls:2,execution:{...execution,window_size:1}},{bootstrap_initial_calls:1,recovery_only:true},
+  {bootstrap_initial_calls:1,continuous_windows:false},{bootstrap_initial_calls:1,max_windows:1},{bootstrap_initial_calls:1,no_initial:true}]){
+  let released=0,reserves=0;const {no_initial,...prepared}=invalid as typeof invalid&{no_initial?:boolean};
+  const store={claim:async()=>({id:'invalid-bootstrap',lease_token:'lease'}),renew:async()=>{},release:async()=>{released++;},reserve:async()=>{reserves++;return[];}}as unknown as Args['store'];
+  const provider={max_response_bytes:4096,evaluate:async()=>{throw Error('invalid bootstrap cannot send');}};
+  await assert.rejects(processJevLabelingPageV1({run_id:'invalid-bootstrap',store,provider,hooks:{}as never,prepare:async()=>({provider,execution,continuous_windows:true,...prepared}),
+   ...(no_initial?{}:{initial_reservation:{max_calls:1024 as const,release_selection:()=>{}}})}),/jev_bootstrap_initial_invalid/);
+  assert.equal(released,1);assert.equal(reserves,0);
+ }
+});
+test('a later bootstrap cohort is ordered before covered inputs and never reserves only the part fitting memory',{timeout:3000},async()=>{
+ type Args=Parameters<typeof processJevLabelingPageV1<FacetInput,string>>[0];
+ const run={id:'bootstrap-memory',lease_token:'lease',error_code:null,status:'running'}as LabelingRunV1;
+ const first={root_id:'first',text:'first'}as FacetInput,anchors=Array.from({length:32},(_,i)=>({root_id:'anchor-'+i,text:'anchor-'+i}))as FacetInput[];
+ const rows:LabelingCallV1<FacetInput>[]=[],reserved:string[][]=[],sent:string[]=[],memory:number[]=[],durable=new Set<string>();let reads=0,finishes=0;
+ const store={claim:async()=>run,renew:async()=>{},release:async()=>{},calls:async()=>[],inputs:async()=>[first],
+  reserve:async(_run:unknown,proposals:Array<{inputs:FacetInput[]}>)=>{reserved.push(proposals.map(p=>p.inputs[0]!.root_id));const added=proposals.map((p,i)=>({...p,id:'call-'+(rows.length+i),status:'reserved',raw_body:null,results_applied:false}))as LabelingCallV1<FacetInput>[];rows.push(...added);return added;},
+  markSubmitting:async(_run:unknown,calls:typeof rows)=>{for(const call of calls)call.status='submitting';},
+  persistRawPage:async(_run:unknown,page:Array<{call:typeof rows[number];raw:string}>)=>{for(const row of page){row.call.raw_body=row.raw;durable.add(row.call.id);}},
+  settlePage:async(_run:unknown,page:Array<{call:typeof rows[number]}>)=>{for(const row of page)row.call.status='settled';},
+  apply:async(_run:unknown,page:Array<{call:typeof rows[number]}>)=>{for(const row of page)row.call.results_applied=true;},
+  finish:async()=>{finishes++;return'running';},fail:async()=>{throw Error('not a provider error');},markFailed:async()=>{throw Error('no technical result');},
+ }as unknown as Args['store'];
+ const provider:Args['provider']={max_response_bytes:4096,max_concurrency:1,evaluate:async request=>{sent.push(request.state);return{http_status:200,latency_ms:1,body:JSON.stringify({model:request.model,usage:{input_tokens:1,output_tokens:0},answers:{q:{type:'noul',noul:.9}}})};}};
+ const hooks:Args['hooks']={continuous_windows:()=>true,revisit_empty_after_apply:true,price:()=>llmPriceV1('typesafe','jev-1.13.0','sync',.042),
+  prepare_next:async()=>true,select_next_inputs:inputs=>{assert.equal(inputs[0]!.root_id,'covered');return{inputs:[...anchors,inputs[0]!],minimum_calls:32};},
+  propose:(_run,inputs)=>inputs.map(input=>({request:{model:'jev-1.13.0',state:input.text,questions:{q:{type:'noul',instructions:input===first?'small':'x'.repeat(8000)}}},inputs:[input],request_digest:input.root_id,custom_id:input.root_id,reserved_micro_usd:100})),
+  map:(_run,call)=>[call.inputs[0]!.root_id],error:()=>[],labeled:()=>true,fail_on_error:true};
+ await processJevLabelingPageV1({run_id:run.id,store,provider,hooks,execution:{...execution,window_size:64,max_buffered_bytes:512*1024},
+  initial_reservation:{max_calls:1024,release_selection:()=>{}},read_next_inputs:async()=>{reads++;return[{root_id:'covered',text:'covered'}as FacetInput,...anchors];},observe_stream:value=>memory.push(value.reserved_working_bytes)});
+ assert.deepEqual(reserved,[['first']],'the32-anchor admission must fit wholly; a smaller paid prefix would lose its evidence span');assert.deepEqual(sent,['first']);assert.equal(reads,1);assert.equal(finishes,1);
+ assert.ok(rows.every(call=>call.results_applied&&durable.has(call.id)));assert.equal(memory.at(-1),0);assert.ok(memory.every(n=>n>=0&&n<=512*1024));
+});
 test('external cancellation preserves first-party unsent identity and drains paid siblings; restart sends only reserved calls',async()=>{
  for(const phase of ['before','during_mark','paid_sibling']as const){
   type Args=Parameters<typeof processJevLabelingPageV1<FacetInput,string>>[0];

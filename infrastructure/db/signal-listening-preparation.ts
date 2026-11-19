@@ -56,8 +56,8 @@ async function quoteWithClient(c:PoolClient,args:SignalListeningAccessV1&{config
    fail('listening_prototype_policy_unavailable');
  }
  const bytes=missing.reduce((n,h)=>n+Buffer.byteLength(plan.texts[h]!),0),cost=quoteSignalWorkspaceEmbeddingCostV1({input_bytes:bytes,chunk_count:missing.length});
- const roots=(await c.query<{bytes:string}>(`SELECT COALESCE(sum(length(p.body)+length(p.wire::text)+512),0)::text bytes
-  FROM signal_listening_population_v1($1,$2,$3,$4) p WHERE p.scope_state<>'excluded' AND p.answer IS NULL`,
+ const roots=(await c.query<{bytes:string}>(`SELECT COALESCE(sum(p.body_chars+p.wire_chars+512),0)::text bytes
+  FROM signal_listening_compact_population_v1($1,$2,$3,$4) p WHERE p.scope_state<>'excluded' AND p.answer IS NULL`,
   [args.workspace_id,cfg.id,map.id,map.entity_context_digest])).rows[0]!;
  const value={contract_version:'signal-listening-preparation-quote-v1' as const,workspace_id:args.workspace_id,configuration_id:cfg.id,map_id:map.id,
   policy_version_id:policy.id,prototype_plan:plan,prototype_quote:{missing_inputs:missing.length,input_bytes:bytes,tokens_upper:cost.token_upper_bound,

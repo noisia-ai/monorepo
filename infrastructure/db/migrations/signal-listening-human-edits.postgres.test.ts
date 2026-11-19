@@ -158,12 +158,12 @@ test('prepare estimates exclude only human decisions for the exact input, contex
    const client=await f.database.connect();return new Proxy(client,{get(target,property){
     if(property!=='query'){const value=Reflect.get(target,property);return typeof value==='function'?value.bind(target):value;}
     return async(sql:string,params?:unknown[])=>{
-     if(sql.includes('COALESCE(sum(length(body)+length(wire::text)+512),0)::text chars')){
+     if(sql.includes('COALESCE(sum(body_chars+wire_chars+512),0)::text chars')){
       // An estimate-only synthetic pending stream, evaluated by real Postgres.
       // The source inputs/rights/decision are native; original answers and calls
       // stay untouched, and the public request rolls back before any admission.
-      const projected=sql.replace(/FROM (signal_listening_population_v1\([^\n]+?\)) p/u,
-       `FROM (SELECT root_id,body,wire,candidate,scope_state,question_digest,${changedInput?"'sha256:'||repeat('0',64)":"input_digest"} input_digest,NULL::jsonb answer FROM $1 source WHERE source.question_key=$6 AND source.root_id=ANY($5::uuid[])) p`);
+      const projected=sql.replace(/FROM (signal_listening_compact_population_v1\([^\n]+?\)) p/u,
+       `FROM (SELECT root_id,body_chars,wire_chars,candidate,scope_state,question_digest,${changedInput?"'sha256:'||repeat('0',64)":"input_digest"} input_digest,NULL::jsonb answer FROM $1 source WHERE source.question_key=$6 AND source.root_id=ANY($5::uuid[])) p`);
       const nativeParams=[...params!];if(legacyRevision)nativeParams[1]=ctx.expected.configuration_id;
       observed=(await target.query(projected,[...nativeParams,f.roots.slice(0,2),key])).rows[0];throw Error(stop);
      }

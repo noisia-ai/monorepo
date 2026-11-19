@@ -6,7 +6,10 @@ import type { createSignalLabelingStoreV1, LabelingRunV1, LabelingCallV1, Labeli
 import { validateJevResponseV1, jevProviderErrorV1, type JevProviderV1, type JevRawResponseV1,
   type JevRequestV1, type JevResponseV1, type JevProviderErrorV1 } from "../providers/typesafe-jev";
 
-export type JevPreparedExecutionV1 = {provider:JevProviderV1;execution:JevStreamingExecutionV2;max_windows?:number;recovery_only?:boolean;continuous_windows?:boolean};
+export type JevPreparedExecutionV1 = {provider:JevProviderV1;execution:JevStreamingExecutionV2;max_windows?:number;recovery_only?:boolean;continuous_windows?:boolean;
+  /** One complete ordinary calibration cohort, including its byte extrema.
+   * This changes reservation order, never the shared send/memory limits. */
+  bootstrap_initial_calls?:number};
 function validatePreparedExecution(value:JevPreparedExecutionV1){
   if(!value||typeof value.provider?.evaluate!=='function'||!value.execution||value.recovery_only!==undefined&&typeof value.recovery_only!=='boolean'||value.continuous_windows!==undefined&&typeof value.continuous_windows!=='boolean')throw Error('jev_preparation_invalid');
   const e=value.execution;
@@ -15,6 +18,9 @@ function validatePreparedExecution(value:JevPreparedExecutionV1){
     throw Error('jev_stream_configuration_invalid');
   if(value.max_windows!==undefined&&(!Number.isSafeInteger(value.max_windows)||value.max_windows<1||value.max_windows>4096))
     throw Error('jev_window_limit_invalid');
+  if(value.bootstrap_initial_calls!==undefined&&(!Number.isSafeInteger(value.bootstrap_initial_calls)
+    ||value.bootstrap_initial_calls<1||value.bootstrap_initial_calls>32||value.bootstrap_initial_calls>e.window_size
+    ||value.continuous_windows!==true||value.recovery_only===true||value.max_windows!==undefined))throw Error('jev_bootstrap_initial_invalid');
 }
 export type JevNextInputBoundsV2={max_rows:number;max_working_bytes:number};
 async function withReleasedSelection<T>(body:()=>Promise<T>,release:()=>void):Promise<T>{
@@ -47,7 +53,10 @@ export async function processJevLabelingPageV1<Input extends FacetInput,Result>(
     recovery_only?:boolean;
     /** Only native adapters whose inputs exclude reserved identities opt in. */
     continuous_windows?(run:LabelingRunV1):boolean;
-    prepare_next?(run:LabelingRunV1,inputs:Input[]):Promise<boolean>;
+    prepare_next?(run:LabelingRunV1,inputs:Input[]):Promise<boolean|'wait_for_apply'>;
+    /** Preserve a native calibration cohort's anchor order without compiling a
+     * second request page. Its minimum must fit wholly before reservation. */
+    select_next_inputs?(inputs:Input[]):{inputs:Input[];minimum_calls:number};
     /** Server-native Listening only; empty eligibility can advance after apply. */
     revisit_empty_after_apply?:boolean;
     max_in_flight?(run:LabelingRunV1):number|undefined;
@@ -60,7 +69,7 @@ export async function processJevLabelingPageV1<Input extends FacetInput,Result>(
   if(args.initial_reservation&&(args.initial_reservation.max_calls!==1024||typeof args.initial_reservation.release_selection!=='function'))throw Error('jev_initial_reservation_invalid');
   if(args.signal?.aborted)return{status:'stopped'};
   if(args.signal&&!args.execution&&!args.prepare)throw Error('jev_external_signal_requires_streaming');
-  const {store,hooks}=args;let provider=args.provider,execution=args.execution,maxWindows=args.max_windows,recoveryOnly=hooks.recovery_only===true,continuous=false;
+  const {store,hooks}=args;let provider=args.provider,execution=args.execution,maxWindows=args.max_windows,recoveryOnly=hooks.recovery_only===true,continuous=false,bootstrapInitialCalls:number|undefined;
   const run=await store.claim(args.run_id);
   if(!run)return {status:"not_claimed"};
   const cancellation=new AbortController();setMaxListeners(Math.max(201,(args.execution?.max_in_flight??0)*2+64),cancellation.signal);
@@ -81,6 +90,8 @@ export async function processJevLabelingPageV1<Input extends FacetInput,Result>(
       if(renewal)await renewal;if(leaseError)throw leaseError;
       if(cancellation.signal.aborted){if(args.signal?.aborted)return{status:'stopped'};throw Error('labeling_lease_lost');}
       provider=prepared.provider;execution=Object.freeze({...prepared.execution});maxWindows=prepared.max_windows;recoveryOnly||=prepared.recovery_only===true;continuous=prepared.continuous_windows===true;
+      bootstrapInitialCalls=prepared.bootstrap_initial_calls;
+      if(bootstrapInitialCalls!==undefined&&!args.initial_reservation)throw Error('jev_bootstrap_initial_invalid');
       setMaxListeners(Math.max(201,execution.max_in_flight*2+64),cancellation.signal);
     }
     continuous ||= hooks.continuous_windows?.(run)===true;
@@ -115,8 +126,12 @@ export async function processJevLabelingPageV1<Input extends FacetInput,Result>(
             // Read/calibrate the original selection and anchors; only this new
             // reservation's proposals are bounded. The remainder is read fresh.
             const inputs=await store.inputs(run,{max_rows:execution!.window_size,max_working_bytes:inputBudget!,on_oversize:'error'});
-            const limit=Math.min(args.initial_reservation!.max_calls,execution!.window_size,execution!.max_in_flight,provider.max_concurrency??execution!.max_in_flight);
+            // Ordinary measured work retains the existing small paid prefix.
+            // Bootstrap must retain ALL <=32 anchors even with one HTTP slot;
+            // otherwise releasing the original page can strand a far extreme.
+            const limit=bootstrapInitialCalls??Math.min(args.initial_reservation!.max_calls,execution!.window_size,execution!.max_in_flight,provider.max_concurrency??execution!.max_in_flight);
             const proposals=hooks.propose(run,inputs.slice(0,limit)).slice(0,limit);
+            if(bootstrapInitialCalls!==undefined&&proposals.length!==bootstrapInitialCalls)throw Error('jev_bootstrap_initial_incomplete');
             return proposals.length?(await store.reserve(run,proposals)).slice(0,limit):[];
           },args.initial_reservation!.release_selection);
         }else{
@@ -141,12 +156,20 @@ export async function processJevLabelingPageV1<Input extends FacetInput,Result>(
               const inputs=(await(args.read_next_inputs?args.read_next_inputs(run,{max_rows:maxCalls,max_working_bytes:available}):store.inputs(run,{max_rows:maxCalls,max_working_bytes:available,on_oversize:'empty'}))).slice(0,maxCalls);
               if(admissionSignal.aborted||cancellation.signal.aborted)return{closed:true};
               if(!inputs.length)return[];
-              if(hooks.prepare_next&&!await hooks.prepare_next(run,inputs))return{closed:true};
+              if(hooks.prepare_next){
+                const prepared=await hooks.prepare_next(run,inputs);
+                if(prepared==='wait_for_apply')return[];
+                if(prepared===false)return{closed:true};
+                if(prepared!==true)throw Error('jev_preparation_invalid');
+              }
               if(admissionSignal.aborted||cancellation.signal.aborted)return{closed:true};
               // Compile incrementally: never retain a second full request page
               // merely to discover that its copied bodies exceed free memory.
+              const selected=hooks.select_next_inputs?.(inputs)??{inputs,minimum_calls:0};
+              if(!Number.isSafeInteger(selected.minimum_calls)||selected.minimum_calls<0||selected.minimum_calls>32
+                ||selected.minimum_calls>selected.inputs.length||selected.inputs.length>inputs.length)throw Error('jev_bootstrap_next_invalid');
               const bounded:LabelingCallProposalV1<Input>[]=[];let bytes=0;
-              outer:for(const input of inputs)for(const proposal of hooks.propose(run,[input])){
+              outer:for(const input of selected.inputs)for(const proposal of hooks.propose(run,[input])){
                 const cost=jevCallWorkingBytesV2(proposal)+8192;
                 if(bytes+cost>available||bounded.length>=maxCalls)break outer;
                 bytes+=cost;bounded.push(proposal);
@@ -157,7 +180,7 @@ export async function processJevLabelingPageV1<Input extends FacetInput,Result>(
                   if(admissionSignal.aborted||cancellation.signal.aborted)return{closed:true};
                 }
               }
-              if(!bounded.length||admissionSignal.aborted||cancellation.signal.aborted)return{closed:true};
+              if(!bounded.length||bounded.length<selected.minimum_calls||admissionSignal.aborted||cancellation.signal.aborted)return{closed:true};
               const next=await store.reserve(run,bounded);fedWindows++;
               return next.length?next:{closed:true};
             }catch(error){failed=true;primary=error;throw error;}finally{

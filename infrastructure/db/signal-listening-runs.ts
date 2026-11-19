@@ -179,7 +179,7 @@ async function pendingAndAvailable(c:Pick<PoolClient,'query'>,run:LabelingRunV1)
  const o=await owner(c,run,false);
  const row=(await c.query<{pending:number;available:boolean}>(`/* labeling_listening_pending_available_v1 */
   WITH pending AS MATERIALIZED(
-   SELECT p.root_id,p.question_digest FROM ${population} p WHERE ${unansweredScope}
+   SELECT p.root_id,p.question_digest FROM signal_listening_compact_population_v1($1::uuid,$2::uuid,$3::uuid,$4::text) p WHERE ${unansweredScope}
     AND $2::uuid=(SELECT id FROM signal_listening_configurations WHERE workspace_id=$1 AND state='published' ORDER BY revision DESC LIMIT 1)
   ) SELECT count(DISTINCT root_id)::int pending,EXISTS(
    SELECT 1 FROM pending p WHERE NOT EXISTS(SELECT 1 FROM signal_listening_call_questions sent
@@ -212,7 +212,7 @@ export async function requestSignalListeningV1(args:SignalListeningAccessV1&{con
    const map=await mapCurrent(c,workspace,args.map_id);
    if((await c.query<{blocked:boolean}>('SELECT signal_listening_prior_outcome_unresolved_v1($1,$2,$3,$4) blocked',[workspace,stored.id,map.id,map.entity_context_digest])).rows[0]?.blocked)fail('listening_prior_outcome_unresolved');
    const stats=(await c.query<{roots:number;chars:string}>(`SELECT count(DISTINCT root_id)::int roots,
-    COALESCE(sum(length(body)+length(wire::text)+512),0)::text chars FROM ${population} p
+    COALESCE(sum(body_chars+wire_chars+512),0)::text chars FROM signal_listening_compact_population_v1($1::uuid,$2::uuid,$3::uuid,$4::text) p
     WHERE candidate AND scope_state<>'excluded' AND answer IS NULL
      AND NOT signal_listening_human_decision_exists_v1($1::uuid,$2::uuid,$3::uuid,p.root_id,p.input_digest,$4::text,p.question_digest)`,[workspace,stored.id,map.id,map.entity_context_digest])).rows[0]!;
    return {roots:stats.roots,estimated_micro_usd:Math.ceil(Number(stats.chars)*4*.042),concept_set_digest:stored.configuration_digest,

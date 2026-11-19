@@ -75,12 +75,12 @@ export async function readSignalListeningQuestionsMetricsV1(args:SignalListening
  SELECT q.question_key,q.question_digest,q.definition->>'type' question_type,q.wire
  FROM signal_listening_questions q WHERE q.workspace_id=$1 AND q.configuration_id=$2 AND q.question_key=ANY($5::text[])),
 p AS MATERIALIZED(
- SELECT root_id,question_key,(definition ? 'topic_source') has_topic_source,candidate,scope_state,answer,human_belongs,effective_belongs,published_at,
+ SELECT root_id,question_key,has_topic_source,candidate,scope_state,answer,human_belongs,effective_belongs,published_at,
   CASE WHEN human_belongs IS NOT NULL THEN CASE WHEN human_belongs THEN 'positive' ELSE 'negative' END
    WHEN(answer->>'noul')::double precision>=.7 THEN 'positive' WHEN(answer->>'noul')::double precision<=.3 THEN 'negative'
    WHEN answer->>'noul' IS NOT NULL THEN 'uncertain' END effective_class
- FROM signal_listening_effective_population_roots_v2($1::uuid,$2::uuid,$3::uuid,$4,NULL::uuid[],'client-derived-metrics')
- WHERE($11::boolean OR COALESCE(definition->>'domain','category')<>'outside')
+ FROM signal_listening_effective_compact_population_roots_v1($1::uuid,$2::uuid,$3::uuid,$4,NULL::uuid[],'client-derived-metrics')
+ WHERE($11::boolean OR COALESCE(domain,'category')<>'outside')
   AND($6::timestamptz IS NULL OR published_at>=$6) AND($7::timestamptz IS NULL OR published_at<$7)),
 root_topics AS MATERIALIZED(
  SELECT root_id,array_agg(question_key ORDER BY question_key) FILTER(WHERE candidate AND scope_state='included'

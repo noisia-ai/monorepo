@@ -1,7 +1,22 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import {invertCompactListeningRunsV1} from './signal-listening-compact-population.oracle';
 import {readFile} from 'node:fs/promises';
 import {projectionMetadataBeforeLinearJoinsV1,projectionBeforeRawSha256V1,projectionBeforeNormalizedSha256V1,projectionShaV1,projectionHelperPartsV1,unchangedSourcePartsV1,assertProjectionLinearPlanV1,sanitizeProjectionLinearPlanV1,type ProjectionPlanV1} from './signal-listening-projection-linear-joins.oracle';
+const listeningChangeOnlyContextLineV1="  context_registration:'change_only',\n";
+function assertProjectionSuffixAfterListeningContextOptInV1(compactSuffix:string){
+ // First recover baseline T using only the two compact calls and cost formula.
+ // Then retain the historical CE38 inverse and complete suffix hash below.
+ const suffix=invertCompactListeningRunsV1(compactSuffix);
+ // The separately reviewed Listening adapter opt-in is outside the projection
+ // helper. Invert only that exact addition, retaining the original suffix hash.
+ const at=suffix.indexOf(listeningChangeOnlyContextLineV1+"  policy_action:'mass_labeling_jev',feature:'mass_labeling',select_labeler:false,\n");
+ assert.ok(at>=0,'Listening change-only opt-in must precede its original policy fields');
+ assert.equal(suffix.indexOf(listeningChangeOnlyContextLineV1),at,'one literal Listening context opt-in is required');
+ assert.equal(suffix.lastIndexOf(listeningChangeOnlyContextLineV1),at,'duplicate Listening context opt-ins are forbidden');
+ const previous=suffix.slice(0,at)+suffix.slice(at+listeningChangeOnlyContextLineV1.length);
+ assert.equal(projectionShaV1(previous),unchangedSourcePartsV1.suffix,'removing only the registered opt-in must recover the complete frozen suffix');
+}
 test('linear join oracle freezes complete a883 nine-bind query with exact raw98e48 and observed623e identities',()=>{
  assert.equal(projectionShaV1(projectionMetadataBeforeLinearJoinsV1),projectionBeforeRawSha256V1);
  assert.equal(projectionShaV1(projectionMetadataBeforeLinearJoinsV1.replace(/\s+/g,' ').trim()),projectionBeforeNormalizedSha256V1);
@@ -9,7 +24,8 @@ test('linear join oracle freezes complete a883 nine-bind query with exact raw98e
 });
 test('linear join candidate changes only two bounded projection joins beyond materialized barriers',async()=>{
  const parts=projectionHelperPartsV1(await readFile(new URL('../signal-listening-runs.ts',import.meta.url),'utf8'));
- for(const key of ['prefix','suffix','helperOutsideSql'] as const)assert.equal(projectionShaV1(parts[key]),unchangedSourcePartsV1[key]);
+ for(const key of ['prefix','helperOutsideSql'] as const)assert.equal(projectionShaV1(parts[key]),unchangedSourcePartsV1[key]);
+ assertProjectionSuffixAfterListeningContextOptInV1(parts.suffix);
  assert.ok(parts.sql.includes('fit_matches AS MATERIALIZED('));assert.ok(parts.sql.includes('projection_rows AS MATERIALIZED('));
  assert.ok(parts.sql.includes('FROM pending p FULL JOIN fitting f ON f.root_id=p.root_id'));
  assert.ok(parts.sql.includes('FROM fit_matches p WHERE p.root_id IS NOT NULL AND p.fitting_root_id IS NOT NULL AND p.n<=256'));
@@ -20,6 +36,21 @@ test('linear join candidate changes only two bounded projection joins beyond mat
  const start=parts.sql.indexOf('   fit_matches AS MATERIALIZED('),end=parts.sql.lastIndexOf('ORDER BY root_id')+'ORDER BY root_id'.length;assert.ok(start>=0&&end>start);
  const previous=projectionMetadataBeforeLinearJoinsV1.slice(projectionMetadataBeforeLinearJoinsV1.indexOf('   projections AS MATERIALIZED('));
  assert.equal(parts.sql.slice(0,start)+previous,projectionMetadataBeforeLinearJoinsV1,'every clause before the two join changes is literal');
+});
+test('projection source chain rejects missing, duplicate, moved or altered context opt-ins and unrelated suffix edits',async()=>{
+ const {suffix}=projectionHelperPartsV1(await readFile(new URL('../signal-listening-runs.ts',import.meta.url),'utf8'));
+ assertProjectionSuffixAfterListeningContextOptInV1(suffix);
+ const without=suffix.replace(listeningChangeOnlyContextLineV1,'');
+ for(const [name,changed] of [
+  ['missing',without],
+  ['duplicate',suffix.replace(listeningChangeOnlyContextLineV1,listeningChangeOnlyContextLineV1.repeat(2))],
+  ['moved',without+listeningChangeOnlyContextLineV1],
+  ['altered',suffix.replace(listeningChangeOnlyContextLineV1,"  context_registration:'always',\n")],
+  ['unrelated suffix edit',suffix+'\n'],
+ ] as const){
+  assert.notEqual(changed,suffix,`${name} fixture must change the real source`);
+  assert.throws(()=>assertProjectionSuffixAfterListeningContextOptInV1(changed),name);
+ }
 });
 type R={root:string|null;input?:string;n?:number;key?:string};
 function join<L,R>(left:L[],right:R[],on:(l:L,r:R)=>boolean,full=false):Array<[L|null,R|null]>{const seen=new Set<number>(),out:Array<[L|null,R|null]>=[];for(const l of left){let matched=false;right.forEach((r,i)=>{if(on(l,r)){matched=true;seen.add(i);out.push([l,r]);}});if(!matched)out.push([l,null]);}if(full)right.forEach((r,i)=>{if(!seen.has(i))out.push([null,r]);});return out;}

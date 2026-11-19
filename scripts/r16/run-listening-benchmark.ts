@@ -3,6 +3,7 @@ import {performance} from 'node:perf_hooks';
 import {dirname,resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {assertR16ListeningSyntheticPreflightV1} from './listening-preflight';
+import {createR16BootstrapObservationRecorderV1,type R16CalibrationObservationInputV1} from './bootstrap-observation-spans';
 import {captureR16SourceProvenanceV1} from './source-provenance';
 import {getSignalListeningStatusV1,readSignalListeningQuestionMetricsV1,readSignalListeningQuestionsMetricsV1} from '../../infrastructure/db/signal-listening-serving';
 import {signalWorkspaceEmbeddingDigestV1 as digest} from '../../packages/query-engine/src/index';
@@ -120,9 +121,9 @@ export async function runR16ListeningBenchmarkV1(args:{arm:R16ListeningArmV1;obj
   assert.equal(digest(status.configuration?.configuration),workload.configuration_digest);
   assert.equal(f.root_ids.length,registration.root_count);const expected=new Set(f.root_ids);assert.equal(expected.size,f.root_ids.length);
   const execution=jevStreamingExecutionFromEnvV2({NOISIA_JEV_STREAMING_V2_ENABLED:'true',NOISIA_JEV_STREAM_BUFFER_BYTES:String(512*1024*1024)})!;
-  const latency_ms:number[]=[],calibration:Array<{at_ms:number;warmup:boolean;selected_roots:number;max_in_flight:number;shape_digests:string[]}>=[];
+  const latency_ms:number[]=[];
+  const calibrationRecorder=createR16BootstrapObservationRecorderV1({start_time_ms:start,now:()=>performance.now()});
   const providerFetch=createSyntheticJevFetchV1({latencyForRequest:deterministicR16LatencyV1});
-  const job_spans:Array<{start_ms:number;end_ms:number;warmup:boolean}>=[];
   const resources=createR16ListeningResourceObservationV1(),sampleResources=()=>resources.sampleRss(performance.now()-start);
   sampleResources();
   let requests=0;const resolved=new Set<string>(),commits:Array<{at_ms:number;roots:number}>=[];
@@ -146,11 +147,18 @@ export async function runR16ListeningBenchmarkV1(args:{arm:R16ListeningArmV1;obj
   }};
   let jobs=0;
   for(;jobs<(args.max_jobs??10000)&&resolved.size<expected.size;jobs++){
-    const jobStart=performance.now()-start,calibrationIndex=calibration.length;
-    const outcome=await signalListeningJevJobV1(f.run_id,{database:f.access.database,store,execution,preflight:()=>assertR16ListeningSyntheticPreflightV1({storage,storage_url:storageServer.base_url,configuration:workload.configuration,configuration_digest:workload.configuration_digest,env:process.env}),calibrated_provider_factory,
-     observe_stream:metrics=>resources.observeStream(metrics),
-     observe_calibration:event=>calibration.push({...event,at_ms:performance.now()-start})});
-    job_spans.push({start_ms:jobStart,end_ms:performance.now()-start,warmup:calibration.slice(calibrationIndex).some(event=>event.warmup)});
+    const jobOrdinal=jobs+1,jobStart=calibrationRecorder.elapsed();let jobWarmup=false;
+    let outcome:Awaited<ReturnType<typeof signalListeningJevJobV1>>;
+    try{
+     outcome=await signalListeningJevJobV1(f.run_id,{database:f.access.database,store,execution,preflight:()=>assertR16ListeningSyntheticPreflightV1({storage,storage_url:storageServer.base_url,configuration:workload.configuration,configuration_digest:workload.configuration_digest,env:process.env}),calibrated_provider_factory,
+      observe_stream:metrics=>resources.observeStream(metrics),
+      observe_calibration:event=>{
+       if(event.warmup)jobWarmup=true;
+       // Preserve compatibility with the current worker callback while also
+       // observing optional lifecycle fields from a source-compatible worker.
+       calibrationRecorder.observe(jobOrdinal,event as R16CalibrationObservationInputV1);
+      }});
+    }finally{calibrationRecorder.finishJob(jobOrdinal,jobStart,jobWarmup);}
     sampleResources();
     if(['failed','outcome_unknown','lease_lost'].includes(outcome.status))break;
    }
@@ -176,10 +184,16 @@ export async function runR16ListeningBenchmarkV1(args:{arm:R16ListeningArmV1;obj
    serving:metrics.length===workload.question_keys.length&&metrics.every((m,i)=>m.question_key===workload.question_keys[i]
     &&m.configuration_id===f.access.configuration_id&&m.counts.pending===0&&m.counts.awaiting_base===0&&m.distribution.length>0&&m.trend.length>0
     &&m.topic_cross.length>0)};
+  const calibrationObservation=calibrationRecorder.snapshot();
   assert.equal((await captureR16SourceProvenanceV1(repo)).source_tree_sha256,source_provenance.source_tree_sha256,'source changed during measurement');
   return{contract_version:'r16-listening-capacity-measurement-v2',acceptance:'pending_native_fault_and_census_validation',
-   capacity_gates,capacity,source_provenance,job_spans,warmup_wall_ms:job_spans.filter(span=>span.warmup).reduce((sum,span)=>sum+span.end_ms-span.start_ms,0),workload,root_census_digest:digest([...expected].sort()),cold_elapsed_ms:performance.now()-coldStart,wall_elapsed_ms,classification_wall_elapsed_ms,
-   fully_resolved_distinct_roots:resolved.size,requests,requests_per_resolved_root:resolved.size?requests/resolved.size:null,latency_ms,calibration,commits,jobs,metrics,storage:storageServer.metrics(),
+   capacity_gates,capacity,source_provenance,job_spans:calibrationObservation.job_spans,
+   warmup_wall_ms:calibrationObservation.warmup_wall_ms,warmup_wall_ms_known_completed:calibrationObservation.warmup_wall_ms_known_completed,
+   warmup_wall_ms_basis:calibrationObservation.warmup_wall_ms_basis,warmup_intervals_may_overlap_processing:calibrationObservation.warmup_intervals_may_overlap_processing,
+   bootstrap_observation_status:calibrationObservation.bootstrap_observation_status,
+   bootstrap_observation_issues:calibrationObservation.bootstrap_observation_issues,bootstrap_spans:calibrationObservation.bootstrap_spans,
+   workload,root_census_digest:digest([...expected].sort()),cold_elapsed_ms:performance.now()-coldStart,wall_elapsed_ms,classification_wall_elapsed_ms,
+   fully_resolved_distinct_roots:resolved.size,requests,requests_per_resolved_root:resolved.size?requests/resolved.size:null,latency_ms,calibration:calibrationObservation.calibration,commits,jobs,metrics,storage:storageServer.metrics(),
    unresolved_roots:expected.size-resolved.size,storage_spans,sql_profile:args.query_profiler?.snapshot()??null,
    resource_observation:resources.snapshot({max_in_flight:execution.max_in_flight,window_size:execution.window_size,
     max_buffered_bytes:execution.max_buffered_bytes,flush_size:execution.flush_size,max_flushes:execution.max_flushes,

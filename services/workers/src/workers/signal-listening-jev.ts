@@ -16,7 +16,7 @@ import {createWorkspaceEngineStorageV1,type WorkspaceEngineStorageV1} from './si
 import {assertJevStreamingExecutionV2,jevCallWorkingBytesV2,type JevStreamingExecutionV2,type JevStreamingMetricsV2} from './signal-jev-streaming-window';
 
 import {listeningHasRawV1,selectSignalListeningRecoveryV1,createSignalListeningRecoveryProviderV1} from './signal-listening-recovery';
-import {planSignalListeningCalibrationV1,createSignalListeningCalibratedProviderV1} from './signal-listening-calibration';
+import {planSignalListeningCalibrationV1,createSignalListeningCalibratedProviderV1,createSignalListeningContinuationV1,type SignalListeningCalibrationEventV1} from './signal-listening-calibration';
 
 // Stream response custody and one native input read have independent budgets.
 // Invalid numbers remain invalid for the existing native validator.
@@ -64,7 +64,8 @@ export function processSignalListeningJevV1(args:{run_id:string;store:Store;prov
   /** Transfer selection ownership after proposals/reservation, not authorization. */
   release_selection?:()=>void;
   read_next_inputs?(run:LabelingRunV1,bounds:JevNextInputBoundsV2):Promise<SignalListeningInputV1[]>;
-  prepare_next?(run:LabelingRunV1,inputs:SignalListeningInputV1[]):Promise<boolean>;
+  prepare_next?(run:LabelingRunV1,inputs:SignalListeningInputV1[]):Promise<boolean|'wait_for_apply'>;
+  minimum_next_calls?:()=>number;
   compiled_snapshot?:()=>SignalListeningCompiledSnapshotV1|undefined}){
   let preparedExecution=args.execution,preparedProvider=args.provider;
   let windowSize=args.execution.window_size,compiledRun:ReturnType<typeof compileRun>|undefined;
@@ -101,6 +102,7 @@ export function processSignalListeningJevV1(args:{run_id:string;store:Store;prov
     read_next_inputs:(run,bounds)=>args.read_next_inputs?args.read_next_inputs(run,readBounds(bounds)):args.store.inputs(run,readBounds({...bounds,on_oversize:'empty' as const})),
     prepare:args.prepare?async run=>{compiledRun=undefined;try{const prepared=await args.prepare!(run);preparedExecution=prepared.execution;preparedProvider=prepared.provider;windowSize=prepared.execution.window_size;return prepared;}finally{selectionIndex.invalidate();}}:undefined,hooks:{
     revisit_empty_after_apply:true,price:run=>contextOf(run).price,prepare_next:args.prepare_next?async(run,inputs)=>{try{return await args.prepare_next!(run,inputs);}finally{selectionIndex.invalidate();}}:undefined,
+    select_next_inputs:args.minimum_next_calls?inputs=>({inputs:args.selection?.()??inputs,minimum_calls:args.minimum_next_calls!()}):undefined,
     propose:(run,inputs)=>select(inputs).map(input=>{
       const request=buildSignalListeningCompiledRequestV1(input,contextOf(run).snapshot);
       const request_digest=signalListeningRequestDigestV1(run,input,request);
@@ -129,7 +131,7 @@ export async function signalListeningJevJobV1(run_id:string,options:{
   execution?:JevStreamingExecutionV2;preflight?:()=>Promise<void>;
   /** Instrumentation sees copied scalar metadata, never the mutable plan. */
   observe_stream?:(metrics:JevStreamingMetricsV2)=>void;
-  observe_calibration?:(event:{warmup:boolean;selected_roots:number;max_in_flight:number;shape_digests:string[]})=>void;
+  observe_calibration?:(event:SignalListeningCalibrationEventV1)=>void;
   calibrated_provider_factory?:typeof createCalibratedJevRuntimeProviderV2;
   calibration?:{load:typeof loadSignalListeningCalibrationV1;derive:typeof deriveSignalListeningCalibrationV1};
 }={}){
@@ -151,13 +153,17 @@ export async function signalListeningJevJobV1(run_id:string,options:{
   const store=options.store??createSignalListeningRuntimeStoreV1(database,{execution});
   let jobContext:ReturnType<typeof compileRun>|undefined;
   let calibrated:ReturnType<typeof createSignalListeningCalibratedProviderV1>|undefined,recoveryProvider:JevProviderV1|undefined;
+  let continuation:Awaited<ReturnType<typeof createSignalListeningContinuationV1>>|undefined;
   let metadata:Awaited<ReturnType<Store['calls']>>|undefined,recovery:ReturnType<typeof selectSignalListeningRecoveryV1>,hydrated:Awaited<ReturnType<Store['calls']>>|undefined;
   let calibrationRun:Readonly<LabelingRunV1>|undefined,shapes:string[]=[],selection:SignalListeningInputV1[]|undefined;
   // This placeholder cannot send; the lease-held planner always selects runtime.
   const unavailable:JevProviderV1={async evaluate(){throw new JevProviderErrorV1('listening_preparation_required','definitely_not_sent');}};
   // Prepare inspects metadata only. The shared worker then loads exactly one
   // bounded raw selection once; no second full-page read and no hidden unknown.
-  const boundedStore={...store,async calls(leased:LabelingRunV1){
+  const boundedStore={...store,
+    async reserve(...params:Parameters<Store['reserve']>){const calls=await store.reserve(...params);continuation?.reserved(calls);return calls;},
+    async apply(...params:Parameters<Store['apply']>){await store.apply(...params);await continuation?.applied(params[1]);},
+    async calls(leased:LabelingRunV1){
     if(recovery){
       const loaded=await store.calls(leased,{call_ids:recovery.calls.map(call=>call.id)});
       // Routine measured recovery must not replace a wide ledger profile with
@@ -172,11 +178,13 @@ export async function signalListeningJevJobV1(run_id:string,options:{
     return hydrated??metadata??await store.calls(leased,{metadata_only:true});
   }};
   try{
-    return await processSignalListeningJevV1({run_id,execution,observe_stream:options.observe_stream,store:boundedStore,provider:unavailable,recovery_only:run.recovery_only,selection:()=>selection,compiled_snapshot:()=>jobContext?.snapshot,
+    const outcome=await processSignalListeningJevV1({run_id,execution,observe_stream:options.observe_stream,store:boundedStore,provider:unavailable,recovery_only:run.recovery_only,selection:()=>selection,compiled_snapshot:()=>jobContext?.snapshot,
       release_selection:()=>{selection=undefined;},
+      minimum_next_calls:()=>continuation?.minimumNextCalls()??0,
       prepare_next:async(_leased,inputs)=>{
         if(!jobContext)throw Error('listening_identity_invalid');jobContext.assert(_leased);
         const {snapshot,configuration,configuration_digest}=jobContext,next=inputs.slice(0,execution.window_size);
+        if(continuation){const prepared=await continuation.selectNext(next);selection=prepared.selected;return prepared.decision;}
         function* requests(){for(const input of next)yield buildSignalListeningCompiledRequestV1(input,snapshot);}
         if(!calibrated||!await calibrated.prepareMeasuredRequestsWithProfiles(requests(),shape_digest=>(options.calibration?.load??loadSignalListeningCalibrationV1)({database,
           workspace_id:_leased.workspace_id,actor_user_id:_leased.actor_user_id,configuration_digest,model:configuration.model,shape_digest})))return false;
@@ -212,12 +220,26 @@ export async function signalListeningJevJobV1(run_id:string,options:{
           const plan=await planSignalListeningCalibrationV1({workspace_id:leased.workspace_id,configuration_digest,
             configuration,snapshot,inputs,execution,loadProfile:shape_digest=>(options.calibration?.load??loadSignalListeningCalibrationV1)({database,
               workspace_id:leased.workspace_id,actor_user_id:leased.actor_user_id,configuration_digest,model:configuration.model,shape_digest})});
+          if(!pending.length){
+            continuation=await createSignalListeningContinuationV1({run_id:leased.id,initial_plan:plan,initial_inputs:inputs,execution,
+              loadProfile:shape_digest=>(options.calibration?.load??loadSignalListeningCalibrationV1)({database,workspace_id:leased.workspace_id,
+                actor_user_id:leased.actor_user_id,configuration_digest,model:configuration.model,shape_digest}),
+              deriveProfile:shape_digest=>(options.calibration?.derive??deriveSignalListeningCalibrationV1)({database,workspace_id:leased.workspace_id,
+                actor_user_id:leased.actor_user_id,run_id:leased.id,shape_digest}),
+              ...(options.calibrated_provider_factory?{factory:options.calibrated_provider_factory}:{}),
+              ...(options.provider?{factory:()=>({...options.provider!,close:undefined})}:{}),observe:options.observe_calibration});
+            selection=continuation.takeInitialSelection();calibrated=continuation.runtime;shapes=[];
+            return{provider:calibrated.provider,execution:continuation.execution,continuous_windows:true,
+              ...(continuation.bootstrap_initial_calls?{bootstrap_initial_calls:continuation.bootstrap_initial_calls}:{})};
+          }
+          // Existing reservations/recovery retain the bounded original pass.
+          // A later ordinary job enters continuous admission only after drain.
           selection=plan.selected_inputs;shapes=plan.calibration_shapes;
           try{options.observe_calibration?.({warmup:plan.warmup,selected_roots:plan.selected_inputs.length,
             max_in_flight:plan.execution.max_in_flight,shape_digests:[...plan.calibration_shapes]});}catch{/* Observation cannot change execution. */}
           calibrated=createSignalListeningCalibratedProviderV1({plan,...(options.calibrated_provider_factory?{factory:options.calibrated_provider_factory}:{}),...(options.provider?{factory:()=>({...options.provider!,close:undefined})}:{})});
           calibrated.prepareRequests(selection.map(input=>buildSignalListeningCompiledRequestV1(input,snapshot)));
-          return{provider:calibrated.provider,execution:plan.execution,...(plan.warmup?{max_windows:1}:{continuous_windows:true})};
+          return{provider:calibrated.provider,execution:plan.execution,max_windows:1};
         }catch(error){
           const knownConfiguration=error instanceof Error&&[
             'listening_configuration_invalid','listening_identity_invalid','jev_stream_runtime_configuration_invalid',
@@ -229,7 +251,10 @@ export async function signalListeningJevJobV1(run_id:string,options:{
           throw error;
         }
       }});
+    const failure=continuation?.failure();if(failure?.failed)throw failure.error;
+    return outcome;
   }finally{
+    continuation?.closeObservation();
     // Derivation reads only the same run's settled, verified, applied receipts.
     // A recovery-only pass also contributes its original shape, without a new fetch.
     try{if(calibrationRun)for(const shape_digest of shapes)await (options.calibration?.derive??deriveSignalListeningCalibrationV1)({database,

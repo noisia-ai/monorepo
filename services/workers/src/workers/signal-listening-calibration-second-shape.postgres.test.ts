@@ -6,16 +6,54 @@ import {join,resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import test from 'node:test';
 import {runMassLabelingAcceptanceFixtureV1} from '../../../../infrastructure/db/migrations/signal-mass-labeling-acceptance.synthetic.fixture';
-import {saveSignalListeningConfigurationV1,requestSignalListeningV1,loadSignalListeningCalibrationV1} from '@noisia/db';
-import {buildSignalListeningJevRequestV1,signalListeningCalibrationShapeV1,signalWorkspaceEmbeddingDigestV1 as digest,type SignalListeningCalibrationProfileV1} from '@noisia/query-engine';
+import {saveSignalListeningConfigurationV1,requestSignalListeningV1,loadSignalListeningCalibrationV1,deriveSignalListeningCalibrationV1} from '@noisia/db';
+import {buildSignalListeningJevRequestV1,signalListeningCalibrationShapeV1,signalWorkspaceEmbeddingDigestV1 as digest,type SignalListeningInputV1,type SignalListeningCalibrationProfileV1} from '@noisia/query-engine';
 import {r16ListeningWorkloadV2} from '../../../../scripts/r16/listening-workload';
 import {captureR16SourceProvenanceV1} from '../../../../scripts/r16/source-provenance';
 import {startR16HttpFilesystemStorageV1} from '../../../../scripts/r16/http-filesystem-storage';
 import {createWorkspaceEngineStorageV1} from './signal-workspace-engine-storage';
-import {createSignalListeningRuntimeStoreV1,signalListeningJevJobV1} from './signal-listening-jev';
+import {createSignalListeningRuntimeStoreV1,processSignalListeningJevV1,signalListeningJevJobV1} from './signal-listening-jev';
 import {planSignalListeningCalibrationV1,createSignalListeningCalibratedProviderV1} from './signal-listening-calibration';
 import type {JevProviderV1} from '../providers/typesafe-jev';
 const enabled=process.env.NOISIA_R16_LISTENING_SECOND_SHAPE_PG==='true';
+test('default native Listening continuation keeps one lease through both real base-to-consumer dependencies and complete bootstrap cohorts',{
+ skip:!enabled,timeout:600000,
+},async()=>{
+ assert.equal(process.env.GITHUB_ACTIONS,'true','native continuation proof is CI-only; never start local Docker');
+ for(const key of ['ANTHROPIC_API_KEY','TYPESAFE_API_KEY','VOYAGE_API_KEY'])assert.ok(!process.env[key]?.trim(),'real provider credentials are forbidden');
+ const flags=['NOISIA_SIGNAL_LISTENING_ENABLED','NOISIA_JEV_PROVIDER_ENABLED']as const,previous=flags.map(key=>process.env[key]);for(const key of flags)process.env[key]='true';
+ try{await runMassLabelingAcceptanceFixtureV1('product',{population_count:64,beforeProcessing:async f=>{
+  const canceled=await f.database.query(`UPDATE signal_labeling_runs r SET status='canceled' WHERE r.id=$1 AND r.workspace_id=$2
+   AND r.status='queued' AND NOT EXISTS(SELECT 1 FROM signal_labeling_calls c WHERE c.run_id=r.id) RETURNING id`,[f.run_id,f.workspace_id]);assert.equal(canceled.rows.length,1);
+  const access={database:f.database,workspace_id:f.workspace_id,actor_user_id:f.actor_user_id};
+  const configuration=await saveSignalListeningConfigurationV1({...access,expected_revision:0,provenance:'human',configuration:r16ListeningWorkloadV2('defined_consumer_second_pass').configuration});
+  const admitted=await requestSignalListeningV1({...access,configuration_id:configuration.id,map_id:f.map_id,idempotency_key:randomUUID(),cap_micro_usd:1000000,provider_available:true});
+  const execution={max_in_flight:1,flush_size:8,max_flushes:2,max_buffered_bytes:64*1024*1024,flush_interval_ms:5,window_size:64};
+  const files=await mkdtemp(join(tmpdir(),'r16-continuation-native-')),server=await startR16HttpFilesystemStorageV1(files);
+  try{
+   const storage=createWorkspaceEngineStorageV1({url:server.base_url,service_role_key:'synthetic-local-only',bucket:'corpus-files'}),native=createSignalListeningRuntimeStoreV1(f.database,{execution,storage});
+   let claims=0,finishes=0,releases=0,physical=0,firstReserve=0;const starts:string[]=[],ends:string[]=[],memory:number[]=[];
+   const store={...native,async claim(...args:Parameters<typeof native.claim>){claims++;return native.claim(...args);},
+    async finish(...args:Parameters<typeof native.finish>){finishes++;return native.finish(...args);},
+    async release(...args:Parameters<typeof native.release>){releases++;return native.release(...args);},
+    async reserve(...args:Parameters<typeof native.reserve>){if(!firstReserve){firstReserve=args[1].length;assert.equal(firstReserve,32);}return native.reserve(...args);}};
+   const provider:JevProviderV1={max_concurrency:1,max_response_bytes:16384,async evaluate(request){physical++;
+    return{http_status:200,latency_ms:1,body:JSON.stringify({model:request.model,usage:{input_tokens:120,output_tokens:0},answers:Object.fromEntries(Object.entries(request.questions).map(([key,q])=>[key,
+     q.type==='noul'?{type:'noul',noul:key==='promotion'?.1:.9}:{type:'choice',choice:'individual',confidence:.9,
+      probabilities:Object.fromEntries(Object.keys(q.criteria).map(option=>[option,option==='individual'?.9:.1/(Object.keys(q.criteria).length-1)]))}]))})};}};
+   const outcome=await signalListeningJevJobV1(admitted.run_id,{database:f.database,store,execution,provider,preflight:async()=>{},observe_stream:value=>{memory.push(value.reserved_working_bytes);assert.ok(value.in_flight<=1&&value.active_flushes<=2);},
+    observe_calibration:event=>{if(event.transition==='bootstrap_start')starts.push(...event.shape_digests);if(event.transition==='bootstrap_end'){assert.equal(event.outcome,'measured');ends.push(...event.shape_digests);}}});
+   assert.equal(outcome.status,'completed');assert.equal(physical,128);assert.equal(outcome.labeled,128);assert.deepEqual([claims,finishes,releases],[1,1,1]);
+   assert.equal(firstReserve,32);assert.equal(starts.length,2);assert.deepEqual(ends,starts);assert.equal(new Set(starts).size,2);assert.equal(memory.at(-1),0);assert.ok(memory.every(n=>n>=0&&n<=execution.max_buffered_bytes));
+   const receipts=(await f.database.query(`SELECT call.id,call.request,call.inputs,call.status,call.results_applied,call.raw_storage_key,call.raw_storage_verified_at,
+    call.settled_micro_usd::text FROM signal_labeling_calls call WHERE call.run_id=$1`,[admitted.run_id])).rows;
+   assert.equal(receipts.length,128);assert.ok(receipts.every(row=>row.status==='settled'&&row.results_applied&&row.raw_storage_key&&row.raw_storage_verified_at&&BigInt(row.settled_micro_usd)>0n));
+   const roots=new Map<string,Set<string>>();for(const row of receipts){const phases=roots.get(row.inputs[0].root_id)??new Set<string>();phases.add('voice'in row.request.questions?'base':'consumer');roots.set(row.inputs[0].root_id,phases);}assert.equal(roots.size,64);assert.ok([...roots.values()].every(phases=>phases.size===2));
+   for(const shape_digest of starts){const profile=await loadSignalListeningCalibrationV1({...access,configuration_digest:configuration.configuration_digest,model:configuration.configuration.model,shape_digest});assert.ok(profile);assert.equal(profile.sample_count,32);assert.equal(profile.source_run_id,admitted.run_id);assert.ok(profile.source_call_ids.every(id=>receipts.some(row=>row.id===id)));}
+  }finally{await server.close();await rm(files,{recursive:true,force:true});}
+ }});
+ }finally{flags.forEach((key,i)=>{if(previous[i]===undefined)delete process.env[key];else process.env[key]=previous[i];});}
+});
 test('native existing consumer profile extends an absent base-plan Map with exact verified32 source identities and no provider attempt',{
  skip:!enabled,timeout:600000,
 },async()=>{
@@ -41,8 +79,23 @@ test('native existing consumer profile extends an absent base-plan Map with exac
       {type:'choice',choice:'individual',confidence:.9,probabilities:Object.fromEntries(Object.keys(q.criteria).map(option=>[option,option==='individual'?.9:.1/(Object.keys(q.criteria).length-1)]))}]))})};}};
    const warmups:Array<{physical:number;warmup:boolean;selected_roots:number}>=[];
    for(let i=0;i<2;i++){
-    let observed:{warmup:boolean;selected_roots:number}|undefined;const before=physical;
-    await signalListeningJevJobV1(admitted.run_id,{database:f.database,store,execution,provider,preflight:async()=>{},observe_calibration:event=>{observed=event;}});
+    // Seed the existing readonly profile oracle with the original finite REAL
+    // components. Listening's default job now continues beyond these32 labels;
+    // Study and this component proof still exercise the bounded planner path.
+    let observed:{warmup:boolean;selected_roots:number}|undefined,selection:SignalListeningInputV1[]|undefined,shapes:string[]=[];
+    let runtime:ReturnType<typeof createSignalListeningCalibratedProviderV1>|undefined;const before=physical;
+    try{await processSignalListeningJevV1({run_id:admitted.run_id,store,execution,provider,selection:()=>selection,
+     prepare:async leased=>{
+      const inputs=await store.inputs(leased,{max_rows:64,max_working_bytes:execution.max_buffered_bytes,on_oversize:'error'});
+      const plan=await planSignalListeningCalibrationV1({workspace_id:f.workspace_id,configuration_digest:configuration.configuration_digest,
+       configuration:configuration.configuration,inputs,execution,loadProfile:shape_digest=>loadSignalListeningCalibrationV1({...access,
+        configuration_digest:configuration.configuration_digest,model:configuration.configuration.model,shape_digest})});
+      selection=plan.selected_inputs;shapes=plan.calibration_shapes;observed={warmup:plan.warmup,selected_roots:selection.length};
+      runtime=createSignalListeningCalibratedProviderV1({plan,factory:()=>({...provider,close:undefined})});
+      runtime.prepareRequests(selection.map(input=>buildSignalListeningJevRequestV1(input,configuration.configuration)));
+      return{provider:runtime.provider,execution:plan.execution,max_windows:1};
+     }});
+    }finally{try{for(const shape_digest of shapes)await deriveSignalListeningCalibrationV1({...access,run_id:admitted.run_id,shape_digest});}finally{await runtime?.provider.close?.();}}
     assert.ok(observed?.warmup);assert.equal(observed.selected_roots,32);assert.equal(physical-before,32);warmups.push({physical:physical-before,...observed});
    }
    assert.equal(physical,64,'the two warmups are ordinary native reusable labels, not probes');

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import test from 'node:test';
+import {invertCompactListeningRunsV1} from './signal-listening-compact-population.oracle';
 
 test('0325 changes only statement-local base-answer set joins; raw outputs, rights and H5 inputs stay exact',async()=>{
  const old=await readFile(new URL('./0321_signal_listening_bounded_custom_plan.sql',import.meta.url),'utf8');
@@ -44,8 +45,9 @@ test('pending barriers preserve projection/budgets and do not add status or cont
  const meta=oldListeningMetadataSqlV1(),hydrate=oldListeningHydrateSqlV1(true);
  assert.ok(source.includes(meta.slice(meta.indexOf('   SELECT root_id,(4::bigint*'))),'metadata byte formula, question cutoff and output order stay exact');
  assert.ok(source.includes(hydrate.slice(hydrate.indexOf('  SELECT root_id,input_digest,body,'))),'hydration output and root/question order stay exact');
- const start=source.indexOf('async function pendingAndAvailable('),end=source.indexOf('\nexport async function requestSignalListeningV1',start);
- assert.equal(createHash('sha256').update(source.slice(start,end)).digest('hex'),'4e7dc457faa63e16942a71202cfc37c89ae2589d5bec3388d8d1f45dc71e6daa','finish count/availability is outside this change');
+ const previous=invertCompactListeningRunsV1(source);
+ const start=previous.indexOf('async function pendingAndAvailable('),end=previous.indexOf('\nexport async function requestSignalListeningV1',start);
+ assert.equal(createHash('sha256').update(previous.slice(start,end)).digest('hex'),'4e7dc457faa63e16942a71202cfc37c89ae2589d5bec3388d8d1f45dc71e6daa','inverse compact delta retains the complete original finish count/availability');
 });
 
 for(const divergent of [false,true])test('unbounded oracle '+(divergent?'rolls back divergent results':'compares on an owned read-only snapshot')+' before releasing its client (orchestration only)',async()=>{

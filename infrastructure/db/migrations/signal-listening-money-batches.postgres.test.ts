@@ -25,6 +25,8 @@ import {activateSignalListeningServingSnapshotV1,lockSignalListeningDiscoveryPol
 import {anchorListeningStatementOracleParametersV1,listeningExpectedProjectionOracleSqlV1} from './signal-listening-statement-validator.oracle';
 import {listeningTransitionSetReferencesV1,assertListeningTransitionSetOracleV1} from './signal-listening-transition-set.oracle';
 import {ownerTargetSetReferencesV1,assertOwnerTargetSetOracleV1} from './signal-listening-owner-target-sets.oracle';
+import {answerGuardBefore0334SqlV1,answerGuardBefore0334BodySha256V1,answerGuardAfter0334BodySha256V1,answerGuardAfter0334LookupV1,
+ answerGuardBodyV1,answerGuardShaV1,assertAnswerGuard0334SourceV1,answerGuardWitnessSqlV1} from './signal-listening-answer-guard.oracle';
 
 const enabled=process.env.NOISIA_R16_LISTENING_MONEY_BATCHES_PG==='true';
 type NativeFixture={database:Parameters<typeof createSignalListeningStoreV1>[0]['database'];
@@ -590,6 +592,115 @@ async function listeningPageSnapshot(f:ListeningPageFixture){
   answers:(await f.database.query('SELECT * FROM signal_listening_answers WHERE run_id=$1 ORDER BY root_id,question_key',[f.run.id])).rows,
   fences:(await f.database.query('SELECT id FROM signal_labeling_page_mutation_fences WHERE run_id=$1 ORDER BY id',[f.run.id])).rows};
 }
+
+test('0334 preserves native answer errors, BEFORE conflicts, actor locks and statement rollback against frozen 0296',{
+ skip:!enabled,timeout:600000,
+},async()=>withListeningPageFixture(async f=>{
+ const candidate=assertAnswerGuard0334SourceV1(await readFile(new URL('./0334_signal_listening_answer_guard_lookup.sql',import.meta.url),'utf8'));
+ const first=await listeningPageReady(f,0);await f.store.apply(f.run,[first]);
+ const spare=await listeningPageReady(f,1),input=spare.call.inputs[0]!;
+ const existing=(await f.database.query("SELECT to_jsonb(a) value FROM signal_listening_answers a WHERE call_id=$1 AND question_key='promotion'",[first.call.id])).rows[0].value as Record<string,unknown>;
+ const spareReceipt=(await f.database.query('SELECT request_digest,raw_sha256 FROM signal_labeling_calls WHERE id=$1',[spare.call.id])).rows[0];
+ const unowned=(await f.database.query(`SELECT r.id FROM signal_labeling_runs r WHERE r.workspace_id=$1
+  AND NOT EXISTS(SELECT 1 FROM signal_listening_runs o WHERE o.run_id=r.id) ORDER BY r.id LIMIT 1`,[f.run.workspace_id])).rows[0];assert.ok(unowned);
+ const c=await f.database.connect();let original:Record<string,unknown>|undefined;
+ type Case={name:string;code:string|null;message?:string;actor?:boolean;rights?:boolean;fresh?:boolean;question?:'promotion'|'voice';
+  answer?:unknown;receiptBad?:boolean;patch?:Record<string,unknown>;twice?:boolean;siblingBad?:boolean;operation?:'update'|'delete'};
+ const cases:Case[]=[
+  {name:'valid conflict',code:null},{name:'two valid conflicts retain two actor checks',code:null,twice:true},
+  {name:'missing call',code:'P0001',message:'listening_answer_receipt_invalid',patch:{call_id:randomUUID()}},
+  {name:'NULL call',code:'P0001',message:'listening_answer_receipt_invalid',patch:{call_id:null}},
+  {name:'missing run',code:'P0001',message:'listening_answer_receipt_invalid',patch:{run_id:randomUUID()}},
+  {name:'NULL run',code:'P0001',message:'listening_answer_receipt_invalid',patch:{run_id:null}},
+  {name:'missing owner',code:'P0001',message:'listening_answer_receipt_invalid',patch:{run_id:unowned.id}},
+  {name:'missing question',code:'P0001',message:'listening_answer_receipt_invalid',patch:{question_key:'missing_question'}},
+  {name:'NULL question',code:'P0001',message:'listening_answer_receipt_invalid',patch:{question_key:null}},
+  {name:'malformed noul shape',code:'P0001',message:'listening_answer_invalid',fresh:true,answer:{type:'noul',noul:2}},
+  {name:'malformed choice shape',code:'P0001',message:'listening_answer_invalid',fresh:true,question:'voice',
+   answer:{...spare.results[0]!.answers.voice,confidence:2}},
+  {name:'malformed choice cast',code:'22P02',fresh:true,question:'voice',answer:{...spare.results[0]!.answers.voice,confidence:'not-a-number'}},
+  {name:'malformed cast',code:'22P02',fresh:true,answer:{type:'noul',noul:'not-a-number'}},
+  {name:'bad receipt precedes malformed cast',code:'P0001',message:'listening_answer_receipt_invalid',fresh:true,
+   answer:{type:'noul',noul:'not-a-number'},receiptBad:true},
+  {name:'revoked root rights',code:'P0001',message:'listening_answer_receipt_invalid',rights:true},
+  {name:'revoked actor',code:'42501',message:'processing_forbidden',actor:true},
+  {name:'bad receipt precedes revoked actor',code:'P0001',message:'listening_answer_receipt_invalid',actor:true,receiptBad:true},
+  {name:'revoked actor precedes malformed cast',code:'42501',message:'processing_forbidden',actor:true,fresh:true,
+   answer:{type:'noul',noul:'not-a-number'}},
+  {name:'valid fresh sibling rolls back with bad conflict tuple',code:'P0001',message:'listening_answer_receipt_invalid',fresh:true,siblingBad:true},
+  {name:'update remains immutable',code:'P0001',message:'listening_history_immutable',operation:'update'},
+  {name:'delete remains immutable',code:'P0001',message:'listening_history_immutable',operation:'delete'},
+ ];
+ const witness=async()=>{const row=(await c.query(answerGuardWitnessSqlV1)).rows[0];assert.ok(row);return row as Record<string,unknown>;};
+ const identity=(row:Record<string,unknown>)=>{const{prosrc,...attributes}=row;return attributes;};
+ const snapshot=async()=>(await c.query(`SELECT jsonb_build_object(
+  'answers',(SELECT coalesce(jsonb_agg(to_jsonb(a) ORDER BY root_id,question_key),'[]') FROM signal_listening_answers a WHERE run_id=$1),
+  'calls',(SELECT coalesce(jsonb_agg(to_jsonb(v) ORDER BY id),'[]') FROM signal_labeling_calls v WHERE run_id=$1),
+  'links',(SELECT coalesce(jsonb_agg(to_jsonb(v) ORDER BY call_id,question_key),'[]') FROM signal_listening_call_questions v WHERE run_id=$1)) value`,[f.run.id])).rows[0].value;
+ try{
+  await c.query('BEGIN ISOLATION LEVEL REPEATABLE READ');await c.query("SET LOCAL statement_timeout='20s';SET LOCAL lock_timeout='5s';SET LOCAL track_functions='all'");
+  original=await witness();assert.equal(original.return_type,'trigger');assert.equal(original.arguments,'');
+  assert.equal(answerGuardShaV1(String(original.prosrc)),answerGuardAfter0334BodySha256V1,'migrated native source must be exactly 0334');
+  const triggerBefore=(await c.query("SELECT tgfoid::text,tgtype,tgenabled,pg_get_triggerdef(oid) definition FROM pg_trigger WHERE tgrelid='signal_listening_answers'::regclass AND tgname='signal_listening_answer_guard'")).rows;
+  assert.equal(triggerBefore.length,1);assert.equal(triggerBefore[0]!.tgtype,31,'BEFORE ROW INSERT/UPDATE/DELETE remains installed');
+  const singleLookup=answerGuardAfter0334LookupV1.slice(0,answerGuardAfter0334LookupV1.indexOf(';')).replace(' INTO looked_up','')
+   .replaceAll('NEW.call_id','$1').replaceAll('NEW.workspace_id','$2').replaceAll('NEW.run_id','$3').replaceAll('NEW.question_key','$4');
+  assert.ok(!singleLookup.includes('NEW.')&&!singleLookup.includes('looked_up'));
+  const lookupPatches:Array<Record<string,unknown>>=[{},{call_id:randomUUID()},{run_id:randomUUID()},{run_id:unowned.id},{question_key:'missing_question'}];
+  for(const patch of lookupPatches){
+   const row={...existing,...patch};
+   const call=(await c.query('SELECT to_jsonb(v) value FROM signal_labeling_calls v WHERE id=$1 AND workspace_id=$2 AND run_id=$3',[row.call_id,row.workspace_id,row.run_id])).rows[0]?.value??null;
+   const run=(await c.query('SELECT to_jsonb(v) value FROM signal_labeling_runs v WHERE id=$1',[row.run_id])).rows[0]?.value??null;
+   const owner=(await c.query('SELECT to_jsonb(v) value FROM signal_listening_runs v WHERE run_id=$1 AND workspace_id=$2',[run?.id??null,row.workspace_id])).rows[0]?.value??null;
+   const question=(await c.query('SELECT to_jsonb(v) value FROM signal_listening_questions v WHERE configuration_id=$1 AND question_key=$2',[owner?.configuration_id??null,row.question_key])).rows[0]?.value??null;
+   const actual=(await c.query('SELECT to_jsonb(v) value FROM ('+singleLookup+') v',[row.call_id,row.workspace_id,row.run_id,row.question_key])).rows;
+   assert.equal(actual.length,1,'seed retains one row for every missing relation');
+   assert.deepEqual(actual[0].value,{selected_call:call,selected_run:run,selected_owner:owner,selected_question:question},'all four native composites and NULLs equal the separate reads in SAME RR');
+   if(patch.call_id){assert.equal(actual[0].value.selected_call,null);assert.equal(actual[0].value.selected_run.id,f.run.id,'missing call never drives away the independent run');}
+  }
+  for(const probe of cases){
+   const observed=[];
+   for(const [label,sql,bodySha]of [['old',answerGuardBefore0334SqlV1,answerGuardBefore0334BodySha256V1],['new',candidate,answerGuardAfter0334BodySha256V1]]as const){
+    await c.query('SAVEPOINT answer_variant');
+    try{
+     await c.query(sql);const current=await witness();assert.deepEqual(identity(current),identity(original),label+' preserves OID/owner/ACL/signature/attributes');
+     assert.equal(answerGuardShaV1(String(current.prosrc)),bodySha,label+' native body is exact');
+     let row={...existing,...probe.patch};
+     if(probe.fresh){
+      const key=probe.question??'promotion',answer=probe.answer??spare.results[0]!.answers[key];assert.ok(answer);
+      const result={...spare.results[0]!,answers:{...spare.results[0]!.answers,[key]:answer}};
+      await c.query('UPDATE signal_labeling_calls SET results_applied=true,results=$2::jsonb WHERE id=$1',[spare.call.id,JSON.stringify([result])]);
+      row={...existing,root_id:input.root_id,input_digest:input.input_digest,question_key:key,question_digest:input.question_digests[key],
+       call_id:spare.call.id,request_digest:spareReceipt.request_digest,raw_sha256:spareReceipt.raw_sha256,answer};
+     }
+     if(probe.receiptBad)row.raw_sha256='sha256:'+'f'.repeat(64);
+     if(probe.rights)await c.query("UPDATE data_sources SET status='archived' WHERE workspace_id=$1",[f.run.workspace_id]);
+     if(probe.actor)await c.query("UPDATE users SET status='suspended' WHERE id=$1",[f.run.actor_user_id]);
+     const rows=probe.twice?[row,row]:probe.siblingBad?[row,{...row,raw_sha256:'sha256:'+'f'.repeat(64)}]:[row];
+     const before=await snapshot(),beforeActor=await exposureCalls(c,'signal_processing_lock_actor_v1(uuid,uuid,boolean)');
+     await c.query('SAVEPOINT answer_attempt');let result:{code:string|null;message:string|null;inserted:number|null};
+     try{
+      const inserted=probe.operation==='update'?await c.query('UPDATE signal_listening_answers SET answer=answer WHERE call_id=$1',[first.call.id])
+       :probe.operation==='delete'?await c.query('DELETE FROM signal_listening_answers WHERE call_id=$1',[first.call.id])
+       :await c.query('INSERT INTO signal_listening_answers SELECT * FROM jsonb_populate_recordset(NULL::signal_listening_answers,$1::jsonb) ON CONFLICT DO NOTHING',[JSON.stringify(rows)]);
+      result={code:null,message:null,inserted:inserted.rowCount};
+     }catch(error){
+      assert.ok(typeof error==='object'&&error!==null&&'code'in error&&'message'in error);
+      result={code:String(error.code),message:String(error.message),inserted:null};await c.query('ROLLBACK TO SAVEPOINT answer_attempt');
+     }
+     await c.query('RELEASE SAVEPOINT answer_attempt');assert.deepEqual(await snapshot(),before,probe.name+' has no partial answers/calls/links');
+     assert.equal(result.code,probe.code,probe.name);if(probe.message)assert.equal(result.message,probe.message,probe.name);
+     if(probe.code===null){assert.equal(result.inserted,0);assert.equal(await exposureCalls(c,'signal_processing_lock_actor_v1(uuid,uuid,boolean)')-beforeActor,probe.twice?2:1,'actor lock executes for every conflict-suppressed BEFORE row');}
+     observed.push(result);
+    }finally{await c.query('ROLLBACK TO SAVEPOINT answer_variant');await c.query('RELEASE SAVEPOINT answer_variant');}
+   }
+   assert.deepEqual(observed[1],observed[0],probe.name+' retains SQLSTATE, message, precedence and row count in SAME transaction');
+  }
+  assert.deepEqual((await c.query("SELECT tgfoid::text,tgtype,tgenabled,pg_get_triggerdef(oid) definition FROM pg_trigger WHERE tgrelid='signal_listening_answers'::regclass AND tgname='signal_listening_answer_guard'")).rows,triggerBefore);
+  assert.deepEqual(await witness(),original,'savepoint rollback restores the original migrated function and attributes');
+ }finally{try{await c.query('ROLLBACK');}finally{c.release();}}
+ if(original)assert.deepEqual((await f.database.query(answerGuardWitnessSqlV1)).rows[0],original,'outer rollback leaves the native public guard unchanged');
+}));
 for(const operation of ['apply_raw','mark_raw']as const)test('native Listening page fence disjoint '+operation+' commits while another page retains its run fence',{
  skip:!enabled,timeout:600000,
 },async()=>withListeningPageFixture(async f=>{

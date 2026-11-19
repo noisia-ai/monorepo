@@ -7,7 +7,10 @@ import {withSignalStudyFixtureV1} from './signal-study.synthetic.fixture';
 import {saveSignalListeningConfigurationV1,loadSignalListeningConfigurationWithClientV1,type SignalListeningAccessV1} from '../signal-listening-configuration';
 import {readSignalListeningQuestionsMetricsV1,readSignalListeningQuestionMetricsV1,type SignalListeningMetricsFiltersV1} from '../signal-listening-serving';
 import * as human from '../signal-listening-human-edits';
+import {setSignalListeningDiscoveryManualV1} from '../signal-listening-discovery';
+import {localizeSyntheticListeningConfigurationV1} from './signal-listening-localized.synthetic.fixture';
 import {r16ListeningWorkloadV1} from '../../../scripts/r16/listening-workload';
+import {assertCompactNativeCasesV1} from './signal-listening-compact-population.synthetic.fixture';
 const enabled=process.env.NOISIA_R16_LISTENING_METRICS_BATCH_PG==='true';
 async function parity(access:SignalListeningAccessV1,args:SignalListeningMetricsFiltersV1){
  const c=await access.database.connect();let configuration;try{
@@ -20,7 +23,7 @@ async function parity(access:SignalListeningAccessV1,args:SignalListeningMetrics
   const client=await access.database.connect();return new Proxy(client,{get(target,key){
    if(key!=='query'){const value=Reflect.get(target,key);return typeof value==='function'?value.bind(target):value;}
    return async(sql:string,values?:unknown[])=>{
-   if(sql.includes("FROM signal_listening_effective_population_roots_v2("))populationReads++;
+   if(sql.includes("FROM signal_listening_effective_compact_population_roots_v1("))populationReads++;
    return client.query(sql,values);
   };}});
  }};
@@ -44,6 +47,7 @@ test('batch metrics preserve pending roots, both scopes, zero options, periods a
  configuration.questions.push({...topic,key:'outside_probe',domain:'outside'});
  const cfg=await saveSignalListeningConfigurationV1({...f,expected_revision:0,provenance:'human',configuration});
  const access={database:f.database,workspace_id:f.workspace_id,actor_user_id:f.actor_user_id};const args={configuration_id:cfg.id,map_id:f.map_id};
+ await assertCompactNativeCasesV1(access,args,{extended:true,expected_scope:'awaiting_base',execute_authority:true});
  const results=await parity(access,args);assert.ok(results.some(r=>r.scope==='consumer_category'&&r.counts.awaiting_base===3));
  assert.ok(results.every(r=>r.counts.asked===0&&r.distribution.every(d=>d.count===0&&d.probability_sum===null)));
  assert.ok(results.every(r=>r.counts.corpus_eligible>0&&r.topic_cross.length===0),'roots without confirmed topics remain in every requested population');
@@ -55,6 +59,7 @@ test('batch metrics preserve pending roots, both scopes, zero options, periods a
  await assert.rejects(readSignalListeningQuestionsMetricsV1({...access,...args,question_keys:['voice'],topic_key:'voice'}),/listening_question_unavailable/);
  await assert.rejects(readSignalListeningQuestionsMetricsV1({...access,...args,question_keys:['voice'],timezone:'invalid'}),/listening_filters_invalid/);
  await f.database.query("UPDATE data_sources SET status='archived' WHERE workspace_id=$1",[f.workspace_id]);
+ await assertCompactNativeCasesV1(access,args,{empty:true});
  await assert.rejects(readSignalListeningQuestionsMetricsV1({...access,...args,question_keys:['voice']}),/mass_labeling_map_stale/);
 }}));
 test('batch metrics preserve completed classifier probabilities, H5 precedence and confirmed topic cross denominators',{
@@ -62,13 +67,30 @@ test('batch metrics preserve completed classifier probabilities, H5 precedence a
 },async()=>withSignalStudyFixtureV1(async f=>{
  const access={database:f.database,workspace_id:f.workspace_id,actor_user_id:f.actor_user_id};
  const ctx=await human.getSignalListeningHumanEditContextV1(access);const key=ctx.configuration.questions.find(q=>q.topic_source)!.key;
+ await assertCompactNativeCasesV1(access,{configuration_id:ctx.expected.configuration_id,map_id:f.map_id});
  await parity(access,{configuration_id:ctx.expected.configuration_id,map_id:f.map_id,topic_key:key});
  const changed=await human.correctSignalListeningTopicMembershipV1({...access,expected:ctx.expected,root_id:f.roots[0]!,from_question_key:key,idempotency_key:randomUUID()});
+ await assertCompactNativeCasesV1(access,{configuration_id:changed.configuration_id,map_id:f.map_id},{extended:true});
  const results=await parity(access,{configuration_id:changed.configuration_id,map_id:f.map_id});
  const removed=results.find(r=>r.question_key===key)!;assert.equal(removed.counts.human_negative,1);assert.equal(removed.distribution.find(d=>d.option_key==='positive')!.count,2);
  assert.equal(removed.distribution.find(d=>d.option_key==='negative')!.probability_sum,null,'a human negative is not a provider probability');
  const filtered=await parity(access,{configuration_id:changed.configuration_id,map_id:f.map_id,topic_key:key,timezone:'America/Sao_Paulo'});
  assert.ok(filtered.every(r=>r.counts.corpus_eligible===2),'the removed root is excluded by its effective topic membership');
+ // Legacy and native H5 paths deliberately coexist. Their map predicates are
+ // asymmetric in0333/0316 and the compact reader must preserve both.
+ await setSignalListeningDiscoveryManualV1({...access,configuration_id:changed.configuration_id,map_id:f.map_id,question_key:key,root_id:f.roots[2]!,belongs:false});
+ await assertCompactNativeCasesV1(access,{configuration_id:changed.configuration_id,map_id:f.map_id});
+ await parity(access,{configuration_id:changed.configuration_id,map_id:f.map_id});
+ const latest=await human.getSignalListeningHumanEditContextV1(access);
+ const moved=await human.correctSignalListeningTopicMembershipV1({...access,expected:latest.expected,root_id:f.roots[1]!,from_question_key:key,to_question_key:'additional_defined_topic',idempotency_key:randomUUID()});
+ await assertCompactNativeCasesV1(access,{configuration_id:moved.configuration_id,map_id:f.map_id});
+ await parity(access,{configuration_id:moved.configuration_id,map_id:f.map_id});
+ const current=await loadSignalListeningConfigurationWithClientV1(f.database,access.workspace_id,moved.configuration_id);assert.ok(current);
+ const template=current.configuration.questions.find(q=>q.topic_source==='defined');assert.ok(template);
+ const excluded=await saveSignalListeningConfigurationV1({...access,expected_revision:current.revision,provenance:'human',configuration:localizeSyntheticListeningConfigurationV1({...current.configuration,lexicon_terms:['compact_no_lexical_match_7f34'],questions:[...current.configuration.questions,...Array.from({length:9},(_,i)=>({...template,key:'compact_defined_'+i,human_locked:false}))]})});
+ assert.ok(excluded.configuration.questions.filter(q=>q.topic_source==='defined').length>8);
+ await assertCompactNativeCasesV1(access,{configuration_id:excluded.id,map_id:f.map_id},{extended:true,expected_scope:'excluded'});
+ await parity(access,{configuration_id:excluded.id,map_id:f.map_id,include_outside:true});
  await f.database.query("UPDATE users SET status='inactive' WHERE id=$1",[f.actor_user_id]);
  await assert.rejects(readSignalListeningQuestionsMetricsV1({...access,configuration_id:changed.configuration_id,map_id:f.map_id,question_keys:['voice']}),/listening_forbidden/);
 },{complete_listening:true,additional_defined_topic:true}));

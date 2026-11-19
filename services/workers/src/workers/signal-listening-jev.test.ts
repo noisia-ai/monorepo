@@ -7,6 +7,7 @@ import {buildSignalListeningJevRequestV1,signalListeningRequestDigestV1,signalLi
 import {LABELING_INPUT_MAX_WORKING_BYTES_V1,type LabelingRunV1,type LabelingCallV1} from '@noisia/db';
 import type {JevProviderV1,JevRequestV1} from '../providers/typesafe-jev';
 import {processSignalListeningJevV1,signalListeningJevJobV1,createSignalListeningSelectionIndexV1} from './signal-listening-jev';
+import {jevCallWorkingBytesV2} from './signal-jev-streaming-window';
 const execution={max_in_flight:8,flush_size:8,max_flushes:1,max_buffered_bytes:16*1024*1024,flush_interval_ms:5,window_size:200};
 function fixture(configuration:SignalListeningConfigurationV1,windows:string[][],cache:Record<string,unknown>={}){
   const context={entities:[{entity_id:'category',kind:'category' as const,name:'tea',aliases:[],disambiguation:null}]};
@@ -144,7 +145,7 @@ test('heterogeneous pending batches warm their extremes once then remain paralle
     }}});
    peaks.push(peak);windows.push(f.requests.slice(before));assert.ok(windows.length<10,'bounded progress must finish rather than warming covered prefixes forever');
   }
-  assert.equal(windows[0]!.length,32);assert.ok(peaks[0]!>=2);assert.ok(peaks[0]!<=8);assert.ok(boundedReads>=2);
+  assert.equal(windows.length,1,'one lease now continues after Native calibration ACK');assert.equal(windows[0]!.length,corpus.length);assert.ok(peaks[0]!>=2);assert.ok(peaks[0]!<=8);assert.ok(boundedReads>=2);
   for(const index of [32,70,90])assert.ok(windows[0]!.some(request=>request.state===corpus[index]!.text));
   assert.ok(peaks.slice(1).every(value=>value>1));assert.equal(derivations,1);assert.equal(f.requests.length,corpus.length);
   assert.equal(f.calls.length,corpus.length);assert.equal(new Set(f.calls.map(call=>call.inputs[0]!.root_id)).size,corpus.length);
@@ -189,7 +190,7 @@ for(const withUnknownWithoutRaw of [false,true])test(`recovery precedes an outli
  }finally{if(previous===undefined)delete process.env.NOISIA_SIGNAL_LISTENING_ENABLED;else process.env.NOISIA_SIGNAL_LISTENING_ENABLED=previous;}
 });
 
-test('automatic measured listening stops before reserving or sending the next page of an unseen question shape',async()=>{
+test('automatic measured listening admits a new bounded ordinary shape and stops its admission when Native profile is unavailable',async()=>{
  const configuration=signalListeningBaseTemplateV1({category:'tea',lexicon_terms:['tea']}),f=fixture(configuration,[['voice','promotion']]);
  const sample=(await f.store.inputs(f.run))[0]!,shape=signalListeningCalibrationShapeV1(configuration,sample);
  const corpus=[{...sample,root_id:randomUUID()},{...sample,root_id:randomUUID()},
@@ -207,10 +208,10 @@ test('automatic measured listening stops before reserving or sending the next pa
  try{
   for(const name of names)process.env[name]='true';
   const result=await signalListeningJevJobV1(f.run.id,{database,store:f.store,provider:f.provider,execution:{...execution,window_size:2},
-   preflight:async()=>{},calibration:{load:async args=>args.shape_digest===shape.shape_digest?profile:null,derive:async()=>{throw Error('measured continuity cannot derive a warmup');}}});
-  assert.equal(result.status,'running');assert.equal(f.requests.length,2);assert.equal(f.calls.length,2);
-  assert.ok(f.calls.every(call=>call.inputs[0]!.root_id!==corpus[2]!.root_id));
-  assert.ok(f.requests.every(request=>Object.keys(request.questions).sort().join(',')==='promotion,voice'));
+   preflight:async()=>{},calibration:{load:async args=>args.shape_digest===shape.shape_digest?profile:null,derive:async()=>null}});
+  assert.equal(result.status,'completed');assert.equal(f.requests.length,3);assert.equal(f.calls.length,3);
+  assert.equal(f.calls.filter(call=>call.inputs[0]!.root_id===corpus[2]!.root_id).length,1,'the new shape is an ordinary reusable label, never a probe');
+  assert.ok(f.calls.every(call=>call.status==='settled'&&call.results_applied));
  }finally{names.forEach((key,i)=>{if(previous[i]===undefined)delete process.env[key];else process.env[key]=previous[i];});}
 });
 
@@ -299,6 +300,67 @@ test('measured prefetch loads an existing second-phase profile before reserving 
   assert.equal(outcome.status,'completed');assert.equal(f.requests.length,3);assert.equal(f.calls.length,3);assert.equal(new Set(f.calls.map(call=>call.request_digest)).size,3);
   assert.ok(f.calls.every(call=>call.status==='settled'&&call.results_applied));assert.equal(loads.length,2);assert.equal(new Set(loads).size,2);
   assert.ok(f.requests.some(request=>Object.keys(request.questions).join(',')==='consumer_topic'));
+ }finally{names.forEach((key,i)=>{if(previous[i]===undefined)delete process.env[key];else process.env[key]=previous[i];});}
+});
+
+test('default Listening job with one HTTP slot keeps the distant anchor and both Native-dependent phases under one real claim/finish',{timeout:15000},async()=>{
+ const draft=signalListeningBaseTemplateV1({category:'tea',lexicon_terms:['tea']});
+ draft.questions.push({key:'consumer_topic',type:'noul',text:'Consumer tea?',positive:'Present',negative:'Absent',scope:'consumer_category',origin:'brand_os',human_locked:true,topic_source:'defined'});
+ const configuration=validateSignalListeningConfigurationV1(draft),f=fixture(configuration,[['voice','promotion']]),sample=(await f.store.inputs(f.run))[0]!;
+ const bases=Array.from({length:80},(_,i)=>({...sample,root_id:randomUUID(),text:i===79?'tea '.repeat(500):sample.text}));
+ const consumers=bases.map(input=>({...input,question_keys:['consumer_topic'],question_digests:{consumer_topic:signalListeningQuestionDigestV1(configuration,configuration.questions.at(-1)!)}}));
+ const profiles=new Map<string,SignalListeningCalibrationProfileV1>(),appliedBase=new Set<string>(),durable=new Map<string,number>();let claims=0,finishes=0,releases=0,initialReserved=0,heldApply=false;
+ const metrics:Array<{reserved_working_bytes:number;active_flushes:number;in_flight:number}>=[],events:Array<{transition?:string;selected_roots:number;outcome?:string}>=[];
+ const claim=f.store.claim,release=f.store.release,reserve=f.store.reserve,apply=f.store.apply,persist=f.store.persistRawPage;
+ f.store.persistRawPage=async(run,rows)=>{await persist(run,rows);for(const row of rows)durable.set(row.call.id,Buffer.byteLength(row.raw));};
+ f.store.claim=async(...args)=>{claims++;return claim(...args);};f.store.release=async(...args)=>{releases++;return release(...args);};
+ f.store.inputs=async(_run,bounds)=>[...bases,...consumers.filter(input=>appliedBase.has(input.root_id))]
+  .filter(input=>!f.calls.some(call=>call.inputs[0]!.root_id===input.root_id&&call.inputs[0]!.question_keys[0]===input.question_keys[0])).slice(0,bounds!.max_rows);
+ f.store.reserve=async(run,proposals)=>{if(!f.calls.length){initialReserved=proposals.length;assert.equal(initialReserved,32);assert.ok(proposals.some(p=>p.inputs[0]!.root_id===bases[79]!.root_id));}return reserve(run,proposals);};
+ f.store.apply=async(run,rows)=>{
+  assert.ok(rows.every(row=>row.call.status==='settled'&&durable.has(row.call.id)),'durable storage owns RAW before APPLY; transient bodies may already be released');
+  if(!heldApply){heldApply=true;const retained=f.calls.reduce((n,call)=>n+jevCallWorkingBytesV2(call),0),custody=rows.reduce((n,row)=>n+Math.min(16384*24+64*1024,durable.get(row.call.id)!*24+64*1024),0);
+   assert.ok(metrics.at(-1)!.reserved_working_bytes>=retained+custody);assert.equal(f.requests.some(r=>'consumer_topic'in r.questions),false);
+   await new Promise(resolve=>setTimeout(resolve,10));assert.ok(metrics.at(-1)!.reserved_working_bytes>=retained+custody,'RAW custody cannot be released while APPLY is awaiting its ACK');}
+  await apply(run,rows);for(const row of rows)if('voice'in row.results[0]!.answers)appliedBase.add(row.call.inputs[0]!.root_id);
+ };
+ const evaluate=f.provider.evaluate;f.provider.evaluate=async(...args)=>{if('consumer_topic'in args[0].questions){const root=consumers.find(input=>input.text===args[0].state&&appliedBase.has(input.root_id));assert.ok(root,'consumer is only exposed after real base APPLY');}return evaluate(...args);};
+ f.store.finish=async()=>{finishes++;const status=f.calls.length===160&&f.calls.every(call=>call.results_applied)?'completed' as const:'running' as const;f.run.status=status;return status;};
+ const database={query:async(sql:string)=>({rows:sql.includes('signal_workspace_features')?[{enabled:true}]:[{workspace_id:f.run.workspace_id,labeler_digest:f.run.labeler_digest,recovery_only:false}]})}as NonNullable<Parameters<typeof signalListeningJevJobV1>[1]>['database'];
+ const names=['NOISIA_SIGNAL_LISTENING_ENABLED','NOISIA_JEV_PROVIDER_ENABLED']as const,previous=names.map(key=>process.env[key]);
+ try{for(const name of names)process.env[name]='true';
+  const result=await signalListeningJevJobV1(f.run.id,{database,store:f.store,provider:f.provider,execution:{...execution,max_in_flight:1,flush_size:8,max_flushes:2},preflight:async()=>{},observe_stream:value=>metrics.push(value),observe_calibration:value=>events.push(value),
+   calibration:{load:async args=>profiles.get(args.shape_digest)??null,derive:async args=>{
+    const receipts=f.calls.filter(call=>call.results_applied&&call.status==='settled'&&signalListeningCalibrationShapeV1(configuration,call.inputs[0]!).shape_digest===args.shape_digest).slice(-32);
+    assert.ok(receipts.length>0);const shape=signalListeningCalibrationShapeV1(configuration,receipts[0]!.inputs[0]!),sizes=receipts.map(call=>Buffer.byteLength(JSON.stringify(call.request))),scope={workspace_id:f.run.workspace_id,configuration_digest:digest(configuration),model:shape.model,compiler_version:shape.compiler_version,phase:shape.phase,shape_digest:shape.shape_digest};
+    const profile:SignalListeningCalibrationProfileV1={scope,scope_digest:digest(scope),source_digest:digest(receipts.map(call=>call.id)),source_call_ids:receipts.map(call=>call.id),source_run_id:f.run.id,
+     request_min_bytes:Math.min(...sizes),request_max_bytes:Math.max(...sizes),max_input_tokens_per_byte:.25,sample_count:receipts.length,status:'measured'};profiles.set(args.shape_digest,profile);return profile;
+   }}});
+  assert.equal(result.status,'completed');assert.equal(result.labeled,160);assert.equal(f.requests.length,160);assert.equal(initialReserved,32);
+  assert.deepEqual([claims,finishes,releases],[1,1,1]);assert.equal(new Set(f.calls.map(call=>call.request_digest)).size,160);assert.ok(f.calls.every(call=>call.results_applied&&durable.has(call.id)&&call.status==='settled'));assert.equal(durable.size,160);
+  assert.equal(events.filter(event=>event.transition==='bootstrap_start').length,2);assert.ok(events.filter(event=>event.transition==='bootstrap_end').every(event=>event.outcome==='measured'));
+  assert.ok(metrics.every(value=>value.in_flight<=1&&value.active_flushes<=2&&value.reserved_working_bytes>=0&&value.reserved_working_bytes<=execution.max_buffered_bytes));assert.equal(metrics.at(-1)!.reserved_working_bytes,0);
+ }finally{names.forEach((key,i)=>{if(previous[i]===undefined)delete process.env[key];else process.env[key]=previous[i];});}
+});
+
+for(const [cap,rejection]of [[15,'labeling_budget_exceeded'],[32,'labeling_budget_exceeded'],[32,'listening_forbidden']]as const)test(`complete bootstrap respects the Native financial prefix and drains paid custody at cap ${cap}, ${rejection}`,{timeout:10000},async()=>{
+ const configuration=signalListeningBaseTemplateV1({category:'tea',lexicon_terms:['tea']}),f=fixture(configuration,[['voice','promotion']]),sample=(await f.store.inputs(f.run))[0]!;
+ const corpus=Array.from({length:80},()=>({...sample,root_id:randomUUID()})),durable=new Set<string>();let releases=0,reserves=0,profile:SignalListeningCalibrationProfileV1|null=null;
+ f.store.release=async()=>{releases++;};f.store.inputs=async(_run,bounds)=>corpus.filter(input=>!f.calls.some(call=>call.inputs[0]!.root_id===input.root_id)).slice(0,bounds!.max_rows);
+ const reserve=f.store.reserve,persist=f.store.persistRawPage;f.store.persistRawPage=async(run,rows)=>{await persist(run,rows);for(const row of rows)durable.add(row.call.id);};
+ f.store.reserve=async(run,proposals)=>{reserves++;if(f.calls.length+proposals.length>cap)throw Error(rejection);return reserve(run,proposals);};
+ f.store.finish=async()=> 'running';
+ const database={query:async(sql:string)=>({rows:sql.includes('signal_workspace_features')?[{enabled:true}]:[{workspace_id:f.run.workspace_id,labeler_digest:f.run.labeler_digest,recovery_only:false}]})}as NonNullable<Parameters<typeof signalListeningJevJobV1>[1]>['database'];
+ const names=['NOISIA_SIGNAL_LISTENING_ENABLED','NOISIA_JEV_PROVIDER_ENABLED']as const,previous=names.map(key=>process.env[key]);
+ const memory:number[]=[];try{for(const name of names)process.env[name]='true';
+  await assert.rejects(signalListeningJevJobV1(f.run.id,{database,store:f.store,provider:f.provider,execution:{...execution,max_in_flight:1},preflight:async()=>{},observe_stream:value=>memory.push(value.reserved_working_bytes),
+   calibration:{load:async()=>profile,derive:async()=>{const receipts=f.calls.filter(call=>call.results_applied);assert.equal(receipts.length,32);
+    const shape=signalListeningCalibrationShapeV1(configuration,sample),scope={workspace_id:f.run.workspace_id,configuration_digest:digest(configuration),model:shape.model,compiler_version:shape.compiler_version,phase:shape.phase,shape_digest:shape.shape_digest};
+    const bytes=Buffer.byteLength(JSON.stringify(buildSignalListeningJevRequestV1(sample,configuration)));profile={scope,scope_digest:digest(scope),source_digest:digest(receipts.map(call=>call.id)),source_call_ids:receipts.map(call=>call.id),source_run_id:f.run.id,
+     request_min_bytes:bytes,request_max_bytes:bytes,max_input_tokens_per_byte:.25,sample_count:32,status:'measured'};return profile;}}}),new RegExp(rejection));
+  assert.equal(releases,1);assert.equal(f.requests.length,cap===15?0:32);assert.equal(f.calls.length,cap===15?0:32);assert.equal(reserves,cap===15?1:2);
+  assert.ok(f.calls.every(call=>call.results_applied&&durable.has(call.id)&&call.status==='settled'),'all paid prefix receipts survive the later rejection');
+  if(cap===32)assert.equal(memory.at(-1),f.calls.reduce((n,call)=>n+jevCallWorkingBytesV2(call),0),'on error only the caller-owned initial request page remains, with no paid RAW custody');
  }finally{names.forEach((key,i)=>{if(previous[i]===undefined)delete process.env[key];else process.env[key]=previous[i];});}
 });
 
