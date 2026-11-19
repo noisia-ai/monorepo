@@ -129,8 +129,14 @@ Brandhon wants this look in the studies themselves too (the decks), not only on 
 - **For a study** (website page, card, email and, if the deck wants it, its cover or section
   images), write `image.brief` and `image.place` in the study's `estudio.json` and run
   `pnpm content:image <web folder>`. The same `imagen.png` and `imagen-wide.png` can go into the
-  deck. A deck that needs more scenes writes one prompt per scene: blocks 1 to 6 as they are, and
-  blocks 7 to 10 for each scene.
+  deck.
+- **A deck that needs more scenes** (a cover, section covers) writes one prompt per scene: blocks
+  1 to 6 copied as they are from `image.ts`, and blocks 7 to 10 for each scene. Same model,
+  quality and sizes. This is what Pitch Kit does today. The copy lives in the case's folder,
+  outside git, because the scenes carry client data. When `STYLE` changes, a deck still being
+  built has to copy it again.
+- **Pitch Kit's pointer** is `packages/pitch-kit/HUMAN_SIGNALS.md` §VII.1 ("La imagen de un
+  estudio"). It names this file and `STYLE` as the source of the prompt.
 - **Pitch Kit's own creative direction** (Human Signals, Kinetic Cinema) stays for sales decks,
   video and atmosphere: `packages/pitch-kit/HUMAN_SIGNALS.md`. This look is the quiet one, one
   person and one moment in haze, for studies and their pages.
@@ -145,13 +151,13 @@ At about USD 0.20 per image (high quality). The real spend is in the OpenAI usag
 | 17 Nov 2026 | Style test on the insurance study: three styles, two candidates each | 6 | USD 1.20 |
 | 17–18 Nov 2026 | Images of the four Triggers & Barriers studies, vertical and wide, with candidates | ~16 | USD 3.20 |
 | 17–18 Nov 2026 | Insights experiment (on hold) | 12 | USD 2.40 |
-| | **Total** | **~34** | **~USD 6.80** |
+| 19 Nov 2026 | A paid study deck by Pitch Kit: cover in both shapes (two candidates each) and 8 section covers | 12 | USD 2.40 |
+| | **Total** | **~46** | **~USD 9.20** |
 
 **What to budget:**
 - **A new study:** two candidates of each shape is 4 images, about USD 0.80. With one round of
   retries, about USD 1.60.
-- **A study whose deck uses this look in its sections:** add about USD 0.40 per scene (two
-  candidates).
+- **A paid study deck with section covers:** about 10 scenes, USD 2 to 3.
 - Show the figure before generating.
 
 ## Reference
