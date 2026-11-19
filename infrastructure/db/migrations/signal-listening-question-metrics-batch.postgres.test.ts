@@ -91,8 +91,9 @@ test('batch metrics preserve completed classifier probabilities, H5 precedence a
  await parity(access,{configuration_id:moved.configuration_id,map_id:f.map_id});
  const current=await loadSignalListeningConfigurationWithClientV1(f.database,access.workspace_id,moved.configuration_id);assert.ok(current);
  const template=current.configuration.questions.find(q=>q.topic_source==='defined');assert.ok(template);
- const excluded=await saveSignalListeningConfigurationV1({...access,expected_revision:current.revision,provenance:'human',configuration:localizeSyntheticListeningConfigurationV1({...current.configuration,lexicon_terms:['compact_no_lexical_match_7f34'],questions:[...current.configuration.questions,...Array.from({length:9},(_,i)=>({...template,key:'compact_defined_'+i,human_locked:false}))]})});
+ const excluded=await saveSignalListeningConfigurationV1({...access,expected_revision:current.revision,provenance:'human',configuration:localizeSyntheticListeningConfigurationV1({...current.configuration,lexicon_terms:['compact_no_lexical_match_7f34'],questions:[...current.configuration.questions,...Array.from({length:9},(_,i)=>({...template,key:'compact_defined_'+i,scope:'consumer_category' as const,human_locked:false}))]})});
  assert.ok(excluded.configuration.questions.filter(q=>q.topic_source==='defined').length>8);
+ assert.equal(excluded.configuration.questions.filter(q=>q.key.startsWith('compact_defined_')&&q.scope==='consumer_category').length,9,'all new published topics exercise consumer-category scope');
  await assertCompactNativeCasesV1(access,{configuration_id:excluded.id,map_id:f.map_id},{extended:true,expected_scope:'excluded'});
  await parity(access,{configuration_id:excluded.id,map_id:f.map_id,include_outside:true});
  await f.database.query("UPDATE users SET status='inactive' WHERE id=$1",[f.actor_user_id]);
