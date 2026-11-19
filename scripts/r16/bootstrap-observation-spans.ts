@@ -72,8 +72,7 @@ export function summarizeR16BootstrapObservationV1(
   completedDurations:number[]=[];
  let sequenceIncomplete=false,anyTransition=false;
  const byJob=new Map<number,R16CalibrationObservationV1[]>();
- for(let index=0;index<calibration.length;index++){
-  const event=calibration[index];
+ for(const[index,event]of calibration.entries()){
   if(!validOrdinal(event.job_ordinal)){
    issues.push({job_ordinal:null,event_index:index+1,code:'invalid_job_ordinal'});sequenceIncomplete=true;continue;
   }
@@ -99,8 +98,8 @@ export function summarizeR16BootstrapObservationV1(
   const events=byJob.get(span.job_ordinal)??[];
   let open:{id:number;startMs:number;startEventIndex:number}|null=null;
   let lastStartedId:number|null=null,lastAt=-Infinity;
-  for(let index=0;index<events.length;index++){
-   const event=events[index],eventIndex=index+1;
+  for(const[index,event]of events.entries()){
+   const eventIndex=index+1;
    if(!validMs(event.at_ms)){
     issues.push({job_ordinal:span.job_ordinal,event_index:eventIndex,code:'invalid_timestamp'});sequenceIncomplete=true;
    }else if(event.at_ms<lastAt){
