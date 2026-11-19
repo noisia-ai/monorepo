@@ -46,6 +46,7 @@ test('batch metrics preserve pending roots, both scopes, zero options, periods a
  const access={database:f.database,workspace_id:f.workspace_id,actor_user_id:f.actor_user_id};const args={configuration_id:cfg.id,map_id:f.map_id};
  const results=await parity(access,args);assert.ok(results.some(r=>r.scope==='consumer_category'&&r.counts.awaiting_base===3));
  assert.ok(results.every(r=>r.counts.asked===0&&r.distribution.every(d=>d.count===0&&d.probability_sum===null)));
+ assert.ok(results.every(r=>r.counts.corpus_eligible>0&&r.topic_cross.length===0),'roots without confirmed topics remain in every requested population');
  const empty=await parity(access,{...args,from:'2100-01-01T00:00:00Z',to:'2100-02-01T00:00:00Z',timezone:'America/Sao_Paulo',granularity:'week'});
  assert.ok(empty.every(r=>r.counts.corpus_eligible===0&&r.coverage===null&&r.trend.length===0));
  await parity(access,{...args,include_outside:true,granularity:'month'});

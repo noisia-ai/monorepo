@@ -75,7 +75,7 @@ export async function readSignalListeningQuestionsMetricsV1(args:SignalListening
  SELECT q.question_key,q.question_digest,q.definition->>'type' question_type,q.wire
  FROM signal_listening_questions q WHERE q.workspace_id=$1 AND q.configuration_id=$2 AND q.question_key=ANY($5::text[])),
 p AS MATERIALIZED(
- SELECT root_id,question_key,definition,candidate,scope_state,answer,human_belongs,effective_belongs,published_at,
+ SELECT root_id,question_key,(definition ? 'topic_source') has_topic_source,candidate,scope_state,answer,human_belongs,effective_belongs,published_at,
   CASE WHEN human_belongs IS NOT NULL THEN CASE WHEN human_belongs THEN 'positive' ELSE 'negative' END
    WHEN(answer->>'noul')::double precision>=.7 THEN 'positive' WHEN(answer->>'noul')::double precision<=.3 THEN 'negative'
    WHEN answer->>'noul' IS NOT NULL THEN 'uncertain' END effective_class
@@ -84,7 +84,7 @@ p AS MATERIALIZED(
   AND($6::timestamptz IS NULL OR published_at>=$6) AND($7::timestamptz IS NULL OR published_at<$7)),
 root_topics AS MATERIALIZED(
  SELECT root_id,array_agg(question_key ORDER BY question_key) FILTER(WHERE candidate AND scope_state='included'
-  AND definition ? 'topic_source' AND effective_belongs) topic_keys FROM p GROUP BY root_id),
+  AND has_topic_source AND effective_belongs) topic_keys FROM p GROUP BY root_id),
 target AS MATERIALIZED(
  SELECT t.* FROM p t JOIN root_topics topics ON topics.root_id=t.root_id
  WHERE t.question_key=ANY($5::text[]) AND($10::text IS NULL OR $10=ANY(topics.topic_keys))),
