@@ -266,7 +266,6 @@ export async function loadNativeReceiptEvidenceV1(client: Client, before: Genera
       after_generation_index: verifiedPath?.after_generation_index ?? null,
       generation_ids: verifiedPath?.generation_ids ?? null, listening_source_round_id: financialAnchor?.round_id ?? study.listening_source_round_id,
       listening_source_kind: study.listening_source_kind, listening_base_snapshot_id: study.listening_base_snapshot_id,
-      root_census_digest: parent.root_census_digest,
       child_run_count: children.length };
     if (parent.status !== "completed") limitations.add("listening_parent_not_completed");
     const roundCalls = roundIds.length ? (await client.query<{ id: string; call_state: string; settled_micro_usd: string | null;

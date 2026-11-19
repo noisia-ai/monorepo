@@ -625,12 +625,13 @@ export async function verifyBlindPackageV1(packageDir: string): Promise<{ valid:
     || !HASH_RE.test(manifest.source_digest) || !HASH_RE.test(manifest.seed_fingerprint)
     || !Number.isFinite(Date.parse(manifest.created_at)) || !Array.isArray(manifest.packet_files) || !rows.length || manifest.answer_key_separate !== true
     || rows.some(x => !/^[a-f0-9]{12}$/u.test(x.packet_ref) || !Number.isSafeInteger(x.quota) || x.quota < 1 || !Number.isSafeInteger(x.available) || x.available < 0
-      || !Number.isSafeInteger(x.selected) || x.selected < 0 || x.selected > x.available || x.selected > x.quota
+      || !Number.isSafeInteger(x.selected) || x.selected < 0 || x.selected > x.available
       || x.shortfall !== Math.max(0, x.quota - x.selected))
     || !axisRows.length || axisRows.some(x => !/^[a-f0-9]{12}$/u.test(x.ref) || !/^[a-f0-9]{12}$/u.test(x.packet_ref)
       || !rows.some(s => s.packet_ref === x.packet_ref) || !Number.isSafeInteger(x.required) || x.required < 0
-      || !Number.isSafeInteger(x.selected) || x.selected < 0 || x.selected > x.required
+      || !Number.isSafeInteger(x.selected) || x.selected < 0
       || !Number.isSafeInteger(x.shortfall) || x.shortfall !== Math.max(0, x.required - x.selected))
+    || rows.some(x => x.selected > x.quota && !(x.quota === 200 && axisRows.filter(axis => axis.packet_ref === x.packet_ref).length === 8))
     || !Array.isArray(manifest.incompleteness_reasons) || manifest.incompleteness_reasons.some((x: string) => x !== "required_metric_receipt_missing")
     || manifest.shortfall_count !== expectedShortfall
     || !["complete", "census_with_shortfalls", "evidence_incomplete"].includes(manifest.completeness)
@@ -656,17 +657,41 @@ export async function verifyBlindPackageV1(packageDir: string): Promise<{ valid:
       || !Array.isArray(manifest.readiness_reasons)) throw new Error("blind_readiness_evidence_invalid");
     if (!manifest.readiness_evidence.official_motive_ranked) readinessReasons.push("official_motive_rank_missing");
     if (expectedShortfall > 0) readinessReasons.push("sampling_shortfalls");
-    if (!manifest.readiness_evidence.metric_receipts_complete) readinessReasons.push("required_metric_receipt_missing");
+    const receipts = manifest.receipts as BlindSnapshotV1["receipts"] | undefined;
+    const receiptDataMeasured = !!receipts && receipts.cost_scope === "native_provider_ledgers"
+      && receipts.total_cost_usd !== null && finiteNonNegative(receipts.total_cost_usd) && receipts.total_reserved_usd === 0
+      && receipts.total_elapsed_ms !== null && finiteNonNegative(receipts.total_elapsed_ms)
+      && receipts.timing_scope === "wall_span" && Array.isArray(receipts.stages) && receipts.stages.length > 0
+      && receipts.stages.every(row => row.cost_usd !== null && finiteNonNegative(row.cost_usd) && row.reserved_usd !== null
+        && finiteNonNegative(row.reserved_usd) && row.elapsed_ms !== null && finiteNonNegative(row.elapsed_ms));
+    const receiptRowsComplete = !!receipts && receipts.status === "complete" && receiptDataMeasured;
+    const receiptNumbersConsistent = !!receipts && ["complete", "incomplete"].includes(receipts.status)
+      && (receipts.status === "complete") === receiptDataMeasured
+      && (!receiptDataMeasured || (Math.abs(receipts.stages.reduce((sum, row) => sum + row.cost_usd!, 0) - receipts.total_cost_usd!) <= .000001
+        && Math.abs(receipts.stages.reduce((sum, row) => sum + row.reserved_usd!, 0) - receipts.total_reserved_usd!) <= .000001));
+    const incompletenessReasons = manifest.incompleteness_reasons as string[];
+    const completenessConsistent = manifest.completeness === "complete"
+      ? receiptRowsComplete && !incompletenessReasons.length
+      : manifest.completeness === "evidence_incomplete"
+        ? incompletenessReasons.includes("required_metric_receipt_missing")
+        : manifest.completeness === "census_with_shortfalls";
+    const metricReceiptsComplete = receiptRowsComplete && !incompletenessReasons.includes("required_metric_receipt_missing")
+      && manifest.completeness !== "evidence_incomplete";
+    if (!receiptNumbersConsistent || !completenessConsistent
+      || manifest.readiness_evidence.metric_receipts_complete !== metricReceiptsComplete) {
+      throw new Error("blind_readiness_metric_receipt_mismatch");
+    }
+    if (!metricReceiptsComplete) readinessReasons.push("required_metric_receipt_missing");
     if (!sameQuotaHistogram(Object.fromEntries(rows.reduce((hist, row) => hist.set(String(row.quota), (hist.get(String(row.quota)) ?? 0) + 1),
-      new Map<string, number>())), expectedR16QuotaHistogram())) readinessReasons.push("protocol_quotas_mismatch");
-    if (!sameQuotaHistogram(Object.fromEntries(axisRows.reduce((hist, row) => hist.set(String(row.required), (hist.get(String(row.required)) ?? 0) + 1),
-      new Map<string, number>())), { "30": 4, "40": 4, "50": 1 })) readinessReasons.push("axis_quotas_mismatch");
+      new Map<string, number>())), expectedR16QuotaHistogram())
+      || !sameQuotaHistogram(Object.fromEntries(axisRows.reduce((hist, row) => hist.set(String(row.required), (hist.get(String(row.required)) ?? 0) + 1),
+        new Map<string, number>())), { "30": 4, "40": 4, "50": 1 })) throw new Error("blind_manifest_protocol_quotas_invalid");
     const axisPacketHistogram: Record<string, number> = {};
     for (const item of axisRows) {
       const packetQuota = rows.find(stratum => stratum.packet_ref === item.packet_ref)?.quota;
       if (packetQuota !== undefined) axisPacketHistogram[String(packetQuota)] = (axisPacketHistogram[String(packetQuota)] ?? 0) + 1;
     }
-    if (!sameQuotaHistogram(axisPacketHistogram, { "30": 1, "200": 8 })) readinessReasons.push("axis_references_mismatch");
+    if (!sameQuotaHistogram(axisPacketHistogram, { "30": 1, "200": 8 })) throw new Error("blind_manifest_axis_references_invalid");
     if (JSON.stringify([...manifest.readiness_reasons].sort()) !== JSON.stringify([...readinessReasons].sort())
       || manifest.readiness !== (readinessReasons.length ? "not_ready" : "ready")) throw new Error("blind_readiness_manifest_mismatch");
   }

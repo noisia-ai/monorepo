@@ -64,6 +64,10 @@ test("same synthetic snapshot and custody seed produce identical blind packets a
   const snapshot = syntheticSnapshot();
   const a = buildBlindPackageV1(snapshot, seed); const b = buildBlindPackageV1(snapshot, seed);
   assert.deepEqual(a, b);
+  const axisStratum = a.key.custody_manifest.strata.find(row => row.sample_code === "TAX")!;
+  assert.ok(axisStratum.selected > axisStratum.quota, "the Study axis census may exceed its 200-case minimum");
+  const targetOverrepresentation = a.key.custody_manifest.axis_coverage.find(row => row.code === "target_own_brand")!;
+  assert.equal(targetOverrepresentation.selected, 40, "the target stratum includes already-selected cases toward its minimum");
   assert.equal(a.packets.length, 52);
   assert.ok(a.packets.every(packet => { validatePacketV1(packet); return packet.cases.every(row => !("mention_id" in row)); }));
   assert.equal(a.manifest.completeness, "complete");
@@ -374,13 +378,41 @@ test("private writer emits separated custody key, atomic package, and verifiable
     const mismatchManifestText = `${JSON.stringify(mismatchManifest, null, 2)}\n`;
     await writeFile(mismatchManifestPath, mismatchManifestText, { mode: 0o600 });
     const sumsPath = resolve(mismatchPackage, "SHA256SUMS");
-    const sums = (await readFile(sumsPath, "utf8")).trim().split("\n").map(line => {
+    const updatedSums = (await readFile(sumsPath, "utf8")).trim().split("\n").map(line => {
       if (line.endsWith("  packet-01.json")) return `${sha256(mismatchPacketText)}  packet-01.json`;
       if (line.endsWith("  manifest.json")) return `${sha256(mismatchManifestText)}  manifest.json`;
       return line;
     });
-    await writeFile(sumsPath, `${sums.join("\n")}\n`, { mode: 0o600 });
+    await writeFile(sumsPath, `${updatedSums.join("\n")}\n`, { mode: 0o600 });
     await assert.rejects(() => verifyBlindPackageV1(mismatchPackage), /selected_case_mismatch/u);
+
+    const inconsistentReceiptsPackage = resolve(temp, "inconsistent-receipts-auditor");
+    await writeBlindPackageV1({ snapshotPath, seedPath, packageDir: inconsistentReceiptsPackage,
+      custodyKeyPath: resolve(temp, "custody", "inconsistent-receipts-key.json") });
+    const inconsistentManifestPath = resolve(inconsistentReceiptsPackage, "manifest.json");
+    const inconsistentManifest = JSON.parse(await readFile(inconsistentManifestPath, "utf8"));
+    inconsistentManifest.receipts.status = "incomplete";
+    const inconsistentManifestText = `${JSON.stringify(inconsistentManifest, null, 2)}\n`;
+    await writeFile(inconsistentManifestPath, inconsistentManifestText, { mode: 0o600 });
+    const inconsistentSumsPath = resolve(inconsistentReceiptsPackage, "SHA256SUMS");
+    const inconsistentSums = (await readFile(inconsistentSumsPath, "utf8")).trim().split("\n").map(line => line.endsWith("  manifest.json")
+      ? `${sha256(inconsistentManifestText)}  manifest.json` : line);
+    await writeFile(inconsistentSumsPath, `${inconsistentSums.join("\n")}\n`, { mode: 0o600 });
+    await assert.rejects(() => verifyBlindPackageV1(inconsistentReceiptsPackage), /readiness_metric_receipt_mismatch/u);
+
+    const lowQuotaPackage = resolve(temp, "lowered-quota-auditor");
+    await writeBlindPackageV1({ snapshotPath, seedPath, packageDir: lowQuotaPackage,
+      custodyKeyPath: resolve(temp, "custody", "lowered-quota-key.json") });
+    const lowQuotaManifestPath = resolve(lowQuotaPackage, "manifest.json");
+    const lowQuotaManifest = JSON.parse(await readFile(lowQuotaManifestPath, "utf8"));
+    lowQuotaManifest.strata.find((row: { quota: number }) => row.quota === 50).quota = 49;
+    const lowQuotaText = `${JSON.stringify(lowQuotaManifest, null, 2)}\n`;
+    await writeFile(lowQuotaManifestPath, lowQuotaText, { mode: 0o600 });
+    const lowQuotaSumsPath = resolve(lowQuotaPackage, "SHA256SUMS");
+    const lowQuotaSums = (await readFile(lowQuotaSumsPath, "utf8")).trim().split("\n").map(line => line.endsWith("  manifest.json")
+      ? `${sha256(lowQuotaText)}  manifest.json` : line);
+    await writeFile(lowQuotaSumsPath, `${lowQuotaSums.join("\n")}\n`, { mode: 0o600 });
+    await assert.rejects(() => verifyBlindPackageV1(lowQuotaPackage), /blind_manifest_(?:protocol_quotas_invalid|invalid)/u);
     const sums = await readFile(resolve(packageDir, "SHA256SUMS"), "utf8");
     assert.doesNotMatch(sums, /answer-key/u);
     assert.equal((await stat(packageDir)).mode & 0o777, 0o700);
