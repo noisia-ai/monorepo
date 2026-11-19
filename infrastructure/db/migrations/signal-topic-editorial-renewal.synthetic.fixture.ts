@@ -44,7 +44,7 @@ export type SignalTopicEditorialRenewalSyntheticSeedArgsV1 = SyntheticTransactio
   root_count?: number;
   seed_published_at?: string;
   study_vector_groups?:boolean;
-  study_author_metadata?:boolean;study_text_length?:number;
+  study_author_metadata?:boolean;study_text_length?:number;wire_octet_probe?:true;
   import_batch_size?: number;
   preparation_page_size?: number;
   embedding_page_limit?: number;
@@ -267,7 +267,7 @@ export async function seedSignalTopicEditorialRenewalSourceV1(args: SignalTopicE
   // rollback, including failures. Its numerical records and receipts are real.
   const clusterIds = args.projection?.cluster_ids ?? [randomUUID(), randomUUID()] as const;
   const projection = await syntheticClientWorkspaceFixtureV1({ database, scoped, query, cleanup: async () => {} }, {
-    identity, root_count: args.root_count, seed_published_at: args.seed_published_at, study_vector_groups:args.study_vector_groups,study_author_metadata:args.study_author_metadata,study_text_length:args.study_text_length,long_text: args.long_text, import_batch_size: args.import_batch_size,
+    identity, root_count: args.root_count, seed_published_at: args.seed_published_at, study_vector_groups:args.study_vector_groups,study_author_metadata:args.study_author_metadata,study_text_length:args.study_text_length,long_text: args.long_text, import_batch_size: args.import_batch_size,...(args.wire_octet_probe===true?{wire_octet_probe:true as const}:{}),
     preparation_page_size: args.preparation_page_size,
     embedding_page_limit: args.embedding_page_limit,
     skip_topic_prototypes: args.skip_topic_prototypes,

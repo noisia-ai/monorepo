@@ -1,8 +1,10 @@
+import {invertWirePopulationMetadataV1} from './signal-listening-wire-population.oracle';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {invertCompactListeningRunsV1} from './signal-listening-compact-population.oracle';
 import {readFile} from 'node:fs/promises';
 import {projectionMetadataBeforeLinearJoinsV1,projectionBeforeRawSha256V1,projectionBeforeNormalizedSha256V1,projectionShaV1,projectionHelperPartsV1,unchangedSourcePartsV1,assertProjectionLinearPlanV1,sanitizeProjectionLinearPlanV1,type ProjectionPlanV1} from './signal-listening-projection-linear-joins.oracle';
+import {assertCompiler21006NegativeFixturesV1,invertSignalListeningCompiler21006V1} from './signal-listening-compiler-source-chain.test-support';
 const listeningChangeOnlyContextLineV1="  context_registration:'change_only',\n";
 function assertProjectionSuffixAfterListeningContextOptInV1(compactSuffix:string){
  // First recover baseline T using only the two compact calls and cost formula.
@@ -23,7 +25,8 @@ test('linear join oracle freezes complete a883 nine-bind query with exact raw98e
  assert.equal(Math.max(...[...projectionMetadataBeforeLinearJoinsV1.matchAll(/\$(\d+)/g)].map(m=>Number(m[1]))),9);
 });
 test('linear join candidate changes only two bounded projection joins beyond materialized barriers',async()=>{
- const parts=projectionHelperPartsV1(await readFile(new URL('../signal-listening-runs.ts',import.meta.url),'utf8'));
+ const source=await readFile(new URL('../signal-listening-runs.ts',import.meta.url),'utf8');
+ const parts=projectionHelperPartsV1(invertSignalListeningCompiler21006V1(invertWirePopulationMetadataV1(source)));
  for(const key of ['prefix','helperOutsideSql'] as const)assert.equal(projectionShaV1(parts[key]),unchangedSourcePartsV1[key]);
  assertProjectionSuffixAfterListeningContextOptInV1(parts.suffix);
  assert.ok(parts.sql.includes('fit_matches AS MATERIALIZED('));assert.ok(parts.sql.includes('projection_rows AS MATERIALIZED('));
@@ -38,8 +41,13 @@ test('linear join candidate changes only two bounded projection joins beyond mat
  assert.equal(parts.sql.slice(0,start)+previous,projectionMetadataBeforeLinearJoinsV1,'every clause before the two join changes is literal');
 });
 test('projection source chain rejects missing, duplicate, moved or altered context opt-ins and unrelated suffix edits',async()=>{
- const {suffix}=projectionHelperPartsV1(await readFile(new URL('../signal-listening-runs.ts',import.meta.url),'utf8'));
+ const current=await readFile(new URL('../signal-listening-runs.ts',import.meta.url),'utf8');assertCompiler21006NegativeFixturesV1(current);
+ const {suffix}=projectionHelperPartsV1(invertSignalListeningCompiler21006V1(invertWirePopulationMetadataV1(current)));
  assertProjectionSuffixAfterListeningContextOptInV1(suffix);
+ const unrelatedNeedle=' const limit=options.page_size??200;';assert.equal(current.split(unrelatedNeedle).length-1,1);
+ const unrelated=current.replace(unrelatedNeedle,' const limit=options.page_size??201;');
+ assert.throws(()=>assertProjectionSuffixAfterListeningContextOptInV1(projectionHelperPartsV1(invertSignalListeningCompiler21006V1(invertWirePopulationMetadataV1(unrelated))).suffix),
+  'unrelated runtime edit survives compiler inverse and fails the frozen suffix hash');
  const without=suffix.replace(listeningChangeOnlyContextLineV1,'');
  for(const [name,changed] of [
   ['missing',without],

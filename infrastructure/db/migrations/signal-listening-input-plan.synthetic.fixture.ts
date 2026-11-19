@@ -1,3 +1,4 @@
+import {invertWirePopulationMetadataV1,wirePopulationMetadataV1} from './signal-listening-wire-population.oracle';
 import {createHash,randomUUID} from 'node:crypto';
 import {readFile,mkdir,open,realpath,rm,lstat} from 'node:fs/promises';
 import {dirname,join,relative,resolve} from 'node:path';
@@ -17,20 +18,41 @@ const hash=(text:string)=>'sha256:'+createHash('sha256').update(text,'utf8').dig
 export const INPUT_PLAN_LIMITS_V1=Object.freeze({ordinal:65,notice_bytes:4*1024*1024,input_bytes:64*1024*1024,
  templates:128,nodes:512,depth:64,output_bytes:4*1024*1024});
 export const INPUT_PLAN_TARGET_SHA_V1='sha256:e2a1d2ae7cc6917e1b58de56e7d3a2ad108e902feeb46d5d1dd1559644421f42';
+export const INPUT_PLAN_WIRE_E_TARGET_SHA_V1='sha256:b4e38b2486fca6e4025b361b9c47ba4ad79edd91294b2554ff8b93edd3ba2150';
+export const INPUT_PLAN_CURRENT_PROFILE_V1='E' as const;
+export type InputPlanTargetProfileV1='historical'|'E';
+const targetShaV1=(profile:InputPlanTargetProfileV1)=>{known(profile==='historical'||profile==='E');return profile==='historical'?INPUT_PLAN_TARGET_SHA_V1:INPUT_PLAN_WIRE_E_TARGET_SHA_V1;};
 export const inputPlanTemplateHashV1=(text:string)=>hash(text.replace(/\s+/gu,' ').trim());
 function known(ok:unknown):asserts ok{if(!ok)throw Error('r16_input_plan_observer_invalid_or_incomplete');}
 
 /** Resolve the same two literal substitutions as the production TypeScript.
- * No eval, query replay, rewritten SQL, bind values or SQL artifact is used. */
-export function extractListeningInputPlanQueryV1(source:string){
+ * Target versions use only the registered source inverse; no eval, replay,
+ * bind values or SQL artifact is used. */
+function extractHistoricalInputPlanQueryV1(source:string,expected=INPUT_PLAN_TARGET_SHA_V1){
  const scope=/const unresolvedScope="([^"\n]+)";/u.exec(source);
  const human=/const noHumanDecision=`([^`]+)`;/u.exec(source);
  const method=source.split('async function inputProjectionMetadata(');known(method.length===2);
  const template=/\(`(\/\* labeling_listening_input_metadata_v1 \*\/[\s\S]*?)`,\s*\[run\.workspace_id/u.exec(method[1]!);
  known(scope&&human&&template);
  const sql=template[1]!.replaceAll('${unresolvedScope}',scope[1]!).replaceAll('${noHumanDecision}',human[1]!);
- known(!sql.includes('${')&&inputPlanTemplateHashV1(sql)===INPUT_PLAN_TARGET_SHA_V1);
- return{sql,template_sha256:INPUT_PLAN_TARGET_SHA_V1};
+ known(!sql.includes('${')&&inputPlanTemplateHashV1(sql)===expected);
+ return{sql,template_sha256:expected};
+}
+
+/** Historical selector remains explicit; E must invert the complete registered
+ * three-delta SQL back to that immutable query before matching its own pin. */
+export function extractListeningInputPlanQueryOldV1(source:string){
+ return extractHistoricalInputPlanQueryV1(source.includes('FROM signal_listening_wire_population_roots_v1')?invertWirePopulationMetadataV1(source):source);
+}
+export function extractListeningInputPlanQueryV1(source:string,profile:InputPlanTargetProfileV1=INPUT_PLAN_CURRENT_PROFILE_V1){
+ if(profile==='historical')return{...extractListeningInputPlanQueryOldV1(source),profile,legacy_template_sha256:INPUT_PLAN_TARGET_SHA_V1};
+ known(profile==='E');const oldSource=invertWirePopulationMetadataV1(source);known(wirePopulationMetadataV1(oldSource)===source);
+ const old=extractHistoricalInputPlanQueryV1(oldSource);
+ // Expand the SAME literal scope/human interpolations. The only SQL edits are
+ // the closed reader and two octet columns already checked by the inverse.
+ const {sql}=extractHistoricalInputPlanQueryV1(wirePopulationMetadataV1(oldSource),INPUT_PLAN_WIRE_E_TARGET_SHA_V1);known(old.template_sha256===INPUT_PLAN_TARGET_SHA_V1);
+ known(inputPlanTemplateHashV1(sql)===INPUT_PLAN_WIRE_E_TARGET_SHA_V1);
+ return{sql,template_sha256:INPUT_PLAN_WIRE_E_TARGET_SHA_V1,profile,legacy_template_sha256:INPUT_PLAN_TARGET_SHA_V1};
 }
 
 const nodeTypes=new Set(['Named Tuplestore Scan','Nested Loop','Hash Join','Merge Join','Aggregate','Group','Unique','SetOp','WindowAgg',
@@ -122,6 +144,7 @@ export type InputPlanDatabaseV1={query:(...args:any[])=>any;connect:(...args:any
 export type InputPlanClientV1={query:(...args:any[])=>Promise<QueryResultV1>;release:(destroy?:boolean)=>void;
  on:(event:string,handler:(notice:unknown)=>void)=>unknown;removeListener:(event:string,handler:(notice:unknown)=>void)=>unknown;listenerCount:(event:string)=>number};
 export type InputPlanObservationV1={
+ target_profile:InputPlanTargetProfileV1;target_template_sha256:string;legacy_template_sha256:string;
  status:'pending'|'observed'|'INCONCLUSIVE';ordinal_seen:number;selected_count:number;original_executions:number;
  original_succeeded:boolean;result_reference_preserved:boolean;returned_rows:number|null;root_argument_count:number|null;bind_count:number|null;
  query_raw_match:boolean;context_stable:boolean;rr_read_only:boolean;settings_restored:boolean;rollback_reset_confirmed:boolean;discarded:boolean;
@@ -155,9 +178,10 @@ async function readSettings(client:InputPlanClientV1){
 /** All controls use the underlying client, outside the selected await/listener.
  * Added latency is intrusive. This is neither an uninstrumented timing nor CPU.
  * Each selected query is forwarded exactly once, with its original arguments. */
-export function createListeningInputPlanObserverV1(options:{target_sql:string}){
- known(inputPlanTemplateHashV1(options.target_sql)===INPUT_PLAN_TARGET_SHA_V1);
- const report:InputPlanObservationV1={status:'pending',ordinal_seen:0,selected_count:0,original_executions:0,
+export function createListeningInputPlanObserverV1(options:{target_sql:string;profile?:InputPlanTargetProfileV1}){
+ const profile=options.profile??INPUT_PLAN_CURRENT_PROFILE_V1,targetSha=targetShaV1(profile);
+ known(inputPlanTemplateHashV1(options.target_sql)===targetSha);
+ const report:InputPlanObservationV1={target_profile:profile,target_template_sha256:targetSha,legacy_template_sha256:INPUT_PLAN_TARGET_SHA_V1,status:'pending',ordinal_seen:0,selected_count:0,original_executions:0,
   original_succeeded:false,result_reference_preserved:false,returned_rows:null,root_argument_count:null,bind_count:null,
   query_raw_match:false,context_stable:false,rr_read_only:false,settings_restored:false,rollback_reset_confirmed:false,discarded:false,
   library_loaded:false,library_unloaded:false,notices:0,input_bytes:0,loss:false,failure_stage:'none',parent_present:false,nested_present:false,context:null,plans:[]};
@@ -189,8 +213,8 @@ export function createListeningInputPlanObserverV1(options:{target_sql:string}){
   }catch{failure(stage);}
  };
  const snapshot=():InputPlanObservationV1=>{
-  report.parent_present=report.plans.some(p=>p.query_template_sha256===INPUT_PLAN_TARGET_SHA_V1);
-  report.nested_present=report.plans.some(p=>p.query_template_sha256!==INPUT_PLAN_TARGET_SHA_V1);
+  report.parent_present=report.plans.some(p=>p.query_template_sha256===targetSha);
+  report.nested_present=report.plans.some(p=>p.query_template_sha256!==targetSha);
   report.status=report.selected_count===1&&report.original_executions===1&&report.original_succeeded&&report.result_reference_preserved&&
    report.query_raw_match&&report.context_stable&&report.rr_read_only&&report.settings_restored&&!report.loss&&
    report.parent_present&&report.nested_present?'observed':'INCONCLUSIVE';
@@ -222,7 +246,7 @@ export function createListeningInputPlanObserverV1(options:{target_sql:string}){
   const wrapQuery=async(...args:any[]):Promise<QueryResultV1>=>{
    const text=typeof args[0]==='string'?args[0]:args[0]&&typeof args[0].text==='string'?args[0].text:undefined;
    const normalized=text?.replace(/\s+/gu,' ').trim();
-   const target=text!==undefined&&inputPlanTemplateHashV1(text)===INPUT_PLAN_TARGET_SHA_V1;
+   const target=text!==undefined&&inputPlanTemplateHashV1(text)===targetSha;
    if(target)report.ordinal_seen++;
    if(!target||report.ordinal_seen!==INPUT_PLAN_LIMITS_V1.ordinal){
     try{
@@ -291,7 +315,7 @@ export function createListeningInputPlanObserverV1(options:{target_sql:string}){
    if(key==='connect')return async(...args:any[])=>{known(args.length===0);return borrowed(await target.connect());};
    if(key==='query')return(...args:any[])=>{const text=typeof args[0]==='string'?args[0]:args[0]?.text;
     // The target must be the client's native RR transaction, never Pool.query.
-    if(typeof text==='string'&&inputPlanTemplateHashV1(text)===INPUT_PLAN_TARGET_SHA_V1){failure('context');known(false);}
+    if(typeof text==='string'&&inputPlanTemplateHashV1(text)===targetSha){failure('context');known(false);}
     return target.query(...args);};
    const value=Reflect.get(target,key,target);return typeof value==='function'?value.bind(target):value;
   }});},snapshot,backendPids:()=>[...pids],
@@ -406,7 +430,7 @@ export async function runR16ListeningInputPlanProbeV1(directory:string):Promise<
    redis_url:process.env.R16BENCH_REDIS_URL!,query_profiler:queryProfiler,withNativeFixture,
    writePreregistration:async value=>{preregistration={contract:'r16-input-plan-driver-registration-v1',
     registration:value.registration,workload_sha256:hash(JSON.stringify(value)),expected_source_tree_sha256:report.source.expected_git!.source_tree_sha256,
-    target_template_sha256:INPUT_PLAN_TARGET_SHA_V1,ordinal:INPUT_PLAN_LIMITS_V1.ordinal,limits:INPUT_PLAN_LIMITS_V1,
+    target_profile:INPUT_PLAN_CURRENT_PROFILE_V1,target_template_sha256:INPUT_PLAN_WIRE_E_TARGET_SHA_V1,legacy_template_sha256:INPUT_PLAN_TARGET_SHA_V1,ordinal:INPUT_PLAN_LIMITS_V1.ordinal,limits:INPUT_PLAN_LIMITS_V1,
     note:'unmodified_driver_registration_not_H1_acceptance'};}}));
   known(measurement.fully_resolved_distinct_roots===32768&&measurement.requests===65536&&measurement.unresolved_roots===0&&
    measurement.capacity_gates.native_processing_complete===true&&measurement.capacity_gates.serving===true&&

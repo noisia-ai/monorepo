@@ -1,3 +1,4 @@
+import {wirePopulationMigrationV1,wirePopulationPartsV1,wirePopulationSourceV1,wirePopulationNameV1,wirePopulationMoneyProsrcShaV1,wirePopulationCatalogV1} from './signal-listening-wire-population.oracle';
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import {createHash,randomUUID} from 'node:crypto';
@@ -29,19 +30,20 @@ export function restoreSharedWirePayloadSourceV1(source:string){
 export function sharedWireVariantsV1(oldSource:string,newSource:string){return[['before',oldSource],['after',newSource],['variant',sharedWirePayloadBarrierSourceV1(newSource)]]as const;}
 export function sharedWireValidationV1(source:string){const matches=[...source.matchAll(/EXECUTE format\(\$validation\$([\s\S]*?)\$validation\$,batch_sql\)/g)];assert.equal(matches.length,1);const sql=matches[0]![1]!;assert.equal((sql.match(/%s/g)??[]).length,1);return sql.replace('%s','SELECT n.* FROM jsonb_populate_recordset(NULL::signal_labeling_calls,$8::jsonb) n');}
 export async function sharedWireSourcesV1(){return Promise.all(['0329_signal_listening_expected_projection.sql',sharedWireMigrationV1].map(n=>readFile(new URL('./'+n,import.meta.url),'utf8')));}
-export function sharedWireDefaultContractFromSourcesV1(sourceB:string,sourceC?:string,sourceD?:string){
+export function sharedWireDefaultContractFromSourcesV1(sourceB:string,sourceC?:string,sourceD?:string,sourceE?:string){
  assert.equal(sharedWireShaV1(sourceB),frozenSharedWireSourceShaV1);
  if(sourceC!==undefined)assert.equal(sourceC,sharedWirePayloadBarrierSourceV1(sourceB),'0331 must be all exact proved C bytes');
  if(sourceD!==undefined){assert.ok(sourceC!==undefined);statementNativeProjectionSourceV1(sourceC,sourceD);}
- const source=sourceD??sourceC??sourceB,match=/CREATE OR REPLACE FUNCTION signal_listening_statement_money_v1\(\) RETURNS trigger LANGUAGE plpgsql SET search_path=public,extensions,pg_temp AS \$\$([\s\S]*)\$\$;\n$/.exec(source);assert.ok(match);
+ if(sourceE!==undefined){assert.ok(sourceD!==undefined);const proof=wirePopulationPartsV1(sourceE);assert.equal(proof.money.replace('FROM '+wirePopulationNameV1,'FROM signal_listening_population_roots_v1'),sourceD);}
+ const source=sourceE??sourceD??sourceC??sourceB,match=/CREATE OR REPLACE FUNCTION signal_listening_statement_money_v1\(\) RETURNS trigger LANGUAGE plpgsql SET search_path=public,extensions,pg_temp AS \$\$([\s\S]*)\$\$;\n$/.exec(source);assert.ok(match);
  const prosrc=match[1]!;
- return{contract:'r16-statement-shared-wire-default-contract-v1',default_arm:sourceD!==undefined?'D':sourceC===undefined?'B':'C',migration:sourceD!==undefined?statementNativeProjectionMigrationV1:sourceC===undefined?sharedWireMigrationV1:sharedWirePayloadMigrationV1,source_sha256:sharedWireShaV1(source),prosrc,prosrc_sha256:sharedWireShaV1(prosrc),metadata:{proconfig:['search_path=public, extensions, pg_temp'],lanname:'plpgsql',prosecdef:false,return_type:'trigger',pronargs:0,proretset:false,provolatile:'v',proisstrict:false,proparallel:'u',proleakproof:false,prokind:'f'}};
+ return{contract:'r16-statement-shared-wire-default-contract-v1',default_arm:sourceE!==undefined?'E':sourceD!==undefined?'D':sourceC===undefined?'B':'C',migration:sourceE!==undefined?wirePopulationMigrationV1:sourceD!==undefined?statementNativeProjectionMigrationV1:sourceC===undefined?sharedWireMigrationV1:sharedWirePayloadMigrationV1,source_sha256:sharedWireShaV1(source),prosrc,prosrc_sha256:sharedWireShaV1(prosrc),metadata:{proconfig:['search_path=public, extensions, pg_temp'],lanname:'plpgsql',prosecdef:false,return_type:'trigger',pronargs:0,proretset:false,provolatile:'v',proisstrict:false,proparallel:'u',proleakproof:false,prokind:'f'}};
 }
 export async function sharedWireDefaultContractV1(){
  const [,sourceB]=await sharedWireSourcesV1();assert.ok(sourceB);
- // Current runtime is strictD: a missing0336 is never an easier B/C default.
- const [sourceC,sourceD]=await Promise.all([sharedWirePayloadMigrationV1,statementNativeProjectionMigrationV1].map(n=>readFile(new URL('./'+n,import.meta.url),'utf8')));assert.ok(sourceC&&sourceD);
- return sharedWireDefaultContractFromSourcesV1(sourceB,sourceC,sourceD);
+ // Current runtime is strictE: a missing0337 is never an easier B/C/D default.
+ const [sourceC,sourceD,sourceE]=await Promise.all([sharedWirePayloadMigrationV1,statementNativeProjectionMigrationV1,wirePopulationMigrationV1].map(n=>readFile(new URL('./'+n,import.meta.url),'utf8')));assert.ok(sourceC&&sourceD&&sourceE);
+ return sharedWireDefaultContractFromSourcesV1(sourceB,sourceC,sourceD,sourceE);
 }
 export function assertSharedWireDefaultRowV1(row:Record<string,unknown>|undefined,expected:ReturnType<typeof sharedWireDefaultContractFromSourcesV1>){
  assert.ok(row&&typeof row.prosrc==='string','actual native function must exist');
@@ -85,14 +87,14 @@ export function sharedWireCanonicalProjectionV1(oldSource:string,newSource:strin
  const canonical=arm==='before'?`public.signal_labeling_json_v1(${p.preimage})`:p.canonical;
  return anchorListeningStatementOracleParametersV1(sql.slice(0,end)+`,serialized AS MATERIALIZED(SELECT id,${canonical} canonical FROM expected)\n SELECT id,encode(convert_to(canonical,'UTF8'),'hex') bytes,'sha256:'||encode(sha256(convert_to(canonical,'UTF8')),'hex') digest FROM serialized e ORDER BY id`);
 }
-export async function compareSharedWireValidationV1(c:PoolClient,oldSource:string,newSource:string,params:unknown[],sourceD?:string){
- const all=[];for(const [arm,source]of sourceD===undefined?sharedWireVariantsV1(oldSource,newSource):sharedWireNativeVariantsV1(oldSource,newSource,sourceD)){const sql=sharedWireValidationV1(source);
+export async function compareSharedWireValidationV1(c:PoolClient,oldSource:string,newSource:string,params:unknown[],sourceD?:string,sourceE?:string){
+ const all=[];for(const [arm,source]of sourceD===undefined?sharedWireVariantsV1(oldSource,newSource):sharedWireNativeVariantsV1(oldSource,newSource,sourceD,sourceE)){const sql=sharedWireValidationV1(source);
   const flags=(await c.query(anchorListeningStatementOracleParametersV1(sql),params)).rows[0];
   const projected=await c.query(listeningExpectedProjectionOracleSqlV1(sql),params);
   const exact=(await c.query(listeningExpectedProjectionOracleSqlV1(sql,true),params)).rows;
-  const canonical=(await c.query(arm==='native'?statementNativeCanonicalProjectionV1(oldSource,sourceD!):sharedWireCanonicalProjectionV1(oldSource,newSource,arm),params)).rows;
+  const canonical=(await c.query(arm==='native'||arm==='wire'?statementNativeCanonicalProjectionV1(oldSource,source):sharedWireCanonicalProjectionV1(oldSource,newSource,arm),params)).rows;
   all.push({flags,fields:projected.fields.map(f=>[f.name,f.dataTypeID]),exact,canonical});
- }for(const result of all.slice(1))assert.deepEqual(result,all[0],'frozen A/B/C plus optionalD:3flags/8typedfields/multiplicity/SQLtext/UTF8/fullSHA equal in same native snapshot');return all[0]!;
+ }for(const result of all.slice(1))assert.deepEqual(result,all[0],'frozen A/B/C plus optionalD/E:3flags/8typedfields/multiplicity/SQLtext/UTF8/fullSHA equal in same native snapshot');return all[0]!;
 }
 // Kernel tests feed representation probes as PostgreSQL JSON text, never JS
 // numbers. It executes the actual0330 fragments and canonical expression.
@@ -161,15 +163,15 @@ export function statementNativeProjectionSourceV1(sourceC:string,sourceD:string)
 }
 export async function sharedWireNativeSourcesV1(){
  const [old,next]=await sharedWireSourcesV1();assert.ok(old&&next);
- const sourceC=await readFile(new URL('./'+sharedWirePayloadMigrationV1,import.meta.url),'utf8'),sourceD=await readFile(new URL('./'+statementNativeProjectionMigrationV1,import.meta.url),'utf8');assert.equal(sourceC,sharedWirePayloadBarrierSourceV1(next));statementNativeProjectionSourceV1(sourceC,sourceD);return[old,next,sourceD]as const;
+ const sourceC=await readFile(new URL('./'+sharedWirePayloadMigrationV1,import.meta.url),'utf8'),sourceD=await readFile(new URL('./'+statementNativeProjectionMigrationV1,import.meta.url),'utf8');assert.equal(sourceC,sharedWirePayloadBarrierSourceV1(next));statementNativeProjectionSourceV1(sourceC,sourceD);const [raw,sourceE]=await Promise.all(['0333_signal_listening_bounded_mentions.sql',wirePopulationMigrationV1].map(n=>readFile(new URL('./'+n,import.meta.url),'utf8')));assert.ok(raw&&sourceE);wirePopulationSourceV1(raw,sourceD,sourceE);return[old,next,sourceD,sourceE]as const;
 }
-export function sharedWireNativeVariantsV1(oldSource:string,newSource:string,sourceD:string){statementNativeProjectionSourceV1(sharedWirePayloadBarrierSourceV1(newSource),sourceD);return[...sharedWireVariantsV1(oldSource,newSource),['native',sourceD]as const]as const;}
+export function sharedWireNativeVariantsV1(oldSource:string,newSource:string,sourceD:string,sourceE?:string){statementNativeProjectionSourceV1(sharedWirePayloadBarrierSourceV1(newSource),sourceD);const historical=[...sharedWireVariantsV1(oldSource,newSource),['native',sourceD]as const]as const;if(sourceE===undefined)return historical;const proof=wirePopulationPartsV1(sourceE);assert.equal(proof.money.replace('FROM '+wirePopulationNameV1,'FROM signal_listening_population_roots_v1'),sourceD);return[...historical,['wire',proof.money]as const]as const;}
 export function statementNativeCanonicalProjectionV1(oldSource:string,sourceD:string){
  const p=sharedWireCanonicalPartsV1(oldSource,sourceD),end=p.next.indexOf('\n   SELECT COALESCE(');assert.ok(end>=0);
  return anchorListeningStatementOracleParametersV1(p.next.slice(0,end)+`,serialized AS MATERIALIZED(SELECT id,${p.canonical} canonical FROM expected)\n SELECT id,encode(convert_to(canonical,'UTF8'),'hex') bytes,'sha256:'||encode(sha256(convert_to(canonical,'UTF8')),'hex') digest FROM serialized e ORDER BY id`);
 }
-export function statementNativeRepresentationKernelV1(oldSource:string,newSource:string,sourceD:string){
- statementNativeProjectionSourceV1(sharedWirePayloadBarrierSourceV1(newSource),sourceD);const p=sharedWireCanonicalPartsV1(oldSource,sourceD);
+export function statementNativeRepresentationKernelV1(oldSource:string,newSource:string,sourceD:string,sourceE?:string){
+ statementNativeProjectionSourceV1(sharedWirePayloadBarrierSourceV1(newSource),sourceD);const current=sourceE===undefined?sourceD:wirePopulationPartsV1(sourceE).money;if(sourceE!==undefined)assert.equal(current.replace('FROM '+wirePopulationNameV1,'FROM signal_listening_population_roots_v1'),sourceD);const p=sharedWireCanonicalPartsV1(oldSource,current);
  const prefix=`WITH selected AS MATERIALIZED(SELECT id,native_questions questions FROM jsonb_to_recordset($8::jsonb) e(id uuid,native_questions jsonb)),expected AS MATERIALIZED(SELECT id,i,digests,basis,expected_request FROM jsonb_to_recordset($8::jsonb) e(id uuid,i jsonb,digests jsonb,basis jsonb,expected_request jsonb)),${p.wires}`;
  return anchorListeningStatementOracleParametersV1(prefix+`,serialized AS MATERIALIZED(SELECT id,public.signal_labeling_json_v1(${p.preimage}) before_canonical,${p.canonical} native_canonical FROM expected) SELECT id,encode(convert_to(before_canonical,'UTF8'),'hex') before_bytes,encode(convert_to(native_canonical,'UTF8'),'hex') native_bytes,ARRAY(SELECT key FROM statement_native_fragments ORDER BY key COLLATE "C") fragment_keys FROM serialized ORDER BY id`);
 }
@@ -177,28 +179,30 @@ export function statementNativeRepresentationKernelV1(oldSource:string,newSource
 export async function statementNativeFunctionCatalogV1(c:PoolClient){return(await c.query<Record<string,unknown>>(`SELECT p.oid::text,p.proowner::text,p.proacl::text,p.proargtypes::text,p.proallargtypes::text,p.proargmodes::text,p.proargnames::text,
  p.proretset,p.proisstrict,p.prosecdef,p.provolatile,p.proparallel,p.proleakproof,p.prokind,p.procost,p.prorows,p.prosupport::text,l.lanname,p.proconfig,p.prorettype::regtype::text return_type,p.pronargs,p.pronargdefaults,p.proargdefaults::text,p.prosrc
  FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_language l ON l.oid=p.prolang WHERE p.oid='public.signal_listening_statement_money_v1()'::regprocedure`)).rows;}
-export async function assertStatementNativeCatalogReplacementV1(c:PoolClient,sourceC:string,sourceD:string){
+export async function assertStatementNativeCatalogReplacementV1(c:PoolClient,sourceC:string,sourceD:string,sourceE?:string){
  const proof=statementNativeProjectionSourceV1(sourceC,sourceD);await c.query(sourceC);const before=await statementNativeFunctionCatalogV1(c);assert.equal(before.length,1);assert.equal(sharedWireShaV1(String(before[0]!.prosrc)),'5ed4fa353803122208408b1f66a29b9fdea8599b86d0d0b8de3bb18d5b2155fa');
  await c.query(sourceD);const after=await statementNativeFunctionCatalogV1(c);assert.equal(after.length,1);assert.equal(sharedWireShaV1(String(after[0]!.prosrc)),proof.prosrc_sha256);
  const withoutBody=({prosrc,...row}:Record<string,unknown>)=>row;assert.deepEqual(after.map(withoutBody),before.map(withoutBody),'CREATE OR REPLACE retains exact native OID/owner/ACL/signature/attrs');
+ if(sourceE!==undefined){const wire=wirePopulationPartsV1(sourceE);assert.equal(wire.money.replace('FROM '+wirePopulationNameV1,'FROM signal_listening_population_roots_v1'),sourceD);await c.query(wire.money);const current=await statementNativeFunctionCatalogV1(c);assert.equal(sharedWireShaV1(String(current[0]!.prosrc)),wirePopulationMoneyProsrcShaV1);assert.deepEqual(current.map(withoutBody),before.map(withoutBody),'E retains the same native OID/owner/ACL/signature/attrs');}
 }
 /** Only the owned synthetic CI clone may create this uncommitted probe role.
  * BYPASSRLS isolates column/EXECUTE ACL; it is not evidence of RLS coverage. */
-export async function assertStatementNativeColumnACLAndRevokeV1(c:PoolClient,sourceC:string,sourceD:string,params:unknown[]){
+export async function assertStatementNativeColumnACLAndRevokeV1(c:PoolClient,sourceC:string,sourceD:string,params:unknown[],sourceE?:string){
  statementNativeProjectionSourceV1(sourceC,sourceD);const role='r16_statement_acl_'+randomUUID().replaceAll('-',''),quoted='"'+role+'"';
  const own=(await c.query("SELECT current_database() name,current_user owner,(SELECT rolsuper FROM pg_catalog.pg_roles WHERE rolname=current_user) super")).rows[0];assert.match(own.name,/^noisia_mfp_recovery_[a-f0-9]{32}$/u);assert.equal(own.super,true);
- const raw='signal_listening_population_roots_v1(uuid,uuid,uuid,text,uuid[],text)',helpers=[raw,'signal_labeling_json_v1(jsonb)','signal_labeling_digest_v1(jsonb)','signal_mass_labeling_lexical_text_v1(text)','signal_mass_labeling_category_pattern_v1(text[])','signal_mass_labeling_category_pattern_matches_v1(text,text)','signal_mass_labeling_r13_hashtags_v1(text)','signal_listening_discovery_candidates_v1(uuid,uuid,uuid,uuid,uuid)'];
+ const raw='signal_listening_population_roots_v1(uuid,uuid,uuid,text,uuid[],text)',wire=wirePopulationNameV1+'(uuid,uuid,uuid,text,uuid[],text)',sources=sourceE===undefined?[sourceC,sourceD]:[sourceC,sourceD,wirePopulationPartsV1(sourceE).money],helpers=[raw,...(sourceE===undefined?[]:[wire]),'signal_labeling_json_v1(jsonb)','signal_labeling_digest_v1(jsonb)','signal_mass_labeling_lexical_text_v1(text)','signal_mass_labeling_category_pattern_v1(text[])','signal_mass_labeling_category_pattern_matches_v1(text,text)','signal_mass_labeling_r13_hashtags_v1(text)','signal_listening_discovery_candidates_v1(uuid,uuid,uuid,uuid,uuid)'];
  const aclState=async()=>(await c.query(`SELECT jsonb_build_object('functions',(SELECT jsonb_agg(jsonb_build_array(p.oid::text,p.proowner::text,p.proacl::text) ORDER BY p.oid) FROM pg_catalog.pg_proc p WHERE p.oid IN(SELECT pg_catalog.to_regprocedure(x)::oid FROM unnest($1::text[]) x)),
   'tables',(SELECT jsonb_agg(jsonb_build_array(cl.oid::text,cl.relowner::text,cl.relacl::text) ORDER BY cl.oid) FROM pg_catalog.pg_class cl JOIN pg_catalog.pg_namespace n ON n.oid=cl.relnamespace WHERE n.nspname='public'),
   'columns',(SELECT jsonb_agg(jsonb_build_array(a.attnum,a.attacl::text) ORDER BY a.attnum) FROM pg_catalog.pg_attribute a WHERE a.attrelid='public.mentions'::regclass)) value`,[helpers.map(x=>'public.'+x)])).rows[0].value;
+ const producerBefore=sourceE===undefined?undefined:await wirePopulationCatalogV1(c);if(sourceE!==undefined)assert.equal(producerBefore!.find(r=>r.proname===wirePopulationNameV1)!.prosrc,wirePopulationPartsV1(sourceE).raw.split('AS $function$')[1]!.split('$function$;')[0]!);
  const baseline=await aclState(),prepared=new Set<string>();await c.query('SAVEPOINT statement_acl_scope');
  try{
   await c.query('CREATE ROLE '+quoted+' NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT BYPASSRLS');
   for(const schema of['public','extensions'])await c.query('GRANT USAGE ON SCHEMA "'+schema+'" TO '+quoted);
   await c.query('GRANT SELECT ON ALL TABLES IN SCHEMA public TO '+quoted);for(const signature of helpers)await c.query('GRANT EXECUTE ON FUNCTION public.'+signature+' TO '+quoted);
-  const probe=async(source:string):Promise<{rows?:Array<Record<string,unknown>>;code?:string;message?:string}>=>{await c.query('SAVEPOINT statement_acl_probe');try{await c.query('SET LOCAL ROLE '+quoted);const name=role+(source===sourceC?'_C':'_D'),result=await c.query<Record<string,unknown>>({name,text:anchorListeningStatementOracleParametersV1(sharedWireValidationV1(source)),values:params});prepared.add(name);return{rows:result.rows};}catch(error){return{code:(error as {code?:string}).code,message:(error as Error).message};}finally{await c.query('ROLLBACK TO SAVEPOINT statement_acl_probe');await c.query('RESET ROLE');await c.query('RELEASE SAVEPOINT statement_acl_probe');}};
-  const positive=async()=>{for(const source of[sourceC,sourceD]){const result=await probe(source);assert.equal(result.code,undefined,result.message);assert.deepEqual(result.rows,[{invalid_questions:false,invalid_request:false,invalid_prior:false}],'nonowner has sufficient SELECT/helper rights before revocation');}assert.equal(prepared.size,2,'the same named C/D statements are cached before each permission change');};
-  const denied=async(gate:string)=>{for(const source of[sourceC,sourceD]){const result=await probe(source);assert.equal(result.code,'42501');assert.ok(result.message?.includes(gate),'denial names the intended gate, not another helper/RLS');}};
+  const probe=async(source:string):Promise<{rows?:Array<Record<string,unknown>>;code?:string;message?:string}>=>{await c.query('SAVEPOINT statement_acl_probe');try{await c.query('SET LOCAL ROLE '+quoted);const name=role+(source===sourceC?'_C':source===sourceD?'_D':'_E'),result=await c.query<Record<string,unknown>>({name,text:anchorListeningStatementOracleParametersV1(sharedWireValidationV1(source)),values:params});prepared.add(name);return{rows:result.rows};}catch(error){return{code:(error as {code?:string}).code,message:(error as Error).message};}finally{await c.query('ROLLBACK TO SAVEPOINT statement_acl_probe');await c.query('RESET ROLE');await c.query('RELEASE SAVEPOINT statement_acl_probe');}};
+  const positive=async()=>{for(const source of sources){const result=await probe(source);assert.equal(result.code,undefined,result.message);assert.deepEqual(result.rows,[{invalid_questions:false,invalid_request:false,invalid_prior:false}],'nonowner has sufficient SELECT/helper rights before revocation');}assert.equal([...prepared].filter(name=>name!==role+'_wire').length,sources.length,'the same named C/D and optionalE statements are cached before each permission change');};
+  const denied=async(gate:string)=>{for(const source of sources){const result=await probe(source);assert.equal(result.code,'42501');assert.ok(result.message?.includes(gate),'denial names the intended gate, not another helper/RLS');}};
   const identity=(await c.query("SET LOCAL ROLE "+quoted).then(()=>c.query("SELECT current_user name,(SELECT oid::text FROM pg_catalog.pg_roles WHERE rolname=current_user) oid,(SELECT rolsuper FROM pg_catalog.pg_roles WHERE rolname=current_user) super,(SELECT rolbypassrls FROM pg_catalog.pg_roles WHERE rolname=current_user) bypass"))).rows[0];await c.query('RESET ROLE');assert.equal(identity.name,role);assert.equal(identity.super,false);assert.equal(identity.bypass,true);assert.notEqual(identity.oid,(await statementNativeFunctionCatalogV1(c))[0]!.proowner);
   await positive();await c.query('SAVEPOINT statement_column_phase');
   try{
@@ -206,10 +210,12 @@ export async function assertStatementNativeColumnACLAndRevokeV1(c:PoolClient,sou
    const columns=(await c.query("SELECT attname FROM pg_catalog.pg_attribute WHERE attrelid='public.mentions'::regclass AND attnum>0 AND NOT attisdropped AND attname<>'platform' ORDER BY attnum")).rows.map(r=>String(r.attname));assert.ok(columns.length>0&&columns.every(x=>/^[a-z_][a-z_0-9]*$/u.test(x)));await c.query('GRANT SELECT('+columns.map(x=>'"'+x+'"').join(',')+') ON public.mentions TO '+quoted);
    const gate=(await c.query("SELECT pg_catalog.has_table_privilege($1::name,'public.mentions','SELECT') whole,pg_catalog.has_column_privilege($1::name,'public.mentions','platform','SELECT') platform",[role])).rows[0];assert.equal(gate.whole,false);assert.equal(gate.platform,false);await denied('mentions');
   }finally{await c.query('ROLLBACK TO SAVEPOINT statement_column_phase');await c.query('RELEASE SAVEPOINT statement_column_phase');}
-  await positive();await c.query('SAVEPOINT statement_execute_phase');
-  try{await c.query('REVOKE EXECUTE ON FUNCTION public.'+raw+' FROM PUBLIC,'+quoted);assert.equal((await c.query("SELECT pg_catalog.has_function_privilege($1::name,$2::regprocedure,'EXECUTE') allowed",[role,'public.'+raw])).rows[0].allowed,false);await denied('signal_listening_population_roots_v1');}
+  const wireProbe=async(roots:unknown):Promise<{code?:string;message?:string}>=>{await c.query('SAVEPOINT wire_acl_probe');try{await c.query('SET LOCAL ROLE '+quoted);await c.query({name:role+'_wire',text:'SELECT * FROM public.'+wirePopulationNameV1+"($1::uuid,$2::uuid,$3::uuid,$4::text,$5::uuid[],'llm-processing')",values:[params[1],params[2],params[3],params[4],roots]});prepared.add(role+'_wire');return{};}catch(error){return{code:(error as {code?:string}).code,message:(error as Error).message};}finally{await c.query('ROLLBACK TO SAVEPOINT wire_acl_probe');await c.query('RESET ROLE');await c.query('RELEASE SAVEPOINT wire_acl_probe');}};
+  await positive();if(sourceE!==undefined)for(const roots of[params[5],null,[]])assert.equal((await wireProbe(roots)).code,undefined);
+  await c.query('SAVEPOINT statement_execute_phase');
+  try{await c.query('REVOKE EXECUTE ON FUNCTION public.'+raw+' FROM PUBLIC,'+quoted);assert.equal((await c.query("SELECT pg_catalog.has_function_privilege($1::name,$2::regprocedure,'EXECUTE') allowed",[role,'public.'+raw])).rows[0].allowed,false);await denied('signal_listening_population_roots_v1');if(sourceE!==undefined){assert.equal((await c.query("SELECT pg_catalog.has_function_privilege($1::name,$2::regprocedure,'EXECUTE') allowed",[role,'public.'+wire])).rows[0].allowed,true);for(const roots of[params[5],null,[]]){const result=await wireProbe(roots);assert.equal(result.code,'42501');assert.ok(result.message?.includes('signal_listening_population_roots_v1'));}}}
   finally{await c.query('ROLLBACK TO SAVEPOINT statement_execute_phase');await c.query('RELEASE SAVEPOINT statement_execute_phase');}
-  await positive();
+  await positive();if(sourceE!==undefined)for(const roots of[params[5],null,[]])assert.equal((await wireProbe(roots)).code,undefined);
  }finally{await c.query('ROLLBACK TO SAVEPOINT statement_acl_scope');await c.query('RESET ROLE');for(const name of prepared)await c.query('DEALLOCATE "'+name+'"');await c.query('RELEASE SAVEPOINT statement_acl_scope');}
- assert.equal((await c.query('SELECT pg_catalog.to_regrole($1) role',[role])).rows[0].role,null);assert.deepEqual(await aclState(),baseline,'all CI-only role/grants/column ACL changes roll back exactly');
+ assert.equal((await c.query('SELECT pg_catalog.to_regrole($1) role',[role])).rows[0].role,null);assert.deepEqual(await aclState(),baseline,'all CI-only role/grants/column ACL changes roll back exactly');if(sourceE!==undefined)assert.deepEqual(await wirePopulationCatalogV1(c),producerBefore,'raw11/raw14 OID/owner/ACL/body/allattrs unchanged after prepared revocations');
 }

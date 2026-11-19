@@ -1,3 +1,4 @@
+import {compareWirePopulationV1} from './signal-listening-wire-population.oracle';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {randomUUID} from 'node:crypto';
@@ -27,17 +28,19 @@ function oracleDatabase(database:LabelingDatabaseV1,counters:ProjectionLinearJoi
 }
 async function pair(c:PoolClient,sql:string,params:unknown[]){
  assert.deepEqual((await c.query("SELECT current_setting('transaction_isolation') isolation,current_setting('transaction_read_only') readonly")).rows[0],{isolation:'repeatable read',readonly:'on'});
+ await compareWirePopulationV1(c,[params[0],params[1],params[2],params[3],params[7],'llm-processing']);
  const before=(await c.query(projectionMetadataBeforeLinearJoinsV1,params)).rows,after=(await c.query(sql,params)).rows;
  assert.deepEqual(after,before,'complete metadata rows, projection and weights match frozen a883 in one RR/RO');return after;
 }
 test('projection linear joins native preserves256keys, Unicode microseconds, byte sentinels, reservations and rights',{
  skip:!enabled,timeout:600000,
-},async()=>runMassLabelingAcceptanceFixtureV1('product',{seed_published_at:'2026-01-01T00:00:00.123456Z',study_author_metadata:true,beforeProcessing:async f=>{
+},async()=>runMassLabelingAcceptanceFixtureV1('product',{seed_published_at:'2026-01-01T00:00:00.123456Z',study_author_metadata:true,wire_octet_probe:true,beforeProcessing:async f=>{
  const canceled=await f.database.query("UPDATE signal_labeling_runs SET status='canceled' WHERE id=$1 AND workspace_id=$2 AND status='queued' AND NOT EXISTS(SELECT 1 FROM signal_labeling_calls WHERE run_id=$1) RETURNING id",[f.run_id,f.workspace_id]);assert.equal(canceled.rows.length,1);
  const access={database:f.database,workspace_id:f.workspace_id,actor_user_id:f.actor_user_id},base=signalListeningBaseTemplateV1({category:'bicycles',lexicon_terms:['synthetic']});
  const cfg=await saveSignalListeningConfigurationV1({...access,expected_revision:0,provenance:'human',configuration:localizeSyntheticListeningConfigurationV1({...base,instructions:'Café 😀 漢字 "evidence"\n',questions:[...base.questions,
   ...Array.from({length:254},(_,i)=>({key:'detail_'+String(i).padStart(3,'0'),type:'noul' as const,text:'Café 😀?',positive:'sí 漢字',negative:'no',scope:'all' as const,origin:'brand_os' as const,human_locked:false}))]})});
  const admitted=await requestSignalListeningV1({...access,configuration_id:cfg.id,map_id:f.map_id,cap_micro_usd:1000000,idempotency_key:randomUUID(),provider_available:true});
+ const octets=(await f.database.query('SELECT max(octet_length(text)) bytes,max(length(text)) chars FROM signal_mass_labeling_items WHERE workspace_id=$1 AND map_id=$2',[f.workspace_id,f.map_id])).rows[0];assert.ok(octets.bytes>octets.chars);assert.ok(octets.bytes<12000);
  const counters={metadata:0,hydrated:0,sentinel:0},database=oracleDatabase(f.database,counters);
  const store=createSignalListeningStoreV1({database,page_size:4096,storeRaw:async()=>{throw Error('no provider');}}),run=await store.claim(admitted.run_id);assert.ok(run);
  try{

@@ -56,7 +56,7 @@ export function boundedMentionsSourceV1(source:string,candidate:string){
 async function nativeFlatCatalogV1(c:PoolClient,candidate:string){
  const before=await defaults(c);
  assert.equal(before.length,5);
- const mark=await sharedWireDefaultContractV1();assert.equal(mark.default_arm,'D');assert.equal(before.find(r=>r.proname==='signal_listening_statement_money_v1')!.prosrc,mark.prosrc,'current0336 Money is required; historical population aliases stay independent');
+ const mark=await sharedWireDefaultContractV1();assert.equal(mark.default_arm,'E');assert.equal(before.find(r=>r.proname==='signal_listening_statement_money_v1')!.prosrc,mark.prosrc,'current0337 Money is required; historical population aliases stay independent');
  const runtime=(await c.query("SELECT current_database() database,current_setting('server_version_num')::int version")).rows[0];assert.match(runtime.database,/^noisia_mfp_recovery_[a-f0-9]{32}$/u);assert.notEqual(runtime.database,new URL(process.env.DATABASE_URL!).pathname.slice(1));assert.ok(runtime.version>=170000&&runtime.version<180000);
  const native=before.find(r=>r.proname==='signal_listening_population_roots_v1')!;
  assert.equal(native.prosrc,candidate.split('AS $function$')[1]!.split('$function$;')[0]);assert.notEqual(native.proacl,null);

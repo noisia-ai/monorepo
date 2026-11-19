@@ -1,3 +1,4 @@
+import {wireOctetProbeTextsV1} from './signal-listening-wire-population.oracle';
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
 import type {Pool,PoolClient} from 'pg';
@@ -22,16 +23,17 @@ export type SyntheticTransactionV1={database:Pool;scoped:PoolClient;query:Worksp
 /** Accepted import only: no preparation, embeddings, execution or provider receipt.
  * The caller must own an approved synthetic-only transaction and its rollback. */
 export async function syntheticImportedWorkspaceFixtureV1(tx:SyntheticTransactionV1,
- identity?:{organization_id:string;brand_id:string;actor_user_id:string;workspace_id:string},options:{root_count?:number;seed_published_at?:string;long_text?:boolean;batch_size?:number;study_vector_groups?:boolean;study_author_metadata?:boolean;study_text_length?:number}={}){
+ identity?:{organization_id:string;brand_id:string;actor_user_id:string;workspace_id:string},options:{root_count?:number;seed_published_at?:string;long_text?:boolean;batch_size?:number;study_vector_groups?:boolean;study_author_metadata?:boolean;study_text_length?:number;wire_octet_probe?:true}={}){
  const {database,query}=tx;
  if(options.seed_published_at!==undefined)assert.match(options.seed_published_at,/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/u,'synthetic source timestamp must retain six fractional digits');
  const roots:string[]=[];
- const texts: string[]=options.root_count===undefined?[...NOI19_SYNTHETIC_TEXTS]:
+ let texts: string[]=options.root_count===undefined?[...NOI19_SYNTHETIC_TEXTS]:
   Array.from({length:options.root_count},(_,index)=>`Synthetic fixture root ${index.toString().padStart(4,'0')}.`);
  if(options.study_vector_groups){assert.ok(options.root_count&&options.root_count>=60&&options.root_count<=240);const forces=['A bicycle purchase feels reassuring with a smooth quiet ride.','A bicycle repair budget creates hesitation around costly spare parts.','Friends encourage a bicycle commute with shared weekend trips.'];for(let i=0;i<texts.length;i++)texts[i]+=' '+forces[i%3];}
  if(options.study_text_length!==undefined){assert.equal(options.study_vector_groups,true);assert.ok(Number.isInteger(options.study_text_length)&&options.study_text_length>=1000&&options.study_text_length<=13000);for(let i=0;i<texts.length;i++)texts[i]=texts[i]!.padEnd(options.study_text_length,` Synthetic fixture root ${i.toString().padStart(4,'0')}. Preparation material.`);}
  if(options.long_text&&texts.length)texts[0]=`${texts[0]} ${'Synthetic excerpt continuation. '.repeat(100)}`;
  if(options.study_author_metadata){assert.equal(options.batch_size??1,1);for(let i=0;i<texts.length;i++)texts[i]+=' '+(i%3===0?'Known Fixture Person Zero':i%3===1?'Suppressed Legacy Person One':'Known Legacy Person Two and Linked Fixture Person Two')+' talks with @fixture_user.';}
+ texts=wireOctetProbeTextsV1(texts,options.wire_octet_probe===true);
  const org=identity?.organization_id??randomUUID(),brand=identity?.brand_id??randomUUID(),actor_user_id=identity?.actor_user_id??randomUUID(),source=randomUUID(),batch=randomUUID();
  if(!identity){
  await query("INSERT INTO organizations(id,slug,legal_name,status) VALUES($1,$2,'Synthetic NOI-19 test organization','active')",[org,`noi19-${org}`]);
@@ -113,7 +115,7 @@ export async function syntheticClientWorkspaceFixtureV1(tx:SyntheticTransactionV
  root_count?:number;
  seed_published_at?:string;
  study_vector_groups?:boolean;
- study_author_metadata?:boolean;study_text_length?:number;
+ study_author_metadata?:boolean;study_text_length?:number;wire_octet_probe?:true;
  long_text?:boolean;
  import_batch_size?:number;
  preparation_page_size?:number;
@@ -122,7 +124,7 @@ export async function syntheticClientWorkspaceFixtureV1(tx:SyntheticTransactionV
  projection?:Parameters<typeof workspaceProjectionFixtureBodyV1>[1];
 }={}){
  const {database,query,scoped}=tx;
- const {workspace_id,actor_user_id}=await syntheticImportedWorkspaceFixtureV1(tx,options.identity,{root_count:options.root_count,seed_published_at:options.seed_published_at,long_text:options.long_text,batch_size:options.import_batch_size,study_vector_groups:options.study_vector_groups,study_author_metadata:options.study_author_metadata,study_text_length:options.study_text_length});
+ const {workspace_id,actor_user_id}=await syntheticImportedWorkspaceFixtureV1(tx,options.identity,{root_count:options.root_count,seed_published_at:options.seed_published_at,long_text:options.long_text,batch_size:options.import_batch_size,study_vector_groups:options.study_vector_groups,study_author_metadata:options.study_author_metadata,study_text_length:options.study_text_length,...(options.wire_octet_probe===true?{wire_octet_probe:true as const}:{})});
  const access={database,workspace_id,actor_user_id};
  const prep=await requestSignalWorkspaceCorpusPreparationStoreV1({...access,idempotency_key:randomUUID()});
  const prepJob=(await query('SELECT worker_job_id FROM signal_corpus_preparation_runs WHERE id=$1',[prep.run_id])).rows[0]!.worker_job_id;

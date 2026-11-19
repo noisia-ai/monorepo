@@ -1,7 +1,9 @@
+import {invertWirePopulationMetadataV1} from './signal-listening-wire-population.oracle';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {readFile} from 'node:fs/promises';
 import {assertCompactProjectionSourceV1,invertCompactListeningRunsV1,compactBaselineListeningShaV1,compactShaV1,compactReaderCallV1,extractCompactExecuteReaderSqlV1} from './signal-listening-compact-population.oracle';
+import {assertCompiler21006NegativeFixturesV1,invertSignalListeningCompiler21006V1} from './signal-listening-compiler-source-chain.test-support';
 test('compact projection exact inverses retain0333 authority and0316 H5; unrelated SQL is rejected',async()=>{
  const raw=await readFile(new URL('./0333_signal_listening_bounded_mentions.sql',import.meta.url),'utf8'),effective=await readFile(new URL('./0316_signal_listening_human_revision_plan.sql',import.meta.url),'utf8'),next=await readFile(new URL('./0335_signal_listening_compact_population.sql',import.meta.url),'utf8');
  const parts=assertCompactProjectionSourceV1(raw,effective,next);
@@ -22,7 +24,12 @@ test('compact projection exact inverses retain0333 authority and0316 H5; unrelat
  assert.ok(!/GRANT SELECT|ALTER ROLE|CREATE ROLE/.test(parts.acl));
 });
 test('compact readers reverse exactly to T before the retained CE38 and historical suffix identities',async()=>{
- const source=await readFile(new URL('../signal-listening-runs.ts',import.meta.url),'utf8');assert.equal(compactShaV1(invertCompactListeningRunsV1(source)),compactBaselineListeningShaV1);
+ const current=await readFile(new URL('../signal-listening-runs.ts',import.meta.url),'utf8'),source=invertSignalListeningCompiler21006V1(invertWirePopulationMetadataV1(current));assertCompiler21006NegativeFixturesV1(current);
+ assert.equal(compactShaV1(invertCompactListeningRunsV1(source)),compactBaselineListeningShaV1);
+ const unrelatedNeedle=' const limit=options.page_size??200;';assert.equal(current.split(unrelatedNeedle).length-1,1);
+ const unrelated=current.replace(unrelatedNeedle,' const limit=options.page_size??201;');
+ assert.notEqual(compactShaV1(invertCompactListeningRunsV1(invertSignalListeningCompiler21006V1(invertWirePopulationMetadataV1(unrelated)))),compactBaselineListeningShaV1,
+  'unrelated runtime edits survive only the compiler inverse and still fail the frozen complete-source hash');
  for(const changed of[source.replace(compactReaderCallV1,'signal_listening_population_v1($1,$2,$3,$4)'),source.replace('sum(body_chars+wire_chars+512)','sum(body_chars+wire_chars+511)'),source+compactReaderCallV1,source+'\n'])assert.throws(()=>assert.equal(compactShaV1(invertCompactListeningRunsV1(changed)),compactBaselineListeningShaV1));
 });
 

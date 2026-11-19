@@ -93,10 +93,10 @@ async function inputProjectionMetadata(c:Pick<PoolClient,'query'>,run:LabelingRu
    [run.workspace_id,o.map_id,sliceSize,o.configuration_id,run.id,...(cursor?[cursor]:[])])).rows.map(row=>row.root_id);
   if(!ids.length)break;
   const page=(await c.query<ListeningInputProjectionRowV1>(`/* labeling_listening_input_metadata_v1 */ WITH candidates AS MATERIALIZED(
-   SELECT p.root_id,p.input_digest,p.question_key,p.question_digest,p.scope_basis,octet_length(p.body)::bigint text_bytes,octet_length(p.wire::text)::bigint wire_bytes,
+   SELECT p.root_id,p.input_digest,p.question_key,p.question_digest,p.scope_basis,p.body_octets::bigint text_bytes,octet_length(p.wire::text)::bigint wire_bytes,
     (octet_length(p.question_key)+octet_length(p.question_digest)+octet_length(COALESCE(p.scope_basis,'')))::bigint question_metadata_bytes,
-    octet_length(COALESCE(p.platform,''))::bigint platform_bytes
-   FROM signal_listening_population_roots_v1($1::uuid,$2::uuid,$3::uuid,$4::text,$8::uuid[],'llm-processing') p WHERE ${unresolvedScope}
+    p.platform_octets::bigint platform_bytes
+   FROM signal_listening_wire_population_roots_v1($1::uuid,$2::uuid,$3::uuid,$4::text,$8::uuid[],'llm-processing') p WHERE ${unresolvedScope}
   ), sent AS MATERIALIZED(
    SELECT root_id,question_digest FROM signal_listening_call_questions WHERE workspace_id=$1 AND run_id=$5 AND root_id=ANY($8::uuid[])
   ), reservation_matches AS MATERIALIZED(

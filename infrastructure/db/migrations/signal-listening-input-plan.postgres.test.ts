@@ -4,7 +4,7 @@ import {join} from 'node:path';
 import test from 'node:test';
 import {
   INPUT_PLAN_GATES_V1,
-  INPUT_PLAN_TARGET_SHA_V1,
+  INPUT_PLAN_WIRE_E_TARGET_SHA_V1,
   runR16ListeningInputPlanProbeV1,
   type InputPlanProbeReceiptV1,
 } from './signal-listening-input-plan.synthetic.fixture';
@@ -72,8 +72,8 @@ test(nativeTitle,{skip:!native},async()=>{
   assert.match(String(observation.context?.search_path_sha256),/^sha256:[a-f0-9]{64}$/u);
   assert.match(String(observation.context?.snapshot_sha256),/^sha256:[a-f0-9]{64}$/u);
   assert.ok(observation.plans.length>=2&&observation.plans.length<=128);
-  assert.ok(observation.plans.some(plan=>plan.query_template_sha256===INPUT_PLAN_TARGET_SHA_V1));
-  assert.ok(observation.plans.some(plan=>plan.query_template_sha256!==INPUT_PLAN_TARGET_SHA_V1));
+  assert.ok(observation.plans.some(plan=>plan.query_template_sha256===INPUT_PLAN_WIRE_E_TARGET_SHA_V1));
+  assert.ok(observation.plans.some(plan=>plan.query_template_sha256!==INPUT_PLAN_WIRE_E_TARGET_SHA_V1));
   for(const plan of observation.plans){
     assert.equal(plan.variants,'NOT_COLLECTED');
     assert.ok(Number.isSafeInteger(plan.occurrences)&&plan.occurrences>0);

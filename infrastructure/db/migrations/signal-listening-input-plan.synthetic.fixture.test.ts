@@ -7,9 +7,11 @@ import test from 'node:test';
 import {
   createListeningInputPlanObserverV1,
   extractListeningInputPlanQueryV1,
+  extractListeningInputPlanQueryOldV1,
+  INPUT_PLAN_TARGET_SHA_V1,
   inputPlanTemplateHashV1,
   INPUT_PLAN_LIMITS_V1,
-  INPUT_PLAN_TARGET_SHA_V1,
+  INPUT_PLAN_WIRE_E_TARGET_SHA_V1,
   sanitizeListeningInputPlanV1,
   withListeningInputPlanStorageV1,
   type InputPlanClientV1,
@@ -61,7 +63,7 @@ function makeDatabase(options:{targetSql:string;throwSelected?:boolean;selectedE
         for(const [name,value] of initialSettings)currentSettings.set(name,value);
         return {rows:[]};
       }
-      if(inputPlanTemplateHashV1(text)===INPUT_PLAN_TARGET_SHA_V1){
+      if(inputPlanTemplateHashV1(text)===INPUT_PLAN_WIRE_E_TARGET_SHA_V1){
         targetCalls++;
         if(targetCalls===INPUT_PLAN_LIMITS_V1.ordinal){
           selectedCalls++;
@@ -112,10 +114,16 @@ async function runToOrdinal65(observer:ReturnType<typeof createListeningInputPla
 }
 
 if(pure){
-  test('input-plan query extraction binds the exact original template digest',async()=>{
-    const extracted=await sourceAndTarget();
-    assert.equal(extracted.template_sha256,INPUT_PLAN_TARGET_SHA_V1);
-    assert.equal(inputPlanTemplateHashV1(extracted.sql),INPUT_PLAN_TARGET_SHA_V1);
+  test('input-plan current E and explicit historical extraction bind independent frozen template digests',async()=>{
+    const source=await readFile(new URL('../signal-listening-runs.ts',import.meta.url),'utf8'),old=extractListeningInputPlanQueryOldV1(source);
+    assert.equal(old.template_sha256,INPUT_PLAN_TARGET_SHA_V1);assert.equal(inputPlanTemplateHashV1(old.sql),INPUT_PLAN_TARGET_SHA_V1);
+    assert.equal(extractListeningInputPlanQueryV1(source,'historical').sql,old.sql);
+    const extracted=await sourceAndTarget();assert.equal(extracted.profile,'E');assert.equal(extracted.legacy_template_sha256,INPUT_PLAN_TARGET_SHA_V1);
+    assert.throws(()=>extractListeningInputPlanQueryV1(source.replace('p.body_octets::bigint','p.body_octets::integer')));
+    assert.throws(()=>createListeningInputPlanObserverV1({target_sql:old.sql}),'default E cannot observe the old target silently');
+    const historic=createListeningInputPlanObserverV1({target_sql:old.sql,profile:'historical'});assert.equal(historic.snapshot().target_profile,'historical');
+    assert.equal(extracted.template_sha256,INPUT_PLAN_WIRE_E_TARGET_SHA_V1);
+    assert.equal(inputPlanTemplateHashV1(extracted.sql),INPUT_PLAN_WIRE_E_TARGET_SHA_V1);
     assert.ok(extracted.sql.length>0);
     assert.doesNotMatch(JSON.stringify(extracted),/PRIVATE_(?:ROOT|WORKSPACE|RUN)_SENTINEL/u);
   });
@@ -124,7 +132,7 @@ if(pure){
     const {sql}=await sourceAndTarget();
     const value=sanitizeListeningInputPlanV1(planDocument(sql,'PRIVATE_RELATION_SENTINEL'));
     const encoded=JSON.stringify(value);
-    assert.equal(value.plan.query_template_sha256,INPUT_PLAN_TARGET_SHA_V1);
+    assert.equal(value.plan.query_template_sha256,INPUT_PLAN_WIRE_E_TARGET_SHA_V1);
     const firstChild=((value.plan.Plan as Record<string,unknown>).Plans as Array<Record<string,unknown>>)[0]!;
     assert.match(String(firstChild['Relation Name SHA256']),/^sha256:[a-f0-9]{64}$/u);
     assert.ok(!Object.hasOwn(firstChild,'Relation Name'));

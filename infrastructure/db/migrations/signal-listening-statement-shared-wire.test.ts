@@ -18,14 +18,15 @@ test('0331 is the exact proved C source and reverses all bytes to frozen0330',as
  assert.equal(sharedWireShaV1(product),'cabed81234f56cf2647368aab03be14817d8de99073929f0d255b2a1f1153cf5');
  assert.equal(product,sharedWirePayloadBarrierSourceV1(next));assert.equal(restoreSharedWirePayloadSourceV1(product),next);
 });
-test('current default runtime strictly requires0336 D and rejects frozen B/C or altered metadata',async()=>{
+test('current default runtime strictly requires0337 E and rejects frozen B/C/D or altered metadata',async()=>{
  const [,sourceB]=await sharedWireSourcesV1();assert.ok(sourceB);const sourceC=sharedWirePayloadBarrierSourceV1(sourceB);
  const prior=sharedWireDefaultContractFromSourcesV1(sourceB),expected=await sharedWireDefaultContractV1();
  const historicalC=sharedWireDefaultContractFromSourcesV1(sourceB,sourceC);assert.equal(historicalC.default_arm,'C');
- assert.equal(prior.default_arm,'B');assert.equal(expected.default_arm,'D');assert.equal(expected.migration,'0336_signal_listening_statement_native_projection.sql');assert.equal(expected.prosrc_sha256,'314f138b69045a730efc9f306cc49fd19afed02d5aac276d07f78ac8c9d19b10');
+ assert.equal(prior.default_arm,'B');assert.equal(expected.default_arm,'E');assert.equal(expected.migration,'0337_signal_listening_wire_population.sql');assert.equal(expected.prosrc_sha256,'c9aba3719759b7cf09d96371be79838f487707b66a3c20d13070e7559a31a2e0');
+ const {readFile}=await import('node:fs/promises');const sourceD=await readFile(new URL('./0336_signal_listening_statement_native_projection.sql',import.meta.url),'utf8'),historicalD=sharedWireDefaultContractFromSourcesV1(sourceB,sourceC,sourceD);assert.equal(historicalD.default_arm,'D');assert.equal(historicalD.prosrc_sha256,'314f138b69045a730efc9f306cc49fd19afed02d5aac276d07f78ac8c9d19b10');assert.throws(()=>assertSharedWireDefaultRowV1({prosrc:historicalD.prosrc,...historicalD.metadata},expected));
  assert.equal(assertSharedWireDefaultRowV1({prosrc:prior.prosrc,...prior.metadata},prior).default_arm,'B');
  assert.notEqual(prior.prosrc_sha256,expected.prosrc_sha256);
- // Pure contract fixtures only, never evidence that PostgreSQL accepted0336.
+ // Pure contract fixtures only, never evidence that PostgreSQL accepted0337.
  const row={prosrc:expected.prosrc,...expected.metadata};
  assert.equal(assertSharedWireDefaultRowV1(row,expected).prosrc_sha256,expected.prosrc_sha256);
  assert.throws(()=>assertSharedWireDefaultRowV1({...row,prosrc:prior.prosrc},expected));
