@@ -3300,8 +3300,8 @@ jobs:
               raise SystemExit('Input-plan synthetic storage ownership or cleanup is incomplete')
           plans = observation.get('plans')
           if type(plans) is not list or not 2 <= len(plans) <= 128 \
-              or not any(type(p) is dict and p.get('query_template_sha256') == 'sha256:e2a1d2ae7cc6917e1b58de56e7d3a2ad108e902feeb46d5d1dd1559644421f42' for p in plans) \
-              or not any(type(p) is dict and p.get('query_template_sha256') != 'sha256:e2a1d2ae7cc6917e1b58de56e7d3a2ad108e902feeb46d5d1dd1559644421f42' for p in plans):
+              or not any(type(p) is dict and p.get('query_template_sha256') == 'sha256:b4e38b2486fca6e4025b361b9c47ba4ad79edd91294b2554ff8b93edd3ba2150' for p in plans) \
+              or not any(type(p) is dict and p.get('query_template_sha256') != 'sha256:b4e38b2486fca6e4025b361b9c47ba4ad79edd91294b2554ff8b93edd3ba2150' for p in plans):
               raise SystemExit('Input-plan parent and nested query templates were not both observed')
           for item in plans:
               if type(item) is not dict or item.get('variants') != 'NOT_COLLECTED' \

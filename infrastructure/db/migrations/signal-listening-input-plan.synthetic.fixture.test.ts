@@ -36,10 +36,12 @@ function planDocument(queryText:string,relation:string){
       Timing:{Generation:{Deform:0.1,Total:0.3},Inlining:0,Optimization:0.05,Emission:0.15,Total:0.5}}};
 }
 
-function makeDatabase(options:{targetSql:string;throwSelected?:boolean;selectedError?:unknown;existingNoticeListener?:boolean;rollbackError?:Error;releaseError?:Error;oversizedNotice?:boolean}){
+function makeDatabase(options:{targetSql:string;throwSelected?:boolean;selectedError?:unknown;existingNoticeListener?:boolean;rollbackError?:Error;releaseError?:Error;oversizedNotice?:boolean;deferParentUntilControl?:boolean;firstRestoreError?:Error}){
   const listeners=new Set<(notice:unknown)=>void>();
   let targetCalls=0,releaseCalls=0,destroyed=false,selectedCalls=0;
-  let loadCalls=0,settingUpdates=0;
+  let loadCalls=0,settingUpdates=0,pendingParent:string|null=null;
+  let firstTargetBinds:unknown,selectedBinds:unknown;
+  const deferredParentListenerCounts:number[]=[];
   const originalResult={rows:[{value:'PRIVATE_RESULT_SENTINEL'}],rowCount:1};
   const initialSettings=new Map(settingsNames.map(name=>[name,`previous:${name}`]));
   const currentSettings=new Map(initialSettings);
@@ -48,13 +50,22 @@ function makeDatabase(options:{targetSql:string;throwSelected?:boolean;selectedE
   const client={
     async query(...args:unknown[]){
       const text=typeof args[0]==='string'?args[0]:'';
+      // A following parameterized Bind closes the unnamed selected portal
+      // before the new command executes, even when that command will fail.
+      if(pendingParent!==null&&args[1]!==undefined){
+        deferredParentListenerCounts.push(listeners.size);
+        for(const listener of listeners)listener({message:`duration: 3.25 ms plan: ${pendingParent}`});
+        pendingParent=null;
+      }
       if(text.startsWith('SELECT pg_backend_pid()::int pid'))return {rows:[{pid:7123,role:'synthetic_ci_role',database:'noisia_mfp_ci',search_path:'public',superuser:'on',isolation:'repeatable read',readonly:'on',xid:null,snapshot:'snapshot-synthetic'}]};
       if(text.startsWith('SELECT name,current_setting(name) value')){
         const names=((args[1] as unknown[]|undefined)?.[0] as string[]|undefined)??[];
         return {rows:names.map(name=>({name,value:currentSettings.get(name)??''}))};
       }
       if(text==='SELECT set_config($1,$2,true)'){
-        const [name,value]=args[1] as [string,string];settingUpdates++;currentSettings.set(name,value);return {rows:[{set_config:value}]};
+        const [name,value]=args[1] as [string,string];
+        if(selectedCalls>0&&name==='auto_explain.log_min_duration'&&value==='-1'&&options.firstRestoreError)throw options.firstRestoreError;
+        settingUpdates++;currentSettings.set(name,value);return {rows:[{set_config:value}]};
       }
       if(text.startsWith('LOAD ')){loadCalls++;return {rows:[]};}
       if(text==='BEGIN'||text==='COMMIT')return {rows:[]};
@@ -64,14 +75,15 @@ function makeDatabase(options:{targetSql:string;throwSelected?:boolean;selectedE
         return {rows:[]};
       }
       if(inputPlanTemplateHashV1(text)===INPUT_PLAN_WIRE_E_TARGET_SHA_V1){
-        targetCalls++;
+        targetCalls++;if(targetCalls===1)firstTargetBinds=args[1];
         if(targetCalls===INPUT_PLAN_LIMITS_V1.ordinal){
-          selectedCalls++;
+          selectedCalls++;selectedBinds=args[1];
           if(options.throwSelected)throw options.selectedError;
           const parent=JSON.stringify(planDocument(text,'PRIVATE_PARENT_RELATION_SENTINEL'));
           const nested=JSON.stringify({'Query Text':'SELECT PRIVATE_NESTED_QUERY_SENTINEL','Plan':{'Node Type':'Seq Scan','Relation Name':'PRIVATE_NESTED_RELATION_SENTINEL','Actual Rows':1,'Actual Loops':1}});
+          if(options.deferParentUntilControl)pendingParent=parent;
           for(const listener of listeners){
-            listener({message:options.oversizedNotice
+            if(!options.deferParentUntilControl)listener({message:options.oversizedNotice
               ?`duration: 3.25 ms plan: ${parent}${' '.repeat(INPUT_PLAN_LIMITS_V1.notice_bytes)}`
               :`duration: 3.25 ms plan: ${parent}`});
             if(!options.oversizedNotice)listener({message:`duration: 0.75 ms plan: ${nested}`});
@@ -93,7 +105,8 @@ function makeDatabase(options:{targetSql:string;throwSelected?:boolean;selectedE
   } as unknown as InputPlanDatabaseV1;
   return {database,client,originalResult,get targetCalls(){return targetCalls;},get selectedCalls(){return selectedCalls;},
     get releaseCalls(){return releaseCalls;},get destroyed(){return destroyed;},get listenerCount(){return listeners.size;},
-    get loadCalls(){return loadCalls;},get settingUpdates(){return settingUpdates;}};
+    get loadCalls(){return loadCalls;},get settingUpdates(){return settingUpdates;},
+    get firstTargetBinds(){return firstTargetBinds;},get selectedBinds(){return selectedBinds;},deferredParentListenerCounts};
 }
 
 async function sourceAndTarget(){
@@ -166,13 +179,18 @@ if(pure){
   });
 
   test('observer captures only the 65th original RR read, parent and nested plans, preserving the result and controls',async()=>{
-    const {sql}=await sourceAndTarget();const fake=makeDatabase({targetSql:sql});
+    const {sql}=await sourceAndTarget();
+    for(const deferParentUntilControl of [false,true]){
+    const fake=makeDatabase({targetSql:sql,deferParentUntilControl});
     const observer=createListeningInputPlanObserverV1({target_sql:sql});
     const result=await runToOrdinal65(observer,fake.database,sql,2);
     const observation=observer.snapshot();
     assert.equal(result,fake.originalResult);
     assert.equal(fake.targetCalls,INPUT_PLAN_LIMITS_V1.ordinal+2);
     assert.equal(fake.selectedCalls,1);
+    assert.equal(fake.selectedBinds,fake.firstTargetBinds,'the selected original keeps the exact caller bind array');
+    assert.deepEqual(fake.deferredParentListenerCounts,deferParentUntilControl?[1]:[],'the deferred parent must reach the exclusive listener during the existing first restore');
+    assert.equal(fake.settingUpdates,2*settingsNames.length+1,'portal capture adds no control query');
     assert.equal(fake.releaseCalls,1);
     assert.equal(fake.destroyed,false);
     assert.equal(observation.status,'observed');
@@ -205,6 +223,27 @@ if(pure){
       assert.equal(plan.first.sanitized_sha256,'sha256:'+createHash('sha256').update(serialized,'utf8').digest('hex'),
         'retained plan digest must cover its exact serialized plan');
     }
+    }
+    const restoreError=new Error('synthetic first restore failure');
+    const failed=makeDatabase({targetSql:sql,deferParentUntilControl:true,firstRestoreError:restoreError});
+    const observer=createListeningInputPlanObserverV1({target_sql:sql});
+    const connection=await observer.wrapDatabase(failed.database).connect();await connection.query('BEGIN');
+    const binds=[1,2,3,4,5,6,7,['root-a'],9];
+    for(let index=1;index<INPUT_PLAN_LIMITS_V1.ordinal;index++)await connection.query(sql,binds);
+    await assert.rejects(connection.query(sql,binds),error=>error===restoreError);
+    assert.equal(failed.listenerCount,0,'a failed first restore also removes the exclusive listener');
+    assert.deepEqual(failed.deferredParentListenerCounts,[1]);
+    assert.equal(failed.selectedCalls,1);assert.equal(failed.targetCalls,INPUT_PLAN_LIMITS_V1.ordinal);
+    assert.equal(failed.settingUpdates,settingsNames.length,'failed first restore runs no later setting controls');
+    const incomplete=observer.snapshot();
+    assert.equal(incomplete.parent_present,true);assert.equal(incomplete.nested_present,true);
+    assert.equal(incomplete.original_succeeded,true);assert.equal(incomplete.result_reference_preserved,false);
+    assert.equal(incomplete.settings_restored,false);assert.equal(incomplete.context_stable,false);
+    assert.equal(incomplete.status,'INCONCLUSIVE');assert.equal(incomplete.loss,true);assert.equal(incomplete.failure_stage,'restore');
+    await connection.query('ROLLBACK');connection.release();
+    assert.equal(observer.snapshot().rollback_reset_confirmed,true);
+    assert.equal(observer.snapshot().discarded,true,'restoration uncertainty stays sticky after rollback');
+    assert.equal(observer.lifecycle().active_borrowed,0);
   });
 
   test('observer preserves a falsy original query error and confirms rollback reset',async()=>{
@@ -217,9 +256,13 @@ if(pure){
     try{await connection.query(sql,binds);}catch(error){threw=true;original=error;}
     assert.equal(threw,true);
     assert.equal(original,null,'the original null rejection must survive instrumentation');
+    assert.equal(fake.settingUpdates,settingsNames.length,'an aborted original runs no extra restoration SQL');
+    assert.equal(fake.listenerCount,0);
     await connection.query('ROLLBACK');connection.release();
     const observation=observer.snapshot();
     assert.equal(observation.failure_stage,'original');
+    assert.equal(observation.status,'INCONCLUSIVE');assert.equal(observation.settings_restored,false);
+    assert.equal(observation.parent_present,false);
     assert.equal(observation.rollback_reset_confirmed,true);
     assert.equal(observation.discarded,false);
     assert.equal(observer.lifecycle().active_borrowed,0);

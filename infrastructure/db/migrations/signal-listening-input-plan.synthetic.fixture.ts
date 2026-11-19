@@ -175,7 +175,8 @@ async function readSettings(client:InputPlanClientV1){
  const result=await client.query(settingsSql,[settingsNames]);known(result.rows.length===settingsNames.length);
  return result.rows.map((value,index)=>{const row=value as {name:string;value:string};known(row.name===settingsNames[index]&&typeof row.value==='string');return row.value;});
 }
-/** All controls use the underlying client, outside the selected await/listener.
+/** Controls use the underlying client. The existing first restore keeps the
+ * listener through the next Bind, which closes the selected PostgreSQL portal.
  * Added latency is intrusive. This is neither an uninstrumented timing nor CPU.
  * Each selected query is forwarded exactly once, with its original arguments. */
 export function createListeningInputPlanObserverV1(options:{target_sql:string;profile?:InputPlanTargetProfileV1}){
@@ -285,12 +286,16 @@ export function createListeningInputPlanObserverV1(options:{target_sql:string;pr
     for(const index of [14,13,1,2,3,4,5,6,7,8,9,10,11,12,0])await originalQuery('SELECT set_config($1,$2,true)',[settingsNames[index],settingsValues[index]]);
     controlStage='listener';known(control.listenerCount('notice')===0);control.on('notice',collect);listener=true;
     controlStage='original';report.original_executions++;
-    try{result=await originalQuery(...args);report.original_succeeded=true;}
-    catch(error){originalKnown=true;originalError=error;rememberFailure(error);aborted=true;failure('original');}
-    finally{control.removeListener('notice',collect);listener=false;}
+    try{
+     try{result=await originalQuery(...args);report.original_succeeded=true;}
+     catch(error){originalKnown=true;originalError=error;rememberFailure(error);aborted=true;failure('original');}
+     if(!originalKnown){
+      // The next Bind closes the selected portal and emits its parent plan
+      // before executing this existing restore. Never query an aborted TX.
+      controlStage='restore';await originalQuery('SELECT set_config($1,$2,true)',['auto_explain.log_min_duration','-1']);
+     }
+    }finally{control.removeListener('notice',collect);listener=false;}
     if(!originalKnown){
-     // No observation SQL runs in a transaction aborted by the original.
-     controlStage='restore';await originalQuery('SELECT set_config($1,$2,true)',['auto_explain.log_min_duration','-1']);
      for(let i=1;i<settingsNames.length;i++)await originalQuery('SELECT set_config($1,$2,true)',[settingsNames[i],previous[i]]);
      await originalQuery('SELECT set_config($1,$2,true)',[settingsNames[0],previous[0]]);
      known(JSON.stringify(await readSettings(control))===JSON.stringify(previous));report.settings_restored=true;
