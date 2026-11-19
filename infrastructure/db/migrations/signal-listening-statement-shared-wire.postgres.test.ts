@@ -183,12 +183,15 @@ test('0330 native DML ABBA keeps full guards and fresh transactions and rejects 
    }finally{c.release();}
   }
  });
+ await assertStatementNativePermissionsFixtureV1();
 });
 
-test('0336 retains native function OID/owner/ACL and fresh nonowner column/EXECUTE gates',{skip:!enabled,timeout:600000},async()=>withSharedWireFixtureV1(async f=>{
+async function assertStatementNativePermissionsFixtureV1(){
+ await withSharedWireFixtureV1(async f=>{
  const [old,next,projection]=await sharedWireNativeSourcesV1();assert.ok(old&&next);const sourceC=sharedWirePayloadBarrierSourceV1(next);
  await withSharedWireTxV1(f,async c=>{
   await assertStatementNativeCatalogReplacementV1(c,sourceC,projection);
   const values=await params(c,f,sharedWireProposalsV1(f));await assertStatementNativeColumnACLAndRevokeV1(c,sourceC,projection,values);
  });
-}));
+});
+}
