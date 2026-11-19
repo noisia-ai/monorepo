@@ -6,6 +6,12 @@ the founder's private notes (`website-2026/18_insights_y_estudios_diseno.md`).
 
 Until `CONTENT_DATABASE_URL` is set, the site keeps reading `src/content/stories/public/*.json`.
 
+Other docs here:
+- `PIECES_CONTROL.md`: which pieces are live, and the rule that every piece needs a study.
+- `STUDY_IMAGES.md`: the study image, how its prompt is built, and what images cost.
+- `STUDY_EMAIL.md`: the access email.
+- `INSIGHTS_IMAGES_EXPERIMENT.md`: photos inside Insights pieces (on hold).
+
 ## Roles
 
 | Role | Who uses it | Can do |
