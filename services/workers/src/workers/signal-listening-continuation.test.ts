@@ -51,13 +51,16 @@ for(const measured of [false,true])test(`initial ${measured?'4096-input measured
 test('OLD finite calibration blocks covered work; NEW admits another measured shape while its complete bootstrap waits for APPLY',async()=>{
  const f=fixture(),anchors=Array.from({length:33},(_,i)=>f.input(i)),measured=Array.from({length:4},(_,i)=>f.input(i,['topic']));
  anchors[32]!.text='x'.repeat(1500);const known=f.profile(measured),profiles=new Map([[known.scope.shape_digest,known]]),events:SignalListeningCalibrationEventV1[]=[];
- const load=async(id:string)=>profiles.get(id)??null,old=await planSignalListeningCalibrationV1({...f,inputs:[...anchors,...measured],execution,loadProfile:load});
+ let deferReload=false,loading=false,releaseReload!:()=>void,reloadStarted!:()=>void;
+ const reloadGate=new Promise<void>(resolve=>{releaseReload=resolve;}),reloadEntered=new Promise<void>(resolve=>{reloadStarted=resolve;});
+ const load=async(id:string)=>{if(deferReload){loading=true;reloadStarted();await reloadGate;}return profiles.get(id)??null;};
+ const old=await planSignalListeningCalibrationV1({...f,inputs:[...anchors,...measured],execution,loadProfile:load});
  assert.equal(old.selected_inputs.length,32);assert.ok(old.selected_inputs.every(input=>input.question_keys.includes('voice')));
  assert.equal(createSignalListeningCalibratedProviderV1({plan:old}).prepareMeasuredRequests(measured.map(input=>buildSignalListeningJevRequestV1(input,f.configuration))),false);
  let release!:()=>void,deriving=false,observedUsage=0,closed=0;
  const gate=new Promise<void>(resolve=>{release=resolve;});
  const controller=await createSignalListeningContinuationV1({run_id:f.run_id,initial_plan:old,initial_inputs:[...anchors,...measured],execution,loadProfile:load,
-  deriveProfile:async()=>{deriving=true;await gate;const derived=f.profile(selection,rows.map(call=>call.id));profiles.set(derived.scope.shape_digest,derived);return derived;},
+  deriveProfile:async()=>{deriving=true;await gate;const derived=f.profile(selection,rows.map(call=>call.id));profiles.set(derived.scope.shape_digest,derived);deferReload=true;return derived;},
   observe:event=>events.push(event),factory:args=>({async evaluate(){return{body:'{}',http_status:200,latency_ms:1,
    rate_calibration:{labeler_digest:args.labeler_digest,input_bytes:100,kind:'official_context_bound'}};},async observeUsage(){assert.equal(closed,0);observedUsage++;},async close(){closed++;}})});
  const selection=controller.takeInitialSelection(),rows=f.calls(selection);controller.reserved(rows);
@@ -65,9 +68,16 @@ test('OLD finite calibration blocks covered work; NEW admits another measured sh
  const waiting=await controller.selectNext([...remaining,...measured]);assert.equal(waiting.decision,true);assert.deepEqual(waiting.selected,measured);
  assert.equal((await controller.selectNext(remaining)).decision,'wait_for_apply');assert.equal(controller.minimumNextCalls(),0);
  const raw=await controller.runtime.provider.evaluate(buildSignalListeningJevRequestV1(selection[0]!,f.configuration));
- const promotion=controller.applied(f.applied(rows));assert.ok(deriving);assert.equal(closed,0);assert.equal(events.filter(e=>e.transition==='bootstrap_end').length,0);
+ await controller.applied(f.applied(rows.slice(0,16)));assert.equal(deriving,false);
+ assert.deepEqual(await controller.selectNext(remaining),{selected:[],decision:'wait_for_apply'},'first ACK leaves bootstrap calls pending');
+ const promotion=controller.applied(f.applied(rows.slice(16)));assert.ok(deriving);assert.equal(closed,0);assert.equal(events.filter(e=>e.transition==='bootstrap_end').length,0);
+ assert.deepEqual(await controller.selectNext(remaining),{selected:[],decision:'wait_for_apply'},'final ACK empties pending but native derivation still holds warming-shape admission');
  assert.deepEqual((await controller.selectNext([...remaining,...measured])).selected,measured,'Native derivation must ACK before warming-shape admission');
- release();await promotion;assert.equal(controller.failure().failed,false);assert.equal((await controller.selectNext(remaining)).decision,true);
+ release();await reloadEntered;assert.ok(loading);
+ assert.deepEqual(await controller.selectNext(remaining),{selected:[],decision:'wait_for_apply'},'derived evidence must finish reload before warming-shape admission');
+ assert.equal(events.filter(e=>e.transition==='bootstrap_end').length,0);
+ releaseReload();await promotion;assert.equal(controller.failure().failed,false);
+ assert.deepEqual(await controller.selectNext(remaining),{selected:remaining,decision:true});
  await controller.runtime.provider.observeUsage!(raw,100);assert.equal(observedUsage,1);assert.equal(closed,0,'promotion retains the official client for post-APPLY usage');
  assert.deepEqual(controller.execution,execution);assert.equal(controller.runtime.provider.max_response_bytes,controller.response_bound_bytes);
  assert.deepEqual(events.filter(e=>e.transition==='bootstrap_end').map(e=>e.outcome),['measured']);await controller.runtime.provider.close!();assert.ok(closed>=1);

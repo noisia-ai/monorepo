@@ -267,7 +267,9 @@ export async function createSignalListeningContinuationV1({run_id,
       ...bootstrap.order.flatMap(key=>{const row=bootstrap!.unreserved.has(key)?byKey.get(key):undefined;return row?[row]:[];}),
       ...(initial?[]:rows.filter(row=>row.covered&&row.shape!==bootstrap!.shape)),
     ].slice(0,execution.window_size):rows.slice(0,execution.window_size);
-    if(!selected.length)return{selected:[],decision:bootstrap?.pending.size?'wait_for_apply':false};
+    // The final APPLY ACK empties pending before native derivation/reload can
+    // publish coverage. Keep admission waiting through both asynchronous steps.
+    if(!selected.length)return{selected:[],decision:bootstrap&&(bootstrap.pending.size||bootstrap.deriving)?'wait_for_apply':false};
     if(initial){
       const rawBytes=assertJevStreamingExecutionV2(execution,runtime.provider),retained=selected.reduce((sum,row)=>sum+jevCallWorkingBytesV2({request:row.compiled,inputs:[row.input]})+8192,0);
       if(retained+rawBytes>execution.max_buffered_bytes)fail('listening_selection_memory_bound');
