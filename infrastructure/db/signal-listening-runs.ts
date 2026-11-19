@@ -1,6 +1,6 @@
 import {assertSignalListeningDiscoveryInitialPreparationWithClientV1,bindSignalListeningDiscoveryInitialAdmissionWithClientV1} from './signal-listening-discovery-initial';
 import type {PoolClient} from 'pg';
-import {signalListeningJevIdentityV1,validateSignalListeningConfigurationV1,labelerDigestV1,buildSignalListeningJevRequestV1,
+import {signalListeningJevIdentityV1,validateSignalListeningConfigurationV1,labelerDigestV1,compileSignalListeningSnapshotV1,buildSignalListeningCompiledRequestV1,
  signalWorkspaceEmbeddingDigestV1 as digest,type SignalListeningInputV1,type SignalListeningResultV1,type SignalListeningConfigurationV1} from '@noisia/query-engine';
 import {requestMentionFacetsV1,createSignalLabelingStoreV1,type LabelingRunV1,type LabelingCallV1} from './signal-labeling-runs';
 import {type LabelingInputBoundsV1} from './signal-labeling-input-bounds';
@@ -248,8 +248,8 @@ export function createSignalListeningStoreV1(options:Omit<Parameters<typeof crea
   authority:async(c,run)=>{await owner(c,run,false);},
   beforeSubmit:async(c,run,calls)=>{
    await owner(c,run);
-   const configuration=config(run);
-   for(const call of calls){if(call.inputs.length!==1||digest(call.request)!==digest(buildSignalListeningJevRequestV1(call.inputs[0]!,configuration)))fail('listening_request_invalid');}
+   const snapshot=compileSignalListeningSnapshotV1(config(run));
+   for(const call of calls){if(call.inputs.length!==1||digest(call.request)!==digest(buildSignalListeningCompiledRequestV1(call.inputs[0]!,snapshot)))fail('listening_request_invalid');}
   },
   pending:async(c,run)=>(await pendingAndAvailable(c,run)).pending,
   pending_and_available:pendingAndAvailable,
