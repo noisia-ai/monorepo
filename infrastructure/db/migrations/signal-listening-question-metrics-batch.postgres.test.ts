@@ -41,7 +41,7 @@ async function parity(access:SignalListeningAccessV1,args:SignalListeningMetrics
 }
 test('batch metrics preserve pending roots, both scopes, zero options, periods and hidden questions',{
  skip:!enabled,timeout:600000,
-},async()=>runMassLabelingAcceptanceFixtureV1('product',{beforeProcessing:async f=>{
+},async()=>{await runMassLabelingAcceptanceFixtureV1('product',{beforeProcessing:async f=>{
  const configuration=structuredClone(r16ListeningWorkloadV1('defined_consumer_second_pass').configuration);
  const topic=configuration.questions.find(q=>q.topic_source)!;
  configuration.questions.push({...topic,key:'outside_probe',domain:'outside'});
@@ -61,7 +61,15 @@ test('batch metrics preserve pending roots, both scopes, zero options, periods a
  await f.database.query("UPDATE data_sources SET status='archived' WHERE workspace_id=$1",[f.workspace_id]);
  await assertCompactNativeCasesV1(access,args,{empty:true});
  await assert.rejects(readSignalListeningQuestionsMetricsV1({...access,...args,question_keys:['voice']}),/mass_labeling_map_stale/);
-}}));
+}});
+ // Existing product-recovery scale and ordinary widths, under this same gate/title.
+ await runMassLabelingAcceptanceFixtureV1('product-recovery',{beforeProcessing:async f=>{
+  const access={database:f.database,workspace_id:f.workspace_id,actor_user_id:f.actor_user_id};
+  assert.equal((await f.database.query('SELECT count(*)::int n FROM signal_mass_labeling_items WHERE workspace_id=$1 AND map_id=$2',[f.workspace_id,f.map_id])).rows[0].n,1002);
+  const cfg=await saveSignalListeningConfigurationV1({...access,expected_revision:0,provenance:'human',configuration:r16ListeningWorkloadV1('defined_consumer_second_pass').configuration});
+  await assertCompactNativeCasesV1(access,{configuration_id:cfg.id,map_id:f.map_id},{profile_full:true});
+ }});
+});
 test('batch metrics preserve completed classifier probabilities, H5 precedence and confirmed topic cross denominators',{
  skip:!enabled,timeout:600000,
 },async()=>withSignalStudyFixtureV1(async f=>{

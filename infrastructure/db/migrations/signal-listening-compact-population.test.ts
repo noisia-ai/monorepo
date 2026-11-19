@@ -2,11 +2,15 @@ import {invertWirePopulationMetadataV1} from './signal-listening-wire-population
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {readFile} from 'node:fs/promises';
-import {assertCompactProjectionSourceV1,invertCompactListeningRunsV1,compactBaselineListeningShaV1,compactShaV1,compactReaderCallV1,extractCompactExecuteReaderSqlV1} from './signal-listening-compact-population.oracle';
+import {assertCompactProjectionSourceV1,invertCompactListeningRunsV1,compactBaselineListeningShaV1,compactShaV1,compactReaderCallV1,extractCompactExecuteReaderSqlV1,compactFullStreamSourceV1,compactFullStreamSourceShaV1,compactFullStreamProsrcShaV1} from './signal-listening-compact-population.oracle';
 import {assertCompiler21006NegativeFixturesV1,invertSignalListeningCompiler21006V1} from './signal-listening-compiler-source-chain.test-support';
 test('compact projection exact inverses retain0333 authority and0316 H5; unrelated SQL is rejected',async()=>{
  const raw=await readFile(new URL('./0333_signal_listening_bounded_mentions.sql',import.meta.url),'utf8'),effective=await readFile(new URL('./0316_signal_listening_human_revision_plan.sql',import.meta.url),'utf8'),next=await readFile(new URL('./0335_signal_listening_compact_population.sql',import.meta.url),'utf8');
  const parts=assertCompactProjectionSourceV1(raw,effective,next);
+ const stream=await readFile(new URL('./0338_signal_listening_compact_full_stream.sql',import.meta.url),'utf8');
+ const full=compactFullStreamSourceV1(next,stream);assert.equal(compactShaV1(stream),compactFullStreamSourceShaV1);assert.equal(compactShaV1(full.body),compactFullStreamProsrcShaV1);
+ assert.equal(full.nextRaw.split('$bounded$')[1],full.oldRaw.split('$bounded$')[1]);
+ for(const changed of [full.oldRaw.replace('CREATE FUNCTION','CREATE OR REPLACE FUNCTION'),stream.replace('NOT MATERIALIZED','MATERIALIZED'),stream.replace('NOT MATERIALIZED','NOT MATERIALIZED /* altered */'),stream.replace('selected_items AS NOT MATERIALIZED','selected_items AS MATERIALIZED').replace('selected_items AS MATERIALIZED(\n  SELECT item.*','selected_items AS NOT MATERIALIZED(\n  SELECT item.*'),stream+'SELECT 1;\n'])assert.throws(()=>compactFullStreamSourceV1(next,changed));
  assert.equal((parts.raw.match(/flat_input_begin/g)||[]).length,2);
  assert.ok(!parts.raw.includes('body text'));
  assert.ok(!parts.raw.includes('q.definition'));
@@ -52,7 +56,7 @@ test('compact EXECUTE composition keeps three historical runtime gates and wrapp
  assert.ok(effective.includes("pg_catalog.has_function_privilege(current_user,'public.signal_listening_effective_population_roots_v2(uuid,uuid,uuid,text,uuid[],text)'"));assert.ok(effective.includes('signal_listening_human_revision_v1(CASE WHEN(SELECT allowed FROM execute_gate) THEN cid END)'));assert.ok(effective.includes('signal_listening_compact_population_roots_v1(CASE WHEN(SELECT allowed FROM execute_gate) THEN w END'));
  assert.ok(!effective.includes('signal_listening_population_v1('));assert.ok(!raw.includes('signal_listening_population_v1('),'metrics cannot acquire the unrelated wrapper permission');
  assert.ok(wrapper.includes("purpose text DEFAULT 'llm-processing'"));assert.ok(wrapper.includes("pg_catalog.has_function_privilege(current_user,'public.signal_listening_population_v1(uuid,uuid,uuid,text,text)'"));assert.ok(wrapper.includes('ELSE(SELECT denied.root_id FROM public.signal_listening_population_v1(NULL::uuid'));
- const fixture=await readFile(new URL('./signal-listening-compact-population.synthetic.fixture.ts',import.meta.url),'utf8'),entry=await readFile(new URL('./signal-listening-question-metrics-batch.postgres.test.ts',import.meta.url),'utf8');assert.ok(fixture.includes('if(options.execute_authority)await assertCompactExecuteCompositionV1(access.database,base)'));assert.equal(entry.split('execute_authority:true').length,2,'real-role case is invoked once under the existing Native gate');
+ const fixture=await readFile(new URL('./signal-listening-compact-population.synthetic.fixture.ts',import.meta.url),'utf8'),entry=await readFile(new URL('./signal-listening-question-metrics-batch.postgres.test.ts',import.meta.url),'utf8');assert.ok(fixture.includes('if(options.execute_authority){await assertCompactFullReplacementV1(access.database);await assertCompactExecuteCompositionV1(access.database,base);}'));assert.equal(entry.split('execute_authority:true').length,2,'real-role case is invoked once under the existing Native gate');
 });
 
 test('Native execute oracle extracts the actual quote, stats, pending and metrics SQL without PG',async()=>{
