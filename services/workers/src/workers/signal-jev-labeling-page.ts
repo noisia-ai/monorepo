@@ -22,7 +22,9 @@ function validatePreparedExecution(value:JevPreparedExecutionV1){
     ||value.bootstrap_initial_calls<1||value.bootstrap_initial_calls>32||value.bootstrap_initial_calls>e.window_size
     ||value.continuous_windows!==true||value.recovery_only===true||value.max_windows!==undefined))throw Error('jev_bootstrap_initial_invalid');
 }
-export type JevNextInputBoundsV2={max_rows:number;max_working_bytes:number};
+export type JevNextInputBoundsV2={max_rows:number;max_working_bytes:number;
+  /** Private synchronous notice from the canonical bounded prefix only. */
+  on_byte_limit?:()=>void};
 async function withReleasedSelection<T>(body:()=>Promise<T>,release:()=>void):Promise<T>{
  let failed=false,primary:unknown,result:T|undefined;
  try{result=await body();}catch(error){failed=true;primary=error;}
@@ -148,14 +150,16 @@ export async function processJevLabelingPageV1<Input extends FacetInput,Result>(
         // reserve commits. Never prefetch through pending recovery or unknown.
         let fedWindows=1;
         const feed=continuous&&!pending.length&&!recoveryOnly&&!run.error_code&&(maxWindows??Infinity)>windows+1
-          ?async(available:number,maxCalls:number,admissionSignal:AbortSignal):Promise<LabelingCallV1<Input>[]|{closed:true}>=>{
+          ?async(available:number,maxCalls:number,admissionSignal:AbortSignal):Promise<LabelingCallV1<Input>[]|{calls:LabelingCallV1<Input>[];byte_limited:boolean}|{closed:true}>=>{
             let failed=false,primary:unknown;
             try{
               if(renewal)await renewal;if(leaseError)throw leaseError;
               if(admissionSignal.aborted||cancellation.signal.aborted||windows+fedWindows>=(maxWindows??Infinity))return{closed:true};
-              const inputs=(await(args.read_next_inputs?args.read_next_inputs(run,{max_rows:maxCalls,max_working_bytes:available}):store.inputs(run,{max_rows:maxCalls,max_working_bytes:available,on_oversize:'empty'}))).slice(0,maxCalls);
+              let byteLimited=false;
+              const bounds={max_rows:maxCalls,max_working_bytes:available,on_byte_limit:()=>{byteLimited=true;}};
+              const inputs=(await(args.read_next_inputs?args.read_next_inputs(run,bounds):store.inputs(run,{...bounds,on_oversize:'empty'}))).slice(0,maxCalls);
               if(admissionSignal.aborted||cancellation.signal.aborted)return{closed:true};
-              if(!inputs.length)return[];
+              if(!inputs.length)return byteLimited?{calls:[],byte_limited:true}:[];
               if(hooks.prepare_next){
                 const prepared=await hooks.prepare_next(run,inputs);
                 if(prepared==='wait_for_apply')return[];
@@ -168,10 +172,14 @@ export async function processJevLabelingPageV1<Input extends FacetInput,Result>(
               const selected=hooks.select_next_inputs?.(inputs)??{inputs,minimum_calls:0};
               if(!Number.isSafeInteger(selected.minimum_calls)||selected.minimum_calls<0||selected.minimum_calls>32
                 ||selected.minimum_calls>selected.inputs.length||selected.inputs.length>inputs.length)throw Error('jev_bootstrap_next_invalid');
+              // A bootstrap/filter can intentionally admit fewer roots than
+              // the reader returned. That is not a byte-limited reservation.
+              byteLimited&&=selected.minimum_calls===0&&selected.inputs.length===inputs.length;
               const bounded:LabelingCallProposalV1<Input>[]=[];let bytes=0;
               outer:for(const input of selected.inputs)for(const proposal of hooks.propose(run,[input])){
                 const cost=jevCallWorkingBytesV2(proposal)+8192;
-                if(bytes+cost>available||bounded.length>=maxCalls)break outer;
+                if(bounded.length>=maxCalls)break outer;
+                if(bytes+cost>available){byteLimited=true;break outer;}
                 bytes+=cost;bounded.push(proposal);
                 // Compile outside the native reservation transaction without
                 // monopolizing the event loop while other HTTP timers run.
@@ -182,7 +190,7 @@ export async function processJevLabelingPageV1<Input extends FacetInput,Result>(
               }
               if(!bounded.length||bounded.length<selected.minimum_calls||admissionSignal.aborted||cancellation.signal.aborted)return{closed:true};
               const next=await store.reserve(run,bounded);fedWindows++;
-              return next.length?next:{closed:true};
+              return next.length?{calls:next,byte_limited:byteLimited&&selected.minimum_calls===0}:{closed:true};
             }catch(error){failed=true;primary=error;throw error;}finally{
               if(incrementalInitial)try{args.initial_reservation!.release_selection();}catch(secondary){if(failed)throw new AggregateError([primary,secondary],'jev_selection_primary_and_release_failed',{cause:primary});throw secondary;}
             }

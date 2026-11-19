@@ -32,13 +32,15 @@ test('lazy native selector matches full oracle across empty slices, base reclass
  const cfg=await saveSignalListeningConfigurationV1({...access,expected_revision:0,provenance:'human',configuration:localizeSyntheticListeningConfigurationV1({...base,questions:[...base.questions,
   {key:'consumer_usage',type:'noul',text:'Does this describe using the category?',positive:'Use by an individual consumer',negative:'Unrelated',scope:'consumer_category',origin:'brand_os',human_locked:false,topic_source:'defined',domain:'category'}]})});
  const admitted=await requestSignalListeningV1({...access,configuration_id:cfg.id,map_id:ctx.map_id,cap_micro_usd:1000000,idempotency_key:randomUUID(),provider_available:true});
- let pages:Array<{ids:string[];cursor:string|null}>=[],metadata:Array<Array<{root_id:string;working_bytes:string}>>=[],finishRows:Array<{pending:number;available:boolean}>=[];
+ let pages:Array<{ids:string[];cursor:string|null}>=[],metadata:Array<Array<{root_id:string;working_bytes:string}>>=[],finishRows:Array<{pending:number;available:boolean}>=[],bodyReads:string[][]=[],readEndings:string[]=[];
  const comparisons={unbounded:0},readerDatabase=withListeningReaderSliceOracleV1(ctx.database,comparisons);
  const database={query:readerDatabase.query.bind(readerDatabase),connect:async()=>{const c=await readerDatabase.connect();return new Proxy(c,{get(target,key){if(key==='query')return async(sql:string,params?:unknown[])=>{
   if(sql.includes('labeling_listening_input_metadata_v1')){const current=active??prior;assert.ok(current);assertWireObserverMetadataV1(sql,params,wireObserver,{workspace_id:ctx.workspace_id,configuration_id:cfg.id,map_id:ctx.map_id,entity_context_digest:current.entity_context_digest,run_id:current.id});}
   const result=await target.query(sql,params);
   if(sql.includes('labeling_listening_root_page_v1')){assert.ok(result.rows.length<=4096);assert.deepEqual(Object.keys(result.rows[0]??{root_id:null}),['root_id']);assert.equal(params?.[3],cfg.id);assert.equal(typeof params?.[4],'string');assert.ok(params?.length===5||params?.length===6);pages.push({ids:result.rows.map(r=>r.root_id),cursor:params?.[5] as string??null});}
   if(sql.includes('labeling_listening_input_metadata_v1')){assert.ok(Array.isArray(params?.[7]));assert.ok((params![7] as string[]).length<=4096);assert.ok(result.rows.every(r=>Object.keys(r).sort().join(',')==='projection,root_id,working_bytes'));metadata.push(result.rows);}
+  if(sql.includes('labeling_listening_input_body_v1')){assert.ok(Array.isArray(params?.[2]));bodyReads.push([...(params![2] as string[])]);}
+  if(sql==='COMMIT'||sql==='ROLLBACK')readEndings.push(sql);
   if(sql.includes('labeling_listening_pending_available_v1'))finishRows.push(result.rows[0]);
   return result;
  };const value=Reflect.get(target,key);return typeof value==='function'?value.bind(target):value;}});}} as typeof ctx.database;
@@ -80,13 +82,43 @@ test('lazy native selector matches full oracle across empty slices, base reclass
   pages=[];metadata=[];const across=await store.inputs(run,bounds);assert.deepEqual(across,all.slice(62,65));
   assert.deepEqual(metadata.map(rows=>rows.length),[2,1]);const globalCosts=metadata.flat();
   const exactTwo=Number(globalCosts[0]!.working_bytes)+Number(globalCosts[1]!.working_bytes);
-  pages=[];metadata=[];assert.deepEqual(await store.inputs(run,{...bounds,max_working_bytes:exactTwo}),all.slice(62,64),
+  let byteLimits=0;const on_byte_limit=(...args:unknown[])=>{assert.deepEqual(args,[]);byteLimits++;};
+  pages=[];metadata=[];bodyReads=[];assert.deepEqual(await store.inputs(run,{...bounds,max_working_bytes:exactTwo,on_byte_limit}),all.slice(62,64),
    'byte budget belongs to the complete read, never resets for the next nonempty ID slice');
-  assert.equal((metadata[1]![0] as {projection?:unknown}).projection,null,'second-slice question payload stays NULL beyond the exact global boundary');
+  assert.equal(pages.length,1,'OLD crossed to the known nonempty next slice; an exhausted exact prefix needs no later root page');
+  assert.equal(metadata.length,1);assert.equal(metadata[0]!.length,2);
+  assert.deepEqual(bodyReads,[all.slice(62,64).map(i=>i.root_id)]);
+  assert.equal(byteLimits,0,'an exact end with no observed sentinel is not a byte-limit notification');
+  const firstCost=Number(globalCosts[0]!.working_bytes);
+  pages=[];metadata=[];bodyReads=[];assert.deepEqual(await store.inputs(run,{...bounds,max_working_bytes:firstCost,on_byte_limit}),all.slice(62,63));
+  assert.equal(pages.length,1);assert.equal(metadata.length,1);assert.equal(metadata[0]!.length,2,'retain every returned row, including the non-fitting sentinel');
+  assert.deepEqual(metadata[0]!.map(r=>[r.root_id,r.working_bytes]),globalCosts.slice(0,2).map(r=>[r.root_id,r.working_bytes]));
+  assert.notEqual((metadata[0]![0] as {projection?:unknown}).projection,null);
+  assert.equal((metadata[0]![1] as {projection?:unknown}).projection,null);
+  assert.deepEqual(bodyReads,[[all[62]!.root_id]]);assert.equal(byteLimits,1,'the real sentinel reports the byte stop exactly once');
+  for(const on_oversize of ['empty','error'] as const){
+   pages=[];metadata=[];bodyReads=[];readEndings=[];byteLimits=0;
+   const read=store.inputs(run,{...bounds,max_working_bytes:firstCost-1,on_oversize,on_byte_limit});
+   if(on_oversize==='error')await assert.rejects(read,/labeling_input_memory_bound/);else assert.deepEqual(await read,[]);
+   assert.equal(pages.length,1);assert.equal(metadata.length,1);assert.equal(metadata[0]!.length,2);
+   assert.ok(metadata[0]!.every(row=>(row as {projection?:unknown}).projection===null),'all returned first-page NULL sentinels survive both oversize policies');
+   assert.deepEqual(bodyReads,[]);assert.equal(byteLimits,1);assert.deepEqual(readEndings,[on_oversize==='error'?'ROLLBACK':'COMMIT']);
+  }
+  const callbackError=new Error('synthetic byte callback failure');
+  pages=[];metadata=[];bodyReads=[];readEndings=[];
+  await assert.rejects(store.inputs(run,{...bounds,max_working_bytes:firstCost-1,on_byte_limit:()=>{throw callbackError;}}),error=>error===callbackError);
+  assert.equal(pages.length,1);assert.equal(metadata.length,1);assert.deepEqual(bodyReads,[]);assert.deepEqual(readEndings,['ROLLBACK']);
   const calls=await store.reserve(run,proposals(run,all.slice(0,64)));assert.equal(calls.length,64);
   pages=[];metadata=[];const expected=await oracle();assert.equal(expected.length,6);
   const selected=await store.inputs(run,bounds);assert.deepEqual(selected,expected.slice(0,3));
   assert.equal(pages.length,2,'a base-only-reserved prefix still has an unlinked consumer and cannot be pruned');assert.equal(metadata[0]!.length,0);assert.equal(metadata[1]!.length,3);assert.equal(pages[1]!.cursor,all[63]!.root_id);
+  for(const on_oversize of ['empty','error'] as const){
+   pages=[];metadata=[];bodyReads=[];byteLimits=0;
+   const read=store.inputs(run,{...bounds,max_working_bytes:0,on_oversize,on_byte_limit});
+   if(on_oversize==='error')await assert.rejects(read,/labeling_input_memory_bound/);else assert.deepEqual(await read,[]);
+   assert.equal(pages.length,2,'zero remaining bytes must still cross an empty/awaiting-base slice to encounter the real pending root');
+   assert.deepEqual(metadata.map(rows=>rows.length),[0,3]);assert.deepEqual(bodyReads,[]);assert.equal(byteLimits,1);
+  }
   assert.deepEqual((await ctx.database.query('SELECT root_id,question_digest FROM signal_listening_call_questions WHERE run_id=$1 ORDER BY root_id,question_digest',[prior.id])).rows,historyLinks.rows,'reading a new run preserves the historical run links');
   assert.deepEqual((await ctx.database.query('SELECT id,status FROM signal_labeling_runs WHERE workspace_id=$1 AND id NOT IN($2,$3,$4) ORDER BY id',[ctx.workspace_id,ctx.run_id,prior.id,run.id])).rows,otherRunsBefore,'no other run lifecycle changes');
   const before=finishRows.length;assert.equal(await store.finish(run),'running');assert.equal(finishRows.length-before,1);assert.deepEqual(finishRows.at(-1),{pending:70,available:true},'pending retains reserved-but-unanswered roots exactly');

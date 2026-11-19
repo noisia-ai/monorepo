@@ -136,6 +136,7 @@ async function inputProjectionMetadata(c:Pick<PoolClient,'query'>,run:LabelingRu
   for(const row of page)remaining-=BigInt(row.working_bytes);
   if(remaining<0n)remaining=0n;
   cursor=ids.at(-1)!;
+  if(page.length&&remaining===0n)break;
   // An excluded/awaiting-base/reserved slice is not exhaustion. Only the
   // source ID page can establish that there are no later roots in this TX.
   if(ids.length<sliceSize)break;

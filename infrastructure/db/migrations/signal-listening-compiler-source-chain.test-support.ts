@@ -10,9 +10,25 @@ export const historicalBeforeSubmit21006V1 = "  beforeSubmit:async(c,run,calls)=
 
 const count = (source: string, value: string) => source.split(value).length - 1;
 
-/** Invert only the reviewed 21006 compiler import and beforeSubmit source delta.
- * Other edits remain visible to the older frozen CE38/compact/projection hashes. */
+const metadataPrefixStopLineV1 = "  if(page.length&&remaining===0n)break;\n";
+const metadataPrefixStopBeforeV1 = "  if(remaining<0n)remaining=0n;\n  cursor=ids.at(-1)!;\n  // An excluded/awaiting-base/reserved slice is not exhaustion.";
+const metadataPrefixStopAfterV1 = metadataPrefixStopBeforeV1.replace("  // An excluded",metadataPrefixStopLineV1+"  // An excluded");
+/** Remove only the new prefix-stop line at its exact reviewed loop position.
+ * SQL literals, sentinels, weights and every unrelated runtime byte survive. */
+export function invertListeningMetadataPrefixStopV1(source: string): string {
+  assert.equal(count(source, metadataPrefixStopLineV1), 1, 'one exact metadata prefix stop is required');
+  assert.equal(count(source, metadataPrefixStopAfterV1), 1, 'metadata stop must remain after clamp/cursor and before the historical empty-slice comment');
+  assert.equal(count(source, metadataPrefixStopBeforeV1), 0, 'the old loop cannot stand in for the reviewed stop');
+  const previous=source.replace(metadataPrefixStopAfterV1,metadataPrefixStopBeforeV1);
+  assert.equal(count(previous, metadataPrefixStopBeforeV1), 1);
+  assert.equal(previous.replace(metadataPrefixStopBeforeV1,metadataPrefixStopAfterV1),source,'the registered prefix inverse reconstructs every current source byte');
+  return previous;
+}
+
+/** First invert the separately registered prefix stop, then the reviewed
+ * 21006 compiler import/beforeSubmit delta. Every older frozen hash is retained. */
 export function invertSignalListeningCompiler21006V1(source: string): string {
+  source=invertListeningMetadataPrefixStopV1(source);
   assert.equal(count(source, compilerImport21006V1), 1, 'compiler 21006 import must appear exactly once');
   assert.equal(count(source, historicalImportBeforeCompiler21006V1), 0, 'old request builder cannot stand in for compiler 21006');
   assert.equal(count(source, compilerBeforeSubmit21006V1), 1, 'compiler 21006 beforeSubmit must appear exactly once');
@@ -37,6 +53,10 @@ export function assertCompiler21006NegativeFixturesV1(source: string): void {
   assert.equal(count(source, unrelatedNeedle), 1, 'third-party edit fixture must match one exact source line');
   const unrelated = source.replace(unrelatedNeedle, ' const limit=options.page_size??201;');
   const cases: Array<[string, string]> = [
+    ['missing metadata prefix stop', source.replace(metadataPrefixStopLineV1, '')],
+    ['duplicate metadata prefix stop', source.replace(metadataPrefixStopLineV1, metadataPrefixStopLineV1.repeat(2))],
+    ['moved metadata prefix stop', source.replace(metadataPrefixStopLineV1, '')+metadataPrefixStopLineV1],
+    ['altered metadata prefix stop', source.replace(metadataPrefixStopLineV1, "  if(remaining===0n)break;\n")],
     ['missing compiler import', source.replace(compilerImport21006V1, '')],
     ['duplicate compiler import', source.replace(compilerImport21006V1, `${compilerImport21006V1}\n${compilerImport21006V1}`)],
     ['old profile import', source.replace(compilerImport21006V1, historicalImportBeforeCompiler21006V1)],

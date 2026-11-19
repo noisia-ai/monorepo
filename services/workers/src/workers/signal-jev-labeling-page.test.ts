@@ -950,3 +950,122 @@ test('the 4096-proposal feeder yields before reservation without changing bytes,
 test('cancellation during a feeder compiler yield reserves and sends none of that cohort',{timeout:5000},async()=>{
  await exerciseFeederProposalYield(true);
 });
+
+async function exerciseByteLimitedRefill(mode:'raw'|'apply'|'raw_failure'|'apply_ack_lost'|'cancel'|'no_flush'|'growing_credit'|'page'){
+ const {processJevStreamingWindowV2}=await import('./signal-jev-streaming-window');
+ const {selectLabelingInputPrefixV1}=await import('../../../../infrastructure/db/signal-labeling-input-bounds');
+ type Store=Parameters<typeof processJevStreamingWindowV2<FacetInput,string>>[0]['store'];
+ const make=(i:number)=>({id:`coalesce-${i}`,request_digest:`coalesce-${i}`,status:'reserved',raw_body:null,results_applied:false,
+  request:{model:'jev-1.13.0',state:String(i),questions:{q:{type:'noul',instructions:'configured'}}},
+  inputs:[{root_id:String(i),text:String(i)}]})as unknown as LabelingCallV1<FacetInput>;
+ const all=Array.from({length:5},(_,i)=>make(i)),future=all.slice(2),budget=600*1024;
+ const flushStarted=deferredFrontier(),flushGate=deferredFrontier(),tinyRead=deferredFrontier(),nextRead=deferredFrontier(),thirdHttp=deferredFrontier();
+ const cancellation=new AbortController(),sent:string[]=[],raw:string[]=[],settled:string[]=[],applied:string[]=[],unknown:string[]=[],allowances:number[]=[],memory:number[]=[];
+ let reads=0,acknowledged=false,activeHttp=0,peak=0;
+ const hold=async()=>{flushStarted.resolve();await flushGate.promise;};
+ const run={id:'coalescing',lease_token:'lease',error_code:null,status:'running'}as LabelingRunV1;
+ const store={claim:async()=>run,renew:async()=>{},release:async()=>{},calls:async()=>[],inputs:async()=>all.slice(0,2).map(row=>row.inputs[0]!),
+  reserve:async(_run:unknown,proposals:Array<{inputs:FacetInput[]}>)=>proposals.map(proposal=>all.find(row=>row.inputs[0]!.root_id===proposal.inputs[0]!.root_id)!),
+  markSubmittingSelected:async(_run:unknown,select:()=>ReadonlyArray<LabelingCallV1<FacetInput>>)=>{
+   const selected=select();for(const row of selected)row.status='submitting';return selected;
+  },persistRawPage:async(_run:unknown,rows:Array<{call:LabelingCallV1<FacetInput>;raw:string}>)=>{
+   if(rows.some(row=>row.call.id==='coalesce-0')&&(mode==='raw'||mode==='raw_failure')){
+    await hold();if(mode==='raw_failure')throw Error('raw_ack_lost');
+   }
+   for(const row of rows){raw.push(row.call.id);row.call.raw_body=row.raw;}
+  },settlePage:async(_run:unknown,rows:Array<{call:LabelingCallV1<FacetInput>}>)=>{
+   for(const row of rows){assert.ok(raw.includes(row.call.id));settled.push(row.call.id);row.call.status='settled';}
+  },apply:async(_run:unknown,rows:Array<{call:LabelingCallV1<FacetInput>}>)=>{
+   if(rows.some(row=>row.call.id==='coalesce-0')&&!['raw','raw_failure','no_flush'].includes(mode))await hold();
+   for(const row of rows){assert.ok(settled.includes(row.call.id));applied.push(row.call.id);row.call.results_applied=true;}
+   if(rows.some(row=>row.call.id==='coalesce-0')&&mode==='apply_ack_lost')throw Error('apply_ack_lost');
+  },markFailed:async(_run:unknown,rows:LabelingCallV1<FacetInput>[],isUnknown:boolean)=>{
+   assert.equal(isUnknown,true);unknown.push(...rows.map(row=>row.id));
+  },finish:async()=>all.filter(row=>sent.includes(row.id)).every(row=>row.results_applied)?'completed':'running',
+ }as unknown as Store;
+ const streamArgs:Parameters<typeof processJevStreamingWindowV2<FacetInput,string>>[0]={run,calls:all.slice(0,2),store,cancellation,
+  execution:{max_in_flight:2,window_size:4,flush_size:mode==='no_flush'?8:2,max_flushes:1,max_buffered_bytes:budget,flush_interval_ms:60000},
+  price:llmPriceV1('typesafe','jev-1.13.0','sync',.042),revisit_empty_after_apply:true,defer_initial_prefetch_until_handoff:true,
+  provider:{max_concurrency:2,max_response_bytes:4096,async evaluate(request){
+   const id=`coalesce-${request.state}`;assert.ok(!sent.includes(id));sent.push(id);activeHttp++;peak=Math.max(peak,activeHttp);
+   try{
+    if(request.state==='2')await thirdHttp.promise;
+    const body=JSON.stringify({model:request.model,usage:{input_tokens:1,output_tokens:0},answers:{q:{type:'noul',noul:.8}}});
+    // Full custody prevents a completed HTTP alone from manufacturing memory
+    // credit. The growing-credit case deliberately uses exact smaller bodies.
+    return{http_status:200,latency_ms:1,body:mode==='growing_credit'?body:' '.repeat(4096-Buffer.byteLength(body))+body};
+   }finally{activeHttp--;}
+  }},feed_next:async(available,maxCalls)=>{
+   reads++;allowances.push(available);
+   if(reads===1){
+    if(mode!=='no_flush')await flushStarted.promise;
+    const prefix=selectLabelingInputPrefixV1(future.map(row=>({root_id:row.id,working_bytes:200*1024})),
+     {max_rows:maxCalls,max_working_bytes:available,on_oversize:'empty'});
+    assert.deepEqual(prefix,['coalesce-2'],'this controlled native byte prefix fits exactly one ordinary root');
+    tinyRead.resolve();return{calls:[future[0]!],byte_limited:true};
+   }
+   if(reads===2){
+    nextRead.resolve();
+    if(mode==='no_flush'||mode==='growing_credit')return{closed:true};
+    assert.equal(acknowledged,true,'a repeat byte-limited read must wait for owned flush completion');
+    assert.ok(available>allowances[0]!,'actual released custody makes a larger fresh allowance available');
+    const prefix=selectLabelingInputPrefixV1(future.slice(1).map(row=>({root_id:row.id,working_bytes:200*1024})),
+     {max_rows:maxCalls,max_working_bytes:available,on_oversize:'empty'});
+    assert.deepEqual(prefix,['coalesce-3','coalesce-4']);
+    return{calls:future.slice(1),byte_limited:false};
+   }
+   return{closed:true};
+  },observe_stream:value=>memory.push(value.reserved_working_bytes),
+  hooks:{map:(_run,call)=>[call.id],error:()=>{throw Error('no invented technical labels');},labeled:()=>true,fail_on_error:true},
+ };
+ const processing=mode==='page'?processJevLabelingPageV1<FacetInput,string>({run_id:run.id,store,provider:streamArgs.provider,
+  signal:cancellation.signal,execution:streamArgs.execution,initial_reservation:{max_calls:1024,release_selection:()=>{}},observe_stream:streamArgs.observe_stream,
+  hooks:{...streamArgs.hooks,price:()=>streamArgs.price,continuous_windows:()=>true,revisit_empty_after_apply:true,
+   propose:(_run,inputs)=>inputs.map(input=>{const call=all.find(row=>row.inputs[0]!.root_id===input.root_id)!;
+    return{custom_id:call.id,request_digest:call.request_digest,request:call.request,inputs:[input],reserved_micro_usd:100};})},
+  read_next_inputs:async(_run,bounds)=>{
+   const result=await streamArgs.feed_next!(bounds.max_working_bytes,bounds.max_rows,cancellation.signal);
+   assert.ok(!Array.isArray(result),'controlled reader returns an explicit byte-limit result');
+   if('closed'in result)return[];
+   assert.equal(typeof bounds.on_byte_limit,'function','the real page reader receives the private synchronous notice');
+   if(result.byte_limited)bounds.on_byte_limit!();
+   return result.calls.map(call=>call.inputs[0]!);
+  }}):processJevStreamingWindowV2(streamArgs);
+ const pending=processing.then(value=>({value,error:undefined}),error=>({value:undefined,error}));
+ try{
+  await tinyRead.promise;
+  await new Promise<void>(resolve=>setImmediate(resolve));
+  assert.ok(sent.includes('coalesce-2'),'the committed tiny prefix keeps its HTTP headroom while coalescing the next read');
+  if(mode==='no_flush'||mode==='growing_credit'){
+   await nextRead.promise;
+   if(mode==='growing_credit')assert.ok(allowances[1]!>allowances[0]!,'growing credit bypasses the held flush');
+  }else{
+   assert.equal(reads,1,'no repeated tiny read while the same flush owns memory');
+   assert.equal(applied.length,0,'no APPLY ACK or memory credit invented while the gate is held');
+   if(mode==='cancel')cancellation.abort();
+  }
+  acknowledged=true;flushGate.resolve();
+  if(mode==='raw'||mode==='apply'||mode==='page')await nextRead.promise;
+ }finally{flushGate.resolve();thirdHttp.resolve();await pending;}
+ const result=await pending;
+ assert.ok(peak<=2);assert.ok(memory.every(n=>n>=0&&n<=budget));assert.equal(new Set(sent).size,sent.length);
+ assert.deepEqual([...settled].sort(),[...raw].sort());
+ if(mode==='raw_failure'||mode==='apply_ack_lost'){
+  assert.equal(result.error?.message,mode==='raw_failure'?'raw_ack_lost':'apply_ack_lost');
+  assert.ok(unknown.includes('coalesce-0'));assert.equal(reads,1,'failed/ambiguous ACK never opens a fresh read');
+ }else{
+  assert.equal(result.error,undefined);assert.equal(memory.at(-1),0);assert.deepEqual([...applied].sort(),[...raw].sort());
+  if(mode==='raw'||mode==='apply'||mode==='page')assert.equal(sent.length,5);
+  if(mode==='cancel')assert.equal(reads,1);
+ }
+ return result;
+}
+for(const mode of ['raw','apply','page']as const)test(`byte-limited refill waits for ${mode} custody and admits a larger fresh prefix after ACK`,{timeout:5000},async()=>{
+ await exerciseByteLimitedRefill(mode);
+});
+for(const mode of ['no_flush','growing_credit']as const)test(`byte-limited refill escapes immediately with ${mode}`,{timeout:5000},async()=>{
+ await exerciseByteLimitedRefill(mode);
+});
+for(const mode of ['raw_failure','apply_ack_lost','cancel']as const)test(`byte-limited refill preserves ${mode} without inventing durable progress`,{timeout:5000},async()=>{
+ await exerciseByteLimitedRefill(mode);
+});

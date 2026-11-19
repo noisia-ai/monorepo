@@ -41,7 +41,9 @@ export async function processJevStreamingWindowV2<I extends FacetInput, R>(args:
   observe_stream?(metrics: JevStreamingMetricsV2): void;
   /** First-party adapters only: inputs exclude every already reserved identity.
    * Returns at most one window, already budgeted before money reservation. */
-  feed_next?(available_bytes:number,max_calls:number,admission_signal:AbortSignal):Promise<LabelingCallV1<I>[] | { closed:true }>;
+  feed_next?(available_bytes:number,max_calls:number,admission_signal:AbortSignal):Promise<LabelingCallV1<I>[] | {
+    calls:LabelingCallV1<I>[];byte_limited:boolean;
+  } | { closed:true }>;
   /** Listening native pending eligibility can advance only after durable apply. */
   revisit_empty_after_apply?:boolean;
   /** Scheduling only: evaluate handoff is not proof of physical fetch/rate admission. */
@@ -61,6 +63,9 @@ export async function processJevStreamingWindowV2<I extends FacetInput, R>(args:
     inFlight = 0, fatal: unknown;
   const admission=new AbortController();
   let totalRoots=calls.length,feedClosed=!args.feed_next,feeding:Promise<void>|undefined;
+  // A scheduling hint from the exact bounded prefix, never retained inputs or
+  // permission to reserve. A later read still obtains a fresh native snapshot.
+  let byteLimitedAvailable:number|undefined;
   let durableEpoch=0,emptyAtEpoch:number|undefined;
   const roster=new Map(calls.map(call=>[call.id,call])),initialIds=new Set(calls.map(call=>call.id));
   let recentIdentities=new Set(calls.map(call=>call.request_digest));
@@ -170,7 +175,13 @@ export async function processJevStreamingWindowV2<I extends FacetInput, R>(args:
       // A timer/pressure flush is a one-shot request, not a mode inherited by
       // subsequent pages. Keep batching later responses while HTTP is active;
       // the timer or final drain will flush the bounded tail when needed.
-      const task = consume(rows).finally(() => { active.delete(task); observe(); wake(); flush(); });
+      const task = consume(rows).finally(() => {
+        // consume releases its real custody before this completion. Even if
+        // it failed, fatal/cancellation prevents another admission; do not
+        // treat a lost RAW/settlement/APPLY acknowledgement as durable success.
+        byteLimitedAvailable=undefined;
+        active.delete(task); observe(); wake(); flush();
+      });
       active.add(task); observe();
     }
   }
@@ -201,6 +212,11 @@ export async function processJevStreamingWindowV2<I extends FacetInput, R>(args:
     // can reject a different prefix at a financial boundary; caps are unchanged.
     const available=free-headroom;
     if(readySlots&&available<8192)return;
+    // Do not repeat a byte-limited refill at the same (or smaller) allowance
+    // while an owned flush is already going to release memory. Wait for that
+    // completion, without holding bytes or starting a timer. Growing credit
+    // and a frontier with no active flush both escape immediately.
+    if(byteLimitedAvailable!==undefined&&available<=byteLimitedAvailable&&active.size)return;
     // Hold the input/serialization budget while SQL is pending. HTTP/flushes
     // share the same counter and cannot consume bytes promised to this page.
     memory+=available;observe();let retained=0;
@@ -208,8 +224,9 @@ export async function processJevStreamingWindowV2<I extends FacetInput, R>(args:
       const maxCalls=e.window_size-reserved.length;
       const readEpoch=durableEpoch;
       const next=await args.feed_next!(available,maxCalls,admission.signal);
-      if(!Array.isArray(next)){feedClosed=true;return;}
-      const rows=next;
+      if(!Array.isArray(next)&&'closed' in next){feedClosed=true;return;}
+      const rows=Array.isArray(next)?next:next.calls;
+      byteLimitedAvailable=!Array.isArray(next)&&next.byte_limited?available:undefined;
       if(!rows.length){
         // A repeatable-read snapshot may finish after the apply that unlocks
         // consumers. Keep its starting epoch, not the epoch at query return.
