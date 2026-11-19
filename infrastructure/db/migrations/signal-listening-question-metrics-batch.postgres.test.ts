@@ -66,7 +66,7 @@ test('batch metrics preserve completed classifier probabilities, H5 precedence a
  skip:!enabled,timeout:600000,
 },async()=>withSignalStudyFixtureV1(async f=>{
  const access={database:f.database,workspace_id:f.workspace_id,actor_user_id:f.actor_user_id};
- const ctx=await human.getSignalListeningHumanEditContextV1(access);const key=ctx.configuration.questions.find(q=>q.topic_source)!.key;
+ const ctx=await human.getSignalListeningHumanEditContextV1(access);const key=ctx.configuration.questions.find(q=>q.topic_source==='discovered')!.key;
  await assertCompactNativeCasesV1(access,{configuration_id:ctx.expected.configuration_id,map_id:f.map_id});
  await parity(access,{configuration_id:ctx.expected.configuration_id,map_id:f.map_id,topic_key:key});
  const changed=await human.correctSignalListeningTopicMembershipV1({...access,expected:ctx.expected,root_id:f.roots[0]!,from_question_key:key,idempotency_key:randomUUID()});
@@ -78,6 +78,10 @@ test('batch metrics preserve completed classifier probabilities, H5 precedence a
  assert.ok(filtered.every(r=>r.counts.corpus_eligible===2),'the removed root is excluded by its effective topic membership');
  // Legacy and native H5 paths deliberately coexist. Their map predicates are
  // asymmetric in0333/0316 and the compact reader must preserve both.
+ const manualConfiguration=await loadSignalListeningConfigurationWithClientV1(f.database,access.workspace_id,changed.configuration_id);
+ const manualTopic=manualConfiguration?.configuration.questions.find(q=>q.key===key);
+ assert.equal(manualTopic?.topic_source,'discovered');
+ assert.equal(manualTopic?.human_locked,true,'the real H5 correction freezes the discovered topic before legacy manual membership');
  await setSignalListeningDiscoveryManualV1({...access,configuration_id:changed.configuration_id,map_id:f.map_id,question_key:key,root_id:f.roots[2]!,belongs:false});
  await assertCompactNativeCasesV1(access,{configuration_id:changed.configuration_id,map_id:f.map_id});
  await parity(access,{configuration_id:changed.configuration_id,map_id:f.map_id});
