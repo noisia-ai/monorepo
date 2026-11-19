@@ -15,13 +15,18 @@ function fixture(){
  const input=(i:number,keys=['voice','promotion']):SignalListeningInputV1=>({root_id:randomUUID(),input_digest:digest(i),text:'tea '+i,
   title:null,platform:null,content_type:null,author:null,published_at:'2026-01-01T00:00:00Z',language:'en',map_id:randomUUID(),
   configuration_digest,question_keys:keys,question_digests:Object.fromEntries(keys.map(key=>[key,digest(key)])),scope_basis:{}});
- const profile=(inputs:SignalListeningInputV1[],ids=Array.from({length:32},()=>randomUUID())):SignalListeningCalibrationProfileV1=>{
+ const profile=(inputs:SignalListeningInputV1[],ids:string[]=Array.from({length:32},()=>randomUUID())):SignalListeningCalibrationProfileV1=>{
   const shape=signalListeningCalibrationShapeV1(configuration,inputs[0]!),sizes=inputs.map(i=>Buffer.byteLength(JSON.stringify(buildSignalListeningJevRequestV1(i,configuration))));
   const scope={workspace_id,configuration_digest,model:shape.model,compiler_version:shape.compiler_version,phase:shape.phase,shape_digest:shape.shape_digest};
   return{scope,scope_digest:digest(scope),source_digest:digest(ids),source_run_id:run_id,source_call_ids:ids,sample_count:ids.length,status:'measured',
    request_min_bytes:Math.min(...sizes),request_max_bytes:Math.max(...sizes),max_input_tokens_per_byte:.25};
  };
- const calls=(inputs:SignalListeningInputV1[])=>inputs.map(input=>({id:randomUUID(),inputs:[input],request:buildSignalListeningJevRequestV1(input,configuration)}) as LabelingCallV1<SignalListeningInputV1>);
+ const calls=(inputs:SignalListeningInputV1[]):LabelingCallV1<SignalListeningInputV1>[]=>inputs.map(input=>{
+  const request=buildSignalListeningJevRequestV1(input,configuration),id=randomUUID();
+  const call:LabelingCallV1<SignalListeningInputV1>={id,custom_id:id,request_digest:digest({input,request}),request,inputs:[input],reserved_micro_usd:100,
+   status:'reserved',raw_body:null,results_applied:false,provider_batch_id:null,retry_depth:0};
+  return call;
+ });
  const applied=(rows:ReturnType<typeof calls>)=>rows.map(call=>({call,results:[{status:'labeled'} as never]}));
  return{configuration,configuration_digest,workspace_id,run_id,input,profile,calls,applied};
 }

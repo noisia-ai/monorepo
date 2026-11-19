@@ -23,7 +23,7 @@ test('a later bootstrap cohort is ordered before covered inputs and never reserv
  type Args=Parameters<typeof processJevLabelingPageV1<FacetInput,string>>[0];
  const run={id:'bootstrap-memory',lease_token:'lease',error_code:null,status:'running'}as LabelingRunV1;
  const first={root_id:'first',text:'first'}as FacetInput,anchors=Array.from({length:32},(_,i)=>({root_id:'anchor-'+i,text:'anchor-'+i}))as FacetInput[];
- const rows:LabelingCallV1<FacetInput>[]=[],reserved:string[][]=[],sent:string[]=[],memory:number[]=[],durable=new Set<string>();let reads=0,finishes=0;
+ const rows:LabelingCallV1<FacetInput>[]=[],reserved:string[][]=[],sent:unknown[]=[],memory:number[]=[],durable=new Set<string>();let reads=0,finishes=0;
  const store={claim:async()=>run,renew:async()=>{},release:async()=>{},calls:async()=>[],inputs:async()=>[first],
   reserve:async(_run:unknown,proposals:Array<{inputs:FacetInput[]}>)=>{reserved.push(proposals.map(p=>p.inputs[0]!.root_id));const added=proposals.map((p,i)=>({...p,id:'call-'+(rows.length+i),status:'reserved',raw_body:null,results_applied:false}))as LabelingCallV1<FacetInput>[];rows.push(...added);return added;},
   markSubmitting:async(_run:unknown,calls:typeof rows)=>{for(const call of calls)call.status='submitting';},
