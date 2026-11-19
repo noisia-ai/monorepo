@@ -16,13 +16,20 @@ import {startR16HttpFilesystemStorageV1} from './http-filesystem-storage';
 import {r16ListeningWorkloadV2,summarizeR16ListeningCapacityV2,R16_LISTENING_PREREGISTRATION_V2 as registration,type R16ListeningArmV1} from './listening-workload';
 import type {R16QueryProfilerV1} from './query-profiler';
 import {assertSharedWireDefaultRuntimeV1,withSharedWireDefaultPostcheckV1} from '../../infrastructure/db/migrations/signal-listening-statement-shared-wire.oracle';
+import {assertCompactCatalogV1,compactFullStreamMigrationV1,compactFullStreamProsrcShaV1,compactFullStreamSourceShaV1,compactRawNameV1,compactShaV1} from '../../infrastructure/db/migrations/signal-listening-compact-population.oracle';
 
 export type R16ListeningRuntimeReceiptV1=Awaited<ReturnType<typeof assertSharedWireDefaultRuntimeV1>>;
 export type R16ListeningRuntimeDatabaseV1=Parameters<typeof assertSharedWireDefaultRuntimeV1>[0];
+export type R16ListeningCompactRuntimeReceiptV1={
+ contract:'r16-compact-population-runtime-witness-v1';
+ migration:string;source_sha256:string;prosrc_sha256:string;
+ function:Record<string,unknown>;acl:Array<Record<string,unknown>>;
+};
 export type R16ListeningRuntimeWitnessV1={
  contract:'r16-listening-runtime-witness-v1';
  before:R16ListeningRuntimeReceiptV1|null;
  after:R16ListeningRuntimeReceiptV1|null;
+ compact:{before:R16ListeningCompactRuntimeReceiptV1|null;after:R16ListeningCompactRuntimeReceiptV1|null};
 };
 export type R16ListeningResourceObservationV1={
  sampling:'sparse_start_after_each_job_and_final';
@@ -54,11 +61,43 @@ export function createR16ListeningResourceObservationV1(readRss:()=>number=()=>p
 }
 export async function withR16ListeningRuntimeWitnessV1<T>(database:R16ListeningRuntimeDatabaseV1,
  body:(witness:R16ListeningRuntimeWitnessV1,captureAfter:()=>Promise<R16ListeningRuntimeReceiptV1>)=>Promise<T>){
- const witness:R16ListeningRuntimeWitnessV1={contract:'r16-listening-runtime-witness-v1',before:null,after:null};
- const captureAfter=async()=>{const receipt=await assertSharedWireDefaultRuntimeV1(database);witness.after=receipt;return receipt;};
+ const witness:R16ListeningRuntimeWitnessV1={contract:'r16-listening-runtime-witness-v1',before:null,after:null,compact:{before:null,after:null}};
+ let captureAfterFailed=false,captureAfterFailure:unknown;
+ const captureCompact=async():Promise<R16ListeningCompactRuntimeReceiptV1>=>{
+  const catalog=await assertCompactCatalogV1(database as Parameters<typeof assertCompactCatalogV1>[0]);
+  const row=catalog.functions.find(candidate=>candidate.proname===compactRawNameV1);assert.ok(row,'current compact raw function must exist');
+  assert.equal(compactShaV1(String(row.prosrc)),compactFullStreamProsrcShaV1,'actual compact pg_proc.prosrc SHA must match strict0338 source');
+  assert.equal(row.pronargs,6,'compact raw identity signature must retain six input arguments');
+  assert.equal(row.proargtypes,'2950 2950 2950 25 2951 25','compact raw input argument types must match the registered uuid/uuid/uuid/text/uuid[]/text signature');
+  assert.equal(row.prorettype,'2249','compact raw function must return the registered TABLE record type');
+  assert.equal(row.proretset,true,'compact raw function must remain set-returning');
+  assert.equal(row.proallargtypes,'{2950,2950,2950,25,2951,25,2950,25,1184,25,25,23,23,16,25,16,25,3802}',
+   'compact raw TABLE must retain all six input and twelve output argument types');
+  assert.equal(row.proargmodes,'{i,i,i,i,i,i,t,t,t,t,t,t,t,t,t,t,t,t}',
+   'compact raw signature must keep six inputs followed by twelve TABLE outputs');
+  assert.deepEqual(row.proargnames,['w','cid','mid','ctx','roots','purpose','root_id','input_digest','published_at','question_key','question_digest','body_chars','wire_chars','has_topic_source','domain','candidate','scope_state','answer'],
+   'compact raw input and TABLE output names/order are fixed');
+  assert.equal(row.provolatile,'s');assert.equal(row.prosecdef,false);
+  assert.deepEqual(row.proconfig,['search_path=public, extensions, pg_temp']);
+  const{prosrc,...metadata}=row;
+  return{contract:'r16-compact-population-runtime-witness-v1',migration:compactFullStreamMigrationV1,source_sha256:compactFullStreamSourceShaV1,
+   prosrc_sha256:compactShaV1(String(prosrc)),function:metadata,
+   acl:catalog.acl.filter(grant=>grant.proname===compactRawNameV1).map(({proname,...grant})=>grant)};
+ };
+ const capture=async(phase:'before'|'after')=>{
+  const money=await assertSharedWireDefaultRuntimeV1(database),compact=await captureCompact();
+  if(phase==='after')assert.deepEqual(compact,witness.compact.before,'compact0338 catalog/source/owner/ACL must remain exact across the measured run');
+  witness[phase]=money;witness.compact[phase]=compact;return money;
+ };
+ const captureAfter=async()=>{try{
+  const receipt=await capture('after');
+  if(captureAfterFailed){witness.after=null;witness.compact.after=null;throw captureAfterFailure;}
+  return receipt;
+ }catch(error){if(!captureAfterFailed)captureAfterFailure=error;captureAfterFailed=true;witness.after=null;witness.compact.after=null;throw captureAfterFailure;}};
  const value=await withSharedWireDefaultPostcheckV1(async()=>{
-  witness.before=await assertSharedWireDefaultRuntimeV1(database);
+  await capture('before');
   const result=await body(witness,captureAfter);
+  if(captureAfterFailed)throw captureAfterFailure;
   if(witness.after===null)await captureAfter();
   return result;
  },async()=>{if(witness.after===null)await captureAfter();});
