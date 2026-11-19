@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import {createHash,randomUUID} from 'node:crypto';
 import {readFile} from 'node:fs/promises';
 import type {PoolClient} from 'pg';
+import {sharedWireDefaultContractV1} from './signal-listening-statement-shared-wire.oracle';
 import {withFlatPrefixFullFixtureV1,withFlatPrefixReadOnlyV1,releaseFlatPrefixClientV1} from './signal-listening-flat-prefix.synthetic.fixture';
 import {runMassLabelingAcceptanceFixtureV1} from './signal-mass-labeling-acceptance.synthetic.fixture';
 import {saveSignalListeningConfigurationV1} from '../signal-listening-configuration';
@@ -55,7 +56,7 @@ export function boundedMentionsSourceV1(source:string,candidate:string){
 async function nativeFlatCatalogV1(c:PoolClient,candidate:string){
  const before=await defaults(c);
  assert.equal(before.length,5);
- const mark=await readFile(new URL('./0331_signal_listening_statement_payload.sql',import.meta.url),'utf8');assert.equal(before.find(r=>r.proname==='signal_listening_statement_money_v1')!.prosrc,mark.split('AS $$')[1]!.split('$$;')[0]);
+ const mark=await sharedWireDefaultContractV1();assert.equal(mark.default_arm,'D');assert.equal(before.find(r=>r.proname==='signal_listening_statement_money_v1')!.prosrc,mark.prosrc,'current0336 Money is required; historical population aliases stay independent');
  const runtime=(await c.query("SELECT current_database() database,current_setting('server_version_num')::int version")).rows[0];assert.match(runtime.database,/^noisia_mfp_recovery_[a-f0-9]{32}$/u);assert.notEqual(runtime.database,new URL(process.env.DATABASE_URL!).pathname.slice(1));assert.ok(runtime.version>=170000&&runtime.version<180000);
  const native=before.find(r=>r.proname==='signal_listening_population_roots_v1')!;
  assert.equal(native.prosrc,candidate.split('AS $function$')[1]!.split('$function$;')[0]);assert.notEqual(native.proacl,null);

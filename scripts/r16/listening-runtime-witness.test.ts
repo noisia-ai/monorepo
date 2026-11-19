@@ -14,18 +14,18 @@ function fakeDatabase(read:(sql:string,readIndex:number)=>Promise<{rows:Record<s
  return{query:async(sql:string)=>{readIndex++;return read(sql,readIndex);}} as unknown as R16ListeningRuntimeDatabaseV1;
 }
 
-test('the full-run witness returns source-aware C receipts for the actual function and metadata',async()=>{
+test('the full-run witness returns source-aware strictD receipts for the actual function and metadata',async()=>{
  const {contract,row}=await nativeRow(),database=fakeDatabase(sql=>{
   assert.equal(sql,sharedWireDefaultRuntimeSqlV1);return{rows:[row]};
  });
  const observed=await withR16ListeningRuntimeWitnessV1(database,async(witness,captureAfter)=>{
   assert.equal(witness.before?.actual_pg_proc_checked,true);
-  assert.equal(witness.before?.default_arm,'C');
+  assert.equal(witness.before?.default_arm,'D');
   await captureAfter();
   return{serving_ready:true};
  });
  assert.deepEqual(observed.value,{serving_ready:true});
- assert.equal(contract.default_arm,'C');
+ assert.equal(contract.default_arm,'D');
  assert.equal(observed.runtime_witness.contract,'r16-listening-runtime-witness-v1');
  assert.deepEqual(observed.runtime_witness.before,observed.runtime_witness.after);
  assert.equal(observed.runtime_witness.before?.prosrc_sha256,contract.prosrc_sha256);
@@ -74,4 +74,12 @@ test('a failed precheck sends no body and still attempts a real postcheck',async
  const database=fakeDatabase((_sql,index)=>{reads++;return{rows:[index===1?invalid:row]};});
  await assert.rejects(withR16ListeningRuntimeWitnessV1(database,async()=>{bodyCalled=true;}),error=>error instanceof Error&&error.message.startsWith('actual pg_proc.prosrc SHA must match source-aware default'));
  assert.equal(bodyCalled,false);assert.equal(reads,2);
+});
+
+test('a stale0331 C function is rejected before the full-run body when0336 D is current',async()=>{
+ const {sharedWireSourcesV1,sharedWirePayloadBarrierSourceV1,sharedWireDefaultContractFromSourcesV1}=await import('../../infrastructure/db/migrations/signal-listening-statement-shared-wire.oracle');
+ const [,sourceB]=await sharedWireSourcesV1();assert.ok(sourceB);const historical=sharedWireDefaultContractFromSourcesV1(sourceB,sharedWirePayloadBarrierSourceV1(sourceB));assert.equal(historical.default_arm,'C');let bodyCalled=false;
+ const database=fakeDatabase(()=>({rows:[{prosrc:historical.prosrc,...historical.metadata}]}));
+ await assert.rejects(withR16ListeningRuntimeWitnessV1(database,async()=>{bodyCalled=true;}),error=>error instanceof AggregateError&&error.errors.every(e=>e instanceof Error&&e.message.startsWith('actual pg_proc.prosrc SHA must match source-aware default')));
+ assert.equal(bodyCalled,false);
 });
