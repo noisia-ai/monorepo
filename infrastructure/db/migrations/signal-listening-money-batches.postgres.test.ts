@@ -1,3 +1,5 @@
+import {loadWireObserverContractV1,attestWireObserverRuntimeV1} from './signal-listening-wire-observer.test-support';
+import {withSharedWireDefaultPostcheckV1} from './signal-listening-statement-shared-wire.oracle';
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
 import {mkdtemp,writeFile,open,readFile,rm} from 'node:fs/promises';
@@ -131,9 +133,11 @@ async function exposureCalls(c:PoolClient,fn='signal_processing_org_exposure_v1(
 test('native Listening evaluates one fresh bounded population per reserve and mark statement, not per call',{
  skip:!enabled,timeout:600000,
 },async()=>withMoneyFixture(1000000,async f=>{
- await transaction(f,async c=>{
+ const wireObserver=await loadWireObserverContractV1(),before=await attestWireObserverRuntimeV1(f.database,wireObserver);
+ await withSharedWireDefaultPostcheckV1(()=>transaction(f,async c=>{
+  assert.deepEqual(await attestWireObserverRuntimeV1(c,wireObserver),before,'counter attests the same actual E producer before tracking');
   await c.query("SET LOCAL track_functions='all'");
-  const population='signal_listening_population_roots_v1(uuid,uuid,uuid,text,uuid[],text)';
+  const population=wireObserver.populationSignature;
   const authority='signal_listening_call_authority_v1(uuid,date,text,timestamptz)';
   const beforePopulation=await exposureCalls(c,population),beforeAuthority=await exposureCalls(c,authority);
   const calls=(await insert(c,f,1000)).rows;assert.equal(calls.length,3);
@@ -143,7 +147,8 @@ test('native Listening evaluates one fresh bounded population per reserve and ma
   await c.query("UPDATE signal_labeling_calls SET status='submitting' WHERE id=ANY($1::uuid[])",[calls.map(row=>row.id)]);
   assert.equal(await exposureCalls(c,population)-beforeMark,1,'mark must read another population even in the same transaction');
   assert.equal(await exposureCalls(c,authority)-beforeMarkAuthority,2,'mark retains both physical authority fences');
- });
+  assert.deepEqual(await attestWireObserverRuntimeV1(c,wireObserver),before,'measured E body/signature/OID/owner/ACL/attrs remain unchanged');
+ }),async()=>{assert.deepEqual(await attestWireObserverRuntimeV1(f.database,wireObserver),before,'catalog is unchanged after the real COMMIT or ROLLBACK; tracking uses SET LOCAL only');});
 }));
 
 for(const defect of ['text','digest','question_digest','duplicate_question']as const)test('native Listening batch rejects '+defect+' and rolls back valid siblings',{

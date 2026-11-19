@@ -1,3 +1,4 @@
+import {loadWireObserverContractV1,assertWireObserverMetadataV1} from './signal-listening-wire-observer.test-support';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {randomUUID,createHash} from 'node:crypto';
@@ -18,6 +19,7 @@ const sha=(s:string)=>'sha256:'+createHash('sha256').update(s).digest('hex');
 test('lazy native selector matches full oracle across empty slices, base reclassification, exact reservations, rights and byte prefixes',{
  skip:!enabled,timeout:600000,
 },async()=>runMassLabelingAcceptanceFixtureV1('product',{population_count:70,study_author_metadata:true,beforeProcessing:async ctx=>{
+ const wireObserver=await loadWireObserverContractV1();
  const access={database:ctx.database,workspace_id:ctx.workspace_id,actor_user_id:ctx.actor_user_id};
  const callsBefore=(await ctx.database.query('SELECT count(*)::int n FROM signal_labeling_calls WHERE workspace_id=$1',[ctx.workspace_id])).rows[0].n;
  const otherRunsBefore=(await ctx.database.query('SELECT id,status FROM signal_labeling_runs WHERE workspace_id=$1 AND id<>$2 ORDER BY id',[ctx.workspace_id,ctx.run_id])).rows;
@@ -33,9 +35,10 @@ test('lazy native selector matches full oracle across empty slices, base reclass
  let pages:Array<{ids:string[];cursor:string|null}>=[],metadata:Array<Array<{root_id:string;working_bytes:string}>>=[],finishRows:Array<{pending:number;available:boolean}>=[];
  const comparisons={unbounded:0},readerDatabase=withListeningReaderSliceOracleV1(ctx.database,comparisons);
  const database={query:readerDatabase.query.bind(readerDatabase),connect:async()=>{const c=await readerDatabase.connect();return new Proxy(c,{get(target,key){if(key==='query')return async(sql:string,params?:unknown[])=>{
+  if(sql.includes('labeling_listening_input_metadata_v1')){const current=active??prior;assertWireObserverMetadataV1(sql,params,wireObserver,{workspace_id:ctx.workspace_id,configuration_id:cfg.id,map_id:ctx.map_id,entity_context_digest:current.entity_context_digest,run_id:current.id});}
   const result=await target.query(sql,params);
   if(sql.includes('labeling_listening_root_page_v1')){assert.ok(result.rows.length<=4096);assert.deepEqual(Object.keys(result.rows[0]??{root_id:null}),['root_id']);assert.equal(params?.[3],cfg.id);assert.equal(typeof params?.[4],'string');assert.ok(params?.length===5||params?.length===6);pages.push({ids:result.rows.map(r=>r.root_id),cursor:params?.[5] as string??null});}
-  if(sql.includes('labeling_listening_input_metadata_v1')){assert.ok(sql.includes('signal_listening_population_roots_v1('),'metadata never projects the unbounded population');assert.ok(Array.isArray(params?.[7]));assert.ok((params![7] as string[]).length<=4096);assert.ok(result.rows.every(r=>Object.keys(r).sort().join(',')==='projection,root_id,working_bytes'));metadata.push(result.rows);}
+  if(sql.includes('labeling_listening_input_metadata_v1')){assert.ok(Array.isArray(params?.[7]));assert.ok((params![7] as string[]).length<=4096);assert.ok(result.rows.every(r=>Object.keys(r).sort().join(',')==='projection,root_id,working_bytes'));metadata.push(result.rows);}
   if(sql.includes('labeling_listening_pending_available_v1'))finishRows.push(result.rows[0]);
   return result;
  };const value=Reflect.get(target,key);return typeof value==='function'?value.bind(target):value;}});}} as typeof ctx.database;
