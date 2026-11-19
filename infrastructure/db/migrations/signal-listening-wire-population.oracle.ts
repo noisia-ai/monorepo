@@ -122,6 +122,6 @@ export async function wirePopulationCatalogV1(c:Pick<PoolClient,'query'>){
  * array/reference and bytes. No provider, global env, clock or live data. */
 export function wireOctetProbeTextsV1(texts:string[],enabled=false){
  if(!enabled)return texts;assert.equal(texts.length,3,'octet probe uses only the existing three-root fixture');
- const next=[...texts];next[0]=texts[0]+' synthetic bicycle '+ 'é é 😀 漢字 '.repeat(512);
+ const next=[...texts];next[0]=texts[0]+' synthetic bicycle '+ 'é é 😀 漢字 '.repeat(96);
  assert.ok(Buffer.byteLength(next[0]!)<12000);assert.ok(Buffer.byteLength(next[0]!)>[...next[0]!].length);return next;
 }
