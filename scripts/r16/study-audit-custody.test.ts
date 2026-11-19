@@ -24,7 +24,7 @@ async function fixture() {
   await writeFile(snapshot, JSON.stringify(snapshotValue), { mode: 0o600 });
   await writeFile(source, JSON.stringify(manifest), { mode: 0o600 });
   await writeFile(human, "human answer fixture", { mode: 0o600 });
-  return { root, snapshot, source, human, seal, receipt,
+  return { root, snapshot, source, human, seal, receipt, nativeReceipt: resolve(artifacts, "native-receipt.json"), artifacts,
     result_refs: [{ role: "snapshot" as const, path: snapshot, sha256: sha(await readFile(snapshot)) },
       { role: "source_manifest" as const, path: source, sha256: sha(await readFile(source)) }] };
 }
@@ -37,6 +37,8 @@ test("seal binds study outputs and human reference without reading the human fil
       result_refs: f.result_refs,
       human_refs: [{ key: "human22", role: "human_audit_answers", path: f.human }],
       now: () => new Date("2026-11-19T00:00:00.000Z") });
+    assert.deepEqual(freeze.study_ref, { study_id: "study-fixture", execution_id: "execution-fixture",
+      source_digest: sha("source"), output_digest: sha("output") }, "the Native export's raw 64-hex digest is accepted and normalized Study refs are derived");
     assert.equal(freeze.human_refs[0]?.expected_sha256, undefined);
     const result = await readBoundReferenceV1({ private_root: f.root, seal_path: f.seal, reference_key: "human22", receipt_path: f.receipt,
       read_bytes: async path => { readCalls.push(path); if (path === f.human) assert.match(await readFile(f.receipt, "utf8"), /"status":"intent"/u);
@@ -97,11 +99,19 @@ test("typed export binding rejects cross-execution refs and non-completed Study 
 test("preflight rejects path aliases, hard links, symlinks and unsafe modes before human access", async () => {
   const f = await fixture();
   try {
-    await assert.rejects(() => sealStudyFreezeV1({ private_root: f.root, seal_path: f.seal, allowed_human_root: resolve(f.root, "human"),
-      result_refs: f.result_refs, human_refs: [{ key: "human22", role: "human_audit_answers", path: f.snapshot }] }), /disjoint|human_ref_invalid/u);
-    const hardlink = resolve(f.root, "human", "hardlink.json"); await link(f.snapshot, hardlink);
-    await assert.rejects(() => sealStudyFreezeV1({ private_root: f.root, seal_path: f.seal, allowed_human_root: resolve(f.root, "human"),
-      result_refs: f.result_refs, human_refs: [{ key: "human22", role: "human_audit_answers", path: hardlink }] }), /disjoint/u);
+    await assert.rejects(() => sealStudyFreezeV1({ private_root: f.root, seal_path: f.seal, allowed_human_root: f.artifacts,
+      result_refs: f.result_refs, human_refs: [{ key: "human22", role: "human_audit_answers", path: f.snapshot }] }), /paths_must_be_disjoint/u);
+    await writeFile(f.nativeReceipt, "synthetic native receipt", { mode: 0o600 });
+    const aliases = [f.snapshot, f.source, f.nativeReceipt];
+    for (let i = 0; i < aliases.length; i++) {
+      const resultPath = aliases[i]!;
+      const hardlink = resolve(f.root, "human", `hardlink-${i}.json`); await link(resultPath, hardlink);
+      const refs = [...f.result_refs, ...(resultPath === f.nativeReceipt
+        ? [{ role: "native_receipt" as const, path: f.nativeReceipt, sha256: sha(await readFile(f.nativeReceipt)) }] : [])];
+      await assert.rejects(() => sealStudyFreezeV1({ private_root: f.root, seal_path: resolve(f.root, "artifacts", `freeze-${i}.json`),
+        allowed_human_root: resolve(f.root, "human"), result_refs: refs,
+        human_refs: [{ key: "human22", role: "human_audit_answers", path: hardlink }] }), /disjoint/u);
+    }
     const aliasFreezePath = resolve(f.root, "artifacts", "same-as-snapshot.json"); await link(f.snapshot, aliasFreezePath);
     await assert.rejects(() => sealStudyFreezeV1({ private_root: f.root, seal_path: aliasFreezePath, allowed_human_root: resolve(f.root, "human"),
       result_refs: f.result_refs, human_refs: [{ key: "human22", role: "human_audit_answers", path: f.human }] }), /disjoint/u);

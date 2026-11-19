@@ -6,6 +6,7 @@ import { canonicalJsonDigestV1 } from "./private-json-stream.js";
 
 const CONTRACT = "r16-study-audit-freeze-v1" as const;
 const SHA = /^sha256:[a-f0-9]{64}$/u;
+const HEX64 = /^[a-f0-9]{64}$/u;
 const DEFAULT_PRIVATE_ROOT = resolve(".data/piloto-masivo/r16");
 const hash = (bytes: Uint8Array | string) => `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
 
@@ -128,7 +129,7 @@ function bindExport(snapshotBytes: Uint8Array, manifestBytes: Uint8Array): Study
   const snapshot = parsedObject(snapshotBytes), manifest = parsedObject(manifestBytes);
   const source = snapshot.source as { export_contract?: unknown; export_digest?: unknown } | undefined;
   const exported = manifest as unknown as NativeExportManifestV2;
-  if (source?.export_contract !== "r16-native-audit-export-v2" || !SHA.test(String(source.export_digest))
+  if (source?.export_contract !== "r16-native-audit-export-v2" || typeof source.export_digest !== "string" || !HEX64.test(source.export_digest)
     || exported.contract_version !== "r16-native-audit-source-manifest-v2" || exported.study_execution_status !== "completed"
     || typeof exported.study_id !== "string" || !exported.study_id.trim()
     || typeof exported.study_execution_id !== "string" || !exported.study_execution_id.trim()
@@ -209,14 +210,15 @@ export async function verifyStudyFreezeV1(args: { seal_path: string; private_roo
 }
 
 async function assertDisjointPaths(paths: string[]): Promise<void> {
-  const identities = new Set<string>();
+  const canonicalPaths = new Set<string>(), inodeIdentities = new Set<string>();
   for (const path of paths) {
     await rejectSymlinks(path);
     const info = await stat(path).catch((error: NodeJS.ErrnoException) => error.code === "ENOENT" ? null : Promise.reject(error));
     const canonical = info ? await realpath(path) : resolve(await realpath(dirname(path)), basename(path));
-    const key = info ? `${canonical}\0${info.dev}:${info.ino}` : canonical;
-    if (identities.has(key) || identities.has(canonical)) fail("study_freeze_paths_must_be_disjoint");
-    identities.add(key); identities.add(canonical);
+    const inode = info ? `${info.dev}:${info.ino}` : null;
+    if (canonicalPaths.has(canonical) || (inode && inodeIdentities.has(inode))) fail("study_freeze_paths_must_be_disjoint");
+    canonicalPaths.add(canonical);
+    if (inode) inodeIdentities.add(inode);
   }
 }
 
