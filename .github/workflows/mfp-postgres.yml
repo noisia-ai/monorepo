@@ -1270,7 +1270,7 @@ jobs:
           process.stdout.write('statement shared-wire oracle: 5 exact selected cases passed\n');
           NODE
           if [ "$R16_STATEMENT_SHARED_WIRE_SOURCE_KIND" = six ]; then
-            node scripts/r16-diagnostics/listening-small/statement-default-contract.mjs verify-tap "$R16_STATEMENT_SHARED_WIRE_TAP" C
+            node scripts/r16-diagnostics/listening-small/statement-default-contract.mjs verify-tap "$R16_STATEMENT_SHARED_WIRE_TAP" current
           fi
           printf 'selected_pass=5\n' >> "$GITHUB_OUTPUT"
       - name: Ensure statement shared-wire TAP receipt exists
