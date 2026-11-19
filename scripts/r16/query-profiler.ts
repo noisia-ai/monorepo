@@ -12,6 +12,9 @@ type DurationStats = { calls: number; total_ms: number; p50_ms: number; p95_ms: 
 type SampleStats = { count: number; total: number; p50: number; p95: number; max: number };
 type OperationMetrics = { operation: string; duration_ms: DurationStats; batch_size: SampleStats | null };
 type QueryMetrics = { operation: string; sql_template_sha256: string; duration_ms: DurationStats };
+type OperationSpan = { operation: R16StoreOperationV1; start_ms: number; end_ms: number;
+  batch_size: number | null; outcome: "completed" | "failed" };
+export const R16_OPERATION_TIMELINE_MAX_SPANS_V1 = 8192;
 
 const percentile = (values: readonly number[], quantile: number): number => {
   if (!values.length) return 0;
@@ -48,6 +51,9 @@ function batchSize(operation: R16StoreOperationV1, args: readonly unknown[], res
 export class R16QueryProfilerV1 {
   private readonly operationContext = new AsyncLocalStorage<string>();
   private readonly operationDurations = new Map<string, number[]>();
+  private readonly operationSpans: OperationSpan[] = [];
+  private operationSpansStarted = 0;
+  private operationSpansCompleted = 0;
   private readonly operationBatchSizes = new Map<string, number[]>();
   private readonly queryDurations = new Map<string, { operation: string; hash: string; values: number[] }>();
 
@@ -78,9 +84,24 @@ export class R16QueryProfilerV1 {
       const operation = operationName as R16StoreOperationV1;
       return async (...args: unknown[]) => {
         const start_ms = elapsedMs();
-        try { return await this.measureStoreOperation(operation, args, () => value.apply(target, args)); }
-        finally { if (operation === "apply") observeApply?.({ start_ms, end_ms: elapsedMs(),
-          roots: Array.isArray(args[1]) ? args[1].length : 0 }); }
+        this.operationSpansStarted++;
+        let result: unknown, outcome: OperationSpan["outcome"] = "failed";
+        try {
+          result = await this.measureStoreOperation(operation, args, () => value.apply(target, args));
+          outcome = "completed";
+          return result;
+        } finally {
+          const end_ms = elapsedMs();
+          this.operationSpansCompleted++;
+          // Keep only closed allowlisted scalar spans, in completion order.
+          // Aggregates above retain their exact historical samples even when
+          // this bounded timeline overflows. Never retain arguments or errors.
+          if (this.operationSpans.length < R16_OPERATION_TIMELINE_MAX_SPANS_V1) this.operationSpans.push({
+            operation, start_ms, end_ms, batch_size: batchSize(operation, args, result) ?? null, outcome,
+          });
+          if (operation === "apply") observeApply?.({ start_ms, end_ms,
+            roots: Array.isArray(args[1]) ? args[1].length : 0 });
+        }
       };
     } }) as T;
   }
@@ -124,6 +145,17 @@ export class R16QueryProfilerV1 {
       .sort((a, b) => a.operation.localeCompare(b.operation) || a.sql_template_sha256.localeCompare(b.sql_template_sha256));
     return { contract_version: "r16-query-profile-v1" as const, sql_text_recorded: false as const,
       bind_values_recorded: false as const, operation_durations_overlap: true as const,
-      query_durations_overlap: true as const, operations, queries };
+      query_durations_overlap: true as const, operations, queries,
+      operation_timeline: {
+        contract_version: "r16-store-operation-timeline-v1" as const,
+        clock: "caller_elapsed_ms" as const, order: "completion" as const,
+        max_spans: R16_OPERATION_TIMELINE_MAX_SPANS_V1,
+        started_spans: this.operationSpansStarted, completed_spans: this.operationSpansCompleted,
+        in_flight_spans: this.operationSpansStarted - this.operationSpansCompleted,
+        dropped_spans: this.operationSpansCompleted - this.operationSpans.length,
+        complete: this.operationSpansStarted === this.operationSpansCompleted
+          && this.operationSpansCompleted === this.operationSpans.length,
+        spans: this.operationSpans.map(span => ({ ...span })),
+      } };
   }
 }

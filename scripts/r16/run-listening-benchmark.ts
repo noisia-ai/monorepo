@@ -139,7 +139,7 @@ export async function runR16ListeningBenchmarkV1(args:{arm:R16ListeningArmV1;obj
    if(newIds.length){newIds.forEach(id=>resolved.add(id));commits.push({at_ms:performance.now()-start,roots:newIds.length});}
   };
   const unobservedStore=createSignalListeningRuntimeStoreV1(f.access.database,{execution,storage});
-  const nativeStore=args.query_profiler?.wrapStore(unobservedStore)??unobservedStore;
+  const nativeStore=args.query_profiler?.wrapStore(unobservedStore,undefined,()=>performance.now()-start)??unobservedStore;
   const store={...nativeStore,async apply(...params:Parameters<typeof nativeStore.apply>){
    await nativeStore.apply(...params);
    const roots=[...new Set(params[1].flatMap(row=>row.results.map(result=>result.root_id)))];

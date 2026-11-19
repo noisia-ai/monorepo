@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import test from "node:test";
-import { R16QueryProfilerV1 } from "./query-profiler";
+import { R16QueryProfilerV1, R16_OPERATION_TIMELINE_MAX_SPANS_V1 } from "./query-profiler";
 
 const hash = (sql: string) => `sha256:${createHash("sha256").update(sql.replace(/\s+/gu, " ").trim()).digest("hex")}`;
 const pause = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms));
@@ -107,4 +107,93 @@ test("R16 profiler counts the committed selected Mark cohort under the existing 
   assert.equal(snapshot.queries.length, 3);
   assert.ok(snapshot.queries.every(row => row.operation === "markSubmitting"));
   assert.doesNotMatch(JSON.stringify(snapshot), /private-committed|authority_before_selection|commit_after_selection/u);
+});
+
+
+test("R16 operation timeline records overlapping completion spans and failures without leaking private data or invoking selected Mark", { timeout: 5000 }, async () => {
+  const gate = () => {
+    let resolve!: () => void;
+    return { promise: new Promise<void>(done => { resolve = done; }), resolve: () => resolve() };
+  };
+  const reserveEntered = gate(), applyEntered = gate(), reserveGate = gate(), applyGate = gate();
+  const profiler = new R16QueryProfilerV1();
+  let now = 10, clockReads = 0, selections = 0;
+  const clock = () => { clockReads++; return now; };
+  const primary = new Error("private-error-message-must-not-be-recorded");
+  const privateRun = { id: "private-run-identifier" };
+  const rows = [{ id: "private-root-a" }, { id: "private-root-b" }];
+  const statements: Array<{ sql: string; binds: unknown[] }> = [];
+  const database = profiler.wrapDatabase({ async query(sql: string, binds: unknown[] = []) {
+    statements.push({ sql, binds }); return { rows: [] };
+  } });
+  const applyObservations: Array<{ start_ms: number; end_ms: number; roots: number }> = [];
+  const store = profiler.wrapStore({
+    async reserve(run: typeof privateRun, proposed: typeof rows) {
+      assert.equal(run, privateRun); assert.equal(proposed, rows);
+      reserveEntered.resolve(); await reserveGate.promise; return proposed;
+    },
+    async apply(run: typeof privateRun, proposed: typeof rows) {
+      assert.equal(run, privateRun); assert.equal(proposed, rows);
+      applyEntered.resolve(); await applyGate.promise; throw primary;
+    },
+    async markSubmittingSelected(run: typeof privateRun, select: () => typeof rows) {
+      assert.equal(run, privateRun);
+      await database.query("SELECT secret_value FROM private_table WHERE id=$1", [privateRun.id]);
+      const chosen = select();
+      await database.query("UPDATE private_table SET secret_value=$1", [rows[0]!.id]);
+      return chosen;
+    },
+  }, value => applyObservations.push(value), clock);
+  const reserved = store.reserve(privateRun, rows); await reserveEntered.promise;
+  now = 20;
+  const failed = store.apply(privateRun, rows);
+  const rejected = assert.rejects(failed, error => error === primary);
+  await applyEntered.promise;
+  try {
+  const pending = profiler.snapshot().operation_timeline;
+  assert.deepEqual([pending.started_spans, pending.completed_spans, pending.in_flight_spans, pending.dropped_spans], [2, 0, 2, 0]);
+  assert.equal(pending.complete, false); assert.deepEqual(pending.spans, []);
+  now = 30; applyGate.resolve(); await rejected;
+  now = 40; reserveGate.resolve(); assert.equal(await reserved, rows);
+  now = 50;
+  assert.equal(await store.markSubmittingSelected(privateRun, () => { selections++; return rows; }), rows);
+  assert.equal(selections, 1, "only the real store may invoke its selected Mark callback");
+  assert.equal(statements.length, 2, "observation must not add queries");
+  assert.equal(statements[0]!.binds[0], privateRun.id); assert.equal(statements[1]!.binds[0], rows[0]!.id);
+  const snapshot = profiler.snapshot(), timeline = snapshot.operation_timeline;
+  assert.deepEqual(timeline.spans, [
+    { operation: "apply", start_ms: 20, end_ms: 30, batch_size: 2, outcome: "failed" },
+    { operation: "reserve", start_ms: 10, end_ms: 40, batch_size: 2, outcome: "completed" },
+    { operation: "markSubmitting", start_ms: 50, end_ms: 50, batch_size: 2, outcome: "completed" },
+  ]);
+  assert.equal(timeline.order, "completion"); assert.equal(timeline.clock, "caller_elapsed_ms");
+  assert.deepEqual([timeline.started_spans, timeline.completed_spans, timeline.in_flight_spans, timeline.dropped_spans], [3, 3, 0, 0]);
+  assert.equal(timeline.complete, true);
+  assert.deepEqual(applyObservations, [{ start_ms: 20, end_ms: 30, roots: 2 }]);
+  assert.equal(clockReads, 6, "each wrapper uses one start and one end reading, including the APPLY observer");
+  for (const operation of ["apply", "reserve", "markSubmitting"]) {
+    const aggregate = snapshot.operations.find(row => row.operation === operation)!;
+    assert.equal(aggregate.duration_ms.calls, 1); assert.equal(aggregate.batch_size?.total, 2);
+  }
+  assert.doesNotMatch(JSON.stringify(snapshot), /private-|private_table|secret_value|SELECT |UPDATE |error-message/u);
+  timeline.spans[0]!.start_ms = 999;
+  assert.equal(profiler.snapshot().operation_timeline.spans[0]!.start_ms, 20, "snapshot mutation must not alter retained observations");
+  } finally {
+    applyGate.resolve(); reserveGate.resolve(); await Promise.allSettled([reserved, rejected]);
+  }
+});
+
+test("R16 operation timeline reports overflow after 8192 closed spans while exact aggregates continue", async () => {
+  const profiler = new R16QueryProfilerV1();
+  let tick = 0;
+  const store = profiler.wrapStore({ async finish() { return "completed"; } }, undefined, () => ++tick);
+  for (let index = 0; index <= R16_OPERATION_TIMELINE_MAX_SPANS_V1; index++) assert.equal(await store.finish(), "completed");
+  const snapshot = profiler.snapshot(), timeline = snapshot.operation_timeline;
+  assert.equal(timeline.max_spans, 8192); assert.equal(timeline.spans.length, 8192);
+  assert.deepEqual([timeline.started_spans, timeline.completed_spans, timeline.in_flight_spans, timeline.dropped_spans], [8193, 8193, 0, 1]);
+  assert.equal(timeline.complete, false, "a truncated timeline must never claim complete capture");
+  assert.deepEqual(timeline.spans[0], { operation: "finish", start_ms: 1, end_ms: 2, batch_size: null, outcome: "completed" });
+  assert.equal(timeline.spans.at(-1)!.end_ms, 16384);
+  assert.equal(snapshot.operations.find(row => row.operation === "finish")?.duration_ms.calls, 8193, "timeline truncation must not truncate historical aggregates");
+  assert.ok(Buffer.byteLength(JSON.stringify(timeline)) < 2 * 1024 * 1024, "bounded synthetic timeline adds under 2MiB, without relaxing the artifact cap");
 });
