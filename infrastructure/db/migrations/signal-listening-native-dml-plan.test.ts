@@ -72,7 +72,7 @@ test('DML plan observer rejects changed SQL, wrong APPLY count and 720 foreign I
 
 /** Exercise the ORIGINAL native owner's catch/rollback/release, not a local
  * imitation of its transaction. Authority/data are mocked; no socket opens. */
-async function realOwnerWithLostAck(loss:'savepoint'|'rollback'|'release'|'commit'|'nested_settings'|'nested_restore'){
+async function realOwnerWithLostAck(loss:'savepoint'|'rollback'|'release'|'commit'|'nested_settings'|'nested_restore'|'nested_context_restore'){
  const configuration=signalListeningBaseTemplateV1({category:'synthetic bicycles',lexicon_terms:['synthetic']});
  const identity=signalListeningJevIdentityV1(configuration),context=canonicalEntityContextV1({entities:[]});
  const run:LabelingRunV1={id:randomUUID(),workspace_id:randomUUID(),actor_user_id:randomUUID(),kind:'mass_labeling',identity,
@@ -101,7 +101,7 @@ async function realOwnerWithLostAck(loss:'savepoint'|'rollback'|'release'|'commi
   commands.push(sql);
   if(sql.includes('r16_nested_settings')){settingsReads++;return{rows:[{backend_pid:42,server_version_num:170000,settings:{
    'auto_explain.log_min_duration':'-1','auto_explain.log_nested_statements':'off','auto_explain.log_format':'text',
-   'auto_explain.log_level':'log','auto_explain.log_analyze':loss==='nested_restore'&&settingsReads>2?'on':'off',
+   'auto_explain.log_level':'log','auto_explain.log_analyze':(loss==='nested_restore'||loss==='nested_context_restore')&&settingsReads>2?'on':'off',
    'auto_explain.log_buffers':'off','auto_explain.log_timing':'on','auto_explain.log_parameter_max_length':'-1',
    'auto_explain.sample_rate':'1','client_min_messages':'notice'}}]};}
   if(loss==='nested_settings'&&sql.startsWith('SET LOCAL auto_explain'))throw primary;
@@ -110,7 +110,7 @@ async function realOwnerWithLostAck(loss:'savepoint'|'rollback'|'release'|'commi
   if(loss==='release'&&sql.startsWith('RELEASE SAVEPOINT'))throw primary;
   if(loss==='commit'&&sql==='COMMIT')throw primary;
   if(sql.startsWith('EXPLAIN')){
-   if(loss==='nested_restore')raw.emit('notice',nestedNotice());
+   if(loss==='nested_restore'||loss==='nested_context_restore')raw.emit('notice',loss==='nested_context_restore'?nestedNoticeWithContext('x'.repeat(8193)+nestedFunctionContext):nestedNotice());
    const marking=sql.includes('labeling_native_covered_mark_v1');
    return{rows:[{'QUERY PLAN':[{Plan:{'Node Type':'ModifyTable',Operation:marking?'Update':'Insert','Relation Name':'signal_labeling_calls'},
     Triggers:[{'Trigger Name':'listening_statement_money_'+(marking?'update':'insert'),Calls:1}]}]}]};
@@ -135,7 +135,7 @@ async function realOwnerWithLostAck(loss:'savepoint'|'rollback'|'release'|'commi
  const nestedRecorder=createNativeDmlNestedRecorderV1({money:nestedSql,answer_guard:''});
  const guard=createNativeDmlPlanClientGuardV1(raw,({sql,values,normal,markUnknown})=>observer.query({client:raw,sql,values,
   snapshot:async()=>({raw:'same_mocked_business_state',counts:{calls:32}}),normal,onUnknown:markUnknown,
-  ...(loss==='nested_settings'||loss==='nested_restore'?{instrumentation:(identity:Parameters<typeof nestedRecorder.probe>[1])=>nestedRecorder.probe(raw,identity)}:{})}));
+  ...(loss==='nested_settings'||loss==='nested_restore'||loss==='nested_context_restore'?{instrumentation:(identity:Parameters<typeof nestedRecorder.probe>[1])=>nestedRecorder.probe(raw,identity)}:{})}));
  const database={query:guard.client.query.bind(guard.client),connect:async()=>guard.client} as Parameters<typeof createSignalLabelingStoreV1>[0]['database'];
  const store=createSignalLabelingStoreV1<SignalListeningInputV1>({database,page_size:1024,storeRaw:async()=>{throw Error('no raw I/O in owner unit test');},
   rawPages:{reference:()=>({storage_key:'unused'}),store:async()=>{throw Error('no raw I/O');},load:async()=>{throw Error('no raw I/O');}},
@@ -148,7 +148,7 @@ async function realOwnerWithLostAck(loss:'savepoint'|'rollback'|'release'|'commi
  assert.ok(failure instanceof LabelingAdmissionFailureV1,'must reach actual owner post-DML catch');
  assert.equal(failure.outcome,'unknown');assert.equal(nativeDmlPlanOwnerOutcomeV1(failure),'unknown');
  assert.ok(failure.cause instanceof AggregateError);
- if(loss==='nested_restore')assert.match(String(failure.cause.cause),/nested_settings_not_restored/u);
+ if(loss==='nested_restore'||loss==='nested_context_restore')assert.match(String(failure.cause.cause),/nested_settings_not_restored/u);
  else assert.equal(failure.cause.cause,primary,'actual owner retains original primary error');
  assert.equal(guard.state.unknown_ack,true);assert.equal(guard.state.owner_rollback_sent,true);assert.equal(guard.state.owner_rollback_ack,true);
  assert.equal(guard.state.forced_discard,true);assert.equal(guard.state.released,true);assert.deepEqual(released,[true]);
@@ -181,12 +181,14 @@ test('nested notices retain one raw JSON sample while counting repeated inclusiv
  assert.equal(r.types[0]!.sample_bytes,Buffer.byteLength(r.types[0]!.sample_json));
  assert.equal(r.types[1]!.is_outer,true);assert.deepEqual(r.types[1]!.attribution,[]);
 });
-for(const problem of ['parse','event','sample','retained','types','context','parameters']as const)test('nested collector fails closed without emitter exceptions after '+problem,()=>{
+for(const problem of ['parse','event','sample','retained','types','context','parameters']as const)test(problem==='context'?'nested collector explicitly omits optional oversized context without dropping the plan':'nested collector fails closed without emitter exceptions after '+problem,()=>{
  const limits={...NATIVE_DML_NESTED_LIMITS_V1,...(problem==='event'?{event_bytes:2}:{}),...(problem==='sample'?{sample_bytes:2}:{}),
   ...(problem==='retained'?{retained_bytes:2}:{}),...(problem==='types'?{unique_types:1}:{}),...(problem==='context'?{context_bytes:2}:{})};
  const c=createNativeDmlNestedCollectorV1({sql:'INSERT synthetic',protectedSources:{money:nestedSql,answer_guard:''},limits});c.arm();
  const msg=problem==='parse'?{message:'duration: 1 ms  plan: {broken'}:problem==='parameters'?{message:'duration: 1 ms  plan: '+JSON.stringify({'Query Text':nestedSql,'Query Parameters':'$1=secret',Plan:{}})}:nestedNotice();
  assert.doesNotThrow(()=>c.notice(msg));if(problem==='types')assert.doesNotThrow(()=>c.notice(nestedNotice('SELECT second')));
+ if(problem==='context'){assert.equal(c.report.failed,false);assert.equal(c.report.counts.dropped,0);
+  assert.equal(c.report.types[0]!.context_omitted,true);assert.equal(c.report.context_omissions.events,1);c.assertComplete('money');return;}
  assert.equal(c.report.failed,true);assert.ok(c.report.counts.dropped>0);assert.throws(()=>c.assertComplete('money'));
  assert.doesNotThrow(()=>c.notice(nestedNotice()));c.disarm();
 });
@@ -195,7 +197,7 @@ test('nested collector does not mistake a different EXPLAIN hash for a useful in
  c.notice(nestedNotice('EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) INSERT synthetic'));c.disarm();
  assert.equal(c.report.internal_events,0);assert.throws(()=>c.assertComplete('money'));
 });
-function nestedClient(loss?:'settings'|'restore'|'capture'){
+function nestedClient(loss?:'settings'|'restore'|'capture'|'large_context'){
  const client=new Client();const commands:string[]=[];let configured=false,reads=0;
  const settings:Record<string,string>={'auto_explain.log_min_duration':'-1','auto_explain.log_nested_statements':'off','auto_explain.log_format':'text',
   'auto_explain.log_level':'log','auto_explain.log_analyze':'off','auto_explain.log_buffers':'off','auto_explain.log_timing':'on',
@@ -204,7 +206,7 @@ function nestedClient(loss?:'settings'|'restore'|'capture'){
   if(sql.includes('r16_nested_settings')){reads++;return{rows:[{backend_pid:42,server_version_num:170000,settings:{...settings,...(loss==='restore'&&reads>2?{'auto_explain.log_analyze':'on'}:{})}}]};}
   if(sql.startsWith('SET LOCAL')){if(loss==='settings')throw Error('synthetic_settings_ack_lost');configured=true;}
   if(sql.startsWith('ROLLBACK TO'))configured=false;
-  if(sql.startsWith('EXPLAIN')){assert.equal(configured,true);client.emit('notice',loss==='capture'?{message:'duration: 1 ms  plan: {broken'}:nestedNotice());return{rows:[{'QUERY PLAN':[{Plan:{'Node Type':'ModifyTable',Operation:'Insert','Relation Name':'signal_labeling_calls'},Triggers:[{'Trigger Name':'listening_statement_money_insert',Calls:1}]}]}]};}
+  if(sql.startsWith('EXPLAIN')){assert.equal(configured,true);client.emit('notice',loss==='capture'?{message:'duration: 1 ms  plan: {broken'}:loss==='large_context'?nestedNoticeWithContext('x'.repeat(8193)+nestedFunctionContext):nestedNotice());return{rows:[{'QUERY PLAN':[{Plan:{'Node Type':'ModifyTable',Operation:'Insert','Relation Name':'signal_labeling_calls'},Triggers:[{'Trigger Name':'listening_statement_money_insert',Calls:1}]}]}]};}
   return{rows:[]};};
  const diagnostic:NativeDmlNestedClientV1=Object.assign(client,{query});return{client:diagnostic,commands};
 }
@@ -245,4 +247,87 @@ test('nested byte budgets accept the exact boundary and hostile notice getters n
  exact.arm();exact.notice(message);exact.assertComplete('money');assert.equal(exact.report.counts.retained_bytes,retained);
  const hostile=Object.defineProperty({},'message',{get(){throw Error('synthetic_getter');}});
  assert.doesNotThrow(()=>exact.notice(hostile));assert.equal(exact.report.failed,true);assert.equal(exact.report.counts.handler_exceptions,1);
+});
+
+// V2 acceptance: optional context omission never changes raw plan bytes or ACK authority.
+const nestedFunctionContext='PL/pgSQL function signal_listening_statement_money_v1() line 1 at SQL statement';
+const nestedNoticeWithContext=(where:string)=>({...nestedNotice(),where});
+test('nested V2 retains context8192 and omits8193 with exact metadata and unchanged raw sample',()=>{
+ const reports=[8192,8193].map(bytes=>{const c=createNativeDmlNestedCollectorV1({sql:'INSERT synthetic',protectedSources:{money:'',answer_guard:''}});
+  const where=nestedFunctionContext+'x'.repeat(bytes-Buffer.byteLength(nestedFunctionContext));c.arm();c.notice(nestedNoticeWithContext(where));c.assertComplete('money');return{report:c.report,where};});
+ const retained=reports[0]!,omitted=reports[1]!,a=retained.report.types[0]!,b=omitted.report.types[0]!;
+ assert.equal(a.context,retained.where);assert.equal(a.context_omitted,false);assert.equal(a.context_bytes,8192);
+ assert.equal(a.context_sha256,nativeDmlPlanShaV1(retained.where));assert.equal(retained.report.context_omissions.events,0);
+ assert.equal(b.context,null);assert.equal(b.context_omitted,true);assert.equal(b.context_bytes,8193);
+ assert.equal(b.context_sha256,nativeDmlPlanShaV1(omitted.where));assert.equal(omitted.report.context_omissions.events,1);
+ assert.equal(omitted.report.context_omissions.bytes,8193);assert.equal(omitted.report.counts.dropped,0);
+ assert.equal(a.sample_json,b.sample_json);assert.equal(a.sample_sha256,b.sample_sha256);
+});
+test('nested V2 derives declared attribution from complete transient context beyond8192 without retaining a prefix',()=>{
+ const where='x'.repeat(8193)+nestedFunctionContext,c=createNativeDmlNestedCollectorV1({sql:'INSERT synthetic',protectedSources:{money:'',answer_guard:''}});
+ c.arm();c.notice(nestedNoticeWithContext(where));c.assertComplete('money');const row=c.report.types[0]!;
+ assert.equal(row.context,null);assert.equal(row.context_sha256,nativeDmlPlanShaV1(where));assert.deepEqual(row.attribution,['money']);
+ assert.deepEqual(row.attribution_evidence,{basis:'context',context_functions:['money'],source_functions:[]});
+ assert.equal(c.report.context_omissions.first?.context_sha256,row.context_sha256);
+});
+test('nested V2 distinguishes absent and present empty context without omission',()=>{
+ const reports=[{message:nestedNotice().message},nestedNoticeWithContext('')].map(notice=>{
+  const c=createNativeDmlNestedCollectorV1({sql:'INSERT synthetic',protectedSources:{money:nestedSql,answer_guard:''}});c.arm();c.notice(notice);c.assertComplete('money');return c.report;});
+ assert.equal(reports[0]!.types[0]!.context_sha256,null);assert.equal(reports[0]!.types[0]!.context,null);
+ assert.equal(reports[1]!.types[0]!.context_sha256,nativeDmlPlanShaV1(''));assert.equal(reports[1]!.types[0]!.context,'');
+ assert.ok(reports.every(r=>r.context_omissions.events===0&&r.types[0]!.context_omitted===false));
+});
+test('nested V2 reports oversized context on later repetitions without replacing first sample',()=>{
+ const c=createNativeDmlNestedCollectorV1({sql:'INSERT synthetic',protectedSources:{money:'',answer_guard:''}}),where='x'.repeat(8193)+nestedFunctionContext;
+ c.arm();c.notice(nestedNotice());const sample=c.report.types[0]!.sample_json;c.notice(nestedNoticeWithContext(where));c.notice(nestedNoticeWithContext(where));c.assertComplete('money');
+ assert.equal(c.report.types.length,1);assert.equal(c.report.types[0]!.sample_json,sample);assert.equal(c.report.types[0]!.context_omitted,false);
+ assert.equal(c.report.types[0]!.events,3);assert.equal(c.report.context_omissions.events,2);assert.equal(c.report.context_omissions.bytes,2*Buffer.byteLength(where));
+ assert.equal(c.report.context_omissions.max_bytes,Buffer.byteLength(where));assert.equal(c.report.context_omissions.first?.notice_ordinal,2);
+ assert.equal(c.report.context_omissions.first?.query_raw_sha256,nativeDmlPlanShaV1(nestedSql));assert.equal(c.report.counts.dropped,0);
+});
+test('nested V2 shares512 type budget across captures, admits129 and rejects513 below byte caps',()=>{
+ const budget={types:0,retained_bytes:0},make=()=>createNativeDmlNestedCollectorV1({sql:'INSERT synthetic',protectedSources:{money:'',answer_guard:''},budget});
+ const first=make(),second=make();first.arm();second.arm();
+ for(let i=0;i<256;i++)first.notice({message:nestedNotice('SELECT '+i).message});
+ assert.equal(first.report.failed,false);assert.equal(first.report.types.length,256);
+ for(let i=0;i<256;i++)second.notice({message:nestedNotice('SELECT '+i).message});
+ assert.equal(budget.types,512);assert.equal(second.report.failed,false);assert.ok(budget.retained_bytes<NATIVE_DML_NESTED_LIMITS_V1.retained_bytes);
+ second.notice({message:nestedNotice('SELECT 513').message});assert.equal(second.report.failed,true);assert.equal(second.report.drop_reasons.unique_types,1);
+ assert.equal(budget.types,512);assert.equal(second.report.counts.valid_plans,256);assert.throws(()=>second.assertComplete());
+});
+test('nested V2 optional omission cannot bypass full1MiB event limit',()=>{
+ const c=createNativeDmlNestedCollectorV1({sql:'INSERT synthetic',protectedSources:{money:'',answer_guard:''}});c.arm();
+ c.notice(nestedNoticeWithContext('x'.repeat(NATIVE_DML_NESTED_LIMITS_V1.event_bytes)+nestedFunctionContext));
+ assert.equal(c.report.failed,true);assert.equal(c.report.drop_reasons.event_bytes,1);assert.equal(c.report.context_omissions.events,0);
+ assert.equal(c.report.types.length,0);assert.throws(()=>c.assertComplete());
+});
+test('nested V2 oversized optional context permits normal SQL once after restore and full snapshot',async()=>{
+ const h=nestedClient('large_context'),recorder=createNativeDmlNestedRecorderV1({money:'',answer_guard:''}),observer=createNativeDmlPlanObserverV1();
+ observer.arm('base',keys);let normals=0,snapshots=0;const args=await argumentsFor('insert');
+ await observer.query({...args,client:h.client,snapshot:async()=>{snapshots++;return{raw:'same',counts:{calls:32}};},instrumentation:identity=>recorder.probe(h.client,identity),
+  normal:async()=>{normals++;assert.equal(snapshots,2);assert.equal(h.client.listenerCount('notice'),0);assert.equal(recorder.probes[0]!.settings_restored,true);return{rows:[]};}});
+ assert.equal(normals,1);assert.equal(recorder.probes[0]!.capture.counts.dropped,0);assert.equal(recorder.probes[0]!.capture.context_omissions.events,1);
+ assert.equal(observer.observations[0]!.snapshot_equal,true);assert.equal(observer.observations[0]!.unknown_ack,false);
+});
+test('real Native owner retains UNKNOWN and forced discard after omitted context plus restore failure',()=>realOwnerWithLostAck('nested_context_restore'));
+
+test('nested V2 keeps256KiB sample cap even when optional context would be omitted',()=>{
+ const c=createNativeDmlNestedCollectorV1({sql:'INSERT synthetic',protectedSources:{money:'',answer_guard:''}});
+ const sample=JSON.stringify({'Query Text':nestedSql,Plan:{'Node Type':'Result',padding:'x'.repeat(NATIVE_DML_NESTED_LIMITS_V1.sample_bytes)}});
+ c.arm();c.notice({message:'duration: 1 ms  plan: '+sample,where:'x'.repeat(8193)+nestedFunctionContext});
+ assert.equal(c.report.failed,true);assert.equal(c.report.drop_reasons.sample_bytes,1);assert.equal(c.report.types.length,0);
+ assert.equal(c.report.context_omissions.events,0);
+});
+test('nested V2 keeps3MiB global sample budget below512 small types',()=>{
+ const c=createNativeDmlNestedCollectorV1({sql:'INSERT synthetic',protectedSources:{money:'',answer_guard:''}});c.arm();
+ for(let i=0;i<512&&!c.report.failed;i++)c.notice({message:'duration: 1 ms  plan: '+JSON.stringify({'Query Text':'SELECT '+i,Plan:{'Node Type':'Result',padding:'x'.repeat(10000)}})});
+ assert.equal(c.report.failed,true);assert.equal(c.report.drop_reasons.retained_bytes,1);assert.ok(c.report.types.length<512);
+ assert.ok(c.report.counts.retained_bytes<=NATIVE_DML_NESTED_LIMITS_V1.retained_bytes);assert.throws(()=>c.assertComplete());
+});
+test('nested V2 omitted ambiguous context stays unattributed and cannot satisfy the useful-plan gate',()=>{
+ const c=createNativeDmlNestedCollectorV1({sql:'INSERT synthetic',protectedSources:{money:'',answer_guard:''}});c.arm();
+ c.notice(nestedNoticeWithContext('x'.repeat(8193)+nestedFunctionContext+' PL/pgSQL function signal_listening_answer_guard_v1() line 1'));
+ assert.equal(c.report.failed,false);assert.equal(c.report.types[0]!.context_omitted,true);
+ assert.equal(c.report.types[0]!.attribution_evidence.basis,'ambiguous');assert.deepEqual(c.report.types[0]!.attribution,[]);
+ assert.throws(()=>c.assertComplete('money'),/nested_target_not_attributable/u);
 });

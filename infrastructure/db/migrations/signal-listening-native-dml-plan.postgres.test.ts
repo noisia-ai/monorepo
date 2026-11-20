@@ -235,12 +235,13 @@ test(NATIVE_DML_PLAN_TITLE_V1,{skip:!enabled,timeout:30*60*1000},async()=>{
  for(const probe of nested.probes){const row=observer.observations.find(row=>row.phase===probe.phase&&row.operation===probe.operation);
   if(row)probe.outer={calls:row.calls,answers:row.answers,query_raw_sha256:row.query_raw_sha256,query_normalized_sha256:row.query_normalized_sha256,
    plan_sha256:row.plan_sha256,apply_roster_sha256:row.apply_roster_sha256};}
- const nestedReceipt={contract:'r16-native-dml-nested-plans-v1',status:failed?'failed':'observed',diagnostic_only:true,h1_accepted:false,cpu:'UNKNOWN',
-  baseline_head:'c19f5ed178a806e13a49253090f5ed9bd1da36eb',source_binding_digest:expected.source_tree_sha256,
+ const nestedReceipt={contract:'r16-native-dml-nested-plans-v2',status:failed?'failed':'observed',diagnostic_only:true,h1_accepted:false,cpu:'UNKNOWN',
+  baseline_head:'b34a7e24073bf1f32420a9c97736700fd74b7c71',source_binding_digest:expected.source_tree_sha256,
   limits:NATIVE_DML_NESTED_LIMITS_V1,preflight_receipt:nested.preflight,probes:nested.probes,
   failure:failed?{kind:primary instanceof Error?primary.name:typeof primary,code:primary&&typeof primary==='object'&&'code'in primary&&typeof primary.code==='string'?primary.code:null}:null,
   limitations:['Diagnostic instrumentation overhead; inclusive durations are not CPU and nested levels must not be summed.',
    'One raw sample per exact SQL and phase/operation does not measure every physical plan variant.',
+   'Optional contexts over8KiB are omitted explicitly with full bytes/SHA and observed attribution evidence; omitted context cannot be reconstructed from SHA.',
    'Early752 roots/1504 calls; not late65536 ledger, deferred COMMIT fences or H1 capacity.',
    'Counters cover notices actually delivered; no proof of every possible server message. LOAD remains session-local until connection closes.']};
  const nestedFile=await privateJson(join(directory,NATIVE_DML_NESTED_FILE_V1),nestedReceipt,NATIVE_DML_NESTED_LIMITS_V1.file_bytes);

@@ -3599,14 +3599,14 @@ jobs:
             nested_path=evidence/nested_name
             raw_nested=nested_path.read_bytes()
             nested=json.loads(raw_nested.decode('utf-8'))
-            nested_contract='r16-native-dml-nested-plans-v1'
+            nested_contract='r16-native-dml-nested-plans-v2'
             nested_keys=['contract','status','diagnostic_only','h1_accepted','cpu','baseline_head','source_binding_digest','limits','preflight_receipt','probes','failure','limitations']
             limits={'event_bytes':1024*1024,'sample_bytes':256*1024,'retained_bytes':3*1024*1024,'file_bytes':4*1024*1024,
-              'unique_types':128,'context_bytes':8*1024,'depth':128,'nodes':16384,'preflight_sample_bytes':16*1024}
+              'unique_types':512,'context_bytes':8*1024,'depth':128,'nodes':16384,'preflight_sample_bytes':16*1024}
             if type(nested) is not dict or set(nested.keys())!=set(nested_keys):
               raise SystemExit('nested DML receipt has an invalid top-level shape or key order')
             fixed={'contract':nested_contract,'status':'observed','diagnostic_only':True,'h1_accepted':False,'cpu':'UNKNOWN',
-              'baseline_head':'c19f5ed178a806e13a49253090f5ed9bd1da36eb'}
+              'baseline_head':'b34a7e24073bf1f32420a9c97736700fd74b7c71'}
             if any(type(nested.get(k)) is not type(v) or nested.get(k)!=v for k,v in fixed.items()):
               raise SystemExit('nested DML receipt metadata is invalid or not diagnostic-only')
             if nested.get('failure') is not None or nested.get('limits')!=limits:
@@ -3641,7 +3641,7 @@ jobs:
                   stack.extend((v,depth+1) for v in current)
               return True
             def validate_capture(capture, phase, operation, outer=None, preflight=False):
-              capture_keys=['query_raw_sha256','query_normalized_sha256','explain_normalized_sha256','failed','counts','drop_reasons','internal_events','attribution_events','types']
+              capture_keys=['query_raw_sha256','query_normalized_sha256','explain_normalized_sha256','failed','counts','drop_reasons','internal_events','attribution_events','types','context_omissions']
               if type(capture) is not dict or set(capture.keys())!=set(capture_keys):
                 raise SystemExit('nested DML capture has an invalid shape or key order')
               if outer is not None and (capture.get('query_raw_sha256')!=outer['query_raw_sha256'] or capture.get('query_normalized_sha256')!=outer['query_normalized_sha256']):
@@ -3659,9 +3659,18 @@ jobs:
                 raise SystemExit('nested capture has parse failures, drops, handler errors, or out-of-window plans')
               if type(capture.get('types')) is not list:
                 raise SystemExit('nested capture types must be an array')
-              retained=0;valid_events=0;internal_events=0;attribution={'money':0,'answer_guard':0};seen=set()
+              omitted=capture.get('context_omissions');omission_keys={'events','bytes','max_bytes','first'}
+              if type(omitted) is not dict or set(omitted)!=omission_keys or any(not safe_int(omitted.get(k)) for k in ('events','bytes','max_bytes')):
+                raise SystemExit('nested context omission aggregate is malformed')
+              if omitted['events']>counts['valid_plans']:
+                raise SystemExit('nested context omissions exceed accepted valid plan events')
+              if (omitted['events']==0 and (omitted['bytes']!=0 or omitted['max_bytes']!=0 or omitted['first'] is not None)):
+                raise SystemExit('empty nested context omission aggregate must have zero totals and null first')
+              if omitted['events']>0 and (omitted['max_bytes']<=limits['context_bytes'] or omitted['bytes']<omitted['max_bytes'] or omitted['max_bytes']>limits['event_bytes'] or omitted['bytes']>counts['notice_bytes'] or omitted['bytes']<omitted['events']*(limits['context_bytes']+1)):
+                raise SystemExit('nested context omission byte totals are inconsistent')
+              retained=0;valid_events=0;internal_events=0;attribution={'money':0,'answer_guard':0};seen=set();type_raw_hashes=set();sample_omitted=[]
               for item in capture['types']:
-                type_keys=['query_raw_sha256','query_normalized_sha256','query_text','is_outer','attribution','sample_json','sample_sha256','sample_bytes','sample_retained_bytes','sample_ordinal','context','events','duration_inclusive_ms']
+                type_keys=['query_raw_sha256','query_normalized_sha256','query_text','is_outer','attribution','sample_json','sample_sha256','sample_bytes','sample_retained_bytes','sample_ordinal','context','events','duration_inclusive_ms','context_bytes','context_sha256','context_omitted','attribution_evidence']
                 if type(item) is not dict or set(item.keys())!=set(type_keys):
                   raise SystemExit('nested SQL type has an invalid shape or key order')
                 query_text=item.get('query_text');sample_json=item.get('sample_json')
@@ -3672,11 +3681,11 @@ jobs:
                   raise SystemExit('nested Query Text SHA differs from exact UTF-8 bytes or whitespace normalization')
                 identity=(phase,operation,raw_hash,norm_hash)
                 if identity in seen: raise SystemExit('nested capture repeats a SQL identity within one probe')
-                seen.add(identity)
+                seen.add(identity);type_raw_hashes.add(raw_hash)
                 if len(query_text.encode('utf-8'))>limits['event_bytes']:
                   raise SystemExit('nested Query Text exceeds event cap')
                 if type(item.get('is_outer')) is not bool: raise SystemExit('nested SQL type is_outer must be boolean')
-                if type(item.get('attribution')) is not list or len(item['attribution'])!=len(set(item['attribution'])) or any(x not in ('money','answer_guard') for x in item['attribution']):
+                if type(item.get('attribution')) is not list or len(item['attribution'])!=len(set(item['attribution'])) or any(type(x) is not str or x not in ('money','answer_guard') for x in item['attribution']):
                   raise SystemExit('nested SQL attribution is invalid')
                 if item['is_outer'] and item['attribution']:
                   raise SystemExit('outer EXPLAIN type cannot be attributed to an internal guard')
@@ -3692,11 +3701,56 @@ jobs:
                 retained_bytes=item.get('sample_retained_bytes')
                 if not safe_int(retained_bytes) or retained_bytes<sample_bytes or retained_bytes>limits['sample_bytes']:
                   raise SystemExit('nested sample retained-byte accounting is invalid')
-                context=item.get('context')
-                if context is not None and (type(context) is not str or len(context.encode('utf-8'))>limits['context_bytes']):
-                  raise SystemExit('nested notice context exceeds its UTF-8 cap')
                 if not safe_int(item.get('sample_ordinal')) or item['sample_ordinal']==0 or item['sample_ordinal']>counts['notices']:
                   raise SystemExit('nested sample ordinal is invalid')
+                context=item.get('context');context_bytes=item.get('context_bytes');context_sha=item.get('context_sha256');context_omitted=item.get('context_omitted')
+                if type(context_omitted) is not bool or not safe_int(context_bytes):
+                  raise SystemExit('nested context metadata has unsafe types')
+                if context_bytes>limits['event_bytes'] or sample_bytes+context_bytes>limits['event_bytes']:
+                  raise SystemExit('nested sample and full context exceed the event cap')
+                if context_omitted and context_bytes>omitted['max_bytes']:
+                  raise SystemExit('nested omitted sample exceeds the aggregate maximum context bytes')
+                if context is None:
+                  if context_omitted:
+                    if context_bytes<=limits['context_bytes'] or not re.fullmatch(r'[0-9a-f]{64}',str(context_sha)):
+                      raise SystemExit('omitted nested context lacks full byte count/SHA')
+                    sample_omitted.append(item)
+                  elif context_bytes!=0 or context_sha is not None:
+                    raise SystemExit('absent nested context must use zero bytes and null SHA')
+                else:
+                  if type(context) is not str:
+                    raise SystemExit('nested context must be a string or null')
+                  exact_context_bytes=len(context.encode('utf-8'))
+                  if context_bytes!=exact_context_bytes or context_sha!=sha256_text(context) or context_omitted or exact_context_bytes>limits['context_bytes']:
+                    raise SystemExit('retained nested context bytes/SHA or omission flag is inconsistent')
+                evidence=item.get('attribution_evidence')
+                if type(evidence) is not dict or set(evidence)!={'basis','context_functions','source_functions'}:
+                  raise SystemExit('nested attribution_evidence shape is invalid')
+                for key in ('context_functions','source_functions'):
+                  values=evidence.get(key)
+                  if type(values) is not list or len(values)!=len(set(values)) or any(type(v) is not str or v not in ('money','answer_guard') for v in values):
+                    raise SystemExit('nested attribution_evidence function list is invalid')
+                if context is None and not context_omitted and evidence['context_functions']:
+                  raise SystemExit('absent nested context cannot claim context function matches')
+                basis=evidence.get('basis');context_functions=evidence['context_functions'];source_functions=evidence['source_functions']
+                if basis not in ('context','source','none','ambiguous'):
+                  raise SystemExit('nested attribution_evidence basis is invalid')
+                if item['is_outer']:
+                  expected_basis='none';expected_attribution=[]
+                  if context_functions or source_functions:
+                    raise SystemExit('outer plan must have empty attribution evidence')
+                elif len(context_functions)==1:
+                  expected_basis='context';expected_attribution=context_functions
+                elif len(context_functions)>1:
+                  expected_basis='ambiguous';expected_attribution=[]
+                elif len(source_functions)==1:
+                  expected_basis='source';expected_attribution=source_functions
+                elif len(source_functions)>1:
+                  expected_basis='ambiguous';expected_attribution=[]
+                else:
+                  expected_basis='none';expected_attribution=[]
+                if basis!=expected_basis or item['attribution']!=expected_attribution:
+                  raise SystemExit('nested attribution disagrees with its declared evidence basis')
                 events=item.get('events')
                 if not safe_int(events) or events==0: raise SystemExit('nested SQL event count is invalid')
                 duration=item.get('duration_inclusive_ms')
@@ -3716,18 +3770,49 @@ jobs:
                 if not item['is_outer']: internal_events+=events
                 for label in item['attribution']: attribution[label]+=events
                 retained+=retained_bytes
+              if omitted['events']<len(sample_omitted):
+                raise SystemExit('nested omission event count does not cover every omitted first sample')
+              if omitted['bytes']<sum(item['context_bytes'] for item in sample_omitted):
+                raise SystemExit('nested omission byte total does not cover every omitted first sample')
+              if sample_omitted and omitted['max_bytes']<max(item['context_bytes'] for item in sample_omitted):
+                raise SystemExit('nested omission maximum does not cover every omitted first sample')
+              if omitted['events']==0:
+                pass
+              else:
+                first=omitted.get('first');first_keys={'notice_ordinal','query_raw_sha256','context_bytes','context_sha256'}
+                if type(first) is not dict or set(first)!=first_keys or not safe_int(first.get('notice_ordinal')) or first['notice_ordinal']==0 or first['notice_ordinal']>counts['notices']:
+                  raise SystemExit('nested first omission descriptor is malformed')
+                if not re.fullmatch(r'[0-9a-f]{64}',str(first.get('query_raw_sha256'))) or not re.fullmatch(r'[0-9a-f]{64}',str(first.get('context_sha256'))):
+                  raise SystemExit('nested first omission descriptor SHA is malformed')
+                if not safe_int(first.get('context_bytes')) or first['context_bytes']<=limits['context_bytes'] or first['context_bytes']>omitted['max_bytes']:
+                  raise SystemExit('nested first omission descriptor byte length is inconsistent')
+                if first['query_raw_sha256'] not in type_raw_hashes:
+                  raise SystemExit('nested first omission SQL hash is not a retained type')
+                matching_first_types=[item for item in capture['types'] if item['query_raw_sha256']==first['query_raw_sha256']]
+                if len(matching_first_types)!=1:
+                  raise SystemExit('nested first omission SQL hash does not map to one retained type')
+                first_type=matching_first_types[0]
+                if sample_omitted and first['notice_ordinal']>min(item['sample_ordinal'] for item in sample_omitted):
+                  raise SystemExit('nested omission aggregate does not cover the omitted first sample')
+                if first['notice_ordinal']<first_type['sample_ordinal']:
+                  raise SystemExit('nested first omission precedes the first sample of its SQL type')
+                if first['notice_ordinal']==first_type['sample_ordinal'] and (not first_type['context_omitted'] or first['context_bytes']!=first_type['context_bytes'] or first['context_sha256']!=first_type['context_sha256'] or first['query_raw_sha256']!=first_type['query_raw_sha256']):
+                  raise SystemExit('nested first omission at the sample ordinal differs from that retained sample')
               if retained!=counts['retained_bytes']:
                 raise SystemExit('nested retained-byte counter differs from retained samples')
-              if valid_events!=counts['valid_plans']:
+              if not safe_int(valid_events) or valid_events!=counts['valid_plans']:
                 raise SystemExit('nested valid-plan counter differs from per-type event totals')
               totals['retained']+=retained;totals['types']+=0 if preflight else len(capture['types'])
-              if totals['retained']>limits['retained_bytes'] or totals['types']>limits['unique_types']:
+              if not safe_int(totals['retained']) or not safe_int(totals['types']) or totals['retained']>limits['retained_bytes'] or totals['types']>limits['unique_types']:
                 raise SystemExit('nested aggregate sample/type budget exceeds its cap')
               expected_attribution={'money':attribution['money'],'answer_guard':attribution['answer_guard']}
-              if capture.get('internal_events')!=internal_events or capture.get('attribution_events')!=expected_attribution:
+              observed_attribution=capture.get('attribution_events')
+              if not safe_int(capture.get('internal_events')) or type(observed_attribution) is not dict or set(observed_attribution)!={'money','answer_guard'} or any(not safe_int(v) for v in observed_attribution.values()):
+                raise SystemExit('nested internal/attribution counters are unsafe')
+              if capture.get('internal_events')!=internal_events or observed_attribution!=expected_attribution:
                 raise SystemExit('nested internal/attribution totals differ from retained SQL type event counts')
               if preflight:
-                if counts['valid_plans']!=1 or len(capture['types'])!=1 or internal_events!=0 or attribution!={'money':0,'answer_guard':0}:
+                if counts['valid_plans']!=1 or len(capture['types'])!=1 or capture['types'][0]['events']!=1 or internal_events!=0 or attribution!={'money':0,'answer_guard':0}:
                   raise SystemExit('preflight must contain exactly one outer SELECT plan and no internal attribution')
                 item=capture['types'][0]
                 if item['query_text']!='SELECT 1 /* r16_auto_explain_preflight */' or not item['is_outer'] or item['sample_bytes']>limits['preflight_sample_bytes'] or item['sample_retained_bytes']>limits['preflight_sample_bytes']:
@@ -3784,7 +3869,7 @@ jobs:
             if sum(p['capture']['counts']['retained_bytes'] for p in probes)+preflight['capture']['counts']['retained_bytes']>limits['retained_bytes']:
               raise SystemExit('nested sample retention including preflight exceeds 3 MiB')
             if sum(len(p['capture']['types']) for p in probes)>limits['unique_types']:
-              raise SystemExit('nested probe type count exceeds 128')
+              raise SystemExit('nested probe type count exceeds 512')
             tap_text=tap.read_text(encoding='utf-8',errors='replace') if tap.is_file() and not tap.is_symlink() and tap.stat().st_size<=max_tap else ''
             def validate_native_dml_tap(text, expected_title):
               lines=text.splitlines()

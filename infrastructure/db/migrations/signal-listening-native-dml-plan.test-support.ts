@@ -191,7 +191,7 @@ export function createNativeDmlPlanObserverV1(){
 /** Diagnostic-only auto_explain. Raw JSON samples are hashed without numeric reserialization. */
 export const NATIVE_DML_NESTED_FILE_V1='native-dml-nested-plans.json';
 export const NATIVE_DML_NESTED_LIMITS_V1={event_bytes:1048576,sample_bytes:262144,retained_bytes:3145728,file_bytes:4194304,
- unique_types:128,context_bytes:8192,depth:128,nodes:16384,preflight_sample_bytes:16384}as const;
+ unique_types:512,context_bytes:8192,depth:128,nodes:16384,preflight_sample_bytes:16384}as const;
 export const NATIVE_DML_NESTED_PREFLIGHT_SQL_V1='SELECT 1 /* r16_auto_explain_preflight */';
 export const NATIVE_DML_NESTED_SETTING_KEYS_V1=['auto_explain.log_min_duration','auto_explain.log_nested_statements',
  'auto_explain.log_format','auto_explain.log_level','auto_explain.log_analyze','auto_explain.log_buffers',
@@ -207,13 +207,16 @@ export type NativeDmlProbeIdentityV1={phase:NativeDmlPlanPhaseV1|'preflight';ope
 export type NativeDmlProbeInstrumentationV1={beforeSavepoint():Promise<void>;afterSavepoint():Promise<void>;
  explainStarted():void;explainFinished():void;afterRestore():Promise<void>;finish():void;assertCapture():void;
  uncertainty:boolean};
+type NestedAttributionEvidenceV2={basis:'context'|'source'|'none'|'ambiguous';context_functions:NestedAttributionV1[];source_functions:NestedAttributionV1[]};
+type NestedContextOmissionsV2={events:number;bytes:number;max_bytes:number;first:{notice_ordinal:number;query_raw_sha256:string;context_bytes:number;context_sha256:string}|null};
 type NestedSampleV1={query_raw_sha256:string;query_normalized_sha256:string;query_text:string;is_outer:boolean;
  attribution:NestedAttributionV1[];sample_json:string;sample_sha256:string;sample_bytes:number;sample_retained_bytes:number;
- sample_ordinal:number;context:string|null;events:number;duration_inclusive_ms:{count:number;min:number;max:number;sum:number}};
+ sample_ordinal:number;context:string|null;context_bytes:number;context_sha256:string|null;context_omitted:boolean;
+ attribution_evidence:NestedAttributionEvidenceV2;events:number;duration_inclusive_ms:{count:number;min:number;max:number;sum:number}};
 type NestedCaptureV1={query_raw_sha256:string;query_normalized_sha256:string;explain_normalized_sha256:string;failed:boolean;
  counts:{notices:number;notice_bytes:number;valid_plans:number;non_plan_notices:number;parse_failures:number;handler_exceptions:number;
   dropped:number;out_of_window:number;retained_bytes:number};drop_reasons:Record<string,number>;internal_events:number;
- attribution_events:{money:number;answer_guard:number};types:NestedSampleV1[]};
+ attribution_events:{money:number;answer_guard:number};types:NestedSampleV1[];context_omissions:NestedContextOmissionsV2};
 export type NativeDmlNestedProbeV1={phase:NativeDmlProbeIdentityV1['phase'];operation:NativeDmlProbeIdentityV1['operation'];
  session_id:string|null;backend_pid:number|null;load_ack:boolean;settings_before:Record<string,string>|null;settings_after:Record<string,string>|null;
  settings_restored:boolean;listener_before:number|null;listener_after:number|null;listener_detached:boolean;capture:NestedCaptureV1;
@@ -225,7 +228,7 @@ export function createNativeDmlNestedCollectorV1(args:{sql:string;protectedSourc
  const report:NestedCaptureV1={query_raw_sha256:nativeDmlPlanShaV1(args.sql),query_normalized_sha256:nativeDmlPlanNormalizedShaV1(args.sql),
   explain_normalized_sha256:nativeDmlPlanNormalizedShaV1('EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) '+args.sql),failed:false,
   counts:{notices:0,notice_bytes:0,valid_plans:0,non_plan_notices:0,parse_failures:0,handler_exceptions:0,dropped:0,out_of_window:0,retained_bytes:0},
-  drop_reasons:{},internal_events:0,attribution_events:{money:0,answer_guard:0},types:[]};
+  drop_reasons:{},internal_events:0,attribution_events:{money:0,answer_guard:0},types:[],context_omissions:{events:0,bytes:0,max_bytes:0,first:null}};
  const types=new Map<string,NestedSampleV1>();let active=false;
  const increment=(n:number,by=1)=>{assert.ok(Number.isSafeInteger(n)&&Number.isSafeInteger(by)&&by>=0&&n<=Number.MAX_SAFE_INTEGER-by,'nested_counter_overflow');return n+by;};
  const reject=(reason:string)=>{report.failed=true;report.counts.dropped=increment(report.counts.dropped);
@@ -242,7 +245,8 @@ export function createNativeDmlNestedCollectorV1(args:{sql:string;protectedSourc
    const contextBytes=context===null?0:Buffer.byteLength(context),bytes=Buffer.byteLength(message)+contextBytes;
    report.counts.notice_bytes=increment(report.counts.notice_bytes,bytes);
    if(bytes>limits.event_bytes){reject('event_bytes');classified=true;return;}
-   if(contextBytes>limits.context_bytes){reject('context_bytes');classified=true;return;}
+   const contextOmitted=context!==null&&contextBytes>limits.context_bytes,retainedContext=contextOmitted?null:context;
+   let contextSha:string|null=null;
    const match=/^duration: ([0-9]+(?:\.[0-9]+)?) ms\s+plan:\s*([\s\S]+)$/u.exec(message);
    if(!match){
     if(/^duration:/u.test(message)){report.counts.parse_failures=increment(report.counts.parse_failures);reject('prefix');}
@@ -273,21 +277,33 @@ export function createNativeDmlNestedCollectorV1(args:{sql:string;protectedSourc
      if(sources[target].length>0&&sources[target].includes(normalize(sql)))sourceTargets.push(target);
     }
     const targets=contextTargets.length>0?contextTargets:sourceTargets;if(targets.length===1)attribution.push(targets[0]!);
-    const sample_retained_bytes=Buffer.byteLength(JSON.stringify({query_text:sql,sample_json,context}));
+    const basis:NestedAttributionEvidenceV2['basis']=is_outer?'none':contextTargets.length>0?contextTargets.length===1?'context':'ambiguous':
+     sourceTargets.length===1?'source':sourceTargets.length>1?'ambiguous':'none';
+    const attribution_evidence:NestedAttributionEvidenceV2={basis,context_functions:contextTargets,source_functions:sourceTargets};
+    contextSha=context===null?null:nativeDmlPlanShaV1(context);
+    const sample_retained_bytes=Buffer.byteLength(JSON.stringify({query_text:sql,sample_json,context:retainedContext,context_bytes:contextBytes,
+     context_sha256:contextSha,context_omitted:contextOmitted,attribution_evidence}));
     const sampleCap=args.preflight?limits.preflight_sample_bytes:limits.sample_bytes;
     if(sample_retained_bytes>sampleCap){reject('sample_bytes');classified=true;return;}
     if(!args.preflight&&budget.types>=limits.unique_types){reject('unique_types');classified=true;return;}
     if(budget.retained_bytes+sample_retained_bytes>limits.retained_bytes){reject('retained_bytes');classified=true;return;}
     type={query_raw_sha256:raw,query_normalized_sha256:normalized,query_text:sql,is_outer,attribution,sample_json,
      sample_sha256:nativeDmlPlanShaV1(sample_json),sample_bytes:Buffer.byteLength(sample_json),sample_retained_bytes,
-     sample_ordinal:report.counts.notices,context,events:0,duration_inclusive_ms:{count:0,min:duration,max:duration,sum:0}};
+     sample_ordinal:report.counts.notices,context:retainedContext,context_bytes:contextBytes,context_sha256:contextSha,context_omitted:contextOmitted,
+     attribution_evidence,events:0,duration_inclusive_ms:{count:0,min:duration,max:duration,sum:0}};
     types.set(key,type);report.types.push(type);if(!args.preflight)budget.types++;
     budget.retained_bytes+=sample_retained_bytes;report.counts.retained_bytes+=sample_retained_bytes;
    }
    const sum=type.duration_inclusive_ms.sum+duration;assert.ok(Number.isFinite(sum),'nested_duration_overflow');
    type.events=increment(type.events);type.duration_inclusive_ms={count:type.events,min:Math.min(type.duration_inclusive_ms.min,duration),
     max:Math.max(type.duration_inclusive_ms.max,duration),sum};
-   report.counts.valid_plans=increment(report.counts.valid_plans);if(!is_outer)report.internal_events=increment(report.internal_events);
+   report.counts.valid_plans=increment(report.counts.valid_plans);
+   if(contextOmitted&&context!==null){const omissions=report.context_omissions;
+    omissions.events=increment(omissions.events);omissions.bytes=increment(omissions.bytes,contextBytes);omissions.max_bytes=Math.max(omissions.max_bytes,contextBytes);
+    if(omissions.first===null)omissions.first={notice_ordinal:report.counts.notices,query_raw_sha256:raw,context_bytes:contextBytes,
+     context_sha256:contextSha??nativeDmlPlanShaV1(context)};
+   }
+   if(!is_outer)report.internal_events=increment(report.internal_events);
    for(const target of type.attribution)report.attribution_events[target]=increment(report.attribution_events[target]);classified=true;
   }catch{
    // Keep a bounded fixed reason even after a getter, graph-cap or counter failure.
