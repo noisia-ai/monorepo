@@ -1,3 +1,4 @@
+import {runSurveyQuestionBytesExperimentV1,compareSurveyQuestionBytesEdgeV1} from './signal-listening-survey-question-bytes.experimental.test-support';
 import {compareWirePopulationV1} from './signal-listening-wire-population.oracle';
 import assert from 'node:assert/strict';
 import test from 'node:test';
@@ -55,10 +56,16 @@ test('projection linear joins native preserves256keys, Unicode microseconds, byt
   try{await c.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
    const fixed=Buffer.byteLength(JSON.stringify(run.identity))+Buffer.byteLength(JSON.stringify(run.context))+Buffer.byteLength(JSON.stringify(cfg.configuration));
    const rows=await pair(c,await candidateProjectionMetadataSqlV1(),[f.workspace_id,cfg.id,f.map_id,run.entity_context_digest,run.id,3,fixed,bounded.map(i=>i.root_id),String(budget)]);weights=rows.map(r=>Number(r.working_bytes));
+   console.log('# experimental survey question bytes Q8 256 edge '+JSON.stringify(await compareSurveyQuestionBytesEdgeV1(c,
+    [f.workspace_id,cfg.id,f.map_id,run.entity_context_digest,run.id,3,fixed,bounded.map(input=>input.root_id),String(budget)],
+    {workspace_id:f.workspace_id,map_id:f.map_id,configuration_digest:cfg.configuration_digest},bounded)));
    const date=(await c.query("SELECT to_jsonb(m)->>'published_at' value FROM mentions m WHERE workspace_id=$1 AND id=$2",[f.workspace_id,bounded[0]!.root_id])).rows[0].value;assert.match(date,/\.123456/);
    for(const [available,expected]of [[1,0],[weights[0]!-1,0],[weights[0]!,1],[weights[0]!+weights[1]!-1,1],[weights[0]!+weights[1]!,2]]as const){
     const paired=await pair(c,await candidateProjectionMetadataSqlV1(),[f.workspace_id,cfg.id,f.map_id,run.entity_context_digest,run.id,3,fixed,bounded.map(input=>input.root_id),String(available)]);
     assert.equal(paired.filter(row=>row.projection!==null).length,expected,'both survey SQL arms preserve the exact fitting prefix with256 question keys');
+    console.log('# experimental survey question bytes Q8 256 edge '+JSON.stringify(await compareSurveyQuestionBytesEdgeV1(c,
+     [f.workspace_id,cfg.id,f.map_id,run.entity_context_digest,run.id,3,fixed,bounded.map(input=>input.root_id),String(available)],
+     {workspace_id:f.workspace_id,map_id:f.map_id,configuration_digest:cfg.configuration_digest},bounded)));
    }
 
   }finally{await c.query('ROLLBACK');c.release();}
@@ -191,7 +198,11 @@ test('projection linear joins native4096 paired RRRO preserves rows and removes 
    const identity=async()=>(await target.query("SELECT pg_backend_pid() pid,pg_current_snapshot()::text snapshot,current_setting('transaction_isolation') isolation,current_setting('transaction_read_only') readonly")).rows[0];
    const anchor=metadata||body?await identity():null,result=await target.query(sql,params);
    if(metadata){surveyQueries++;assert.ok(params);assert.equal(sql,await candidateProjectionMetadataSqlV1('survey'),'the real survey API executes the reviewed candidate query');
-    assert.deepEqual(result.rows,(await target.query(projectionSurveyMetadataBeforeLinearV1,params)).rows,'ACTUAL4096 survey metadata equals frozen Source1dd on its own RR/RO client');}
+    assert.deepEqual(result.rows,(await target.query(projectionSurveyMetadataBeforeLinearV1,params)).rows,'ACTUAL4096 survey metadata equals frozen Source1dd on its own RR/RO client');
+    // Experimental SQL only; the API, original oracle, and its receipt remain Q8.
+    const experiment=await runSurveyQuestionBytesExperimentV1(target,{sql,params,actual:result.rows,
+     scope:{workspace_id:f.workspace_id,map_id:f.map_id,configuration_digest:cfg.configuration_digest},expectedInputs:rows});
+    console.log('# experimental survey question bytes Q8 pair4096 '+JSON.stringify(experiment));}
    if(body){bodyQueries++;assert.ok(params&&Array.isArray(params[2])&&params[2].length<=1024);}
    if(anchor){assert.deepEqual(await identity(),anchor);snapshots.push(anchor);}return result;
   };const value=Reflect.get(target,key);return typeof value==='function'?value.bind(target):value;}});}}as LabelingDatabaseV1;
