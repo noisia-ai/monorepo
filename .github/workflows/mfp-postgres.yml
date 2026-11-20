@@ -3358,11 +3358,11 @@ jobs:
         run: pnpm install --frozen-lockfile
       - name: Typecheck database package before fixture setup
         env:
-          NODE_OPTIONS: --max-old-space-size=1024
+          NODE_OPTIONS: --max-old-space-size=4096
         run: pnpm --filter @noisia/db typecheck
       - name: Typecheck workers package before fixture setup
         env:
-          NODE_OPTIONS: --max-old-space-size=1024
+          NODE_OPTIONS: --max-old-space-size=4096
         run: pnpm --filter @noisia/workers typecheck
       - name: Require the owned benchmark lab and evidence path to be absent
         run: |
