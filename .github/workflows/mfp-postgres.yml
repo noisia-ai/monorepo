@@ -3596,8 +3596,22 @@ jobs:
               if row.get('snapshot_before_sha256')!=row.get('snapshot_after_sha256') or type(row.get('snapshot_counts')) is not dict or set(row['snapshot_counts'])!=count_keys:
                 raise SystemExit('full transactional snapshot did not restore exactly')
             tap_text=tap.read_text(encoding='utf-8',errors='replace') if tap.is_file() and not tap.is_symlink() and tap.stat().st_size<=max_tap else ''
-            if '# tests 1' not in tap_text or '# pass 1' not in tap_text or '# fail 0' not in tap_text or '# skipped 0' not in tap_text or title not in tap_text:
-              raise SystemExit('Native DML TAP census is not exactly one passing case with zero skips')
+            def validate_native_dml_tap(text, expected_title):
+              lines=text.splitlines()
+              for key,expected_count in (('tests',1),('pass',1),('fail',0),('skipped',0)):
+                matches=[re.fullmatch(rf'# {key} ([0-9]+)',line) for line in lines]
+                values=[int(match.group(1)) for match in matches if match]
+                if len(values)!=1 or values[0]!=expected_count:
+                  raise SystemExit(f'Native DML TAP summary #{key} is missing, duplicated, or not exactly {expected_count}')
+              for key in ('cancelled','todo'):
+                matches=[re.fullmatch(rf'# {key} ([0-9]+)',line) for line in lines]
+                values=[int(match.group(1)) for match in matches if match]
+                if values and (len(values)!=1 or values[0]!=0):
+                  raise SystemExit(f'Native DML TAP summary #{key} is duplicated or nonzero')
+              title_line=f'# Subtest: {expected_title}'
+              if sum(line==title_line for line in lines)!=1:
+                raise SystemExit('Native DML TAP title is missing, duplicated, or not exact')
+            validate_native_dml_tap(tap_text,title)
           if not profile_ok or not cleanup_ok: raise SystemExit('native DML test or owned-lab cleanup did not succeed')
           print('Native DML plans and workflow control validated; result remains diagnostic only, not H1 acceptance')
           PY
