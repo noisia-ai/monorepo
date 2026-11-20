@@ -2,6 +2,7 @@ import {loadWireObserverContractV1,attestWireObserverRuntimeV1} from './signal-l
 import {withSharedWireDefaultPostcheckV1} from './signal-listening-statement-shared-wire.oracle';
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
+import {performance} from 'node:perf_hooks';
 import {mkdtemp,writeFile,open,readFile,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
@@ -28,7 +29,9 @@ import {anchorListeningStatementOracleParametersV1,listeningExpectedProjectionOr
 import {listeningTransitionSetReferencesV1,assertListeningTransitionSetOracleV1} from './signal-listening-transition-set.oracle';
 import {ownerTargetSetReferencesV1,assertOwnerTargetSetOracleV1} from './signal-listening-owner-target-sets.oracle';
 import {answerGuardBefore0334SqlV1,answerGuardBefore0334BodySha256V1,answerGuardAfter0334BodySha256V1,answerGuardAfter0334LookupV1,
- answerGuardBodyV1,answerGuardShaV1,assertAnswerGuard0334SourceV1,answerGuardWitnessSqlV1} from './signal-listening-answer-guard.oracle';
+ answerGuardBodyV1,answerGuardShaV1,assertAnswerGuard0334SourceV1} from './signal-listening-answer-guard.oracle';
+import {answerGuardBefore0339SqlV1,answerGuard0339LookupV1,answerGuardAfter0339BodySha256V1,
+ assertAnswerGuard0339SourceV1,answerGuard0339WitnessSqlV1} from './signal-listening-answer-guard-narrow.oracle';
 
 const enabled=process.env.NOISIA_R16_LISTENING_MONEY_BATCHES_PG==='true';
 type NativeFixture={database:Parameters<typeof createSignalListeningStoreV1>[0]['database'];
@@ -598,10 +601,92 @@ async function listeningPageSnapshot(f:ListeningPageFixture){
   fences:(await f.database.query('SELECT id FROM signal_labeling_page_mutation_fences WHERE run_id=$1 ORDER BY id',[f.run.id])).rows};
 }
 
-test('0334 preserves native answer errors, BEFORE conflicts, actor locks and statement rollback against frozen 0296',{
+const answerInsertV1='INSERT INTO signal_listening_answers SELECT * FROM jsonb_populate_recordset(NULL::signal_listening_answers,$1::jsonb) ON CONFLICT DO NOTHING';
+// ACL perturbations exist only in the already-owned rollback fixture. One named
+// statement is reused before/after REVOKE and across both function bodies.
+async function answerGuard0339ColumnAuthority(c:PoolClient,old:string,next:string,rows:Record<string,unknown>[],
+ witness:()=>Promise<Record<string,unknown>>,original:Record<string,unknown>,snapshot:()=>Promise<unknown>){
+ const owned=(await c.query("SELECT current_database() name,current_setting('server_version_num')::int version,(SELECT rolsuper FROM pg_roles WHERE rolname=current_user) super")).rows[0];
+ assert.match(owned.name,/^noisia_mfp_recovery_[a-f0-9]{32}$/u);assert.ok(owned.version>=170000&&owned.version<180000);assert.equal(owned.super,true);
+ const role='r16_answer_guard_'+randomUUID().replaceAll('-',''),quotedRole='"'+role+'"',prepared='r16_answer_acl_'+randomUUID().replaceAll('-','');
+ const identity=(row:Record<string,unknown>)=>{const{prosrc,...attributes}=row;return attributes;};
+ const probes:Array<{name:string;columns:Array<readonly[string,string]>;table:string;missing?:boolean}>=[
+  {name:'unused call request',columns:[['signal_labeling_calls','request']],table:'signal_labeling_calls'},
+  {name:'unused run cursor',columns:[['signal_labeling_runs','cursor_root_id']],table:'signal_labeling_runs'},
+  {name:'unused owner full corpus',columns:[['signal_listening_runs','full_corpus']],table:'signal_listening_runs'},
+  {name:'unused question prototype',columns:[['signal_listening_questions','prototype_embedding_id']],table:'signal_listening_questions'},
+  {name:'unused call and used run columns',columns:[['signal_labeling_calls','request'],['signal_labeling_runs','entity_context_digest']],table:'signal_labeling_calls'},
+  {name:'unused owner and used question columns',columns:[['signal_listening_runs','full_corpus'],['signal_listening_questions','question_digest']],table:'signal_listening_runs'},
+  {name:'missing call still checks whole row permissions',columns:[['signal_labeling_calls','request']],table:'signal_labeling_calls',missing:true},
+ ];
+ const observations=new Map<string,Array<{code:string|null;message:string|null}>>();
+ const attempt=async(input:Record<string,unknown>[])=>{
+  const before=await snapshot();await c.query('SAVEPOINT answer_role_probe');let entered=false;
+  let result:{code:string|null;message:string|null;inserted:number|null};
+  try{
+   await c.query('SET LOCAL ROLE '+quotedRole);entered=true;
+   assert.equal((await c.query('SELECT current_user name')).rows[0].name,role);
+   const inserted=await c.query({name:prepared,text:answerInsertV1,values:[JSON.stringify(input)]});
+   result={code:null,message:null,inserted:inserted.rowCount};
+  }catch(error){
+   assert.equal(entered,true,'a denied role change cannot masquerade as a guard denial');
+   assert.ok(typeof error==='object'&&error!==null&&'code'in error&&'message'in error);
+   result={code:String(error.code),message:String(error.message),inserted:null};
+  }finally{await c.query('ROLLBACK TO SAVEPOINT answer_role_probe');await c.query('RELEASE SAVEPOINT answer_role_probe');}
+  assert.deepEqual(await snapshot(),before,'every role probe is rolled back without data changes');return result;
+ };
+ await c.query('SAVEPOINT answer_column_role');
+ try{
+  await c.query('CREATE ROLE '+quotedRole+' NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT BYPASSRLS');
+  await c.query('GRANT USAGE ON SCHEMA public,extensions TO '+quotedRole);
+  await c.query('GRANT SELECT ON ALL TABLES IN SCHEMA public TO '+quotedRole);
+  // SELECT FOR SHARE in the unchanged actor helper requires an UPDATE column
+  // privilege on these locked relations, independently of its SELECT privilege.
+  await c.query('GRANT UPDATE(id) ON TABLE users,signal_workspaces,brands,organizations,user_brand_access TO '+quotedRole);
+  for(const signature of ['signal_listening_root_right_v1(uuid,uuid,text)',
+   'signal_processing_lock_actor_v1(uuid,uuid,boolean)','signal_processing_actor_v1(uuid,uuid)'])
+   await c.query('GRANT EXECUTE ON FUNCTION public.'+signature+' TO '+quotedRole);
+  await c.query('GRANT INSERT ON TABLE signal_listening_answers TO '+quotedRole);
+  for(const [label,sql,body]of [['old0334',old,answerGuardAfter0334BodySha256V1],['new0339',next,answerGuardAfter0339BodySha256V1]]as const){
+   await c.query(sql);assert.deepEqual(identity(await witness()),identity(original));
+   assert.equal(answerGuardShaV1(String((await witness()).prosrc)),body);
+   assert.deepEqual(await attempt(rows),{code:null,message:null,inserted:1},label+' role must first execute a real fresh insert and conflict');
+   for(const probe of probes){
+    const input=probe.missing?[{...rows[0],call_id:randomUUID()}]:rows;
+    await c.query('SAVEPOINT answer_column_phase');
+    try{
+     for(const [table,column]of probe.columns){
+      assert.match(table,/^signal_(?:labeling_calls|labeling_runs|listening_runs|listening_questions)$/u);
+      await c.query('REVOKE SELECT ON TABLE public.'+table+' FROM PUBLIC,'+quotedRole);
+      const columns=(await c.query("SELECT attname FROM pg_attribute WHERE attrelid=$1::regclass AND attnum>0 AND NOT attisdropped ORDER BY attnum",['public.'+table])).rows.map(row=>String(row.attname));
+      assert.ok(columns.includes(column));
+      await c.query('GRANT SELECT('+columns.filter(name=>name!==column).map(name=>'"'+name.replaceAll('"','""')+'"').join(',')+') ON TABLE public.'+table+' TO '+quotedRole);
+      assert.equal((await c.query("SELECT has_column_privilege($1::name,$2::regclass,$3::text,'SELECT') allowed",[role,'public.'+table,column])).rows[0].allowed,false,'unused-column denial must actually be installed');
+     }
+     const denied=await attempt(input);assert.equal(denied.code,'42501',label+' '+probe.name);
+     assert.ok(denied.message?.includes(probe.table),'the historical table must explain the denial');
+     const values=observations.get(probe.name)??[];values.push({code:denied.code,message:denied.message});observations.set(probe.name,values);
+    }finally{await c.query('ROLLBACK TO SAVEPOINT answer_column_phase');await c.query('RELEASE SAVEPOINT answer_column_phase');}
+    assert.deepEqual(await attempt(rows),{code:null,message:null,inserted:1},label+' restored permissions execute the same prepared statement');
+   }
+   assert.equal(answerGuardShaV1(String((await witness()).prosrc)),body);assert.deepEqual(identity(await witness()),identity(original));
+  }
+  for(const [name,values]of observations){assert.equal(values.length,2);assert.deepEqual(values[1],values[0],name+' preserves SQLSTATE and error message on cached/prepared plans');}
+ }finally{
+  await c.query('ROLLBACK TO SAVEPOINT answer_column_role');await c.query('RELEASE SAVEPOINT answer_column_role');
+  if((await c.query('SELECT name FROM pg_prepared_statements WHERE name=$1',[prepared])).rows.length)await c.query('DEALLOCATE "'+prepared+'"');
+ }
+ assert.equal((await c.query('SELECT rolname FROM pg_roles WHERE rolname=$1',[role])).rows.length,0,'only the owned uncommitted role is removed by rollback');
+ assert.deepEqual(await witness(),original,'column permission probes restore the whole migrated guard');
+ return [...observations].map(([name,values])=>({name,...values[0],old_new_equal:true}));
+}
+
+test('0339 preserves native answer errors, BEFORE conflicts, actor locks and statement rollback against frozen 0296 and 0334',{
  skip:!enabled,timeout:600000,
 },async()=>withListeningPageFixture(async f=>{
- const candidate=assertAnswerGuard0334SourceV1(await readFile(new URL('./0334_signal_listening_answer_guard_lookup.sql',import.meta.url),'utf8'));
+ const historical=assertAnswerGuard0334SourceV1(await readFile(new URL('./0334_signal_listening_answer_guard_lookup.sql',import.meta.url),'utf8'));
+ assert.equal(historical,answerGuardBefore0339SqlV1);
+ const migration=await readFile(new URL('./0339_signal_listening_answer_guard_narrow.sql',import.meta.url),'utf8'),candidate=assertAnswerGuard0339SourceV1(migration);
  const first=await listeningPageReady(f,0);await f.store.apply(f.run,[first]);
  const spare=await listeningPageReady(f,1),input=spare.call.inputs[0]!;
  const existing=(await f.database.query("SELECT to_jsonb(a) value FROM signal_listening_answers a WHERE call_id=$1 AND question_key='promotion'",[first.call.id])).rows[0].value as Record<string,unknown>;
@@ -613,6 +698,7 @@ test('0334 preserves native answer errors, BEFORE conflicts, actor locks and sta
   answer?:unknown;receiptBad?:boolean;patch?:Record<string,unknown>;twice?:boolean;siblingBad?:boolean;operation?:'update'|'delete'};
  const cases:Case[]=[
   {name:'valid conflict',code:null},{name:'two valid conflicts retain two actor checks',code:null,twice:true},
+  {name:'valid fresh row',code:null,fresh:true},
   {name:'missing call',code:'P0001',message:'listening_answer_receipt_invalid',patch:{call_id:randomUUID()}},
   {name:'NULL call',code:'P0001',message:'listening_answer_receipt_invalid',patch:{call_id:null}},
   {name:'missing run',code:'P0001',message:'listening_answer_receipt_invalid',patch:{run_id:randomUUID()}},
@@ -620,6 +706,9 @@ test('0334 preserves native answer errors, BEFORE conflicts, actor locks and sta
   {name:'missing owner',code:'P0001',message:'listening_answer_receipt_invalid',patch:{run_id:unowned.id}},
   {name:'missing question',code:'P0001',message:'listening_answer_receipt_invalid',patch:{question_key:'missing_question'}},
   {name:'NULL question',code:'P0001',message:'listening_answer_receipt_invalid',patch:{question_key:null}},
+  ...['root_id','input_digest','entity_context_digest','question_digest','request_digest','raw_sha256'].map(key=>({
+   name:'mismatched '+key,code:'P0001',message:'listening_answer_receipt_invalid',patch:{[key]:key==='root_id'?randomUUID():'sha256:'+'e'.repeat(64)},
+  })),
   {name:'malformed noul shape',code:'P0001',message:'listening_answer_invalid',fresh:true,answer:{type:'noul',noul:2}},
   {name:'malformed choice shape',code:'P0001',message:'listening_answer_invalid',fresh:true,question:'voice',
    answer:{...spare.results[0]!.answers.voice,confidence:2}},
@@ -636,7 +725,7 @@ test('0334 preserves native answer errors, BEFORE conflicts, actor locks and sta
   {name:'update remains immutable',code:'P0001',message:'listening_history_immutable',operation:'update'},
   {name:'delete remains immutable',code:'P0001',message:'listening_history_immutable',operation:'delete'},
  ];
- const witness=async()=>{const row=(await c.query(answerGuardWitnessSqlV1)).rows[0];assert.ok(row);return row as Record<string,unknown>;};
+ const witness=async()=>{const row=(await c.query(answerGuard0339WitnessSqlV1)).rows[0];assert.ok(row);return row as Record<string,unknown>;};
  const identity=(row:Record<string,unknown>)=>{const{prosrc,...attributes}=row;return attributes;};
  const snapshot=async()=>(await c.query(`SELECT jsonb_build_object(
   'answers',(SELECT coalesce(jsonb_agg(to_jsonb(a) ORDER BY root_id,question_key),'[]') FROM signal_listening_answers a WHERE run_id=$1),
@@ -645,13 +734,17 @@ test('0334 preserves native answer errors, BEFORE conflicts, actor locks and sta
  try{
   await c.query('BEGIN ISOLATION LEVEL REPEATABLE READ');await c.query("SET LOCAL statement_timeout='20s';SET LOCAL lock_timeout='5s';SET LOCAL track_functions='all'");
   original=await witness();assert.equal(original.return_type,'trigger');assert.equal(original.arguments,'');
-  assert.equal(answerGuardShaV1(String(original.prosrc)),answerGuardAfter0334BodySha256V1,'migrated native source must be exactly 0334');
+  assert.equal(original.proretset,false);assert.equal(original.pronargs,0);assert.equal(original.pronargdefaults,0);
+  assert.equal(original.provolatile,'v');assert.equal(original.proparallel,'u');assert.equal(original.prosecdef,false);
+  assert.equal(answerGuardShaV1(String(original.prosrc)),answerGuardAfter0339BodySha256V1,'migrated native source must be exactly 0339');
   const triggerBefore=(await c.query("SELECT tgfoid::text,tgtype,tgenabled,pg_get_triggerdef(oid) definition FROM pg_trigger WHERE tgrelid='signal_listening_answers'::regclass AND tgname='signal_listening_answer_guard'")).rows;
   assert.equal(triggerBefore.length,1);assert.equal(triggerBefore[0]!.tgtype,31,'BEFORE ROW INSERT/UPDATE/DELETE remains installed');
   const singleLookup=answerGuardAfter0334LookupV1.slice(0,answerGuardAfter0334LookupV1.indexOf(';')).replace(' INTO looked_up','')
    .replaceAll('NEW.call_id','$1').replaceAll('NEW.workspace_id','$2').replaceAll('NEW.run_id','$3').replaceAll('NEW.question_key','$4');
+  const narrowLookup=answerGuard0339LookupV1.slice(0,answerGuard0339LookupV1.indexOf(';')).replace(' INTO looked_up','')
+   .replaceAll('NEW.call_id','$1').replaceAll('NEW.workspace_id','$2').replaceAll('NEW.run_id','$3').replaceAll('NEW.question_key','$4');
   assert.ok(!singleLookup.includes('NEW.')&&!singleLookup.includes('looked_up'));
-  const lookupPatches:Array<Record<string,unknown>>=[{},{call_id:randomUUID()},{run_id:randomUUID()},{run_id:unowned.id},{question_key:'missing_question'}];
+  const lookupPatches:Array<Record<string,unknown>>=[{},{call_id:randomUUID()},{call_id:null},{run_id:randomUUID()},{run_id:null},{run_id:unowned.id},{question_key:'missing_question'},{question_key:null}];
   for(const patch of lookupPatches){
    const row={...existing,...patch};
    const call=(await c.query('SELECT to_jsonb(v) value FROM signal_labeling_calls v WHERE id=$1 AND workspace_id=$2 AND run_id=$3',[row.call_id,row.workspace_id,row.run_id])).rows[0]?.value??null;
@@ -661,11 +754,22 @@ test('0334 preserves native answer errors, BEFORE conflicts, actor locks and sta
    const actual=(await c.query('SELECT to_jsonb(v) value FROM ('+singleLookup+') v',[row.call_id,row.workspace_id,row.run_id,row.question_key])).rows;
    assert.equal(actual.length,1,'seed retains one row for every missing relation');
    assert.deepEqual(actual[0].value,{selected_call:call,selected_run:run,selected_owner:owner,selected_question:question},'all four native composites and NULLs equal the separate reads in SAME RR');
+   const narrow=(await c.query('SELECT to_jsonb(v) value FROM ('+narrowLookup+') v',[row.call_id,row.workspace_id,row.run_id,row.question_key])).rows;
+   assert.equal(narrow.length,1,'the narrow record always has a descriptor, including missing and NULL relations');
+   assert.deepEqual(narrow[0].value,{
+    call_id:call?.id??null,call_status:call?.status??null,call_settled_micro_usd:call?.settled_micro_usd??null,
+    call_usage:call?.usage??null,call_raw_sha256:call?.raw_sha256??null,call_raw_storage_verified_at:call?.raw_storage_verified_at??null,
+    call_raw_storage_verified_key:call?.raw_storage_verified_key??null,call_raw_storage_key:call?.raw_storage_key??null,
+    call_results_applied:call?.results_applied??null,call_results:call?.results??null,call_request_digest:call?.request_digest??null,
+    run_entity_context_digest:run?.entity_context_digest??null,run_workspace_id:run?.workspace_id??null,run_actor_user_id:run?.actor_user_id??null,
+    question_digest:question?.question_digest??null,question_type:question?.definition?.type??null,question_criteria:question?.wire?.criteria??null,
+    permission_call:null,permission_run:null,permission_owner:null,permission_question:null,
+   },'every projected value equals its frozen composite field; four permission-only slots stay NULL');
    if(patch.call_id){assert.equal(actual[0].value.selected_call,null);assert.equal(actual[0].value.selected_run.id,f.run.id,'missing call never drives away the independent run');}
   }
   for(const probe of cases){
    const observed=[];
-   for(const [label,sql,bodySha]of [['old',answerGuardBefore0334SqlV1,answerGuardBefore0334BodySha256V1],['new',candidate,answerGuardAfter0334BodySha256V1]]as const){
+   for(const [label,sql,bodySha]of [['old0296',answerGuardBefore0334SqlV1,answerGuardBefore0334BodySha256V1],['old0334',historical,answerGuardAfter0334BodySha256V1],['new0339',candidate,answerGuardAfter0339BodySha256V1]]as const){
     await c.query('SAVEPOINT answer_variant');
     try{
      await c.query(sql);const current=await witness();assert.deepEqual(identity(current),identity(original),label+' preserves OID/owner/ACL/signature/attributes');
@@ -687,24 +791,55 @@ test('0334 preserves native answer errors, BEFORE conflicts, actor locks and sta
      try{
       const inserted=probe.operation==='update'?await c.query('UPDATE signal_listening_answers SET answer=answer WHERE call_id=$1',[first.call.id])
        :probe.operation==='delete'?await c.query('DELETE FROM signal_listening_answers WHERE call_id=$1',[first.call.id])
-       :await c.query('INSERT INTO signal_listening_answers SELECT * FROM jsonb_populate_recordset(NULL::signal_listening_answers,$1::jsonb) ON CONFLICT DO NOTHING',[JSON.stringify(rows)]);
+       :await c.query(answerInsertV1,[JSON.stringify(rows)]);
       result={code:null,message:null,inserted:inserted.rowCount};
      }catch(error){
       assert.ok(typeof error==='object'&&error!==null&&'code'in error&&'message'in error);
       result={code:String(error.code),message:String(error.message),inserted:null};await c.query('ROLLBACK TO SAVEPOINT answer_attempt');
      }
-     await c.query('RELEASE SAVEPOINT answer_attempt');assert.deepEqual(await snapshot(),before,probe.name+' has no partial answers/calls/links');
+     await c.query('RELEASE SAVEPOINT answer_attempt');const after=await snapshot();
+     if(probe.fresh&&probe.code===null){
+      assert.equal(after.answers.length,before.answers.length+1);assert.deepEqual(after.calls,before.calls);assert.deepEqual(after.links,before.links);
+     }else assert.deepEqual(after,before,probe.name+' has no partial answers/calls/links');
      assert.equal(result.code,probe.code,probe.name);if(probe.message)assert.equal(result.message,probe.message,probe.name);
-     if(probe.code===null){assert.equal(result.inserted,0);assert.equal(await exposureCalls(c,'signal_processing_lock_actor_v1(uuid,uuid,boolean)')-beforeActor,probe.twice?2:1,'actor lock executes for every conflict-suppressed BEFORE row');}
+     if(probe.code===null){assert.equal(result.inserted,probe.fresh?1:0);assert.equal(await exposureCalls(c,'signal_processing_lock_actor_v1(uuid,uuid,boolean)')-beforeActor,probe.twice?2:1,'actor lock executes for every fresh or conflict-suppressed BEFORE row');}
      observed.push(result);
     }finally{await c.query('ROLLBACK TO SAVEPOINT answer_variant');await c.query('RELEASE SAVEPOINT answer_variant');}
    }
-   assert.deepEqual(observed[1],observed[0],probe.name+' retains SQLSTATE, message, precedence and row count in SAME transaction');
+   assert.deepEqual(observed[1],observed[0],probe.name+' retains frozen 0334/0296 SQLSTATE, precedence and row count');
+   assert.deepEqual(observed[2],observed[0],probe.name+' retains 0339 SQLSTATE, message, precedence and row count in SAME transaction');
   }
+  await c.query('SAVEPOINT answer_pair_inputs');
+  try{
+   await c.query('UPDATE signal_labeling_calls SET results_applied=true,results=$2::jsonb WHERE id=$1',[spare.call.id,JSON.stringify(spare.results)]);
+   const fresh={...existing,root_id:input.root_id,input_digest:input.input_digest,question_key:'promotion',question_digest:input.question_digests.promotion,
+    call_id:spare.call.id,request_digest:spareReceipt.request_digest,raw_sha256:spareReceipt.raw_sha256,answer:spare.results[0]!.answers.promotion};
+   const pairRows=[existing,fresh],pairJson=JSON.stringify(pairRows),acl=await answerGuard0339ColumnAuthority(c,historical,candidate,pairRows,witness,original,snapshot);
+   const timings:Array<{variant:string;elapsed_ms:number;inserted:number|null;output_sha256:string}>=[];
+   for(const [variant,sql,body]of [['old0334',historical,answerGuardAfter0334BodySha256V1],['new0339',candidate,answerGuardAfter0339BodySha256V1],
+    ['new0339',candidate,answerGuardAfter0339BodySha256V1],['old0334',historical,answerGuardAfter0334BodySha256V1]]as const){
+    await c.query('SAVEPOINT answer_pair_variant');try{
+     await c.query(sql);assert.deepEqual(identity(await witness()),identity(original));assert.equal(answerGuardShaV1(String((await witness()).prosrc)),body);
+     const actorBefore=await exposureCalls(c,'signal_processing_lock_actor_v1(uuid,uuid,boolean)'),before=await snapshot();
+     const start=performance.now(),inserted=await c.query(answerInsertV1,[pairJson]),elapsed_ms=performance.now()-start;
+     const after=await snapshot();assert.equal(inserted.rowCount,1);assert.equal(after.answers.length,before.answers.length+1);
+     assert.deepEqual(after.calls,before.calls);assert.deepEqual(after.links,before.links);
+     assert.equal(await exposureCalls(c,'signal_processing_lock_actor_v1(uuid,uuid,boolean)')-actorBefore,2,'one real BEFORE check per row, including the conflict');
+     assert.deepEqual(identity(await witness()),identity(original));assert.equal(answerGuardShaV1(String((await witness()).prosrc)),body);
+     timings.push({variant,elapsed_ms,inserted:inserted.rowCount,output_sha256:answerGuardShaV1(JSON.stringify(after))});
+    }finally{await c.query('ROLLBACK TO SAVEPOINT answer_pair_variant');await c.query('RELEASE SAVEPOINT answer_pair_variant');}
+   }
+   assert.equal(new Set(timings.map(row=>row.output_sha256)).size,1,'ABBA keeps every data result byte-equivalent in the same RR');
+   console.log('# answer guard0339 Native '+JSON.stringify({contract:'r16-answer-guard-narrow-native-v1',migration_source_sha256:answerGuardShaV1(migration),
+    old_body_sha256:answerGuardAfter0334BodySha256V1,new_body_sha256:answerGuardAfter0339BodySha256V1,catalog:identity(original),
+    acl_prepared_probes:acl,rows_per_statement:2,same_three_root_fixture:true,same_RR:true,input_sha256:answerGuardShaV1(pairJson),timings,
+    timing_scope:'one original INSERT statement, inclusive wall; outside installation/catalog/snapshot checks',
+    no_scale_or_CPU_or_throughput_gain_claim:true}));
+  }finally{await c.query('ROLLBACK TO SAVEPOINT answer_pair_inputs');await c.query('RELEASE SAVEPOINT answer_pair_inputs');}
   assert.deepEqual((await c.query("SELECT tgfoid::text,tgtype,tgenabled,pg_get_triggerdef(oid) definition FROM pg_trigger WHERE tgrelid='signal_listening_answers'::regclass AND tgname='signal_listening_answer_guard'")).rows,triggerBefore);
   assert.deepEqual(await witness(),original,'savepoint rollback restores the original migrated function and attributes');
  }finally{try{await c.query('ROLLBACK');}finally{c.release();}}
- if(original)assert.deepEqual((await f.database.query(answerGuardWitnessSqlV1)).rows[0],original,'outer rollback leaves the native public guard unchanged');
+ if(original)assert.deepEqual((await f.database.query(answerGuard0339WitnessSqlV1)).rows[0],original,'outer rollback leaves the native public guard unchanged');
 }));
 for(const operation of ['apply_raw','mark_raw']as const)test('native Listening page fence disjoint '+operation+' commits while another page retains its run fence',{
  skip:!enabled,timeout:600000,

@@ -19,6 +19,91 @@ test('complete bootstrap override is strictly1..32, window-bounded and only avai
   assert.equal(released,1);assert.equal(reserves,0);
  }
 });
+test('a later anchor prefix survives native call sorting and ambiguous proposal hooks retain the legacy window',{timeout:5000},async()=>{
+ type Args=Parameters<typeof processJevLabelingPageV1<FacetInput,string>>[0];
+ for(const arity of ['single','zero','zero_incomplete','multiple']as const){
+  const run={id:'anchor-prefix-'+arity,lease_token:'lease',error_code:null,status:'running'}as LabelingRunV1;
+  const first={root_id:'m-first',text:'first'}as FacetInput;
+  const anchors=Array.from({length:7},(_,i)=>({root_id:'z-anchor-'+i,text:'anchor-'+i}))as FacetInput[];
+  const covered=Array.from({length:80},(_,i)=>({root_id:'a-covered-'+i,text:'survey-covered-'+i}))as FacetInput[];
+  const fresh=covered.map((input,i)=>({...input,text:'fresh-covered-'+i}));
+  // The survey's far anchor must remain visible outside a 32-input prefix.
+  const survey=[...covered.slice(0,79),anchors[6]!,...anchors.slice(0,6),covered[79]!];
+  const calls:LabelingCallV1<FacetInput>[]=[],reserved:string[][]=[],proposed:string[]=[],sent:string[]=[],applied:string[]=[],memory:number[]=[];
+  const durable=new Set<string>(),reservedIds=new Set<string>();let reads=0,failures=0;
+  const store={claim:async()=>run,renew:async()=>{},release:async()=>{},calls:async()=>[],inputs:async()=>[first],
+   reserve:async(_run:unknown,proposals:Array<{custom_id:string;inputs:FacetInput[]}>)=>{
+    if(arity==='single'&&reserved.length===1)assert.equal(
+     proposals.length,anchors.length,'the first continuation reservation must contain exactly the seven selected anchors before covered calls'
+    );
+    reserved.push(proposals.map(proposal=>proposal.custom_id));
+    const rows=proposals.map(proposal=>{
+     assert.ok(!reservedIds.has(proposal.custom_id));reservedIds.add(proposal.custom_id);
+     return{...proposal,id:proposal.custom_id,status:'reserved',raw_body:null,results_applied:false};
+    })as LabelingCallV1<FacetInput>[];calls.push(...rows);
+    // Native reserve returns custom_id order, not the survey's anchor order.
+    return [...rows].sort((a,b)=>a.id.localeCompare(b.id));
+   },markSubmitting:async(_run:unknown,rows:typeof calls)=>{for(const call of rows)call.status='submitting';},
+   persistRawPage:async(_run:unknown,rows:Array<{call:typeof calls[number];raw:string}>)=>{
+    for(const row of rows){row.call.raw_body=row.raw;durable.add(row.call.id);}
+   },settlePage:async(_run:unknown,rows:Array<{call:typeof calls[number]}>)=>{
+    for(const row of rows){assert.ok(durable.has(row.call.id));row.call.status='settled';}
+   },apply:async(_run:unknown,rows:Array<{call:typeof calls[number];results:string[]}>)=>{
+    for(const row of rows){assert.equal(row.call.status,'settled');row.call.results_applied=true;applied.push(row.call.id);}
+   },finish:async()=>calls.every(call=>call.results_applied)?'completed':'running',
+   fail:async()=>{failures++;},markFailed:async()=>{failures++;},
+  }as unknown as Args['store'];
+  const provider:Args['provider']={max_response_bytes:4096,max_concurrency:2,evaluate:async request=>{
+   sent.push(String(request.state));return{http_status:200,latency_ms:1,
+    body:JSON.stringify({model:request.model,usage:{input_tokens:1,output_tokens:0},answers:{q:{type:'noul',noul:.9}}})};
+  }};
+  const hooks:Args['hooks']={continuous_windows:()=>true,revisit_empty_after_apply:true,price:()=>llmPriceV1('typesafe','jev-1.13.0','sync',.042),
+   prepare_next:async()=>true,select_next_inputs:inputs=>{
+    if(inputs.some(input=>input.root_id===anchors[6]!.root_id)){
+     assert.equal(inputs.length,87);assert.equal(inputs[79]!.root_id,anchors[6]!.root_id);
+     return{inputs:arity==='zero_incomplete'?anchors:[...anchors,...covered],minimum_calls:7};
+    }return{inputs,minimum_calls:0};
+   },propose:(_run,inputs)=>inputs.flatMap(input=>{
+    proposed.push(String(input.text));
+    const variants=input===anchors[6]?(arity==='zero'||arity==='zero_incomplete'?[]:arity==='multiple'?[0,1]:[0]):[0];
+    return variants.map(variant=>{
+     const request={model:'jev-1.13.0',state:variant?input.text+'-second-domain':input.text,
+      questions:{q:{type:'noul' as const,instructions:'configured'}}};
+     return{request,inputs:[input],request_digest:createHash('sha256').update(JSON.stringify(request)).digest('hex'),
+      custom_id:input.root_id+(variant?'-second-domain':''),reserved_micro_usd:100};
+    });
+   }),map:(_run,call)=>[call.id],error:()=>[],labeled:()=>true,fail_on_error:true};
+  const result=await processJevLabelingPageV1({run_id:run.id,store,provider,hooks,
+   execution:{...execution,max_in_flight:2,max_flushes:2,window_size:128,flush_size:4},
+   initial_reservation:{max_calls:1024,release_selection:()=>{}},observe_stream:value=>memory.push(value.reserved_working_bytes),
+   read_next_inputs:async(_run,bounds)=>{
+    reads++;
+    if(reads===1){assert.ok(bounds.max_rows>=survey.length,'survey breadth is not reduced to warmup size');return survey;}
+    if(reads===2&&arity==='single')return fresh;
+    return[];
+   }});
+  assert.equal(result.status,'completed');assert.equal(failures,0);
+  assert.deepEqual(reserved[0],['m-first']);
+  if(arity==='single'){
+   assert.deepEqual(reserved[1],anchors.map(input=>input.root_id),'covered calls cannot enter the anchor reservation');
+   assert.deepEqual(reserved[2],covered.map(input=>input.root_id),'covered calls are admitted normally by a fresh min0 read');
+   assert.ok(covered.every(input=>!proposed.includes(String(input.text))),'the deferred survey bodies are not compiled');
+   assert.deepEqual(sent.slice(1,8),anchors.map(input=>String(input.text)));
+   assert.ok(sent.slice(8).every(state=>state.startsWith('fresh-covered-')));
+  }else if(arity==='zero_incomplete'){
+   assert.deepEqual(reserved,[['m-first']],'the unchanged minimum-call guard cannot admit only six of seven required calls');
+   assert.deepEqual(sent,['first']);assert.equal(reads,1);
+  }else{
+   const anchorCalls=anchors.flatMap(input=>input===anchors[6]?(arity==='zero'?[]:[input.root_id,input.root_id+'-second-domain']):[input.root_id]);
+   assert.deepEqual(reserved[1],[...anchorCalls,...covered.map(input=>input.root_id)],'ambiguous arity retains the complete legacy proposal window');
+   assert.equal(proposed.filter(text=>text===anchors[6]!.text).length,1,'fallback never re-proposes an input');
+   assert.ok(sent.every(state=>!state.startsWith('fresh-covered-')));
+  }
+  assert.equal(new Set(sent).size,sent.length);assert.ok(calls.every(call=>call.results_applied&&durable.has(call.id)));
+  assert.deepEqual([...applied].sort(),calls.map(call=>call.id).sort());assert.equal(memory.at(-1),0);
+  assert.ok(memory.every(bytes=>bytes>=0&&bytes<=execution.max_buffered_bytes));
+ }
+});
 test('a later bootstrap cohort is ordered before covered inputs and never reserves only the part fitting memory',{timeout:3000},async()=>{
  type Args=Parameters<typeof processJevLabelingPageV1<FacetInput,string>>[0];
  const run={id:'bootstrap-memory',lease_token:'lease',error_code:null,status:'running'}as LabelingRunV1;
@@ -1006,7 +1091,7 @@ async function exerciseByteLimitedRefill(mode:'raw'|'apply'|'raw_failure'|'apply
    }
    if(reads===2){
     nextRead.resolve();
-    if(mode==='no_flush'||mode==='growing_credit')return{closed:true};
+    if(mode==='no_flush')return{closed:true};
     assert.equal(acknowledged,true,'a repeat byte-limited read must wait for owned flush completion');
     assert.ok(available>allowances[0]!,'actual released custody makes a larger fresh allowance available');
     const prefix=selectLabelingInputPrefixV1(future.slice(1).map(row=>({root_id:row.id,working_bytes:200*1024})),
@@ -1036,16 +1121,17 @@ async function exerciseByteLimitedRefill(mode:'raw'|'apply'|'raw_failure'|'apply
   await tinyRead.promise;
   await new Promise<void>(resolve=>setImmediate(resolve));
   assert.ok(sent.includes('coalesce-2'),'the committed tiny prefix keeps its HTTP headroom while coalescing the next read');
-  if(mode==='no_flush'||mode==='growing_credit'){
+  if(mode==='no_flush'){
    await nextRead.promise;
-   if(mode==='growing_credit')assert.ok(allowances[1]!>allowances[0]!,'growing credit bypasses the held flush');
   }else{
-   assert.equal(reads,1,'no repeated tiny read while the same flush owns memory');
+   assert.equal(reads,1,'HTTP credit growth must not repeat a tiny read while the same flush owns memory');
+   if(mode==='growing_credit')assert.ok(budget-memory.at(-1)!>allowances[0]!,
+    'smaller HTTP receipts have really grown free credit while APPLY and the next HTTP remain held');
    assert.equal(applied.length,0,'no APPLY ACK or memory credit invented while the gate is held');
    if(mode==='cancel')cancellation.abort();
   }
   acknowledged=true;flushGate.resolve();
-  if(mode==='raw'||mode==='apply'||mode==='page')await nextRead.promise;
+  if(mode==='raw'||mode==='apply'||mode==='page'||mode==='growing_credit')await nextRead.promise;
  }finally{flushGate.resolve();thirdHttp.resolve();await pending;}
  const result=await pending;
  assert.ok(peak<=2);assert.ok(memory.every(n=>n>=0&&n<=budget));assert.equal(new Set(sent).size,sent.length);
@@ -1055,15 +1141,15 @@ async function exerciseByteLimitedRefill(mode:'raw'|'apply'|'raw_failure'|'apply
   assert.ok(unknown.includes('coalesce-0'));assert.equal(reads,1,'failed/ambiguous ACK never opens a fresh read');
  }else{
   assert.equal(result.error,undefined);assert.equal(memory.at(-1),0);assert.deepEqual([...applied].sort(),[...raw].sort());
-  if(mode==='raw'||mode==='apply'||mode==='page')assert.equal(sent.length,5);
+  if(mode==='raw'||mode==='apply'||mode==='page'||mode==='growing_credit')assert.equal(sent.length,5);
   if(mode==='cancel')assert.equal(reads,1);
  }
  return result;
 }
-for(const mode of ['raw','apply','page']as const)test(`byte-limited refill waits for ${mode} custody and admits a larger fresh prefix after ACK`,{timeout:5000},async()=>{
+for(const mode of ['raw','apply','page','growing_credit']as const)test(`byte-limited refill waits for ${mode} custody and admits a larger fresh prefix after ACK`,{timeout:5000},async()=>{
  await exerciseByteLimitedRefill(mode);
 });
-for(const mode of ['no_flush','growing_credit']as const)test(`byte-limited refill escapes immediately with ${mode}`,{timeout:5000},async()=>{
+for(const mode of ['no_flush']as const)test(`byte-limited refill escapes immediately with ${mode}`,{timeout:5000},async()=>{
  await exerciseByteLimitedRefill(mode);
 });
 for(const mode of ['raw_failure','apply_ack_lost','cancel']as const)test(`byte-limited refill preserves ${mode} without inventing durable progress`,{timeout:5000},async()=>{

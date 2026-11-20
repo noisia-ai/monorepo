@@ -212,11 +212,11 @@ export async function processJevStreamingWindowV2<I extends FacetInput, R>(args:
     // can reject a different prefix at a financial boundary; caps are unchanged.
     const available=free-headroom;
     if(readySlots&&available<8192)return;
-    // Do not repeat a byte-limited refill at the same (or smaller) allowance
-    // while an owned flush is already going to release memory. Wait for that
-    // completion, without holding bytes or starting a timer. Growing credit
-    // and a frontier with no active flush both escape immediately.
-    if(byteLimitedAvailable!==undefined&&available<=byteLimitedAvailable&&active.size)return;
+    // After a byte-limited prefix, coalesce until one already active flush
+    // completes. Smaller HTTP responses can grow credit before that durable
+    // release; they must not reopen repeated tiny reads. No active flush is
+    // still an immediate escape, without held inputs or another timer.
+    if(byteLimitedAvailable!==undefined&&active.size)return;
     // Hold the input/serialization budget while SQL is pending. HTTP/flushes
     // share the same counter and cannot consume bytes promised to this page.
     memory+=available;observe();let retained=0;

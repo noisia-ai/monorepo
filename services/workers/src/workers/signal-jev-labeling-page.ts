@@ -175,10 +175,21 @@ export async function processJevLabelingPageV1<Input extends FacetInput,Result>(
               // A bootstrap/filter can intentionally admit fewer roots than
               // the reader returned. That is not a byte-limited reservation.
               byteLimited&&=selected.minimum_calls===0&&selected.inputs.length===inputs.length;
+              // Reserve the complete selected anchors before covered work. The
+              // native return order is not their survey order; covered inputs
+              // are read fresh after this intentionally smaller paid prefix.
+              let anchorPrefix=selected.minimum_calls>0,limit=Math.min(maxCalls,selected.minimum_calls||maxCalls);
               const bounded:LabelingCallProposalV1<Input>[]=[];let bytes=0;
-              outer:for(const input of selected.inputs)for(const proposal of hooks.propose(run,[input])){
+              outer:for(const input of selected.inputs){
+               if(anchorPrefix&&bounded.length>=limit)break;
+               const proposals=hooks.propose(run,[input]);
+               // Native anchors map one-to-one to calls. A generic hook can
+               // emit zero/many; retain its legacy window without re-proposing
+               // inputs or cutting that group at an assumed anchor boundary.
+               if(anchorPrefix&&proposals.length!==1){anchorPrefix=false;limit=maxCalls;}
+               for(const proposal of proposals){
                 const cost=jevCallWorkingBytesV2(proposal)+8192;
-                if(bounded.length>=maxCalls)break outer;
+                if(bounded.length>=limit)break outer;
                 if(bytes+cost>available){byteLimited=true;break outer;}
                 bytes+=cost;bounded.push(proposal);
                 // Compile outside the native reservation transaction without
@@ -187,6 +198,7 @@ export async function processJevLabelingPageV1<Input extends FacetInput,Result>(
                   await yieldToEventLoop();
                   if(admissionSignal.aborted||cancellation.signal.aborted)return{closed:true};
                 }
+               }
               }
               if(!bounded.length||bounded.length<selected.minimum_calls||admissionSignal.aborted||cancellation.signal.aborted)return{closed:true};
               const next=await store.reserve(run,bounded);fedWindows++;

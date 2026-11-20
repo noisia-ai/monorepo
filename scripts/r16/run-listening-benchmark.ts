@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict';
+import {createHash} from 'node:crypto';
+import {readFile} from 'node:fs/promises';
 import {performance} from 'node:perf_hooks';
 import {dirname,resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
@@ -17,6 +19,23 @@ import {r16ListeningWorkloadV2,summarizeR16ListeningCapacityV2,R16_LISTENING_PRE
 import type {R16QueryProfilerV1} from './query-profiler';
 import {assertSharedWireDefaultRuntimeV1,withSharedWireDefaultPostcheckV1} from '../../infrastructure/db/migrations/signal-listening-statement-shared-wire.oracle';
 import {assertCompactCatalogV1,compactFullStreamMigrationV1,compactFullStreamProsrcShaV1,compactFullStreamSourceShaV1,compactRawNameV1,compactShaV1} from '../../infrastructure/db/migrations/signal-listening-compact-population.oracle';
+export const answerGuardMigrationV1='0339_signal_listening_answer_guard_narrow.sql';
+export const answerGuardNameV1='signal_listening_answer_guard_v1';
+export const answerGuardSourceShaV1='903e7cc04436235751cd19e047122560c0df3e397da6b70134c86cb01358c9f0';
+export const answerGuardProsrcShaV1='83a1d0366bee6339fb010140084bc42dfcabe7b63bb07dc8566272eb7659357f';
+const answerGuardShaV1=(value:string)=>createHash('sha256').update(value).digest('hex');
+export type R16ListeningAnswerGuardRuntimeReceiptV1={
+ contract:'r16-listening-answer-guard-runtime-witness-v1';migration:string;source_sha256:string;prosrc_sha256:string;
+ function:Record<string,unknown>;acl:Array<Record<string,unknown>>;
+};
+const answerGuardCatalogSqlV1=`/* r16_answer_guard_catalog */ SELECT p.oid::text,p.proname,p.proowner::text,p.proacl::text,p.provolatile,p.prosecdef,p.proconfig,
+ p.proisstrict,p.proparallel,p.proleakproof,p.prokind,p.pronargs,p.proargtypes::text,p.pronargdefaults,p.proargdefaults::text,pg_catalog.pg_get_expr(p.proargdefaults,0) default_arguments,
+ p.prorettype::text,p.proallargtypes::text,p.proargmodes::text,p.proargnames::text,p.proretset,p.procost,p.prorows,p.prosupport::text,l.lanname,p.prosrc
+ FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace n ON n.oid=p.pronamespace JOIN pg_catalog.pg_language l ON l.oid=p.prolang
+ WHERE n.nspname='public' AND p.proname='signal_listening_answer_guard_v1'`;
+const answerGuardAclSqlV1=`/* r16_answer_guard_acl */ SELECT a.grantor::text,a.grantee::text,a.privilege_type,a.is_grantable FROM pg_catalog.pg_proc p
+ JOIN pg_catalog.pg_namespace n ON n.oid=p.pronamespace CROSS JOIN LATERAL pg_catalog.aclexplode(COALESCE(p.proacl,pg_catalog.acldefault('f',p.proowner))) a
+ WHERE n.nspname='public' AND p.proname='signal_listening_answer_guard_v1' ORDER BY a.grantor,a.grantee,a.privilege_type,a.is_grantable`;
 
 export type R16ListeningRuntimeReceiptV1=Awaited<ReturnType<typeof assertSharedWireDefaultRuntimeV1>>;
 export type R16ListeningRuntimeDatabaseV1=Parameters<typeof assertSharedWireDefaultRuntimeV1>[0];
@@ -30,6 +49,7 @@ export type R16ListeningRuntimeWitnessV1={
  before:R16ListeningRuntimeReceiptV1|null;
  after:R16ListeningRuntimeReceiptV1|null;
  compact:{before:R16ListeningCompactRuntimeReceiptV1|null;after:R16ListeningCompactRuntimeReceiptV1|null};
+ answer_guard:{before:R16ListeningAnswerGuardRuntimeReceiptV1|null;after:R16ListeningAnswerGuardRuntimeReceiptV1|null};
 };
 export type R16ListeningResourceObservationV1={
  sampling:'sparse_start_after_each_job_and_final';
@@ -61,7 +81,7 @@ export function createR16ListeningResourceObservationV1(readRss:()=>number=()=>p
 }
 export async function withR16ListeningRuntimeWitnessV1<T>(database:R16ListeningRuntimeDatabaseV1,
  body:(witness:R16ListeningRuntimeWitnessV1,captureAfter:()=>Promise<R16ListeningRuntimeReceiptV1>)=>Promise<T>){
- const witness:R16ListeningRuntimeWitnessV1={contract:'r16-listening-runtime-witness-v1',before:null,after:null,compact:{before:null,after:null}};
+ const witness:R16ListeningRuntimeWitnessV1={contract:'r16-listening-runtime-witness-v1',before:null,after:null,compact:{before:null,after:null},answer_guard:{before:null,after:null}};
  let captureAfterFailed=false,captureAfterFailure:unknown;
  const captureCompact=async():Promise<R16ListeningCompactRuntimeReceiptV1>=>{
   const catalog=await assertCompactCatalogV1(database as Parameters<typeof assertCompactCatalogV1>[0]);
@@ -84,16 +104,42 @@ export async function withR16ListeningRuntimeWitnessV1<T>(database:R16ListeningR
    prosrc_sha256:compactShaV1(String(prosrc)),function:metadata,
    acl:catalog.acl.filter(grant=>grant.proname===compactRawNameV1).map(({proname,...grant})=>grant)};
  };
+ const captureAnswerGuard=async():Promise<R16ListeningAnswerGuardRuntimeReceiptV1>=>{
+  const source=await readFile(new URL('../../infrastructure/db/migrations/'+answerGuardMigrationV1,import.meta.url),'utf8');
+  assert.equal(answerGuardShaV1(source),answerGuardSourceShaV1,'0339 answer-guard source must match the reviewed migration');
+  const match=/CREATE OR REPLACE FUNCTION signal_listening_answer_guard_v1\(\) RETURNS trigger LANGUAGE plpgsql SET search_path=public,extensions,pg_temp AS \$\$([\s\S]*?)\$\$;\n/u.exec(source);
+  assert.ok(match,'0339 must contain the exact zero-argument BEFORE trigger function source');
+  const prosrc=match[1]!;assert.equal(answerGuardShaV1(prosrc),answerGuardProsrcShaV1,'0339 answer-guard prosrc source digest is fixed');
+  const rows=(await database.query(answerGuardCatalogSqlV1)).rows;assert.equal(rows.length,1,'actual public answer guard must exist exactly once');
+  const row=rows[0]!;assert.equal(row.prosrc,prosrc,'actual pg_proc.prosrc must match the independently parsed 0339 source');
+  const expected={proname:answerGuardNameV1,provolatile:'v',prosecdef:false,proconfig:['search_path=public, extensions, pg_temp'],proisstrict:false,
+   proparallel:'u',proleakproof:false,prokind:'f',pronargs:0,proargtypes:'',pronargdefaults:0,proargdefaults:null,default_arguments:null,prorettype:'2279',
+   proallargtypes:null,proargmodes:null,proargnames:null,proretset:false,procost:100,prorows:0,prosupport:'-',lanname:'plpgsql'};
+  const {prosrc:observedProsrc,oid,proowner,proacl,...metadata}=row;
+  assert.equal(observedProsrc,prosrc,'actual pg_proc source must match the separately pinned fixture body');
+  assert.ok(typeof oid==='string'&&/^\d+$/u.test(oid),'answer guard OID must be captured from pg_proc');
+  assert.ok(typeof proowner==='string'&&/^\d+$/u.test(proowner),'answer guard owner must be captured from pg_proc');
+  assert.deepEqual(metadata,expected,'actual pg_proc signature and complete function attributes must match trigger contract');
+  const acl=(await database.query(answerGuardAclSqlV1)).rows.map(grant=>({...grant}));
+  assert.ok(acl.length>0,'effective answer-guard ACL must be present');
+  return{contract:'r16-listening-answer-guard-runtime-witness-v1',migration:answerGuardMigrationV1,source_sha256:answerGuardShaV1(source),
+   prosrc_sha256:answerGuardShaV1(prosrc),function:{oid,proowner,proacl,...metadata},acl};
+ };
  const capture=async(phase:'before'|'after')=>{
-  const money=await assertSharedWireDefaultRuntimeV1(database),compact=await captureCompact();
-  if(phase==='after')assert.deepEqual(compact,witness.compact.before,'compact0338 catalog/source/owner/ACL must remain exact across the measured run');
-  witness[phase]=money;witness.compact[phase]=compact;return money;
+  const money=await assertSharedWireDefaultRuntimeV1(database),compact=await captureCompact(),answerGuard=await captureAnswerGuard();
+  if(phase==='after'){
+   assert.deepEqual(money,witness.before,'Money E catalog/source must remain exact across the measured run');
+   assert.deepEqual(compact,witness.compact.before,'compact0338 catalog/source/owner/ACL must remain exact across the measured run');
+   assert.deepEqual(answerGuard,witness.answer_guard.before,'answer guard 0339 catalog/source/owner/ACL must remain exact across the measured run');
+  }
+  // Publish only after all three independent runtime witnesses validate.
+  witness[phase]=money;witness.compact[phase]=compact;witness.answer_guard[phase]=answerGuard;return money;
  };
  const captureAfter=async()=>{try{
   const receipt=await capture('after');
-  if(captureAfterFailed){witness.after=null;witness.compact.after=null;throw captureAfterFailure;}
+  if(captureAfterFailed){witness.after=null;witness.compact.after=null;witness.answer_guard.after=null;throw captureAfterFailure;}
   return receipt;
- }catch(error){if(!captureAfterFailed)captureAfterFailure=error;captureAfterFailed=true;witness.after=null;witness.compact.after=null;throw captureAfterFailure;}};
+ }catch(error){if(!captureAfterFailed)captureAfterFailure=error;captureAfterFailed=true;witness.after=null;witness.compact.after=null;witness.answer_guard.after=null;throw captureAfterFailure;}};
  const value=await withSharedWireDefaultPostcheckV1(async()=>{
   await capture('before');
   const result=await body(witness,captureAfter);
