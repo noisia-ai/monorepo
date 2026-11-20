@@ -1,3 +1,5 @@
+import {invertSignalListeningSurveyReaderV1,restoreSignalListeningSurveyBeforeLinearV1} from './signal-listening-survey-source-chain.test-support';
+import {projectionShaV1,projectionSurveyMetadataBeforeLinearV1,projectionSurveyBeforeLinearRawShaV1} from './signal-listening-projection-linear-joins.oracle';
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
 import {mkdir,mkdtemp,readFile,realpath,rm,stat,writeFile} from 'node:fs/promises';
@@ -12,6 +14,7 @@ import {
   inputPlanTemplateHashV1,
   INPUT_PLAN_LIMITS_V1,
   INPUT_PLAN_WIRE_E_TARGET_SHA_V1,
+  INPUT_PLAN_SURVEY_Q8_TARGET_SHA_V1,
   sanitizeListeningInputPlanV1,
   withListeningInputPlanStorageV1,
   type InputPlanClientV1,
@@ -109,8 +112,18 @@ function makeDatabase(options:{targetSql:string;throwSelected?:boolean;selectedE
     get firstTargetBinds(){return firstTargetBinds;},get selectedBinds(){return selectedBinds;},deferredParentListenerCounts};
 }
 
+/** Old protocol tests consume their registered pre-Survey projection fixture,
+ * not the current conditional Survey source. The closed inverse restores
+ * Source1dd first and proves its complete forward round trip before extraction. */
+async function legacyProjectionFixtureSourceV1(){
+  const current=await readFile(fileURLToPath(new URL('../signal-listening-runs.ts',import.meta.url)),'utf8');
+  const source1dd=restoreSignalListeningSurveyBeforeLinearV1(current);
+  assert.equal(projectionShaV1(source1dd),'017203dd09945b8b41a160d1596306b3017b6d316634be73df5bbe9c62cfceb7','registered inverse restores every frozen Source1dd byte');
+  assert.equal(projectionShaV1(projectionSurveyMetadataBeforeLinearV1),projectionSurveyBeforeLinearRawShaV1,'independent Source1dd SQL literal stays frozen');
+  return invertSignalListeningSurveyReaderV1(current);
+}
 async function sourceAndTarget(){
-  const source=await readFile(fileURLToPath(new URL('../signal-listening-runs.ts',import.meta.url)),'utf8');
+  const source=await legacyProjectionFixtureSourceV1();
   return extractListeningInputPlanQueryV1(source);
 }
 
@@ -128,7 +141,7 @@ async function runToOrdinal65(observer:ReturnType<typeof createListeningInputPla
 
 if(pure){
   test('input-plan current E and explicit historical extraction bind independent frozen template digests',async()=>{
-    const source=await readFile(new URL('../signal-listening-runs.ts',import.meta.url),'utf8'),old=extractListeningInputPlanQueryOldV1(source);
+    const source=await legacyProjectionFixtureSourceV1(),old=extractListeningInputPlanQueryOldV1(source);
     assert.equal(old.template_sha256,INPUT_PLAN_TARGET_SHA_V1);assert.equal(inputPlanTemplateHashV1(old.sql),INPUT_PLAN_TARGET_SHA_V1);
     assert.equal(extractListeningInputPlanQueryV1(source,'historical').sql,old.sql);
     const extracted=await sourceAndTarget();assert.equal(extracted.profile,'E');assert.equal(extracted.legacy_template_sha256,INPUT_PLAN_TARGET_SHA_V1);
@@ -139,6 +152,12 @@ if(pure){
     assert.equal(inputPlanTemplateHashV1(extracted.sql),INPUT_PLAN_WIRE_E_TARGET_SHA_V1);
     assert.ok(extracted.sql.length>0);
     assert.doesNotMatch(JSON.stringify(extracted),/PRIVATE_(?:ROOT|WORKSPACE|RUN)_SENTINEL/u);
+    const current=await readFile(new URL('../signal-listening-runs.ts',import.meta.url),'utf8');
+    assert.throws(()=>extractListeningInputPlanQueryV1(current,'E'),'current Q8 cannot impersonate the frozen E fixture');
+    assert.throws(()=>extractListeningInputPlanQueryV1(current,'historical'),'current Q8 cannot impersonate historical projection');
+    const survey=extractListeningInputPlanQueryV1(current,'survey-Q8');
+    assert.equal(survey.profile,'survey-Q8');assert.equal(survey.template_sha256,INPUT_PLAN_SURVEY_Q8_TARGET_SHA_V1);
+    assert.throws(()=>createListeningInputPlanObserverV1({target_sql:survey.sql,profile:'E'}),'the default E observer never relabels current Survey SQL');
   });
 
   test('auto_explain sanitization hashes identifiers and omits SQL expressions while retaining closed JIT metrics',async()=>{
