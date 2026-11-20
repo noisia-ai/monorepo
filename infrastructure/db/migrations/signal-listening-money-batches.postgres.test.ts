@@ -1170,17 +1170,29 @@ test('atomic native covered fresh admission exercises both E statements after32 
    assert.ok(error instanceof LabelingAdmissionFailureV1);assert.equal(error.outcome,'rolled_back');assert.equal(error.message,'listening_request_invalid');
    assert.match(String((error.cause as {where?:unknown}|undefined)?.where),/signal_listening_statement_money_v1/,'invalid fullSHA must fail in E, not the row guard');return true;});assert.deepEqual(await coveredLedger(f),before);
  });
- await t.test('Mark reads source text again through the actual E fullSHA validator after INSERT, in the same transaction',async()=>{
-  const before=await coveredLedger(f),rows=fresh();let inserted=false,markAttempted=false;
+ await t.test('immutable source rejects text changes between INSERT and Mark while both actual E statements revalidate the unchanged request',async()=>{
+  const before=await coveredLedger(f),rows=fresh(),start=f.evidence.length;let inserted=false,markAttempted=false,validated=false;
   const sourceBefore=(await f.database.query('SELECT text FROM signal_mass_labeling_items WHERE workspace_id=$1 AND map_id=$2 AND root_id=$3',[f.run.workspace_id,rows[0]!.inputs[0]!.map_id,rows[0]!.inputs[0]!.root_id])).rows[0].text;
   f.intercept.after=async(sql,c)=>{if(sql.includes('labeling_native_covered_insert_v1')){inserted=true;
-   await c.query("UPDATE signal_mass_labeling_items SET text=text||' source changed between native statements' WHERE workspace_id=$1 AND map_id=$2 AND root_id=$3",[f.run.workspace_id,rows[0]!.inputs[0]!.map_id,rows[0]!.inputs[0]!.root_id]);}};
+   // The snapshot is immutable: a source UPDATE cannot legitimately reach E.
+   // Keep that guard installed, prove its rejection inside a savepoint, and
+   // continue to the real Mark statement with the original fullSHA payload.
+   await c.query('SAVEPOINT native_immutable_source_probe');
+   try{await assert.rejects(c.query("UPDATE signal_mass_labeling_items SET text=text||' source changed between native statements' WHERE workspace_id=$1 AND map_id=$2 AND root_id=$3",[f.run.workspace_id,rows[0]!.inputs[0]!.map_id,rows[0]!.inputs[0]!.root_id]),error=>{
+    assert.ok(error instanceof Error&&'code'in error);assert.equal(error.code,'23514');assert.equal(error.message,'mass_labeling_history_is_immutable');return true;});}
+   finally{await c.query('ROLLBACK TO SAVEPOINT native_immutable_source_probe');await c.query('RELEASE SAVEPOINT native_immutable_source_probe');}
+  }};
   f.intercept.before=async sql=>{if(sql.includes('labeling_native_covered_mark_v1'))markAttempted=true;};
-  try{await assert.rejects(f.store.admitAndMarkSelected!(f.run,rows,freshSelection(p=>p)),error=>{
-   assert.ok(error instanceof LabelingAdmissionFailureV1);assert.equal(error.outcome,'rolled_back');assert.equal(error.message,'listening_request_invalid');
-   assert.match(String((error.cause as {where?:unknown}|undefined)?.where),/signal_listening_statement_money_v1/,'E must reject; a BEFORE ROW or JS denial is insufficient');return true;});}
+  try{await assert.rejects(f.store.admitAndMarkSelected!(f.run,rows,freshSelection(p=>p,calls=>{
+   validated=true;for(const call of calls){const proposal=rows.find(row=>row.custom_id===call.custom_id)!;
+    assert.equal(call.status,'submitting');assert.deepEqual(call.request,proposal.request);assert.deepEqual(call.inputs,proposal.inputs);
+    assert.equal(signalListeningRequestDigestV1(f.run,call.inputs[0]!,call.request as never),call.request_digest);}
+   throw Error('synthetic_fullsha_mark_probe_rollback');
+  })),/synthetic_fullsha_mark_probe_rollback/);}
   finally{f.intercept.after=undefined;f.intercept.before=undefined;}
-  assert.equal(inserted,true);assert.equal(markAttempted,true);assert.deepEqual(await coveredLedger(f),before);
+  assert.equal(inserted,true);assert.equal(markAttempted,true);assert.equal(validated,true);
+  assert.deepEqual(f.evidence.slice(start),[{operation:'insert',population_calls:1,money_calls:1},{operation:'mark',population_calls:2,money_calls:2}]);
+  assert.deepEqual(await coveredLedger(f),before);
   assert.equal((await f.database.query('SELECT text FROM signal_mass_labeling_items WHERE workspace_id=$1 AND map_id=$2 AND root_id=$3',[f.run.workspace_id,rows[0]!.inputs[0]!.map_id,rows[0]!.inputs[0]!.root_id])).rows[0].text,sourceBefore);
  });
  await t.test('Mark authority denial rolls back fresh reservations, retaining the intentional new atomicity',async()=>{
@@ -1375,7 +1387,7 @@ test('atomic same-run32 covered child admission preserves real parent exposure a
  const labeling=createSignalListeningStoreV1({database:f.database,rawPages,storeRaw:async()=>{throw Error('no individual provider/raw');}}),run=await labeling.claim(child.run_id);assert.ok(run);
  const inputs=await labeling.inputs(run),groups=new Map<string,SignalListeningInputV1[]>();
  for(const input of inputs){const shape=signalListeningCalibrationShapeV1(child.configuration,input),rows=groups.get(shape.shape_digest)??[];rows.push(input);groups.set(shape.shape_digest,rows);}
- const candidates=[...groups.values()].sort((a,b)=>b.length-a.length)[0];assert.ok(candidates&&candidates.length>32,'the real child has at least32 receipts and a later covered cohort of the same shape');
+ const candidates=[...groups.values()].sort((a,b)=>b.length-a.length)[0];assert.ok(candidates&&candidates.length>32,JSON.stringify({requirement:'the real child has at least32 receipts and a later covered cohort of the same shape',roots:f.roots.length,inputs:inputs.length,shape_counts:[...groups].map(([shape,rows])=>({shape,roots:rows.length}))}));
  const sorted=candidates.map(input=>({input,bytes:Buffer.byteLength(JSON.stringify(buildSignalListeningJevRequestV1(input,child.configuration)))})).sort((a,b)=>a.bytes-b.bytes||a.input.root_id.localeCompare(b.input.root_id));
  const anchors=[sorted[0]!.input,sorted.at(-1)!.input,...sorted.slice(1,-1).map(x=>x.input)].filter((i,n,a)=>a.findIndex(x=>x.root_id===i.root_id)===n).slice(0,32);
  const calls=await labeling.reserve(run,proposals({run,inputs:anchors,configuration:child.configuration},1000));await labeling.markSubmitting(run,calls);
@@ -1451,7 +1463,7 @@ test('atomic same-run32 covered child admission preserves real parent exposure a
  assert.deepEqual((await f.database.query('SELECT to_jsonb(c) value FROM signal_labeling_calls c WHERE id=$1',[siblingCall.id])).rows[0].value,heldSibling,'the competing genuine held reservation survives the denied cohort');
  assert.equal(BigInt((await f.database.query('SELECT signal_listening_discovery_exposure_v1($1)::text n',[f.execution.id])).rows[0].n),parentHeld);
  assert.deepEqual(await immutable(),invariantBefore);assert.deepEqual(await attestWireObserverRuntimeV1(f.database,observer),catalogBefore);await labeling.release(run);
-},{population_count:120,initial_approved:120,cap_micro_usd:1000000}));
+},{population_count:240,initial_approved:240,cap_micro_usd:1000000}));
 
 
 // Compound lifecycle reconciliation acceptance. The thrown admission outcome is

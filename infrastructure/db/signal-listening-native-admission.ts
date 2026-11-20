@@ -155,16 +155,20 @@ export function validateNativeListeningAdmissionRowsV1<Input extends FacetInput>
   throw Error('labeling_admission_return_invalid');
  const ordered=selected.map(proposal=>{
   const row=rows.find(r=>r.custom_id===proposal.custom_id) as (LabelingCallV1<Input>&Record<string,unknown>)|undefined;
-  const nullFields=['request_storage_key','raw_body','raw_sha256','raw_storage_key','raw_size_bytes','raw_storage_verified_at','raw_storage_verified_key',
+  const nullFields=['request_storage_key','raw_sha256','raw_storage_key','raw_size_bytes','raw_storage_verified_at','raw_storage_verified_key',
    'provider_batch_id','usage','results','settled_micro_usd','stop_reason','refusal_category'];
   if(!row||nullFields.some(key=>!Object.hasOwn(row,key)||row[key]!==null)||!Object.hasOwn(row,'terminal_exposure_micro_usd')
+   ||Object.hasOwn(row,'raw_body')&&row.raw_body!==null
    ||!uuid.test(row.id)||row.run_id!==run.id||row.workspace_id!==run.workspace_id||row.provider!==run.identity.provider||row.model!==run.identity.model||row.transport!=='sync'
    ||row.status!==status||row.request_digest!==proposal.request_digest||Number(row.reserved_micro_usd)!==proposal.reserved_micro_usd||row.retry_depth!==(proposal.retry_depth??0)
    ||!equal(row.request,proposal.request)||!equal(row.inputs,proposal.inputs)||row.raw_body||row.raw_sha256||row.raw_storage_key||row.raw_size_bytes!==null&&row.raw_size_bytes!==undefined
    ||row.raw_page_id||row.has_raw||row.provider_batch_id||row.results_applied!==false||row.raw_storage_verified_at||row.raw_storage_verified_key
    ||row.usage||row.results||row.settled_micro_usd!==null&&row.settled_micro_usd!==undefined
    ||row.terminal_exposure_micro_usd!==0&&row.terminal_exposure_micro_usd!=='0')throw Error('labeling_admission_return_invalid');
-  return row;
+  // 0255 removed raw_body from PostgreSQL. It is a loaded-bytes field of
+  // the worker contract, not persisted receipt evidence. Normalize only after
+  // every persisted RAW marker and the complete returned cohort were checked.
+  return {...row,raw_body:null};
  });
  return ordered;
 }

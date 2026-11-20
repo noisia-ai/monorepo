@@ -97,6 +97,16 @@ test('return validation checks the complete selected cohort before COMMIT, indep
   results_applied:false})as LabelingCallV1<SignalListeningInputV1>);
  assert.deepEqual(validateNativeListeningAdmissionRowsV1(f.run,selected,[rows[1]!,rows[0]!],'submitting').map(c=>c.id),rows.map(c=>c.id));
  assert.deepEqual(validateNativeListeningAdmissionRowsV1(f.run,[],[],'submitting'),[]);
+ // Real INSERT/UPDATE RETURNING * has no raw_body column since 0255.
+ // Do not fabricate that virtual property in the regression input.
+ const persisted=structuredClone(rows)as Array<LabelingCallV1<SignalListeningInputV1>&Record<string,unknown>>;
+ for(const row of persisted)delete (row as Record<string,unknown>).raw_body;
+ const normalized=validateNativeListeningAdmissionRowsV1(f.run,selected,persisted,'submitting');
+ assert.ok(normalized.every(row=>Object.hasOwn(row,'raw_body')&&row.raw_body===null));
+ assert.ok(persisted.every(row=>!Object.hasOwn(row,'raw_body')),'normalization does not mutate SQL rows');
+ assert.deepEqual(normalized,rows);
+ const undefinedRaw=structuredClone(rows);Object.assign(undefinedRaw[0]!,{raw_body:undefined});
+ assert.throws(()=>validateNativeListeningAdmissionRowsV1(f.run,selected,undefinedRaw,'submitting'));
  for(const change of [{status:'reserved'},{status:'unknown'},{request_digest:'changed'},{custom_id:'changed'},{reserved_micro_usd:38},
   {request:{changed:true}},{inputs:[]},{raw_body:'raw'},{raw_storage_key:'raw'},{raw_sha256:'raw'},{raw_size_bytes:1},
   {terminal_exposure_micro_usd:null},{terminal_exposure_micro_usd:''},{terminal_exposure_micro_usd:'1'},
@@ -105,9 +115,12 @@ test('return validation checks the complete selected cohort before COMMIT, indep
  }
  assert.throws(()=>validateNativeListeningAdmissionRowsV1(f.run,selected,rows.slice(0,1),'submitting'));
  const duplicate=structuredClone(rows);duplicate[1]!.id=duplicate[0]!.id;assert.throws(()=>validateNativeListeningAdmissionRowsV1(f.run,selected,duplicate,'submitting'));
- for(const key of ['raw_body','raw_sha256','raw_storage_key','raw_size_bytes','raw_storage_verified_at','raw_storage_verified_key','terminal_exposure_micro_usd']){
+ for(const key of ['request_storage_key','raw_sha256','raw_storage_key','raw_size_bytes','raw_storage_verified_at','raw_storage_verified_key',
+  'provider_batch_id','usage','results','settled_micro_usd','stop_reason','refusal_category','terminal_exposure_micro_usd']){
   const missing=structuredClone(rows)as Array<LabelingCallV1<SignalListeningInputV1>&Record<string,unknown>>;delete missing[0]![key];
-  assert.throws(()=>validateNativeListeningAdmissionRowsV1(f.run,selected,missing,'submitting'),key);
+  assert.throws(()=>validateNativeListeningAdmissionRowsV1(f.run,selected,missing,'submitting'),key+' missing');
+  const occupied=structuredClone(rows)as Array<LabelingCallV1<SignalListeningInputV1>&Record<string,unknown>>;occupied[0]![key]='occupied';
+  assert.throws(()=>validateNativeListeningAdmissionRowsV1(f.run,selected,occupied,'submitting'),key+' occupied');
  }
 });
 

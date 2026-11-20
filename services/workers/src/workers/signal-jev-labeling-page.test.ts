@@ -1112,6 +1112,7 @@ async function exerciseByteLimitedRefill(mode:'raw'|'apply'|'raw_failure'|'apply
    const result=await streamArgs.feed_next!(bounds.max_working_bytes,bounds.max_rows,cancellation.signal);
    assert.ok(!Array.isArray(result),'controlled reader returns an explicit byte-limit result');
    if('closed'in result)return[];
+   assert.ok('calls' in result,'this controlled reader returns legacy calls');
    assert.equal(typeof bounds.on_byte_limit,'function','the real page reader receives the private synchronous notice');
    if(result.byte_limited)bounds.on_byte_limit!();
    return result.calls.map(call=>call.inputs[0]!);
