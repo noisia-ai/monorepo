@@ -1,0 +1,1 @@
+{"extends":"../../tsconfig.base.json","compilerOptions":{"noEmit":true,"incremental":false},"include":["listening-native-census.ts","listening-native-census.postgres.test.ts"]}

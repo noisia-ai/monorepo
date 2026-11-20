@@ -1,4 +1,5 @@
 "use client";
+import {SignalListeningMetrics} from "./SignalListeningMetrics";
 import type { SignalWorkspaceTopicReadBundleV1 } from "@noisia/db";
 
 import Link from "next/link";
@@ -174,6 +175,7 @@ export function SignalV2BrandMonitoring({
   initialTriggersBarriers,
   legacyOutputId,
   nativeInsightsWorkspaceId = null,
+  listeningEnabled = false,
   manageTopicsHref,
   strategicStudies,
   userName,
@@ -198,6 +200,7 @@ export function SignalV2BrandMonitoring({
   initialTriggersBarriers: SignalTriggersBarriersOverviewV2 | null;
   legacyOutputId: string | null;
   nativeInsightsWorkspaceId?: string | null;
+  listeningEnabled?: boolean;
   manageTopicsHref: string | null;
   strategicStudies: SignalStrategicStudyNavigationItem[];
   userName: string;
@@ -1836,6 +1839,9 @@ export function SignalV2BrandMonitoring({
         </div>
           </>
         )}
+        {listeningEnabled && currentModule === "monitoring" ? <SignalListeningMetrics workspaceId={data.workspace.id}
+          from={data.filter.date_range.start} to={data.filter.date_range.end} timezone={data.filter.timezone}
+          granularity={data.filter.granularity} /> : null}
         </div>
         )}
       </WorkspaceMain>

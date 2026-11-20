@@ -257,6 +257,181 @@ def _matrix(directory: Path, descriptor: dict[str, Any]) -> np.ndarray:
     return matrix
 
 
+def _study_cached_source_rows(directory: Path, manifest: dict[str, Any]):
+    """Study-only proof census; mixed real embedding/preparation runs, no surrogate owner."""
+    source = manifest["cached_vector_source"]
+    if "embedding_run_id" in manifest or "preparation_run_id" in manifest or manifest["guides"].get("rows") != 0:
+        _fail("study_cached_source_invalid")
+    _uuid(source.get("execution_id"))
+    for key in ["study_digest", "source_digest", "cut_digest", "fit_plan_digest", "proof_census_digest"]:
+        if not _HASH.fullmatch(str(source.get(key, ""))):
+            _fail("study_cached_source_invalid")
+    for key in ["source_preparation_run_ids", "preparation_unknown_root_ids"]:
+        values = source.get(key)
+        if not isinstance(values, list) or values != sorted(set(values)):
+            _fail("study_cached_source_invalid")
+        for value in values:
+            _uuid(value)
+    count = _natural(source.get("root_count"))
+    descriptor = source.get("proofs", {})
+    if count != manifest["records"]["roots"] or descriptor.get("rows") != count or descriptor.get("file") != "source-proofs.jsonl":
+        _fail("study_cached_source_invalid")
+    canonical = lambda value: json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    census = hashlib.sha256()
+    census.update(b'{"execution_id":' + canonical(source["execution_id"]) + b',"fit_plan_digest":' + canonical(source["fit_plan_digest"]) + b',"roots":[')
+    previous = ""
+    observed = 0
+    preparations, unknown = set(), []
+    for row in _jsonl(_checked_file(directory, descriptor)):
+        _uuid(row.get("root_id"))
+        if row["root_id"] <= previous:
+            _fail("study_cached_source_order_invalid")
+        previous = row["root_id"]
+        proof_text = row.get("proof_json")
+        if not isinstance(proof_text, str) or _hash_bytes(proof_text.encode("utf-8")) != row.get("proof_digest"):
+            _fail("study_cached_source_proof_invalid")
+        try:
+            proof = json.loads(proof_text, parse_constant=lambda _value: _fail("json_invalid"))
+        except (ValueError, TypeError):
+            _fail("study_cached_source_proof_invalid")
+        if (not isinstance(proof, dict) or proof.get("contract_version") != "signal-study-cached-vector-proof-v1"
+                or proof.get("workspace_id") != manifest["workspace_id"] or proof.get("root_id") != row["root_id"]
+                or proof.get("execution_id") != source["execution_id"] or proof.get("in_consumer_cut") is not True
+                or any(proof.get(key) != source[key] for key in ["study_digest", "source_digest", "cut_digest", "fit_plan_digest"])):
+            _fail("study_cached_source_proof_invalid")
+        axes = proof.get("axes", {})
+        if axes.get("direction") not in ["trigger", "barrier", "mixed"] or axes.get("use") != "literal" or axes.get("aggregate") not in ["subject", "competitor", "alternative"]:
+            _fail("study_cached_source_population_invalid")
+        for key in ["input_digest", "source_text_sha256", "original_source_text_sha256", "chunk_sha256", "embedding_sha256", "embedding_raw_sha256", "embedding_request_digest", "embedding_batch_digest", "embedding_chunk_sha256", "embedding_config_digest", "context_digest"]:
+            if not _HASH.fullmatch(str(proof.get(key, ""))):
+                _fail("study_cached_source_proof_invalid")
+        if proof["embedding_config_digest"] != manifest["embedding_config_digest"] or proof["context_digest"] != manifest["context_digest"]:
+            _fail("study_cached_source_lineage_invalid")
+        fragment = proof.get("selected_fragment", {})
+        if (fragment.get("text_sha256") != proof["source_text_sha256"] or proof["chunk_sha256"] != proof["source_text_sha256"]
+                or proof["embedding_chunk_sha256"] != proof["chunk_sha256"]
+                or not isinstance(fragment.get("start"), int) or fragment["start"] < 0
+                or not isinstance(fragment.get("end"), int) or fragment["end"] <= fragment["start"]
+                or not isinstance(proof.get("embedding_response_index"), int) or proof["embedding_response_index"] < 0
+                or not isinstance(proof.get("embedding_model"), str) or not proof["embedding_model"].strip()
+                or not isinstance(proof.get("embedding_input_contract"), str) or not proof["embedding_input_contract"].strip()):
+            _fail("study_cached_source_lineage_invalid")
+        _uuid(proof.get("embedding_call_id"))
+        _uuid(proof.get("embedding_run_id"))
+        preparation = proof.get("embedding_preparation_run_id")
+        if preparation is None:
+            unknown.append(row["root_id"])
+        else:
+            _uuid(preparation)
+            preparations.add(preparation)
+        vector_text = row.get("vector_json")
+        if not isinstance(vector_text, str) or _hash_bytes(vector_text.encode("utf-8")) != proof["embedding_sha256"]:
+            _fail("study_cached_source_vector_invalid")
+        try:
+            vector = np.asarray(json.loads(vector_text, parse_constant=lambda _value: _fail("json_invalid")), dtype=np.float32)
+        except (ValueError, TypeError):
+            _fail("study_cached_source_vector_invalid")
+        if vector.shape != (1024,) or not np.isfinite(vector).all() or not np.isclose(np.linalg.norm(vector), 1.0, rtol=1e-4, atol=1e-4):
+            _fail("study_cached_source_vector_invalid")
+        if observed:
+            census.update(b",")
+        census.update(canonical([row["root_id"], row["proof_digest"]]))
+        observed += 1
+        yield row, proof, vector
+    census.update(b'],"source_digest":' + canonical(source["source_digest"]) + b',"workspace_id":' + canonical(manifest["workspace_id"]) + b"}")
+    if (observed != count or "sha256:" + census.hexdigest() != source["proof_census_digest"]
+            or sorted(preparations) != source["source_preparation_run_ids"] or unknown != source["preparation_unknown_root_ids"]):
+        _fail("study_cached_source_census_invalid")
+
+
+def _orphan_evaluation_is_false(item: Any) -> bool:
+    """Effective human decision wins; raw provider probability is never rewritten."""
+    if not isinstance(item, dict):
+        return False
+    raw = item.get("probability")
+    numeric = isinstance(raw, (int, float)) and not isinstance(raw, bool) and np.isfinite(raw) and 0 <= raw <= 1
+    human = item.get("human_belongs")
+    decision_id = item.get("human_decision_id")
+    if isinstance(human, bool):
+        _uuid(decision_id)
+        return bool(not human and (raw is None or numeric))
+    if human is not None or decision_id is not None:
+        return False
+    return bool(numeric and raw < .7)
+
+
+def _cached_source_rows(directory: Path, manifest: dict[str, Any]):
+    """Stream exact DB proof/vector text; no embedding run is synthesized."""
+    source = manifest.get("cached_vector_source")
+    if isinstance(source, dict) and source.get("kind") == "sealed-study-consumer-cut-v1":
+        yield from _study_cached_source_rows(directory, manifest)
+        return
+    if not isinstance(source, dict) or "embedding_run_id" in manifest or manifest["guides"].get("rows") != 0:
+        _fail("cached_source_invalid")
+    if source.get("kind") != "sealed-listening-orphan-subset-v1":
+        _fail("cached_source_invalid")
+    for key in ["generation_id", "subset_id"]:
+        _uuid(source.get(key))
+    for key in ["generation_digest", "subset_digest"]:
+        if not _HASH.fullmatch(str(source.get(key, ""))):
+            _fail("cached_source_invalid")
+    root_count = _natural(source.get("root_count"))
+    cached_count = _natural(source.get("cached_count"))
+    if cached_count != manifest["records"]["roots"] or cached_count > root_count:
+        _fail("cached_source_invalid")
+    descriptor = source.get("proofs", {})
+    if descriptor.get("file") != "source-proofs.jsonl" or descriptor.get("rows") != root_count:
+        _fail("cached_source_invalid")
+    census = hashlib.sha256()
+    canonical = lambda value: json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    census.update(b'{"generation_id":' + canonical(source["generation_id"]) + b',"roots":[')
+    previous = ""
+    count = cached = 0
+    for row in _jsonl(_checked_file(directory, descriptor)):
+        _uuid(row.get("root_id"))
+        if row["root_id"] <= previous:
+            _fail("cached_source_order_invalid")
+        previous = row["root_id"]
+        proof_text = row.get("proof_json")
+        if not isinstance(proof_text, str) or _hash_bytes(proof_text.encode("utf-8")) != row.get("proof_digest"):
+            _fail("cached_source_proof_invalid")
+        try:
+            proof = json.loads(proof_text, parse_constant=lambda _value: _fail("json_invalid"))
+        except (ValueError, TypeError):
+            _fail("cached_source_proof_invalid")
+        if not isinstance(proof, dict) or proof.get("in_category") is not True or not isinstance(proof.get("evaluations"), list):
+            _fail("cached_source_subset_invalid")
+        for item in proof["evaluations"]:
+            if not _orphan_evaluation_is_false(item):
+                _fail("cached_source_subset_invalid")
+        for key in ["source_text_sha256", "chunk_sha256"]:
+            if not _HASH.fullmatch(str(proof.get(key, ""))):
+                _fail("cached_source_proof_invalid")
+        if count:
+            census.update(b",")
+        census.update(canonical([row["root_id"], row["proof_digest"]]))
+        count += 1
+        vector_text = row.get("vector_json")
+        if proof.get("embedding_call_id") is None:
+            if vector_text is not None or proof.get("embedding_sha256") is not None:
+                _fail("cached_source_vector_invalid")
+            continue
+        _uuid(proof["embedding_call_id"])
+        if not isinstance(vector_text, str) or _hash_bytes(vector_text.encode("utf-8")) != proof.get("embedding_sha256"):
+            _fail("cached_source_vector_invalid")
+        try:
+            vector = np.asarray(json.loads(vector_text, parse_constant=lambda _value: _fail("json_invalid")), dtype=np.float32)
+        except (ValueError, TypeError):
+            _fail("cached_source_vector_invalid")
+        if vector.shape != (1024,) or not np.isfinite(vector).all() or not np.isclose(np.linalg.norm(vector), 1.0, rtol=1e-4, atol=1e-4):
+            _fail("cached_source_vector_invalid")
+        cached += 1
+        yield row, proof, vector
+    census.update(b'],"workspace_id":' + canonical(manifest["workspace_id"]) + b"}")
+    if count != root_count or cached != cached_count or "sha256:" + census.hexdigest() != source["subset_digest"]:
+        _fail("cached_source_census_invalid")
+
+
 def _load_input(
     directory: Path,
 ) -> tuple[dict[str, Any], list[dict[str, Any]], np.ndarray, list[dict[str, Any]], np.ndarray]:
@@ -271,8 +446,12 @@ def _load_input(
         )
     ):
         return _fail("input_profile_invalid")
-    for key in ["workspace_id", "preparation_run_id", "embedding_run_id"]:
+    study_source = manifest.get("cached_vector_source", {}).get("kind") == "sealed-study-consumer-cut-v1"
+    for key in (["workspace_id"] if study_source else ["workspace_id", "preparation_run_id"]):
         _uuid(manifest.get(key))
+    cached_rows = _cached_source_rows(directory, manifest) if "cached_vector_source" in manifest else None
+    if cached_rows is None:
+        _uuid(manifest.get("embedding_run_id"))
     if not re.fullmatch(r"[1-9][0-9]*", str(manifest.get("input_revision", ""))):
         return _fail("input_revision_invalid")
     for key in ["embedding_config_digest", "context_digest", "catalog_digest"]:
@@ -337,12 +516,27 @@ def _load_input(
             or _hash_bytes(encoded) != record["chunk_sha256"]
         ):
             _fail("chunk_invalid")
+        if cached_rows is not None:
+            cached_row = next(cached_rows, None)
+            if cached_row is None:
+                _fail("cached_source_population_invalid")
+            source_row, proof, source_vector = cached_row
+            if (record["root_id"] != source_row["root_id"] or record["root_fingerprint"] != source_row["proof_digest"]
+                    or record["expected_chunks"] != 1 or record["chunk_index"] != 0
+                    or record["asset_sha256"] != proof["source_text_sha256"]
+                    or record["chunk_sha256"] != proof["chunk_sha256"]
+                    or not np.array_equal(matrix[ordinal], source_vector)):
+                _fail("cached_source_population_invalid")
+            if study_source and proof["selected_fragment"]["end"] - proof["selected_fragment"]["start"] != code_units:
+                _fail("study_cached_source_fragment_invalid")
         root_hash.update(encoded)
         expected_index += 1
         offset += code_units
         records.append(record)
         prior_key = key
     finish_root()
+    if cached_rows is not None and next(cached_rows, None) is not None:
+        _fail("cached_source_population_invalid")
     if len(records) != manifest["records"]["rows"] or roots != manifest["records"]["roots"]:
         _fail("population_mismatch")
     guides = list(_jsonl(_checked_file(directory, manifest["guides"])))
@@ -892,6 +1086,8 @@ def run_workspace_engine(
             "chunk_policy_version",
         ]
     }
+    if "cached_vector_source" in manifest:
+        identities["cached_vector_source"] = manifest["cached_vector_source"]
     _progress(
         "validated",
         occurrences=len(records),

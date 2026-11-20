@@ -38,45 +38,66 @@ function snapshot(run: LabelingRunV1): Snapshot {
     return fail("hybrid_snapshot_invalid");
   return value;
 }
+/** Statement-local only: one current binding/license/retention proof per relevant
+ * import batch. Inputs retain their multiplicity and must each have one complete
+ * provenance; permissions from different paths are never combined. */
+export const HYBRID_PROVIDER_RIGHTS_BEFORE_SUBMIT_SQL_V1 = `WITH selected_calls AS MATERIALIZED (
+ SELECT id,inputs FROM signal_labeling_calls WHERE run_id=$1 AND workspace_id=$2 AND id=ANY($3::uuid[])
+), requested_inputs AS MATERIALIZED (
+ SELECT call.id call_id,input.value input,input.value->>'root_id' root_text
+ FROM selected_calls call LEFT JOIN LATERAL jsonb_array_elements(call.inputs) input(value) ON true
+), requested_roots AS MATERIALIZED (
+ -- Guard the index cast; the original textual identity comparison remains below.
+ SELECT DISTINCT root_text,CASE WHEN length(root_text)=36 AND root_text ~ '^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$'
+  THEN root_text::uuid END root_id FROM requested_inputs
+), requested_origins AS MATERIALIZED (
+ -- Resolve each root once before joining import paths. Keep the UUID probe inside
+ -- the fence; workspace is checked before any origin enters the materialized set.
+ SELECT requested.root_text,origin.id
+ FROM requested_roots requested
+ CROSS JOIN LATERAL (
+  SELECT origin.id,origin.workspace_id FROM mentions origin
+  WHERE origin.canonical_mention_id=requested.root_id AND origin.canonical_mention_id::text=requested.root_text OFFSET 0
+ ) origin
+ WHERE origin.workspace_id=$2
+), requested_paths AS MATERIALIZED (
+ SELECT DISTINCT origin.root_text,path.import_batch_id,path.data_source_id
+ FROM requested_origins origin
+ JOIN signal_mention_import_memberships path ON path.workspace_id=$2 AND path.mention_id=origin.id
+), eligible_batches AS MATERIALIZED (
+ SELECT batch.id,batch.data_source_id
+ FROM (SELECT DISTINCT import_batch_id,data_source_id FROM requested_paths) requested
+ JOIN import_batches batch ON batch.id=requested.import_batch_id AND batch.workspace_id=$2
+  AND batch.data_source_id=requested.data_source_id AND batch.status='completed'
+ JOIN data_sources source ON source.id=batch.data_source_id AND source.workspace_id=$2 AND source.status='active'
+ JOIN LATERAL (SELECT candidate.* FROM signal_provenance_policy_bindings candidate
+  WHERE candidate.workspace_id=$2 AND candidate.data_source_id=batch.data_source_id
+   AND candidate.status='active' AND candidate.effective_from<=now()
+   AND (candidate.effective_to IS NULL OR candidate.effective_to>now())
+   AND (candidate.import_batch_id=batch.id OR candidate.import_batch_id IS NULL)
+  ORDER BY (candidate.import_batch_id IS NOT NULL) DESC,candidate.binding_version DESC,candidate.id LIMIT 1) binding ON true
+ JOIN signal_licensing_policies license ON license.id=binding.licensing_policy_id
+  AND license.workspace_id=$2 AND license.status='active'
+  AND license.effective_from<=now() AND (license.effective_to IS NULL OR license.effective_to>now())
+ JOIN signal_retention_policies retention ON retention.id=binding.retention_policy_id
+  AND retention.workspace_id=$2 AND retention.status='active' AND retention.retention_state='allowed'
+  AND retention.effective_from<=now() AND (retention.effective_to IS NULL OR retention.effective_to>now())
+  AND (retention.retention_mode='indefinite' OR retention.retention_mode='until' AND retention.retain_until>now())
+ WHERE NOT EXISTS (SELECT 1 FROM (VALUES ('llm-processing'),('client-derived-metrics'),
+  ('client-mention-list'),('client-text-or-excerpt')) required(purpose) WHERE NOT EXISTS (
+   SELECT 1 FROM signal_licensing_policy_usages usage WHERE usage.workspace_id=$2
+    AND usage.licensing_policy_id=license.id AND usage.usage_purpose=required.purpose AND usage.decision='allowed'))
+), authorized_roots AS MATERIALIZED (
+ SELECT DISTINCT path.root_text FROM requested_paths path JOIN eligible_batches batch
+  ON batch.id=path.import_batch_id AND batch.data_source_id=path.data_source_id
+)
+SELECT count(DISTINCT input.call_id)::int found,count(*) FILTER(WHERE allowed.root_text IS NOT NULL)::int allowed,
+ count(input.input)::int input_count FROM requested_inputs input LEFT JOIN authorized_roots allowed ON allowed.root_text=input.root_text`;
 /** Recheck evidence and external processing on one current provenance before dispatch. */
 export async function assertHybridProviderRightsBeforeSubmitV1(client: PoolClient, run: LabelingRunV1,
   calls: {id:string}[]) {
   if (!calls.length) return;
-  const counts = (await client.query<{found:number;allowed:number;input_count:number}>(`
-    SELECT count(DISTINCT call.id)::int found,count(*) FILTER(WHERE provider.allowed IS NOT NULL)::int allowed,
-      count(input)::int input_count
-    FROM signal_labeling_calls call
-    LEFT JOIN LATERAL jsonb_array_elements(call.inputs) input ON true
-    LEFT JOIN LATERAL (
-      SELECT 1 allowed FROM signal_mention_import_memberships path
-      JOIN import_batches batch ON batch.id=path.import_batch_id AND batch.workspace_id=path.workspace_id
-        AND batch.data_source_id=path.data_source_id AND batch.status='completed'
-      JOIN data_sources source ON source.id=path.data_source_id AND source.workspace_id=path.workspace_id
-        AND source.status='active'
-      JOIN mentions origin ON origin.id=path.mention_id AND origin.workspace_id=path.workspace_id
-      JOIN LATERAL (SELECT candidate.* FROM signal_provenance_policy_bindings candidate
-        WHERE candidate.workspace_id=path.workspace_id AND candidate.data_source_id=path.data_source_id
-          AND candidate.status='active' AND candidate.effective_from<=now()
-          AND (candidate.effective_to IS NULL OR candidate.effective_to>now())
-          AND (candidate.import_batch_id=path.import_batch_id OR candidate.import_batch_id IS NULL)
-        ORDER BY (candidate.import_batch_id IS NOT NULL) DESC,candidate.binding_version DESC,candidate.id LIMIT 1) binding ON true
-      JOIN signal_licensing_policies license ON license.id=binding.licensing_policy_id
-        AND license.workspace_id=path.workspace_id AND license.status='active'
-        AND license.effective_from<=now() AND (license.effective_to IS NULL OR license.effective_to>now())
-      JOIN signal_retention_policies retention ON retention.id=binding.retention_policy_id
-        AND retention.workspace_id=path.workspace_id AND retention.status='active'
-        AND retention.retention_state='allowed' AND retention.effective_from<=now()
-        AND (retention.effective_to IS NULL OR retention.effective_to>now())
-        AND (retention.retention_mode='indefinite' OR retention.retention_mode='until' AND retention.retain_until>now())
-      WHERE path.workspace_id=call.workspace_id AND origin.canonical_mention_id::text=input->>'root_id'
-        AND NOT EXISTS (SELECT 1 FROM (VALUES ('llm-processing'),('client-derived-metrics'),
-          ('client-mention-list'),('client-text-or-excerpt')) required(purpose) WHERE NOT EXISTS (
-          SELECT 1 FROM signal_licensing_policy_usages usage WHERE usage.workspace_id=path.workspace_id
-            AND usage.licensing_policy_id=license.id AND usage.usage_purpose=required.purpose
-            AND usage.decision='allowed'))
-      LIMIT 1
-    ) provider ON true
-    WHERE call.run_id=$1 AND call.workspace_id=$2 AND call.id=ANY($3::uuid[])`,
+  const counts = (await client.query<{found:number;allowed:number;input_count:number}>(HYBRID_PROVIDER_RIGHTS_BEFORE_SUBMIT_SQL_V1,
     [run.id,run.workspace_id,calls.map(call=>call.id)])).rows[0]!;
   if (counts.found!==calls.length || counts.allowed!==counts.input_count || counts.input_count<calls.length)
     fail("hybrid_provider_rights_changed");

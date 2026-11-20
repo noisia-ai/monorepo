@@ -7,6 +7,7 @@ import { SIGNAL_BACKEND_CONTRACT_VERSION } from "@noisia/query-engine";
 import type { SignalMentionRecordV1 } from "./signal-workspace-serving";
 import type { SignalMentionsViewData, SignalNativeMentionsMetadata } from "@/components/signal-v2/SignalV2Mentions";
 import { nativeTopicsViewV1 } from "./signal-workspace-topics-native";
+import {loadSignalMentionListeningLabelsV1} from './signal-listening-mention-labels';
 
 type ActorScope = { workspace_id: string; actor_user_id: string; imported_fallback?: boolean; timezone?: string };
 type ReadArgs = Omit<SignalWorkspaceMentionsArgsV1, "database">;
@@ -15,7 +16,8 @@ export type NativeSignalMentionsViewData = SignalMentionsViewData & {
   native: SignalNativeMentionsMetadata;
   record?: SignalMentionRecordV1;
 };
-type Dependencies = { read?: (args: ReadArgs) => Promise<SignalWorkspaceMentionsResultV1 | null> };
+type Dependencies = { read?: (args: ReadArgs) => Promise<SignalWorkspaceMentionsResultV1 | null>;
+ listening?:typeof loadSignalMentionListeningLabelsV1 };
 
 function invalid(code = "workspace_mentions_filter_invalid"): never {
   throw Object.assign(new Error("Check the mention filters and try again."), { code, status: 422 });
@@ -151,8 +153,12 @@ export async function loadNativeSignalMentionsV1(scope: ActorScope, params = new
   if (page.workspace_id !== scope.workspace_id || !page.is_current) throw Object.assign(new Error("Mention view changed."), {
     code: "workspace_mentions_scope_changed", status: 409
   });
-  return nativeMentionsViewDataV1(page, query?.limit ?? 50, query?.focus_mention_id ?? undefined, query?.cursor,
+  const view=nativeMentionsViewDataV1(page, query?.limit ?? 50, query?.focus_mention_id ?? undefined, query?.cursor,
     page.filters.timezone ?? scope.timezone ?? "UTC");
+  const roots=[...new Set([...view.records.map(row=>row.subject_id),...(view.record?[view.record.subject_id]:[])])];
+  const labels=await(dependencies.listening??loadSignalMentionListeningLabelsV1)(scope,roots);
+  for(const row of [...view.records,...(view.record?[view.record]:[])]){const value=labels.get(row.subject_id);if(value)row.listening_labels=value;}
+  return view;
 }
 
 export function nativeMentionsErrorResponseV1(error: unknown) {

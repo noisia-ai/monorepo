@@ -1,3 +1,4 @@
+import {indexSyntheticTopicAssignmentsByRootV1} from './signal-topic-assignment-index.synthetic.fixture';
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import {
@@ -41,6 +42,13 @@ export type SignalTopicEditorialRenewalSyntheticSeedArgsV1 = SyntheticTransactio
   before_numeric_policy_activation?: (args: { transaction: SyntheticTransactionV1;
     identity: { organization_id: string; actor_user_id: string; brand_id: string; workspace_id: string } }) => Promise<void>;
   root_count?: number;
+  seed_published_at?: string;
+  study_vector_groups?:boolean;
+  study_author_metadata?:boolean;study_text_length?:number;wire_octet_probe?:true;
+  import_batch_size?: number;
+  preparation_page_size?: number;
+  embedding_page_limit?: number;
+  allow_benchmark_population?: boolean;
   long_text?: boolean;
   skip_topic_prototypes?: boolean;
   runtime?: SignalBrandContextPreparationRuntimeV1;
@@ -259,12 +267,16 @@ export async function seedSignalTopicEditorialRenewalSourceV1(args: SignalTopicE
   // rollback, including failures. Its numerical records and receipts are real.
   const clusterIds = args.projection?.cluster_ids ?? [randomUUID(), randomUUID()] as const;
   const projection = await syntheticClientWorkspaceFixtureV1({ database, scoped, query, cleanup: async () => {} }, {
-    identity, root_count: args.root_count, long_text: args.long_text, skip_topic_prototypes: args.skip_topic_prototypes,
+    identity, root_count: args.root_count, seed_published_at: args.seed_published_at, study_vector_groups:args.study_vector_groups,study_author_metadata:args.study_author_metadata,study_text_length:args.study_text_length,long_text: args.long_text, import_batch_size: args.import_batch_size,...(args.wire_octet_probe===true?{wire_octet_probe:true as const}:{}),
+    preparation_page_size: args.preparation_page_size,
+    embedding_page_limit: args.embedding_page_limit,
+    skip_topic_prototypes: args.skip_topic_prototypes,
     projection: { ...args.projection, cluster_ids: clusterIds,
+      ...(args.allow_benchmark_population ? { allow_benchmark_population: true } : {}),
       ...(args.root_count && args.root_count > 10 ? { allow_large_population: true } : {}) },
   });
   assert.equal(projection.roots.length, args.root_count ?? 3, "the requested invented canonical root count is used");
-  if (args.long_text) assert.ok(projection.chunks.length >= projection.roots.length, "long synthetic text is represented by governed chunks");
+  if (args.long_text||args.study_text_length) assert.ok(projection.chunks.length >= projection.roots.length, "long synthetic text is represented by governed chunks");
   else assert.equal(projection.chunks.length, args.root_count ?? 3, "each synthetic fixture text occupies one governed chunk");
   const source_execution_id = projection.engine_execution_id;
   const binding = (await query("SELECT signal_topic_consolidation_source_binding_v1($1::uuid) value", [source_execution_id])).rows[0]?.value;
@@ -319,17 +331,25 @@ export async function seedSignalTopicEditorialRenewalSourceV1(args: SignalTopicE
   const lease = await claimSignalTopicConsolidationExecutionV1({ database, ...requested, lease_seconds: 300 });
   assert.ok(lease && !("completed" in lease), "real numeric owner must yield a current execution lease");
   const configuration = (await query("SELECT signal_topic_consolidation_numeric_configuration_v1() value")).rows[0]?.value as SignalTopicConsolidationConfigurationV1;
-  const metadata = await loadSignalTopicConsolidationRootMetadataV1({ queryable: database,
-    workspace_id: created.workspace_id, root_ids: projection.roots.map(root => root.root_id) });
+  const metadata: Awaited<ReturnType<typeof loadSignalTopicConsolidationRootMetadataV1>> = [];
+  const rootIds = projection.roots.map(root => root.root_id);
+  for (let offset = 0; offset < rootIds.length; offset += 2_000) {
+    metadata.push(...await loadSignalTopicConsolidationRootMetadataV1({ queryable: database,
+      workspace_id: created.workspace_id, root_ids: rootIds.slice(offset, offset + 2_000) }));
+  }
+  assert.equal(metadata.length, rootIds.length, "batched official metadata reads cover every governed root");
+  assert.equal(new Set(metadata.map(row => row.root_id)).size, rootIds.length,
+    "batched official metadata reads do not duplicate canonical roots");
   const byRoot = new Map(metadata.map(row => [row.root_id, row]));
   const counts = (values: Array<string | null>) => [...new Set(values.filter((value): value is string => value !== null))]
     .sort().map(key => ({ key, count: values.filter(value => value === key).length }));
+  const assignments = projection.chunks.map((chunk, ordinal) => ({ ordinal, root_id: chunk.root_id,
+    chunk_index: chunk.chunk_index, start: chunk.start, end: chunk.end, chunk_sha256: chunk.chunk_sha256 }));
+  const assignmentsByRoot = indexSyntheticTopicAssignmentsByRootV1(assignments);
   const groups: SignalTopicAtomicGroupV1[] = (["open", "guided"] as const).map((lane, index) => {
     const stable_cluster_id = clusterIds[index]!, group_key = `${lane}:${stable_cluster_id}`;
-    const assignments = projection.chunks.map((chunk, ordinal) => ({ ordinal, root_id: chunk.root_id,
-      chunk_index: chunk.chunk_index, start: chunk.start, end: chunk.end, chunk_sha256: chunk.chunk_sha256 }));
     const roots = projection.roots.map(root => ({ root_id: root.root_id, chunk_count: root.chunk_count,
-      strength: 0.8, assignment_digest: digest(assignments.filter(item => item.root_id === root.root_id).map(item => ({ ...item, strength: 0.8 }))) })).sort((a, b) => a.root_id.localeCompare(b.root_id));
+      strength: 0.8, assignment_digest: digest((assignmentsByRoot.get(root.root_id) ?? []).map(item => ({ ...item, strength: 0.8 }))) })).sort((a, b) => a.root_id.localeCompare(b.root_id));
     const scope_counts = { brand: 0, competitor: 0, category: 0, unknown: 0 };
     for (const row of metadata) scope_counts[row.scope]++;
     const evidence = projection.chunks.slice(0, 10).map(chunk => {

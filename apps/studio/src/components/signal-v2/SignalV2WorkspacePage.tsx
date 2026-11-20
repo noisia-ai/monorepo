@@ -87,7 +87,7 @@ export async function SignalV2WorkspacePage({
       listSignalWorkspaceOptionsForUser(session.appUser),
       loadSignalStrategicReleasesV1(workspace, session.appUser.userType === "noisia_internal")
     ]);
-    return <SignalV2BrandMonitoring key={`${workspace.id}:${activeModule}`} activeModule={activeModule}
+    return <SignalV2BrandMonitoring listeningEnabled={process.env.NOISIA_SIGNAL_LISTENING_ENABLED === "true"} key={`${workspace.id}:${activeModule}`} activeModule={activeModule}
       deferredInitialModule={activeModule} activeStudy={null} brandName={workspace.name}
       canRefreshInsights={false} nativeInsightsWorkspaceId={nativeInsightsWorkspaceId} initialData={buildEmptySignalBrandMonitoringV1(workspace)}
       initialMention={null} initialMentions={null} initialSettings={null} initialTopicsNarratives={null}
@@ -119,7 +119,7 @@ export async function SignalV2WorkspacePage({
         loadSignalStrategicReleasesV1(workspace, session.appUser.userType === "noisia_internal")
       ]);
       const empty = buildEmptySignalBrandMonitoringV1(workspace);
-      return <SignalV2BrandMonitoring activeModule="mentions" activeStudy={null} brandName={workspace.name}
+      return <SignalV2BrandMonitoring listeningEnabled={process.env.NOISIA_SIGNAL_LISTENING_ENABLED === "true"} activeModule="mentions" activeStudy={null} brandName={workspace.name}
         canRefreshInsights={false} nativeInsightsWorkspaceId={nativeInsightsWorkspaceId} initialData={native ? { ...empty, filter: native.filter, comparison: native.comparison,
           coverage: { date_from: native.native.available_dates.date_from, date_through: native.native.available_dates.date_to,
             mentions: native.native.metric_denominator } } : empty}
@@ -156,7 +156,7 @@ export async function SignalV2WorkspacePage({
       const filter = dateFrom && dateTo ? { ...empty.filter, timezone: workspace.timezone, date_range: { start: dateFrom, end: dateTo } } : empty.filter;
       const nativeMonitoring = buildNativeSignalMonitoringV1({ ...empty, filter,
         comparison: resolveSignalComparisonV1({ filter, mode: "none" }) }, native);
-      return <SignalV2BrandMonitoring activeModule={activeReportKey ? "study" : activeModule} activeStudy={null} brandName={workspace.name}
+      return <SignalV2BrandMonitoring listeningEnabled={process.env.NOISIA_SIGNAL_LISTENING_ENABLED === "true"} activeModule={activeReportKey ? "study" : activeModule} activeStudy={null} brandName={workspace.name}
         canRefreshInsights={false} nativeInsightsWorkspaceId={nativeInsightsWorkspaceId} initialData={nativeMonitoring}
         initialMention={null} initialMentions={null} initialSettings={null} initialTopicsNarratives={native} initialNativeTopicBundle={bundle} initialTriggersBarriers={null}
         legacyOutputId={null} manageTopicsHref={manageTopicsHref}
@@ -180,7 +180,7 @@ export async function SignalV2WorkspacePage({
       loadSignalStrategicReleasesV1(workspace, isInternalUser)
     ]);
     return (
-      <SignalV2BrandMonitoring
+      <SignalV2BrandMonitoring listeningEnabled={process.env.NOISIA_SIGNAL_LISTENING_ENABLED === "true"}
         activeModule="settings"
         activeStudy={null}
         brandName={workspace.name}
@@ -230,7 +230,7 @@ export async function SignalV2WorkspacePage({
     if (!isUnconfiguredLegacyWorkspace && !isUnavailableGovernedView) throw error;
     const workspaceOptions = await listSignalWorkspaceOptionsForUser(session.appUser);
     return (
-      <SignalV2BrandMonitoring
+      <SignalV2BrandMonitoring listeningEnabled={process.env.NOISIA_SIGNAL_LISTENING_ENABLED === "true"}
         activeModule={activeModule}
         activeStudy={null}
         brandName={workspace.name}
@@ -273,7 +273,7 @@ export async function SignalV2WorkspacePage({
   if (!home.default_filter) {
     const workspaceOptions = await listSignalWorkspaceOptionsForUser(session.appUser);
     return (
-      <SignalV2BrandMonitoring
+      <SignalV2BrandMonitoring listeningEnabled={process.env.NOISIA_SIGNAL_LISTENING_ENABLED === "true"}
         activeModule={activeModule}
         activeStudy={null}
         brandName={workspace.name}
@@ -488,7 +488,7 @@ export async function SignalV2WorkspacePage({
     ?? null;
 
   return (
-    <SignalV2BrandMonitoring
+    <SignalV2BrandMonitoring listeningEnabled={process.env.NOISIA_SIGNAL_LISTENING_ENABLED === "true"}
       activeModule={activeModule}
       activeStudy={activeStudy}
       brandName={workspace.name}

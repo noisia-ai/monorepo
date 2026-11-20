@@ -1,12 +1,12 @@
 import { createHash } from "node:crypto";
-import { createReadStream } from "node:fs";
-import { mkdir, open, realpath, writeFile } from "node:fs/promises";
+import { constants, createReadStream } from "node:fs";
+import { copyFile, mkdir, open, realpath, writeFile } from "node:fs/promises";
 import type { FileHandle } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative } from "node:path";
 import {
   SIGNAL_WORKSPACE_ENGINE_INPUT_V1,
   type SignalWorkspaceEngineChunkV1, type SignalWorkspaceEngineGuideV1,
-  type SignalWorkspaceEngineInputManifestV1, type SignalWorkspaceEngineSnapshotV1
+  type SignalWorkspaceEngineInputManifestV1, type SignalWorkspaceNumericSnapshotV1
 } from "@noisia/query-engine";
 
 const digestPattern = /^sha256:[0-9a-f]{64}$/u;
@@ -63,13 +63,28 @@ function encodeVector(vector: number[], dimensions: number) {
 /** Spool every prepared fragment directly into a NumPy-compatible matrix. The
  * header and final manifest reconcile population; EOF never silently samples. */
 export async function spoolSignalWorkspaceEngineInputV1(args: {
-  storage_root: string; directory: string; snapshot: SignalWorkspaceEngineSnapshotV1;
+  storage_root: string; directory: string; snapshot: SignalWorkspaceNumericSnapshotV1;source_proofs_path?:string;
   chunks: AsyncIterable<ReadonlyArray<SignalWorkspaceEngineChunkV1>>;
   guides: AsyncIterable<ReadonlyArray<SignalWorkspaceEngineGuideV1>>;
   onProgress?: (counts: { roots: number; chunks: number; guides: number }) => Promise<void>;
 }): Promise<SignalWorkspaceEngineInputManifestV1> {
   const s = args.snapshot;
-  if (![s.workspace_id, s.preparation_run_id, s.embedding_run_id].every(value => uuidPattern.test(value))
+  const cached="cached_vector_source"in s?s.cached_vector_source:undefined;
+  if(cached?.kind==="sealed-study-consumer-cut-v1"){
+    if("embedding_run_id"in s||"preparation_run_id"in s||s.guides!==0||!uuidPattern.test(cached.execution_id)
+      ||![cached.study_digest,cached.source_digest,cached.cut_digest,cached.fit_plan_digest,cached.proof_census_digest,cached.proofs.sha256].every(h=>digestPattern.test(h))
+      ||cached.root_count!==s.roots||cached.proofs.rows!==s.roots||cached.proofs.file!=="source-proofs.jsonl"||!args.source_proofs_path
+      ||![cached.source_preparation_run_ids,cached.preparation_unknown_root_ids].every(ids=>Array.isArray(ids)&&ids.every(id=>uuidPattern.test(id))
+        &&new Set(ids).size===ids.length&&[...ids].sort().join(',')===ids.join(',')))return fail("cached_source_invalid");
+  }else if(cached){
+    if("embedding_run_id"in s||s.guides!==0||cached.kind!=="sealed-listening-orphan-subset-v1"
+      ||![cached.generation_id,cached.subset_id].every(id=>uuidPattern.test(id))
+      ||![cached.generation_digest,cached.subset_digest,cached.proofs.sha256].every(hash=>digestPattern.test(hash))
+      ||cached.proofs.file!=="source-proofs.jsonl"||cached.proofs.rows!==cached.root_count||cached.cached_count!==s.roots
+      ||![cached.root_count,cached.cached_count].every(n=>Number.isSafeInteger(n)&&n>=0)
+      ||cached.cached_count>cached.root_count||!args.source_proofs_path) return fail("cached_source_invalid");
+  }else if(!s.embedding_run_id||!uuidPattern.test(s.embedding_run_id)||args.source_proofs_path)return fail("snapshot_invalid");
+  if (![s.workspace_id,...(cached?.kind==="sealed-study-consumer-cut-v1"?[]:[s.preparation_run_id!])].every(value => uuidPattern.test(value))
     || ![s.embedding_config_digest, s.context_digest, s.catalog_digest].every(value => digestPattern.test(value))
     || ![s.roots, s.chunks, s.guides, s.input_revision].every(value => Number.isSafeInteger(value) && value >= 0)
     || s.dimensions !== 1024 || s.chunk_policy_version !== "corpus-text-chunks-v1") return fail("snapshot_invalid");
@@ -82,6 +97,13 @@ export async function spoolSignalWorkspaceEngineInputV1(args: {
     || !targetRelative || targetRelative.startsWith("..") || isAbsolute(targetRelative)) return fail("storage_path_invalid");
   await mkdir(args.directory, { mode: 0o700 });
   const directory = await assertWorkspaceEngineDirectoryV1(args.directory, args.storage_root);
+  if(cached){
+    const source=await realpath(args.source_proofs_path!);
+    const child=relative(storageRoot,source);
+    if(!child||child.startsWith("..")||isAbsolute(child)||await hashWorkspaceEngineFileV1(source)!==cached.proofs.sha256)return fail("cached_source_invalid");
+    await copyFile(source,join(directory,"source-proofs.jsonl"),constants.COPYFILE_EXCL);
+    if(await hashWorkspaceEngineFileV1(join(directory,"source-proofs.jsonl"))!==cached.proofs.sha256)return fail("cached_source_invalid");
+  }
   const files: FileHandle[] = [];
   try {
     for (const name of ["chunks.jsonl", "vectors.npy", "guides.jsonl", "guide-vectors.npy"]) {

@@ -22,6 +22,14 @@ import {
   writeFacetResultsV1,
   type LabelingDatabaseV1,
 } from "./signal-mention-facets";
+import {createLabelingRawPageStoreV1} from "./signal-labeling-raw-page-store";
+import {LABELING_RAW_PAGE_MAX_MEMBERS_V1,type LabelingRawPageStorageV1} from "./signal-labeling-raw-pages";
+import {validateLabelingInputBoundsV1,type LabelingInputBoundsV1} from './signal-labeling-input-bounds';
+import {planNativeListeningAdmissionPacketV1,nativeListeningAdmissionCoveredV1,nativeListeningAdmissionPacketBodyV1,
+ validateNativeListeningAdmissionRowsV1,reconstructNativeListeningAdmissionRowsV1,validateNativeListeningAdmissionSelectionV1,NATIVE_LISTENING_COVERED_PROFILES_SQL_V1,
+ NATIVE_LISTENING_ADMISSION_INSERT_SQL_V1,NATIVE_LISTENING_ADMISSION_MARK_SQL_V1} from './signal-listening-native-admission';
+export type {LabelingInputBoundsV1} from './signal-labeling-input-bounds';
+export {nativeListeningAdmissionWorkspaceBoundV1,createNativeListeningAdmissionWorkspaceQuoteV1,type NativeListeningAdmissionWorkspaceQuoteV1} from './signal-listening-native-admission';
 export type LabelingPolicyV1={organization_id:string;budget_date:string;budget_timezone:string;daily_cap_micro_usd:string|null;
  max_execution_micro_usd:string|null;provider:string;model:string;action:string;funding_receipt_id?:string|null;effective_total_cap_micro_usd?:string};
 export type LabelingRequestPolicyV1=Pick<LabelingPolicyV1,"max_execution_micro_usd"|"provider"|"model">;
@@ -52,6 +60,26 @@ export type LabelingCallProposalV1<Input extends FacetInput = FacetInput> = {
   reserved_micro_usd: number;
   retry_depth?: number;
 };
+/** Private native admission callbacks. Neither callback grants DB authority.
+ * The selected proposals are not committed calls; validation happens before
+ * COMMIT and the exact validated array is handed back only after its ACK. */
+export type LabelingAdmissionSelectionV1<Input extends FacetInput = FacetInput> = {
+  selectFresh(candidates:ReadonlyArray<LabelingCallProposalV1<Input>>):ReadonlyArray<LabelingCallProposalV1<Input>>;
+  validateBeforeCommit(calls:ReadonlyArray<LabelingCallV1<Input>>,selected:ReadonlyArray<LabelingCallProposalV1<Input>>):void;
+};
+export type LabelingAdmissionResultV1<Input extends FacetInput = FacetInput> =
+  |{kind:'committed';calls:ReadonlyArray<LabelingCallV1<Input>>}
+  |{kind:'legacy'};
+/** No post-DML failure permits automatic fallback or another attempt. A lost
+ * COMMIT ACK remains unknown even when a later ROLLBACK command responds. */
+export class LabelingAdmissionFailureV1 extends Error{
+  readonly code:string|undefined;
+  constructor(cause:unknown,readonly outcome:'rolled_back'|'unknown',readonly call_ids:ReadonlyArray<string>,readonly custom_ids:ReadonlyArray<string>){
+    super(cause instanceof Error?cause.message:'labeling_native_admission_failed',{cause});this.name='LabelingAdmissionFailureV1';
+    const primary=cause instanceof AggregateError?cause.cause:cause;
+    this.code=primary&&typeof primary==='object'&&'code'in primary&&typeof primary.code==='string'?primary.code:undefined;
+  }
+}
 export type LabelingCallV1<Input extends FacetInput = FacetInput> =
   LabelingCallProposalV1<Input> & {
     id: string;
@@ -63,6 +91,14 @@ export type LabelingCallV1<Input extends FacetInput = FacetInput> =
       | "failed"
       | "unknown";
     raw_body: string | null;
+    /** Metadata does not load bytes: NULL raw_body is not proof of no receipt. */
+    has_raw?:boolean;
+    request_size_bytes?:number|string;
+    input_size_bytes?:number|string;
+    raw_storage_key?:string|null;
+    raw_size_bytes?:number|string|null;
+    raw_page_id?:string|null;
+    raw_page_size_bytes?:number|string|null;
     results_applied: boolean;
     provider_batch_id: string | null;
     retry_depth: number;
@@ -276,6 +312,11 @@ export async function requestMentionFacetsV1(args: {
   identity?: LabelerIdentity;
   adapter?: {
     request_identity: unknown;
+    /** Internal cohort policy: Listening scans its governed configuration/map/cache
+     * population itself. Keep full intent, but append CE history only on a real
+     * identity change. Classic/Study defaults and superseded-full fences remain.
+     * Future audit trails intentionally contain fewer synthetic identical CEs. */
+    context_registration?: "change_only";
     policy?: (client:PoolClient)=>Promise<LabelingRequestPolicyV1|null>;
     admit?: (client:PoolClient,args:SignalProcessingAdmitArgsV1)=>Promise<LabelingAdmissionRefV1>;
     /** A provider-specific membership stage must use its own governed action. */
@@ -405,10 +446,11 @@ export async function requestMentionFacetsV1(args: {
     if (policyCap !== null && requestedCap !== null && requestedCap > policyCap)
       fail("labeling_policy_cap_exceeded");
     const cap = requestedCap ?? policyCap;
+    const fullIntent = args.full_recalculation ?? false;
     const change = await registerFacetContextV1(
       c,
       args.workspace_id,
-      (args.full_recalculation ?? false) || supersededFull,
+      supersededFull || (fullIntent && args.adapter?.context_registration !== "change_only"),
     );
     if (args.adapter) args.adapter.validateIdentity(identity);
     else if (identity.provider === "anthropic")
@@ -523,9 +565,20 @@ export function createSignalLabelingStoreV1<
     hybrid_stage?: "jev" | "claude" | "citation";
     feature?: SignalWorkspaceFeatureV1;
     pending_calls_only?: boolean;
+    /** Listening can drain previously paid raw receipts on a terminal run. */
+    recover_failed_raw?: boolean;
     policy_action?: "concept_membership_jev" | "concept_membership_claude" | "mass_labeling_jev";
     /** H1 verifies each decision against this call's results in the same transaction. */
     persist_results_before_write?: boolean;
+    /** Native page adapters only: mutations touch disjoint calls/results and
+     * never update the run lifecycle. Requires durable page custody. */
+    parallel_native_pages?: boolean;
+    /** Server-owned Listening adapter only: selection derives from native
+     * question receipts, never the generic run cursor. Requires parallel
+     * native pages AND durable RAW page custody; not an identity/JSON flag. */
+    reserve_selection?: 'native_listening_pending';
+    bounded_inputs?:(client:PoolClient,run:LabelingRunV1,bounds:LabelingInputBoundsV1)=>Promise<Input[]>;
+    has_inputs?:(client:PoolClient,run:LabelingRunV1)=>Promise<boolean>;
     inputs: (
       client: LabelingDatabaseV1 | PoolClient,
       run: LabelingRunV1,
@@ -536,10 +589,16 @@ export function createSignalLabelingStoreV1<
       pages: Array<{ call: LabelingCallV1<Input>; results: Result[] }>,
     ) => Promise<void>;
     pending: (client: PoolClient, run: LabelingRunV1) => Promise<number>;
+    /** Listening counts unanswered roots and selectable questions from one
+     * population snapshot; other adapters retain their existing callbacks. */
+    pending_and_available?: (client:PoolClient,run:LabelingRunV1)=>Promise<{pending:number;available:boolean}>;
     authority?: (client: PoolClient, run: LabelingRunV1) => Promise<void>;
     beforeSubmit?: (client: PoolClient, run: LabelingRunV1, calls: LabelingCallV1<Input>[]) => Promise<void>;
   };
   database: LabelingDatabaseV1;
+  /** Explicit R16 opt-in. Historical consumers keep their page of 200. */
+  page_size?: number;
+  rawPages?: LabelingRawPageStorageV1;
   /** Runtime preflight, cached by the existing private storage adapter. */
   assertRawReady?: () => Promise<void>;
   /** True only for a runtime writer that authenticates a byte-for-byte readback. */
@@ -561,6 +620,8 @@ export function createSignalLabelingStoreV1<
   }) => Promise<string>;
 }) {
   const db = options.database;
+  const pageSize=options.page_size??200;
+  if(!Number.isInteger(pageSize)||pageSize<1||pageSize>LABELING_RAW_PAGE_MAX_MEMBERS_V1)fail("labeling_page_size_invalid",400);
   async function lock(c: PoolClient, run: LabelingRunV1) {
     const found = (
       await c.query(
@@ -569,6 +630,53 @@ export function createSignalLabelingStoreV1<
       )
     ).rows[0];
     if (!found) fail("labeling_lease_lost");
+  }
+  // Raw planning/attachment updates only its own page/calls. SHARE allows
+  // disjoint pages to progress, while conflicting with every lease UPDATE.
+  // Check the physical clock after acquiring the fence: a waiter cannot use
+  // transaction-start `now()` to attach after its lease expired behind a writer.
+  async function rawRunReadFence(c:PoolClient,run:LabelingRunV1){
+    const found=(await c.query(`WITH raw_run_fence AS MATERIALIZED(
+      SELECT id,lease_until FROM signal_labeling_runs
+      WHERE id=$1 AND lease_token=$2 AND workspace_id=$3 FOR SHARE)
+      SELECT id FROM raw_run_fence WHERE lease_until>clock_timestamp()`,
+      [run.id,run.lease_token,run.workspace_id])).rows[0];
+    if(!found)fail("labeling_lease_lost");
+  }
+  const rawPages=options.rawPages?createLabelingRawPageStoreV1({database:db,storage:options.rawPages,
+    withRunReadFence:(run,fn)=>tx(db,async c=>{await rawRunReadFence(c,run);return fn(c);})}):null;
+  const nativePendingReserve=options.adapter?.reserve_selection==='native_listening_pending'
+    &&options.adapter.parallel_native_pages===true&&rawPages!==null;
+  async function pageMutationFence(c:PoolClient,run:LabelingRunV1){
+    if(options.adapter?.parallel_native_pages===true&&rawPages)await rawRunReadFence(c,run);
+    else await lock(c,run);
+  }
+  async function lockMutationCalls(c:PoolClient,run:LabelingRunV1,calls:LabelingCallV1<Input>[],pages?:Array<{call:LabelingCallV1<Input>;results:Result[]}>){
+    const ids=calls.map(call=>call.id);
+    if(new Set(ids).size!==ids.length)fail('labeling_result_call_conflict');
+    // Match raw planning/attachment's global call order. PostgreSQL compares
+    // JSONB results without reserializing canonical numeric spellings in JS.
+    const found=await c.query<{id:string}>(`SELECT id FROM signal_labeling_calls
+      WHERE workspace_id=$1 AND run_id=$2 AND id=ANY($3::uuid[]) ORDER BY id FOR UPDATE`,[run.workspace_id,run.id,ids]);
+    if(found.rows.length!==calls.length)fail('labeling_result_call_conflict');
+    if(!pages)return new Set<string>();
+    // A separate statement sees the committed row after any lock wait. Never
+    // approve a divergent replay from a pre-wait snapshot of results_applied.
+    const checked=await c.query<{id:string;results_applied:boolean;replay_ok:boolean}>(`SELECT call.id,call.results_applied,
+      (NOT call.results_applied OR call.results IS NOT DISTINCT FROM planned.results) replay_ok
+      FROM signal_labeling_calls call JOIN jsonb_to_recordset($4::jsonb) planned(id uuid,results jsonb) ON planned.id=call.id
+      WHERE call.workspace_id=$1 AND call.run_id=$2 AND call.id=ANY($3::uuid[])`,
+      [run.workspace_id,run.id,ids,JSON.stringify(pages.map(page=>({id:page.call.id,results:page.results})))]);
+    if(checked.rows.length!==calls.length)fail('labeling_result_call_conflict');
+    if(checked.rows.some(row=>!row.replay_ok))fail('labeling_result_replay_conflict');
+    return new Set(checked.rows.filter(row=>row.results_applied).map(row=>row.id));
+  }
+
+  async function registerMutationFence(c:PoolClient,run:LabelingRunV1,operation:'mark'|'apply'){
+    // One deferred check per transaction covers waits after the initial fence,
+    // including a delayed COMMIT; it never upgrades SHARE to UPDATE.
+    await c.query(`INSERT INTO signal_labeling_page_mutation_fences(workspace_id,run_id,lease_token,operation)
+      VALUES($1,$2,$3,$4)`,[run.workspace_id,run.id,run.lease_token,operation]);
   }
   async function authority(c: PoolClient, run: LabelingRunV1, amount: number) {
     // Policy lifecycle triggers take this lock. Read only after acquiring it so a
@@ -647,6 +755,39 @@ export function createSignalLabelingStoreV1<
     return policy;
   }
   return {
+    ...(rawPages?{
+      /** Only the live scheduler may provide IDs it never delivered to evaluate.
+       * Missing raw alone is never evidence that a crashed process did not send. */
+      async requeueUnsent(run:LabelingRunV1,calls:LabelingCallV1<Input>[]){
+        if(!calls.length)return;
+        if(new Set(calls.map(call=>call.id)).size!==calls.length)fail("labeling_unsent_requeue_conflict");
+        await tx(db,async c=>{
+          await lock(c,run);await authority(c,run,0);
+          if(!(await c.query(`SELECT 1 FROM signal_labeling_runs WHERE id=$1 AND workspace_id=$2
+            AND lease_token=$3::uuid AND lease_until>clock_timestamp()`,[run.id,run.workspace_id,run.lease_token])).rows.length)
+            fail("labeling_lease_lost");
+          await c.query("SELECT set_config('noisia.labeling_unsent_requeue_v1',$1,true)",
+            [JSON.stringify({contract_version:'signal-labeling-unsent-requeue-v1',run_id:run.id,workspace_id:run.workspace_id,
+              lease_token:run.lease_token,calls:calls.map(call=>({id:call.id,request_digest:call.request_digest}))})]);
+          const changed=await c.query(`UPDATE signal_labeling_calls call SET status='reserved',stop_reason=NULL,updated_at=clock_timestamp()
+            FROM jsonb_to_recordset($3::jsonb) known(id uuid,request_digest text)
+            WHERE call.run_id=$1 AND call.workspace_id=$2 AND call.id=known.id AND call.request_digest=known.request_digest
+              AND EXISTS(SELECT 1 FROM signal_labeling_runs held WHERE held.id=$1 AND held.workspace_id=$2
+                AND held.lease_token=$4::uuid AND held.lease_until>clock_timestamp())
+              AND call.status IN('submitting','reserved') AND call.provider_batch_id IS NULL
+              AND call.raw_sha256 IS NULL AND call.raw_storage_key IS NULL AND call.raw_size_bytes IS NULL
+              AND call.raw_storage_verified_at IS NULL AND call.raw_storage_verified_key IS NULL
+              AND call.usage IS NULL AND call.settled_micro_usd IS NULL AND call.terminal_exposure_micro_usd=0
+              AND NOT call.results_applied AND call.results IS NULL
+              AND NOT EXISTS(SELECT 1 FROM signal_labeling_raw_page_members member
+                WHERE member.workspace_id=call.workspace_id AND member.run_id=call.run_id AND member.call_id=call.id)
+            RETURNING call.id`,[run.id,run.workspace_id,JSON.stringify(calls.map(call=>({id:call.id,request_digest:call.request_digest}))),run.lease_token]);
+          await c.query("SELECT set_config('noisia.labeling_unsent_requeue_v1','',true)");
+          if(changed.rows.length!==calls.length)fail("labeling_unsent_requeue_conflict");
+        });
+        for(const call of calls)call.status='reserved';
+      },
+    }:{}),
     async claim(runId: string): Promise<LabelingRunV1 | null> {
       return tx(db, async (c) => {
         const token = randomUUID();
@@ -654,8 +795,14 @@ export function createSignalLabelingStoreV1<
           await c.query(
             `UPDATE signal_labeling_runs SET lease_token=$2,lease_until=now()+interval '10 minutes',status='running',updated_at=now()
    WHERE id=$1 AND kind=$3 AND ($4::text IS NULL OR membership_snapshot->>'hybrid_stage'=$4)
-   AND (status IN('queued','running') OR status='failed' AND error_code='labeling_outcome_unknown'
-   AND EXISTS(SELECT 1 FROM signal_labeling_calls c WHERE c.run_id=$1 AND c.status='unknown')
+   AND (status IN('queued','running') OR status='failed' AND (
+     error_code='labeling_outcome_unknown' AND EXISTS(SELECT 1 FROM signal_labeling_calls c WHERE c.run_id=$1 AND c.status='unknown')
+     OR ${options.adapter?.recover_failed_raw===true?`kind='mass_labeling'
+       AND EXISTS(SELECT 1 FROM signal_labeler_versions l JOIN signal_listening_runs owner
+         ON owner.run_id=signal_labeling_runs.id AND owner.workspace_id=signal_labeling_runs.workspace_id
+         WHERE l.id=signal_labeling_runs.labeler_version_id AND l.identity#>>'{params,request_version}'='listening-jev-v1')
+       AND EXISTS(SELECT 1 FROM signal_labeling_calls c WHERE c.run_id=$1 AND c.workspace_id=signal_labeling_runs.workspace_id
+         AND c.raw_storage_key IS NOT NULL AND NOT c.results_applied)`:'FALSE'})
    AND NOT EXISTS(SELECT 1 FROM signal_labeling_runs active WHERE active.workspace_id=signal_labeling_runs.workspace_id
      AND active.kind=signal_labeling_runs.kind AND active.id<>signal_labeling_runs.id AND active.status IN('queued','running')))
    AND NOT waiting_full_confirmation AND (lease_until IS NULL OR lease_until<now()) RETURNING id`,
@@ -675,7 +822,7 @@ export function createSignalLabelingStoreV1<
         ).rows[0]!;
       });
     },
-    async fail(run: LabelingRunV1, code: string) {
+    async fail(run: LabelingRunV1, code: string,mode:{preserve_reserved?:boolean}={}) {
       await tx(db, async (c) => {
         await lock(c, run);
         if(code==="labeling_raw_receipt_invalid"){
@@ -687,7 +834,7 @@ export function createSignalLabelingStoreV1<
           await c.query(`UPDATE signal_labeling_runs SET error_code=$2,status='failed',updated_at=now() WHERE id=$1`,[run.id,code]);
           return;
         }
-        await c.query(
+        if(!rawPages||mode.preserve_reserved!==true)await c.query(
           `UPDATE signal_labeling_calls SET status='failed',updated_at=now() WHERE run_id=$1 AND status='reserved'`,
           [run.id],
         );
@@ -708,21 +855,31 @@ export function createSignalLabelingStoreV1<
         if (!changed.rows.length) fail("labeling_lease_lost");
       });
     },
-    async release(run: LabelingRunV1) {
+    async release(run: LabelingRunV1, cadence: {immediate?:boolean}={}) {
       await db.query(
         `UPDATE signal_labeling_runs SET lease_token=NULL,lease_until=NULL,
          next_poll_at=CASE WHEN EXISTS(SELECT 1 FROM signal_labeling_calls WHERE run_id=$1 AND status='unknown')
-           THEN now()+interval '1 hour' ELSE now()+interval '30 seconds' END WHERE id=$1 AND lease_token=$2`,
-        [run.id, run.lease_token],
+           THEN now()+interval '1 hour' WHEN $3::boolean AND error_code IS NULL THEN now()
+           ELSE now()+interval '30 seconds' END WHERE id=$1 AND lease_token=$2`,
+        [run.id, run.lease_token, cadence.immediate===true],
       );
     },
-    async inputs(run: LabelingRunV1) {
+    async inputs(run: LabelingRunV1,bounds?:LabelingInputBoundsV1) {
+      if(bounds){
+        let read:LabelingInputBoundsV1;try{read=validateLabelingInputBoundsV1(bounds,pageSize);}catch{fail('labeling_input_bounds_invalid',400);}
+        if(!options.adapter?.bounded_inputs)fail('labeling_bounded_inputs_unavailable',409);
+        return tx(db,async c=>{await c.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY');
+          return options.adapter!.bounded_inputs!(c,run,read);}).catch(error=>{
+            if(error instanceof Error&&['labeling_input_memory_bound','labeling_input_metadata_invalid'].includes(error.message))fail(error.message,409);
+            throw error;
+          });
+      }
       if (options.adapter) return options.adapter.inputs(db, run);
       return selectFacetInputsV1(
         db,
         run.workspace_id,
         run.cursor_root_id,
-        200,
+        pageSize,
       ) as Promise<Input[]>;
     },
     async reserve(
@@ -731,7 +888,14 @@ export function createSignalLabelingStoreV1<
       advanceCursor = true,
     ): Promise<LabelingCallV1<Input>[]> {
       return tx(db, async (c) => {
-        await lock(c, run);
+        if(nativePendingReserve){
+          await rawRunReadFence(c,run);
+          // Serialize the existence snapshot with the SAME policy/day/actor
+          // authority used below. Zero only reads exposure; it reserves no
+          // money. A concurrent replay must observe the committed first call
+          // before computing fresh cost, avoiding a false cap rejection.
+          await authority(c,run,0);
+        }else await lock(c, run);
         const existing = (
           await c.query<LabelingCallV1<Input>>(
             "SELECT * FROM signal_labeling_calls WHERE custom_id=ANY($1::text[])",
@@ -759,7 +923,7 @@ export function createSignalLabelingStoreV1<
               policy.budget_timezone,
             ],
           );
-        if (advanceCursor) {
+        if (advanceCursor && !nativePendingReserve) {
           const ids = proposals
             .flatMap((p) => p.inputs.map((i) => i.root_id))
             .sort();
@@ -779,22 +943,54 @@ export function createSignalLabelingStoreV1<
         ).rows;
       });
     },
-    async calls(run: LabelingRunV1): Promise<LabelingCallV1<Input>[]> {
-      const calls = (
-        await db.query<LabelingCallV1<Input>>(
+    async calls(run: LabelingRunV1,read?:{metadata_only?:boolean;call_ids?:string[]}): Promise<LabelingCallV1<Input>[]> {
+      if(read&&(!read.metadata_only&&read.call_ids===undefined||read.metadata_only!==undefined&&typeof read.metadata_only!=='boolean'
+        ||read.call_ids!==undefined&&(!Array.isArray(read.call_ids)||read.call_ids.length>pageSize
+          ||read.call_ids.some(id=>typeof id!=='string'||!/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/iu.test(id))
+          ||new Set(read.call_ids.map(id=>id.toLowerCase())).size!==read.call_ids.length)))fail('labeling_call_selection_invalid',400);
+      const selected=read?await tx(db,async c=>{
+        await lock(c,run);await authority(c,run,0);
+        return (await c.query<LabelingCallV1<Input>>(`SELECT ${read.metadata_only?`call.id,call.custom_id,call.request_digest,call.status,call.results_applied,call.provider_batch_id,
+            call.retry_depth,call.reserved_micro_usd,call.created_at,call.updated_at,call.raw_storage_key,
+            '{}'::jsonb request,'[]'::jsonb inputs`:'call.*'},
+          octet_length(call.request::text) request_size_bytes,octet_length(call.inputs::text) input_size_bytes,
+          (call.raw_storage_key IS NOT NULL OR member.call_id IS NOT NULL) has_raw,
+          member.page_id raw_page_id,page.size_bytes raw_page_size_bytes,
+          COALESCE(member.raw_size_bytes,call.raw_size_bytes) raw_size_bytes
+          FROM signal_labeling_calls call
+          LEFT JOIN signal_labeling_raw_page_members member ON member.workspace_id=call.workspace_id AND member.run_id=call.run_id AND member.call_id=call.id
+          LEFT JOIN signal_labeling_raw_pages page ON page.id=member.page_id AND page.workspace_id=call.workspace_id AND page.run_id=call.run_id
+          WHERE call.run_id=$1 AND call.workspace_id=$2 AND NOT call.results_applied AND ($3::uuid[] IS NULL OR call.id=ANY($3::uuid[]))
+          ORDER BY (call.raw_storage_key IS NOT NULL OR member.call_id IS NOT NULL) DESC,(call.status='unknown') DESC,
+            member.page_id NULLS LAST,member.byte_offset NULLS LAST,call.created_at,call.id LIMIT $4`,
+          [run.id,run.workspace_id,read.call_ids??null,pageSize])).rows;
+      }):(await db.query<LabelingCallV1<Input>>(
           `SELECT * FROM signal_labeling_calls WHERE run_id=$1
            ${options.adapter?.pending_calls_only ? "AND NOT results_applied" : ""}
-           ORDER BY created_at,id ${options.adapter?.pending_calls_only ? "LIMIT 200" : ""}`,
-          [run.id],
-        )
-      ).rows.map((call) => ({ ...call, raw_body: call.raw_body ?? null }));
+           ORDER BY created_at,id ${options.adapter?.pending_calls_only ? "LIMIT $2" : ""}`,
+          options.adapter?.pending_calls_only?[run.id,pageSize]:[run.id],
+        )).rows;
+      const calls=selected.map(call=>({...call,raw_body:read?.metadata_only?null:call.raw_body??null}));
+      if(read?.metadata_only)return calls;
+      let pageCalls=new Set<string>();
+      if(rawPages){
+        try{pageCalls=await rawPages.loadCalls(run,calls.filter(c=>!c.results_applied));}
+        catch(error){
+          if(error instanceof SignalLabelingError)throw error;
+          if(error instanceof SyntaxError||error instanceof Error&&["labeling_raw_page_invalid","labeling_raw_receipt_invalid",
+            "workspace_engine_storage_object_missing","workspace_engine_storage_digest_invalid","workspace_engine_storage_part_invalid",
+            "workspace_engine_storage_manifest_invalid","workspace_engine_storage_reference_invalid",
+            "workspace_engine_storage_response_too_large"].includes(error.message))fail("labeling_raw_receipt_invalid",503);
+          fail("labeling_raw_storage_unavailable",503);
+        }
+      }
       for (const call of calls) {
         const stored = call as LabelingCallV1<Input> & {
           raw_storage_key?: string | null;
           raw_sha256?: string | null;
           raw_size_bytes?: string | number | null;
         };
-        if (stored.raw_storage_key && stored.raw_sha256 && !call.raw_body && !call.results_applied) {
+        if (!pageCalls.has(call.id) && stored.raw_storage_key && stored.raw_sha256 && !call.raw_body && !call.results_applied) {
           if (!options.loadRaw) fail("labeling_raw_loader_unavailable", 503);
           const size = Number(stored.raw_size_bytes);
           if (!Number.isSafeInteger(size) || size < 0) fail("labeling_raw_receipt_invalid", 503);
@@ -825,12 +1021,122 @@ export function createSignalLabelingStoreV1<
       if(!row)fail("labeling_lease_lost");
       return row;
     },
+    ...(nativePendingReserve?{
+      /** Constructor-authenticated Listening only: one fresh, covered native
+       * cohort. The ordinary INSERT and UPDATE retain both E statement guards.
+       * Unlike the legacy path, a denied Mark rolls back its fresh reservation. */
+      async admitAndMarkSelected(run:LabelingRunV1,proposals:LabelingCallProposalV1<Input>[],callbacks:LabelingAdmissionSelectionV1<Input>):Promise<LabelingAdmissionResultV1<Input>>{
+        await options.assertRawReady?.();
+        const plan=planNativeListeningAdmissionPacketV1(run,proposals,Math.min(pageSize,1024));
+        const c=await db.connect();let discardClient=false,open=false,rollbackSent=false,rollbackAck=false,dmlSent=false,commitSent=false;
+        let selected:ReadonlyArray<LabelingCallProposalV1<Input>>=[],ids:string[]=[],customIds:string[]=[];
+        const legacy=async():Promise<LabelingAdmissionResultV1<Input>>=>{
+          rollbackSent=true;await c.query('ROLLBACK');rollbackAck=true;open=false;return{kind:'legacy'};
+        };
+        const rejectAsync=(value:unknown)=>{
+          if(value&&(['object','function'].includes(typeof value))&&typeof(value as {then?:unknown}).then==='function'){
+            if(value instanceof Promise)void value.catch(()=>undefined);
+            fail('labeling_admission_callback_invalid',400);
+          }
+        };
+        try{
+          await c.query('BEGIN');open=true;
+          await pageMutationFence(c,run);await authority(c,run,0);
+          if(!plan)return await legacy();
+          // Preserve the original whole-row SELECT permissions and serialize
+          // existence with the same policy lock as native reservations.
+          const existing=await c.query('SELECT * FROM signal_labeling_calls WHERE custom_id=ANY($1::text[])',[proposals.map(p=>p.custom_id)]);
+          if(existing.rows.length)return await legacy();
+          const profiles=await c.query<{profile:unknown}>(NATIVE_LISTENING_COVERED_PROFILES_SQL_V1,
+            [run.workspace_id,plan.configuration_digest,plan.model,[...new Set(plan.rows.map(row=>row.shape.shape_digest))],run.id]);
+          if(!nativeListeningAdmissionCoveredV1(plan,profiles.rows.map(row=>row.profile)))return await legacy();
+          if(typeof callbacks?.selectFresh!=='function'||typeof callbacks.validateBeforeCommit!=='function')fail('labeling_admission_callback_invalid',400);
+          const selection:unknown=callbacks.selectFresh(proposals);rejectAsync(selection);
+          if(!Array.isArray(selection))fail('labeling_admission_selection_invalid',400);
+          selected=[...selection] as LabelingCallProposalV1<Input>[];
+          const packet=nativeListeningAdmissionPacketBodyV1(plan,selected);
+          customIds=selected.map(proposal=>proposal.custom_id);
+          let calls:LabelingCallV1<Input>[]=[];
+          if(selected.length){
+            const amount=selected.reduce((sum,p)=>sum+BigInt(p.reserved_micro_usd),0n);
+            if(amount>BigInt(Number.MAX_SAFE_INTEGER))fail('labeling_money_invalid',400);
+            const policy=await authority(c,run,Number(amount));
+            // From this point no failure, even an acknowledged rollback, can
+            // return legacy or silently launch a second reservation attempt.
+            dmlSent=true;
+            const inserted=await c.query<Record<string,unknown>>(NATIVE_LISTENING_ADMISSION_INSERT_SQL_V1,
+              [run.id,run.workspace_id,run.identity.provider,run.identity.model,'sync',packet,policy.budget_date,policy.budget_timezone]);
+            calls=reconstructNativeListeningAdmissionRowsV1(run,plan,selected,inserted.rows,'reserved');ids=calls.map(call=>call.id);
+            await pageMutationFence(c,run);await authority(c,run,0);
+            await lockMutationCalls(c,run,calls);await options.adapter?.beforeSubmit?.(c,run,calls);
+            await rawRunReadFence(c,run);await registerMutationFence(c,run,'mark');
+            const changed=await c.query<Record<string,unknown>>(NATIVE_LISTENING_ADMISSION_MARK_SQL_V1,[run.id,run.workspace_id,ids,packet]);
+            calls=reconstructNativeListeningAdmissionRowsV1(run,plan,selected,changed.rows,'submitting');
+          }
+          const callsFingerprint=()=>createHash('sha256').update(JSON.stringify(calls)).digest('hex');
+          const beforeValidation=callsFingerprint();
+          const validation:unknown=callbacks.validateBeforeCommit(calls,selected);rejectAsync(validation);
+          // A callback may register the roster/bytes but cannot poison what is
+          // about to be committed or handed to evaluate after the ACK.
+          if(callsFingerprint()!==beforeValidation)fail('labeling_admission_handoff_changed',400);
+          validateNativeListeningAdmissionSelectionV1(plan,selected);
+          validateNativeListeningAdmissionRowsV1(run,selected,calls,'submitting');
+          commitSent=true;await c.query('COMMIT');open=false;return{kind:'committed',calls};
+        }catch(primary){
+          let cause=primary;
+          if(commitSent)discardClient=true;
+          if(open&&!rollbackSent){rollbackSent=true;try{await c.query('ROLLBACK');rollbackAck=true;open=false;}
+            catch(rollback){discardClient=true;cause=new AggregateError([primary,rollback],'labeling_admission_body_and_rollback_failed',{cause:primary});}}
+          if(!rollbackAck&&open)discardClient=true;
+          if(dmlSent)throw new LabelingAdmissionFailureV1(cause,commitSent||!rollbackAck?'unknown':'rolled_back',Object.freeze([...ids]),Object.freeze([...customIds]));
+          throw cause;
+        }finally{c.release(discardClient);}
+      },
+      /** Select only already-committed, memory-owned calls after the common
+       * authority wait. This callback grants no DB authority and receives no client. */
+      async markSubmittingSelected(run:LabelingRunV1,selectCommitted:()=>ReadonlyArray<LabelingCallV1<Input>>):Promise<ReadonlyArray<LabelingCallV1<Input>>>{
+        await options.assertRawReady?.();
+        const c=await db.connect();let discardClient=false;
+        try{
+          await c.query("BEGIN");
+          await pageMutationFence(c,run);await authority(c,run,0);
+          const selected:unknown=selectCommitted();
+          if(!Array.isArray(selected)){
+            // Reject async selectors without awaiting them or leaking a rejected
+            // native Promise as an unhandled rejection on this failure path.
+            if(selected instanceof Promise)void selected.catch(()=>undefined);
+            fail('labeling_mark_selection_invalid',400);
+          }
+          const calls:LabelingCallV1<Input>[]=[...selected];
+          if(calls.length>pageSize||calls.some(call=>!call||typeof call.id!=='string'||!call.id||call.status!=='reserved'||Boolean(call.raw_body)))
+            fail('labeling_mark_selection_invalid',400);
+          if(calls.length){
+            await lockMutationCalls(c,run,calls);
+            await options.adapter?.beforeSubmit?.(c,run,calls);
+            await rawRunReadFence(c,run);await registerMutationFence(c,run,'mark');
+            const changed=await c.query(
+              `UPDATE signal_labeling_calls SET status='submitting',updated_at=now() WHERE run_id=$1 AND id=ANY($2::uuid[]) AND status='reserved' RETURNING id`,
+              [run.id,calls.map(call=>call.id)]);
+            if(changed.rows.length!==calls.length)fail('labeling_submission_conflict');
+          }
+          await c.query("COMMIT");return calls;
+        }catch(primary){
+          try{await c.query("ROLLBACK");}
+          catch(rollback){discardClient=true;throw new AggregateError([primary,rollback],'labeling_mark_body_and_rollback_failed',{cause:primary});}
+          throw primary;
+        }finally{c.release(discardClient);}
+      },
+    }:{}),
     async markSubmitting(run: LabelingRunV1, calls: LabelingCallV1<Input>[]) {
       await options.assertRawReady?.();
       await tx(db, async (c) => {
-        await lock(c, run);
+        await pageMutationFence(c,run);
         await authority(c, run, 0);
+        if(options.adapter?.parallel_native_pages===true&&rawPages)await lockMutationCalls(c,run,calls);
         await options.adapter?.beforeSubmit?.(c, run, calls);
+        if(options.adapter?.parallel_native_pages===true&&rawPages){
+          await rawRunReadFence(c,run);await registerMutationFence(c,run,'mark');
+        }
         const changed = await c.query(
           `UPDATE signal_labeling_calls SET status='submitting',updated_at=now() WHERE run_id=$1 AND id=ANY($2::uuid[]) AND status='reserved' RETURNING id`,
           [run.id, calls.map((x) => x.id)],
@@ -954,6 +1260,8 @@ export function createSignalLabelingStoreV1<
       run: LabelingRunV1,
       pages: Array<{ call: LabelingCallV1<Input>; raw: string }>,
     ) {
+      if(!pages.length)return;
+      if(rawPages)return rawPages.persist(run,pages);
       const receipts = [];
       for (const page of pages) {
         const sha = `sha256:${createHash("sha256").update(page.raw).digest("hex")}`;
@@ -1013,7 +1321,12 @@ export function createSignalLabelingStoreV1<
       pages: Array<{ call: LabelingCallV1<Input>; results: Result[] }>,
     ) {
       await tx(db, async (c) => {
-        await lock(c, run);
+        await pageMutationFence(c,run);
+        if(options.adapter?.parallel_native_pages===true&&rawPages){
+          const applied=await lockMutationCalls(c,run,pages.map(page=>page.call),pages);
+          pages=pages.filter(page=>!applied.has(page.call.id));if(!pages.length)return;
+          await rawRunReadFence(c,run);await registerMutationFence(c,run,'apply');
+        }
         const persistResults = async () => {
           const changed = await c.query(
           `UPDATE signal_labeling_calls call SET results_applied=true,results=page.results,updated_at=now()
@@ -1067,7 +1380,9 @@ export function createSignalLabelingStoreV1<
             [run.id],
           )
         ).rows[0]!;
-        const pending = options.adapter
+        const combined = options.adapter?.pending_and_available
+          ? await options.adapter.pending_and_available(c,run) : null;
+        const pending = combined ? combined.pending : options.adapter
           ? await options.adapter.pending(c, run)
           : Number(
               (
@@ -1077,7 +1392,7 @@ export function createSignalLabelingStoreV1<
                 )
               ).rows[0]!.count,
             );
-        const available = (
+        const available = combined ? Number(combined.available) : options.adapter?.has_inputs ? Number(await options.adapter.has_inputs(c,run)) : (
           options.adapter
             ? await options.adapter.inputs(c, run)
             : await selectFacetInputsV1(

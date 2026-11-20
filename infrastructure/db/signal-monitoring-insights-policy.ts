@@ -55,7 +55,8 @@ export async function provisionMonitoringInsightPolicyV1(args:Args&{plan_digest:
   await client.query("SELECT pg_advisory_xact_lock(hashtextextended('signal-processing-policy:'||$1::uuid::text,0))",[scope.organization_id]);
   const read=await readPlan(client,args);
   if(read.plan_digest!==args.plan_digest)throw new MonitoringInsightsError('monitoring_insights_policy_plan_changed');
-  if(await readClassicPolicyActiveWorkV1(client,scope.organization_id))throw new MonitoringInsightsError('monitoring_insights_policy_active_work');
+  if(await readClassicPolicyActiveWorkV1(client,scope.organization_id)
+   ||(await client.query<{busy:boolean}>('SELECT signal_listening_study_policy_busy_v1($1) busy',[scope.organization_id])).rows[0]?.busy)throw new MonitoringInsightsError('monitoring_insights_policy_active_work');
   const prior=read.prior;
   const next=(await client.query<{id:string}>(`INSERT INTO signal_processing_policy_versions(organization_id,version,status,valid_from,valid_until,
    budget_timezone,daily_cap_micro_usd,created_by_user_id) VALUES($1,$2,'draft',clock_timestamp(),$3,$4,$5,$6) RETURNING id`,
@@ -65,6 +66,7 @@ export async function provisionMonitoringInsightPolicyV1(args:Args&{plan_digest:
   await client.query(`INSERT INTO signal_processing_policy_actions(policy_version_id,action,kind,provider,model,configuration,configuration_digest,max_execution_micro_usd,automatic_allowed)
    VALUES($1,'monitoring_insights','provider','anthropic','claude-sonnet-4-6',$2,signal_semantic_context_digest_json_v2($2::jsonb),2000000,false)`,
   [next.id,JSON.stringify(read.plan.configuration)]);
+  await client.query('SELECT signal_listening_study_policy_inherit_v1($1,$2,$3)',[prior.id,next.id,args.actor_user_id]);
   await client.query("UPDATE signal_processing_policy_versions SET status='revoked' WHERE id=$1 AND status='active'",[prior.id]);
   await client.query("UPDATE signal_processing_policy_versions SET status='active' WHERE id=$1 AND status='draft'",[next.id]);
   await client.query("INSERT INTO signal_workspace_features(workspace_id,feature,enabled_by) VALUES($1,'monitoring_insights',$2) ON CONFLICT DO NOTHING",[args.workspace_id,args.actor_user_id]);

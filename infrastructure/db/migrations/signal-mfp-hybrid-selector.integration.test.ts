@@ -1,3 +1,4 @@
+import {verifyHybridProviderRightsSetPlanV1} from './signal-hybrid-provider-rights.assertions';
 import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
 import test from "node:test";
@@ -278,6 +279,8 @@ test("migrated H1 selection, review queue and explicit unknown-exposure rollback
     const beforeSubmit = () => assertHybridProviderRightsBeforeSubmitV1(client,
       { id: jevRun, workspace_id: workspace } as LabelingRunV1, [{ id: jevCall }]);
     await beforeSubmit();
+    await verifyHybridProviderRightsSetPlanV1({client,workspace,organization,actor,source,batch,quality,retention,license,root,
+      run_id:jevRun,call_id:jevCall,other_workspace:fixture.second.workspace_id});
     await client.query("SAVEPOINT rights_revoked");
     await client.query("UPDATE data_sources SET status='inactive' WHERE id=$1", [source]);
     await assert.rejects(beforeSubmit(), /hybrid_provider_rights_changed/u,

@@ -1,0 +1,126 @@
+name: R16 H1 synthetic capacity benchmark
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/r16-h1-benchmark.yml'
+      - 'docs/product/PROMPT_LOOPING/R16_BENCHMARK_HARNESS.md'
+      - 'infrastructure/db/migrations/0295_signal_labeling_raw_pages.sql'
+      - 'infrastructure/db/migrations/0308_signal_labeling_page_mutation_fences.sql'
+      - 'infrastructure/db/migrations/signal-labeling-raw-pages*'
+      - 'infrastructure/db/migrations/signal-labeling-raw-page-locks.postgres.test.ts'
+      - 'infrastructure/db/migrations/signal-client-workspace-entry.synthetic.fixture.ts'
+      - 'infrastructure/db/migrations/signal-client-workspace-entry.batch-equivalence.postgres.test.ts'
+      - 'infrastructure/db/migrations/signal-client-workspace-entry.preparation-page-equivalence.postgres.test.ts'
+      - 'infrastructure/db/migrations/signal-topic-editorial-renewal.synthetic.fixture.ts'
+      - 'infrastructure/db/migrations/signal-mass-labeling-acceptance.synthetic.fixture.ts'
+      - 'infrastructure/db/migrations/signal-r16-local-pg.fixture.ts'
+      - 'infrastructure/db/migrations/0303_signal_semantic_review_attribution_lookup.sql'
+      - 'infrastructure/db/migrations/signal-semantic-review-attribution-lookup.postgres.test.ts'
+      - 'infrastructure/db/migrations/signal-mass-labeling-input-bounds.postgres.test.ts'
+      - 'infrastructure/db/signal-labeling-input-bounds*'
+      - 'infrastructure/db/signal-mass-labeling.ts'
+      - 'infrastructure/db/migrations/signal-labeling-unsent.postgres.test.ts'
+      - 'infrastructure/db/signal-labeling-raw-page-store.ts'
+      - 'infrastructure/db/signal-labeling-runs.ts'
+      - 'services/workers/src/providers/jev-account-rate-limit*'
+      - 'services/workers/src/providers/jev-streaming-runtime.ts'
+      - 'services/workers/src/providers/typesafe-jev.ts'
+      - 'services/workers/src/workers/signal-jev-labeling-page.ts'
+      - 'services/workers/src/workers/signal-labeling-receipt-storage.ts'
+      - 'services/workers/src/workers/signal-mass-labeling-jev-recovery.ts'
+      - 'services/workers/src/workers/signal-mass-labeling-jev.ts'
+      - 'services/workers/src/workers/signal-jev-streaming-window.ts'
+      - 'services/workers/src/workers/signal-workspace-engine-storage.ts'
+      - 'infrastructure/db/signal-listening*.ts'
+      - 'infrastructure/db/migrations/0311_signal_listening_statement_money.sql'
+      - 'infrastructure/db/migrations/0312_signal_listening_population_batches.sql'
+      - 'infrastructure/db/migrations/*_signal_listening*.sql'
+      - 'services/workers/src/workers/signal-listening*.ts'
+      - 'packages/query-engine/src/signal-listening*.ts'
+      - 'scripts/r16/**'
+  push:
+    branches: [develop]
+    paths:
+      - '.github/workflows/r16-h1-benchmark.yml'
+      - 'infrastructure/db/migrations/0295_signal_labeling_raw_pages.sql'
+      - 'infrastructure/db/migrations/0308_signal_labeling_page_mutation_fences.sql'
+      - 'infrastructure/db/migrations/signal-labeling-raw-pages*'
+      - 'infrastructure/db/migrations/signal-labeling-raw-page-locks.postgres.test.ts'
+      - 'infrastructure/db/migrations/signal-client-workspace-entry.synthetic.fixture.ts'
+      - 'infrastructure/db/migrations/signal-client-workspace-entry.preparation-page-equivalence.postgres.test.ts'
+      - 'infrastructure/db/migrations/signal-topic-editorial-renewal.synthetic.fixture.ts'
+      - 'infrastructure/db/migrations/signal-mass-labeling-acceptance.synthetic.fixture.ts'
+      - 'infrastructure/db/migrations/signal-r16-local-pg.fixture.ts'
+      - 'infrastructure/db/migrations/0303_signal_semantic_review_attribution_lookup.sql'
+      - 'infrastructure/db/migrations/signal-semantic-review-attribution-lookup.postgres.test.ts'
+      - 'infrastructure/db/migrations/signal-mass-labeling-input-bounds.postgres.test.ts'
+      - 'infrastructure/db/signal-labeling-input-bounds*'
+      - 'infrastructure/db/signal-mass-labeling.ts'
+      - 'infrastructure/db/migrations/signal-labeling-unsent.postgres.test.ts'
+      - 'infrastructure/db/signal-labeling-raw-page-store.ts'
+      - 'infrastructure/db/signal-labeling-runs.ts'
+      - 'services/workers/src/providers/jev-account-rate-limit*'
+      - 'services/workers/src/providers/jev-streaming-runtime.ts'
+      - 'services/workers/src/providers/typesafe-jev.ts'
+      - 'services/workers/src/workers/signal-jev-labeling-page.ts'
+      - 'services/workers/src/workers/signal-labeling-receipt-storage.ts'
+      - 'services/workers/src/workers/signal-mass-labeling-jev-recovery.ts'
+      - 'services/workers/src/workers/signal-mass-labeling-jev.ts'
+      - 'services/workers/src/workers/signal-jev-streaming-window.ts'
+      - 'services/workers/src/workers/signal-workspace-engine-storage.ts'
+      - 'infrastructure/db/signal-listening*.ts'
+      - 'infrastructure/db/migrations/0311_signal_listening_statement_money.sql'
+      - 'infrastructure/db/migrations/0312_signal_listening_population_batches.sql'
+      - 'infrastructure/db/migrations/*_signal_listening*.sql'
+      - 'services/workers/src/workers/signal-listening*.ts'
+      - 'packages/query-engine/src/signal-listening*.ts'
+      - 'scripts/r16/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  calibration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Enable pinned pnpm
+        run: corepack enable && corepack prepare pnpm@10.33.2 --activate
+      - name: Install dependencies
+        run: corepack pnpm install --frozen-lockfile
+      - name: Verify calibration in a separate empty accredited lab
+        run: bash scripts/r16/ci-calibration.sh
+  benchmark:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      NODE_OPTIONS: --max-old-space-size=4096
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Enable pinned pnpm
+        run: corepack enable && corepack prepare pnpm@10.33.2 --activate
+      - name: Install dependencies
+        run: corepack pnpm install --frozen-lockfile
+      - name: Run isolated PostgreSQL, Redis, storage and product pipeline benchmark
+        run: scripts/r16/ci-benchmark.sh
+      - name: Upload private synthetic evidence as workflow artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: r16-h1-synthetic-evidence
+          path: |
+            .data/piloto-masivo/r16/benchmark-*.json
+            .data/piloto-masivo/r16/fault-matrix-*.json
+            .data/piloto-masivo/r16/fault-trace-*.json
+            .data/piloto-masivo/r16/listening-ci-*.json
+          if-no-files-found: ignore
+          retention-days: 14

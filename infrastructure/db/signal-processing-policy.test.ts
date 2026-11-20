@@ -203,3 +203,30 @@ test("every new modeled check and foreign key has the same explicit SQL identity
     }
   }
 });
+
+test('R16 scope cannot be supplied by availability flags and does not leak into the public action contract', async () => {
+  const r16 = ['listening_discovery_review', 'study_analysis'].map(action => ({ action, kind: 'provider', provider: 'anthropic',
+    model: 'claude-sonnet-4-6', configuration_digest: digest, max_execution_micro_usd: '700', automatic_allowed: false }));
+  for (const scope_allowed of [undefined, false, true]) {
+    const {queryable, queries} = reader({...policy, actions: r16.map(action => ({...action, ...(scope_allowed === undefined ? {} : {scope_allowed})}))});
+    const result = await readSignalProcessingPolicyWithQueryableV1({queryable, workspace_id: workspace, actor_user_id: actor,
+      action_availability: {listening_discovery_review: true, study_analysis: true}});
+    assert.equal(result.actions.every(action => action.available), scope_allowed === true);
+    assert.equal(result.status, scope_allowed === true ? 'ready' : 'provider_unavailable');
+    assert.ok(result.actions.every(action => !Object.hasOwn(action, 'scope_allowed')));
+    assert.equal(queries.length, 2, 'scope is read with the same native policy statement, without per-action round trips');
+  }
+});
+test('a scoped R16 denial preserves independent legacy/free readiness and a scoped prototype denial', async () => {
+  const result = await readSignalProcessingPolicyWithQueryableV1({...reader({...policy, actions: [...policy.actions,
+    {action: 'study_analysis', kind: 'provider', provider: 'anthropic', model: 'claude-sonnet-4-6', configuration_digest: digest,
+      max_execution_micro_usd: '700', automatic_allowed: false, scope_allowed: false},
+    {action: 'topic_prototype_embeddings', kind: 'provider', provider: 'voyage', model: 'voyage-4-large', configuration_digest: digest,
+      max_execution_micro_usd: '700', automatic_allowed: false, scope_allowed: false}]}), workspace_id: workspace, actor_user_id: actor,
+    action_availability: {corpus_embeddings: true, study_analysis: true, topic_prototype_embeddings: true}});
+  assert.equal(result.status, 'ready');
+  assert.equal(result.actions.find(action => action.action === 'corpus_preparation')?.available, true);
+  assert.equal(result.actions.find(action => action.action === 'corpus_embeddings')?.available, true);
+  assert.equal(result.actions.find(action => action.action === 'study_analysis')?.available, false);
+  assert.equal(result.actions.find(action => action.action === 'topic_prototype_embeddings')?.available, false);
+});

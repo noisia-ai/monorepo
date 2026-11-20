@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createTypesafeJevClientV1, validateJevResponseV1, JevProviderErrorV1, type JevRequestV1 } from './typesafe-jev';
+import { createTypesafeJevClientV1, jevRetryAfterMsV1, validateJevResponseV1, JevProviderErrorV1, type JevRequestV1 } from './typesafe-jev';
 const request: JevRequestV1 = { model: 'jev-1.13.0', state: 'synthetic', questions: { yes: { type: 'noul', instructions: 'yes?' }, select: { type: 'choice', instructions: 'choose', criteria: { a: 'A', b: 'B' } } } };
 const response = () => ({ model: request.model, usage: { input_tokens: 100, output_tokens: 5 }, answers: { yes: { type: 'noul', noul: 0.9 }, select: { type: 'choice', choice: 'a', confidence: 0.8, probabilities: { a: 0.9, b: 0.1 } } } });
 test('one request, disabled by default and no credential/error leakage', async () => {
@@ -84,4 +84,93 @@ test('nonfinite choice probabilities remain invalid', () => {
         (error: unknown) => error instanceof JevProviderErrorV1 && error.outcome === 'known_response_invalid');
     }
   }
+});
+
+test('physical throttle receipts preserve Retry-After without hiding a retry', async () => {
+  for (const status of [429, 529]) {
+    let attempts = 0;
+    const raw = await createTypesafeJevClientV1({ enabled: true, api_key: 'test', fetch: async () => {
+      attempts++; return new Response('provider rejection', { status, headers: { 'retry-after': '1.25' } });
+    } }).evaluate(request);
+    assert.equal(attempts, 1); assert.equal(raw.http_status, status);
+    assert.equal(raw.body, 'provider rejection'); assert.equal(raw.retry_after, '1.25'); assert.equal(raw.retry_after_ms, 1250);
+  }
+  const now = Date.parse('2026-11-14T12:00:00Z');
+  assert.equal(jevRetryAfterMsV1('Sat, 14 Nov 2026 12:00:03 GMT', now), 3000);
+  assert.equal(jevRetryAfterMsV1('Sat, 14 Nov 2026 11:59:59 GMT', now), 0);
+  assert.equal(jevRetryAfterMsV1('invalid', now), undefined);
+});
+
+test('high concurrency requires shared account admission and explicit token estimate', async () => {
+  let calls = 0; let observed = 0;
+  const fetch = async () => { calls++; return new Response(JSON.stringify(response())); };
+  await assert.rejects(createTypesafeJevClientV1({ enabled: true, api_key: 'test', concurrency: 512, fetch }).evaluate(request), /jev_configuration_invalid/);
+  assert.equal(calls, 0);
+  const limiter = { acquire: async (tokens: number) => { assert.equal(tokens, 123); return { id: 'synthetic', estimated_input_tokens: tokens }; },
+    throttle: async () => {}, observe: async () => { observed++; } };
+  const client = createTypesafeJevClientV1({ enabled: true, api_key: 'test', concurrency: 512, fetch, rate_limiter: limiter, estimate_input_tokens: () => 123 });
+  const raw = await client.evaluate(request); assert.equal(calls, 1); assert.equal(observed, 0);
+  assert.equal(raw.rate_reservation?.estimated_input_tokens, 123);
+  await client.observeUsage!(raw, 100); assert.equal(observed, 1);
+  const unavailable = createTypesafeJevClientV1({ enabled: true, api_key: 'test', fetch, rate_limiter: { ...limiter, acquire: async () => { throw Error('private backend detail'); } }, estimate_input_tokens: () => 123 });
+  await assert.rejects(unavailable.evaluate(request), (e: unknown) => e instanceof JevProviderErrorV1 && e.code === 'jev_rate_limiter_unavailable' && e.outcome === 'definitely_not_sent');
+  assert.equal(calls, 1);
+});
+
+test('throttling always backs off the shared account, including missing or invalid Retry-After', async () => {
+  for (const header of [undefined, 'invalid', '0', '3']) {
+    const delays: number[] = [];
+    const limiter = { acquire: async () => ({ id: 'synthetic', estimated_input_tokens: 100 }),
+      throttle: async (delay: number) => { delays.push(delay); }, observe: async () => {} };
+    const client = createTypesafeJevClientV1({ enabled: true, api_key: 'test', rate_limiter: limiter,
+      estimate_input_tokens: () => 100, fetch: async () => new Response('busy', {
+        status: 529, ...(header === undefined ? {} : { headers: { 'retry-after': header } }) }) });
+    await client.evaluate(request); await client.evaluate(request);
+    assert.deepEqual(delays, header === '3' ? [3000, 3000] : [1000, 2000]);
+  }
+});
+
+test('a 429/529 usage claim never proves billing or absence of processing', () => {
+  for (const http_status of [429, 529]) for (const input_tokens of [0, 100]) {
+    const body = JSON.stringify({ error: 'busy', usage: { input_tokens, output_tokens: 0 } });
+    assert.throws(() => validateJevResponseV1(request, { body, http_status, latency_ms: 1 }),
+      (error: unknown) => error instanceof JevProviderErrorV1 && error.outcome === 'outcome_unknown'
+        && error.evidence.http_status === http_status && error.evidence.usage === undefined
+        && /^sha256:[0-9a-f]{64}$/.test(error.evidence.response_digest ?? ''));
+  }
+});
+
+test('failed shared cooldown preserves its receipt and closes subsequent admission', async () => {
+  let sends = 0;
+  const client = createTypesafeJevClientV1({ enabled: true, api_key: 'test', estimate_input_tokens: () => 100,
+    rate_limiter: { acquire: async () => ({ id: 'synthetic', estimated_input_tokens: 100 }),
+      throttle: async () => { throw Error('redis_down'); }, observe: async () => {} },
+    fetch: async () => { sends++; return new Response('busy', { status: 529 }); } });
+  const raw = await client.evaluate(request);
+  assert.equal(raw.http_status, 529); assert.equal(raw.body, 'busy'); assert.equal(raw.rate_limit_update_failed, true);
+  await assert.rejects(client.evaluate(request), (error: unknown) => error instanceof JevProviderErrorV1
+    && error.outcome === 'definitely_not_sent' && error.code === 'jev_rate_limiter_unavailable');
+  assert.equal(sends, 1);
+});
+test('only first-party prefetch cancellation carries a live nonserializable witness',async()=>{
+ const {isJevPreFetchCancellationV1}=await import('./typesafe-jev');
+ assert.equal(isJevPreFetchCancellationV1(new JevProviderErrorV1('jev_send_canceled','definitely_not_sent')),false);
+ assert.equal(isJevPreFetchCancellationV1({code:'jev_send_canceled',outcome:'definitely_not_sent'}),false);
+ let fetches=0;const canceled=new AbortController();canceled.abort();
+ const client=createTypesafeJevClientV1({enabled:true,api_key:'test',fetch:async()=>{fetches++;return Response.json(response());}});
+ await assert.rejects(client.evaluate(request,{signal:canceled.signal}),error=>isJevPreFetchCancellationV1(error));assert.equal(fetches,0);
+ let release!:()=>void;const held=new Promise<void>(resolve=>{release=resolve;});
+ const fifo=createTypesafeJevClientV1({enabled:true,api_key:'test',concurrency:1,fetch:async()=>{fetches++;await held;return Response.json(response());}});
+ const first=fifo.evaluate(request),controller=new AbortController(),queued=fifo.evaluate(request,{signal:controller.signal});controller.abort();
+ await assert.rejects(queued,error=>isJevPreFetchCancellationV1(error));release();await first;assert.equal(fetches,1);
+ const limiterAbort=new AbortController();
+ const limiter=createTypesafeJevClientV1({enabled:true,api_key:'test',fetch:async()=>{fetches++;return Response.json(response());},
+  estimate_input_tokens:()=>100,rate_limiter:{acquire:async()=>{limiterAbort.abort();throw Error('canceled');},observe:async()=>{},throttle:async()=>{}}});
+ await assert.rejects(limiter.evaluate(request,{signal:limiterAbort.signal}),error=>isJevPreFetchCancellationV1(error));assert.equal(fetches,1);
+ const keepAlive=setTimeout(()=>undefined,100);
+ try{await assert.rejects(createTypesafeJevClientV1({enabled:true,api_key:'test',timeout_ms:5,fetch:async(_url,options)=>new Promise((_resolve,reject)=>{
+  fetches++;options?.signal?.addEventListener('abort',()=>reject(Error('aborted after fetch started')));
+ })}).evaluate(request),error=>error instanceof JevProviderErrorV1&&error.outcome==='outcome_unknown'&&!isJevPreFetchCancellationV1(error));}
+ finally{clearTimeout(keepAlive);}
+ assert.equal(fetches,2);
 });

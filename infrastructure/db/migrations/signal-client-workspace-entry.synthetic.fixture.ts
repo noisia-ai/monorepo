@@ -1,3 +1,4 @@
+import {wireOctetProbeTextsV1} from './signal-listening-wire-population.oracle';
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
 import type {Pool,PoolClient} from 'pg';
@@ -22,12 +23,17 @@ export type SyntheticTransactionV1={database:Pool;scoped:PoolClient;query:Worksp
 /** Accepted import only: no preparation, embeddings, execution or provider receipt.
  * The caller must own an approved synthetic-only transaction and its rollback. */
 export async function syntheticImportedWorkspaceFixtureV1(tx:SyntheticTransactionV1,
- identity?:{organization_id:string;brand_id:string;actor_user_id:string;workspace_id:string},options:{root_count?:number;long_text?:boolean}={}){
+ identity?:{organization_id:string;brand_id:string;actor_user_id:string;workspace_id:string},options:{root_count?:number;seed_published_at?:string;long_text?:boolean;batch_size?:number;study_vector_groups?:boolean;study_author_metadata?:boolean;study_text_length?:number;wire_octet_probe?:true}={}){
  const {database,query}=tx;
+ if(options.seed_published_at!==undefined)assert.match(options.seed_published_at,/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/u,'synthetic source timestamp must retain six fractional digits');
  const roots:string[]=[];
- const texts: string[]=options.root_count===undefined?[...NOI19_SYNTHETIC_TEXTS]:
+ let texts: string[]=options.root_count===undefined?[...NOI19_SYNTHETIC_TEXTS]:
   Array.from({length:options.root_count},(_,index)=>`Synthetic fixture root ${index.toString().padStart(4,'0')}.`);
+ if(options.study_vector_groups){assert.ok(options.root_count&&options.root_count>=60&&options.root_count<=240);const forces=['A bicycle purchase feels reassuring with a smooth quiet ride.','A bicycle repair budget creates hesitation around costly spare parts.','Friends encourage a bicycle commute with shared weekend trips.'];for(let i=0;i<texts.length;i++)texts[i]+=' '+forces[i%3];}
+ if(options.study_text_length!==undefined){assert.equal(options.study_vector_groups,true);assert.ok(Number.isInteger(options.study_text_length)&&options.study_text_length>=1000&&options.study_text_length<=13000);for(let i=0;i<texts.length;i++)texts[i]=texts[i]!.padEnd(options.study_text_length,` Synthetic fixture root ${i.toString().padStart(4,'0')}. Preparation material.`);}
  if(options.long_text&&texts.length)texts[0]=`${texts[0]} ${'Synthetic excerpt continuation. '.repeat(100)}`;
+ if(options.study_author_metadata){assert.equal(options.batch_size??1,1);for(let i=0;i<texts.length;i++)texts[i]+=' '+(i%3===0?'Known Fixture Person Zero':i%3===1?'Suppressed Legacy Person One':'Known Legacy Person Two and Linked Fixture Person Two')+' talks with @fixture_user.';}
+ texts=wireOctetProbeTextsV1(texts,options.wire_octet_probe===true);
  const org=identity?.organization_id??randomUUID(),brand=identity?.brand_id??randomUUID(),actor_user_id=identity?.actor_user_id??randomUUID(),source=randomUUID(),batch=randomUUID();
  if(!identity){
  await query("INSERT INTO organizations(id,slug,legal_name,status) VALUES($1,$2,'Synthetic NOI-19 test organization','active')",[org,`noi19-${org}`]);
@@ -41,14 +47,34 @@ export async function syntheticImportedWorkspaceFixtureV1(tx:SyntheticTransactio
  await query(`INSERT INTO import_batches(id,workspace_id,data_source_id,source_system,source_file_name,source_file_hash,status,
  record_count,included_count,excluded_count,duplicate_count,imported_by_user_id)
  VALUES($1,$2,$3,'synthetic','invented-synthetic-roots.txt',$4,'completed',$6,$6,0,0,$5)`,[batch,workspace_id,source,fixtureSha(texts.join('\n')),actor_user_id,texts.length]);
- for(const [index,text] of texts.entries()){
-  const root=randomUUID();roots.push(root);
+ const batchSize=options.batch_size??1;
+ assert(Number.isSafeInteger(batchSize)&&batchSize>=1&&batchSize<=2048,'synthetic import batch size must remain bounded');
+ const rows=texts.map((text,index)=>{const id=randomUUID();roots.push(id);return{id,workspace_id,data_source_id:source,
+  provider_record_id:`noi19-${id}-${index}`,source_file_id:batch,text_hash:fixtureSha(text),text,text_length:text.length,url:options.study_vector_groups||options.study_author_metadata?`https://example.test/synthetic-study/${index}`:null,author_id:options.study_author_metadata?randomUUID():null,source_author_label_recorded:!!options.study_author_metadata&&index%3!==2,source_author_label:options.study_author_metadata&&index%3===0?'Known Fixture Person Zero':null,raw_metadata:options.study_author_metadata?{author:index%3===0?'Ignored Legacy Person Zero':index%3===1?'Suppressed Legacy Person One':'Known Legacy Person Two'}:null};});
+ for(let offset=0;offset<rows.length;offset+=batchSize){
+  const page=rows.slice(offset,offset+batchSize);
+  if(batchSize===1){
+   const row=page[0]!;
+   if(row.author_id)await query("INSERT INTO authors(id,platform,external_id,handle,display_name) VALUES($1::uuid,'synthetic',$1::uuid::text,$2,$3)",[row.author_id,'linked_fixture_'+offset,offset%3===2?'Linked Fixture Person Two':'Ignored Linked Person']);
+   await query(`INSERT INTO mentions(id,workspace_id,data_source_id,canonical_mention_id,provider_record_id,external_id,source_system,
+    source_file_id,text_hash,text_raw,text_clean,text_length,published_at,platform,resolved_platform,language,inclusion_status,url,author_id,source_author_label_recorded,source_author_label,raw_metadata)
+    VALUES($1,$2,$3,$1,$4,$4,'synthetic',$5,$6,$7,$7,$8,'2026-09-01T12:00:00Z','synthetic','synthetic','en','included',$9,$10,$11,$12,$13::jsonb)`,
+    [row.id,workspace_id,source,row.provider_record_id,batch,row.text_hash,row.text,row.text_length,row.url,row.author_id,row.source_author_label_recorded,row.source_author_label,row.raw_metadata===null?null:JSON.stringify(row.raw_metadata)]);
+   await query(`INSERT INTO signal_mention_import_memberships(workspace_id,mention_id,import_batch_id,data_source_id,ingestion_disposition)
+    VALUES($1,$2,$3,$4,'included') ON CONFLICT(mention_id,import_batch_id) DO NOTHING`,[workspace_id,row.id,batch,source]);
+   continue;
+  }
+  const encoded=JSON.stringify(page);
   await query(`INSERT INTO mentions(id,workspace_id,data_source_id,canonical_mention_id,provider_record_id,external_id,source_system,
-   source_file_id,text_hash,text_raw,text_clean,text_length,published_at,platform,resolved_platform,language,inclusion_status)
-   VALUES($1,$2,$3,$1,$4,$4,'synthetic',$5,$6,$7,$7,$8,'2026-09-01T12:00:00Z','synthetic','synthetic','en','included')`,
-   [root,workspace_id,source,`noi19-${root}-${index}`,batch,fixtureSha(text),text,text.length]);
+   source_file_id,text_hash,text_raw,text_clean,text_length,published_at,platform,resolved_platform,language,inclusion_status,url)
+   SELECT row.id,row.workspace_id,row.data_source_id,row.id,row.provider_record_id,row.provider_record_id,'synthetic',
+    row.source_file_id,row.text_hash,row.text,row.text,row.text_length,'2026-09-01T12:00:00Z','synthetic','synthetic','en','included',row.url
+   FROM jsonb_to_recordset($1::jsonb) AS row(id uuid,workspace_id uuid,data_source_id uuid,provider_record_id text,
+    source_file_id uuid,text_hash text,text text,text_length integer,url text)`,[encoded]);
   await query(`INSERT INTO signal_mention_import_memberships(workspace_id,mention_id,import_batch_id,data_source_id,ingestion_disposition)
-   VALUES($1,$2,$3,$4,'included') ON CONFLICT(mention_id,import_batch_id) DO NOTHING`,[workspace_id,root,batch,source]);
+   SELECT row.workspace_id,row.id,$2,row.data_source_id,'included'
+   FROM jsonb_to_recordset($1::jsonb) AS row(id uuid,workspace_id uuid,data_source_id uuid)
+   ON CONFLICT(mention_id,import_batch_id) DO NOTHING`,[JSON.stringify(page.map(row=>({id:row.id,workspace_id,data_source_id:source}))),batch]);
  }
  const quality=randomUUID(),retention=randomUUID(),license=randomUUID();
  const q={workspace_id,policy_key:'noi19-synthetic-quality',policy_version:1,min_quality_score:null,
@@ -73,6 +99,10 @@ export async function syntheticImportedWorkspaceFixtureV1(tx:SyntheticTransactio
  await query(`INSERT INTO signal_provenance_policy_bindings(workspace_id,data_source_id,binding_version,status,quality_policy_id,
  retention_policy_id,licensing_policy_id,definition_hash,created_by_user_id,activated_by_user_id,activated_at,creation_idempotency_key)
  VALUES($1,$2,1,'active',$3,$4,$5,$6,$7,$7,now(),$8)`,[workspace_id,source,quality,retention,license,signalProvenancePolicyBindingDefinitionHashV1(b),actor_user_id,fixtureSha('synthetic binding')]);
+ // Source-only seed override: finish before the caller admits corpus preparation.
+ // Defaults execute no extra statement and retain the original import literals.
+ if(options.seed_published_at!==undefined)await query(`UPDATE mentions SET published_at=$3::timestamptz
+  WHERE workspace_id=$1 AND data_source_id=$2 AND source_file_id=$4`,[workspace_id,source,options.seed_published_at,batch]);
  return {database,query,workspace_id,actor_user_id,organization_id:org,brand_id:brand,source_id:source,
   batch_id:batch,quality_id:quality,retention_id:retention,license_id:license,roots,access:{database,workspace_id,actor_user_id}};
 }
@@ -83,22 +113,31 @@ export async function syntheticImportedWorkspaceFixtureV1(tx:SyntheticTransactio
 export async function syntheticClientWorkspaceFixtureV1(tx:SyntheticTransactionV1,options:{
  identity?:{organization_id:string;brand_id:string;actor_user_id:string;workspace_id:string};
  root_count?:number;
+ seed_published_at?:string;
+ study_vector_groups?:boolean;
+ study_author_metadata?:boolean;study_text_length?:number;wire_octet_probe?:true;
  long_text?:boolean;
+ import_batch_size?:number;
+ preparation_page_size?:number;
+ embedding_page_limit?:number;
  skip_topic_prototypes?:boolean;
  projection?:Parameters<typeof workspaceProjectionFixtureBodyV1>[1];
 }={}){
  const {database,query,scoped}=tx;
- const {workspace_id,actor_user_id}=await syntheticImportedWorkspaceFixtureV1(tx,options.identity,{root_count:options.root_count,long_text:options.long_text});
+ const {workspace_id,actor_user_id}=await syntheticImportedWorkspaceFixtureV1(tx,options.identity,{root_count:options.root_count,seed_published_at:options.seed_published_at,long_text:options.long_text,batch_size:options.import_batch_size,study_vector_groups:options.study_vector_groups,study_author_metadata:options.study_author_metadata,study_text_length:options.study_text_length,...(options.wire_octet_probe===true?{wire_octet_probe:true as const}:{})});
  const access={database,workspace_id,actor_user_id};
  const prep=await requestSignalWorkspaceCorpusPreparationStoreV1({...access,idempotency_key:randomUUID()});
  const prepJob=(await query('SELECT worker_job_id FROM signal_corpus_preparation_runs WHERE id=$1',[prep.run_id])).rows[0]!.worker_job_id;
- await signalWorkspaceCorpusPreparationJobV1({id:prepJob,data:{run_id:prep.run_id},updateProgress:async()=>{}},{database,page_size:3});
+ const preparationPageSize=options.preparation_page_size??3;
+ if(!Number.isSafeInteger(preparationPageSize)||preparationPageSize<1||preparationPageSize>100)
+  throw new Error('synthetic corpus preparation page size must be between 1 and the production limit of 100');
+ await signalWorkspaceCorpusPreparationJobV1({id:prepJob,data:{run_id:prep.run_id},updateProgress:async()=>{}},{database,page_size:preparationPageSize});
  const prepared=await loadSignalWorkspaceCorpusPreparationStoreV1({queryable:database,workspace_id});
  assert.equal(prepared.is_current,true);assert.equal(prepared.latest_completed?.counts.eligible_roots,options.root_count??3);
  const quoted=await quoteSignalWorkspaceEmbeddingsStoreV1({...access,profile});
  const embedded=await requestSignalWorkspaceEmbeddingsStoreV1({...access,profile,preparation_run_id:quoted.preparation_run_id,
-  quote_digest:quoted.quote_digest,idempotency_key:randomUUID(),hard_cap_micro_usd:1_000_000,provider_available:true});
- await embedSyntheticRunV1(tx,embedded.run_id);
+  quote_digest:quoted.quote_digest,idempotency_key:randomUUID(),hard_cap_micro_usd:options.study_text_length?Math.max(1_000_000,quoted.estimated_upper_micro_usd):1_000_000,provider_available:true});
+ await embedSyntheticRunV1(tx,embedded.run_id,options.embedding_page_limit,options.study_vector_groups);
  const context=await loadSignalTopicInheritedContextStoreV1({queryable:database,workspace_id,complete_context:true});
  await insertSignalTaxonomyDraftCoreV1({client:scoped,workspace_id,kind:'topic',context_hash:fixtureSha('synthetic-empty-catalog'),terms:[],rules:{topics:[]},
   rule_set_metadata:{},provider:'operator',model_version:'synthetic-test',prompt_hash:fixtureSha('synthetic'),model_metadata:{},
@@ -113,16 +152,18 @@ export async function syntheticClientWorkspaceFixtureV1(tx:SyntheticTransactionV
  // existing projection body uses real guards/receipts with explicit numerical data.
  return workspaceProjectionFixtureBodyV1({...tx,workspace_id,actor_user_id,embedding_run_id:embedded.run_id},options.projection);
 }
-async function embedSyntheticRunV1(tx:SyntheticTransactionV1,run_id:string){
+async function embedSyntheticRunV1(tx:SyntheticTransactionV1,run_id:string,maxPages=8,studyGroups=false){
  const {database,query}=tx;
+ if(studyGroups){const n=Number((await query("SELECT count(*)::int n FROM mentions m JOIN data_sources d ON d.id=m.data_source_id AND d.workspace_id=m.workspace_id WHERE m.workspace_id=(SELECT workspace_id FROM signal_workspace_embedding_runs WHERE id=$1) AND d.provider='synthetic'",[run_id])).rows[0]?.n);assert.ok(n>=60&&n<=240,'grouped Study vectors are synthetic fixture data only');}
+ if(!Number.isSafeInteger(maxPages)||maxPages<1||maxPages>1000)throw new Error('synthetic embedding page limit is invalid');
  const worker_job_id=(await query('SELECT worker_job_id FROM signal_workspace_embedding_runs WHERE id=$1',[run_id])).rows[0]!.worker_job_id;
  let lease=await embeddings.claimSignalWorkspaceEmbeddingRunV1({database,run_id,worker_job_id});assert.ok(lease);
  for(let page=0;;page++){
-  assert.ok(page<8,'tiny synthetic fixture must remain bounded');
+  assert.ok(page<maxPages,'synthetic fixture embedding must remain bounded by its explicit page limit');
   const batch=await embeddings.readSignalWorkspaceEmbeddingBatchV1({database,lease});if(!batch.items.length)break;
   const call=await embeddings.reserveSignalWorkspaceEmbeddingCallV1({database,lease,batch});
   if(call){
-   const vectors=batch.inputs.map(input=>({chunk_sha256:input.chunk_sha256,embedding:Array.from({length:1024},(_,index)=>index===0?1:0)}));
+   const vectors=batch.inputs.map(input=>({chunk_sha256:input.chunk_sha256,embedding:studyGroups?syntheticStudyEmbeddingVectorV1(input.text):Array.from({length:1024},(_,index)=>index===0?1:0)}));
    await embeddings.markSignalWorkspaceEmbeddingCallSentV1({database,lease,call_id:call.call_id,attempt_token:call.attempt_token});
    await embeddings.persistSignalWorkspaceEmbeddingResponseV1({database,call_id:call.call_id,attempt_token:call.attempt_token,
     response:{http_status:200,provider_request_id:'synthetic-no-transport',body:JSON.stringify({model:profile.model,usage:{total_tokens:vectors.length},
@@ -133,4 +174,14 @@ async function embedSyntheticRunV1(tx:SyntheticTransactionV1,run_id:string){
   if(batch.done)break;
  }
  await embeddings.finishSignalWorkspaceEmbeddingsV1({database,lease});
+}
+
+/** TEST ONLY: three deterministic separated clouds, normalized before their
+ * exact values are written into the synthetic provider receipt and native cache.
+ * The canonical Study fit still decides whether any real group exists. */
+export function syntheticStudyEmbeddingVectorV1(text:string):number[]{
+ const match=/Synthetic fixture root ([0-9]+)\./u.exec(text);if(!match)throw Error('synthetic_study_vector_input_invalid');
+ const index=Number(match[1]);if(!Number.isInteger(index)||index<0||index>=240)throw Error('synthetic_study_vector_input_invalid');
+ const values=Array.from({length:1024},(_,d)=>d===index%3?1:d<40?Math.sin((index+1)*(d+7)*.731)*.006:0);
+ const norm=Math.hypot(...values);return values.map(v=>v/norm);
 }

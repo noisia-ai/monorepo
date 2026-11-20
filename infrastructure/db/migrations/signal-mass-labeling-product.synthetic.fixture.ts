@@ -1,3 +1,4 @@
+import {assertRawPageFailedRecoveryV1} from "./signal-labeling-page-recovery.assertions";
 import { assertConcurrentMassLabelingJevRecoveryV1 } from "./signal-mass-labeling-concurrent.synthetic.fixture";
 import { reconcileMassLabelingJevReceiptV1 } from "../signal-mass-labeling-jev-recovery";
 import { createHash } from "node:crypto";
@@ -21,6 +22,7 @@ import { loadMassLabelingConsumerEvidenceV1, loadSignalWorkspaceTopicsOverviewV1
  * invented-data map supplied by the existing migrated PostgreSQL fixture. */
 export async function assertMassLabelingProductNativeV2(args: {
   database: LabelingDatabaseV1; query: PoolClient["query"]; workspace_id: string; actor_user_id: string; map_id: string; concurrent_recovery?: boolean; foreign_actor_id?: string;
+  execution_cap_micro_usd?:number;beforeProcessing?:(context:{database:LabelingDatabaseV1;run_id:string;workspace_id:string;actor_user_id:string;map_id:string})=>Promise<void>;
 }) {
   const interests = [{ key: "travel", name: "Travel", definition: "Travel and tourism", active: true },
     ...(args.concurrent_recovery ? [{ key: "equipment", name: "Equipment", definition: "Bicycle equipment and maintenance", active: true }] : [])];
@@ -28,9 +30,10 @@ export async function assertMassLabelingProductNativeV2(args: {
   await updateMassLabelingStudyPolicyV1({ ...args, ...policy, expected_revision: policy.revision,
     category: "bicycles", lexicon_terms: ["bicycle", "bike"], candidate_language: "en",
     interest_threshold: .85, interests });
-  const activation = await enableMassLabelingProductV2({ ...args, cap_micro_usd: 1_000_000 });
+  const cap=args.execution_cap_micro_usd??1_000_000;
+  const activation = await enableMassLabelingProductV2({ ...args, cap_micro_usd: cap });
   assert.equal(activation.request_version, "mass-labeling-jev-v2");
-  const request = { ...args, idempotency_key: randomUUID(), cap_micro_usd: 1_000_000, provider_available: true };
+  const request = { ...args, idempotency_key: randomUUID(), cap_micro_usd: cap, provider_available: true };
   const preview=await loadMassLabelingProductStatusV2(args);
   const admitted = await requestMassLabelingProductV2(request);
   assert.equal((await requestMassLabelingProductV2(request)).run_id, admitted.run_id);
@@ -68,6 +71,7 @@ export async function assertMassLabelingProductNativeV2(args: {
       raw.set(key, receipt.raw_text); return key;
     },
     async loadRaw(receipt) { return raw.get(receipt.storage_key)!; } });
+  if(args.beforeProcessing){await args.beforeProcessing({...args,run_id:admitted.run_id});return;}
   let sends = 0;
   const provider = { async evaluate(body: JevRequestV1) {
     sends++;
@@ -99,6 +103,7 @@ export async function assertMassLabelingProductNativeV2(args: {
     assert.equal(exposureBefore.settled, 199);
     assert.equal(exposureBefore.unknown, 1);
   }
+  if(!args.concurrent_recovery)await assertRawPageFailedRecoveryV1({...args,run_id:admitted.run_id,call_id:interrupted.call_id,raw_text:interrupted.raw_text});
   const root = (await args.query("SELECT inputs->0->>'root_id' root_id FROM signal_labeling_calls WHERE id=$1", [interrupted.call_id])).rows[0].root_id;
   const oldCall = (await args.query("SELECT to_jsonb(c) snapshot FROM signal_labeling_calls c WHERE id=$1", [interrupted.call_id])).rows[0].snapshot;
   const oldResult = (await args.query("SELECT to_jsonb(r) snapshot FROM signal_mass_labeling_results r WHERE call_id=$1", [interrupted.call_id])).rows[0].snapshot;

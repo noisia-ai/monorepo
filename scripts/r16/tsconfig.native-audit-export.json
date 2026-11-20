@@ -1,0 +1,5 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": { "noEmit": true, "incremental": false },
+  "include": ["native-audit-export.ts", "native-audit-export.test.ts", "native-audit-export-receipts.test.ts", "native-audit-export.postgres.test.ts", "private-json-stream.ts", "private-json-stream.test.ts"]
+}

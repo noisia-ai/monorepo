@@ -20,6 +20,7 @@ import type {
 } from "@noisia/query-engine";
 import { useLocale, useTranslations } from "next-intl";
 import {
+  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -57,6 +58,7 @@ import { SignalMetricHelp } from "./SignalMetricHelp";
 import { SignalSourceIcon } from "./SignalSourceIcon";
 import { SignalV2ModuleHeader } from "./SignalV2ModuleHeader";
 import { WorkspaceDrawer } from "@/components/workspace/WorkspaceShell";
+import {ListeningMentionActions,ListeningMentionLabels} from "@/components/brands/ListeningHumanActions";
 
 export type SignalNativeMentionsMetadata = {
   source?: "workspace_imported";
@@ -165,16 +167,22 @@ export function SignalV2Mentions({
   const cursorHistory = useRef(new Map<number, string | null>([[0, null]]));
   const requestEpoch = useRef(0);
   const refreshRef = useRef<() => void>(() => undefined);
+  const drawerIntent = useRef({epoch:0,subject_id:initialMention?.subject_id??null});
+  const updateDrawer=useCallback((record:SignalMentionRecordV1|null,intent=true,subject_id=record?.subject_id??null)=>{
+    if(intent)drawerIntent.current.epoch++;
+    drawerIntent.current.subject_id=subject_id;setActiveRecord(record);
+  },[]);
+
 
   useEffect(() => {
     const filterChanged = previousFiltersHashRef.current !== data.filters_hash;
     previousFiltersHashRef.current = data.filters_hash;
     setSearch(data.filter.search_query ?? "");
     setSelectedIds([]);
-    if (filterChanged) { setActiveRecord(null); cursorHistory.current = new Map([[0, null]]); }
+    if (filterChanged) { updateDrawer(null); cursorHistory.current = new Map([[0, null]]); }
     setSortKey(data.native?.sort_direction === "asc" ? "publishedAsc" : "publishedDesc");
     setPageError(null);
-  }, [data.filters_hash, data.filter.search_query, data.native?.sort_direction]);
+  }, [data.filters_hash, data.filter.search_query, data.native?.sort_direction,updateDrawer]);
 
   useEffect(() => {
     if (native?.is_current && native.page_cursor && data.page.offset > 0) {
@@ -183,24 +191,34 @@ export function SignalV2Mentions({
   }, [native?.is_current, native?.page_cursor, data.page.offset, data.filters_hash]);
 
   useEffect(() => {
-    setActiveRecord(initialMention);
-  }, [initialMention]);
+    updateDrawer(initialMention,(initialMention?.subject_id??null)!==drawerIntent.current.subject_id);
+  }, [initialMention,updateDrawer]);
 
   useEffect(() => {
-    if (native && !native.is_current) { setActiveRecord(null); setSelectedIds([]); setEvidenceInvalidated(true); }
+    if (native && !native.is_current) { updateDrawer(null); setSelectedIds([]); setEvidenceInvalidated(true); }
     else if (native) setEvidenceInvalidated(false);
-  }, [native]);
+  }, [native,updateDrawer]);
 
   useEffect(() => {
     if (!isNative) return;
     const clear = () => {
       requestEpoch.current++; pageRequestRef.current?.abort(); cursorHistory.current.clear();
-      setActiveRecord(null); setSelectedIds([]); setEvidenceInvalidated(true); onInvalidate?.();
+      updateDrawer(null); setSelectedIds([]); setEvidenceInvalidated(true); onInvalidate?.();
     };
     const restore = (event: PageTransitionEvent) => { if (event.persisted) { clear(); refreshRef.current(); } };
     window.addEventListener("pagehide", clear); window.addEventListener("pageshow", restore);
     return () => { window.removeEventListener("pagehide", clear); window.removeEventListener("pageshow", restore); };
-  }, [isNative, onInvalidate]);
+  }, [isNative, onInvalidate,updateDrawer]);
+
+  useEffect(()=>{
+    const select=()=>{
+      const subject_id=new URL(window.location.href).searchParams.get("mention");
+      if(subject_id===drawerIntent.current.subject_id)return;
+      const record=data.records.find(record=>record.subject_id===subject_id)??null;
+      updateDrawer(record,true,subject_id);
+    };
+    window.addEventListener("popstate",select);return()=>window.removeEventListener("popstate",select);
+  },[data.records,updateDrawer]);
 
   useEffect(() => {
     if (!native?.is_processing || loading || pageLoading || pageError) return;
@@ -248,7 +266,7 @@ export function SignalV2Mentions({
     : Math.min(pageStart + data.records.length - 1, data.total_count);
 
   const activateRecord = (record: SignalMentionRecordV1) => {
-    setActiveRecord(record);
+    updateDrawer(record);
     const next = new URL(window.location.href);
     if (native) { next.searchParams.delete("cursor"); next.searchParams.delete("offset"); }
     next.searchParams.set("mention", record.subject_id);
@@ -256,7 +274,7 @@ export function SignalV2Mentions({
   };
 
   const closeActiveRecord = () => {
-    setActiveRecord(null);
+    updateDrawer(null);
     const next = new URL(window.location.href);
     next.searchParams.delete("mention");
     window.history.replaceState(null, "", next);
@@ -272,14 +290,18 @@ export function SignalV2Mentions({
     offset,
     sort = sortKey,
     query,
-    fresh = false
+    fresh = false,
+    focus
   }: {
     limit?: number;
     offset: number;
     sort?: MentionSortKey;
     query?: Partial<SignalNativeMentionsMetadata["filters"]>;
     fresh?: boolean;
-  }) => {
+    focus?: string;
+  }):Promise<boolean> => {
+    const selectionEpoch=drawerIntent.current.epoch,requestedFocus=focus?drawerIntent.current.subject_id:null;
+    const urlFocusAtStart=new URL(window.location.href).searchParams.get("mention");
     pageRequestRef.current?.abort();
     const controller = new AbortController();
     pageRequestRef.current = controller;
@@ -288,6 +310,7 @@ export function SignalV2Mentions({
     setPageError(null);
     try {
       const params = native ? nativeMentionQueryParams(data, query) : mentionQueryParams(data);
+      if(native&&requestedFocus)params.set("mention",requestedFocus);
       const parsedSort = mentionSortParams(sort);
       if (native) {
         if (!fresh && !query && sort === sortKey && limit === data.page.limit) {
@@ -307,7 +330,7 @@ export function SignalV2Mentions({
       if (controller.signal.aborted || epoch !== requestEpoch.current) return false;
       if (!response.ok) {
         if (native && [401, 403, 404, 409].includes(response.status)) {
-          setActiveRecord(null); setSelectedIds([]); setEvidenceInvalidated(true); cursorHistory.current.clear(); onInvalidate?.();
+          updateDrawer(null); setSelectedIds([]); setEvidenceInvalidated(true); cursorHistory.current.clear(); onInvalidate?.();
           throw new Error(t("mentions.native.refreshRequired"));
         }
         throw new Error(t("mentions.errors.load"));
@@ -316,9 +339,20 @@ export function SignalV2Mentions({
       if (controller.signal.aborted || epoch !== requestEpoch.current) return false;
       if (native && (!payload.native || payload.native.workspace_id !== workspaceId
         || (params.has("scope_digest") && payload.native.scope_digest !== native.scope_digest))) {
-        setActiveRecord(null); setSelectedIds([]); setEvidenceInvalidated(true); cursorHistory.current.clear(); onInvalidate?.();
+        updateDrawer(null); setSelectedIds([]); setEvidenceInvalidated(true); cursorHistory.current.clear(); onInvalidate?.();
         throw new Error(t("mentions.native.refreshRequired"));
       }
+      const urlFocus=new URL(window.location.href).searchParams.get("mention");
+      // Routers may replace the focus URL without dispatching popstate.
+      if(urlFocus!==urlFocusAtStart&&urlFocus!==drawerIntent.current.subject_id){
+        updateDrawer(payload.records.find(record=>record.subject_id===urlFocus)??null,true,urlFocus);
+      }
+      const desiredFocus=focus||drawerIntent.current.epoch!==selectionEpoch?drawerIntent.current.subject_id:null;
+      const focused=desiredFocus?(payload.record?.subject_id===desiredFocus?payload.record:payload.records.find(record=>record.subject_id===desiredFocus)??null):null;
+      // A newer selection outside the returned page needs its own authorized
+      // focus read. Never revive the original A response over a later B intent.
+      if(native&&desiredFocus&&desiredFocus!==requestedFocus&&!focused)return loadPage({offset:0,fresh:true,focus:desiredFocus});
+      const nextPayload=native?{...payload,record:focused}:payload;
       if (native) {
         if (query || fresh || sort !== sortKey || limit !== data.page.limit) cursorHistory.current = new Map([[0, null]]);
         cursorHistory.current.set(payload.page.offset, params.get("cursor"));
@@ -326,13 +360,14 @@ export function SignalV2Mentions({
         const url = new URL(window.location.href);
         const canonical = nativeMentionQueryParams(payload);
         canonical.set("sort", "published"); canonical.set("direction", payload.native!.sort_direction);
+        if(focused)canonical.set("mention",focused.subject_id);
         canonical.set("limit", String(payload.page.limit)); url.search = canonical.toString();
         window.history.replaceState(null, "", url);
       }
-      onDataChange(payload);
+      onDataChange(nextPayload);
       setEvidenceInvalidated(false);
       setSelectedIds([]);
-      setActiveRecord(null);
+      updateDrawer(focused,false);
       return true;
     } catch (error) {
       if (controller.signal.aborted || epoch !== requestEpoch.current) return false;
@@ -617,6 +652,7 @@ export function SignalV2Mentions({
             />
           ) : (
             <MentionCards
+              showListening={Boolean(native)}
               timeZone={native ? data.filter.timezone : undefined}
               activeRecord={activeRecord}
               columns={visibleColumns}
@@ -674,6 +710,8 @@ export function SignalV2Mentions({
           record={activeRecord}
           timeZone={native ? data.filter.timezone : undefined}
           variant={native ? "workspace" : "signal"}
+          workspaceId={native?workspaceId:undefined}
+          onListeningSaved={native?()=>loadPage({offset:0,fresh:true,focus:activeRecord.subject_id}):undefined}
         />
       ) : null}
     </section>
@@ -687,6 +725,7 @@ function MentionCards({
   onSelect,
   records,
   selectedIds,
+  showListening,
   timeZone
 }: {
   activeRecord: SignalMentionRecordV1 | null;
@@ -695,6 +734,7 @@ function MentionCards({
   onSelect: (record: SignalMentionRecordV1) => void;
   records: SignalMentionRecordV1[];
   selectedIds: string[];
+  showListening: boolean;
   timeZone?: string;
 }) {
   const t = useTranslations("SignalV2");
@@ -740,6 +780,7 @@ function MentionCards({
               {columns.includes("published") ? <time>{formatDate(record.occurred_at, timeZone, timeZone ? locale : undefined)}</time> : null}
             </div>
             {columns.includes("context") ? <MentionContext record={record} /> : null}
+            {showListening&&record.listening_labels?<ListeningMentionLabels labels={record.listening_labels} compact/>:null}
             {columns.includes("engagement") ? (
               <footer>
                 <span>{t("mentions.table.engagement")}</span>
@@ -761,6 +802,8 @@ export function SignalMentionDetailDrawer({
   record,
   technicalContent,
   timeZone,
+  workspaceId,
+  onListeningSaved,
   variant = "signal"
 }: {
   footer?: ReactNode;
@@ -773,6 +816,8 @@ export function SignalMentionDetailDrawer({
   record: SignalMentionRecordV1;
   technicalContent?: ReactNode;
   timeZone?: string;
+  workspaceId?: string;
+  onListeningSaved?: ()=>Promise<boolean|void>;
   variant?: "operator" | "signal" | "workspace";
 }) {
   const t = useTranslations("SignalV2");
@@ -966,6 +1011,11 @@ export function SignalMentionDetailDrawer({
           </section>
 
           {operatorContent}
+          {variant==="workspace"&&record.listening_labels?<>
+            <ListeningMentionLabels labels={record.listening_labels}/>
+            {workspaceId&&onListeningSaved?<ListeningMentionActions key={record.subject_id} workspaceId={workspaceId} rootId={record.subject_id}
+              labels={record.listening_labels} onSaved={onListeningSaved}/>:null}
+          </>:null}
           {variant === "workspace" ? null : (variant === "operator" ? operatorSections : signalSections).filter(Boolean)}
           {technicalContent}
     </WorkspaceDrawer>

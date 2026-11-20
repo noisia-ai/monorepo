@@ -19,6 +19,16 @@ function page(): SignalWorkspaceMentionsPageV1 {
       resolution_state: "abstained", has_unresolved_topics: true }], page_offset: 0, next_cursor: "next" };
 }
 
+test('native listening enrichment reaches both an authorized page and out-of-page focused root without rewriting historical tags',async()=>{
+ const source=page(),focused='10000000-0000-0000-0000-000000000004';source.focused_item={...source.items[0]!,mention_id:focused};let reads=0;
+ const result=await loadNativeSignalMentionsV1(scope,new URLSearchParams('mention='+focused),{read:async()=>source,listening:async(actual,roots)=>{
+  assert.deepEqual(actual,scope);assert.deepEqual(roots,[mention,focused]);reads++;
+  return new Map(roots.map(root=>[root,{binding:{snapshot_id:mention,configuration_id:mention,generation_id:mention,map_id:mention,snapshot_digest:digest,human_snapshot_id:null},labels:[]}]));
+ }});
+ assert.equal(reads,1);assert.ok(result?.records[0]?.listening_labels);assert.ok(result?.record?.listening_labels);
+ assert.deepEqual(result?.records[0]?.tags,[]);assert.equal(result?.records[0]?.tb_classification,null);
+});
+
 test("native dates, literal search and repeated platforms preserve their exact meaning", () => {
   assert.deepEqual(nativeMentionsQueryV1(new URLSearchParams("start=2026-01-01&end=2026-09-01&q=50%25_off&platform=web&platform=x&platform=web&direction=asc")), {
     date_from: "2026-01-01", date_to: "2026-09-01", search_query: "50%_off", platforms: ["web", "x"],

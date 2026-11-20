@@ -1,0 +1,570 @@
+import type { FacetInput, LlmPriceV1 } from '@noisia/query-engine';
+import { llmCostMicroUsdV1 } from '@noisia/query-engine';
+import type { createSignalLabelingStoreV1, LabelingRunV1, LabelingCallV1, LabelingCallProposalV1, LabelingAdmissionSelectionV1, LabelingAdmissionResultV1 } from '@noisia/db';
+import { validateJevResponseV1, jevProviderErrorV1, isJevPreFetchCancellationV1, type JevProviderV1, type JevRawResponseV1,
+  type JevResponseV1, type JevRequestV1, type JevProviderErrorV1 } from '../providers/typesafe-jev';
+const jevUsageV1 = (usage:JevResponseV1['usage']) => ({...usage,cache_read_input_tokens:0,
+  cache_creation_input_tokens:0,cache_creation:{ephemeral_5m_input_tokens:0,ephemeral_1h_input_tokens:0}});
+export type JevStreamingExecutionV2 = {
+  max_in_flight: number; flush_size: number; max_flushes: number;
+  max_buffered_bytes: number; flush_interval_ms: number; window_size: number;
+};
+export type JevStreamingMetricsV2 = { in_flight: number; reserved_working_bytes: number;
+  buffered_responses: number; active_flushes: number; prefetch_canceled_requests?:number;admission_closed?:boolean };
+/** Private scheduling metadata. It never supplies inputs or grants authority. */
+export type JevFeedAdmissionHintV1 = {kind:'open'}|{kind:'closed'}|{
+  kind:'bootstrap';bootstrap_id:number;covered_call_limit:number;wait_for_apply:boolean;acknowledged_covered_calls?:number;
+};
+/** Only trusted native Listening constructors return uncommitted drafts.
+ * Proposal custody and the native transaction workspace coexist with returned
+ * call custody; none substitutes for the paid-response allowance. */
+export type JevNativeWorkspaceQuoteV1={readonly length:number;readonly retained_bytes:number;quote(prefixLength:number):number};
+export type JevNativeAdmissionDraftV1<I extends FacetInput>={
+  proposals:LabelingCallProposalV1<I>[];workspace_bytes:number;byte_limited:boolean;
+  /** Pure immutable prefix snapshot; no request bodies or authority are cached. */
+  workspace_quote?:JevNativeWorkspaceQuoteV1;
+  /** One separately charged numeric prefix; avoids allocation at final fit. */
+  call_working_prefix?:ReadonlyArray<number>;
+  on_committed?(call_ids:ReadonlyArray<string>,proposals:ReadonlyArray<LabelingCallProposalV1<I>>):void;
+};
+export type JevFeedResultV1<I extends FacetInput>=LabelingCallV1<I>[]|{
+  calls:LabelingCallV1<I>[];byte_limited:boolean;admission_deferred?:true;
+}|{closed:true}|JevNativeAdmissionDraftV1<I>;
+export function assertJevStreamingExecutionV2(e:JevStreamingExecutionV2,provider:JevProviderV1){
+  for (const value of Object.values(e)) if (!Number.isSafeInteger(value) || value < 1) throw Error('jev_stream_configuration_invalid');
+  if (e.max_in_flight > 4096 || e.max_flushes > 64 || e.flush_size > 4096 || e.window_size > 4096
+    || e.flush_interval_ms > 60_000) throw Error('jev_stream_configuration_invalid');
+  const responseBound = provider.max_response_bytes ?? 2 * 1024 * 1024;
+  if(!Number.isSafeInteger(responseBound)||responseBound<1||responseBound>2*1024*1024)throw Error('jev_stream_response_bound_invalid');
+  // JSON escaping, base64 page codec and temporary serialization copies are budgeted.
+  const reservationBytes = responseBound * 24 + 64 * 1024;
+  if (e.max_buffered_bytes < reservationBytes) throw Error('jev_stream_memory_budget_invalid');
+  return reservationBytes;
+}
+/** Conservative retained request/input copies, distinct from response custody. */
+export function jevCallWorkingBytesV2(call:Pick<LabelingCallV1<FacetInput>,'request'|'inputs'>){
+  return Buffer.byteLength(JSON.stringify({request:call.request,inputs:call.inputs}))*4+8192;
+}
+/** One reserved window, continuous HTTP producers and independently bounded durable flushes.
+ * The caller owns the lease and heartbeat. A response does not release its buffer until
+ * its page is durable, billed and applied. No provider request is retried here. */
+export async function processJevStreamingWindowV2<I extends FacetInput, R>(args: {
+  run: LabelingRunV1; calls: LabelingCallV1<I>[]; send_calls?:LabelingCallV1<I>[];
+  store: ReturnType<typeof createSignalLabelingStoreV1<I, R>> & {
+    /** Native adapters select only after their fresh authority fences, and
+     * return the exact cohort after its submitting transaction commits. */
+    admitAndMarkSelected?(run:LabelingRunV1,proposals:LabelingCallProposalV1<I>[],
+      callbacks:LabelingAdmissionSelectionV1<I>):Promise<LabelingAdmissionResultV1<I>>;
+    markSubmittingSelected?(run:LabelingRunV1,
+      selectCommitted:()=>ReadonlyArray<LabelingCallV1<I>>):Promise<ReadonlyArray<LabelingCallV1<I>>>;
+  }; provider: JevProviderV1;
+  execution: JevStreamingExecutionV2; price: LlmPriceV1; cancellation: AbortController;
+  observe_stream?(metrics: JevStreamingMetricsV2): void;
+  /** First-party adapters only: inputs exclude every already reserved identity.
+   * Returns at most one window, already budgeted before money reservation. */
+  feed_next?(available_bytes:number,max_calls:number,admission_signal:AbortSignal):Promise<JevFeedResultV1<I>>;
+  next_admission_hint?():JevFeedAdmissionHintV1;
+  /** Snapshot/profile revision check before DML only; no post-ACK gate. */
+  preparation_valid?():boolean;
+  /** Listening native pending eligibility can advance only after durable apply. */
+  revisit_empty_after_apply?:boolean;
+  /** Scheduling only: evaluate handoff is not proof of physical fetch/rate admission. */
+  defer_initial_prefetch_until_handoff?:boolean;
+  hooks: { map(run: LabelingRunV1, call: LabelingCallV1<I>, raw: JevResponseV1): R[];
+    error(run: LabelingRunV1, call: LabelingCallV1<I>, code: string, unknown: boolean): R[];
+    labeled(result: R): boolean; invalidUsage?(failure: JevProviderErrorV1): JevResponseV1['usage'] | undefined;
+    fail_on_error?: boolean };
+}) {
+  const { run, calls, store, provider, execution: e, hooks, price, cancellation } = args;
+  const reservationBytes=assertJevStreamingExecutionV2(e,provider);
+  const workers = Math.min(args.feed_next?e.max_in_flight:calls.length, e.max_in_flight, provider.max_concurrency ?? e.max_in_flight,
+    Math.floor(e.max_buffered_bytes / reservationBytes));
+  type Row = { call: LabelingCallV1<I>; raw: string; bytes: number; memory_bytes: number };
+  let buffered: Row[] = [], bufferedBytes = 0,
+    memory = calls.reduce((n, call) => n + Buffer.byteLength(call.raw_body ?? '')+jevCallWorkingBytesV2(call), 0),
+    inFlight = 0, fatal: unknown;
+  const admission=new AbortController();
+  let totalRoots=calls.length,feedClosed=!args.feed_next,feeding:Promise<void>|undefined;
+  // A scheduling hint from the exact bounded prefix, never retained inputs or
+  // permission to reserve. A later read still obtains a fresh native snapshot.
+  let byteLimitedAvailable:number|undefined;
+  let draft:JevNativeAdmissionDraftV1<I>|undefined,draftBytes=0,notificationFailure:unknown;
+  let durableEpoch=0,emptyAtEpoch:number|undefined;
+  const roster=new Map(calls.map(call=>[call.id,call])),initialIds=new Set(calls.map(call=>call.id));
+  let recentIdentities=new Set(calls.map(call=>call.request_digest));
+  let totalCost = 0, labeled = 0; const latencies: number[] = [];
+  const errors = new Map<string, { call: LabelingCallV1<I>; unknown: boolean; code: string; write_result: boolean }>();
+  const applied = new Set<string>(), observedRaw = new Set(calls.filter(c => Boolean(c.raw_body)).map(c => c.id));
+  const active = new Set<Promise<void>>(); const waiters = new Set<() => void>();
+  const observe = () => {
+    // Instrumentation never changes physical attempts or their financial outcome.
+    try { args.observe_stream?.({ in_flight: inFlight, reserved_working_bytes: memory,
+      buffered_responses: buffered.length, active_flushes: active.size,prefetch_canceled_requests:prefetchCanceled.length,admission_closed:admission.signal.aborted }); } catch { /* Observer only. */ }
+  };
+  const wake = () => { for (const resolve of waiters) resolve(); waiters.clear(); };
+  const wait = () => new Promise<void>(resolve => { waiters.add(resolve); });
+  const release = (bytes: number) => { memory -= bytes; observe(); wake(); };
+  const fail = (error: unknown) => { fatal ??= error; cancellation.abort(); wake(); };
+  const record = (call: LabelingCallV1<I>, unknown: boolean, code: string, write_result = true) => {
+    errors.set(call.id, { call, unknown, code, write_result });
+    if(hooks.fail_on_error&&write_result){
+      // Semantic failure closes admission, not the in-flight HTTP transport.
+      // Already handed-off siblings must still drain their physical receipts.
+      feedClosed=true;admission.abort();observe();wake();
+    }
+  };
+  async function consume(rows: Row[], alreadyDurable = false) {
+    try {
+      if (!alreadyDurable) await store.persistRawPage(run, rows.map(({ call, raw }) => ({ call, raw })));
+      const results: Array<{ call: LabelingCallV1<I>; results: R[] }> = [];
+      const settled: Parameters<typeof store.settlePage>[1] = [];
+      const observations: Array<{ raw: JevRawResponseV1; tokens: number }> = [];
+      for (const { call, raw } of rows) {
+        let physical:JevRawResponseV1|undefined;
+        try {
+          physical = JSON.parse(raw) as JevRawResponseV1;
+          const parsed = validateJevResponseV1(call.request as JevRequestV1, physical);
+          const mapped = hooks.map(run, call, parsed), usage = jevUsageV1(parsed.usage);
+          settled.push({ call, usage, settled_micro_usd: llmCostMicroUsdV1(usage, price), stop_reason: 'completed' });
+          results.push({ call, results: mapped }); latencies.push(physical.latency_ms);if(latencies.length>e.window_size)latencies.shift();
+          observations.push({ raw: physical, tokens: parsed.usage.input_tokens });
+        } catch (error) {
+          const failure = jevProviderErrorV1(error), observed = failure.outcome === 'outcome_unknown' ? undefined
+            : hooks.invalidUsage?.(failure) ?? failure.evidence.usage;
+          if (observed) {
+            const usage = jevUsageV1(observed);
+            settled.push({ call, usage, settled_micro_usd: llmCostMicroUsdV1(usage, price), stop_reason: failure.code });
+            results.push({ call, results: hooks.error(run, call, failure.code, false) });
+            if(physical)observations.push({raw:physical,tokens:observed.input_tokens});
+            if (hooks.fail_on_error) record(call, false, failure.code);
+          } else record(call, true, failure.code);
+        }
+      }
+      if (settled.length) await store.settlePage(run, settled);
+      for(let offset=0;offset<results.length;offset+=2000){
+        const batch=results.slice(offset,offset+2000);
+        for(const row of batch)row.call.raw_body=null;
+        await store.apply(run,batch);for(const row of batch)applied.add(row.call.id);
+        if(args.revisit_empty_after_apply){durableEpoch++;wake();}
+      }
+      totalCost += settled.reduce((n, s) => n + s.settled_micro_usd, 0);
+      labeled += results.filter(row => row.results.some(hooks.labeled)).length;
+      // Usage affects rate scheduling only after raw durability and billing settlement.
+      if(provider.observeUsage) {
+        let observationIndex=0;
+        const feedback=await Promise.allSettled(Array.from({length:Math.min(256,e.max_in_flight,observations.length)},async()=>{
+          for(;;){const item=observations[observationIndex++];if(!item)return;
+            await provider.observeUsage!(item.raw,item.tokens);}
+        }));
+        const failure=feedback.find((result):result is PromiseRejectedResult=>result.status==='rejected');
+        if(failure)throw failure.reason;
+      }
+    } catch (error) {
+      // A database/storage failure does not invalidate provider evidence. In
+      // particular, settlement may have committed even if its acknowledgement
+      // was lost. Preserve the pending result for a durable, idempotent replay;
+      // never replace it with a technical label in a second apply.
+      const pending = rows.filter(row => !applied.has(row.call.id));
+      for (const row of pending) record(row.call, true, 'jev_stream_persistence_failed', false);
+      try { if (pending.length) await store.markFailed(run, pending.map(row => row.call), true); }
+      catch (markError) { fail(new AggregateError([error, markError], 'jev_stream_persistence_failed')); }
+      fail(error);
+    } finally {
+      // Durable storage, not the retained window of call objects, owns these bytes.
+      for (const row of rows) {
+        row.call.raw_body = null;
+        if(applied.has(row.call.id)){
+          roster.delete(row.call.id);observedRaw.delete(row.call.id);if(!errors.has(row.call.id))applied.delete(row.call.id);
+          // The caller still owns the initial bounded page. Later pages have no
+          // retained corpus roster once their durable application completes.
+          if(!initialIds.has(row.call.id)&&!errors.has(row.call.id))release(jevCallWorkingBytesV2(row.call));
+        }
+      }
+      release(rows.reduce((n, row) => n + row.memory_bytes, 0));
+    }
+  }
+  function flush(force = false) {
+    while (buffered.length && active.size < e.max_flushes && (force || buffered.length >= e.flush_size)) {
+      // Account for exact base64 growth plus conservative JSONL member metadata.
+      // Do not discover the 32MiB codec bound after receiving paid responses.
+      let size = 0, count = 0;
+      while(count < Math.min(e.flush_size,buffered.length)) {
+        const encoded = Math.ceil(buffered[count]!.bytes / 3) * 4 + 2048;
+        if(size + encoded > 32 * 1024 * 1024) break;
+        size += encoded; count++;
+      }
+      if(!count) { fail(Error('jev_stream_page_memory_bound')); return; }
+      const rows = buffered.splice(0, count); bufferedBytes -= rows.reduce((n, row) => n + row.bytes, 0);
+      // A timer/pressure flush is a one-shot request, not a mode inherited by
+      // subsequent pages. Keep batching later responses while HTTP is active;
+      // the timer or final drain will flush the bounded tail when needed.
+      const task = consume(rows).finally(() => {
+        // consume releases its real custody before this completion. Even if
+        // it failed, fatal/cancellation prevents another admission; do not
+        // treat a lost RAW/settlement/APPLY acknowledgement as durable success.
+        byteLimitedAvailable=undefined;
+        active.delete(task); observe(); wake(); flush();
+      });
+      active.add(task); observe();
+    }
+  }
+  // Track the exact live send frontier even when raw recovery fails before HTTP.
+  const reserved=(args.send_calls??calls.filter(call=>call.status==='reserved')).filter(call=>!call.raw_body);
+  let initialHandoffComplete=!args.defer_initial_prefetch_until_handoff||!reserved.length;
+  function prefetch(){
+    if(!initialHandoffComplete)return;
+    // Refill while one full HTTP cohort is missing from the bounded queue,
+    // rather than waiting until only one cohort remains. Small windows retain
+    // their original tail/bootstrap behavior instead of requiring a full gap.
+    const refillAt=Math.max(workers,e.window_size-workers);
+    if(feedClosed||feeding||draft||fatal||admission.signal.aborted||cancellation.signal.aborted||reserved.length>refillAt||reserved.length>=e.window_size)return;
+    const priority=args.next_admission_hint?.();
+    if(priority?.kind==='closed'){feedClosed=true;return;}
+    if(priority?.kind==='bootstrap'&&priority.wait_for_apply){
+      // A quiet reservation is not a wake-up promise. The main coordinator
+      // still dispatches it below; without any owned work, use the existing
+      // finite frontier/reconciliation path instead of waiting forever.
+      if(!reserved.length&&!activeSends.size&&!inFlight&&!buffered.length&&!active.size&&!markingInProgress)feedClosed=true;
+      return;
+    }
+    // One fresh read per acknowledged apply epoch; never poll an empty SQL frontier.
+    if(emptyAtEpoch!==undefined&&durableEpoch===emptyAtEpoch)return;
+    // Do not read another full input page while paid responses own all memory.
+    const free=e.max_buffered_bytes-memory;if(free<8192+reservationBytes)return;
+    // Protect currently free HTTP slots, plus at least one waiting committed
+    // call when every slot is occupied. Even a maximum-size paid response can
+    // then wake another Mark while both APPLY and this future read wait. Other
+    // occupied slots already own response allowances in `memory`; protecting
+    // all of them again needlessly prevents a useful input prefix from fitting.
+    // Headroom is not another charge: Mark claims actual response memory later.
+    const readySlots=Math.min(reserved.length,Math.max(1,workers-inFlight),Math.floor(free/reservationBytes));
+    const headroom=readySlots*reservationBytes;
+    // The bounded reader and compiler use the actual remaining shared budget,
+    // rather than a second heuristic page ceiling. Larger native reservations
+    // can reject a different prefix at a financial boundary; caps are unchanged.
+    const available=free-headroom;
+    if(readySlots&&available<8192)return;
+    // After a byte-limited prefix, coalesce until one already active flush
+    // completes. Smaller HTTP responses can grow credit before that durable
+    // release; they must not reopen repeated tiny reads. No active flush is
+    // still an immediate escape, without held inputs or another timer.
+    if(byteLimitedAvailable!==undefined&&active.size)return;
+    // Hold the input/serialization budget while SQL is pending. HTTP/flushes
+    // share the same counter and cannot consume bytes promised to this page.
+    memory+=available;observe();let retained=0;
+    feeding=(async()=>{
+      const maxCalls=e.window_size-reserved.length;
+      const readEpoch=durableEpoch;
+      const next=await args.feed_next!(available,maxCalls,admission.signal);
+      if(!Array.isArray(next)&&'closed' in next){feedClosed=true;return;}
+      if(!Array.isArray(next)&&'proposals' in next){
+        if(!store.admitAndMarkSelected||!next.proposals.length||next.proposals.length>Math.min(maxCalls,1024)
+          ||!Number.isSafeInteger(next.workspace_bytes)||next.workspace_bytes<0)throw Error('jev_native_draft_invalid');
+        const quote=next.workspace_quote,prefix=next.call_working_prefix;
+        if(quote&&(quote.length!==next.proposals.length||!Number.isSafeInteger(quote.retained_bytes)||quote.retained_bytes<0||typeof quote.quote!=='function'
+          ||!prefix||!Object.isFrozen(prefix)||prefix.length!==next.proposals.length+1||prefix[0]!==0))throw Error('jev_native_quote_invalid');
+        let returnedBytes=0;
+        for(let index=0;index<next.proposals.length;index++){
+          returnedBytes+=jevCallWorkingBytesV2(next.proposals[index]!);
+          if(quote&&prefix![index+1]!==returnedBytes)throw Error('jev_native_quote_invalid');
+        }
+        const bytes=returnedBytes+8192*next.proposals.length+(quote?quote.retained_bytes+256+8*prefix!.length:0);
+        if(bytes>available)throw Error('jev_native_draft_memory_bound');
+        retained=bytes;draftBytes=bytes;draft=next;byteLimitedAvailable=next.byte_limited?available:undefined;return;
+      }
+      const rows=Array.isArray(next)?next:next.calls;
+      byteLimitedAvailable=!Array.isArray(next)&&next.byte_limited?available:undefined;
+      if(!rows.length){
+        // A repeatable-read snapshot may finish after the apply that unlocks
+        // consumers. Keep its starting epoch, not the epoch at query return.
+        const deferred=!Array.isArray(next)&&next.admission_deferred===true;
+        const future=deferred?reserved.length||activeSends.size||markingInProgress||inFlight||buffered.length||active.size
+          :reserved.length||markingUnsent.length||inFlight||buffered.length||active.size;
+        if(args.revisit_empty_after_apply&&(future||durableEpoch!==readEpoch))emptyAtEpoch=readEpoch;
+        else feedClosed=true;
+        return;
+      }
+      emptyAtEpoch=undefined;
+      if(rows.length>maxCalls)throw Error('jev_stream_feed_window_invalid');
+      const identities=new Set<string>(),ids=new Set<string>();
+      for(const call of rows){
+        if(call.status!=='reserved'||call.raw_body||roster.has(call.id)||ids.has(call.id)
+          ||recentIdentities.has(call.request_digest)||identities.has(call.request_digest))throw Error('jev_stream_feed_identity_invalid');
+        ids.add(call.id);identities.add(call.request_digest);
+      }
+      const bytes=rows.reduce((n,call)=>n+jevCallWorkingBytesV2(call),0);
+      if(bytes>available)throw Error('jev_stream_feed_memory_bound');
+      retained=bytes;totalRoots+=rows.length;recentIdentities=identities;
+      for(const call of rows)roster.set(call.id,call);reserved.push(...rows);observe();
+    })().catch(fail).finally(()=>{release(available-retained);feeding=undefined;wake();});
+  }
+  let requeueAttempted=false,markingInProgress=false,markingUnsent:LabelingCallV1<I>[]=[];
+  const activeSends=new Set<Promise<void>>(),prefetchCanceled:LabelingCallV1<I>[]=[];
+  async function drainAndRequeue(){
+    if(feeding)await feeding;
+    await Promise.all(activeSends);
+    while(buffered.length||active.size){flush(true);if(active.size)await Promise.all(active);}
+    const pending=[...markingUnsent,...prefetchCanceled];
+    if(pending.length&&!requeueAttempted){
+      requeueAttempted=true;
+      if(!store.requeueUnsent)throw Error('jev_unsent_recovery_unavailable');
+      await store.requeueUnsent(run,pending);
+    }
+  }
+  cancellation.signal.addEventListener('abort', wake, { once: true });
+  const timer = setInterval(() => flush(true), e.flush_interval_ms); timer.unref?.();
+  try {
+    observe();
+    if (memory > e.max_buffered_bytes) throw Error('jev_stream_recovery_memory_budget_exceeded');
+    // Recover durable responses first; no HTTP or re-upload is necessary.
+    for (const call of calls.filter(call => Boolean(call.raw_body))) {
+      const raw = call.raw_body!, bytes = Buffer.byteLength(raw);
+      await consume([{ call, raw, bytes, memory_bytes: bytes }], true);
+      if (fatal) throw fatal;
+    }
+    async function send(call:LabelingCallV1<I>){
+      let ownedReservation=reservationBytes;
+      inFlight++;observe();
+      try{
+        const physical=await provider.evaluate(call.request as JevRequestV1,{signal:cancellation.signal});
+        const raw=JSON.stringify(physical),bytes=Buffer.byteLength(raw);
+        if(bytes>reservationBytes)throw Error('jev_stream_response_memory_bound');
+        // The bounded reader has completed. Keep conservative codec/copy
+        // custody for these exact bytes, rather than the largest possible body.
+        // Only the excess peak reservation is now available to another HTTP.
+        const custodyBytes=Math.min(reservationBytes,bytes*24+64*1024);
+        release(ownedReservation-custodyBytes);ownedReservation=custodyBytes;
+        observedRaw.add(call.id);buffered.push({call,raw,bytes,memory_bytes:custodyBytes});
+        ownedReservation=0; // consume owns this reservation through apply/feedback
+        bufferedBytes+=bytes;observe();
+        const throttled=[429,529].includes(physical.http_status);if(throttled)cancellation.abort();
+        flush(throttled||bufferedBytes>=e.max_buffered_bytes/2);
+        if(physical.rate_limit_update_failed)fail(Error('jev_rate_cooldown_unavailable'));
+      }catch(error){
+        if(ownedReservation)release(ownedReservation);const failure=jevProviderErrorV1(error);
+        if(cancellation.signal.aborted&&isJevPreFetchCancellationV1(error)){
+          // First-party identity proves fetch never started. Keep the same money
+          // reservation; no physical receipt, free response or result is invented.
+          prefetchCanceled.push(call);
+        }else record(call,failure.outcome!=='definitely_not_sent',failure.code);
+        if(hooks.fail_on_error)cancellation.abort();
+      }finally{inFlight--;observe();wake();}
+    }
+    // Keep never-assigned calls reserved. Persist only a cohort whose HTTP slots
+    // and response memory are already available, using one governed bulk write.
+    while((reserved.length||draft||!feedClosed||feeding)&&!fatal&&!admission.signal.aborted&&!cancellation.signal.aborted){
+      prefetch();
+      if(draft&&!reserved.length){
+        const pending=draft;
+        if(args.preparation_valid?.()===false){draft=undefined;release(draftBytes);draftBytes=0;continue;}
+        if(workers<=inFlight){
+          if(activeSends.size||active.size||buffered.length){flush(true);await wait();continue;}
+          throw Error('jev_stream_configuration_invalid');
+        }
+        // The reader owns only preparation custody. Choose the paid prefix
+        // here, AFTER feed released its temporary hold and HTTP/APPLY advanced.
+        // Keep ALL prepared proposals and the numeric vector charged until ACK;
+        // unadmitted bodies are then discarded, never reused by a later cohort.
+        let nativeProposals=pending.proposals,workspaceBytes=pending.workspace_bytes;
+        if(pending.workspace_quote){
+          const quote=pending.workspace_quote,costs=pending.call_working_prefix!;
+          let low=1,high=Math.min(pending.proposals.length,workers-inFlight),best=0,bestWorkspace=0;
+          while(low<=high){
+            const mid=Math.floor((low+high)/2),workspace=quote.quote(mid);
+            if(!Number.isSafeInteger(workspace)||workspace<0)throw Error('jev_native_workspace_invalid');
+            if(memory+workspace+costs[mid]!+reservationBytes*mid<=e.max_buffered_bytes){best=mid;bestWorkspace=workspace;low=mid+1;}
+            else high=mid-1;
+          }
+          if(best){nativeProposals=pending.proposals.slice(0,best);workspaceBytes=bestWorkspace;}
+          else workspaceBytes=Infinity; // Existing finite escape below; no DML occurred.
+        }
+        // Real progress can release custody; quiet metadata cannot.
+        if(memory+workspaceBytes+reservationBytes+jevCallWorkingBytesV2(nativeProposals[0]!)>e.max_buffered_bytes){
+          if(activeSends.size||active.size||buffered.length){flush(true);await wait();continue;}
+          // No native invocation/DML/selector occurred: retain the old complete
+          // reservation protocol on this prepared prefix, without rereading it.
+          const rows=await store.reserve(run,pending.workspace_quote?nativeProposals.slice(0,1):nativeProposals);
+          const bytes=rows.reduce((n,c)=>n+jevCallWorkingBytesV2(c),0);
+          if(memory+bytes>e.max_buffered_bytes)throw Error('jev_native_legacy_memory_bound');
+          memory+=bytes;for(const row of rows)roster.set(row.id,row);reserved.push(...rows);totalRoots+=rows.length;
+          draft=undefined;release(draftBytes);draftBytes=0;continue;
+        }
+        let workspaceClaim=workspaceBytes,selectionCalled=false,validationCalled=false;
+        let responseClaim=0,callClaim=0,selected:ReadonlyArray<LabelingCallProposalV1<I>>=[],
+          validated:ReadonlyArray<LabelingCallV1<I>>=[],validatedIds:ReadonlyArray<string>=[];
+        memory+=workspaceBytes;observe();markingInProgress=true;
+        try{
+          const result=await store.admitAndMarkSelected!(run,nativeProposals,{
+            selectFresh(candidates){
+              if(selectionCalled)throw Error('jev_native_selection_repeated');selectionCalled=true;
+              const priority=args.next_admission_hint?.();
+              if(fatal||admission.signal.aborted||cancellation.signal.aborted||args.preparation_valid?.()===false||priority?.kind==='closed'
+                ||priority?.kind==='bootstrap'&&priority.wait_for_apply)return[];
+              const count=Math.min(workers-inFlight,candidates.length,priority?.kind==='bootstrap'?priority.covered_call_limit:Infinity),chosen:LabelingCallProposalV1<I>[]=[];
+              let cost=0;
+              for(const proposal of candidates.slice(0,count)){
+                const bytes=jevCallWorkingBytesV2(proposal);
+                if(memory+cost+bytes+reservationBytes>e.max_buffered_bytes)break;
+                chosen.push(proposal);cost+=bytes+reservationBytes;
+              }
+              selected=chosen;callClaim=chosen.reduce((n,p)=>n+jevCallWorkingBytesV2(p),0);
+              responseClaim=chosen.length*reservationBytes;memory+=callClaim+responseClaim;observe();return chosen;
+            },
+            validateBeforeCommit(rows,proposals){
+              if(!selectionCalled||validationCalled)throw Error('jev_native_validation_invalid');validationCalled=true;
+              if(rows.length!==selected.length||proposals.length!==selected.length)throw Error('jev_native_handoff_invalid');
+              const ids=new Set<string>(),digests=new Set<string>();let bytes=0;
+              for(let i=0;i<rows.length;i++){
+                const row=rows[i]!,proposal=selected[i]!;
+                if(proposals[i]!==proposal||row.status!=='submitting'||row.raw_body||row.results_applied||roster.has(row.id)
+                  ||ids.has(row.id)||digests.has(row.request_digest)||recentIdentities.has(row.request_digest)
+                  ||row.custom_id!==proposal.custom_id||row.request_digest!==proposal.request_digest)throw Error('jev_native_handoff_invalid');
+                ids.add(row.id);digests.add(row.request_digest);bytes+=jevCallWorkingBytesV2(row);
+              }
+              if(bytes>callClaim||memory>e.max_buffered_bytes)throw Error('jev_native_memory_bound');
+              // Prepare every recipient and notification identifier before ACK.
+              validated=rows;validatedIds=rows.map(row=>row.id);
+            }
+          });
+          if(result.kind==='legacy'){
+            release(workspaceClaim);workspaceClaim=0;
+            if(args.preparation_valid?.()===false)continue;
+            // Native guarantees this branch precedes selector and every DML.
+            // Unsupported shapes retain the COMPLETE prepared legacy prefix;
+            // a Native workspace fit must not trim bootstrap/finite coverage.
+            const rows=await store.reserve(run,pending.proposals);
+            const bytes=rows.reduce((n,c)=>n+jevCallWorkingBytesV2(c),0);
+            if(memory+bytes>e.max_buffered_bytes)throw Error('jev_native_legacy_memory_bound');
+            memory+=bytes;for(const row of rows)roster.set(row.id,row);reserved.push(...rows);totalRoots+=rows.length;
+          }else{
+            // DB returned the exact prevalidated array after COMMIT ACK. No
+            // expansion, cancellation, authority or residency gate belongs here.
+            for(const row of validated)roster.set(row.id,row);
+            totalRoots+=validated.length;recentIdentities=new Set(selected.map(p=>p.request_digest));
+            for(const row of validated){const task=send(row).finally(()=>{activeSends.delete(task);wake();});activeSends.add(task);}
+            responseClaim=0;callClaim=0;if(validated.length)initialHandoffComplete=true;
+            try{if(validated.length)pending.on_committed?.(validatedIds,selected);}catch(error){
+              // Close future admission, but let ALL paid siblings drain without
+              // aborting their transport because a scheduling notice failed.
+              notificationFailure??=error;feedClosed=true;admission.abort();
+            }
+          }
+        }catch(error){
+          if((error as {outcome?:string})?.outcome==='unknown')try{await store.fail(run,'labeling_outcome_unknown',{preserve_reserved:true});}
+          catch(secondary){throw new AggregateError([error,secondary],'jev_native_unknown_record_failed',{cause:error});}
+          throw error;
+        }finally{
+          markingInProgress=false;draft=undefined;
+          release(workspaceClaim+draftBytes+responseClaim+callClaim);draftBytes=0;
+        }
+        continue;
+      }
+      if(!reserved.length){
+        if(feeding){await feeding;continue;}
+        if(feedClosed)break;
+        // No budget for a next page: drain one bounded frontier, then retry.
+        if(activeSends.size||active.size||buffered.length){
+          // An empty Listening frontier is not buffer pressure: retain ordinary
+          // size/deadline batching while siblings can still produce responses.
+          if(!args.revisit_empty_after_apply||!inFlight)flush(true);
+          await wait();continue;
+        }
+        feedClosed=true;break;
+      }
+      const slots=Math.min(workers-inFlight,Math.floor((e.max_buffered_bytes-memory)/reservationBytes),reserved.length);
+      if(slots<1){
+        // Already reserved calls can regain slots before the future page commits.
+        // Feeding's finally also wakes this single coordinator after releasing bytes.
+        if(feeding){await wait();continue;}
+        if(!inFlight&&!active.size&&!buffered.length)throw Error('jev_stream_memory_budget_invalid');
+        // Occupied HTTP slots are not buffer pressure. Preserve batching until
+        // its size/timer boundary unless responses actually need memory to move.
+        if(!inFlight||e.max_buffered_bytes-memory<reservationBytes)flush(true);
+        await wait();continue;
+      }
+      let cohort:LabelingCallV1<I>[]=[];
+      try{
+        markingInProgress=true;
+        if(store.markSubmittingSelected){
+          let selected=false;
+          const committed=await store.markSubmittingSelected(run,()=>{
+            if(selected)throw Error('jev_stream_selection_repeated');
+            selected=true;
+            if(fatal||admission.signal.aborted||cancellation.signal.aborted)return[];
+            // Responses, durable flushes and an already-committed input page
+            // may advance while native authority is waiting. Claim their newly
+            // available slots only now, before the native call-row locks.
+            const available=Math.min(workers-inFlight,Math.floor((e.max_buffered_bytes-memory)/reservationBytes),reserved.length);
+            cohort=reserved.slice(0,available);
+            memory+=reservationBytes*cohort.length;markingUnsent=cohort;observe();
+            return cohort;
+          });
+          if(!selected||committed.length!==cohort.length||committed.some((call,index)=>call!==cohort[index]))
+            throw Error('jev_stream_selection_handoff_invalid');
+        }else{
+          cohort=reserved.slice(0,slots);memory+=reservationBytes*cohort.length;observe();markingUnsent=cohort;
+          await store.markSubmitting(run,cohort);
+        }
+      }catch(error){release(reservationBytes*cohort.length);fail(error);break;}
+      finally{markingInProgress=false;}
+      // There is deliberately no await/cancellation check between the successful
+      // durable handoff and delivering EVERY cohort member to evaluate. A sync
+      // provider rejection is classified normally, without stranding siblings.
+      reserved.splice(0,cohort.length);markingUnsent=[];
+      for(const call of cohort){const task=send(call).finally(()=>{activeSends.delete(task);});activeSends.add(task);}
+      // No physical-fetch promise: providers may still await account quotas.
+      // Open only after EVERY committed cohort member has been handed off.
+      if(cohort.length)initialHandoffComplete=true;
+    }
+    await Promise.all(activeSends);
+    // No HTTP was attempted for reserved calls left behind by cancellation or write failure.
+    if(feeding)await feeding;
+    const notDelivered=reserved,notDeliveredIds=new Set([...notDelivered,...prefetchCanceled].map(call=>call.id));
+    // Drain paid receipts before requeue failure can finish or release the lease.
+    await drainAndRequeue();
+    for (const call of roster.values()) {
+      if (!observedRaw.has(call.id) && !errors.has(call.id)) {
+        if(notDeliveredIds.has(call.id)||call.status==='reserved'&&!reserved.some(item=>item.id===call.id))continue;
+        const unsent=call.status==='failed'||call.status==='reserved';
+        record(call,!unsent,unsent?'jev_definitely_not_sent':'jev_outcome_unknown');
+      }
+    }
+    for (const unknown of [false, true]) {
+      const group = [...errors.values()].filter(error => error.unknown === unknown);
+      if (group.length) await store.markFailed(run, group.map(error => error.call), unknown);
+    }
+    const terminalErrors = [...errors.values()].filter(error => error.write_result);
+    // Persist the stop reason before applying technical errors: a lost apply
+    // acknowledgement must not reopen admission for other roots on restart.
+    if (hooks.fail_on_error && terminalErrors.length) await store.fail(run,
+      terminalErrors.some(x => x.unknown) ? 'labeling_outcome_unknown' : terminalErrors[0]!.code,{preserve_reserved:true});
+    for (const unknown of [false, true]) {
+      const technical = [...errors.values()].filter(error => error.unknown === unknown && error.write_result
+        && !applied.has(error.call.id)).map(error => ({call:error.call,
+        results:hooks.error(run,error.call,error.code,unknown)})).filter(row => row.results.length);
+      for(let offset=0;offset<technical.length;offset+=2000){
+        const batch=technical.slice(offset,offset+2000);await store.apply(run,batch);for(const row of batch)applied.add(row.call.id);
+      }
+    }
+    if (fatal) throw fatal;
+    if(notificationFailure)throw notificationFailure;
+    const status=await store.finish(run);
+    // Invocation ownership ends here, including retained terminal errors
+    // and the reserved frontier that was never sent. A cancelled reader may
+    // also have returned a draft: this full release owns its charge, so retire
+    // the draft custodian before finally can release it a second time.
+    draft=undefined;draftBytes=0;
+    release(memory);
+    latencies.sort((a, b) => a - b);
+    return { status, roots: totalRoots, labeled, unresolved_billing_requests: [...errors.values()].filter(x => x.unknown).length,
+      settled_micro_usd: totalCost, p50_ms: latencies[Math.ceil(latencies.length * .5) - 1] ?? null,
+      p95_ms: latencies[Math.ceil(latencies.length * .95) - 1] ?? null };
+  } catch (error) {
+    // Only the ledger can tell whether a lost SQL acknowledgement committed.
+    // Reconcile under the existing lease after any failed stage, including a
+    // technical-error apply; never infer state from an in-memory acknowledgement.
+    try { await drainAndRequeue();await store.finish(run); }
+    catch (reconciliation) { throw new AggregateError([error, reconciliation], 'jev_stream_reconciliation_failed'); }
+    throw error;
+  } finally { if(draft){draft=undefined;release(draftBytes);draftBytes=0;}clearInterval(timer); cancellation.signal.removeEventListener('abort', wake); }
+}

@@ -39,6 +39,8 @@ export async function validateWorkspaceEngineOutputV1(args: {
     || !object(raw.versions) || !Array.isArray(raw.artifacts) || raw.artifacts.length > 32 || !Array.isArray(raw.lanes)) return fail("output_manifest_invalid");
   if (!object(raw.input_identity) || ["embedding_config_digest", "context_digest", "catalog_digest", "chunk_policy_version"]
     .some(key => (raw.input_identity as Record<string, unknown>)[key] !== args.input[key as keyof typeof args.input])) return fail("output_identity_invalid");
+  if(args.input.cached_vector_source&&signalWorkspaceEmbeddingDigestV1(raw.input_identity.cached_vector_source)
+    !==signalWorkspaceEmbeddingDigestV1(args.input.cached_vector_source))return fail("output_identity_invalid");
   const names = new Set<string>();
   for (const artifact of raw.artifacts) {
     if (!object(artifact) || typeof artifact.file !== "string" || !namePattern.test(artifact.file)
