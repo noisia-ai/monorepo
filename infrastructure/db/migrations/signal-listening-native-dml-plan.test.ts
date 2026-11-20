@@ -72,7 +72,7 @@ test('DML plan observer rejects changed SQL, wrong APPLY count and 720 foreign I
 
 /** Exercise the ORIGINAL native owner's catch/rollback/release, not a local
  * imitation of its transaction. Authority/data are mocked; no socket opens. */
-async function realOwnerWithLostAck(loss:'savepoint'|'rollback'|'release'|'commit'){
+async function realOwnerWithLostAck(loss:'savepoint'|'rollback'|'release'|'commit'|'nested_settings'|'nested_restore'){
  const configuration=signalListeningBaseTemplateV1({category:'synthetic bicycles',lexicon_terms:['synthetic']});
  const identity=signalListeningJevIdentityV1(configuration),context=canonicalEntityContextV1({entities:[]});
  const run:LabelingRunV1={id:randomUUID(),workspace_id:randomUUID(),actor_user_id:randomUUID(),kind:'mass_labeling',identity,
@@ -91,7 +91,7 @@ async function realOwnerWithLostAck(loss:'savepoint'|'rollback'|'release'|'commi
   source_call_ids:Array.from({length:32},()=>randomUUID()),source_run_id:run.id,request_min_bytes:Math.min(...sizes),request_max_bytes:Math.max(...sizes),
   max_input_tokens_per_byte:2,sample_count:32,status:'measured'};
  const commands:string[]=[],released:Array<Error|boolean|undefined>=[],primary=Error('synthetic_lost_'+loss+'_ack');
- const callIds=proposals.map(()=>randomUUID());let originals=0;
+ const callIds=proposals.map(()=>randomUUID());let originals=0,settingsReads=0;
  const metadata=(status:string)=>proposals.map((proposal,i)=>({id:callIds[i],run_id:run.id,workspace_id:run.workspace_id,provider:'typesafe',model:'jev-1.13.0',transport:'sync',
   provider_batch_id:null,custom_id:proposal.custom_id,request_digest:proposal.request_digest,request_storage_key:null,retry_depth:0,status,
   reserved_micro_usd:'1000',settled_micro_usd:null,usage:null,raw_sha256:null,raw_storage_key:null,stop_reason:null,refusal_category:null,
@@ -99,11 +99,18 @@ async function realOwnerWithLostAck(loss:'savepoint'|'rollback'|'release'|'commi
   raw_storage_verified_at:null,raw_storage_verified_key:null,raw_size_bytes:null,terminal_exposure_micro_usd:'0',payload_matches:true}));
  const query=(async(sql:string)=>{
   commands.push(sql);
+  if(sql.includes('r16_nested_settings')){settingsReads++;return{rows:[{backend_pid:42,server_version_num:170000,settings:{
+   'auto_explain.log_min_duration':'-1','auto_explain.log_nested_statements':'off','auto_explain.log_format':'text',
+   'auto_explain.log_level':'log','auto_explain.log_analyze':loss==='nested_restore'&&settingsReads>2?'on':'off',
+   'auto_explain.log_buffers':'off','auto_explain.log_timing':'on','auto_explain.log_parameter_max_length':'-1',
+   'auto_explain.sample_rate':'1','client_min_messages':'notice'}}]};}
+  if(loss==='nested_settings'&&sql.startsWith('SET LOCAL auto_explain'))throw primary;
   if(loss==='savepoint'&&sql.startsWith('SAVEPOINT'))throw primary;
   if(loss==='rollback'&&sql.startsWith('ROLLBACK TO SAVEPOINT'))throw primary;
   if(loss==='release'&&sql.startsWith('RELEASE SAVEPOINT'))throw primary;
   if(loss==='commit'&&sql==='COMMIT')throw primary;
   if(sql.startsWith('EXPLAIN')){
+   if(loss==='nested_restore')raw.emit('notice',nestedNotice());
    const marking=sql.includes('labeling_native_covered_mark_v1');
    return{rows:[{'QUERY PLAN':[{Plan:{'Node Type':'ModifyTable',Operation:marking?'Update':'Insert','Relation Name':'signal_labeling_calls'},
     Triggers:[{'Trigger Name':'listening_statement_money_'+(marking?'update':'insert'),Calls:1}]}]}]};
@@ -125,8 +132,10 @@ async function realOwnerWithLostAck(loss:'savepoint'|'rollback'|'release'|'commi
  }) as PoolClient['query'];
  const raw=Object.assign(new Client(),{query,release:(error?:Error|boolean)=>{released.push(error);}});
  const observer=createNativeDmlPlanObserverV1();observer.arm('base',keys);
+ const nestedRecorder=createNativeDmlNestedRecorderV1({money:nestedSql,answer_guard:''});
  const guard=createNativeDmlPlanClientGuardV1(raw,({sql,values,normal,markUnknown})=>observer.query({client:raw,sql,values,
-  snapshot:async()=>({raw:'same_mocked_business_state',counts:{calls:32}}),normal,onUnknown:markUnknown}));
+  snapshot:async()=>({raw:'same_mocked_business_state',counts:{calls:32}}),normal,onUnknown:markUnknown,
+  ...(loss==='nested_settings'||loss==='nested_restore'?{instrumentation:(identity:Parameters<typeof nestedRecorder.probe>[1])=>nestedRecorder.probe(raw,identity)}:{})}));
  const database={query:guard.client.query.bind(guard.client),connect:async()=>guard.client} as Parameters<typeof createSignalLabelingStoreV1>[0]['database'];
  const store=createSignalLabelingStoreV1<SignalListeningInputV1>({database,page_size:1024,storeRaw:async()=>{throw Error('no raw I/O in owner unit test');},
   rawPages:{reference:()=>({storage_key:'unused'}),store:async()=>{throw Error('no raw I/O');},load:async()=>{throw Error('no raw I/O');}},
@@ -138,7 +147,9 @@ async function realOwnerWithLostAck(loss:'savepoint'|'rollback'|'release'|'commi
  catch(error){failure=error;}
  assert.ok(failure instanceof LabelingAdmissionFailureV1,'must reach actual owner post-DML catch');
  assert.equal(failure.outcome,'unknown');assert.equal(nativeDmlPlanOwnerOutcomeV1(failure),'unknown');
- assert.ok(failure.cause instanceof AggregateError);assert.equal(failure.cause.cause,primary,'actual owner retains original primary error');
+ assert.ok(failure.cause instanceof AggregateError);
+ if(loss==='nested_restore')assert.match(String(failure.cause.cause),/nested_settings_not_restored/u);
+ else assert.equal(failure.cause.cause,primary,'actual owner retains original primary error');
  assert.equal(guard.state.unknown_ack,true);assert.equal(guard.state.owner_rollback_sent,true);assert.equal(guard.state.owner_rollback_ack,true);
  assert.equal(guard.state.forced_discard,true);assert.equal(guard.state.released,true);assert.deepEqual(released,[true]);
  assert.equal(commands.filter(sql=>sql==='ROLLBACK').length,1,'one real global rollback, never a retry');
@@ -152,4 +163,86 @@ test('owner uncertainty is retained through postcheck AggregateErrors even when 
  assert.equal(nativeDmlPlanOwnerOutcomeV1(new AggregateError([owner,Error('postcheck')],'both')),'unknown');
  assert.equal(nativeDmlPlanOwnerOutcomeV1(new LabelingAdmissionFailureV1(Error('known'),'rolled_back',[],[])),'rolled_back');
  assert.equal(nativeDmlPlanOwnerOutcomeV1(Error('unrelated')),null);
+});
+
+// Nested capture acceptance: fixtures are notices, not SQL replicas; no socket opens.
+import {createNativeDmlNestedCollectorV1,NATIVE_DML_NESTED_LIMITS_V1,
+ createNativeDmlNestedRecorderV1,nativeDmlPlanShaV1,type NativeDmlNestedClientV1} from './signal-listening-native-dml-plan.test-support';
+const nestedSql='SELECT receipt FROM synthetic_receipts WHERE id=$1';
+const nestedNotice=(sql=nestedSql,duration='0.125')=>({message:'duration: '+duration+' ms  plan:\n'+JSON.stringify({'Query Text':sql,Plan:{'Node Type':'Index Scan','Relation Name':'synthetic_receipts'}}),
+ severity:'NOTICE',where:'PL/pgSQL function signal_listening_statement_money_v1() line 1 at SQL statement'});
+test('nested notices retain one raw JSON sample while counting repeated inclusive durations and excluding EXPLAIN outer',()=>{
+ const c=createNativeDmlNestedCollectorV1({sql:'INSERT synthetic',protectedSources:{money:nestedSql,answer_guard:''}});
+ c.arm();c.notice(nestedNotice());c.notice(nestedNotice(nestedSql,'0.250'));
+ c.notice(nestedNotice('EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) INSERT synthetic','1.000'));c.disarm();
+ c.assertComplete('money');const r=c.report;assert.equal(r.types.length,2);assert.equal(r.internal_events,2);
+ assert.equal(r.types[0]!.events,2);assert.equal(r.types[0]!.duration_inclusive_ms.sum,.375);
+ assert.equal(r.types[0]!.sample_sha256,nativeDmlPlanShaV1(r.types[0]!.sample_json));
+ assert.equal(r.types[0]!.sample_bytes,Buffer.byteLength(r.types[0]!.sample_json));
+ assert.equal(r.types[1]!.is_outer,true);assert.deepEqual(r.types[1]!.attribution,[]);
+});
+for(const problem of ['parse','event','sample','retained','types','context','parameters']as const)test('nested collector fails closed without emitter exceptions after '+problem,()=>{
+ const limits={...NATIVE_DML_NESTED_LIMITS_V1,...(problem==='event'?{event_bytes:2}:{}),...(problem==='sample'?{sample_bytes:2}:{}),
+  ...(problem==='retained'?{retained_bytes:2}:{}),...(problem==='types'?{unique_types:1}:{}),...(problem==='context'?{context_bytes:2}:{})};
+ const c=createNativeDmlNestedCollectorV1({sql:'INSERT synthetic',protectedSources:{money:nestedSql,answer_guard:''},limits});c.arm();
+ const msg=problem==='parse'?{message:'duration: 1 ms  plan: {broken'}:problem==='parameters'?{message:'duration: 1 ms  plan: '+JSON.stringify({'Query Text':nestedSql,'Query Parameters':'$1=secret',Plan:{}})}:nestedNotice();
+ assert.doesNotThrow(()=>c.notice(msg));if(problem==='types')assert.doesNotThrow(()=>c.notice(nestedNotice('SELECT second')));
+ assert.equal(c.report.failed,true);assert.ok(c.report.counts.dropped>0);assert.throws(()=>c.assertComplete('money'));
+ assert.doesNotThrow(()=>c.notice(nestedNotice()));c.disarm();
+});
+test('nested collector does not mistake a different EXPLAIN hash for a useful internal plan',()=>{
+ const c=createNativeDmlNestedCollectorV1({sql:'INSERT synthetic',protectedSources:{money:'',answer_guard:''}});c.arm();
+ c.notice(nestedNotice('EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) INSERT synthetic'));c.disarm();
+ assert.equal(c.report.internal_events,0);assert.throws(()=>c.assertComplete('money'));
+});
+function nestedClient(loss?:'settings'|'restore'|'capture'){
+ const client=new Client();const commands:string[]=[];let configured=false,reads=0;
+ const settings:Record<string,string>={'auto_explain.log_min_duration':'-1','auto_explain.log_nested_statements':'off','auto_explain.log_format':'text',
+  'auto_explain.log_level':'log','auto_explain.log_analyze':'off','auto_explain.log_buffers':'off','auto_explain.log_timing':'on',
+  'auto_explain.log_parameter_max_length':'-1','auto_explain.sample_rate':'1','client_min_messages':'notice'};
+ const query=async(sql:string)=>{commands.push(sql);
+  if(sql.includes('r16_nested_settings')){reads++;return{rows:[{backend_pid:42,server_version_num:170000,settings:{...settings,...(loss==='restore'&&reads>2?{'auto_explain.log_analyze':'on'}:{})}}]};}
+  if(sql.startsWith('SET LOCAL')){if(loss==='settings')throw Error('synthetic_settings_ack_lost');configured=true;}
+  if(sql.startsWith('ROLLBACK TO'))configured=false;
+  if(sql.startsWith('EXPLAIN')){assert.equal(configured,true);client.emit('notice',loss==='capture'?{message:'duration: 1 ms  plan: {broken'}:nestedNotice());return{rows:[{'QUERY PLAN':[{Plan:{'Node Type':'ModifyTable',Operation:'Insert','Relation Name':'signal_labeling_calls'},Triggers:[{'Trigger Name':'listening_statement_money_insert',Calls:1}]}]}]};}
+  return{rows:[]};};
+ const diagnostic:NativeDmlNestedClientV1=Object.assign(client,{query});return{client:diagnostic,commands};
+}
+test('nested lifecycle restores settings and removes its listener before the real observer launches normal SQL',async()=>{
+ const h=nestedClient(),recorder=createNativeDmlNestedRecorderV1({money:nestedSql,answer_guard:''});
+ const observer=createNativeDmlPlanObserverV1();observer.arm('base',keys);let normals=0;
+ const args=await argumentsFor('insert');await observer.query({...args,client:h.client,snapshot:async()=>({raw:'same',counts:{calls:32}}),
+  instrumentation:identity=>recorder.probe(h.client,identity),normal:async()=>{normals++;assert.equal(h.client.listenerCount('notice'),0);
+   assert.equal(recorder.probes[0]!.settings_restored,true);return{rows:[]};}});
+ assert.equal(normals,1);assert.equal(recorder.probes[0]!.listener_detached,true);
+ assert.equal(h.commands.filter(sql=>sql.startsWith('EXPLAIN')).length,1);
+});
+for(const loss of ['settings','restore']as const)test('nested lifecycle '+loss+' failure blocks normal SQL, preserves UNKNOWN, and never retries',async()=>{
+ const h=nestedClient(loss),recorder=createNativeDmlNestedRecorderV1({money:nestedSql,answer_guard:''});
+ const observer=createNativeDmlPlanObserverV1();observer.arm('base',keys);let normals=0,unknown=0;
+ const args=await argumentsFor('insert');await assert.rejects(observer.query({...args,client:h.client,snapshot:async()=>({raw:'same',counts:{calls:32}}),
+  instrumentation:identity=>recorder.probe(h.client,identity),onUnknown:()=>{unknown++;},normal:async()=>{normals++;return{rows:[]};}}));
+ assert.equal(normals,0);assert.equal(unknown,1);assert.equal(h.client.listenerCount('notice'),0);
+ assert.ok(h.commands.filter(sql=>sql.startsWith('ROLLBACK TO')).length<=1);
+});
+
+for(const loss of ['nested_settings','nested_restore']as const)test('real Native owner preserves '+loss+' uncertainty through global rollback and forced discard',()=>realOwnerWithLostAck(loss));
+
+test('nested capture failure rolls back once with known ACKs and blocks normal SQL',async()=>{
+ const h=nestedClient('capture'),recorder=createNativeDmlNestedRecorderV1({money:nestedSql,answer_guard:''});
+ const observer=createNativeDmlPlanObserverV1();observer.arm('base',keys);let normals=0,unknown=0;
+ const args=await argumentsFor('insert');await assert.rejects(observer.query({...args,client:h.client,snapshot:async()=>({raw:'same',counts:{calls:32}}),
+  instrumentation:identity=>recorder.probe(h.client,identity),onUnknown:()=>{unknown++;},normal:async()=>{normals++;return{rows:[]};}}));
+ assert.equal(normals,0);assert.equal(unknown,0);assert.equal(observer.observations[0]!.unknown_ack,false);
+ assert.equal(recorder.probes[0]!.capture.counts.parse_failures,1);assert.equal(recorder.probes[0]!.settings_restored,true);
+ assert.equal(h.commands.filter(sql=>sql.startsWith('ROLLBACK TO')).length,1);assert.equal(h.client.listenerCount('notice'),0);
+});
+test('nested byte budgets accept the exact boundary and hostile notice getters never escape',()=>{
+ const message=nestedNotice(),first=createNativeDmlNestedCollectorV1({sql:'INSERT synthetic',protectedSources:{money:nestedSql,answer_guard:''}});
+ first.arm();first.notice(message);const retained=first.report.counts.retained_bytes;
+ const exact=createNativeDmlNestedCollectorV1({sql:'INSERT synthetic',protectedSources:{money:nestedSql,answer_guard:''},
+  limits:{...NATIVE_DML_NESTED_LIMITS_V1,event_bytes:Buffer.byteLength(message.message)+Buffer.byteLength(message.where),sample_bytes:retained,retained_bytes:retained,unique_types:1}});
+ exact.arm();exact.notice(message);exact.assertComplete('money');assert.equal(exact.report.counts.retained_bytes,retained);
+ const hostile=Object.defineProperty({},'message',{get(){throw Error('synthetic_getter');}});
+ assert.doesNotThrow(()=>exact.notice(hostile));assert.equal(exact.report.failed,true);assert.equal(exact.report.counts.handler_exceptions,1);
 });

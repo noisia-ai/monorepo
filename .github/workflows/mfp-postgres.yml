@@ -3497,7 +3497,7 @@ jobs:
           archive=root / '.data/piloto-masivo/r16/native-dml-plan-evidence.zip'
           plan_names=[f'plan-{phase}-{op}.json' for phase in ('base','consumer') for op in ('insert','mark','apply')]
           manifest_name='native-dml-plans.json';control_name='workflow-control.json'
-          max_plan=4*1024*1024;max_manifest=1024*1024;max_control=16*1024;max_tap=1024*1024;max_expanded=32*1024*1024;max_zip=16*1024*1024-65536
+          max_plan=4*1024*1024;max_manifest=1024*1024;max_control=16*1024;max_tap=1024*1024;max_nested=4*1024*1024;max_expanded=32*1024*1024;max_zip=16*1024*1024-65536
           profile_ok=os.environ.get('PROFILE_CONCLUSION')=='success';cleanup_ok=os.environ.get('CLEANUP_CONCLUSION')=='success'
           actual_workflow=hashlib.sha256((root/'.github/workflows/mfp-postgres.yml').read_bytes()).hexdigest()
           status=subprocess.run(['git','status','--porcelain=v1','-z'],cwd=root,stdout=subprocess.PIPE,check=True).stdout
@@ -3519,10 +3519,11 @@ jobs:
           fd=os.open(control_path,os.O_CREAT|os.O_EXCL|os.O_WRONLY,0o600)
           try: os.write(fd,raw_control);os.fsync(fd)
           finally: os.close(fd)
-          allow=set(plan_names+[manifest_name,control_name,'native-dml-plan.tap']);available=[]
+          nested_name='native-dml-nested-plans.json'
+          allow=set(plan_names+[manifest_name,control_name,nested_name,'native-dml-plan.tap']);available=[]
           for path in evidence.iterdir():
             if path.name not in allow or path.is_symlink() or not path.is_file(): raise SystemExit('native DML-plan evidence contains unsafe/unexpected entry')
-            cap=max_manifest if path.name==manifest_name else max_control if path.name==control_name else max_tap if path.name=='native-dml-plan.tap' else max_plan
+            cap=max_manifest if path.name==manifest_name else max_control if path.name==control_name else max_tap if path.name=='native-dml-plan.tap' else max_nested if path.name==nested_name else max_plan
             if path.stat().st_size<=0 or path.stat().st_size>cap or stat.S_IMODE(path.stat().st_mode)!=0o600:
               raise SystemExit('native DML-plan JSON is empty, over cap, or not mode 0600')
             available.append(path)
@@ -3548,8 +3549,8 @@ jobs:
             for key,value in {'status':'observed','diagnostic_only':True,'h1_accepted':False,'cpu':'UNKNOWN',
               'external_provider_requests':0,'external_provider_spend_micro_usd':0}.items():
               if type(manifest.get(key)) is not type(value) or manifest.get(key)!=value: raise SystemExit('native DML-plan metadata is invalid')
-            if len(available)!=9 or {p.name for p in available}!={manifest_name,control_name,'native-dml-plan.tap',*plan_names}:
-              raise SystemExit('successful Native DML receipt must contain manifest, control, TAP, and six plans')
+            if len(available)!=10 or {p.name for p in available}!={manifest_name,control_name,nested_name,'native-dml-plan.tap',*plan_names}:
+              raise SystemExit('successful Native DML receipt must contain manifest, control, TAP, six plans, and nested plans')
             source=manifest.get('source');expected=source.get('expected_git') if type(source) is dict else None
             if type(source) is not dict or type(expected) is not dict or source.get('before')!=expected or source.get('after')!=expected or expected.get('head_sha')!=os.environ.get('GITHUB_SHA'):
               raise SystemExit('native DML source binding must be actual clean Git source before and after')
@@ -3595,6 +3596,195 @@ jobs:
                 if not re.fullmatch(r'[0-9a-f]{64}',str(row.get(k))): raise SystemExit('plan observation digest is malformed')
               if row.get('snapshot_before_sha256')!=row.get('snapshot_after_sha256') or type(row.get('snapshot_counts')) is not dict or set(row['snapshot_counts'])!=count_keys:
                 raise SystemExit('full transactional snapshot did not restore exactly')
+            nested_path=evidence/nested_name
+            raw_nested=nested_path.read_bytes()
+            nested=json.loads(raw_nested.decode('utf-8'))
+            nested_contract='r16-native-dml-nested-plans-v1'
+            nested_keys=['contract','status','diagnostic_only','h1_accepted','cpu','baseline_head','source_binding_digest','limits','preflight_receipt','probes','failure','limitations']
+            limits={'event_bytes':1024*1024,'sample_bytes':256*1024,'retained_bytes':3*1024*1024,'file_bytes':4*1024*1024,
+              'unique_types':128,'context_bytes':8*1024,'depth':128,'nodes':16384,'preflight_sample_bytes':16*1024}
+            if type(nested) is not dict or set(nested.keys())!=set(nested_keys):
+              raise SystemExit('nested DML receipt has an invalid top-level shape or key order')
+            fixed={'contract':nested_contract,'status':'observed','diagnostic_only':True,'h1_accepted':False,'cpu':'UNKNOWN',
+              'baseline_head':'c19f5ed178a806e13a49253090f5ed9bd1da36eb'}
+            if any(type(nested.get(k)) is not type(v) or nested.get(k)!=v for k,v in fixed.items()):
+              raise SystemExit('nested DML receipt metadata is invalid or not diagnostic-only')
+            if nested.get('failure') is not None or nested.get('limits')!=limits:
+              raise SystemExit('successful nested DML receipt has failure or changed limits')
+            source_digest=expected.get('source_tree_sha256')
+            if not re.fullmatch(r'sha256:[0-9a-f]{64}',str(source_digest)) or nested.get('source_binding_digest')!=source_digest:
+              raise SystemExit('nested DML source binding differs from the original native source tree')
+            descriptor=manifest.get('nested')
+            if type(descriptor) is not dict or set(descriptor)!={'file','bytes','sha256'}:
+              raise SystemExit('native manifest nested descriptor is missing or malformed')
+            if descriptor.get('file')!=nested_name or descriptor.get('bytes')!=len(raw_nested) or not re.fullmatch(r'[0-9a-f]{64}',str(descriptor.get('sha256'))) or hashlib.sha256(raw_nested).hexdigest()!=descriptor.get('sha256'):
+              raise SystemExit('native manifest nested bytes/SHA do not match the private nested receipt')
+            if len(raw_nested)>max_nested:
+              raise SystemExit('nested DML receipt exceeds 4 MiB')
+            settings_keys=['auto_explain.log_min_duration','auto_explain.log_nested_statements','auto_explain.log_format',
+              'auto_explain.log_level','auto_explain.log_analyze','auto_explain.log_buffers','auto_explain.log_timing',
+              'auto_explain.log_parameter_max_length','auto_explain.sample_rate','client_min_messages']
+            probe_order=[('base','insert'),('base','mark'),('base','apply'),('consumer','insert'),('consumer','mark'),('consumer','apply')]
+            session_pids={};totals={'types':0,'retained':0}
+            def safe_int(value): return type(value) is int and 0<=value<=9007199254740991
+            def sha256_text(value): return hashlib.sha256(value.encode('utf-8')).hexdigest()
+            def normalized_sql(value): return re.sub(r'\s+',' ',value).strip()
+            def sample_within_caps(value):
+              stack=[(value,0)];nodes=0
+              while stack:
+                current,depth=stack.pop();nodes+=1
+                if depth>limits['depth'] or nodes>limits['nodes']: return False
+                if type(current) is dict:
+                  if 'Query Parameters' in current: return False
+                  stack.extend((v,depth+1) for v in current.values() if type(v) in (dict,list))
+                elif type(current) is list:
+                  stack.extend((v,depth+1) for v in current)
+              return True
+            def validate_capture(capture, phase, operation, outer=None, preflight=False):
+              capture_keys=['query_raw_sha256','query_normalized_sha256','explain_normalized_sha256','failed','counts','drop_reasons','internal_events','attribution_events','types']
+              if type(capture) is not dict or set(capture.keys())!=set(capture_keys):
+                raise SystemExit('nested DML capture has an invalid shape or key order')
+              if outer is not None and (capture.get('query_raw_sha256')!=outer['query_raw_sha256'] or capture.get('query_normalized_sha256')!=outer['query_normalized_sha256']):
+                raise SystemExit('nested capture SQL hashes differ from the original outer SQL')
+              if not re.fullmatch(r'[0-9a-f]{64}',str(capture.get('explain_normalized_sha256'))):
+                raise SystemExit('nested EXPLAIN wrapper normalized SQL digest is malformed')
+              if capture.get('failed') is not False:
+                raise SystemExit('nested capture failed or is incomplete')
+              counts=capture.get('counts');count_keys=['notices','notice_bytes','valid_plans','non_plan_notices','parse_failures','handler_exceptions','dropped','out_of_window','retained_bytes']
+              if type(counts) is not dict or set(counts.keys())!=set(count_keys) or any(not safe_int(counts.get(k)) for k in count_keys):
+                raise SystemExit('nested capture counters are missing or unsafe')
+              if counts['notices']!=counts['valid_plans']+counts['non_plan_notices']+counts['dropped']:
+                raise SystemExit('nested notice counters do not reconcile')
+              if any(counts[k]!=0 for k in ('parse_failures','handler_exceptions','dropped','out_of_window')) or capture.get('drop_reasons')!={}:
+                raise SystemExit('nested capture has parse failures, drops, handler errors, or out-of-window plans')
+              if type(capture.get('types')) is not list:
+                raise SystemExit('nested capture types must be an array')
+              retained=0;valid_events=0;internal_events=0;attribution={'money':0,'answer_guard':0};seen=set()
+              for item in capture['types']:
+                type_keys=['query_raw_sha256','query_normalized_sha256','query_text','is_outer','attribution','sample_json','sample_sha256','sample_bytes','sample_retained_bytes','sample_ordinal','context','events','duration_inclusive_ms']
+                if type(item) is not dict or set(item.keys())!=set(type_keys):
+                  raise SystemExit('nested SQL type has an invalid shape or key order')
+                query_text=item.get('query_text');sample_json=item.get('sample_json')
+                if type(query_text) is not str or type(sample_json) is not str or not query_text:
+                  raise SystemExit('nested SQL type is missing literal Query Text or raw sample JSON')
+                raw_hash=sha256_text(query_text);norm_hash=sha256_text(normalized_sql(query_text))
+                if item.get('query_raw_sha256')!=raw_hash or item.get('query_normalized_sha256')!=norm_hash:
+                  raise SystemExit('nested Query Text SHA differs from exact UTF-8 bytes or whitespace normalization')
+                identity=(phase,operation,raw_hash,norm_hash)
+                if identity in seen: raise SystemExit('nested capture repeats a SQL identity within one probe')
+                seen.add(identity)
+                if len(query_text.encode('utf-8'))>limits['event_bytes']:
+                  raise SystemExit('nested Query Text exceeds event cap')
+                if type(item.get('is_outer')) is not bool: raise SystemExit('nested SQL type is_outer must be boolean')
+                if type(item.get('attribution')) is not list or len(item['attribution'])!=len(set(item['attribution'])) or any(x not in ('money','answer_guard') for x in item['attribution']):
+                  raise SystemExit('nested SQL attribution is invalid')
+                if item['is_outer'] and item['attribution']:
+                  raise SystemExit('outer EXPLAIN type cannot be attributed to an internal guard')
+                parsed=json.loads(sample_json)
+                if type(parsed) is dict: sample=parsed
+                elif type(parsed) is list and len(parsed)==1 and type(parsed[0]) is dict: sample=parsed[0]
+                else: raise SystemExit('nested sample must be one complete PostgreSQL plan object')
+                if sample.get('Query Text')!=query_text or type(sample.get('Plan')) is not dict or not sample_within_caps(parsed):
+                  raise SystemExit('nested sample Query Text/Plan is invalid or contains query parameters')
+                sample_bytes=len(sample_json.encode('utf-8'))
+                if sample_json!=sample_json.strip() or sample_bytes==0 or sample_bytes>limits['sample_bytes'] or not safe_int(item.get('sample_bytes')) or item.get('sample_bytes')!=sample_bytes or item.get('sample_sha256')!=sha256_text(sample_json):
+                  raise SystemExit('nested sample raw UTF-8 bytes/SHA are invalid')
+                retained_bytes=item.get('sample_retained_bytes')
+                if not safe_int(retained_bytes) or retained_bytes<sample_bytes or retained_bytes>limits['sample_bytes']:
+                  raise SystemExit('nested sample retained-byte accounting is invalid')
+                context=item.get('context')
+                if context is not None and (type(context) is not str or len(context.encode('utf-8'))>limits['context_bytes']):
+                  raise SystemExit('nested notice context exceeds its UTF-8 cap')
+                if not safe_int(item.get('sample_ordinal')) or item['sample_ordinal']==0 or item['sample_ordinal']>counts['notices']:
+                  raise SystemExit('nested sample ordinal is invalid')
+                events=item.get('events')
+                if not safe_int(events) or events==0: raise SystemExit('nested SQL event count is invalid')
+                duration=item.get('duration_inclusive_ms')
+                if type(duration) is not dict or set(duration.keys())!=set(['count','min','max','sum']) or not safe_int(duration.get('count')) or duration.get('count')!=events:
+                  raise SystemExit('nested duration aggregate shape/count is invalid')
+                numbers=[duration.get(k) for k in ('min','max','sum')]
+                if any(type(n) not in (int,float) or isinstance(n,bool) or not __import__('math').isfinite(n) or n<0 for n in numbers):
+                  raise SystemExit('nested duration aggregate contains a non-finite or negative value')
+                if duration['min']>duration['max'] or duration['sum']+1e-6<duration['max']:
+                  raise SystemExit('nested duration aggregate is inconsistent')
+                outer_normal=outer.get('query_normalized_sha256') if outer is not None else (capture.get('query_normalized_sha256') if preflight else None)
+                explain_normal=capture.get('explain_normalized_sha256')
+                expected_outer=(norm_hash==outer_normal or norm_hash==explain_normal or query_text.lstrip().upper().startswith('EXPLAIN'))
+                if item['is_outer']!=expected_outer:
+                  raise SystemExit('nested is_outer classification does not match the original or EXPLAIN wrapper SQL')
+                valid_events+=events
+                if not item['is_outer']: internal_events+=events
+                for label in item['attribution']: attribution[label]+=events
+                retained+=retained_bytes
+              if retained!=counts['retained_bytes']:
+                raise SystemExit('nested retained-byte counter differs from retained samples')
+              if valid_events!=counts['valid_plans']:
+                raise SystemExit('nested valid-plan counter differs from per-type event totals')
+              totals['retained']+=retained;totals['types']+=0 if preflight else len(capture['types'])
+              if totals['retained']>limits['retained_bytes'] or totals['types']>limits['unique_types']:
+                raise SystemExit('nested aggregate sample/type budget exceeds its cap')
+              expected_attribution={'money':attribution['money'],'answer_guard':attribution['answer_guard']}
+              if capture.get('internal_events')!=internal_events or capture.get('attribution_events')!=expected_attribution:
+                raise SystemExit('nested internal/attribution totals differ from retained SQL type event counts')
+              if preflight:
+                if counts['valid_plans']!=1 or len(capture['types'])!=1 or internal_events!=0 or attribution!={'money':0,'answer_guard':0}:
+                  raise SystemExit('preflight must contain exactly one outer SELECT plan and no internal attribution')
+                item=capture['types'][0]
+                if item['query_text']!='SELECT 1 /* r16_auto_explain_preflight */' or not item['is_outer'] or item['sample_bytes']>limits['preflight_sample_bytes'] or item['sample_retained_bytes']>limits['preflight_sample_bytes']:
+                  raise SystemExit('preflight plan is not the exact bounded SELECT 1 probe')
+              else:
+                if outer is None or internal_events<=0:
+                  raise SystemExit('native probe must capture at least one internal plan')
+                expected_guard='money' if operation in ('insert','mark') else 'answer_guard'
+                if attribution[expected_guard]<=0:
+                  raise SystemExit('native probe lacks real SQL attributed to the required protected guard')
+            def validate_lifecycle(receipt, preflight=False):
+              expected_keys=['phase','operation','session_id','backend_pid','load_ack','settings_before','settings_after','settings_restored','listener_before','listener_after','listener_detached']+(['capture','close_ack'] if preflight else ['capture','outer'])
+              if type(receipt) is not dict or set(receipt.keys())!=set(expected_keys):
+                raise SystemExit('nested session lifecycle receipt has an invalid shape or key order')
+              expected_values={'phase':'preflight','operation':'select','load_ack':True,'settings_restored':True,'listener_detached':True,'close_ack':True} if preflight else {'load_ack':True,'settings_restored':True,'listener_detached':True}
+              if any(type(receipt.get(k)) is not type(v) or receipt.get(k)!=v for k,v in expected_values.items()):
+                raise SystemExit('nested lifecycle acknowledgements are incomplete')
+              session_id=receipt.get('session_id');pid=receipt.get('backend_pid')
+              if type(session_id) is not str or not session_id or not safe_int(pid) or pid<=0:
+                raise SystemExit('nested session identity is invalid')
+              if session_id in session_pids and session_pids[session_id]!=pid:
+                raise SystemExit('nested session ID maps to multiple PostgreSQL backends')
+              session_pids[session_id]=pid
+              for key in ('settings_before','settings_after'):
+                settings=receipt.get(key)
+                if type(settings) is not dict or set(settings.keys())!=set(settings_keys) or any(type(v) is not str for v in settings.values()):
+                  raise SystemExit('nested auto_explain setting receipt is incomplete')
+              before=receipt['settings_before'];after=receipt['settings_after']
+              if before!=after or before['auto_explain.log_min_duration']!='-1' or before['auto_explain.log_analyze']!='off':
+                raise SystemExit('nested session settings were not restored to their disabled baseline')
+              if not safe_int(receipt.get('listener_before')) or not safe_int(receipt.get('listener_after')) or receipt['listener_before']!=receipt['listener_after']:
+                raise SystemExit('nested notice listener count was not restored')
+              validate_capture(receipt['capture'],receipt.get('phase'),receipt.get('operation'),receipt.get('outer'),preflight)
+            preflight=nested.get('preflight_receipt')
+            validate_lifecycle(preflight,True)
+            probes=nested.get('probes')
+            if type(probes) is not list or len(probes)!=6 or [(x.get('phase'),x.get('operation')) for x in probes if type(x) is dict]!=probe_order:
+              raise SystemExit('nested receipt does not contain the exact ordered six-probe matrix')
+            original_sql_hashes={'insert':'33e7a32382d6364416fddd8cd208f792f48677e59ea74f0c5b1af46e30284148',
+              'mark':'6ffcd4185b7e26d1a9de07eb1cbb2eebecf15762feef45dc3c945ac5231316e2',
+              'apply':'7a86df2f02e720b156e7f9d7132eba342080fc9d169d7cf8e1cbdfa74de067a7'}
+            rows_by_pair={(r['phase'],r['operation']):r for r in plans}
+            if any(rows_by_pair[pair]['query_normalized_sha256']!=original_sql_hashes[pair[1]] for pair in probe_order):
+              raise SystemExit('native outer SQL differs from the schema-pinned original normalized SQL')
+            if preflight['session_id'] in {p['session_id'] for p in probes if type(p) is dict}:
+              raise SystemExit('preflight must use a disposable session distinct from every native probe session')
+            for probe in probes:
+              pair=(probe['phase'],probe['operation']);row=rows_by_pair[pair]
+              expected_outer={'calls':row['calls'],'answers':row['answers'],'query_raw_sha256':row['query_raw_sha256'],
+                'query_normalized_sha256':row['query_normalized_sha256'],'plan_sha256':row['plan_sha256'],'apply_roster_sha256':row['apply_roster_sha256']}
+              if type(probe.get('outer')) is not dict or set(probe['outer'].keys())!=set(['calls','answers','query_raw_sha256','query_normalized_sha256','plan_sha256','apply_roster_sha256']) or probe['outer']!=expected_outer:
+                raise SystemExit('nested probe outer SQL/call/roster fields differ from the original native manifest')
+              validate_lifecycle(probe)
+            if sum(p['capture']['counts']['retained_bytes'] for p in probes)+preflight['capture']['counts']['retained_bytes']>limits['retained_bytes']:
+              raise SystemExit('nested sample retention including preflight exceeds 3 MiB')
+            if sum(len(p['capture']['types']) for p in probes)>limits['unique_types']:
+              raise SystemExit('nested probe type count exceeds 128')
             tap_text=tap.read_text(encoding='utf-8',errors='replace') if tap.is_file() and not tap.is_symlink() and tap.stat().st_size<=max_tap else ''
             def validate_native_dml_tap(text, expected_title):
               lines=text.splitlines()

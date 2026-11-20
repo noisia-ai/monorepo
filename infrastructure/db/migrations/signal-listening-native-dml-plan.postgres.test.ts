@@ -5,7 +5,7 @@ import {tmpdir} from 'node:os';
 import {dirname,join,resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import test from 'node:test';
-import type {PoolClient} from 'pg';
+import {Client,type PoolClient} from 'pg';
 import {buildSignalListeningJevRequestV1,signalListeningRequestDigestV1,mapSignalListeningJevResponseV1,
  signalListeningCalibrationShapeV1,llmCostMicroUsdV1,llmPriceV1,type SignalListeningInputV1} from '@noisia/query-engine';
 import type {LabelingCallProposalV1,LabelingCallV1,LabelingRunV1} from '../signal-labeling-runs';
@@ -22,7 +22,37 @@ import {createSignalListeningRuntimeStoreV1} from '../../../services/workers/src
 import {jevUsageV1} from '../../../services/workers/src/workers/signal-jev-labeling-page';
 import {createNativeDmlPlanObserverV1,NATIVE_DML_PLAN_TITLE_V1,nativeDmlPlanShaV1,
  createNativeDmlPlanClientGuardV1,nativeDmlPlanOwnerOutcomeV1,
- type NativeDmlPlanSnapshotV1,type NativeDmlPlanClientStateV1} from './signal-listening-native-dml-plan.test-support';
+ type NativeDmlPlanSnapshotV1,type NativeDmlPlanClientStateV1,createNativeDmlNestedRecorderV1,
+ NATIVE_DML_NESTED_FILE_V1,NATIVE_DML_NESTED_LIMITS_V1,NATIVE_DML_NESTED_PREFLIGHT_SQL_V1} from './signal-listening-native-dml-plan.test-support';
+
+
+/** Fast compatibility probe on the owned migrated lab, before any cold fixture. */
+async function instrumentationPreflight(recorder:ReturnType<typeof createNativeDmlNestedRecorderV1>){
+ const client=new Client({connectionString:process.env.DATABASE_URL,connectionTimeoutMillis:5000});
+ const lifecycle=recorder.probe(client,{phase:'preflight',operation:'select',sql:NATIVE_DML_NESTED_PREFLIGHT_SQL_V1});
+ let begun=false,savepoint=false,rollbackSent=false,released=false,restorationAttempted=false,primary:unknown;
+ try{
+  await client.connect();await client.query('BEGIN');begun=true;
+  await client.query("SET LOCAL statement_timeout='5s'; SET LOCAL lock_timeout='1s'");await lifecycle.beforeSavepoint();
+  await client.query('SAVEPOINT r16_nested_preflight');savepoint=true;await lifecycle.afterSavepoint();
+  lifecycle.explainStarted();try{await client.query(NATIVE_DML_NESTED_PREFLIGHT_SQL_V1);}finally{lifecycle.explainFinished();}
+  rollbackSent=true;await client.query('ROLLBACK TO SAVEPOINT r16_nested_preflight');
+  await client.query('RELEASE SAVEPOINT r16_nested_preflight');released=true;
+  restorationAttempted=true;await lifecycle.afterRestore();lifecycle.assertCapture();
+ }catch(error){primary=error;
+  if(savepoint&&!rollbackSent){rollbackSent=true;
+   try{await client.query('ROLLBACK TO SAVEPOINT r16_nested_preflight');await client.query('RELEASE SAVEPOINT r16_nested_preflight');released=true;}
+   catch(cleanup){primary=new AggregateError([primary,cleanup],'nested_preflight_rollback_failed',{cause:primary});}}
+  if(released&&!restorationAttempted){restorationAttempted=true;try{await lifecycle.afterRestore();}
+   catch(cleanup){primary=new AggregateError([primary,cleanup],'nested_preflight_restore_failed',{cause:primary});}}
+ }finally{
+  lifecycle.finish();
+  if(begun)try{await client.query('ROLLBACK');}catch(cleanup){primary=new AggregateError([primary,cleanup],'nested_preflight_owner_rollback_failed',{cause:primary});}
+  try{await client.end();if(recorder.preflight)recorder.preflight.close_ack=true;}
+  catch(cleanup){primary=new AggregateError([primary,cleanup],'nested_preflight_close_failed',{cause:primary});}
+ }
+ if(primary!==undefined)throw primary;
+}
 
 const enabled=process.env.NOISIA_R16_NATIVE_DML_PLAN_PG==='true';
 const repo=resolve(dirname(fileURLToPath(import.meta.url)),'../../..');
@@ -86,14 +116,22 @@ test(NATIVE_DML_PLAN_TITLE_V1,{skip:!enabled,timeout:30*60*1000},async()=>{
  const workflow=await readFile(join(repo,workflowPath));
  assert.equal(nativeDmlPlanShaV1(workflow),nativeDmlPlanShaV1(execFileSync('git',['show',expected.head_sha+':'+workflowPath],{cwd:repo})));
  const observer=createNativeDmlPlanObserverV1();
+ const moneySource=await readFile(join(repo,'infrastructure/db/migrations/0337_signal_listening_wire_population.sql'),'utf8');
+ const guardSource=await readFile(join(repo,'infrastructure/db/migrations/0339_signal_listening_answer_guard_narrow.sql'),'utf8');
+ assert.equal(nativeDmlPlanShaV1(moneySource),'5af216411e8924fa757b3ecae5ae574cb8737ca754f7c06a27eec455396980eb');
+ assert.equal(nativeDmlPlanShaV1(guardSource),'903e7cc04436235751cd19e047122560c0df3e397da6b70134c86cb01358c9f0');
+ const money=/CREATE OR REPLACE FUNCTION signal_listening_statement_money_v1\(\) RETURNS trigger LANGUAGE plpgsql SET search_path=public,extensions,pg_temp AS \$\$([\s\S]*?)\$\$;/u.exec(moneySource)?.[1];
+ const answer_guard=/CREATE OR REPLACE FUNCTION signal_listening_answer_guard_v1\(\) RETURNS trigger[\s\S]*?AS \$\$([\s\S]*?)\$\$;/u.exec(guardSource)?.[1];
+ assert.ok(money&&answer_guard,'nested_fixed_prosrc_missing');
+ assert.equal(nativeDmlPlanShaV1(money),'c9aba3719759b7cf09d96371be79838f487707b66a3c20d13070e7559a31a2e0');
+ assert.equal(nativeDmlPlanShaV1(answer_guard),'83a1d0366bee6339fb010140084bc42dfcabe7b63bb07dc8566272eb7659357f');
+ const nested=createNativeDmlNestedRecorderV1({money,answer_guard});
  const clientStates:NativeDmlPlanClientStateV1[]=[];
  const phaseReceipts:Array<Record<string,unknown>>=[];let runForSnapshot:LabelingRunV1|undefined;
  let runtimeWitness:R16ListeningRuntimeWitnessV1|undefined,finalCensus:Record<string,number>|undefined;
  const answerTriggers:{before:unknown;after:unknown}={before:null,after:null};
  let fixtureReturned=false,storageClosed=false,storageRemoved=false,failed=false,primary:unknown;
- const rawDirectory=await mkdtemp(join(tmpdir(),'r16-native-dml-plan-'));
- const http=await startR16HttpFilesystemStorageV1(rawDirectory);
- const storage=createWorkspaceEngineStorageV1({url:http.base_url,service_role_key:'synthetic-local-only',bucket:'corpus-files'});
+ let rawDirectory:string|undefined,http:Awaited<ReturnType<typeof startR16HttpFilesystemStorageV1>>|undefined;
  const withFixture=createR16ListeningNativeFixtureV1({loadNativeCensus:args=>loadR16ListeningNativeCensusV1(args),
   decorateDatabase(database){
    return{query:database.query.bind(database),connect:async()=>{
@@ -102,12 +140,17 @@ test(NATIVE_DML_PLAN_TITLE_V1,{skip:!enabled,timeout:30*60*1000},async()=>{
      if(sql==='BEGIN'){const result=await normal();await c.query("SET LOCAL statement_timeout='60s'; SET LOCAL lock_timeout='1s'");return result;}
      if(!runForSnapshot)return normal();
      return observer.query({client:c,sql,values,snapshot:()=>snapshot(c,runForSnapshot!),onUnknown:markUnknown,
-      beforeProbe:async operation=>{if(operation==='apply')await assertAnswerTriggers(c);},normal});
+      beforeProbe:async operation=>{if(operation==='apply')await assertAnswerTriggers(c);},
+      instrumentation:identity=>nested.probe(c,identity),normal});
     });clientStates.push(guard.state);return guard.client;
    }};
   }});
  const workload=r16ListeningWorkloadV2('defined_consumer_second_pass');
  try{
+  await instrumentationPreflight(nested);
+  rawDirectory=await mkdtemp(join(tmpdir(),'r16-native-dml-plan-'));
+  http=await startR16HttpFilesystemStorageV1(rawDirectory);
+  const storage=createWorkspaceEngineStorageV1({url:http.base_url,service_role_key:'synthetic-local-only',bucket:'corpus-files'});
   await withFixture({workload,storage},async f=>{
    assert.equal(f.root_ids.length,32768);assert.equal(new Set(f.root_ids).size,32768);
    await withR16ListeningRuntimeWitnessV1(f.access.database,async witness=>{
@@ -177,7 +220,7 @@ test(NATIVE_DML_PLAN_TITLE_V1,{skip:!enabled,timeout:30*60*1000},async()=>{
   });fixtureReturned=true;
  }catch(error){failed=true;primary=error;}
  finally{
-  try{await http.close();storageClosed=true;await rm(rawDirectory,{recursive:true});storageRemoved=true;}
+  try{if(http){await http.close();storageClosed=true;}if(rawDirectory){await rm(rawDirectory,{recursive:true});storageRemoved=true;}}
   catch(error){if(!failed){failed=true;primary=error;}}
  }
  const sourceAfter=await captureR16SourceProvenanceV1(repo);let sourceClean=false;
@@ -189,13 +232,25 @@ test(NATIVE_DML_PLAN_TITLE_V1,{skip:!enabled,timeout:30*60*1000},async()=>{
    assert.equal(stored.bytes,row.plan_bytes);assert.equal(stored.sha256,row.plan_sha256);}
   plans.push(metadata);
  }
+ for(const probe of nested.probes){const row=observer.observations.find(row=>row.phase===probe.phase&&row.operation===probe.operation);
+  if(row)probe.outer={calls:row.calls,answers:row.answers,query_raw_sha256:row.query_raw_sha256,query_normalized_sha256:row.query_normalized_sha256,
+   plan_sha256:row.plan_sha256,apply_roster_sha256:row.apply_roster_sha256};}
+ const nestedReceipt={contract:'r16-native-dml-nested-plans-v1',status:failed?'failed':'observed',diagnostic_only:true,h1_accepted:false,cpu:'UNKNOWN',
+  baseline_head:'c19f5ed178a806e13a49253090f5ed9bd1da36eb',source_binding_digest:expected.source_tree_sha256,
+  limits:NATIVE_DML_NESTED_LIMITS_V1,preflight_receipt:nested.preflight,probes:nested.probes,
+  failure:failed?{kind:primary instanceof Error?primary.name:typeof primary,code:primary&&typeof primary==='object'&&'code'in primary&&typeof primary.code==='string'?primary.code:null}:null,
+  limitations:['Diagnostic instrumentation overhead; inclusive durations are not CPU and nested levels must not be summed.',
+   'One raw sample per exact SQL and phase/operation does not measure every physical plan variant.',
+   'Early752 roots/1504 calls; not late65536 ledger, deferred COMMIT fences or H1 capacity.',
+   'Counters cover notices actually delivered; no proof of every possible server message. LOAD remains session-local until connection closes.']};
+ const nestedFile=await privateJson(join(directory,NATIVE_DML_NESTED_FILE_V1),nestedReceipt,NATIVE_DML_NESTED_LIMITS_V1.file_bytes);
  const receipt={contract:'r16-listening-native-dml-plan-v1',status:failed?'failed':'observed',diagnostic_only:true,h1_accepted:false,cpu:'UNKNOWN',
   external_provider_requests:0,external_provider_spend_micro_usd:0,
   scope:'early_752_roots_on_32768_corpus_not_late_ledger_or_capacity',
   source:{expected_git:expected,before:sourceBefore,after:sourceAfter,workflow:{path:workflowPath,sha256:nativeDmlPlanShaV1(workflow)}},
   runtime_witness:runtimeWitness??null,answer_triggers:answerTriggers,
   connection_uncertainty:clientStates.filter(state=>state.unknown_ack).map(state=>({...state})),
-  fixture:finalCensus?{...finalCensus,phases:phaseReceipts}:null,plans,
+  fixture:finalCensus?{...finalCensus,phases:phaseReceipts}:null,plans,nested:nestedFile,
   closure:{fixture_returned:fixtureReturned,storage_closed:storageClosed,storage_removed:storageRemoved,source_clean:sourceClean},
   failure:failed?{kind:primary instanceof Error?primary.name:typeof primary,
    code:primary&&typeof primary==='object'&&'code'in primary&&typeof primary.code==='string'?primary.code:null,
