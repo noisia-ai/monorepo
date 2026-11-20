@@ -3364,6 +3364,39 @@ jobs:
         env:
           NODE_OPTIONS: --max-old-space-size=4096
         run: pnpm --filter @noisia/workers typecheck
+      - name: Run pure input-plan, Native DML support, Survey, and streamed snapshot contracts
+        env:
+          NOISIA_R16_LISTENING_INPUT_PLAN_PURE: 'true'
+          NOISIA_R16_NATIVE_DML_PLAN_PG: 'false'
+        run: |
+          set -o pipefail
+          pnpm exec node --test --test-concurrency=1 --import tsx \
+            infrastructure/db/migrations/signal-listening-input-plan.synthetic.fixture.test.ts \
+            infrastructure/db/migrations/signal-listening-native-dml-plan.test.ts \
+            infrastructure/db/migrations/signal-listening-native-late-survey.test.ts \
+            infrastructure/db/migrations/signal-listening-native-dml-late-snapshot.test.ts | tee "$RUNNER_TEMP/r16-native-late-pure.tap"
+          python - <<'PYTAP'
+          import re
+          from pathlib import Path
+          text=(Path(__import__('os').environ['RUNNER_TEMP'])/'r16-native-late-pure.tap').read_text(encoding='utf-8')
+          lines=text.splitlines()
+          summaries={}
+          for key in ('tests','pass','fail','cancelled','skipped','todo'):
+              matches=[re.fullmatch(rf'# {key} ([0-9]+)',line) for line in lines]
+              values=[int(m.group(1)) for m in matches if m]
+              if len(values)!=1: raise SystemExit(f'Pure contract TAP must contain exactly one #{key} summary')
+              summaries[key]=values[0]
+          if summaries['tests']<=0 or summaries['pass']!=summaries['tests'] or any(summaries[k]!=0 for k in ('fail','cancelled','skipped','todo')):
+              raise SystemExit('Native LATE pure contracts must all execute and pass with no cancelled/skipped/todo cases')
+          ok=[];subtests=[]
+          for line in lines:
+              match=re.fullmatch(r'ok ([0-9]+) - (.+?)(?: #.*)?',line)
+              if match: ok.append(match.group(2))
+              if line.startswith('# Subtest: '): subtests.append(line[len('# Subtest: '):])
+          if len(ok)!=summaries['tests'] or len(subtests)!=summaries['tests'] or ok!=subtests:
+              raise SystemExit('Every declared pure contract must appear once in the TAP subtest and passing title census')
+          print(f"Native LATE pure TAP census: {summaries['tests']} tests passed; all four source files executed with no skips")
+          PYTAP
       - name: Require the owned benchmark lab and evidence path to be absent
         run: |
           set -euo pipefail
@@ -3488,7 +3521,7 @@ jobs:
         run: |
           set -euo pipefail
           python - <<'PY'
-          import hashlib, json, os, re, stat, subprocess, zipfile
+          import hashlib, json, math, os, re, stat, subprocess, zipfile
           from pathlib import Path
 
           root=Path(os.environ['GITHUB_WORKSPACE'])
@@ -3496,8 +3529,15 @@ jobs:
           tap=evidence / 'native-dml-plan.tap'
           archive=root / '.data/piloto-masivo/r16/native-dml-plan-evidence.zip'
           plan_names=[f'plan-{phase}-{op}.json' for phase in ('base','consumer') for op in ('insert','mark','apply')]
+          late_plan_names=[f'plan-late-consumer-{op}.json' for op in ('insert','mark','apply')]
           manifest_name='native-dml-plans.json';control_name='workflow-control.json'
+          late_manifest_name='native-dml-late-plans.json';late_nested_name='native-dml-late-nested-plans.json'
+          survey_name='native-late-survey.json';survey_plans_name='native-late-survey-plans.json'
           max_plan=4*1024*1024;max_manifest=1024*1024;max_control=16*1024;max_tap=1024*1024;max_nested=4*1024*1024;max_expanded=32*1024*1024;max_zip=16*1024*1024-65536
+          entry_caps={name:max_plan for name in plan_names+late_plan_names}
+          entry_caps.update({manifest_name:max_manifest,late_manifest_name:1024*1024,control_name:max_control,
+            late_nested_name:4*1024*1024,survey_name:1024*1024,survey_plans_name:4*1024*1024,
+            'native-dml-nested-plans.json':max_nested,'native-dml-plan.tap':max_tap})
           profile_ok=os.environ.get('PROFILE_CONCLUSION')=='success';cleanup_ok=os.environ.get('CLEANUP_CONCLUSION')=='success'
           actual_workflow=hashlib.sha256((root/'.github/workflows/mfp-postgres.yml').read_bytes()).hexdigest()
           status=subprocess.run(['git','status','--porcelain=v1','-z'],cwd=root,stdout=subprocess.PIPE,check=True).stdout
@@ -3520,10 +3560,10 @@ jobs:
           try: os.write(fd,raw_control);os.fsync(fd)
           finally: os.close(fd)
           nested_name='native-dml-nested-plans.json'
-          allow=set(plan_names+[manifest_name,control_name,nested_name,'native-dml-plan.tap']);available=[]
+          allow=set(plan_names+late_plan_names+[manifest_name,late_manifest_name,control_name,nested_name,late_nested_name,survey_name,survey_plans_name,'native-dml-plan.tap']);available=[]
           for path in evidence.iterdir():
             if path.name not in allow or path.is_symlink() or not path.is_file(): raise SystemExit('native DML-plan evidence contains unsafe/unexpected entry')
-            cap=max_manifest if path.name==manifest_name else max_control if path.name==control_name else max_tap if path.name=='native-dml-plan.tap' else max_nested if path.name==nested_name else max_plan
+            cap=entry_caps[path.name]
             if path.stat().st_size<=0 or path.stat().st_size>cap or stat.S_IMODE(path.stat().st_mode)!=0o600:
               raise SystemExit('native DML-plan JSON is empty, over cap, or not mode 0600')
             available.append(path)
@@ -3549,8 +3589,9 @@ jobs:
             for key,value in {'status':'observed','diagnostic_only':True,'h1_accepted':False,'cpu':'UNKNOWN',
               'external_provider_requests':0,'external_provider_spend_micro_usd':0}.items():
               if type(manifest.get(key)) is not type(value) or manifest.get(key)!=value: raise SystemExit('native DML-plan metadata is invalid')
-            if len(available)!=10 or {p.name for p in available}!={manifest_name,control_name,nested_name,'native-dml-plan.tap',*plan_names}:
-              raise SystemExit('successful Native DML receipt must contain manifest, control, TAP, six plans, and nested plans')
+            expected_names={manifest_name,control_name,nested_name,'native-dml-plan.tap',*plan_names,late_manifest_name,late_nested_name,*late_plan_names,survey_name,survey_plans_name}
+            if len(available)!=17 or {p.name for p in available}!=expected_names:
+              raise SystemExit('successful Native DML receipt must contain the exact 17 legacy, Native LATE, Survey, control, and TAP files')
             source=manifest.get('source');expected=source.get('expected_git') if type(source) is dict else None
             if type(source) is not dict or type(expected) is not dict or source.get('before')!=expected or source.get('after')!=expected or expected.get('head_sha')!=os.environ.get('GITHUB_SHA'):
               raise SystemExit('native DML source binding must be actual clean Git source before and after')
@@ -3887,8 +3928,311 @@ jobs:
               if sum(line==title_line for line in lines)!=1:
                 raise SystemExit('Native DML TAP title is missing, duplicated, or not exact')
             validate_native_dml_tap(tap_text,title)
+            # BEGIN success-only Native LATE and Survey validation.
+            def value_sha(value):
+                return 'sha256:' + hashlib.sha256(json.dumps(value, ensure_ascii=False, separators=(',', ':')).encode('utf-8')).hexdigest()
+            def valid_prefixed_sha(value):
+                return type(value) is str and re.fullmatch(r'sha256:[0-9a-f]{64}', value) is not None
+            def validate_full_git(value):
+                if type(value) is not dict or set(value) != {'head_sha', 'source_tree_sha256', 'tree_status_sha256', 'file_count', 'file_manifest'}:
+                    raise SystemExit('Native LATE source manifest has an invalid five-field shape')
+                if value.get('head_sha') != os.environ.get('GITHUB_SHA') or not re.fullmatch(r'[0-9a-f]{40}', str(value.get('head_sha'))):
+                    raise SystemExit('Native LATE source HEAD differs from the actual workflow commit')
+                entries=value.get('file_manifest');count=value.get('file_count')
+                if type(count) is not int or count<=0 or type(entries) is not list or len(entries)!=count:
+                    raise SystemExit('Native LATE full source manifest count is invalid')
+                pairs=[];paths=[]
+                for item in entries:
+                    if type(item) is not dict or set(item)!={'path','sha256'} or type(item.get('path')) is not str or type(item.get('sha256')) is not str or not re.fullmatch(r'sha256:[0-9a-f]{64}',item['sha256']):
+                        raise SystemExit('Native LATE full source manifest entry is malformed')
+                    paths.append(item['path']);pairs.append([item['path'],item['sha256']])
+                if paths!=sorted(set(paths)):
+                    raise SystemExit('Native LATE source manifest paths are not the exact sorted unique set')
+                if value.get('source_tree_sha256')!=value_sha(pairs) or value.get('tree_status_sha256')!='sha256:'+hashlib.sha256(b'').hexdigest():
+                    raise SystemExit('Native LATE full source manifest digest or clean tree status is invalid')
+            def validate_stream_snapshot(stream, row, phase, operation):
+                if type(stream) is not dict or set(stream)!={'contract','scope','fetch_rows_max','row_encoding','framing','tables','exposure','exposure_sql_sha256'}:
+                    raise SystemExit('Native LATE streamed snapshot descriptor has an invalid shape')
+                if stream.get('contract')!='r16-native-late-fullstate-stream-v1' or stream.get('fetch_rows_max')!=128 \
+                    or stream.get('row_encoding')!='PostgreSQL complete to_jsonb(row)::text UTF8' \
+                    or stream.get('framing')!='decimal_utf8_byte_length:sha256_of_complete_row\n;ordered;allrows':
+                    raise SystemExit('Native LATE snapshot protocol contract changed')
+                scope=stream.get('scope')
+                if type(scope) is not dict or set(scope)!={'workspace_id','run_id','processing_admission_id'} or any(type(v) is not str or not v for v in scope.values()):
+                    raise SystemExit('Native LATE snapshot scope is incomplete')
+                names=('calls','links','answers','failures','raw_pages','raw_members','mutation_fences','run','admission')
+                tables=stream.get('tables')
+                if type(tables) is not dict or set(tables)!=set(names):
+                    raise SystemExit('Native LATE snapshot does not cover all nine business tables')
+                counts={}
+                for name in names:
+                    item=tables[name]
+                    if type(item) is not dict or set(item)!={'rows','row_utf8_bytes','rows_sha256','sql_sha256','cursor_close_ack'}:
+                        raise SystemExit('Native LATE snapshot table descriptor is malformed')
+                    if type(item.get('rows')) is not int or item['rows']<0 or type(item.get('row_utf8_bytes')) is not str \
+                        or not re.fullmatch(r'[0-9]+',item['row_utf8_bytes']) or not re.fullmatch(r'[0-9a-f]{64}',str(item.get('rows_sha256'))) \
+                        or not re.fullmatch(r'[0-9a-f]{64}',str(item.get('sql_sha256'))) or item.get('cursor_close_ack') is not True:
+                        raise SystemExit('Native LATE snapshot table census, digest, or cursor closure is invalid')
+                    counts[name]=item['rows']
+                exposure=stream.get('exposure')
+                if type(exposure) is not list or len(exposure)!=1 or type(exposure[0]) is not dict or set(exposure[0])!={'organization','run'} \
+                    or any(type(v) is not str or not re.fullmatch(r'[0-9]+',v) for v in exposure[0].values()):
+                    raise SystemExit('Native LATE exposure snapshot is malformed')
+                if not re.fullmatch(r'[0-9a-f]{64}',str(stream.get('exposure_sql_sha256'))):
+                    raise SystemExit('Native LATE exposure SQL digest is malformed')
+                raw_digest=hashlib.sha256(json.dumps(stream,ensure_ascii=False,separators=(',',':')).encode('utf-8')).hexdigest()
+                digest_key='snapshot_before_sha256' if phase=='before' else 'snapshot_after_sha256'
+                if raw_digest!=row.get(digest_key):
+                    raise SystemExit('Native LATE full streamed snapshot digest differs from plan metadata')
+                if row.get('snapshot_counts')!=counts:
+                    raise SystemExit('Native LATE snapshot table counts differ from the plan metadata')
+                return counts
+            # The early envelope already validated its own full source equality; now require its complete dynamic manifest shape.
+            validate_full_git(expected)
+            if source.get('before')!=expected or source.get('after')!=expected:
+                raise SystemExit('Native early expected/before/after full source manifests differ')
+            late_manifest_path=evidence/'native-dml-late-plans.json'
+            late_nested_path=evidence/'native-dml-late-nested-plans.json'
+            survey_path=evidence/'native-late-survey.json'
+            survey_plans_path=evidence/'native-late-survey-plans.json'
+            late_manifest=json.loads(late_manifest_path.read_text(encoding='utf-8'))
+            late_nested=json.loads(late_nested_path.read_text(encoding='utf-8'))
+            survey=json.loads(survey_path.read_text(encoding='utf-8'))
+            survey_plans=json.loads(survey_plans_path.read_text(encoding='utf-8'))
+            late_manifest_keys={'contract','status','diagnostic_only','h1_accepted','cpu','external_provider_requests','external_provider_spend_micro_usd','scope','source','runtime_witness','answer_triggers','fixture','snapshot_contract','plans','nested','connection_uncertainty','closure','failure'}
+            if type(late_manifest) is not dict or set(late_manifest)!=late_manifest_keys or late_manifest.get('contract')!='r16-listening-native-dml-late-plan-v1':
+                raise SystemExit('Native LATE receipt contract is invalid')
+            for key,value in {'status':'observed','diagnostic_only':True,'h1_accepted':False,'cpu':'UNKNOWN','external_provider_requests':0,'external_provider_spend_micro_usd':0,
+                'scope':'late_consumer_720_after_native_60000_plus_ledger','snapshot_contract':'r16-native-late-fullstate-stream-v1'}.items():
+                if type(late_manifest.get(key)) is not type(value) or late_manifest.get(key)!=value:
+                    raise SystemExit('Native LATE receipt metadata is invalid or claims acceptance')
+            late_source=late_manifest.get('source');late_expected=late_source.get('expected_git') if type(late_source) is dict else None
+            if type(late_source) is not dict or set(late_source)!={'expected_git','before','after','workflow'}:
+                raise SystemExit('Native LATE full source binding is malformed')
+            validate_full_git(late_expected);validate_full_git(late_source.get('before'));validate_full_git(late_source.get('after'))
+            if late_source.get('expected_git')!=expected or late_source.get('before')!=expected or late_source.get('after')!=expected:
+                raise SystemExit('Native LATE expected/before/after manifests differ from the actual complete source')
+            workflow=late_source.get('workflow')
+            if type(workflow) is not dict or set(workflow)!={'path','sha256'} or workflow.get('path')!='.github/workflows/mfp-postgres.yml' or workflow.get('sha256')!=actual_workflow:
+                raise SystemExit('Native LATE workflow source binding differs from the actual wrapper bytes')
+            if late_manifest.get('failure') is not None:
+                raise SystemExit('Observed Native LATE receipt carries a failure')
+            if late_manifest.get('connection_uncertainty')!=[]:
+                raise SystemExit('Successful Native LATE receipt has ambiguous connection acknowledgements')
+            closure=late_manifest.get('closure');expected_closure={'fixture_returned':True,'storage_closed':True,'storage_removed':True,'source_clean':True,'early_scope_closed':True,'survey_closed':True}
+            if type(closure) is not dict or set(closure)!=set(expected_closure) or closure!=expected_closure:
+                raise SystemExit('Native LATE fixture/storage/source/early/Survey closure is incomplete')
+            fixture=late_manifest.get('fixture')
+            if type(fixture) is not dict or set(fixture)!={'population','before','after','cohort','growth'} or fixture.get('population')!=32768:
+                raise SystemExit('Native LATE fixture receipt has an invalid shape or corpus population')
+            census_keys={'total_calls','durable_applied_calls','base_calls','consumer_calls','resolved_roots','unresolved_roots'}
+            before=fixture.get('before');after=fixture.get('after')
+            for label,census in (('before',before),('after',after)):
+                if type(census) is not dict or set(census)!=census_keys or any(type(v) is not int or v<0 for v in census.values()):
+                    raise SystemExit(f'Native LATE {label} census is incomplete')
+                if census['base_calls']!=32768 or census['total_calls']!=census['durable_applied_calls'] \
+                    or census['consumer_calls']!=census['total_calls']-32768 or census['resolved_roots']!=census['consumer_calls'] \
+                    or census['unresolved_roots']!=32768-census['resolved_roots']:
+                    raise SystemExit(f'Native LATE {label} counts fail the full-population/durable reconciliation')
+            if not 60000<=before['total_calls']<=64816 or before['unresolved_roots']<720:
+                raise SystemExit('Native LATE pre-phase ledger is outside the admitted 60000..64816 range or lacks 720 roots')
+            for key in ('total_calls','durable_applied_calls','consumer_calls','resolved_roots'):
+                if after[key]!=before[key]+720: raise SystemExit('Native LATE phase did not durably add exactly 720 calls/roots')
+            if after['base_calls']!=before['base_calls'] or after['unresolved_roots']!=before['unresolved_roots']-720:
+                raise SystemExit('Native LATE phase changed the base cohort or failed to reduce unresolved roots by 720')
+            cohort=fixture.get('cohort');cohort_keys={'phase','calls','answers','question_keys','profile','root_ids_sha256','native_call_ids_sha256'}
+            if type(cohort) is not dict or set(cohort)!=cohort_keys or cohort.get('phase')!='late-consumer' or cohort.get('calls')!=720 or cohort.get('answers')!=1440:
+                raise SystemExit('Native LATE consumer cohort metadata is invalid')
+            qkeys=cohort.get('question_keys')
+            if type(qkeys) is not list or len(qkeys)!=2 or qkeys!=sorted(set(qkeys)) or any(type(k) is not str or not k for k in qkeys):
+                raise SystemExit('Native LATE cohort must use the two unique sorted configured consumer keys')
+            profile=cohort.get('profile')
+            if type(profile) is not dict or profile.get('sample_count')!=32 or type(profile.get('source_run_id')) is not str or not profile.get('source_run_id'):
+                raise SystemExit('Native LATE cohort calibration profile is missing or invalid')
+            for key in ('root_ids_sha256','native_call_ids_sha256'):
+                if not re.fullmatch(r'[0-9a-f]{64}',str(cohort.get(key))): raise SystemExit('Native LATE actual root/call roster digest is malformed')
+            growth=fixture.get('growth');growth_keys={'cohorts','native_calls','legacy_calls','elapsed_ms'}
+            if type(growth) is not dict or set(growth)!=growth_keys or any(type(growth.get(k)) is not int or growth[k]<0 for k in ('cohorts','native_calls','legacy_calls')) \
+                or type(growth.get('elapsed_ms')) not in (int,float) or isinstance(growth['elapsed_ms'],bool) or not math.isfinite(growth['elapsed_ms']) or growth['elapsed_ms']<0 or growth['cohorts']>256 \
+                or growth['native_calls']+growth['legacy_calls']!=before['total_calls']-1504:
+                raise SystemExit('Native LATE scalar growth receipt is incomplete or does not reconcile')
+            witness=late_manifest.get('runtime_witness');groups=('main_money','compact','answer_guard')
+            if type(witness) is not dict or witness.get('contract')!='r16-listening-runtime-witness-v1' or witness.get('before') is None or witness.get('after') is None \
+                or any(type(witness.get(g)) is not dict or witness[g].get('before') is None or witness[g].get('after') is None for g in groups):
+                raise SystemExit('Native LATE runtime witness groups are incomplete')
+            if witness['before']!=witness['after'] or any(witness[g]['before']!=witness[g]['after'] for g in groups):
+                raise SystemExit('Native LATE runtime witness changed across the diagnostic')
+            triggers=late_manifest.get('answer_triggers')
+            if type(triggers) is not dict or triggers.get('before') is None or triggers.get('after')!=triggers.get('before'):
+                raise SystemExit('Native LATE answer-trigger witness changed')
+            late_plans=late_manifest.get('plans');late_order=[('late-consumer',op) for op in ('insert','mark','apply')]
+            if type(late_plans) is not list or len(late_plans)!=3 or [(p.get('phase'),p.get('operation')) for p in late_plans if type(p) is dict]!=late_order:
+                raise SystemExit('Native LATE receipt must contain exactly the ordered late-consumer INSERT/MARK/APPLY matrix')
+            late_rows={}
+            count_keys={'calls','links','answers','failures','raw_pages','raw_members','mutation_fences','run','admission'}
+            true_keys=('savepoint_ack','rollback_sent','rollback_ack','release_ack','snapshot_equal','normal_original_sent','normal_original_succeeded')
+            late_row_keys={'phase','operation','calls','answers','query_raw_sha256','query_normalized_sha256','file','plan_bytes','plan_sha256','snapshot_before_sha256','snapshot_after_sha256','snapshot_counts','streamed_snapshot_before','streamed_snapshot_after','savepoint_ack','rollback_sent','rollback_ack','release_ack','snapshot_equal','normal_original_sent','normal_original_succeeded','unknown_ack','apply_roster_sha256'}
+            for row in late_plans:
+                if type(row) is not dict or set(row)!=late_row_keys:
+                    raise SystemExit('Native LATE plan observation row has an invalid exact field set')
+                phase,op=row['phase'],row['operation'];name=f'plan-late-consumer-{op}.json';plan_path=evidence/name
+                if row.get('file')!=name or row.get('calls')!=720 or row.get('answers')!=(1440 if op=='apply' else None):
+                    raise SystemExit('Native LATE plan file or call/answer census is invalid')
+                if row.get('apply_roster_sha256')!=(cohort['native_call_ids_sha256'] if op=='apply' else None):
+                    raise SystemExit('Native LATE APPLY roster differs from actual admitted call IDs')
+                if any(row.get(k) is not True for k in true_keys) or row.get('unknown_ack') is not False:
+                    raise SystemExit('Native LATE savepoint rollback/normal commit acknowledgements are incomplete')
+                if not re.fullmatch(r'[0-9a-f]{64}',str(row.get('plan_sha256'))) or row.get('plan_bytes')!=plan_path.stat().st_size or hashlib.sha256(plan_path.read_bytes()).hexdigest()!=row.get('plan_sha256'):
+                    raise SystemExit('Native LATE plan raw file bytes/SHA differ from receipt')
+                raw_plan=json.loads(plan_path.read_text(encoding='utf-8'))
+                if type(raw_plan) is not list or not raw_plan or sum(len(json.dumps(item,ensure_ascii=False,separators=(',',':')).encode('utf-8')) for item in raw_plan)>4*1024*1024:
+                    raise SystemExit('Native LATE plan is not a bounded raw PostgreSQL plan array')
+                for key in ('query_raw_sha256','query_normalized_sha256','snapshot_before_sha256','snapshot_after_sha256'):
+                    if not re.fullmatch(r'[0-9a-f]{64}',str(row.get(key))): raise SystemExit('Native LATE plan observation digest is malformed')
+                if row.get('snapshot_before_sha256')!=row.get('snapshot_after_sha256') or type(row.get('snapshot_counts')) is not dict or set(row['snapshot_counts'])!=count_keys:
+                    raise SystemExit('Native LATE full-state transaction snapshot did not restore exactly')
+                before_counts=validate_stream_snapshot(row.get('streamed_snapshot_before'),row,'before',op)
+                after_counts=validate_stream_snapshot(row.get('streamed_snapshot_after'),row,'after',op)
+                if before_counts!=after_counts: raise SystemExit('Native LATE streamed full-state census changed across rollback')
+                late_rows[(phase,op)]=row
+            if cohort['profile']['source_run_id']!=late_rows[('late-consumer','insert')]['streamed_snapshot_before']['scope']['run_id']:
+                raise SystemExit('Native LATE calibration source run and full-state snapshot scope differ')
+            if any(late_rows[pair]['query_normalized_sha256']!=original_sql_hashes[pair[1]] for pair in late_order):
+                raise SystemExit('Native LATE outer SQL differs from the schema-pinned original query')
+            early_rows={(row['phase'],row['operation']):row for row in plans}
+            if any(late_rows[('late-consumer',op)]['query_raw_sha256']!=early_rows[('consumer',op)]['query_raw_sha256'] for op in ('insert','mark','apply')):
+                raise SystemExit('Native LATE raw outer SQL differs from the original consumer SQL bytes')
+            late_nested_descriptor=late_manifest.get('nested')
+            raw_late_nested=late_nested_path.read_bytes()
+            if type(late_nested_descriptor) is not dict or set(late_nested_descriptor)!={'file','bytes','sha256'} or late_nested_descriptor.get('file')!=late_nested_path.name \
+                or late_nested_descriptor.get('bytes')!=len(raw_late_nested) or late_nested_descriptor.get('sha256')!=hashlib.sha256(raw_late_nested).hexdigest():
+                raise SystemExit('Native LATE manifest nested byte/SHA reference is invalid')
+            if type(late_nested) is not dict or set(late_nested)!=set(nested_keys) or late_nested.get('contract')!='r16-native-dml-late-nested-plans-v1':
+                raise SystemExit('Native LATE nested receipt has an invalid exact shape')
+            for key,value in {'status':'observed','diagnostic_only':True,'h1_accepted':False,'cpu':'UNKNOWN','baseline_head':expected['head_sha'],'source_binding_digest':expected['source_tree_sha256']}.items():
+                if type(late_nested.get(key)) is not type(value) or late_nested.get(key)!=value: raise SystemExit('Native LATE nested source/diagnostic metadata is invalid')
+            if late_nested.get('failure') is not None or late_nested.get('limits')!=limits:
+                raise SystemExit('Successful Native LATE nested receipt has failure or changed recorder limits')
+            early_retained,early_types=totals['retained'],totals['types'];totals={'types':0,'retained':0}
+            late_preflight=late_nested.get('preflight_receipt');validate_lifecycle(late_preflight,True)
+            late_probes=late_nested.get('probes')
+            if type(late_probes) is not list or len(late_probes)!=3 or [(p.get('phase'),p.get('operation')) for p in late_probes if type(p) is dict]!=late_order:
+                raise SystemExit('Native LATE nested receipt must contain the exact three-probe ordered matrix')
+            if late_preflight['session_id'] in {p['session_id'] for p in late_probes if type(p) is dict}:
+                raise SystemExit('Native LATE preflight must use a distinct disposable client')
+            for probe in late_probes:
+                pair=(probe['phase'],probe['operation']);row=late_rows[pair]
+                expected_outer={'calls':row['calls'],'answers':row['answers'],'query_raw_sha256':row['query_raw_sha256'],
+                    'query_normalized_sha256':row['query_normalized_sha256'],'plan_sha256':row['plan_sha256'],'apply_roster_sha256':row['apply_roster_sha256']}
+                if type(probe.get('outer')) is not dict or probe['outer']!=expected_outer: raise SystemExit('Native LATE nested probe differs from its outer plan receipt')
+                validate_lifecycle(probe)
+            if totals['retained']>limits['retained_bytes'] or totals['types']>limits['unique_types'] or early_retained>limits['retained_bytes'] \
+                or early_types>limits['unique_types'] or early_retained+totals['retained']>2*limits['retained_bytes']:
+                raise SystemExit('Independent early/late nested caps or explicit 6 MiB combined retained cap failed')
+            tap_text=tap.read_text(encoding='utf-8')
+            validate_native_dml_tap(tap_text,title)
+            if type(survey) is not dict or set(survey)!=set(['contract','status','diagnostic_only','h1_accepted','phase','cpu','source','sample','shape','plans_reference','observation','lifecycle','close','rr_closed_and_restored','failure_stage']):
+                raise SystemExit('Native LATE Survey receipt has an invalid exact shape')
+            for key,value in {'contract':'r16-native-late-input-survey-v1','status':'observed','diagnostic_only':True,'h1_accepted':False,'phase':'late-consumer','cpu':'UNKNOWN','rr_closed_and_restored':True,'failure_stage':None}.items():
+                if type(survey.get(key)) is not type(value) or survey.get(key)!=value: raise SystemExit('Native LATE Survey did not complete with its diagnostic-only contract')
+            survey_source=survey.get('source')
+            if type(survey_source) is not dict or set(survey_source)!={'product_sha256','observer_fixture_sha256','helper_sha256','shared_native'} \
+                or survey_source.get('product_sha256')!='sha256:97a7d61e77268524ba1f9d1557f54ffa0ba2dc9b154ab256ac683b81aa86a469':
+                raise SystemExit('Native LATE Survey source/product binding is invalid')
+            shared=survey_source.get('shared_native')
+            if type(shared) is not dict or set(shared)!={'expected_git','runtime_before'}:
+                raise SystemExit('Survey must carry the exact shared Native full source receipts')
+            validate_full_git(shared.get('expected_git'));validate_full_git(shared.get('runtime_before'))
+            if shared.get('expected_git')!=expected or shared.get('runtime_before')!=late_source.get('before'):
+                raise SystemExit('Survey shared Native source bindings differ from the full Native expected/runtime-before receipts')
+            paths={item['path']:item['sha256'] for item in expected['file_manifest']}
+            if paths.get('infrastructure/db/signal-listening-runs.ts')!=survey_source.get('product_sha256') \
+                or paths.get('infrastructure/db/migrations/signal-listening-input-plan.synthetic.fixture.ts')!=survey_source.get('observer_fixture_sha256') \
+                or paths.get('infrastructure/db/migrations/signal-listening-native-late-survey.test-support.ts')!=survey_source.get('helper_sha256') \
+                or not all(valid_prefixed_sha(survey_source.get(k)) for k in ('observer_fixture_sha256','helper_sha256')):
+                raise SystemExit('Survey product, fixture, or helper bytes differ from full Native source')
+            sample=survey.get('sample')
+            if type(sample) is not dict or set(sample)!={'sql_raw_sha256','sql_template_sha256','parameters_sha256','parameters','matching_queries'} \
+                or sample.get('sql_raw_sha256')!='sha256:739613a2fceb44f3c00aa9b8b114efe3fd81a6bd76975841cc725773a2419e24' \
+                or sample.get('sql_template_sha256')!='sha256:cab9532c793cb5ef48193510a54eb24318b4dcf4fc5cc758282b14a565805194' \
+                or sample.get('matching_queries')!=1 or type(sample.get('parameters')) is not list or len(sample['parameters'])!=9 \
+                or sample.get('parameters_sha256')!=value_sha(sample['parameters']):
+                raise SystemExit('Survey did not observe the pinned actual SQL with all nine original parameters exactly once')
+            parameters=sample['parameters']
+            if type(parameters[7]) is not list or len(parameters[7])!=4096 or any(type(value) is not str or not value for value in parameters[7]) or len(set(parameters[7]))!=4096 or parameters[5]!=4096 or parameters[8]!='536870912':
+                raise SystemExit('Survey original query parameter bounds/4096 unique roots are invalid')
+            shape=survey.get('shape')
+            if type(shape) is not dict or set(shape)!={'survey_max_rows','hydration_max_rows','max_working_bytes','consumer_keys','hint_count','selected_root_count','selected_root_ids_sha256','selected_hints_sha256','selected_hints_bytes','inputs_sha256','survey_retained_bytes','hydration_working_bytes','hydration_retained_bytes'} \
+                or shape.get('survey_max_rows')!=4096 or shape.get('hydration_max_rows')!=720 or shape.get('max_working_bytes')!=536870912 \
+                or type(shape.get('hint_count')) is not int or shape['hint_count']<720 or shape.get('selected_root_count')!=720 \
+                or any(type(shape.get(k)) is not int or shape[k]<0 for k in ('survey_retained_bytes','hydration_working_bytes','hydration_retained_bytes')) \
+                or shape['survey_retained_bytes']>=536870912 or shape['hydration_working_bytes']!=536870912-shape['survey_retained_bytes'] \
+                or shape['hydration_working_bytes']<=0 or shape['survey_retained_bytes']+shape['hydration_retained_bytes']>536870912:
+                raise SystemExit('Survey max-row, hydration, working-byte, or selected-root shape is invalid')
+            survey_keys=shape.get('consumer_keys')
+            if type(survey_keys) is not list or len(survey_keys)!=2 or survey_keys!=sorted(set(survey_keys)) or survey_keys!=qkeys:
+                raise SystemExit('Survey consumer keys differ from the actual configured late cohort')
+            if type(survey_plans) is not dict or set(survey_plans)!={'contract','status','phase','source_reference','sql_raw_sha256','sql_template_sha256','selected_hints','plans'}:
+                raise SystemExit('Survey plans receipt has an invalid exact shape')
+            hints=survey_plans.get('selected_hints')
+            if type(hints) is not list or len(hints)!=720 or survey_plans.get('contract')!='r16-native-late-input-survey-plans-v1' \
+                or survey_plans.get('status')!='observed' or survey_plans.get('phase')!='late-consumer':
+                raise SystemExit('Survey plans receipt does not carry exactly 720 observed late hints')
+            hint_ids=[]
+            for hint in hints:
+                required_hint={'root_id','working_bytes','input_digest','state_json_bytes','question_keys','question_digests','scope_basis'}
+                if type(hint) is not dict or set(hint)!=required_hint or type(hint.get('root_id')) is not str or not hint['root_id'] \
+                    or type(hint.get('working_bytes')) is not str or not re.fullmatch(r'[1-9][0-9]*',hint['working_bytes']) \
+                    or type(hint.get('state_json_bytes')) is not int or hint['state_json_bytes']<2 or not valid_prefixed_sha(hint.get('input_digest')) \
+                    or hint.get('question_keys')!=survey_keys or type(hint.get('question_digests')) is not dict or set(hint['question_digests'])!=set(survey_keys) \
+                    or type(hint.get('scope_basis')) is not dict or set(hint['scope_basis'])!=set(survey_keys) \
+                    or any(type(v) is not str or not v for v in hint['scope_basis'].values()) \
+                    or any(not valid_prefixed_sha(v) for v in hint['question_digests'].values()):
+                    raise SystemExit('Survey hint contains missing, malformed, unexpected or text-bearing DTO fields')
+                hint_ids.append(hint['root_id'])
+            if hint_ids!=sorted(set(hint_ids)) or shape.get('selected_root_ids_sha256')!=value_sha(hint_ids) or shape.get('selected_hints_sha256')!=value_sha(hints) \
+                or shape.get('selected_hints_bytes')!=len((json.dumps(hints,ensure_ascii=False,separators=(',',':'))+'\n').encode('utf-8')) \
+                or shape['selected_hints_bytes']>640*1024 \
+                or not valid_prefixed_sha(shape.get('inputs_sha256')):
+                raise SystemExit('Survey selected hints, root IDs, hydrated DTO digest, or byte census do not reconcile')
+            observation=survey.get('observation');observed_gates={'status':'observed','ordinal_seen':1,'selected_count':1,'original_executions':1,'original_succeeded':True,
+                'result_reference_preserved':True,'root_argument_count':4096,'bind_count':9,'query_raw_match':True,'context_stable':True,'rr_read_only':True,
+                'settings_restored':True,'rollback_reset_confirmed':False,'discarded':False,'library_loaded':True,'library_unloaded':False,'loss':False,'failure_stage':'none',
+                'parent_present':True,'nested_present':True}
+            if type(observation) is not dict or observation.get('target_profile')!='survey-Q8' or observation.get('target_template_sha256')!='sha256:cab9532c793cb5ef48193510a54eb24318b4dcf4fc5cc758282b14a565805194' \
+                or observation.get('legacy_template_sha256')!='sha256:e2a1d2ae7cc6917e1b58de56e7d3a2ad108e902feeb46d5d1dd1559644421f42' \
+                or any(type(observation.get(k)) is not type(v) or observation.get(k)!=v for k,v in observed_gates.items()):
+                raise SystemExit('Survey original observer receipt is missing exact read-only RR plan gates')
+            if survey.get('lifecycle')!={'active_borrowed':0,'release_failures':0} or survey.get('close')!={'commit_ack':1,'rollback_ack':0}:
+                raise SystemExit('Survey store/client/transaction closure acknowledgements are incomplete')
+            survey_plan_raw=survey_plans_path.read_bytes();survey_ref=survey.get('plans_reference')
+            if type(survey_ref) is not dict or set(survey_ref)!={'filename','bytes','sha256'} or survey_ref.get('filename')!=survey_plans_path.name \
+                or survey_ref.get('bytes')!=len(survey_plan_raw) or survey_ref.get('sha256')!='sha256:'+hashlib.sha256(survey_plan_raw).hexdigest() \
+                or len(survey_plan_raw)>4*1024*1024:
+                raise SystemExit('Survey plans bytes/SHA reference does not match the complete private artifact')
+            if survey_plans.get('sql_raw_sha256')!=sample['sql_raw_sha256'] or survey_plans.get('sql_template_sha256')!=sample['sql_template_sha256']:
+                raise SystemExit('Survey plans SQL hashes differ from receipt')
+            source_ref=survey_plans.get('source_reference')
+            if type(source_ref) is not dict or source_ref!={'receipt_filename':survey_path.name,'shared_native_sha256':value_sha(shared),
+                'product_sha256':survey_source['product_sha256'],'observer_fixture_sha256':survey_source['observer_fixture_sha256'],'helper_sha256':survey_source['helper_sha256']}:
+                raise SystemExit('Survey plans explicit shared-source hash reference is invalid')
+            if 'sha256:'+str(cohort.get('root_ids_sha256'))!=shape.get('selected_root_ids_sha256'):
+                raise SystemExit('Native LATE root roster differs from actual Survey-selected roots')
+            observer_plans=survey_plans.get('plans')
+            if type(observer_plans) is not list or not 2<=len(observer_plans)<=128 \
+                or not any(type(p) is dict and p.get('query_template_sha256')==sample['sql_template_sha256'] for p in observer_plans) \
+                or not any(type(p) is dict and p.get('query_template_sha256')!=sample['sql_template_sha256'] for p in observer_plans):
+                raise SystemExit('Survey original plan observer lacks target and nested templates')
+            for item in observer_plans:
+                first=item.get('first') if type(item) is dict else None
+                if type(item) is not dict or item.get('variants')!='NOT_COLLECTED' or type(item.get('occurrences')) is not int or item['occurrences']<=0 \
+                    or type(first) is not dict or type(first.get('plan')) is not dict or type(first.get('nodes')) is not int or not 1<=first['nodes']<=512 \
+                    or type(first.get('bytes')) is not int or not 1<=first['bytes']<=4*1024*1024:
+                    raise SystemExit('Survey sanitized original query plan is outside node/byte/occurrence bounds')
+            print('Native LATE and Survey receipts validated independently; diagnostic only, not H1 acceptance')
+            # END success-only Native LATE and Survey validation.
           if not profile_ok or not cleanup_ok: raise SystemExit('native DML test or owned-lab cleanup did not succeed')
-          print('Native DML plans and workflow control validated; result remains diagnostic only, not H1 acceptance')
+          print('Native DML, Native LATE, Survey, and workflow-control receipts validated; diagnostic only, not H1 acceptance')
           PY
       - name: Upload bounded native DML-plan evidence
         if: ${{ always() && steps.evidence.outputs.artifact_eligible == 'true' }}

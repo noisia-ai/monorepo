@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import {execFileSync} from 'node:child_process';
 import {mkdir,mkdtemp,open,readFile,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
+import {performance} from 'node:perf_hooks';
 import {dirname,join,resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import test from 'node:test';
@@ -21,9 +22,11 @@ import {createWorkspaceEngineStorageV1} from '../../../services/workers/src/work
 import {createSignalListeningRuntimeStoreV1} from '../../../services/workers/src/workers/signal-listening-jev';
 import {jevUsageV1} from '../../../services/workers/src/workers/signal-jev-labeling-page';
 import {createNativeDmlPlanObserverV1,NATIVE_DML_PLAN_TITLE_V1,nativeDmlPlanShaV1,
- createNativeDmlPlanClientGuardV1,nativeDmlPlanOwnerOutcomeV1,
+ createNativeDmlPlanClientGuardV1,nativeDmlPlanOwnerOutcomeV1,nativeDmlLateGrowthLimitV1,
  type NativeDmlPlanSnapshotV1,type NativeDmlPlanClientStateV1,createNativeDmlNestedRecorderV1,
  NATIVE_DML_NESTED_FILE_V1,NATIVE_DML_NESTED_LIMITS_V1,NATIVE_DML_NESTED_PREFLIGHT_SQL_V1} from './signal-listening-native-dml-plan.test-support';
+import {captureNativeLateSnapshotV1,NATIVE_LATE_SNAPSHOT_CONTRACT_V1} from './signal-listening-native-dml-late-snapshot.test-support';
+import {observeNativeLateSurveyV1,NativeLateSurveyObservationErrorV1} from './signal-listening-native-late-survey.test-support';
 
 
 /** Fast compatibility probe on the owned migrated lab, before any cold fixture. */
@@ -88,6 +91,31 @@ async function snapshot(c:PoolClient,run:LabelingRunV1):Promise<NativeDmlPlanSna
   WHERE a.id=$2`,[run.id,run.processing_admission_id])).rows;
  return{raw:JSON.stringify(full),counts};
 }
+async function lateSnapshot(c:PoolClient,run:LabelingRunV1,onUnknown:(error:unknown)=>void):Promise<NativeDmlPlanSnapshotV1>{
+ const tables:[string,string,string[]][]=[
+  ['calls','SELECT to_jsonb(t) row FROM signal_labeling_calls t WHERE run_id=$1 ORDER BY id',[run.id]],
+  ['links','SELECT to_jsonb(t) row FROM signal_listening_call_questions t WHERE run_id=$1 ORDER BY call_id,question_key',[run.id]],
+  ['answers','SELECT to_jsonb(t) row FROM signal_listening_answers t WHERE run_id=$1 ORDER BY root_id,question_key',[run.id]],
+  ['failures','SELECT to_jsonb(t) row FROM signal_listening_failures t WHERE run_id=$1 ORDER BY call_id',[run.id]],
+  ['raw_pages','SELECT to_jsonb(t) row FROM signal_labeling_raw_pages t WHERE run_id=$1 ORDER BY id',[run.id]],
+  ['raw_members','SELECT to_jsonb(t) row FROM signal_labeling_raw_page_members t WHERE run_id=$1 ORDER BY call_id',[run.id]],
+  ['mutation_fences','SELECT to_jsonb(t) row FROM signal_labeling_page_mutation_fences t WHERE run_id=$1 ORDER BY id',[run.id]],
+  ['run','SELECT to_jsonb(t) row FROM signal_labeling_runs t WHERE id=$1',[run.id]],
+  ['admission','SELECT to_jsonb(t) row FROM signal_processing_admissions t WHERE id=$1',[run.processing_admission_id!]],
+ ];
+ assert.deepEqual(tables.map(row=>row[0]),['calls','links','answers','failures','raw_pages','raw_members','mutation_fences','run','admission']);
+ return captureNativeLateSnapshotV1({client:c,tables:tables.map(([name,sql,values])=>({name,sql,values})),
+  scope:{workspace_id:run.workspace_id,run_id:run.id,processing_admission_id:run.processing_admission_id!},onUnknown,
+  exposure:{sql:"SELECT exposure.total_micro_usd::text organization,(SELECT COALESCE(sum(CASE WHEN status IN('settled','failed') THEN COALESCE(settled_micro_usd,0)+terminal_exposure_micro_usd ELSE reserved_micro_usd END),0)::text FROM signal_labeling_calls WHERE run_id=$1) run FROM signal_processing_admissions a CROSS JOIN LATERAL signal_processing_org_exposure_v1(a.organization_id,a.budget_date,a.budget_timezone) exposure WHERE a.id=$2",
+   values:[run.id,run.processing_admission_id!]}});
+}
+async function privateLineJson(path:string,value:unknown,maxBytes:number){
+ const raw=JSON.stringify(value)+'\n';assert.ok(Buffer.byteLength(raw)<=maxBytes,'native_late_survey_evidence_too_large');
+ const handle=await open(path,'wx',0o600);try{await handle.writeFile(raw);await handle.sync();}finally{await handle.close();}
+ return{file:path.split('/').at(-1)!,bytes:Buffer.byteLength(raw),sha256:nativeDmlPlanShaV1(raw)};
+}
+type NativeLateCensusV1={total_calls:number;durable_applied_calls:number;base_calls:number;consumer_calls:number;resolved_roots:number;unresolved_roots:number};
+
 async function assertAnswerTriggers(c:Pick<PoolClient,'query'>){
  const rows=(await c.query(`SELECT t.tgname,t.tgenabled,t.tgtype,p.proname,n.nspname,p.prosrc,
   pg_get_triggerdef(t.oid) definition FROM pg_trigger t JOIN pg_proc p ON p.oid=t.tgfoid
@@ -126,6 +154,18 @@ test(NATIVE_DML_PLAN_TITLE_V1,{skip:!enabled,timeout:30*60*1000},async()=>{
  assert.equal(nativeDmlPlanShaV1(money),'c9aba3719759b7cf09d96371be79838f487707b66a3c20d13070e7559a31a2e0');
  assert.equal(nativeDmlPlanShaV1(answer_guard),'83a1d0366bee6339fb010140084bc42dfcabe7b63bb07dc8566272eb7659357f');
  const nested=createNativeDmlNestedRecorderV1({money,answer_guard});
+ const lateObserver=createNativeDmlPlanObserverV1(),lateNested=createNativeDmlNestedRecorderV1({money,answer_guard});
+ let lateMode=false,earlyScopeClosed=false,surveyClosed=false,lateAttempted=false;
+ let sourceLateBefore:Awaited<ReturnType<typeof captureR16SourceProvenanceV1>>|undefined;
+ let runtimeWitnessLate:R16ListeningRuntimeWitnessV1|undefined;
+ const lateAnswerTriggers:{before:unknown;after:unknown}={before:null,after:null};
+ const lateCensus:{before?:NativeLateCensusV1;after?:NativeLateCensusV1}={};
+ const lateCohort:Record<string,unknown>={},growth={cohorts:0,native_calls:0,legacy_calls:0,elapsed_ms:0};
+ type NativeStore=ReturnType<typeof createSignalListeningRuntimeStoreV1>;
+ type Profile=NonNullable<Awaited<ReturnType<typeof deriveSignalListeningCalibrationV1>>>;
+ const continuation:{value?:{run:LabelingRunV1;store:NativeStore;profiles:Map<string,Profile>;
+  proposals:(inputs:SignalListeningInputV1[])=>LabelingCallProposalV1<SignalListeningInputV1>[];
+  complete:(calls:ReadonlyArray<LabelingCallV1<SignalListeningInputV1>>)=>Promise<void>}}={};
  const clientStates:NativeDmlPlanClientStateV1[]=[];
  const phaseReceipts:Array<Record<string,unknown>>=[];let runForSnapshot:LabelingRunV1|undefined;
  let runtimeWitness:R16ListeningRuntimeWitnessV1|undefined,finalCensus:Record<string,number>|undefined;
@@ -139,9 +179,9 @@ test(NATIVE_DML_PLAN_TITLE_V1,{skip:!enabled,timeout:30*60*1000},async()=>{
     const guard=createNativeDmlPlanClientGuardV1(c,async({sql,values,normal,markUnknown})=>{
      if(sql==='BEGIN'){const result=await normal();await c.query("SET LOCAL statement_timeout='60s'; SET LOCAL lock_timeout='1s'");return result;}
      if(!runForSnapshot)return normal();
-     return observer.query({client:c,sql,values,snapshot:()=>snapshot(c,runForSnapshot!),onUnknown:markUnknown,
+     return (lateMode?lateObserver:observer).query({client:c,sql,values,snapshot:()=>lateMode?lateSnapshot(c,runForSnapshot!,markUnknown):snapshot(c,runForSnapshot!),onUnknown:markUnknown,
       beforeProbe:async operation=>{if(operation==='apply')await assertAnswerTriggers(c);},
-      instrumentation:identity=>nested.probe(c,identity),normal});
+      instrumentation:identity=>(lateMode?lateNested:nested).probe(c,identity),normal});
     });clientStates.push(guard.state);return guard.client;
    }};
   }});
@@ -157,6 +197,7 @@ test(NATIVE_DML_PLAN_TITLE_V1,{skip:!enabled,timeout:30*60*1000},async()=>{
     runtimeWitness=witness;answerTriggers.before=await assertAnswerTriggers(f.access.database);
     const store=createSignalListeningRuntimeStoreV1(f.access.database,{execution,storage});
     const run=await store.claim(f.run_id);assert.ok(run);runForSnapshot=run;
+    const profiles=new Map<string,Profile>();
     const all=await store.inputs(run,bounds);assert.ok(all.length>=752);assert.ok(all.every(i=>i.question_keys.join(',')==='promotion,voice'));
     const size=(i:SignalListeningInputV1)=>Buffer.byteLength(JSON.stringify(buildSignalListeningJevRequestV1(i,workload.configuration)));
     const sorted=all.map(input=>({input,bytes:size(input)})).sort((a,b)=>a.bytes-b.bytes||a.input.root_id.localeCompare(b.input.root_id));
@@ -187,7 +228,7 @@ test(NATIVE_DML_PLAN_TITLE_V1,{skip:!enabled,timeout:30*60*1000},async()=>{
      const warm=await store.reserve(run,proposals(anchors));assert.equal(warm.length,32);await store.markSubmitting(run,warm);await complete(warm);
      const shape=signalListeningCalibrationShapeV1(workload.configuration,anchors[0]!);
      const profile=await deriveSignalListeningCalibrationV1({...f.access,run_id:run.id,shape_digest:shape.shape_digest});
-     assert.ok(profile);assert.equal(profile.sample_count,32);assert.equal(profile.source_run_id,run.id);
+     assert.ok(profile);assert.equal(profile.sample_count,32);assert.equal(profile.source_run_id,run.id);profiles.set(phase,profile);
      assert.equal(new Set(profile.source_call_ids).size,32);assert.equal(profile.scope.phase,phase==='base'?'base':'consumer_category');
      assert.ok(batch.every(input=>size(input)>=profile.request_min_bytes&&size(input)<=profile.request_max_bytes));
      const paid:{n:number}=(await f.access.database.query(`SELECT count(*)::int n FROM signal_labeling_calls c
@@ -216,6 +257,98 @@ test(NATIVE_DML_PLAN_TITLE_V1,{skip:!enabled,timeout:30*60*1000},async()=>{
     assert.equal(observer.observations.length,6);
     assert.deepEqual(observer.observations.map(row=>row.phase+':'+row.operation),
      ['base:insert','base:mark','base:apply','consumer:insert','consumer:mark','consumer:apply']);
+    continuation.value={run,store,profiles,proposals,complete};
+   });
+
+   earlyScopeClosed=true;lateAttempted=true;sourceLateBefore=await captureR16SourceProvenanceV1(repo);assert.deepEqual(sourceLateBefore,expected);
+   const state=continuation.value;assert.ok(state,'native_late_early_context_missing');const{run,store}=state;
+   const consumerKeys=workload.question_keys.filter(key=>!['promotion','voice'].includes(key)).sort();assert.equal(consumerKeys.length,2);
+   const baseKeys=['promotion','voice'];
+   const census=async():Promise<NativeLateCensusV1>=>{
+    const row=(await f.access.database.query(`SELECT count(*)::int total_calls,
+     count(*) FILTER(WHERE status='settled' AND results_applied AND raw_storage_verified_at IS NOT NULL AND raw_storage_verified_key=raw_storage_key)::int durable_applied_calls,
+     count(*) FILTER(WHERE inputs->0->'question_keys'=$2::jsonb)::int base_calls,
+     count(*) FILTER(WHERE inputs->0->'question_keys'=$3::jsonb)::int consumer_calls,
+     count(DISTINCT inputs->0->>'root_id') FILTER(WHERE inputs->0->'question_keys'=$2::jsonb)::int base_distinct,
+     count(DISTINCT inputs->0->>'root_id') FILTER(WHERE inputs->0->'question_keys'=$3::jsonb)::int consumer_distinct
+     FROM signal_labeling_calls WHERE run_id=$1`,[run.id,JSON.stringify(baseKeys),JSON.stringify(consumerKeys)])).rows[0];
+    assert.ok(row);assert.equal(row.total_calls,row.durable_applied_calls);assert.equal(row.base_calls,row.base_distinct);
+    assert.equal(row.consumer_calls,row.consumer_distinct);assert.equal(row.total_calls,row.base_calls+row.consumer_calls);
+    assert.ok(row.base_calls<=32768&&row.consumer_calls<=row.base_calls);
+    return{total_calls:row.total_calls,durable_applied_calls:row.durable_applied_calls,base_calls:row.base_calls,
+     consumer_calls:row.consumer_calls,resolved_roots:row.consumer_calls,unresolved_roots:32768-row.consumer_calls};
+   };
+   const initial=await census();assert.equal(initial.total_calls,1504);assert.equal(initial.base_calls,752);assert.equal(initial.consumer_calls,752);
+   await instrumentationPreflight(lateNested);
+   const beganGrowth=performance.now();let current=initial;
+   while(current.base_calls<32768||current.total_calls<60000){
+    assert.ok(growth.cohorts<256,'native_late_growth_cohort_bound');await store.renew(run);
+    const batch=await store.withInputSurvey(run,bounds,async scope=>{
+     if(current.unresolved_roots>=4096)assert.equal(scope.hints.length,4096,'native_late_full_frontier_must_fit');
+     const base=scope.hints.filter(hint=>hint.question_keys.join(',')===baseKeys.join(','));
+     const candidates=base.length?base:scope.hints.filter(hint=>hint.question_keys.join(',')===consumerKeys.join(','));
+     const batchLimit=nativeDmlLateGrowthLimitV1({remaining_base:32768-current.base_calls,has_base_hints:base.length>0});
+     const remaining=execution.max_buffered_bytes-scope.retained_bytes;assert.ok(remaining>0);
+     const selected:typeof candidates=[];let retained=0;
+     for(const hint of candidates){if(selected.length===batchLimit)break;const bytes=Number(hint.working_bytes);
+      assert.ok(Number.isSafeInteger(bytes)&&bytes>=0);if(retained+bytes>remaining)break;selected.push(hint);retained+=bytes;}
+     assert.ok(selected.length>0,'native_late_growth_no_bounded_pending_group');
+     const hydration=await scope.hydrate(selected.map(h=>h.root_id),{max_rows:720,max_working_bytes:remaining});
+     assert.equal(hydration.kind,'ready');if(hydration.kind!=='ready')throw Error('native_late_growth_stale');
+     assert.equal(hydration.inputs.length,selected.length);assert.ok(hydration.retained_bytes+scope.retained_bytes<=execution.max_buffered_bytes);
+     return hydration.inputs;
+    });
+    assert.ok(batch.length>0&&batch.length<=720);const proposals=state.proposals(batch);
+    const admission=await store.admitAndMarkSelected!(run,proposals,{selectFresh:rows=>rows,
+     validateBeforeCommit:(calls,rows)=>{assert.equal(calls.length,batch.length);assert.equal(rows.length,batch.length);}});
+    let calls:ReadonlyArray<LabelingCallV1<SignalListeningInputV1>>;
+    if(admission.kind==='committed'){calls=admission.calls;growth.native_calls+=calls.length;}
+    else{const legacy=await store.reserve(run,proposals);assert.equal(legacy.length,batch.length);await store.markSubmitting(run,legacy);calls=legacy;growth.legacy_calls+=calls.length;}
+    await state.complete(calls);growth.cohorts++;await store.renew(run);
+    const next=await census();assert.equal(next.total_calls,current.total_calls+batch.length);assert.ok(next.total_calls<=64816,'native_late_keep720_pending');current=next;
+   }
+   growth.elapsed_ms=performance.now()-beganGrowth;
+   assert.equal(current.base_calls,32768);assert.ok(current.total_calls>=60000&&current.total_calls<=64816);
+   assert.ok(current.unresolved_roots>=720);lateCensus.before=current;
+   const beforeResolved=await f.readResolvedRootIds();assert.equal(beforeResolved.length,current.resolved_roots);assert.equal(new Set(beforeResolved).size,beforeResolved.length);
+   await store.renew(run);
+   let selectedLate:SignalListeningInputV1[];
+   try{
+    const survey=await observeNativeLateSurveyV1({database:f.access.database,run,
+     createStore:database=>createSignalListeningRuntimeStoreV1(database,{execution,storage}),consumerKeys,phase:'late-consumer',
+     sourceBinding:{expected_git:expected,runtime_before:sourceLateBefore}});
+    await privateLineJson(join(directory,'native-late-survey-plans.json'),survey.plans,4*1024*1024);
+    await privateLineJson(join(directory,'native-late-survey.json'),survey.receipt,1024*1024);
+    selectedLate=survey.inputs;surveyClosed=true;
+   }catch(error){
+    if(error instanceof NativeLateSurveyObservationErrorV1){
+     await privateLineJson(join(directory,'native-late-survey.json'),error.receipt,1024*1024);
+     try{await privateLineJson(join(directory,'native-late-survey-plans.json'),error.plans,4*1024*1024);}
+     catch(writeError){throw new AggregateError([error,writeError],'native_late_survey_partial_write_failed',{cause:error});}
+    }
+    throw error;
+   }
+   assert.equal(selectedLate.length,720);assert.equal(new Set(selectedLate.map(i=>i.root_id)).size,720);
+   assert.ok(selectedLate.every(i=>i.question_keys.join(',')===consumerKeys.join(',')));
+   const profile=state.profiles.get('consumer');assert.ok(profile);assert.equal(profile.sample_count,32);assert.equal(profile.source_run_id,run.id);
+   assert.ok(selectedLate.every(input=>{const bytes=Buffer.byteLength(JSON.stringify(buildSignalListeningJevRequestV1(input,workload.configuration)));
+    return bytes>=profile.request_min_bytes&&bytes<=profile.request_max_bytes;}),'native_late_profile_real_extremes_required');
+   Object.assign(lateCohort,{phase:'late-consumer',calls:720,answers:1440,question_keys:consumerKeys,profile,
+    root_ids_sha256:nativeDmlPlanShaV1(JSON.stringify(selectedLate.map(i=>i.root_id).sort()))});
+   await withR16ListeningRuntimeWitnessV1(f.access.database,async witness=>{
+    runtimeWitnessLate=witness;lateAnswerTriggers.before=await assertAnswerTriggers(f.access.database);
+    await store.renew(run);lateMode=true;lateObserver.arm('late-consumer',consumerKeys);
+    const admission=await store.admitAndMarkSelected!(run,state.proposals(selectedLate),{
+     selectFresh:rows=>rows,validateBeforeCommit:(calls,rows)=>{assert.equal(calls.length,720);assert.equal(rows.length,720);assert.ok(calls.every(c=>c.status==='submitting'));}});
+    assert.equal(admission.kind,'committed');if(admission.kind!=='committed')throw Error('native_late_profile_uncovered');
+    const ids=admission.calls.map(call=>call.id);assert.equal(ids.length,720);lateObserver.bindApplyRoster(ids);
+    lateCohort.native_call_ids_sha256=nativeDmlPlanShaV1(JSON.stringify([...ids].sort()));
+    await state.complete(admission.calls);lateObserver.finishPhase();lateMode=false;
+    lateCensus.after=await census();assert.equal(lateCensus.after.total_calls,current.total_calls+720);
+    assert.equal(lateCensus.after.base_calls,32768);assert.equal(lateCensus.after.consumer_calls,current.consumer_calls+720);
+    const afterResolved=await f.readResolvedRootIds();assert.equal(afterResolved.length,lateCensus.after.resolved_roots);assert.equal(new Set(afterResolved).size,afterResolved.length);
+    lateAnswerTriggers.after=await assertAnswerTriggers(f.access.database);assert.deepEqual(lateAnswerTriggers.after,lateAnswerTriggers.before);
+    await store.renew(run);assert.deepEqual(lateObserver.observations.map(row=>row.phase+':'+row.operation),['late-consumer:insert','late-consumer:mark','late-consumer:apply']);
    });
   });fixtureReturned=true;
  }catch(error){failed=true;primary=error;}
@@ -245,6 +378,29 @@ test(NATIVE_DML_PLAN_TITLE_V1,{skip:!enabled,timeout:30*60*1000},async()=>{
    'Early752 roots/1504 calls; not late65536 ledger, deferred COMMIT fences or H1 capacity.',
    'Counters cover notices actually delivered; no proof of every possible server message. LOAD remains session-local until connection closes.']};
  const nestedFile=await privateJson(join(directory,NATIVE_DML_NESTED_FILE_V1),nestedReceipt,NATIVE_DML_NESTED_LIMITS_V1.file_bytes);
+ const latePlans=[];
+ for(const row of lateObserver.observations){const{plan,...metadata}=row;
+  if(plan!==null){const stored=await privateJson(join(directory,row.file),plan,4*1024*1024);assert.equal(stored.bytes,row.plan_bytes);assert.equal(stored.sha256,row.plan_sha256);}latePlans.push(metadata);}
+ for(const probe of lateNested.probes){const row=lateObserver.observations.find(row=>row.phase===probe.phase&&row.operation===probe.operation);
+  if(row)probe.outer={calls:row.calls,answers:row.answers,query_raw_sha256:row.query_raw_sha256,query_normalized_sha256:row.query_normalized_sha256,plan_sha256:row.plan_sha256,apply_roster_sha256:row.apply_roster_sha256};}
+ const lateNestedReceipt={contract:'r16-native-dml-late-nested-plans-v1',status:failed?'failed':'observed',diagnostic_only:true,h1_accepted:false,cpu:'UNKNOWN',
+  baseline_head:expected.head_sha,source_binding_digest:expected.source_tree_sha256,limits:NATIVE_DML_NESTED_LIMITS_V1,
+  preflight_receipt:lateNested.preflight,probes:lateNested.probes,
+  failure:failed?{kind:primary instanceof Error?primary.name:typeof primary,code:primary&&typeof primary==='object'&&'code'in primary&&typeof primary.code==='string'?primary.code:null}:null,
+  limitations:['Late diagnostic inclusive wall observations, not CPU or H1.','Independent late retained3MiB budget; early3MiB plus late3MiB aggregate<=6MiB; archive32MiB expanded/16MiB conservative ZIP unchanged.']};
+ const lateNestedFile=await privateJson(join(directory,'native-dml-late-nested-plans.json'),lateNestedReceipt,NATIVE_DML_NESTED_LIMITS_V1.file_bytes);
+ const lateReceipt={contract:'r16-listening-native-dml-late-plan-v1',status:failed?'failed':'observed',diagnostic_only:true,h1_accepted:false,cpu:'UNKNOWN',
+  external_provider_requests:0,external_provider_spend_micro_usd:0,scope:'late_consumer_720_after_native_60000_plus_ledger',
+  source:{expected_git:expected,before:sourceLateBefore??null,after:sourceAfter,workflow:{path:workflowPath,sha256:nativeDmlPlanShaV1(workflow)}},
+  runtime_witness:runtimeWitnessLate??null,answer_triggers:lateAnswerTriggers,
+  fixture:lateCensus.before?{population:32768,before:lateCensus.before,after:lateCensus.after??null,cohort:lateCohort,growth}:null,
+  snapshot_contract:NATIVE_LATE_SNAPSHOT_CONTRACT_V1,plans:latePlans,nested:lateNestedFile,
+  connection_uncertainty:clientStates.filter(state=>state.unknown_ack).map(state=>({...state})),
+  closure:{fixture_returned:fixtureReturned,storage_closed:storageClosed,storage_removed:storageRemoved,source_clean:sourceClean,early_scope_closed:earlyScopeClosed,survey_closed:surveyClosed},
+  failure:failed?{kind:primary instanceof Error?primary.name:typeof primary,
+   code:primary&&typeof primary==='object'&&'code'in primary&&typeof primary.code==='string'?primary.code:null,
+   owner_outcome:nativeDmlPlanOwnerOutcomeV1(primary),unknown_ack:lateObserver.observations.some(row=>row.unknown_ack)||clientStates.some(state=>state.unknown_ack)||nativeDmlPlanOwnerOutcomeV1(primary)==='unknown',late_attempted:lateAttempted}:null};
+ await privateJson(join(directory,'native-dml-late-plans.json'),lateReceipt,1024*1024);
  const receipt={contract:'r16-listening-native-dml-plan-v1',status:failed?'failed':'observed',diagnostic_only:true,h1_accepted:false,cpu:'UNKNOWN',
   external_provider_requests:0,external_provider_spend_micro_usd:0,
   scope:'early_752_roots_on_32768_corpus_not_late_ledger_or_capacity',
@@ -260,4 +416,5 @@ test(NATIVE_DML_PLAN_TITLE_V1,{skip:!enabled,timeout:30*60*1000},async()=>{
  await privateJson(join(directory,'native-dml-plans.json'),receipt,1024*1024);
  if(failed)throw primary;
  assert.ok(plans.every(p=>p.savepoint_ack&&p.rollback_ack&&p.release_ack&&p.snapshot_equal&&p.normal_original_succeeded&&!p.unknown_ack));
+ assert.equal(latePlans.length,3);assert.ok(latePlans.every(p=>p.savepoint_ack&&p.rollback_ack&&p.release_ack&&p.snapshot_equal&&p.normal_original_succeeded&&!p.unknown_ack));
 });

@@ -8,10 +8,18 @@ export const NATIVE_DML_PLAN_TITLE_V1='native Listening32768 INSERT MARK APPLY p
 export const NATIVE_DML_PLAN_BATCH_V1=720;
 export const NATIVE_DML_PLAN_MAX_BYTES_V1=4*1024*1024;
 export const NATIVE_DML_PLAN_APPLY_SHA_V1='7a86df2f02e720b156e7f9d7132eba342080fc9d169d7cf8e1cbdfa74de067a7';
-export type NativeDmlPlanPhaseV1='base'|'consumer';
+export type NativeDmlPlanPhaseV1='base'|'consumer'|'late-consumer';
 export type NativeDmlPlanOperationV1='insert'|'mark'|'apply';
+/** In the real pending-root frontier, consumer completion exposes later base
+ * roots. Do not evict more roots than the last unseen base tail requires. */
+export function nativeDmlLateGrowthLimitV1(args:{remaining_base:number;has_base_hints:boolean}):number{
+ assert.ok(Number.isSafeInteger(args.remaining_base)&&args.remaining_base>=0&&args.remaining_base<=32768,'native_late_remaining_base_invalid');
+ assert.equal(typeof args.has_base_hints,'boolean');
+ return !args.has_base_hints&&args.remaining_base>0?Math.min(NATIVE_DML_PLAN_BATCH_V1,args.remaining_base):NATIVE_DML_PLAN_BATCH_V1;
+}
+
 export type NativeDmlPlanClientV1={query(sql:string,values?:unknown[]):Promise<{rows:Record<string,unknown>[]}>};
-export type NativeDmlPlanSnapshotV1={raw:string;counts:Record<string,number>};
+export type NativeDmlPlanSnapshotV1={raw:string;counts:Record<string,number>;streamed?:Record<string,unknown>};
 export type NativeDmlPlanClientStateV1={unknown_ack:boolean;owner_rollback_sent:boolean;owner_rollback_ack:boolean;
  owner_commit_ack_unknown:boolean;released:boolean;forced_discard:boolean};
 type ProbeQueryResultV1={rows:Record<string,unknown>[];rowCount?:number|null};
@@ -66,6 +74,7 @@ export type NativeDmlPlanObservationV1={
  query_raw_sha256:string;query_normalized_sha256:string;file:string;
  plan_bytes:number|null;plan_sha256:string|null;plan:unknown|null;
  snapshot_before_sha256:string|null;snapshot_after_sha256:string|null;snapshot_counts:Record<string,number>|null;
+ streamed_snapshot_before?:Record<string,unknown>;streamed_snapshot_after?:Record<string,unknown>;
  savepoint_ack:boolean;rollback_sent:boolean;rollback_ack:boolean;release_ack:boolean;snapshot_equal:boolean;
  normal_original_sent:boolean;normal_original_succeeded:boolean;unknown_ack:boolean;
  apply_roster_sha256:string|null;
@@ -113,7 +122,7 @@ export function createNativeDmlPlanObserverV1(){
  return{
   observations,
   arm(next:NativeDmlPlanPhaseV1,questionKeys:readonly string[]){
-   assert.equal(phase,null,'native_dml_plan_previous_phase_not_closed');assert.equal(questionKeys.length,2);
+   assert.ok(['base','consumer','late-consumer'].includes(next),'native_dml_plan_phase_invalid');assert.equal(phase,null,'native_dml_plan_previous_phase_not_closed');assert.equal(questionKeys.length,2);
    assert.equal(new Set(questionKeys).size,2);phase=next;keys=[...questionKeys];expectedApplyIds=null;
   },
   bindApplyRoster(ids:readonly string[]){
@@ -138,7 +147,8 @@ export function createNativeDmlPlanObserverV1(){
    observations.push(row);await args.beforeProbe?.(operation);
    const instrumentation=args.instrumentation?.({phase,operation,sql:args.sql});let restorationAttempted=false;
    const before=await args.snapshot();row.snapshot_before_sha256=nativeDmlPlanShaV1(before.raw);row.snapshot_counts=before.counts;
-   const name='r16_native_dml_plan_'+phase+'_'+operation;
+   if(before.streamed)row.streamed_snapshot_before=before.streamed;
+   const name='r16_native_dml_plan_'+phase.replaceAll('-','_')+'_'+operation;assert.match(name,/^[a-z_][a-z0-9_]*$/u);
    try{
     await instrumentation?.beforeSavepoint();
     await args.client.query('SAVEPOINT '+name);row.savepoint_ack=true;await instrumentation?.afterSavepoint();
@@ -165,6 +175,7 @@ export function createNativeDmlPlanObserverV1(){
     await args.client.query('RELEASE SAVEPOINT '+name);row.release_ack=true;
     restorationAttempted=true;await instrumentation?.afterRestore();instrumentation?.assertCapture();
     const after=await args.snapshot();row.snapshot_after_sha256=nativeDmlPlanShaV1(after.raw);
+    if(after.streamed)row.streamed_snapshot_after=after.streamed;
     assert.equal(before.raw===after.raw,true,'native_dml_plan_business_snapshot_changed');row.snapshot_equal=true;
    }catch(primary){
     // Do not retry an unacknowledged savepoint/rollback/release. The owning

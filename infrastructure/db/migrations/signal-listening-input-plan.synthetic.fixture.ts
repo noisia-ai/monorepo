@@ -1,3 +1,4 @@
+import {projectionHelperPartsV1,projectionShaV1} from './signal-listening-projection-linear-joins.oracle';
 import {invertWirePopulationMetadataV1,wirePopulationMetadataV1} from './signal-listening-wire-population.oracle';
 import {createHash,randomUUID} from 'node:crypto';
 import {readFile,mkdir,open,realpath,rm,lstat} from 'node:fs/promises';
@@ -20,8 +21,10 @@ export const INPUT_PLAN_LIMITS_V1=Object.freeze({ordinal:65,notice_bytes:4*1024*
 export const INPUT_PLAN_TARGET_SHA_V1='sha256:e2a1d2ae7cc6917e1b58de56e7d3a2ad108e902feeb46d5d1dd1559644421f42';
 export const INPUT_PLAN_WIRE_E_TARGET_SHA_V1='sha256:b4e38b2486fca6e4025b361b9c47ba4ad79edd91294b2554ff8b93edd3ba2150';
 export const INPUT_PLAN_CURRENT_PROFILE_V1='E' as const;
-export type InputPlanTargetProfileV1='historical'|'E';
-const targetShaV1=(profile:InputPlanTargetProfileV1)=>{known(profile==='historical'||profile==='E');return profile==='historical'?INPUT_PLAN_TARGET_SHA_V1:INPUT_PLAN_WIRE_E_TARGET_SHA_V1;};
+export const INPUT_PLAN_SURVEY_Q8_TARGET_SHA_V1='sha256:cab9532c793cb5ef48193510a54eb24318b4dcf4fc5cc758282b14a565805194';
+export const INPUT_PLAN_SURVEY_Q8_RAW_SHA_V1='sha256:739613a2fceb44f3c00aa9b8b114efe3fd81a6bd76975841cc725773a2419e24';
+export type InputPlanTargetProfileV1='historical'|'E'|'survey-Q8';
+const targetShaV1=(profile:InputPlanTargetProfileV1)=>{known(profile==='historical'||profile==='E'||profile==='survey-Q8');return profile==='historical'?INPUT_PLAN_TARGET_SHA_V1:profile==='E'?INPUT_PLAN_WIRE_E_TARGET_SHA_V1:INPUT_PLAN_SURVEY_Q8_TARGET_SHA_V1;};
 export const inputPlanTemplateHashV1=(text:string)=>hash(text.replace(/\s+/gu,' ').trim());
 function known(ok:unknown):asserts ok{if(!ok)throw Error('r16_input_plan_observer_invalid_or_incomplete');}
 
@@ -45,6 +48,11 @@ export function extractListeningInputPlanQueryOldV1(source:string){
  return extractHistoricalInputPlanQueryV1(source.includes('FROM signal_listening_wire_population_roots_v1')?invertWirePopulationMetadataV1(source):source);
 }
 export function extractListeningInputPlanQueryV1(source:string,profile:InputPlanTargetProfileV1=INPUT_PLAN_CURRENT_PROFILE_V1){
+ if(profile==='survey-Q8'){
+  const {sql}=projectionHelperPartsV1(source,'survey');
+  known('sha256:'+projectionShaV1(sql)===INPUT_PLAN_SURVEY_Q8_RAW_SHA_V1&&inputPlanTemplateHashV1(sql)===INPUT_PLAN_SURVEY_Q8_TARGET_SHA_V1);
+  return{sql,template_sha256:INPUT_PLAN_SURVEY_Q8_TARGET_SHA_V1,profile,legacy_template_sha256:INPUT_PLAN_TARGET_SHA_V1};
+ }
  if(profile==='historical')return{...extractListeningInputPlanQueryOldV1(source),profile,legacy_template_sha256:INPUT_PLAN_TARGET_SHA_V1};
  known(profile==='E');const oldSource=invertWirePopulationMetadataV1(source);known(wirePopulationMetadataV1(oldSource)===source);
  const old=extractHistoricalInputPlanQueryV1(oldSource);
@@ -179,9 +187,13 @@ async function readSettings(client:InputPlanClientV1){
  * listener through the next Bind, which closes the selected PostgreSQL portal.
  * Added latency is intrusive. This is neither an uninstrumented timing nor CPU.
  * Each selected query is forwarded exactly once, with its original arguments. */
-export function createListeningInputPlanObserverV1(options:{target_sql:string;profile?:InputPlanTargetProfileV1}){
+export function createListeningInputPlanObserverV1(options:{target_sql:string;profile?:InputPlanTargetProfileV1;ordinal?:number}){
  const profile=options.profile??INPUT_PLAN_CURRENT_PROFILE_V1,targetSha=targetShaV1(profile);
+ const ordinal=options.ordinal??INPUT_PLAN_LIMITS_V1.ordinal;
+ known(Number.isSafeInteger(ordinal)&&ordinal>=1&&ordinal<=INPUT_PLAN_LIMITS_V1.ordinal);
+ if(profile!=='survey-Q8')known(ordinal===INPUT_PLAN_LIMITS_V1.ordinal);
  known(inputPlanTemplateHashV1(options.target_sql)===targetSha);
+ if(profile==='survey-Q8')known(hash(options.target_sql)===INPUT_PLAN_SURVEY_Q8_RAW_SHA_V1);
  const report:InputPlanObservationV1={target_profile:profile,target_template_sha256:targetSha,legacy_template_sha256:INPUT_PLAN_TARGET_SHA_V1,status:'pending',ordinal_seen:0,selected_count:0,original_executions:0,
   original_succeeded:false,result_reference_preserved:false,returned_rows:null,root_argument_count:null,bind_count:null,
   query_raw_match:false,context_stable:false,rr_read_only:false,settings_restored:false,rollback_reset_confirmed:false,discarded:false,
@@ -249,7 +261,7 @@ export function createListeningInputPlanObserverV1(options:{target_sql:string;pr
    const normalized=text?.replace(/\s+/gu,' ').trim();
    const target=text!==undefined&&inputPlanTemplateHashV1(text)===targetSha;
    if(target)report.ordinal_seen++;
-   if(!target||report.ordinal_seen!==INPUT_PLAN_LIMITS_V1.ordinal){
+   if(!target||report.ordinal_seen!==ordinal){
     try{
      const result=await originalQuery(...args);
      if(normalized==='BEGIN'||normalized?.startsWith('BEGIN ')){inTransaction=true;aborted=false;}

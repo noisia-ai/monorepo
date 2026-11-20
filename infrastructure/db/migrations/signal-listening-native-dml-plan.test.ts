@@ -9,7 +9,7 @@ import {signalListeningBaseTemplateV1,signalListeningJevIdentityV1,buildSignalLi
 import {createSignalLabelingStoreV1,LabelingAdmissionFailureV1,type LabelingRunV1} from '../signal-labeling-runs';
 import {NATIVE_LISTENING_ADMISSION_INSERT_SQL_V1,NATIVE_LISTENING_ADMISSION_MARK_SQL_V1} from '../signal-listening-native-admission';
 import {createNativeDmlPlanObserverV1,NATIVE_DML_PLAN_APPLY_SHA_V1,nativeDmlPlanNormalizedShaV1,
- createNativeDmlPlanClientGuardV1,nativeDmlPlanOwnerOutcomeV1,
+ createNativeDmlPlanClientGuardV1,nativeDmlPlanOwnerOutcomeV1,nativeDmlLateGrowthLimitV1,
  type NativeDmlPlanClientV1,type NativeDmlPlanOperationV1} from './signal-listening-native-dml-plan.test-support';
 
 // Value: protects=probe never launches normal DML after failed/unknown rollback;
@@ -25,8 +25,8 @@ async function argumentsFor(operation:NativeDmlPlanOperationV1){
  assert.equal(matches.length,1);const sql=matches[0]![1]!;assert.equal(nativeDmlPlanNormalizedShaV1(sql),NATIVE_DML_PLAN_APPLY_SHA_V1);
  return{sql,values:['workspace','context','run',JSON.stringify(Array.from({length:720},(_,i)=>keys.map(question_key=>({call_id:'id_'+i,question_key}))).flat())]};
 }
-function harness(operation:NativeDmlPlanOperationV1,problem?:'rollback'|'release'|'explain'|'snapshot'|'size'|'trigger'){
- const observer=createNativeDmlPlanObserverV1();observer.arm('base',keys);
+function harness(operation:NativeDmlPlanOperationV1,problem?:'rollback'|'release'|'explain'|'snapshot'|'size'|'trigger',phase:'base'|'late-consumer'='base'){
+ const observer=createNativeDmlPlanObserverV1();observer.arm(phase,keys);
  if(operation==='apply')observer.bindApplyRoster(Array.from({length:720},(_,i)=>'id_'+i));
  const commands:string[]=[];let normalCalls=0,snapshots=0;
  const plan=[{Plan:{'Node Type':'ModifyTable',Operation:operation==='mark'?'Update':'Insert',
@@ -330,4 +330,45 @@ test('nested V2 omitted ambiguous context stays unattributed and cannot satisfy 
  assert.equal(c.report.failed,false);assert.equal(c.report.types[0]!.context_omitted,true);
  assert.equal(c.report.types[0]!.attribution_evidence.basis,'ambiguous');assert.deepEqual(c.report.types[0]!.attribution,[]);
  assert.throws(()=>c.assertComplete('money'),/nested_target_not_attributable/u);
+});
+
+test('late Native emits safe exact SAVEPOINT, ROLLBACK and RELEASE identifiers without changing phase or plan filenames',async()=>{
+ for(const operation of ['insert','mark','apply']as const){
+  const h=harness(operation,undefined,'late-consumer'),args=await argumentsFor(operation);
+  assert.equal(await h.run(args.sql,args.values),h.returned);
+  const name='r16_native_dml_plan_late_consumer_'+operation;
+  assert.deepEqual(h.commands.filter(sql=>/^(?:SAVEPOINT|ROLLBACK TO SAVEPOINT|RELEASE SAVEPOINT) /u.test(sql)),
+   ['SAVEPOINT '+name,'ROLLBACK TO SAVEPOINT '+name,'RELEASE SAVEPOINT '+name]);
+  assert.equal(h.normalCalls(),1);assert.equal(h.observer.observations[0]!.phase,'late-consumer');
+  assert.equal(h.observer.observations[0]!.file,'plan-late-consumer-'+operation+'.json');
+ }
+});
+
+// Independent model of the SQL root-page predicate: a root survives while any
+// configured question is unsent. Two phases are represented by separate sets;
+// base is preferred within the first4096 surviving root identities.
+test('late growth preserves4096 pending roots by limiting the final consumer eviction to the unseen base tail',()=>{
+ const simulate=(fixed:boolean)=>{
+  const roots=Array.from({length:32768},(_,i)=>i),early=Array.from({length:752},(_,i)=>i*5);
+  const base=new Set(early),consumer=new Set(early),calls=new Set(early.flatMap(id=>['base:'+id,'consumer:'+id]));
+  const consumerBatches:number[]=[];let maxBatch=0,steps=0;
+  while(base.size<roots.length||calls.size<60000){
+   assert.ok(++steps<256);
+   const frontier=roots.filter(id=>!consumer.has(id)).slice(0,4096),basePending=frontier.filter(id=>!base.has(id));
+   const phase=basePending.length?'base':'consumer',candidates=basePending.length?basePending:frontier;
+   const limit=fixed?nativeDmlLateGrowthLimitV1({remaining_base:roots.length-base.size,has_base_hints:basePending.length>0}):720;
+   const selected=candidates.slice(0,limit);assert.ok(selected.length>0&&selected.length<=720);maxBatch=Math.max(maxBatch,selected.length);
+   for(const id of selected){const key=phase+':'+id;assert.equal(calls.has(key),false,'no duplicate native call identity');
+    if(phase==='base'){assert.equal(base.has(id),false);base.add(id);}
+    else{assert.equal(base.has(id),true);assert.equal(consumer.has(id),false);consumer.add(id);}calls.add(key);}
+   if(phase==='consumer')consumerBatches.push(selected.length);
+   assert.equal(calls.size,base.size+consumer.size);
+  }
+  return{base:base.size,consumer:consumer.size,total:calls.size,pending:roots.filter(id=>!consumer.has(id)).length,maxBatch,lastConsumer:consumerBatches.at(-1)};
+ };
+ const before=simulate(false),after=simulate(true);
+ assert.deepEqual(before,{base:32768,consumer:28832,total:61600,pending:3936,maxBatch:720,lastConsumer:720});
+ assert.ok(before.pending<4096,'the old fill loop cannot satisfy the real Survey4096 argument contract');
+ assert.deepEqual(after,{base:32768,consumer:28672,total:61440,pending:4096,maxBatch:720,lastConsumer:560});
+ assert.equal(nativeDmlLateGrowthLimitV1({remaining_base:0,has_base_hints:false}),720,'all-base branch must not produce a zero-call loop');
 });
