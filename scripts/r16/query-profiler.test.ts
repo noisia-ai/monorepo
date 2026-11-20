@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import test from "node:test";
-import { R16QueryProfilerV1, R16_OPERATION_TIMELINE_MAX_SPANS_V1 } from "./query-profiler";
+import { R16QueryProfilerV1, R16_OPERATION_TIMELINE_MAX_SPANS_V1, R16_STORE_OPERATIONS_V1 } from "./query-profiler";
 
 const hash = (sql: string) => `sha256:${createHash("sha256").update(sql.replace(/\s+/gu, " ").trim()).digest("hex")}`;
 const pause = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms));
@@ -107,6 +107,86 @@ test("R16 profiler counts the committed selected Mark cohort under the existing 
   assert.equal(snapshot.queries.length, 3);
   assert.ok(snapshot.queries.every(row => row.operation === "markSubmitting"));
   assert.doesNotMatch(JSON.stringify(snapshot), /private-committed|authority_before_selection|commit_after_selection/u);
+});
+
+test("R16 profiler records native admission once from the committed cohort and labels its SQL", async () => {
+  const profiler = new R16QueryProfilerV1();
+  const statements: Array<{ sql: string; values: unknown[] }> = [];
+  const database = profiler.wrapDatabase({ async query(sql: string, values: unknown[] = []) {
+    statements.push({ sql, values }); return { rows: [], rowCount: 1 };
+  } });
+  type Proposal = { custom_id: string };
+  const proposals: Proposal[] = [
+    { custom_id: "private-proposal-a" }, { custom_id: "private-proposal-b" }, { custom_id: "private-proposal-not-committed" },
+  ];
+  const committed = [{ id: "private-admitted-a" }, { id: "private-admitted-b" }];
+  const response = { kind: "committed", calls: committed } as const;
+  let storeCalls = 0, selectCalls = 0, validationCalls = 0;
+  let tick = 0;
+  const store = profiler.wrapStore({
+    async admitAndMarkSelected(run: unknown, candidates: typeof proposals, callbacks: {
+      selectFresh: (values: Proposal[]) => readonly Proposal[];
+      validateBeforeCommit: (rows: typeof committed, selected: readonly Proposal[]) => void;
+    }) {
+      storeCalls++;
+      assert.equal(run, "private-run-id"); assert.equal(candidates, proposals);
+      await database.query("SELECT native_admission_authority", ["private-bind-before"]);
+      const selected = callbacks.selectFresh(candidates);
+      assert.deepEqual(selected, proposals.slice(0, 2));
+      callbacks.validateBeforeCommit(committed, selected);
+      await database.query("COMMIT native_admission", ["private-bind-after"]);
+      return response;
+    },
+  }, undefined, () => ++tick);
+  const callbacks = {
+    selectFresh: (values: Proposal[]) => { selectCalls++; return values.slice(0, 2); },
+    validateBeforeCommit: (rows: typeof committed, selected: readonly Proposal[]) => {
+      validationCalls++;
+      assert.equal(rows, committed); assert.deepEqual(selected, proposals.slice(0, 2));
+    },
+  };
+  const result = await store.admitAndMarkSelected("private-run-id", proposals, callbacks);
+  assert.equal(result, response, "the wrapper returns the store's exact committed result object");
+  assert.deepEqual([storeCalls, selectCalls, validationCalls], [1, 1, 1]);
+  assert.equal(statements.length, 2, "the observation layer adds no callbacks or database calls");
+  const snapshot = profiler.snapshot(), admission = snapshot.operations.find(row => row.operation === "admitAndMarkSelected")!;
+  assert.deepEqual(R16_STORE_OPERATIONS_V1.includes("admitAndMarkSelected"), true);
+  assert.deepEqual([admission.duration_ms.calls, admission.batch_size?.count, admission.batch_size?.total,
+    admission.batch_size?.max], [1, 1, 2, 2], "batch size comes from committed.calls, not proposals or a second mark operation");
+  assert.equal(snapshot.operations.length, 1, "native admission is one operation, without reserve or Mark double counting");
+  assert.equal(snapshot.queries.length, 2);
+  assert.ok(snapshot.queries.every(row => row.operation === "admitAndMarkSelected"), "query ALS labels native admission SQL");
+  assert.deepEqual(snapshot.operation_timeline.spans,
+    [{ operation: "admitAndMarkSelected", start_ms: 1, end_ms: 2, batch_size: 2, outcome: "completed" }]);
+  assert.doesNotMatch(JSON.stringify(snapshot), /private-|native_admission_authority|COMMIT native_admission/u,
+    "profile output retains only operation names, scalar timings, cohort count and SQL hashes");
+});
+
+test("R16 profiler records legacy admission as zero and preserves native admission failures without a cohort", async () => {
+  const profiler = new R16QueryProfilerV1();
+  const database = profiler.wrapDatabase({ async query(_sql: string) { return { rows: [] }; } });
+  const legacy = { kind: "legacy" } as const, failure = new Error("private-native-admission-error");
+  let storeCalls = 0, selectionCalls = 0;
+  const store = profiler.wrapStore({
+    async admitAndMarkSelected(_run: unknown, _proposals: unknown[], callbacks: { selectFresh: () => unknown[] }) {
+      storeCalls++;
+      await database.query("SELECT legacy_or_failed_admission");
+      if (storeCalls === 1) return legacy;
+      void callbacks;
+      throw failure;
+    },
+  });
+  assert.equal(await store.admitAndMarkSelected({}, [] as unknown[], { selectFresh: () => { selectionCalls++; return []; } }), legacy);
+  await assert.rejects(store.admitAndMarkSelected({}, [] as unknown[], { selectFresh: () => { selectionCalls++; return []; } }), error => error === failure);
+  assert.deepEqual([storeCalls, selectionCalls], [2, 0], "the wrapper never invokes native selectors");
+  const snapshot = profiler.snapshot(), admission = snapshot.operations.find(row => row.operation === "admitAndMarkSelected")!;
+  assert.deepEqual([admission.duration_ms.calls, admission.batch_size?.count, admission.batch_size?.total], [2, 1, 0],
+    "only an explicit legacy response contributes a zero cohort; a failed operation invents none");
+  assert.deepEqual(snapshot.operation_timeline.spans.map(span => [span.operation, span.batch_size, span.outcome]), [
+    ["admitAndMarkSelected", 0, "completed"], ["admitAndMarkSelected", null, "failed"],
+  ]);
+  assert.equal(snapshot.queries.length, 1); assert.equal(snapshot.queries[0]!.operation, "admitAndMarkSelected");
+  assert.doesNotMatch(JSON.stringify(snapshot), /private-native-admission-error/u);
 });
 
 

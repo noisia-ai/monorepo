@@ -17,7 +17,8 @@ import {createSyntheticJevFetchV1,deterministicR16LatencyV1} from './synthetic-j
 import {startR16HttpFilesystemStorageV1} from './http-filesystem-storage';
 import {r16ListeningWorkloadV2,summarizeR16ListeningCapacityV2,R16_LISTENING_PREREGISTRATION_V2 as registration,type R16ListeningArmV1} from './listening-workload';
 import type {R16QueryProfilerV1} from './query-profiler';
-import {assertSharedWireDefaultRuntimeV1,withSharedWireDefaultPostcheckV1} from '../../infrastructure/db/migrations/signal-listening-statement-shared-wire.oracle';
+import {assertSharedWireDefaultRuntimeV1,sharedWireDefaultContractV1,withSharedWireDefaultPostcheckV1} from '../../infrastructure/db/migrations/signal-listening-statement-shared-wire.oracle';
+import {wirePopulationMigrationV1,wirePopulationMoneyProsrcShaV1,wirePopulationPartsV1,wirePopulationShaV1,wirePopulationSourceShaV1} from '../../infrastructure/db/migrations/signal-listening-wire-population.oracle';
 import {assertCompactCatalogV1,compactFullStreamMigrationV1,compactFullStreamProsrcShaV1,compactFullStreamSourceShaV1,compactRawNameV1,compactShaV1} from '../../infrastructure/db/migrations/signal-listening-compact-population.oracle';
 export const answerGuardMigrationV1='0339_signal_listening_answer_guard_narrow.sql';
 export const answerGuardNameV1='signal_listening_answer_guard_v1';
@@ -26,6 +27,21 @@ export const answerGuardProsrcShaV1='83a1d0366bee6339fb010140084bc42dfcabe7b63bb
 const answerGuardShaV1=(value:string)=>createHash('sha256').update(value).digest('hex');
 export type R16ListeningAnswerGuardRuntimeReceiptV1={
  contract:'r16-listening-answer-guard-runtime-witness-v1';migration:string;source_sha256:string;prosrc_sha256:string;
+ function:Record<string,unknown>;acl:Array<Record<string,unknown>>;
+};
+export const mainMoneyNameV1='signal_listening_statement_money_v1';
+export const mainMoneyCatalogSqlV1=`/* r16_main_money_catalog */ SELECT p.oid::text,p.pronamespace::text,p.prolang::text,p.proname,p.proowner::text,p.proacl::text,p.provolatile,p.prosecdef,p.proconfig,
+ p.proisstrict,p.proparallel,p.proleakproof,p.prokind,p.pronargs,p.proargtypes::text,p.pronargdefaults,p.proargdefaults::text,
+ pg_catalog.pg_get_expr(p.proargdefaults,0) default_arguments,p.prorettype::text,pg_catalog.format_type(p.prorettype,NULL) return_type,
+ p.proallargtypes::text,p.proargmodes::text,p.proargnames::text,p.provariadic::text,p.protrftypes::text,p.proretset,p.procost,p.prorows,
+ p.prosupport::text,p.probin,p.prosqlbody::text,l.lanname,p.prosrc,
+ COALESCE((SELECT jsonb_agg(jsonb_build_object('grantor',a.grantor::text,'grantee',a.grantee::text,'privilege_type',a.privilege_type,
+  'is_grantable',a.is_grantable) ORDER BY a.grantor,a.grantee,a.privilege_type,a.is_grantable)
+  FROM pg_catalog.aclexplode(COALESCE(p.proacl,pg_catalog.acldefault('f',p.proowner))) a),'[]'::jsonb) effective_acl
+ FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_language l ON l.oid=p.prolang
+ WHERE p.oid='public.signal_listening_statement_money_v1()'::pg_catalog.regprocedure`;
+export type R16MainMoneyRuntimeReceiptV1={
+ contract:'r16-main-money-E-runtime-catalog-witness-v1';migration:string;source_sha256:string;prosrc_sha256:string;
  function:Record<string,unknown>;acl:Array<Record<string,unknown>>;
 };
 const answerGuardCatalogSqlV1=`/* r16_answer_guard_catalog */ SELECT p.oid::text,p.proname,p.proowner::text,p.proacl::text,p.provolatile,p.prosecdef,p.proconfig,
@@ -48,6 +64,7 @@ export type R16ListeningRuntimeWitnessV1={
  contract:'r16-listening-runtime-witness-v1';
  before:R16ListeningRuntimeReceiptV1|null;
  after:R16ListeningRuntimeReceiptV1|null;
+ main_money:{before:R16MainMoneyRuntimeReceiptV1|null;after:R16MainMoneyRuntimeReceiptV1|null};
  compact:{before:R16ListeningCompactRuntimeReceiptV1|null;after:R16ListeningCompactRuntimeReceiptV1|null};
  answer_guard:{before:R16ListeningAnswerGuardRuntimeReceiptV1|null;after:R16ListeningAnswerGuardRuntimeReceiptV1|null};
 };
@@ -81,8 +98,40 @@ export function createR16ListeningResourceObservationV1(readRss:()=>number=()=>p
 }
 export async function withR16ListeningRuntimeWitnessV1<T>(database:R16ListeningRuntimeDatabaseV1,
  body:(witness:R16ListeningRuntimeWitnessV1,captureAfter:()=>Promise<R16ListeningRuntimeReceiptV1>)=>Promise<T>){
- const witness:R16ListeningRuntimeWitnessV1={contract:'r16-listening-runtime-witness-v1',before:null,after:null,compact:{before:null,after:null},answer_guard:{before:null,after:null}};
+ const witness:R16ListeningRuntimeWitnessV1={contract:'r16-listening-runtime-witness-v1',before:null,after:null,main_money:{before:null,after:null},compact:{before:null,after:null},answer_guard:{before:null,after:null}};
  let captureAfterFailed=false,captureAfterFailure:unknown;
+ const captureMainMoney=async():Promise<R16MainMoneyRuntimeReceiptV1>=>{
+  const source=await readFile(new URL('../../infrastructure/db/migrations/'+wirePopulationMigrationV1,import.meta.url),'utf8');
+  assert.equal(wirePopulationShaV1(source),wirePopulationSourceShaV1,'0337 MAIN Money E source must match the reviewed full migration');
+  const parts=wirePopulationPartsV1(source),match=/CREATE OR REPLACE FUNCTION signal_listening_statement_money_v1\(\) RETURNS trigger LANGUAGE plpgsql SET search_path=public,extensions,pg_temp AS \$\$([\s\S]*?)\$\$;\n/u.exec(parts.money);
+  assert.ok(match,'0337 must contain the exact zero-argument MAIN Money trigger body');
+  const prosrc=match[1]!,expected=await sharedWireDefaultContractV1();
+  assert.equal(expected.default_arm,'E','MAIN Money runtime must remain strict E');
+  assert.equal(expected.migration,wirePopulationMigrationV1,'MAIN Money must come from native wire population 0337');
+  assert.equal(wirePopulationShaV1(prosrc),wirePopulationMoneyProsrcShaV1,'0337 MAIN Money E prosrc SHA is fixed');
+  assert.equal(prosrc,expected.prosrc,'0337 MAIN Money E body must match the strict source-aware oracle');
+  const rows=(await database.query(mainMoneyCatalogSqlV1)).rows;
+  assert.equal(rows.length,1,'actual public MAIN Money E function must exist exactly once');
+  const row=rows[0]!;assert.equal(row.prosrc,prosrc,'actual pg_proc.prosrc must match the independently parsed 0337 MAIN Money E body');
+  const expectedMetadata={proname:mainMoneyNameV1,provolatile:'v',prosecdef:false,proconfig:['search_path=public, extensions, pg_temp'],proisstrict:false,
+   proparallel:'u',proleakproof:false,prokind:'f',pronargs:0,proargtypes:'',pronargdefaults:0,proargdefaults:null,default_arguments:null,
+   prorettype:'2279',return_type:'trigger',proallargtypes:null,proargmodes:null,proargnames:null,provariadic:'0',protrftypes:null,proretset:false,
+   procost:100,prorows:0,prosupport:'-',probin:null,prosqlbody:null,lanname:'plpgsql'};
+  const{prosrc:observedProsrc,oid,pronamespace,prolang,proowner,proacl,effective_acl,...metadata}=row;
+  assert.equal(observedProsrc,prosrc,'actual MAIN Money pg_proc body must match exact source E');
+  assert.ok(typeof oid==='string'&&/^\d+$/u.test(oid),'MAIN Money function OID must be captured from pg_proc');
+  assert.ok(typeof pronamespace==='string'&&/^\d+$/u.test(pronamespace),'MAIN Money namespace OID must be captured from pg_proc');
+  assert.ok(typeof prolang==='string'&&/^\d+$/u.test(prolang),'MAIN Money language OID must be captured from pg_proc');
+  assert.ok(typeof proowner==='string'&&/^\d+$/u.test(proowner),'MAIN Money function owner OID must be captured from pg_proc');
+  assert.ok(proacl===null||typeof proacl==='string','MAIN Money raw ACL must preserve nullable pg_proc.proacl');
+  assert.deepEqual(metadata,expectedMetadata,'actual MAIN Money pg_proc signature, defaults and complete function attributes must match the PG17 trigger contract');
+  assert.ok(Array.isArray(effective_acl),'MAIN Money effective ACL must be captured from the same pg_proc catalog row');
+  const acl=(effective_acl as Array<Record<string,unknown>>).map(grant=>({...grant}));
+  assert.ok(acl.every(grant=>typeof grant.grantor==='string'&&/^\d+$/u.test(grant.grantor)&&typeof grant.grantee==='string'&&/^\d+$/u.test(grant.grantee)
+   &&grant.privilege_type==='EXECUTE'&&typeof grant.is_grantable==='boolean'),'MAIN Money effective ACL entries must retain complete numeric grant identities');
+  return{contract:'r16-main-money-E-runtime-catalog-witness-v1',migration:wirePopulationMigrationV1,source_sha256:wirePopulationShaV1(source),
+   prosrc_sha256:wirePopulationShaV1(prosrc),function:{oid,pronamespace,prolang,proowner,proacl,...metadata},acl};
+ };
  const captureCompact=async():Promise<R16ListeningCompactRuntimeReceiptV1>=>{
   const catalog=await assertCompactCatalogV1(database as Parameters<typeof assertCompactCatalogV1>[0]);
   const row=catalog.functions.find(candidate=>candidate.proname===compactRawNameV1);assert.ok(row,'current compact raw function must exist');
@@ -126,20 +175,21 @@ export async function withR16ListeningRuntimeWitnessV1<T>(database:R16ListeningR
    prosrc_sha256:answerGuardShaV1(prosrc),function:{oid,proowner,proacl,...metadata},acl};
  };
  const capture=async(phase:'before'|'after')=>{
-  const money=await assertSharedWireDefaultRuntimeV1(database),compact=await captureCompact(),answerGuard=await captureAnswerGuard();
+  const money=await assertSharedWireDefaultRuntimeV1(database),mainMoney=await captureMainMoney(),compact=await captureCompact(),answerGuard=await captureAnswerGuard();
   if(phase==='after'){
    assert.deepEqual(money,witness.before,'Money E catalog/source must remain exact across the measured run');
+   assert.deepEqual(mainMoney,witness.main_money.before,'MAIN Money E actual catalog/source/owner/raw and effective ACL must remain exact across the measured run');
    assert.deepEqual(compact,witness.compact.before,'compact0338 catalog/source/owner/ACL must remain exact across the measured run');
    assert.deepEqual(answerGuard,witness.answer_guard.before,'answer guard 0339 catalog/source/owner/ACL must remain exact across the measured run');
   }
-  // Publish only after all three independent runtime witnesses validate.
-  witness[phase]=money;witness.compact[phase]=compact;witness.answer_guard[phase]=answerGuard;return money;
+  // Publish all four witnesses only after every source and catalog capture validates.
+  witness[phase]=money;witness.main_money[phase]=mainMoney;witness.compact[phase]=compact;witness.answer_guard[phase]=answerGuard;return money;
  };
  const captureAfter=async()=>{try{
   const receipt=await capture('after');
-  if(captureAfterFailed){witness.after=null;witness.compact.after=null;witness.answer_guard.after=null;throw captureAfterFailure;}
+  if(captureAfterFailed){witness.after=null;witness.main_money.after=null;witness.compact.after=null;witness.answer_guard.after=null;throw captureAfterFailure;}
   return receipt;
- }catch(error){if(!captureAfterFailed)captureAfterFailure=error;captureAfterFailed=true;witness.after=null;witness.compact.after=null;witness.answer_guard.after=null;throw captureAfterFailure;}};
+ }catch(error){if(!captureAfterFailed)captureAfterFailure=error;captureAfterFailed=true;witness.after=null;witness.main_money.after=null;witness.compact.after=null;witness.answer_guard.after=null;throw captureAfterFailure;}};
  const value=await withSharedWireDefaultPostcheckV1(async()=>{
   await capture('before');
   const result=await body(witness,captureAfter);

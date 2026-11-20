@@ -1,6 +1,6 @@
 import type { FacetInput, LlmPriceV1 } from '@noisia/query-engine';
 import { llmCostMicroUsdV1 } from '@noisia/query-engine';
-import type { createSignalLabelingStoreV1, LabelingRunV1, LabelingCallV1 } from '@noisia/db';
+import type { createSignalLabelingStoreV1, LabelingRunV1, LabelingCallV1, LabelingCallProposalV1, LabelingAdmissionSelectionV1, LabelingAdmissionResultV1 } from '@noisia/db';
 import { validateJevResponseV1, jevProviderErrorV1, isJevPreFetchCancellationV1, type JevProviderV1, type JevRawResponseV1,
   type JevResponseV1, type JevRequestV1, type JevProviderErrorV1 } from '../providers/typesafe-jev';
 const jevUsageV1 = (usage:JevResponseV1['usage']) => ({...usage,cache_read_input_tokens:0,
@@ -11,6 +11,20 @@ export type JevStreamingExecutionV2 = {
 };
 export type JevStreamingMetricsV2 = { in_flight: number; reserved_working_bytes: number;
   buffered_responses: number; active_flushes: number; prefetch_canceled_requests?:number;admission_closed?:boolean };
+/** Private scheduling metadata. It never supplies inputs or grants authority. */
+export type JevFeedAdmissionHintV1 = {kind:'open'}|{kind:'closed'}|{
+  kind:'bootstrap';bootstrap_id:number;covered_call_limit:number;wait_for_apply:boolean;acknowledged_covered_calls?:number;
+};
+/** Only trusted native Listening constructors return uncommitted drafts.
+ * Proposal custody and the native transaction workspace coexist with returned
+ * call custody; none substitutes for the paid-response allowance. */
+export type JevNativeAdmissionDraftV1<I extends FacetInput>={
+  proposals:LabelingCallProposalV1<I>[];workspace_bytes:number;byte_limited:boolean;
+  on_committed?(call_ids:ReadonlyArray<string>):void;
+};
+export type JevFeedResultV1<I extends FacetInput>=LabelingCallV1<I>[]|{
+  calls:LabelingCallV1<I>[];byte_limited:boolean;admission_deferred?:true;
+}|{closed:true}|JevNativeAdmissionDraftV1<I>;
 export function assertJevStreamingExecutionV2(e:JevStreamingExecutionV2,provider:JevProviderV1){
   for (const value of Object.values(e)) if (!Number.isSafeInteger(value) || value < 1) throw Error('jev_stream_configuration_invalid');
   if (e.max_in_flight > 4096 || e.max_flushes > 64 || e.flush_size > 4096 || e.window_size > 4096
@@ -34,6 +48,8 @@ export async function processJevStreamingWindowV2<I extends FacetInput, R>(args:
   store: ReturnType<typeof createSignalLabelingStoreV1<I, R>> & {
     /** Native adapters select only after their fresh authority fences, and
      * return the exact cohort after its submitting transaction commits. */
+    admitAndMarkSelected?(run:LabelingRunV1,proposals:LabelingCallProposalV1<I>[],
+      callbacks:LabelingAdmissionSelectionV1<I>):Promise<LabelingAdmissionResultV1<I>>;
     markSubmittingSelected?(run:LabelingRunV1,
       selectCommitted:()=>ReadonlyArray<LabelingCallV1<I>>):Promise<ReadonlyArray<LabelingCallV1<I>>>;
   }; provider: JevProviderV1;
@@ -41,9 +57,8 @@ export async function processJevStreamingWindowV2<I extends FacetInput, R>(args:
   observe_stream?(metrics: JevStreamingMetricsV2): void;
   /** First-party adapters only: inputs exclude every already reserved identity.
    * Returns at most one window, already budgeted before money reservation. */
-  feed_next?(available_bytes:number,max_calls:number,admission_signal:AbortSignal):Promise<LabelingCallV1<I>[] | {
-    calls:LabelingCallV1<I>[];byte_limited:boolean;
-  } | { closed:true }>;
+  feed_next?(available_bytes:number,max_calls:number,admission_signal:AbortSignal):Promise<JevFeedResultV1<I>>;
+  next_admission_hint?():JevFeedAdmissionHintV1;
   /** Listening native pending eligibility can advance only after durable apply. */
   revisit_empty_after_apply?:boolean;
   /** Scheduling only: evaluate handoff is not proof of physical fetch/rate admission. */
@@ -66,6 +81,7 @@ export async function processJevStreamingWindowV2<I extends FacetInput, R>(args:
   // A scheduling hint from the exact bounded prefix, never retained inputs or
   // permission to reserve. A later read still obtains a fresh native snapshot.
   let byteLimitedAvailable:number|undefined;
+  let draft:JevNativeAdmissionDraftV1<I>|undefined,draftBytes=0,notificationFailure:unknown;
   let durableEpoch=0,emptyAtEpoch:number|undefined;
   const roster=new Map(calls.map(call=>[call.id,call])),initialIds=new Set(calls.map(call=>call.id));
   let recentIdentities=new Set(calls.map(call=>call.request_digest));
@@ -194,7 +210,16 @@ export async function processJevStreamingWindowV2<I extends FacetInput, R>(args:
     // rather than waiting until only one cohort remains. Small windows retain
     // their original tail/bootstrap behavior instead of requiring a full gap.
     const refillAt=Math.max(workers,e.window_size-workers);
-    if(feedClosed||feeding||fatal||admission.signal.aborted||cancellation.signal.aborted||reserved.length>refillAt||reserved.length>=e.window_size)return;
+    if(feedClosed||feeding||draft||fatal||admission.signal.aborted||cancellation.signal.aborted||reserved.length>refillAt||reserved.length>=e.window_size)return;
+    const priority=args.next_admission_hint?.();
+    if(priority?.kind==='closed'){feedClosed=true;return;}
+    if(priority?.kind==='bootstrap'&&priority.wait_for_apply){
+      // A quiet reservation is not a wake-up promise. The main coordinator
+      // still dispatches it below; without any owned work, use the existing
+      // finite frontier/reconciliation path instead of waiting forever.
+      if(!reserved.length&&!activeSends.size&&!inFlight&&!buffered.length&&!active.size&&!markingInProgress)feedClosed=true;
+      return;
+    }
     // One fresh read per acknowledged apply epoch; never poll an empty SQL frontier.
     if(emptyAtEpoch!==undefined&&durableEpoch===emptyAtEpoch)return;
     // Do not read another full input page while paid responses own all memory.
@@ -225,12 +250,21 @@ export async function processJevStreamingWindowV2<I extends FacetInput, R>(args:
       const readEpoch=durableEpoch;
       const next=await args.feed_next!(available,maxCalls,admission.signal);
       if(!Array.isArray(next)&&'closed' in next){feedClosed=true;return;}
+      if(!Array.isArray(next)&&'proposals' in next){
+        if(!store.admitAndMarkSelected||!next.proposals.length||next.proposals.length>Math.min(maxCalls,1024)
+          ||!Number.isSafeInteger(next.workspace_bytes)||next.workspace_bytes<0)throw Error('jev_native_draft_invalid');
+        const bytes=next.proposals.reduce((n,p)=>n+jevCallWorkingBytesV2(p)+8192,0);
+        if(bytes>available)throw Error('jev_native_draft_memory_bound');
+        retained=bytes;draftBytes=bytes;draft=next;byteLimitedAvailable=next.byte_limited?available:undefined;return;
+      }
       const rows=Array.isArray(next)?next:next.calls;
       byteLimitedAvailable=!Array.isArray(next)&&next.byte_limited?available:undefined;
       if(!rows.length){
         // A repeatable-read snapshot may finish after the apply that unlocks
         // consumers. Keep its starting epoch, not the epoch at query return.
-        const future=reserved.length||markingUnsent.length||inFlight||buffered.length||active.size;
+        const deferred=!Array.isArray(next)&&next.admission_deferred===true;
+        const future=deferred?reserved.length||activeSends.size||markingInProgress||inFlight||buffered.length||active.size
+          :reserved.length||markingUnsent.length||inFlight||buffered.length||active.size;
         if(args.revisit_empty_after_apply&&(future||durableEpoch!==readEpoch))emptyAtEpoch=readEpoch;
         else feedClosed=true;
         return;
@@ -249,7 +283,7 @@ export async function processJevStreamingWindowV2<I extends FacetInput, R>(args:
       for(const call of rows)roster.set(call.id,call);reserved.push(...rows);observe();
     })().catch(fail).finally(()=>{release(available-retained);feeding=undefined;wake();});
   }
-  let requeueAttempted=false,markingUnsent:LabelingCallV1<I>[]=[];
+  let requeueAttempted=false,markingInProgress=false,markingUnsent:LabelingCallV1<I>[]=[];
   const activeSends=new Set<Promise<void>>(),prefetchCanceled:LabelingCallV1<I>[]=[];
   async function drainAndRequeue(){
     if(feeding)await feeding;
@@ -303,8 +337,93 @@ export async function processJevStreamingWindowV2<I extends FacetInput, R>(args:
     }
     // Keep never-assigned calls reserved. Persist only a cohort whose HTTP slots
     // and response memory are already available, using one governed bulk write.
-    while((reserved.length||!feedClosed||feeding)&&!fatal&&!admission.signal.aborted&&!cancellation.signal.aborted){
+    while((reserved.length||draft||!feedClosed||feeding)&&!fatal&&!admission.signal.aborted&&!cancellation.signal.aborted){
       prefetch();
+      if(draft&&!reserved.length){
+        const pending=draft;
+        if(workers<=inFlight){
+          if(activeSends.size||active.size||buffered.length){flush(true);await wait();continue;}
+          throw Error('jev_stream_configuration_invalid');
+        }
+        // The quote covers native temporaries before the native function may
+        // allocate them. Real progress can release custody; quiet metadata cannot.
+        if(memory+pending.workspace_bytes+reservationBytes+jevCallWorkingBytesV2(pending.proposals[0]!)>e.max_buffered_bytes){
+          if(activeSends.size||active.size||buffered.length){flush(true);await wait();continue;}
+          // No native invocation/DML/selector occurred: retain the old complete
+          // reservation protocol on this prepared prefix, without rereading it.
+          const rows=await store.reserve(run,pending.proposals);
+          const bytes=rows.reduce((n,c)=>n+jevCallWorkingBytesV2(c),0);
+          if(memory+bytes>e.max_buffered_bytes)throw Error('jev_native_legacy_memory_bound');
+          memory+=bytes;for(const row of rows)roster.set(row.id,row);reserved.push(...rows);totalRoots+=rows.length;
+          draft=undefined;release(draftBytes);draftBytes=0;continue;
+        }
+        let workspaceClaim=pending.workspace_bytes,selectionCalled=false,validationCalled=false;
+        let responseClaim=0,callClaim=0,selected:ReadonlyArray<LabelingCallProposalV1<I>>=[],
+          validated:ReadonlyArray<LabelingCallV1<I>>=[],validatedIds:ReadonlyArray<string>=[];
+        memory+=pending.workspace_bytes;observe();markingInProgress=true;
+        try{
+          const result=await store.admitAndMarkSelected!(run,pending.proposals,{
+            selectFresh(candidates){
+              if(selectionCalled)throw Error('jev_native_selection_repeated');selectionCalled=true;
+              const priority=args.next_admission_hint?.();
+              if(fatal||admission.signal.aborted||cancellation.signal.aborted||priority?.kind==='closed'
+                ||priority?.kind==='bootstrap'&&priority.wait_for_apply)return[];
+              const count=Math.min(workers-inFlight,candidates.length,priority?.kind==='bootstrap'?priority.covered_call_limit:Infinity),chosen:LabelingCallProposalV1<I>[]=[];
+              let cost=0;
+              for(const proposal of candidates.slice(0,count)){
+                const bytes=jevCallWorkingBytesV2(proposal);
+                if(memory+cost+bytes+reservationBytes>e.max_buffered_bytes)break;
+                chosen.push(proposal);cost+=bytes+reservationBytes;
+              }
+              selected=chosen;callClaim=chosen.reduce((n,p)=>n+jevCallWorkingBytesV2(p),0);
+              responseClaim=chosen.length*reservationBytes;memory+=callClaim+responseClaim;observe();return chosen;
+            },
+            validateBeforeCommit(rows,proposals){
+              if(!selectionCalled||validationCalled)throw Error('jev_native_validation_invalid');validationCalled=true;
+              if(rows.length!==selected.length||proposals.length!==selected.length)throw Error('jev_native_handoff_invalid');
+              const ids=new Set<string>(),digests=new Set<string>();let bytes=0;
+              for(let i=0;i<rows.length;i++){
+                const row=rows[i]!,proposal=selected[i]!;
+                if(proposals[i]!==proposal||row.status!=='submitting'||row.raw_body||row.results_applied||roster.has(row.id)
+                  ||ids.has(row.id)||digests.has(row.request_digest)||recentIdentities.has(row.request_digest)
+                  ||row.custom_id!==proposal.custom_id||row.request_digest!==proposal.request_digest)throw Error('jev_native_handoff_invalid');
+                ids.add(row.id);digests.add(row.request_digest);bytes+=jevCallWorkingBytesV2(row);
+              }
+              if(bytes>callClaim||memory>e.max_buffered_bytes)throw Error('jev_native_memory_bound');
+              // Prepare every recipient and notification identifier before ACK.
+              validated=rows;validatedIds=rows.map(row=>row.id);
+            }
+          });
+          if(result.kind==='legacy'){
+            release(workspaceClaim);workspaceClaim=0;
+            // Native guarantees this branch precedes selector and every DML.
+            const rows=await store.reserve(run,pending.proposals);
+            const bytes=rows.reduce((n,c)=>n+jevCallWorkingBytesV2(c),0);
+            if(memory+bytes>e.max_buffered_bytes)throw Error('jev_native_legacy_memory_bound');
+            memory+=bytes;for(const row of rows)roster.set(row.id,row);reserved.push(...rows);totalRoots+=rows.length;
+          }else{
+            // DB returned the exact prevalidated array after COMMIT ACK. No
+            // expansion, cancellation, authority or residency gate belongs here.
+            for(const row of validated)roster.set(row.id,row);
+            totalRoots+=validated.length;recentIdentities=new Set(selected.map(p=>p.request_digest));
+            for(const row of validated){const task=send(row).finally(()=>{activeSends.delete(task);wake();});activeSends.add(task);}
+            responseClaim=0;callClaim=0;if(validated.length)initialHandoffComplete=true;
+            try{if(validated.length)pending.on_committed?.(validatedIds);}catch(error){
+              // Close future admission, but let ALL paid siblings drain without
+              // aborting their transport because a scheduling notice failed.
+              notificationFailure??=error;feedClosed=true;admission.abort();
+            }
+          }
+        }catch(error){
+          if((error as {outcome?:string})?.outcome==='unknown')try{await store.fail(run,'labeling_outcome_unknown',{preserve_reserved:true});}
+          catch(secondary){throw new AggregateError([error,secondary],'jev_native_unknown_record_failed',{cause:error});}
+          throw error;
+        }finally{
+          markingInProgress=false;draft=undefined;
+          release(workspaceClaim+draftBytes+responseClaim+callClaim);draftBytes=0;
+        }
+        continue;
+      }
       if(!reserved.length){
         if(feeding){await feeding;continue;}
         if(feedClosed)break;
@@ -330,6 +449,7 @@ export async function processJevStreamingWindowV2<I extends FacetInput, R>(args:
       }
       let cohort:LabelingCallV1<I>[]=[];
       try{
+        markingInProgress=true;
         if(store.markSubmittingSelected){
           let selected=false;
           const committed=await store.markSubmittingSelected(run,()=>{
@@ -351,6 +471,7 @@ export async function processJevStreamingWindowV2<I extends FacetInput, R>(args:
           await store.markSubmitting(run,cohort);
         }
       }catch(error){release(reservationBytes*cohort.length);fail(error);break;}
+      finally{markingInProgress=false;}
       // There is deliberately no await/cancellation check between the successful
       // durable handoff and delivering EVERY cohort member to evaluate. A sync
       // provider rejection is classified normally, without stranding siblings.
@@ -391,9 +512,13 @@ export async function processJevStreamingWindowV2<I extends FacetInput, R>(args:
       }
     }
     if (fatal) throw fatal;
+    if(notificationFailure)throw notificationFailure;
     const status=await store.finish(run);
     // Invocation ownership ends here, including retained terminal errors
-    // and the reserved frontier that was never sent.
+    // and the reserved frontier that was never sent. A cancelled reader may
+    // also have returned a draft: this full release owns its charge, so retire
+    // the draft custodian before finally can release it a second time.
+    draft=undefined;draftBytes=0;
     release(memory);
     latencies.sort((a, b) => a - b);
     return { status, roots: totalRoots, labeled, unresolved_billing_requests: [...errors.values()].filter(x => x.unknown).length,
@@ -406,5 +531,5 @@ export async function processJevStreamingWindowV2<I extends FacetInput, R>(args:
     try { await drainAndRequeue();await store.finish(run); }
     catch (reconciliation) { throw new AggregateError([error, reconciliation], 'jev_stream_reconciliation_failed'); }
     throw error;
-  } finally { clearInterval(timer); cancellation.signal.removeEventListener('abort', wake); }
+  } finally { if(draft){draft=undefined;release(draftBytes);draftBytes=0;}clearInterval(timer); cancellation.signal.removeEventListener('abort', wake); }
 }

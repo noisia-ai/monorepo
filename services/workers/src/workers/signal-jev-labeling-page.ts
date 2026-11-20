@@ -1,4 +1,4 @@
-import { assertJevStreamingExecutionV2, jevCallWorkingBytesV2, processJevStreamingWindowV2, type JevStreamingExecutionV2, type JevStreamingMetricsV2 } from './signal-jev-streaming-window';
+import { assertJevStreamingExecutionV2, jevCallWorkingBytesV2, processJevStreamingWindowV2, type JevStreamingExecutionV2, type JevStreamingMetricsV2, type JevFeedAdmissionHintV1, type JevFeedResultV1 } from './signal-jev-streaming-window';
 import { setMaxListeners } from "node:events";
 import { setImmediate as yieldToEventLoop } from "node:timers/promises";
 import { llmCostMicroUsdV1, type FacetInput, type LlmPriceV1, type LlmUsageV1 } from "@noisia/query-engine";
@@ -61,6 +61,13 @@ export async function processJevLabelingPageV1<Input extends FacetInput,Result>(
     select_next_inputs?(inputs:Input[]):{inputs:Input[];minimum_calls:number};
     /** Server-native Listening only; empty eligibility can advance after apply. */
     revisit_empty_after_apply?:boolean;
+    /** Supplied by the native Listening continuation, never by identity JSON. */
+    next_admission_hint?():JevFeedAdmissionHintV1;
+    /** Constructor-only native adapter. No identity/configuration flag grants it. */
+    native_admission?:{
+      workspace_bound(run:LabelingRunV1,proposals:LabelingCallProposalV1<Input>[]):number;
+      committed?(hint:JevFeedAdmissionHintV1|undefined,ids:ReadonlyArray<string>):void;
+    };
     max_in_flight?(run:LabelingRunV1):number|undefined;
   };
   observe_stream?(metrics:JevStreamingMetricsV2):void;
@@ -150,15 +157,21 @@ export async function processJevLabelingPageV1<Input extends FacetInput,Result>(
         // reserve commits. Never prefetch through pending recovery or unknown.
         let fedWindows=1;
         const feed=continuous&&!pending.length&&!recoveryOnly&&!run.error_code&&(maxWindows??Infinity)>windows+1
-          ?async(available:number,maxCalls:number,admissionSignal:AbortSignal):Promise<LabelingCallV1<Input>[]|{calls:LabelingCallV1<Input>[];byte_limited:boolean}|{closed:true}>=>{
+          ?async(available:number,maxCalls:number,admissionSignal:AbortSignal):Promise<JevFeedResultV1<Input>>=>{
             let failed=false,primary:unknown;
             try{
               if(renewal)await renewal;if(leaseError)throw leaseError;
               if(admissionSignal.aborted||cancellation.signal.aborted||windows+fedWindows>=(maxWindows??Infinity))return{closed:true};
+              const beforeRead=hooks.next_admission_hint?.();
+              if(beforeRead?.kind==='closed')return{closed:true};
+              if(beforeRead?.kind==='bootstrap'&&beforeRead.wait_for_apply)return{calls:[],byte_limited:false,admission_deferred:true};
               let byteLimited=false;
               const bounds={max_rows:maxCalls,max_working_bytes:available,on_byte_limit:()=>{byteLimited=true;}};
               const inputs=(await(args.read_next_inputs?args.read_next_inputs(run,bounds):store.inputs(run,{...bounds,on_oversize:'empty'}))).slice(0,maxCalls);
               if(admissionSignal.aborted||cancellation.signal.aborted)return{closed:true};
+              const afterRead=hooks.next_admission_hint?.();
+              if(afterRead?.kind==='closed')return{closed:true};
+              if(afterRead?.kind==='bootstrap'&&afterRead.wait_for_apply)return{calls:[],byte_limited:false,admission_deferred:true};
               if(!inputs.length)return byteLimited?{calls:[],byte_limited:true}:[];
               if(hooks.prepare_next){
                 const prepared=await hooks.prepare_next(run,inputs);
@@ -167,6 +180,9 @@ export async function processJevLabelingPageV1<Input extends FacetInput,Result>(
                 if(prepared!==true)throw Error('jev_preparation_invalid');
               }
               if(admissionSignal.aborted||cancellation.signal.aborted)return{closed:true};
+              const priority=hooks.next_admission_hint?.();
+              if(priority?.kind==='closed')return{closed:true};
+              if(priority?.kind==='bootstrap'&&priority.wait_for_apply)return{calls:[],byte_limited:false,admission_deferred:true};
               // Compile incrementally: never retain a second full request page
               // merely to discover that its copied bodies exceed free memory.
               const selected=hooks.select_next_inputs?.(inputs)??{inputs,minimum_calls:0};
@@ -178,15 +194,19 @@ export async function processJevLabelingPageV1<Input extends FacetInput,Result>(
               // Reserve the complete selected anchors before covered work. The
               // native return order is not their survey order; covered inputs
               // are read fresh after this intentionally smaller paid prefix.
-              let anchorPrefix=selected.minimum_calls>0,limit=Math.min(maxCalls,selected.minimum_calls||maxCalls);
+              const coveredLimit=priority?.kind==='bootstrap'&&selected.minimum_calls===0?priority.covered_call_limit:undefined;
+              if(coveredLimit!==undefined&&(!Number.isSafeInteger(coveredLimit)||coveredLimit<1||coveredLimit>32))throw Error('jev_bootstrap_overlap_invalid');
+              let nativePrefix=Boolean(hooks.native_admission&&store.admitAndMarkSelected&&selected.minimum_calls===0),
+                anchorPrefix=selected.minimum_calls>0,coveredPrefix=coveredLimit!==undefined,
+                limit=Math.min(maxCalls,selected.minimum_calls||coveredLimit||(nativePrefix?Math.min(1024,execution!.max_in_flight,provider.max_concurrency??execution!.max_in_flight):maxCalls));
               const bounded:LabelingCallProposalV1<Input>[]=[];let bytes=0;
               outer:for(const input of selected.inputs){
-               if(anchorPrefix&&bounded.length>=limit)break;
+               if((anchorPrefix||coveredPrefix||nativePrefix)&&bounded.length>=limit)break;
                const proposals=hooks.propose(run,[input]);
                // Native anchors map one-to-one to calls. A generic hook can
                // emit zero/many; retain its legacy window without re-proposing
                // inputs or cutting that group at an assumed anchor boundary.
-               if(anchorPrefix&&proposals.length!==1){anchorPrefix=false;limit=maxCalls;}
+               if((anchorPrefix||coveredPrefix||nativePrefix)&&proposals.length!==1){anchorPrefix=false;coveredPrefix=false;nativePrefix=false;limit=maxCalls;}
                for(const proposal of proposals){
                 const cost=jevCallWorkingBytesV2(proposal)+8192;
                 if(bounded.length>=limit)break outer;
@@ -201,13 +221,51 @@ export async function processJevLabelingPageV1<Input extends FacetInput,Result>(
                }
               }
               if(!bounded.length||bounded.length<selected.minimum_calls||admissionSignal.aborted||cancellation.signal.aborted)return{closed:true};
+              if(nativePrefix){
+                // The 4096-row survey is intact. Only the fresh native draft is
+                // smaller; skipped identities remain pending for a fresh RR.
+                const reservation=assertJevStreamingExecutionV2(execution!,provider);
+                // Quote is monotone for JSON prefixes: configuration is fixed,
+                // and every added proposal contributes nonnegative units/nodes.
+                // Cache request costs once and search the largest fitting prefix;
+                // repeatedly requoting every removed row would be quadratic.
+                const returnedCosts=[0];
+                for(const proposal of bounded)returnedCosts.push(returnedCosts.at(-1)!+jevCallWorkingBytesV2(proposal));
+                const quote=(count:number)=>{
+                  const value=hooks.native_admission!.workspace_bound(run,bounded.slice(0,count));
+                  if(!Number.isSafeInteger(value)||value<0)throw Error('jev_native_workspace_invalid');
+                  return value;
+                };
+                const fits=(count:number,value:number)=>returnedCosts[count]!*2+8192*count+value+reservation*count<=available;
+                let workspace:number|undefined;
+                try{
+                  const full=quote(bounded.length);
+                  if(fits(bounded.length,full))workspace=full;
+                  else{
+                    let low=1,high=bounded.length-1,best=0;
+                    while(low<=high){
+                      const mid=Math.floor((low+high)/2),value=quote(mid);
+                      if(fits(mid,value)){best=mid;workspace=value;low=mid+1;}
+                      else high=mid-1;
+                    }
+                    bounded.length=best||1;bytes=returnedCosts[bounded.length]!+8192*bounded.length;
+                  }
+                }catch{workspace=undefined;}
+                if(workspace!==undefined&&bounded.length){
+                  fedWindows++;return{proposals:bounded,workspace_bytes:workspace,byte_limited:byteLimited,
+                    on_committed:ids=>hooks.native_admission!.committed?.(priority,ids)};
+                }
+                // Invalid/too-large native workspace never invokes native DML.
+                // If a fitting draft is impossible, retain the old protocol.
+                if(!bounded.length)return{closed:true};
+              }
               const next=await store.reserve(run,bounded);fedWindows++;
               return next.length?{calls:next,byte_limited:byteLimited&&selected.minimum_calls===0}:{closed:true};
             }catch(error){failed=true;primary=error;throw error;}finally{
               if(incrementalInitial)try{args.initial_reservation!.release_selection();}catch(secondary){if(failed)throw new AggregateError([primary,secondary],'jev_selection_primary_and_release_failed',{cause:primary});throw secondary;}
             }
           }:undefined;
-        const outcome = await processJevStreamingWindowV2({run,calls,send_calls:reserved,store,provider,execution:execution,price,cancellation,hooks,observe_stream:args.observe_stream,feed_next:feed,revisit_empty_after_apply:Boolean(feed)&&hooks.revisit_empty_after_apply===true,defer_initial_prefetch_until_handoff:incrementalInitial&&reserved.length>0});
+        const outcome = await processJevStreamingWindowV2({run,calls,send_calls:reserved,store,provider,execution:execution,price,cancellation,hooks,observe_stream:args.observe_stream,feed_next:feed,next_admission_hint:hooks.next_admission_hint,revisit_empty_after_apply:Boolean(feed)&&hooks.revisit_empty_after_apply===true,defer_initial_prefetch_until_handoff:incrementalInitial&&reserved.length>0});
         aggregate = { ...outcome, roots:(aggregate?.roots??0)+outcome.roots,
           labeled:(aggregate?.labeled??0)+outcome.labeled,
           settled_micro_usd:(aggregate?.settled_micro_usd??0)+outcome.settled_micro_usd,

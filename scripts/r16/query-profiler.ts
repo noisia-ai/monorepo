@@ -2,7 +2,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash } from "node:crypto";
 import { performance } from "node:perf_hooks";
 
-export const R16_STORE_OPERATIONS_V1 = ["inputs", "calls", "reserve", "markSubmitting", "persistRawPage",
+export const R16_STORE_OPERATIONS_V1 = ["inputs", "calls", "reserve", "markSubmitting", "admitAndMarkSelected", "persistRawPage",
   "settlePage", "apply", "finish", "refresh", "requeueUnsent"] as const;
 export type R16StoreOperationV1 = typeof R16_STORE_OPERATIONS_V1[number];
 
@@ -37,6 +37,12 @@ function queryTemplateHash(query: unknown): string {
 
 function batchSize(operation: R16StoreOperationV1, args: readonly unknown[], result: unknown): number | undefined {
   if (operation === "inputs" || operation === "calls") return Array.isArray(result) ? result.length : undefined;
+  if (operation === "admitAndMarkSelected") {
+    if (!result || typeof result !== "object") return undefined;
+    const admission = result as { kind?: unknown; calls?: unknown };
+    if (admission.kind === "legacy") return 0;
+    return admission.kind === "committed" && Array.isArray(admission.calls) ? admission.calls.length : undefined;
+  }
   const rows = args[1];
   // Selected Mark receives a synchronous callback, and resolves only with its
   // committed cohort. Observation must never invoke that callback itself.

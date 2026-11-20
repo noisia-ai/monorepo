@@ -25,7 +25,11 @@ import {
 import {createLabelingRawPageStoreV1} from "./signal-labeling-raw-page-store";
 import {LABELING_RAW_PAGE_MAX_MEMBERS_V1,type LabelingRawPageStorageV1} from "./signal-labeling-raw-pages";
 import {validateLabelingInputBoundsV1,type LabelingInputBoundsV1} from './signal-labeling-input-bounds';
+import {planNativeListeningAdmissionPacketV1,nativeListeningAdmissionCoveredV1,nativeListeningAdmissionPacketBodyV1,
+ validateNativeListeningAdmissionRowsV1,validateNativeListeningAdmissionSelectionV1,NATIVE_LISTENING_COVERED_PROFILES_SQL_V1,
+ NATIVE_LISTENING_ADMISSION_INSERT_SQL_V1,NATIVE_LISTENING_ADMISSION_MARK_SQL_V1} from './signal-listening-native-admission';
 export type {LabelingInputBoundsV1} from './signal-labeling-input-bounds';
+export {nativeListeningAdmissionWorkspaceBoundV1} from './signal-listening-native-admission';
 export type LabelingPolicyV1={organization_id:string;budget_date:string;budget_timezone:string;daily_cap_micro_usd:string|null;
  max_execution_micro_usd:string|null;provider:string;model:string;action:string;funding_receipt_id?:string|null;effective_total_cap_micro_usd?:string};
 export type LabelingRequestPolicyV1=Pick<LabelingPolicyV1,"max_execution_micro_usd"|"provider"|"model">;
@@ -56,6 +60,26 @@ export type LabelingCallProposalV1<Input extends FacetInput = FacetInput> = {
   reserved_micro_usd: number;
   retry_depth?: number;
 };
+/** Private native admission callbacks. Neither callback grants DB authority.
+ * The selected proposals are not committed calls; validation happens before
+ * COMMIT and the exact validated array is handed back only after its ACK. */
+export type LabelingAdmissionSelectionV1<Input extends FacetInput = FacetInput> = {
+  selectFresh(candidates:ReadonlyArray<LabelingCallProposalV1<Input>>):ReadonlyArray<LabelingCallProposalV1<Input>>;
+  validateBeforeCommit(calls:ReadonlyArray<LabelingCallV1<Input>>,selected:ReadonlyArray<LabelingCallProposalV1<Input>>):void;
+};
+export type LabelingAdmissionResultV1<Input extends FacetInput = FacetInput> =
+  |{kind:'committed';calls:ReadonlyArray<LabelingCallV1<Input>>}
+  |{kind:'legacy'};
+/** No post-DML failure permits automatic fallback or another attempt. A lost
+ * COMMIT ACK remains unknown even when a later ROLLBACK command responds. */
+export class LabelingAdmissionFailureV1 extends Error{
+  readonly code:string|undefined;
+  constructor(cause:unknown,readonly outcome:'rolled_back'|'unknown',readonly call_ids:ReadonlyArray<string>,readonly custom_ids:ReadonlyArray<string>){
+    super(cause instanceof Error?cause.message:'labeling_native_admission_failed',{cause});this.name='LabelingAdmissionFailureV1';
+    const primary=cause instanceof AggregateError?cause.cause:cause;
+    this.code=primary&&typeof primary==='object'&&'code'in primary&&typeof primary.code==='string'?primary.code:undefined;
+  }
+}
 export type LabelingCallV1<Input extends FacetInput = FacetInput> =
   LabelingCallProposalV1<Input> & {
     id: string;
@@ -998,6 +1022,76 @@ export function createSignalLabelingStoreV1<
       return row;
     },
     ...(nativePendingReserve?{
+      /** Constructor-authenticated Listening only: one fresh, covered native
+       * cohort. The ordinary INSERT and UPDATE retain both E statement guards.
+       * Unlike the legacy path, a denied Mark rolls back its fresh reservation. */
+      async admitAndMarkSelected(run:LabelingRunV1,proposals:LabelingCallProposalV1<Input>[],callbacks:LabelingAdmissionSelectionV1<Input>):Promise<LabelingAdmissionResultV1<Input>>{
+        await options.assertRawReady?.();
+        const plan=planNativeListeningAdmissionPacketV1(run,proposals,Math.min(pageSize,1024));
+        const c=await db.connect();let discardClient=false,open=false,rollbackSent=false,rollbackAck=false,dmlSent=false,commitSent=false;
+        let selected:ReadonlyArray<LabelingCallProposalV1<Input>>=[],ids:string[]=[],customIds:string[]=[];
+        const legacy=async():Promise<LabelingAdmissionResultV1<Input>>=>{
+          rollbackSent=true;await c.query('ROLLBACK');rollbackAck=true;open=false;return{kind:'legacy'};
+        };
+        const rejectAsync=(value:unknown)=>{
+          if(value&&(['object','function'].includes(typeof value))&&typeof(value as {then?:unknown}).then==='function'){
+            if(value instanceof Promise)void value.catch(()=>undefined);
+            fail('labeling_admission_callback_invalid',400);
+          }
+        };
+        try{
+          await c.query('BEGIN');open=true;
+          await pageMutationFence(c,run);await authority(c,run,0);
+          if(!plan)return await legacy();
+          // Preserve the original whole-row SELECT permissions and serialize
+          // existence with the same policy lock as native reservations.
+          const existing=await c.query('SELECT * FROM signal_labeling_calls WHERE custom_id=ANY($1::text[])',[proposals.map(p=>p.custom_id)]);
+          if(existing.rows.length)return await legacy();
+          const profiles=await c.query<{profile:unknown}>(NATIVE_LISTENING_COVERED_PROFILES_SQL_V1,
+            [run.workspace_id,plan.configuration_digest,plan.model,[...new Set(plan.rows.map(row=>row.shape.shape_digest))],run.id]);
+          if(!nativeListeningAdmissionCoveredV1(plan,profiles.rows.map(row=>row.profile)))return await legacy();
+          if(typeof callbacks?.selectFresh!=='function'||typeof callbacks.validateBeforeCommit!=='function')fail('labeling_admission_callback_invalid',400);
+          const selection:unknown=callbacks.selectFresh(proposals);rejectAsync(selection);
+          if(!Array.isArray(selection))fail('labeling_admission_selection_invalid',400);
+          selected=[...selection] as LabelingCallProposalV1<Input>[];
+          const packet=nativeListeningAdmissionPacketBodyV1(plan,selected);
+          customIds=selected.map(proposal=>proposal.custom_id);
+          let calls:LabelingCallV1<Input>[]=[];
+          if(selected.length){
+            const amount=selected.reduce((sum,p)=>sum+BigInt(p.reserved_micro_usd),0n);
+            if(amount>BigInt(Number.MAX_SAFE_INTEGER))fail('labeling_money_invalid',400);
+            const policy=await authority(c,run,Number(amount));
+            // From this point no failure, even an acknowledged rollback, can
+            // return legacy or silently launch a second reservation attempt.
+            dmlSent=true;
+            const inserted=await c.query<LabelingCallV1<Input>>(NATIVE_LISTENING_ADMISSION_INSERT_SQL_V1,
+              [run.id,run.workspace_id,run.identity.provider,run.identity.model,'sync',packet,policy.budget_date,policy.budget_timezone]);
+            calls=validateNativeListeningAdmissionRowsV1(run,selected,inserted.rows,'reserved');ids=calls.map(call=>call.id);
+            await pageMutationFence(c,run);await authority(c,run,0);
+            await lockMutationCalls(c,run,calls);await options.adapter?.beforeSubmit?.(c,run,calls);
+            await rawRunReadFence(c,run);await registerMutationFence(c,run,'mark');
+            const changed=await c.query<LabelingCallV1<Input>>(NATIVE_LISTENING_ADMISSION_MARK_SQL_V1,[run.id,run.workspace_id,ids]);
+            calls=validateNativeListeningAdmissionRowsV1(run,selected,changed.rows,'submitting');
+          }
+          const callsFingerprint=()=>createHash('sha256').update(JSON.stringify(calls)).digest('hex');
+          const beforeValidation=callsFingerprint();
+          const validation:unknown=callbacks.validateBeforeCommit(calls,selected);rejectAsync(validation);
+          // A callback may register the roster/bytes but cannot poison what is
+          // about to be committed or handed to evaluate after the ACK.
+          if(callsFingerprint()!==beforeValidation)fail('labeling_admission_handoff_changed',400);
+          validateNativeListeningAdmissionSelectionV1(plan,selected);
+          validateNativeListeningAdmissionRowsV1(run,selected,calls,'submitting');
+          commitSent=true;await c.query('COMMIT');open=false;return{kind:'committed',calls};
+        }catch(primary){
+          let cause=primary;
+          if(commitSent)discardClient=true;
+          if(open&&!rollbackSent){rollbackSent=true;try{await c.query('ROLLBACK');rollbackAck=true;open=false;}
+            catch(rollback){discardClient=true;cause=new AggregateError([primary,rollback],'labeling_admission_body_and_rollback_failed',{cause:primary});}}
+          if(!rollbackAck&&open)discardClient=true;
+          if(dmlSent)throw new LabelingAdmissionFailureV1(cause,commitSent||!rollbackAck?'unknown':'rolled_back',Object.freeze([...ids]),Object.freeze([...customIds]));
+          throw cause;
+        }finally{c.release(discardClient);}
+      },
       /** Select only already-committed, memory-owned calls after the common
        * authority wait. This callback grants no DB authority and receives no client. */
       async markSubmittingSelected(run:LabelingRunV1,selectCommitted:()=>ReadonlyArray<LabelingCallV1<Input>>):Promise<ReadonlyArray<LabelingCallV1<Input>>>{

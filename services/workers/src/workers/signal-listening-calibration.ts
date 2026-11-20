@@ -5,7 +5,7 @@ import {
 } from '@noisia/query-engine';
 import {createCalibratedJevRuntimeProviderV2} from '../providers/jev-streaming-runtime';
 import {JevProviderErrorV1,type JevProviderV1,type JevRequestV1} from '../providers/typesafe-jev';
-import {assertJevStreamingExecutionV2,jevCallWorkingBytesV2,type JevStreamingExecutionV2} from './signal-jev-streaming-window';
+import {assertJevStreamingExecutionV2,jevCallWorkingBytesV2,type JevStreamingExecutionV2,type JevFeedAdmissionHintV1} from './signal-jev-streaming-window';
 import {assertSignalListeningRequestTransportV1,assertSignalListeningMeasuredContextV1,
   signalListeningResponseBoundV1,SIGNAL_LISTENING_HTTP_BODY_BYTES_V1} from './signal-listening-request-limits';
 import type {LabelingCallV1} from '@noisia/db';
@@ -198,7 +198,7 @@ export type SignalListeningCalibrationEventV1={warmup:boolean;selected_roots:num
   outcome?:'measured'|'partial'|'unavailable'|'failed'};
 const continuationInputKey=(input:SignalListeningInputV1)=>digest({root_id:input.root_id,input_digest:input.input_digest,question_digests:input.question_digests});
 type BootstrapV1={id:number;shape:string;descriptor:ReturnType<typeof signalListeningCalibrationShapeV1>;order:string[];unreserved:Set<string>;pending:Set<string>;sources:Set<string>;
-  requests:Map<string,number>;lo:number;hi:number;deriving:boolean};
+  requests:Map<string,number>;lo:number;hi:number;deriving:boolean;covered_acknowledged:boolean;covered_ids:Set<string>};
 type ContinuationRowV1={input:SignalListeningInputV1;key:string;index:number;compiled:JevRequestV1;shape:string;bytes:number;covered:boolean};
 /** One Listening invocation owns the global stream. Calibration is a bounded
  * admission lane, not a second stream/lease or an authorization cache. Study
@@ -222,6 +222,21 @@ export async function createSignalListeningContinuationV1({run_id,
     event({warmup:true,selected_roots:current.order.length,max_in_flight:Math.min(32,execution.max_in_flight),shape_digests:[current.shape],
       transition:'bootstrap_end',bootstrap_id:current.id,outcome});
     if(bootstrap===current)bootstrap=undefined;
+  }
+  function nextAdmissionHint():JevFeedAdmissionHintV1{
+    if(stopped)return{kind:'closed'};
+    const current=bootstrap;if(!current)return{kind:'open'};
+    return{kind:'bootstrap',bootstrap_id:current.id,covered_call_limit:Math.min(32,current.order.length),
+      acknowledged_covered_calls:current.covered_ids.size,
+      wait_for_apply:current.covered_acknowledged&&!current.unreserved.size&&Boolean(current.pending.size||current.deriving)};
+  }
+  /** Scheduling notification only. Prevalidated Native handoffs may call this
+   * synchronously after ACK; it performs no validation, IO or admission gate. */
+  function acknowledgeCoveredReservation(generation:number,ids:ReadonlyArray<string>){
+    const current=bootstrap;if(!current||current.id!==generation||!ids.length)return;
+    const limit=Math.min(32,current.order.length);
+    for(const id of ids){if(current.covered_ids.size>=limit)break;current.covered_ids.add(id);}
+    current.covered_acknowledged=true;
   }
   const runtime=createSignalListeningCalibratedProviderV1({plan:{scope,configuration,snapshot,profiles,execution,warmup,response_bound_bytes,
       selected_inputs:[],calibration_shapes:[]},
@@ -256,7 +271,7 @@ export async function createSignalListeningContinuationV1({run_id,
         for(const row of priority){if(seen.has(row.key))continue;seen.add(row.key);anchors.push(row);if(anchors.length>=Math.min(32,execution.window_size))break;}
         const requests=new Map<string,number>();for(const row of anchors){const key=digest(row.compiled);requests.set(key,(requests.get(key)??0)+1);}
         bootstrap={id:++sequence,shape:first.shape,descriptor:shapeCompiler.shape(first.input),order:anchors.map(row=>row.key),unreserved:new Set(seen),pending:new Set(),sources:new Set(),requests,
-          lo:Math.min(...anchors.map(row=>row.bytes)),hi:Math.max(...anchors.map(row=>row.bytes)),deriving:false};
+          lo:Math.min(...anchors.map(row=>row.bytes)),hi:Math.max(...anchors.map(row=>row.bytes)),deriving:false,covered_acknowledged:false,covered_ids:new Set()};
         event({warmup:true,selected_roots:anchors.length,max_in_flight:Math.min(32,execution.max_in_flight),shape_digests:[first.shape],transition:'bootstrap_start',bootstrap_id:bootstrap.id});
       }
     }
@@ -304,18 +319,22 @@ export async function createSignalListeningContinuationV1({run_id,
     },
     bootstrap_initial_calls:bootstrap?.order.length,
     minimumNextCalls:()=>bootstrap?.unreserved.size??0,
+    nextAdmissionHint,acknowledgeCoveredReservation,
     selectNext:async(inputs:SignalListeningInputV1[])=>{
       if(initialSelection!==undefined)fail('listening_selection_not_transferred');
       return select(inputs);
     },
     reserved(calls:LabelingCallV1<SignalListeningInputV1>[]){
-      if(!bootstrap)return;
+      const current=bootstrap;if(!current)return;
+      const coveredIds:string[]=[];
       for(const call of calls){
         if(call.inputs.length!==1)fail('listening_calibration_reservation_invalid');
         const key=continuationInputKey(call.inputs[0]!);
-        if(bootstrap.unreserved.delete(key)){bootstrap.pending.add(call.id);bootstrap.sources.add(call.id);}
-        else if(shapeCompiler.shape(call.inputs[0]!).shape_digest===bootstrap.shape)fail('listening_calibration_reservation_invalid');
+        if(current.unreserved.delete(key)){current.pending.add(call.id);current.sources.add(call.id);}
+        else if(shapeCompiler.shape(call.inputs[0]!).shape_digest===current.shape)fail('listening_calibration_reservation_invalid');
+        else coveredIds.push(call.id);
       }
+      acknowledgeCoveredReservation(current.id,coveredIds);
     },
     async applied(rows:Array<{call:LabelingCallV1<SignalListeningInputV1>;results:SignalListeningResultV1[]}>){
       const current=bootstrap;if(!current||current.deriving)return;

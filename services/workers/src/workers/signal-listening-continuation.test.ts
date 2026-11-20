@@ -120,3 +120,53 @@ test('a future larger response schema ends admission before profile loading, res
   loadProfile:async()=>{loads++;throw Error('wider schema must stop before loading');},deriveProfile:async()=>null,factory:args=>{clients++;assert.equal(args.env!.NOISIA_JEV_MAX_RESPONSE_BYTES,'16384');return{evaluate:async()=>{throw Error('no send');}};}});
  controller.takeInitialSelection();assert.equal((await controller.selectNext([wide])).decision,false);assert.equal(controller.stopReason(),'listening_calibration_response_bound_changed');assert.equal(loads,0);assert.equal(clients,1);assert.equal(controller.response_bound_bytes,16384);await controller.runtime.provider.close!();
 });
+
+for(const count of [1,3,7,8,32])test(`bootstrap priority ${count} consumes only a real covered ACK and releases after finite promotion`,async()=>{
+ const f=fixture(),anchors=Array.from({length:count},(_,i)=>f.input(i)),measured=Array.from({length:4},(_,i)=>f.input(i,['topic']));
+ const known=f.profile(measured),profiles=new Map([[known.scope.shape_digest,known]]);
+ const load=async(shape:string)=>profiles.get(shape)??null;
+ const plan=await planSignalListeningCalibrationV1({...f,inputs:[...anchors,...measured],execution,loadProfile:load});
+ let selected:SignalListeningInputV1[]=[],rows:ReturnType<typeof f.calls>=[];
+ const controller=await createSignalListeningContinuationV1({run_id:f.run_id,initial_plan:plan,initial_inputs:[...anchors,...measured],execution,loadProfile:load,
+  deriveProfile:async()=>{const profile=f.profile(selected,rows.map(row=>row.id));profiles.set(profile.scope.shape_digest,profile);return profile;},
+  factory:()=>({evaluate:async()=>{throw Error('selection-only regression cannot send');}})});
+ selected=controller.takeInitialSelection();rows=f.calls(selected);controller.reserved(rows);
+ const initial=controller.nextAdmissionHint();assert.equal(initial.kind,'bootstrap');if(initial.kind!=='bootstrap')throw Error('missing bootstrap hint');
+ assert.equal(initial.covered_call_limit,count);assert.equal(initial.wait_for_apply,false);assert.equal(initial.acknowledged_covered_calls,0);
+ // Selection alone never consumes the scheduling permit. This includes the
+ // exact existing32+4 contract, and deliberately leaves selectNext untrimmed.
+ for(let i=0;i<2;i++)assert.deepEqual(await controller.selectNext(measured),{selected:measured,decision:true});
+ assert.deepEqual(controller.nextAdmissionHint(),initial);
+ const overlap=f.calls(measured.slice(0,Math.min(count,4)));controller.reserved(overlap);
+ const acknowledged=controller.nextAdmissionHint();assert.equal(acknowledged.kind,'bootstrap');
+ if(acknowledged.kind!=='bootstrap')throw Error('missing ACK hint');
+ assert.equal(acknowledged.wait_for_apply,true);assert.equal(acknowledged.acknowledged_covered_calls,overlap.length);
+ controller.reserved(overlap);assert.deepEqual(controller.nextAdmissionHint(),acknowledged,'duplicate ACK IDs never replenish or consume another permit');
+ await controller.applied(f.applied(rows));assert.equal(controller.failure().failed,false);assert.deepEqual(controller.nextAdmissionHint(),{kind:'open'});
+ const remaining=measured.slice(overlap.length);assert.deepEqual(await controller.selectNext(remaining),{selected:remaining,decision:remaining.length?true:false});
+ // A late notification from the old generation must not consume a newly
+ // opened small bootstrap. No request or permission is carried by this hint.
+ await controller.selectNext([f.input(999)]);const later=controller.nextAdmissionHint();assert.equal(later.kind,'bootstrap');
+ if(later.kind!=='bootstrap')throw Error('missing next bootstrap hint');assert.notEqual(later.bootstrap_id,initial.bootstrap_id);
+ controller.acknowledgeCoveredReservation(initial.bootstrap_id,overlap.map(row=>row.id));assert.deepEqual(controller.nextAdmissionHint(),later);
+ controller.closeObservation();await controller.runtime.provider.close!();
+});
+test('bootstrap priority stays deferred through pending APPLY, derive and reload without changing the existing measured selection',async()=>{
+ const f=fixture(),anchors=Array.from({length:32},(_,i)=>f.input(i)),measured=Array.from({length:4},(_,i)=>f.input(i,['topic']));
+ const known=f.profile(measured),profiles=new Map([[known.scope.shape_digest,known]]);
+ let releaseDerive!:()=>void,releaseReload!:()=>void,reloadStarted!:()=>void,reloading=false;
+ const deriveGate=new Promise<void>(resolve=>{releaseDerive=resolve;}),reloadGate=new Promise<void>(resolve=>{releaseReload=resolve;}),reloadEntered=new Promise<void>(resolve=>{reloadStarted=resolve;});
+ const load=async(shape:string)=>{if(reloading){reloadStarted();await reloadGate;}return profiles.get(shape)??null;};
+ const plan=await planSignalListeningCalibrationV1({...f,inputs:[...anchors,...measured],execution,loadProfile:load});
+ let selected:SignalListeningInputV1[]=[],rows:ReturnType<typeof f.calls>=[];
+ const controller=await createSignalListeningContinuationV1({run_id:f.run_id,initial_plan:plan,initial_inputs:[...anchors,...measured],execution,loadProfile:load,
+  deriveProfile:async()=>{await deriveGate;const profile=f.profile(selected,rows.map(row=>row.id));profiles.set(profile.scope.shape_digest,profile);reloading=true;return profile;},
+  factory:()=>({evaluate:async()=>{throw Error('no physical request in metadata test');}})});
+ selected=controller.takeInitialSelection();rows=f.calls(selected);controller.reserved(rows);controller.reserved(f.calls(measured));
+ const waiting=()=>{const hint=controller.nextAdmissionHint();assert.equal(hint.kind,'bootstrap');if(hint.kind==='bootstrap')assert.equal(hint.wait_for_apply,true);};
+ waiting();await controller.applied(f.applied(rows.slice(0,16)));waiting();
+ const promotion=controller.applied(f.applied(rows.slice(16)));waiting();
+ assert.deepEqual((await controller.selectNext(measured)).selected,measured,'the established measured overlap selection remains byte-equivalent');
+ releaseDerive();await reloadEntered;waiting();releaseReload();await promotion;
+ assert.deepEqual(controller.nextAdmissionHint(),{kind:'open'});await controller.runtime.provider.close!();
+});

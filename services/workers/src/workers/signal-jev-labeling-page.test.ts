@@ -1155,3 +1155,134 @@ for(const mode of ['no_flush']as const)test(`byte-limited refill escapes immedia
 for(const mode of ['raw_failure','apply_ack_lost','cancel']as const)test(`byte-limited refill preserves ${mode} without inventing durable progress`,{timeout:5000},async()=>{
  await exerciseByteLimitedRefill(mode);
 });
+
+/** This boundary assertion must fail on M2 before mutating the reserve mock.
+ * Deferred provider/APPLY gates make the admission order causal, not a timer. */
+async function bootstrapPriorityPageCase(anchorCount:number,coveredCount:number){
+ type Args=Parameters<typeof processJevLabelingPageV1<FacetInput,string>>[0];
+ const run={id:'bootstrap-priority-'+anchorCount,lease_token:'lease',error_code:null,status:'running'}as LabelingRunV1;
+ const anchors=Array.from({length:anchorCount},(_,i)=>({root_id:'priority-anchor-'+i,text:'anchor-'+i}))as FacetInput[];
+ const covered=Array.from({length:coveredCount},(_,i)=>({root_id:'priority-covered-'+i,text:'covered-'+i}))as FacetInput[];
+ const warmupGate=deferredFrontier(),boundaryEntered=deferredFrontier(),priorityWaitSeen=deferredFrontier();
+ const calls:LabelingCallV1<FacetInput>[]=[],reservations:string[][]=[],physical:string[]=[],applied=new Set<string>(),memory:number[]=[];
+ let activeBootstrap=true,overlapAcknowledged=false,reads=0,boundaryCount=-1,failures=0;
+ const provider:Args['provider']={max_response_bytes:4096,max_concurrency:64,async evaluate(request){
+  const id=String(request.state);physical.push(id);if(id.startsWith('anchor-'))await warmupGate.promise;
+  return{http_status:200,latency_ms:1,body:JSON.stringify({model:request.model,usage:{input_tokens:1,output_tokens:0},answers:{q:{type:'noul',noul:.9}}})};
+ }};
+ const store={claim:async()=>run,renew:async()=>{},release:async()=>{},calls:async()=>[],inputs:async()=>anchors,
+  reserve:async(_run:unknown,proposals:Array<{custom_id:string;inputs:FacetInput[]}>)=>{
+   if(reservations.length===1){
+    boundaryCount=proposals.length;boundaryEntered.resolve();
+    assert.equal(proposals.length,Math.min(anchorCount,coveredCount),'covered admission must be bounded before the reserve mock changes');
+   }
+   reservations.push(proposals.map(row=>row.custom_id));
+   const added=proposals.map(row=>({...row,id:row.custom_id,status:'reserved',raw_body:null,results_applied:false}))as LabelingCallV1<FacetInput>[];
+   assert.ok(added.every(row=>!calls.some(prior=>prior.id===row.id)),'no duplicate mock identity may explain the causal boundary');calls.push(...added);
+   if(added.some(row=>String(row.inputs[0]!.text).startsWith('covered-'))&&activeBootstrap)overlapAcknowledged=true;
+   return added;
+  },markSubmitting:async(_run:unknown,rows:typeof calls)=>{for(const row of rows)row.status='submitting';},
+  persistRawPage:async(_run:unknown,rows:Array<{call:typeof calls[number];raw:string}>)=>{for(const row of rows)row.call.raw_body=row.raw;},
+  settlePage:async(_run:unknown,rows:Array<{call:typeof calls[number]}>)=>{for(const row of rows)row.call.status='settled';},
+  apply:async(_run:unknown,rows:Array<{call:typeof calls[number]}>)=>{
+   for(const row of rows){row.call.results_applied=true;applied.add(row.call.id);}
+   if(anchors.every(input=>applied.has(input.root_id)))activeBootstrap=false;
+  },finish:async()=>calls.every(call=>call.results_applied)?'completed':'running',
+  fail:async()=>{failures++;},markFailed:async()=>{failures++;},
+ }as unknown as Args['store'];
+ const hooks:Args['hooks']={continuous_windows:()=>true,revisit_empty_after_apply:true,price:()=>llmPriceV1('typesafe','jev-1.13.0','sync',.042),
+  next_admission_hint:()=>{
+   if(!activeBootstrap)return{kind:'open'};
+   if(overlapAcknowledged)priorityWaitSeen.resolve();
+   return{kind:'bootstrap',bootstrap_id:1,covered_call_limit:anchorCount,wait_for_apply:overlapAcknowledged};
+  },prepare_next:async()=>true,select_next_inputs:inputs=>({inputs,minimum_calls:0}),
+  propose:(_run,inputs)=>inputs.map(input=>({custom_id:input.root_id,request_digest:input.root_id,inputs:[input],reserved_micro_usd:100,
+   request:{model:'jev-1.13.0',state:input.text,questions:{q:{type:'noul',instructions:'Configured evidence'}}}})),
+  map:(_run,call)=>[call.id],error:()=>[],labeled:()=>true,fail_on_error:true};
+ const running=processJevLabelingPageV1({run_id:run.id,store,provider,hooks,
+  execution:{max_in_flight:64,flush_size:1,max_flushes:2,max_buffered_bytes:512*1024*1024,flush_interval_ms:250,window_size:4096},
+  prepare:async()=>({provider,execution:{max_in_flight:64,flush_size:1,max_flushes:2,max_buffered_bytes:512*1024*1024,flush_interval_ms:250,window_size:4096},
+   continuous_windows:true,bootstrap_initial_calls:anchorCount}),initial_reservation:{max_calls:1024,release_selection:()=>{}},
+  read_next_inputs:async(_run,bounds)=>{
+   reads++;if(reads===1)assert.ok(bounds.max_rows>=coveredCount,'the covered proposal bound must not narrow the native survey');
+   if(reads>1)assert.equal(activeBootstrap,false,'a consumed overlap cannot open another RR while bootstrap progress is pending');
+   const known=new Set(calls.flatMap(call=>call.inputs.map(input=>input.root_id)));return covered.filter(input=>!known.has(input.root_id));
+  },observe_stream:value=>memory.push(value.reserved_working_bytes)});
+ // Attach immediately: the OLD boundary throws while its initial provider gate
+ // is still held, so the assertion below must release that gate in finally.
+ void running.catch(()=>{});
+ try{
+  await boundaryEntered.promise;assert.equal(boundaryCount,Math.min(anchorCount,coveredCount),'OLD must be red at the actual reserve boundary, before mock mutation');
+  await priorityWaitSeen.promise;assert.equal(reads,1);assert.equal(activeBootstrap,true);warmupGate.resolve();
+  const result=await running;assert.equal(result.status,'completed');assert.equal(failures,0);
+  assert.equal(physical.length,anchorCount+coveredCount);assert.equal(new Set(physical).size,physical.length);
+  assert.equal(applied.size,anchorCount+coveredCount);assert.deepEqual(reservations[1],covered.slice(0,anchorCount).map(input=>input.root_id));
+  assert.equal(memory.at(-1),0);assert.ok(memory.every(value=>value>=0&&value<=512*1024*1024));
+  return{reservations,reads,physical};
+ }finally{warmupGate.resolve();await running.catch(()=>{});}
+}
+test('bootstrap priority caps OLD covered4064 at eight before any reserve mock mutation',{timeout:15000},async()=>{
+ const result=await bootstrapPriorityPageCase(8,4064);assert.equal(result.reservations[1]!.length,8);
+});
+for(const count of [1,3,7,8])test(`finite bootstrap priority ${count} admits bounded overlap then the complete remaining census`,{timeout:15000},async()=>{
+ const result=await bootstrapPriorityPageCase(count,4);assert.equal(result.physical.length,count+4);
+});
+
+for(const phase of ['after_read','after_prepare']as const)test(`bootstrap priority rechecks ${phase} before a stale covered reservation`,{timeout:5000},async()=>{
+ type Args=Parameters<typeof processJevLabelingPageV1<FacetInput,string>>[0];
+ const run={id:'priority-race-'+phase,lease_token:'lease',error_code:null,status:'running'}as LabelingRunV1;
+ const initial={root_id:'race-initial',text:'initial'}as FacetInput,covered=Array.from({length:4},(_,i)=>({root_id:'race-covered-'+i,text:'covered-'+i}))as FacetInput[];
+ const providerGate=deferredFrontier(),waitSeen=deferredFrontier(),calls:LabelingCallV1<FacetInput>[]=[],physical:string[]=[];
+ let waiting=false,initialApplied=false,reads=0,preparations=0,reserves=0;
+ const provider:Args['provider']={max_response_bytes:4096,max_concurrency:8,async evaluate(request){
+  physical.push(String(request.state));if(request.state==='initial')await providerGate.promise;
+  return{http_status:200,latency_ms:1,body:JSON.stringify({model:request.model,usage:{input_tokens:1,output_tokens:0},answers:{q:{type:'noul',noul:.9}}})};
+ }};
+ const store={claim:async()=>run,renew:async()=>{},release:async()=>{},calls:async()=>[],inputs:async()=>[initial],
+  reserve:async(_run:unknown,proposals:Array<{custom_id:string}>)=>{
+   if(reserves)assert.equal(initialApplied,true,'no stale covered reservation before the real bootstrap APPLY');reserves++;
+   const added=proposals.map(row=>({...row,id:row.custom_id,status:'reserved',raw_body:null,results_applied:false}))as LabelingCallV1<FacetInput>[];calls.push(...added);return added;
+  },markSubmitting:async(_run:unknown,rows:typeof calls)=>{for(const row of rows)row.status='submitting';},
+  persistRawPage:async(_run:unknown,rows:Array<{call:typeof calls[number];raw:string}>)=>{for(const row of rows)row.call.raw_body=row.raw;},
+  settlePage:async(_run:unknown,rows:Array<{call:typeof calls[number]}>)=>{for(const row of rows)row.call.status='settled';},
+  apply:async(_run:unknown,rows:Array<{call:typeof calls[number]}>)=>{for(const row of rows){row.call.results_applied=true;if(row.call.id===initial.root_id){initialApplied=true;waiting=false;}}},
+  finish:async()=>calls.every(row=>row.results_applied)?'completed':'running',fail:async()=>{},markFailed:async()=>{},
+ }as unknown as Args['store'];
+ const e={max_in_flight:8,flush_size:1,max_flushes:2,max_buffered_bytes:16*1024*1024,flush_interval_ms:250,window_size:4096};
+ const running=processJevLabelingPageV1({run_id:run.id,store,provider,execution:e,
+  hooks:{continuous_windows:()=>true,revisit_empty_after_apply:true,price:()=>llmPriceV1('typesafe','jev-1.13.0','sync',.042),
+   next_admission_hint:()=>{if(!waiting)return{kind:'open'};waitSeen.resolve();return{kind:'bootstrap',bootstrap_id:1,covered_call_limit:1,wait_for_apply:true};},
+   prepare_next:async()=>{preparations++;if(phase==='after_prepare'&&!initialApplied)waiting=true;return true;},
+   propose:(_run,inputs)=>inputs.map(input=>({custom_id:input.root_id,request_digest:input.root_id,inputs:[input],reserved_micro_usd:100,
+    request:{model:'jev-1.13.0',state:input.text,questions:{q:{type:'noul',instructions:'Configured data'}}}})),
+   map:(_run,call)=>[call.id],error:()=>[],labeled:()=>true,fail_on_error:true},
+  initial_reservation:{max_calls:1024,release_selection:()=>{}},prepare:async()=>({provider,execution:e,continuous_windows:true,bootstrap_initial_calls:1}),
+  read_next_inputs:async()=>{reads++;if(phase==='after_read'&&!initialApplied)waiting=true;const known=new Set(calls.map(row=>row.id));return covered.filter(input=>!known.has(input.root_id));}});
+ void running.catch(()=>{});
+ try{
+  await waitSeen.promise;assert.equal(reads,1);assert.equal(reserves,1);assert.equal(initialApplied,false);assert.equal(preparations,phase==='after_read'?0:1);
+  providerGate.resolve();const result=await running;assert.equal(result.status,'completed');assert.equal(physical.length,5);assert.equal(new Set(physical).size,5);assert.ok(calls.every(row=>row.results_applied));
+ }finally{providerGate.resolve();await running.catch(()=>{});}
+});
+for(const reservedCount of [0,1])test(`bootstrap priority does not wait on ${reservedCount?'a quiet reservation':'a missing progress promise'}`,{timeout:3000},async()=>{
+ type Args=Parameters<typeof processJevLabelingPageV1<FacetInput,string>>[0];
+ const run={id:'priority-finite-'+reservedCount,lease_token:'lease',error_code:null,status:'running'}as LabelingRunV1;
+ const input={root_id:'quiet-root',text:'quiet'}as FacetInput,calls:LabelingCallV1<FacetInput>[]=[],sent:string[]=[];let reads=0,marks=0;
+ const store={claim:async()=>run,renew:async()=>{},release:async()=>{},calls:async()=>[],inputs:async()=>reservedCount?[input]:[],
+  reserve:async(_run:unknown,proposals:Array<{custom_id:string}>)=>{const rows=proposals.map(row=>({...row,id:row.custom_id,status:'reserved',raw_body:null,results_applied:false}))as LabelingCallV1<FacetInput>[];calls.push(...rows);return rows;},
+  markSubmitting:async(_run:unknown,rows:typeof calls)=>{marks++;for(const row of rows)row.status='submitting';},
+  persistRawPage:async(_run:unknown,rows:Array<{call:typeof calls[number];raw:string}>)=>{for(const row of rows)row.call.raw_body=row.raw;},
+  settlePage:async(_run:unknown,rows:Array<{call:typeof calls[number]}>)=>{for(const row of rows)row.call.status='settled';},
+  apply:async(_run:unknown,rows:Array<{call:typeof calls[number]}>)=>{for(const row of rows)row.call.results_applied=true;},
+  finish:async()=>calls.every(row=>row.results_applied)?'completed':'running',fail:async()=>{},markFailed:async()=>{},
+ }as unknown as Args['store'];
+ const provider:Args['provider']={max_response_bytes:4096,evaluate:async request=>{sent.push(String(request.state));return{http_status:200,latency_ms:1,
+  body:JSON.stringify({model:request.model,usage:{input_tokens:1,output_tokens:0},answers:{q:{type:'noul',noul:.9}}})};}};
+ const result=await processJevLabelingPageV1({run_id:run.id,store,provider,execution:{...execution,flush_size:1},
+  hooks:{continuous_windows:()=>true,revisit_empty_after_apply:true,price:()=>llmPriceV1('typesafe','jev-1.13.0','sync',.042),
+   next_admission_hint:()=>({kind:'bootstrap',bootstrap_id:1,covered_call_limit:1,wait_for_apply:true}),
+   propose:(_run,inputs)=>inputs.map(value=>({custom_id:value.root_id,request_digest:value.root_id,inputs:[value],reserved_micro_usd:100,
+    request:{model:'jev-1.13.0',state:value.text,questions:{q:{type:'noul',instructions:'Configured data'}}}})),map:(_run,call)=>[call.id],error:()=>[],labeled:()=>true},
+  read_next_inputs:async()=>{reads++;throw Error('no native query without a capable progress promise');}});
+ assert.equal(result.status,'completed');assert.equal(reads,0);assert.equal(sent.length,reservedCount);assert.equal(marks,reservedCount);
+});

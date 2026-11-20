@@ -1061,3 +1061,502 @@ test('native Listening without RAW pages retains the default reservation cursor 
  assert.ok(statements.some(sql=>sql.includes('SELECT id FROM signal_labeling_runs')&&sql.includes('FOR UPDATE')));
  assert.ok(!statements.some(sql=>sql.includes('WITH raw_run_fence')));
 },false));
+
+
+// Atomic covered admission acceptance is additive. The original money/0339
+// cases above retain their source bytes and their existing CI environment gate.
+import {deriveSignalListeningCalibrationV1} from '../signal-listening-calibration';
+import {signalListeningCalibrationShapeV1,llmPriceV1,llmCostMicroUsdV1} from '@noisia/query-engine';
+import type {LabelingCallProposalV1,LabelingCallV1,LabelingAdmissionSelectionV1} from '../signal-labeling-runs';
+import {LabelingAdmissionFailureV1} from '../signal-labeling-runs';
+
+type CoveredNativeFixture=NativeFixture&{intercept:ListeningPageFixture['intercept'];
+ evidence:{operation:'insert'|'mark';population_calls:number;money_calls:number}[];sourceProfile:NonNullable<Awaited<ReturnType<typeof deriveSignalListeningCalibrationV1>>>;prewarm_calls:number;probeDatabase:NativeFixture['database']};
+async function withCoveredNativeFixture(cap:number,body:(f:CoveredNativeFixture)=>Promise<void>,editorialRace=false){
+ await runMassLabelingAcceptanceFixtureV1('product',{population_count:60,beforeProcessing:async ctx=>{
+  const original=ctx.database,access={database:original,workspace_id:ctx.workspace_id,actor_user_id:ctx.actor_user_id};
+  await original.query("UPDATE signal_labeling_runs SET status='canceled' WHERE id=$1",[ctx.run_id]);
+  const editorial=editorialRace?await seedEditorialRace(access):undefined,runCap=editorial?.cap??cap;
+  const base=signalListeningBaseTemplateV1({category:'bicycles',lexicon_terms:['synthetic']});
+  const cfg=await saveSignalListeningConfigurationV1({...access,expected_revision:0,provenance:'human',configuration:{...base,questions:[...base.questions,
+   {key:'consumer_signal',type:'choice',text:'What kind of synthetic consumer experience is described?',scope:'consumer_category',origin:'brand_os',human_locked:false,
+    options:[{key:'experience',definition:'Personal bicycle experience'},{key:'other',definition:'Other consumer context'}]}]}});
+  const files=await mkdtemp(join(tmpdir(),'r16-native-covered-'));
+  const rawPages:NativeFixture['rawPages']={reference:a=>({storage_key:`private/${a.workspace_id}/${a.run_id}/${a.name}.${a.raw_sha256.slice(7)}.parts.json`}),
+   async store(a){const path=join(files,a.raw_sha256.slice(7));await writeFile(path,a.raw_text,{flag:'wx'});const fd=await open(path,'r+');try{await fd.sync();}finally{await fd.close();}
+    assert.equal(await readFile(path,'utf8'),a.raw_text);return{storage_key:rawPages.reference(a).storage_key,sha256:a.raw_sha256,size_bytes:a.size_bytes,verified:true};},
+   load:a=>readFile(join(files,a.sha256.slice(7)),'utf8')};
+  const warmStore=createSignalListeningStoreV1({database:original,rawPages,storeRaw:async()=>{throw Error('no real provider or individual receipt');}});
+  const warm=await requestSignalListeningV1({...access,configuration_id:cfg.id,map_id:ctx.map_id,idempotency_key:randomUUID(),cap_micro_usd:runCap,provider_available:true});
+  const warmRun=await warmStore.claim(warm.run_id);assert.ok(warmRun);
+  let counter=0;
+  const complete=async(inputs:SignalListeningInputV1[])=>{
+   const batchSize=Math.max(1,Math.min(16,Math.floor(runCap/2000)));
+   for(let offset=0;offset<inputs.length;offset+=batchSize){
+   const batch=inputs.slice(offset,offset+batchSize);
+   const calls=await warmStore.reserve(warmRun,proposals({run:warmRun,inputs:batch,configuration:cfg.configuration},1000));
+   await warmStore.markSubmitting(warmRun,calls);
+   const outcomes=calls.map(call=>{const input=call.inputs[0]!,request=buildSignalListeningJevRequestV1(input,cfg.configuration),response={model:cfg.configuration.model,
+    usage:{input_tokens:120+counter++,output_tokens:0},answers:Object.fromEntries(Object.entries(request.questions).map(([key,q])=>q.type==='noul'
+     ?[key,{type:'noul' as const,noul:.1}]:[key,{type:'choice' as const,choice:key==='voice'?'individual':'experience',confidence:.9,
+      probabilities:Object.fromEntries(Object.keys(q.criteria).map(k=>[k,k===(key==='voice'?'individual':'experience')?.9:.1/(Object.keys(q.criteria).length-1)]))}]))};
+    const usage=jevUsageV1(response.usage);return{call,raw:JSON.stringify({http_status:200,latency_ms:100,body:JSON.stringify(response)}),usage,
+     settled_micro_usd:llmCostMicroUsdV1(usage,llmPriceV1('typesafe',cfg.configuration.model,'sync',.042)),result:mapSignalListeningJevResponseV1(input,warmRun.context,cfg.configuration,response)};});
+   await warmStore.persistRawPage(warmRun,outcomes);await warmStore.settlePage(warmRun,outcomes);await warmStore.apply(warmRun,outcomes.map(o=>({call:o.call,results:[o.result]})));
+   if(counter%16===0)await warmStore.renew(warmRun);
+   }
+  };
+  try{
+   const initial=await warmStore.inputs(warmRun);assert.equal(initial.length,60);assert.ok(initial.every(i=>i.question_keys.join(',')==='promotion,voice'));
+   await complete(initial);
+   const consumers=await warmStore.inputs(warmRun);assert.equal(consumers.length,60);assert.ok(consumers.every(i=>i.question_keys.join(',')==='consumer_signal'));
+   const sized=consumers.map(i=>({input:i,bytes:Buffer.byteLength(JSON.stringify(buildSignalListeningJevRequestV1(i,cfg.configuration)))})).sort((a,b)=>a.bytes-b.bytes||a.input.root_id.localeCompare(b.input.root_id));
+   const anchors=[sized[0]!.input,sized.at(-1)!.input,...sized.slice(1,-1).map(x=>x.input)].filter((i,n,a)=>a.findIndex(x=>x.root_id===i.root_id)===n).slice(0,32);
+   assert.equal(anchors.length,32);await complete(anchors);
+   const shape=signalListeningCalibrationShapeV1(cfg.configuration,anchors[0]!),sourceProfile=await deriveSignalListeningCalibrationV1({...access,run_id:warmRun.id,shape_digest:shape.shape_digest});
+   assert.ok(sourceProfile);assert.equal(sourceProfile.sample_count,32);assert.equal(new Set(sourceProfile.source_call_ids).size,32);assert.equal(sourceProfile.scope.phase,'consumer_category');
+   assert.equal(sourceProfile.source_run_id,warmRun.id,'coverage must be derived from this exact scope run');
+   await warmStore.renew(warmRun);
+   const intercept:CoveredNativeFixture['intercept']={},evidence:CoveredNativeFixture['evidence']=[];
+   const database={query:original.query.bind(original),connect:async()=>{const c=await original.connect();return new Proxy(c,{get(target,key){
+    if(key==='query')return async(sql:string,values?:unknown[])=>{await intercept.before?.(sql,target);const result=await target.query(sql,values);
+     if(sql==='BEGIN')await target.query("SET LOCAL track_functions='all'");
+     if(sql.includes('labeling_native_covered_insert_v1')||sql.includes('labeling_native_covered_mark_v1'))evidence.push({operation:sql.includes('labeling_native_covered_insert_v1')?'insert':'mark',
+      population_calls:await exposureCalls(target,'signal_listening_wire_population_roots_v1(uuid,uuid,uuid,text,uuid[],text)'),money_calls:await exposureCalls(target,'signal_listening_statement_money_v1()')});
+     await intercept.after?.(sql,target);return result;};const value=Reflect.get(target,key);return typeof value==='function'?value.bind(target):value;
+   }});}}as NativeFixture['database'];
+   const store=createSignalListeningStoreV1({database,rawPages,storeRaw:async()=>{throw Error('no provider or individual receipt');}}),run=warmRun;
+   const inputs=await store.inputs(run);assert.equal(inputs.length,28);assert.ok(inputs.every(i=>i.question_keys.join(',')==='consumer_signal'));
+   assert.ok(store.admitAndMarkSelected,'constructor-authenticated Native Listening+RAW exposes the private operation');
+   await body({database,run,store,rawPages,inputs,configuration:cfg.configuration,intercept,evidence,sourceProfile,prewarm_calls:counter,probeDatabase:original,editorial});
+  }finally{await rm(files,{recursive:true,force:true});}
+ }});
+}
+function freshSelection<I extends SignalListeningInputV1>(select:(p:readonly LabelingCallProposalV1<I>[])=>readonly LabelingCallProposalV1<I>[],
+ validate:(calls:readonly LabelingCallV1<I>[],selected:readonly LabelingCallProposalV1<I>[])=>void=()=>{}):LabelingAdmissionSelectionV1<I>{return{selectFresh:select,validateBeforeCommit:validate};}
+async function coveredLedger(f:CoveredNativeFixture){return(await f.database.query('SELECT to_jsonb(c) row FROM signal_labeling_calls c WHERE run_id=$1 ORDER BY id',[f.run.id])).rows;}
+
+test('atomic native covered fresh admission exercises both E statements after32 real consumer receipts; keeps zero/fallback/cap/rollback contracts',{
+ skip:!enabled,timeout:600000,
+},async t=>withCoveredNativeFixture(1000000,async f=>{
+ const observer=await loadWireObserverContractV1(),catalogBefore=await attestWireObserverRuntimeV1(f.database,observer),fresh=()=>proposals({...f,inputs:f.inputs.slice(2,4)},1000);
+ let committed:readonly LabelingCallV1<SignalListeningInputV1>[]=[],validated:readonly LabelingCallV1<SignalListeningInputV1>[]|undefined;
+ await t.test('actual covered commit returns exact ordered cohort, correct links, two actual fresh E populations and the same beforeCommit array',async()=>{
+  let selected=0,validation=0;const rows=proposals({...f,inputs:f.inputs.slice(0,2)},1000);
+  const result=await f.store.admitAndMarkSelected!(f.run,rows,freshSelection(p=>{selected++;return p;},(calls,plan)=>{validation++;validated=calls;assert.equal(calls.length,2);assert.deepEqual(plan,rows);assert.ok(calls.every(c=>c.status==='submitting'&&!c.raw_body));
+   for(const call of calls){const proposed=rows.find(p=>p.custom_id===call.custom_id)!;assert.deepEqual(call.request,proposed.request);assert.deepEqual(call.inputs,proposed.inputs);assert.equal(Number(call.reserved_micro_usd),1000);}}));
+  assert.equal(result.kind,'committed');assert.equal(selected,1);assert.equal(validation,1);if(result.kind!=='committed')throw Error('expected actual native fastpath');
+  assert.equal(result.calls,validated);committed=result.calls;assert.equal(committed.length,2);
+  assert.deepEqual(f.evidence,[{operation:'insert',population_calls:1,money_calls:1},{operation:'mark',population_calls:2,money_calls:2}],'both real commands execute the current full E source independently');
+  assert.equal((await f.database.query('SELECT count(*)::int n FROM signal_listening_call_questions WHERE run_id=$1 AND call_id=ANY($2::uuid[])',[f.run.id,result.calls.map(c=>c.id)])).rows[0].n,2);
+ });
+ await t.test('zero late selection invokes validation once but creates no new reservation or Mark',async()=>{
+  const before=await coveredLedger(f),evidence=f.evidence.length;let selected=0,validation=0;
+  const result=await f.store.admitAndMarkSelected!(f.run,fresh(),freshSelection(()=>{selected++;return[];},calls=>{validation++;assert.deepEqual(calls,[]);}));
+  assert.equal(result.kind,'committed');assert.equal(selected,1);assert.equal(validation,1);assert.deepEqual(await coveredLedger(f),before);assert.equal(f.evidence.length,evidence);
+ });
+ await t.test('existing and mixed packets return legacy before either late callback or any DML',async()=>{
+  const before=await coveredLedger(f);for(const rows of [proposals({...f,inputs:f.inputs.slice(0,1)},1000),[...proposals({...f,inputs:f.inputs.slice(0,1)},1000),...fresh()]]){
+   const result=await f.store.admitAndMarkSelected!(f.run,rows,freshSelection(()=>{throw Error('legacy cannot claim response credits');},()=>{throw Error('legacy cannot validate a new handoff');}));assert.equal(result.kind,'legacy');
+  }assert.deepEqual(await coveredLedger(f),before);
+ });
+ await t.test('generic0multi and unsupported retries retain legacy, without new rejections or financial mutations',async()=>{
+  const before=await coveredLedger(f);for(const mode of ['zero','multi','retry']as const){const rows=fresh();if(mode==='zero')rows[0]!.inputs=[];if(mode==='multi')rows[0]!.inputs.push(f.inputs[4]!);if(mode==='retry')Object.assign(rows[0]!,{retry_depth:1});
+   assert.equal((await f.store.admitAndMarkSelected!(f.run,rows,freshSelection(()=>{throw Error('unsupported callback');}))).kind,'legacy');}assert.deepEqual(await coveredLedger(f),before);
+ });
+ await t.test('an invalid fullSHA reaches E INSERT and rolls back the entire fresh packet',async()=>{
+  const before=await coveredLedger(f),rows=fresh();rows[1]!.request_digest='sha256:'+'0'.repeat(64);rows[1]!.custom_id='listening_'+rows[1]!.request_digest.slice(7,67);
+  await assert.rejects(f.store.admitAndMarkSelected!(f.run,rows,freshSelection(p=>p)),error=>{
+   assert.ok(error instanceof LabelingAdmissionFailureV1);assert.equal(error.outcome,'rolled_back');assert.equal(error.message,'listening_request_invalid');
+   assert.match(String((error.cause as {where?:unknown}|undefined)?.where),/signal_listening_statement_money_v1/,'invalid fullSHA must fail in E, not the row guard');return true;});assert.deepEqual(await coveredLedger(f),before);
+ });
+ await t.test('Mark reads source text again through the actual E fullSHA validator after INSERT, in the same transaction',async()=>{
+  const before=await coveredLedger(f),rows=fresh();let inserted=false,markAttempted=false;
+  const sourceBefore=(await f.database.query('SELECT text FROM signal_mass_labeling_items WHERE workspace_id=$1 AND map_id=$2 AND root_id=$3',[f.run.workspace_id,rows[0]!.inputs[0]!.map_id,rows[0]!.inputs[0]!.root_id])).rows[0].text;
+  f.intercept.after=async(sql,c)=>{if(sql.includes('labeling_native_covered_insert_v1')){inserted=true;
+   await c.query("UPDATE signal_mass_labeling_items SET text=text||' source changed between native statements' WHERE workspace_id=$1 AND map_id=$2 AND root_id=$3",[f.run.workspace_id,rows[0]!.inputs[0]!.map_id,rows[0]!.inputs[0]!.root_id]);}};
+  f.intercept.before=async sql=>{if(sql.includes('labeling_native_covered_mark_v1'))markAttempted=true;};
+  try{await assert.rejects(f.store.admitAndMarkSelected!(f.run,rows,freshSelection(p=>p)),error=>{
+   assert.ok(error instanceof LabelingAdmissionFailureV1);assert.equal(error.outcome,'rolled_back');assert.equal(error.message,'listening_request_invalid');
+   assert.match(String((error.cause as {where?:unknown}|undefined)?.where),/signal_listening_statement_money_v1/,'E must reject; a BEFORE ROW or JS denial is insufficient');return true;});}
+  finally{f.intercept.after=undefined;f.intercept.before=undefined;}
+  assert.equal(inserted,true);assert.equal(markAttempted,true);assert.deepEqual(await coveredLedger(f),before);
+  assert.equal((await f.database.query('SELECT text FROM signal_mass_labeling_items WHERE workspace_id=$1 AND map_id=$2 AND root_id=$3',[f.run.workspace_id,rows[0]!.inputs[0]!.map_id,rows[0]!.inputs[0]!.root_id])).rows[0].text,sourceBefore);
+ });
+ await t.test('Mark authority denial rolls back fresh reservations, retaining the intentional new atomicity',async()=>{
+  const before=await coveredLedger(f);let inserted=false;f.intercept.after=async(sql,c)=>{if(sql.includes('labeling_native_covered_insert_v1')){inserted=true;await c.query("UPDATE users SET status='suspended' WHERE id=$1",[f.run.actor_user_id]);}};
+  try{await assert.rejects(f.store.admitAndMarkSelected!(f.run,fresh(),freshSelection(p=>p)),/processing_forbidden|labeling_forbidden/);}finally{f.intercept.after=undefined;}
+  assert.equal(inserted,true);assert.deepEqual(await coveredLedger(f),before);assert.equal((await f.database.query('SELECT status FROM users WHERE id=$1',[f.run.actor_user_id])).rows[0].status,'active');
+ });
+ await t.test('validation rejection beforeCOMMIT rolls back both DML and cannot invoke automatic legacy fallback',async()=>{
+  const before=await coveredLedger(f),start=f.evidence.length;let validation=0;
+  await assert.rejects(f.store.admitAndMarkSelected!(f.run,fresh(),freshSelection(p=>p,()=>{validation++;throw Error('synthetic_precommit_handoff_denied');})),/synthetic_precommit_handoff_denied/);
+  assert.equal(validation,1);assert.equal(f.evidence.length,start+2);assert.deepEqual(await coveredLedger(f),before);
+ });
+ await t.test('deferred physical lease expiry at COMMIT rolls back fresh INSERT and submitting transition',async()=>{
+  const before=await coveredLedger(f);f.intercept.before=async(sql,c)=>{if(sql==='COMMIT')await c.query("UPDATE signal_labeling_runs SET lease_until=clock_timestamp()-interval '1 second' WHERE id=$1",[f.run.id]);};
+  try{await assert.rejects(f.store.admitAndMarkSelected!(f.run,fresh(),freshSelection(p=>p)),/labeling_lease_lost/);}finally{f.intercept.before=undefined;}
+  assert.deepEqual(await coveredLedger(f),before);
+ });
+ await t.test('a lost INSERT ACK with confirmed rollback is classified and cannot fall back or attempt a second INSERT',async()=>{
+  const before=await coveredLedger(f);let inserts=0,validations=0;f.intercept.after=async sql=>{if(sql.includes('labeling_native_covered_insert_v1')){inserts++;throw Error('synthetic_atomic_insert_ack_lost');}};
+  try{await assert.rejects(f.store.admitAndMarkSelected!(f.run,fresh(),freshSelection(p=>p,()=>{validations++;})),error=>{
+   assert.ok(error instanceof Error&&'outcome'in error);assert.equal(error.outcome,'rolled_back');assert.match(error.message,/synthetic_atomic_insert_ack_lost/);return true;});}
+  finally{f.intercept.after=undefined;}assert.equal(inserts,1);assert.equal(validations,0);assert.deepEqual(await coveredLedger(f),before);
+ });
+ await t.test('INSERT and ROLLBACK ACK loss remains UNKNOWN, discards only its own client and never starts another admission',async()=>{
+  const before=await coveredLedger(f);let backend=0,inserts=0;
+  f.intercept.after=async(sql,c)=>{if(sql.includes('labeling_native_covered_insert_v1')){inserts++;backend=Number((await c.query('SELECT pg_backend_pid() pid')).rows[0].pid);throw Error('synthetic_insert_transport_lost');}};
+  f.intercept.before=async sql=>{if(sql==='ROLLBACK')throw Error('synthetic_rollback_transport_lost');};
+  try{await assert.rejects(f.store.admitAndMarkSelected!(f.run,fresh(),freshSelection(p=>p)),error=>{
+   assert.ok(error instanceof Error&&'outcome'in error&&'custom_ids'in error);assert.equal(error.outcome,'unknown');assert.ok(error.cause instanceof AggregateError);assert.equal(error.cause.errors.length,2);assert.equal((error.custom_ids as string[]).length,2);return true;});}
+  finally{f.intercept.before=undefined;f.intercept.after=undefined;}
+  assert.equal(inserts,1);assert.ok(backend>0);let ended=false;const deadline=Date.now()+3000;
+  do{ended=(await f.probeDatabase.query('SELECT count(*)::int n FROM pg_stat_activity WHERE pid=$1',[backend])).rows[0].n===0;if(!ended)await pageDelay(20);}while(!ended&&Date.now()<deadline);
+  assert.equal(ended,true,'the discarded owned connection ends; this observation is not a rollback ACK');assert.deepEqual(await coveredLedger(f),before);
+ });
+ await t.test('late and precommit callbacks are synchronous; a mutated handoff cannot poison the paid row or provider body',async()=>{
+  const before=await coveredLedger(f),start=f.evidence.length;
+  await assert.rejects(f.store.admitAndMarkSelected!(f.run,fresh(),{selectFresh:(()=>Promise.reject(Error('async selection rejected')))as never,validateBeforeCommit:()=>{}}),/labeling_admission_callback_invalid/);
+  assert.equal(f.evidence.length,start);
+  await assert.rejects(f.store.admitAndMarkSelected!(f.run,fresh(),freshSelection(p=>p,(()=>Promise.reject(Error('async validation rejected')))as never)),/labeling_admission_callback_invalid/);
+  await assert.rejects(f.store.admitAndMarkSelected!(f.run,fresh(),freshSelection(p=>p,calls=>{calls[0]!.request.state='poison';})),/labeling_admission_handoff_changed/);
+  assert.deepEqual(await coveredLedger(f),before);
+ });
+ await t.test('actual inline SQL packet preserves Unicode strings and finite JSON numbers without changing the JS reservation',async()=>{
+  const before=await coveredLedger(f),rows=structuredClone(fresh().slice(0,1)),input=rows[0]!.inputs[0]! as SignalListeningInputV1&{extra_numeric?:number[];extra_unicode?:string};
+  input.extra_numeric=[1e-7,1e20,-0,.25];input.extra_unicode='quoted " / newline\n tab\t ☕ \u2028';let validated=0;
+  await assert.rejects(f.store.admitAndMarkSelected!(f.run,rows,freshSelection(p=>p,calls=>{validated++;assert.deepEqual(calls[0]!.inputs,JSON.parse(JSON.stringify(rows[0]!.inputs)));assert.deepEqual(calls[0]!.request,rows[0]!.request);
+   assert.equal(Number(calls[0]!.reserved_micro_usd),1000);throw Error('synthetic_packet_positive_rollback');})),/synthetic_packet_positive_rollback/);
+  assert.equal(validated,1);assert.deepEqual(await coveredLedger(f),before);
+ });
+ await t.test('run cap exact-fit and minus1 reach both E guards before a deliberately rolled-back validation probe',async()=>{
+  const before=await coveredLedger(f);let spent=0;await transaction(f,async c=>{spent=Number(await readSignalLabelingRunExposureV1(c,f.run.id));});
+  for(const delta of [-1,0]){const amount=Number(f.run.cap_micro_usd)-spent+delta,rows=fresh().slice(0,1),events=f.evidence.length;rows[0]!.reserved_micro_usd=amount;let validated=0;
+   await assert.rejects(f.store.admitAndMarkSelected!(f.run,rows,freshSelection(p=>p,calls=>{validated++;assert.equal(Number(calls[0]!.reserved_micro_usd),amount);throw Error('synthetic_cap_positive_rollback');})),/synthetic_cap_positive_rollback/);
+   assert.equal(validated,1);assert.equal(f.evidence.length,events+2,'both E commands accept the exact fresh cumulative cap boundary');assert.deepEqual(await coveredLedger(f),before);
+  }
+ });
+ await t.test('sum+1 cap rejection uses only the late selected fresh prefix and preserves all prior exposure',async()=>{
+  const before=await coveredLedger(f),rows=fresh();let spent=0;await transaction(f,async c=>{spent=Number(await readSignalLabelingRunExposureV1(c,f.run.id));});const remaining=1000000-spent;rows[0]!.reserved_micro_usd=Math.floor(remaining/2);rows[1]!.reserved_micro_usd=remaining-rows[0]!.reserved_micro_usd+1;
+  await assert.rejects(f.store.admitAndMarkSelected!(f.run,rows,freshSelection(p=>p)),/labeling_cap_exhausted/);assert.deepEqual(await coveredLedger(f),before);
+ });
+ await t.test('a lost actual COMMIT ACK propagates once, leaves the one cohort durable and never automatically retries',async()=>{
+  let ackLost=false,insertCount=0;f.intercept.after=async sql=>{if(sql.includes('labeling_native_covered_insert_v1'))insertCount++;if(sql==='COMMIT'&&!ackLost){ackLost=true;throw Error('synthetic_atomic_commit_ack_lost');}};
+  try{await assert.rejects(f.store.admitAndMarkSelected!(f.run,fresh(),freshSelection(p=>p)),/synthetic_atomic_commit_ack_lost/);}finally{f.intercept.after=undefined;}
+  assert.equal(ackLost,true);assert.equal(insertCount,1);assert.equal((await coveredLedger(f)).length,f.prewarm_calls+4);
+  const restarted=createSignalListeningStoreV1({database:f.database,rawPages:f.rawPages,storeRaw:async()=>{throw Error('no provider');}});
+  assert.equal((await restarted.admitAndMarkSelected!(f.run,fresh(),freshSelection(()=>{throw Error('existing on restart cannot send');}))).kind,'legacy');
+  assert.ok((await restarted.calls(f.run)).every(c=>c.status==='submitting'&&!c.raw_body),'restart discovers ambiguous native status; this test makes no provider attempts');
+ });
+ assert.deepEqual(await attestWireObserverRuntimeV1(f.database,observer),catalogBefore,'all tests leave actual current E function/catalog/ACL identical');
+}));
+
+
+test('native covered preflight rejects a genuine measured32 profile from another run before claiming credits',{
+ skip:!enabled,timeout:600000,
+},async()=>withCoveredNativeFixture(1000000,async f=>{
+ assert.equal(f.sourceProfile.source_run_id,f.run.id);await f.store.release(f.run);
+ await f.database.query("UPDATE signal_labeling_runs SET status='canceled' WHERE id=$1",[f.run.id]);
+ const owner=(await f.database.query('SELECT configuration_id,map_id FROM signal_listening_runs WHERE run_id=$1',[f.run.id])).rows[0];
+ const next=await requestSignalListeningV1({database:f.database,workspace_id:f.run.workspace_id,actor_user_id:f.run.actor_user_id,
+  configuration_id:owner.configuration_id,map_id:owner.map_id,idempotency_key:randomUUID(),cap_micro_usd:1000000,provider_available:true});
+ const run=await f.store.claim(next.run_id);assert.ok(run);assert.notEqual(run.id,f.sourceProfile.source_run_id);
+ const inputs=await f.store.inputs(run);assert.equal(inputs.length,28);const before=(await f.database.query('SELECT count(*)::int n FROM signal_labeling_calls WHERE run_id=$1',[run.id])).rows[0].n;
+ const result=await f.store.admitAndMarkSelected!(run,proposals({run,inputs:inputs.slice(0,1),configuration:f.configuration},1000),freshSelection(()=>{throw Error('wrong run profile cannot claim memory or HTTP credits');}));
+ assert.equal(result.kind,'legacy');assert.equal((await f.database.query('SELECT count(*)::int n FROM signal_labeling_calls WHERE run_id=$1',[run.id])).rows[0].n,before);
+}));
+
+for(const same of [true,false])test('atomic covered concurrency '+(same?'falls back for the one durable existing identity':'cannot overspend the same remaining run budget'),{
+ skip:!enabled,timeout:600000,
+},async()=>withCoveredNativeFixture(2000,async f=>{
+ let spent=0;await transaction(f,async c=>{spent=Number(await readSignalLabelingRunExposureV1(c,f.run.id));});assert.ok(2000-spent>=1000&&2000-spent<2000);
+ const held=pageDeferred(),attempted=pageDeferred(),release=pageDeferred();let caught=false,holder=0,waiter=0;const custody:{client?:PoolClient}={};
+ f.intercept.after=async(sql,c)=>{if(!caught&&sql==='SELECT * FROM signal_labeling_calls WHERE custom_id=ANY($1::text[])'){
+  caught=true;custody.client=c;holder=Number((await c.query('SELECT pg_backend_pid() pid')).rows[0].pid);held.resolve();await release.promise;
+ }};
+ f.intercept.before=async(sql,c)=>{if(holder&&!waiter&&reservePolicyLock(sql)){waiter=Number((await c.query('SELECT pg_backend_pid() pid')).rows[0].pid);attempted.resolve();}};
+ const rows=proposals({...f,inputs:f.inputs.slice(0,1)},1000);let firstSelected=0,secondSelected=0;
+ const first=f.store.admitAndMarkSelected!(f.run,rows,freshSelection(p=>{firstSelected++;return p;})).then(value=>({value,error:null}),error=>({value:null,error}));
+ let second:typeof first|undefined;
+ try{await reserveGate(held.promise);second=f.store.admitAndMarkSelected!(f.run,same?rows:proposals({...f,inputs:f.inputs.slice(1,2)},1000),freshSelection(p=>{secondSelected++;return p;}))
+  .then(value=>({value,error:null}),error=>({value:null,error}));await reserveGate(attempted.promise);assert.ok(custody.client);await requireListeningPageBlock(custody.client,holder,waiter);
+ }finally{release.resolve();await Promise.all([first,second]);f.intercept.before=undefined;f.intercept.after=undefined;}
+ const a=await first;assert.equal(a.error,null);assert.equal(a.value?.kind,'committed');assert.equal(firstSelected,1);assert.ok(second);const b=await second;
+ if(same){assert.equal(b.error,null);assert.equal(b.value?.kind,'legacy');assert.equal(secondSelected,0);}
+ else{assert.match(String(b.error),/labeling_cap_exhausted/);assert.equal(secondSelected,1);}
+ const fresh=(await f.database.query('SELECT status,count(*)::int n FROM signal_labeling_calls WHERE run_id=$1 AND NOT results_applied GROUP BY status',[f.run.id])).rows;
+ assert.deepEqual(fresh,[{status:'submitting',n:1}]);assert.equal((await coveredLedger(f)).length,f.prewarm_calls+1);
+}));
+
+for(const mutation of ['lease','policy','actor']as const)test('atomic covered admission checks '+mutation+' fresh after the actual authority wait and sends no new cohort',{
+ skip:!enabled,timeout:600000,
+},async()=>withCoveredNativeFixture(1000000,async f=>{
+ const before=await coveredLedger(f),holder=await f.database.connect(),attempted=pageDeferred();let waiter=0,caught=false,selected=0;
+ await holder.query('BEGIN');await holder.query("SET LOCAL statement_timeout='15s';SET LOCAL lock_timeout='5s'");
+ const holderPid=Number((await holder.query('SELECT pg_backend_pid() pid')).rows[0].pid);
+ if(mutation==='lease')await holder.query('SELECT id FROM signal_labeling_runs WHERE id=$1 FOR UPDATE',[f.run.id]);
+ else await holder.query("SELECT pg_advisory_xact_lock(hashtextextended('signal-processing-policy:'||organization_id::text,0)) FROM signal_workspaces WHERE id=$1",[f.run.workspace_id]);
+ f.intercept.before=async(sql,c)=>{if(!caught&&(mutation==='lease'?sql.includes('WITH raw_run_fence'):reservePolicyLock(sql))){caught=true;waiter=Number((await c.query('SELECT pg_backend_pid() pid')).rows[0].pid);attempted.resolve();}};
+ const sending=f.store.admitAndMarkSelected!(f.run,proposals({...f,inputs:f.inputs.slice(0,1)},1000),freshSelection(p=>{selected++;return p;})).then(()=>null,error=>error);
+ try{await reserveGate(attempted.promise);await requireListeningPageBlock(holder,holderPid,waiter);
+  if(mutation==='lease')await holder.query("UPDATE signal_labeling_runs SET lease_until=clock_timestamp()-interval '1 second' WHERE id=$1",[f.run.id]);
+  if(mutation==='policy')await holder.query("UPDATE signal_processing_policy_versions SET status='revoked' WHERE id=(SELECT policy_version_id FROM signal_processing_admissions WHERE id=$1)",[f.run.processing_admission_id]);
+  if(mutation==='actor')await holder.query("UPDATE users SET status='suspended' WHERE id=$1",[f.run.actor_user_id]);
+  await holder.query('COMMIT');assert.match(String(await sending),/labeling_lease_lost|labeling_policy_changed|processing_policy_expired|processing_forbidden|labeling_forbidden/);
+ }finally{f.intercept.before=undefined;await holder.query('ROLLBACK').catch(()=>{});holder.release();await sending;}
+ assert.equal(selected,0);assert.deepEqual(await coveredLedger(f),before);
+}));
+
+
+test('the actual fresh-only preflight retains whole-row SELECT permissions through same-session prepared REVOKE and restoration',{
+ skip:!enabled,timeout:600000,
+},async()=>withCoveredNativeFixture(1000000,async f=>{
+ let actualSql='';f.intercept.before=async sql=>{if(sql==='SELECT * FROM signal_labeling_calls WHERE custom_id=ANY($1::text[])')actualSql=sql;};
+ const result=await f.store.admitAndMarkSelected!(f.run,proposals({...f,inputs:f.inputs.slice(0,1)},1000),freshSelection(p=>p));f.intercept.before=undefined;
+ assert.equal(result.kind,'committed');assert.ok(actualSql,'capture the actual implemented preflight, not a separate query guessed by the test');
+ const c=await f.probeDatabase.connect(),role='r16_atomic_read_'+randomUUID().replaceAll('-',''),quoted='"'+role+'"',prepared='r16_atomic_prepared_'+randomUUID().replaceAll('-','');
+ const unused='raw_storage_verified_key',values=[proposals({...f,inputs:f.inputs.slice(1,2)},1000).map(p=>p.custom_id)];
+ const attempt=async()=>{await c.query('SAVEPOINT atomic_prepared_probe');let output:{code:string|null;rows:number|null};
+  try{await c.query('SET LOCAL ROLE '+quoted);const r=await c.query({name:prepared,text:actualSql,values});output={code:null,rows:r.rows.length};}
+  catch(error){assert.ok(error&&typeof error==='object'&&'code'in error);output={code:String(error.code),rows:null};}
+  finally{await c.query('ROLLBACK TO SAVEPOINT atomic_prepared_probe');await c.query('RELEASE SAVEPOINT atomic_prepared_probe');}return output;
+ };
+ try{await c.query('BEGIN');const owned=(await c.query("SELECT current_database() name,(SELECT rolsuper FROM pg_roles WHERE rolname=current_user) super")).rows[0];assert.match(owned.name,/^noisia_mfp_recovery_[a-f0-9]{32}$/u);assert.equal(owned.super,true);
+  await c.query('CREATE ROLE '+quoted+' NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT BYPASSRLS');await c.query('GRANT USAGE ON SCHEMA public TO '+quoted);await c.query('GRANT SELECT ON TABLE signal_labeling_calls TO '+quoted);
+  assert.deepEqual(await attempt(),{code:null,rows:0});
+  await c.query('REVOKE SELECT ON TABLE signal_labeling_calls FROM PUBLIC,'+quoted);
+  const columns=(await c.query("SELECT attname FROM pg_attribute WHERE attrelid='signal_labeling_calls'::regclass AND attnum>0 AND NOT attisdropped ORDER BY attnum")).rows.map(r=>String(r.attname));assert.ok(columns.includes(unused));
+  await c.query('GRANT SELECT('+columns.filter(k=>k!==unused).map(k=>'"'+k.replaceAll('"','""')+'"').join(',')+') ON TABLE signal_labeling_calls TO '+quoted);
+  assert.equal((await c.query("SELECT has_column_privilege($1::name,'signal_labeling_calls'::regclass,$2,'SELECT') allowed",[role,unused])).rows[0].allowed,false);
+  assert.deepEqual(await attempt(),{code:'42501',rows:null},'prepared empty-existing preflight still checks its unused column');
+  await c.query('GRANT SELECT ON TABLE signal_labeling_calls TO '+quoted);assert.deepEqual(await attempt(),{code:null,rows:0},'the same named prepared statement works after restoration');
+ }finally{await c.query('ROLLBACK');if((await c.query('SELECT name FROM pg_prepared_statements WHERE name=$1',[prepared])).rows.length)await c.query('DEALLOCATE "'+prepared+'"');c.release();}
+}));
+
+
+test('atomic covered admission includes real warmup and a genuine Sonnet sibling in the same finite organization day cap',{
+ skip:!enabled,timeout:600000,
+},async()=>withCoveredNativeFixture(1000000,async f=>{
+ const sibling=f.editorial;assert.ok(sibling);assert.equal(f.sourceProfile.source_run_id,f.run.id);assert.equal(f.sourceProfile.sample_count,32);
+ const sealed=(await f.database.query(`SELECT e.hard_cap_micro_usd::text cap,request.request_digest,request.reserved_micro_usd::text first_request
+  FROM signal_topic_editorial_executions e CROSS JOIN LATERAL(SELECT r.request_digest,r.reserved_micro_usd FROM signal_topic_editorial_requests r WHERE r.execution_id=e.id ORDER BY batch_index,request_digest LIMIT 1) request
+  WHERE e.id=$1`,[sibling.execution_id])).rows[0];assert.ok(sealed);assert.ok(BigInt(sealed.first_request)>0n&&BigInt(sealed.first_request)<BigInt(sealed.cap));
+ const exposure=async()=>BigInt((await f.database.query('SELECT total_micro_usd::text n FROM signal_processing_org_exposure_v1($1,(clock_timestamp() AT TIME ZONE $2)::date,$2)',[sibling.organization_id,sibling.budget_timezone])).rows[0].n);
+ const beforeSibling=await exposure();assert.ok(beforeSibling>0n,'normal warmups and prior native owners have real exposure');
+ assert.ok(BigInt(sibling.daily_cap_micro_usd)-beforeSibling>=BigInt(sealed.first_request),'the independently sealed request fits after actual warmups');
+ await prepareSignalTopicEditorialBatchV2({database:f.database,execution_id:sibling.execution_id,request_digests:[sealed.request_digest],submission_key:'atomic-covered-day-'+randomUUID()});
+ const afterSibling=await exposure(),headroom=BigInt(sibling.daily_cap_micro_usd)-afterSibling;assert.ok(afterSibling>beforeSibling&&headroom>=0n);
+ let runSpent=0;await transaction(f,async c=>{runSpent=Number(await readSignalLabelingRunExposureV1(c,f.run.id));});
+ const amount=Number(headroom+1n);assert.ok(Number.isSafeInteger(amount)&&amount>0&&amount<=Number(f.run.cap_micro_usd)-runSpent);
+ const rows=proposals({...f,inputs:f.inputs.slice(0,1)},amount),before=await coveredLedger(f);let selected=0;
+ await assert.rejects(f.store.admitAndMarkSelected!(f.run,rows,freshSelection(p=>{selected++;return p;})),/labeling_daily_cap_exhausted|processing_daily_cap_exhausted/);
+ assert.equal(selected,1,'same-run32 covered fastpath reached its late selection before the day amount check');
+ assert.deepEqual(await coveredLedger(f),before);assert.equal(await exposure(),afterSibling);assert.ok(afterSibling<=BigInt(sibling.daily_cap_micro_usd));
+},true));
+
+
+test('atomic same-run32 covered child admission preserves real parent exposure and executes its E parent check once per DML',{
+ skip:!enabled,timeout:600000,
+},async()=>withDiscoveryAdvanceFixtureV1(async f=>{
+ const observer=await loadWireObserverContractV1(),catalogBefore=await attestWireObserverRuntimeV1(f.database,observer);
+ const advances=createSignalListeningDiscoveryAdvanceStoreV1({database:f.database,numeric_storage:f.storage});
+ const lease=await advances.claim({database:f.database,execution_id:f.execution.id});assert.ok(lease);
+ const subset=await advances.ensureSubset({database:f.database,lease,generation_id:lease.source_generation_id});const numeric=await f.emptyNumeric(subset);
+ await advances.persistNumeric({database:f.database,lease,subset_id:subset.id,numeric});
+ const round=await advances.enqueue({database:f.database,lease,generation_id:lease.source_generation_id,expected_ordinal:lease.next_ordinal,
+  expected_policy_version_id:lease.policy_version_id,expected_policy_digest:lease.policy_digest,expected_human_revision_digest:lease.human_revision_digest,
+  numeric_manifest_sha256:numeric.manifest_sha256,provider_available:true});assert.ok(round&&round.status!=='budget_exhausted');await advances.release({database:f.database,lease});
+ const child=await f.prepareRoundChild(round as ListeningDiscoveryRoundV1),rawPages:NativeFixture['rawPages']={
+  reference:a=>({storage_key:`private/${a.workspace_id}/${a.run_id}/${a.name}.${a.raw_sha256.slice(7)}.parts.json`}),
+  async store(a){const path=join(f.files,'atomic-child-'+a.raw_sha256.slice(7));await writeFile(path,a.raw_text,{flag:'wx'});const fd=await open(path,'r+');try{await fd.sync();}finally{await fd.close();}assert.equal(await readFile(path,'utf8'),a.raw_text);
+   return{storage_key:rawPages.reference(a).storage_key,sha256:a.raw_sha256,size_bytes:a.size_bytes,verified:true};},
+  load:a=>readFile(join(f.files,'atomic-child-'+a.sha256.slice(7)),'utf8')};
+ const labeling=createSignalListeningStoreV1({database:f.database,rawPages,storeRaw:async()=>{throw Error('no individual provider/raw');}}),run=await labeling.claim(child.run_id);assert.ok(run);
+ const inputs=await labeling.inputs(run),groups=new Map<string,SignalListeningInputV1[]>();
+ for(const input of inputs){const shape=signalListeningCalibrationShapeV1(child.configuration,input),rows=groups.get(shape.shape_digest)??[];rows.push(input);groups.set(shape.shape_digest,rows);}
+ const candidates=[...groups.values()].sort((a,b)=>b.length-a.length)[0];assert.ok(candidates&&candidates.length>32,'the real child has at least32 receipts and a later covered cohort of the same shape');
+ const sorted=candidates.map(input=>({input,bytes:Buffer.byteLength(JSON.stringify(buildSignalListeningJevRequestV1(input,child.configuration)))})).sort((a,b)=>a.bytes-b.bytes||a.input.root_id.localeCompare(b.input.root_id));
+ const anchors=[sorted[0]!.input,sorted.at(-1)!.input,...sorted.slice(1,-1).map(x=>x.input)].filter((i,n,a)=>a.findIndex(x=>x.root_id===i.root_id)===n).slice(0,32);
+ const calls=await labeling.reserve(run,proposals({run,inputs:anchors,configuration:child.configuration},1000));await labeling.markSubmitting(run,calls);
+ const makeOutcomes=(batch:ReadonlyArray<LabelingCallV1<SignalListeningInputV1>>)=>batch.map(call=>{const input=call.inputs[0]!,request=buildSignalListeningJevRequestV1(input,child.configuration),response={model:child.configuration.model,usage:{input_tokens:120,output_tokens:20},
+  answers:Object.fromEntries(Object.entries(request.questions).map(([key,q])=>q.type==='noul'?[key,{type:'noul' as const,noul:.9}]:[key,{type:'choice' as const,choice:'individual',confidence:.9,
+   probabilities:Object.fromEntries(Object.keys(q.criteria).map(k=>[k,k==='individual'?.9:.1/(Object.keys(q.criteria).length-1)]))}]))};
+  return{call,raw:JSON.stringify({http_status:200,latency_ms:100,body:JSON.stringify(response)}),usage:jevUsageV1(response.usage),settled_micro_usd:6,result:mapSignalListeningJevResponseV1(input,run.context,child.configuration,response)};});
+ const outcomes=makeOutcomes(calls);await labeling.persistRawPage(run,outcomes);await labeling.settlePage(run,outcomes);await labeling.apply(run,outcomes.map(o=>({call:o.call,results:[o.result]})));
+ const shape=signalListeningCalibrationShapeV1(child.configuration,anchors[0]!),profile=await deriveSignalListeningCalibrationV1({...f,run_id:run.id,shape_digest:shape.shape_digest});assert.ok(profile);assert.equal(profile.sample_count,32);assert.equal(profile.source_run_id,run.id);
+ const eligible=(await labeling.inputs(run)).filter(i=>signalListeningCalibrationShapeV1(child.configuration,i).shape_digest===shape.shape_digest);assert.ok(eligible.length>0);
+ const events:number[]=[],fn='signal_listening_discovery_exposure_v1(uuid,text,uuid)';
+ const database={query:f.database.query.bind(f.database),connect:async()=>{const c=await f.database.connect();return new Proxy(c,{get(target,key){if(key==='query')return async(sql:string,values?:unknown[])=>{const result=await target.query(sql,values);if(sql==='BEGIN')await target.query("SET LOCAL track_functions='all'");if(sql.includes('labeling_native_covered_insert_v1')||sql.includes('labeling_native_covered_mark_v1'))events.push(await exposureCalls(target,fn));return result;};const value=Reflect.get(target,key);return typeof value==='function'?value.bind(target):value;}});}}as NativeFixture['database'];
+ const store=createSignalListeningStoreV1({database,rawPages,storeRaw:async()=>{throw Error('no provider');}}),parentBefore=BigInt((await f.database.query('SELECT signal_listening_discovery_exposure_v1($1)::text n',[f.execution.id])).rows[0].n);
+ const result=await store.admitAndMarkSelected!(run,proposals({run,inputs:eligible.slice(0,1),configuration:child.configuration},1000),freshSelection(p=>p));assert.equal(result.kind,'committed');assert.deepEqual(events,[1,2]);
+ const parentAfter=BigInt((await f.database.query('SELECT signal_listening_discovery_exposure_v1($1)::text n',[f.execution.id])).rows[0].n);
+ assert.equal(parentAfter,parentBefore+1000n);assert.ok(parentAfter<=BigInt(f.execution.cap_micro_usd));
+ assert.equal(result.kind,'committed');if(result.kind!=='committed')throw Error('native positive admission required');
+ const positiveOutcomes=makeOutcomes(result.calls);await labeling.persistRawPage(run,positiveOutcomes);await labeling.settlePage(run,positiveOutcomes);
+ await labeling.apply(run,positiveOutcomes.map(o=>({call:o.call,results:[o.result]})));await labeling.renew(run);
+ // Adversarial disposable-laboratory concurrency setup, allowed by the actual
+ // DB guards. This is not the ordinary worker path and does not assert product
+ // recovery from failed. Park/resume and the sibling's real held reservation
+ // occur in one fixture transaction; caps, funding, source and profiles stay
+ // immutable. No role/trigger/function changes or fabricated money rows.
+ const immutable=async()=>({parent:(await f.database.query('SELECT cap_micro_usd,policy_version_id,policy_digest,actor_user_id,map_id FROM signal_listening_discovery_executions WHERE id=$1',[f.execution.id])).rows[0],
+  run:(await f.database.query('SELECT cap_micro_usd,processing_admission_id,labeler_digest,entity_context_digest FROM signal_labeling_runs WHERE id=$1',[run.id])).rows[0],
+  profile:(await f.database.query('SELECT source_run_id,profile FROM signal_listening_calibrations WHERE source_run_id=$1 ORDER BY created_at,id',[run.id])).rows});
+ const invariantBefore=await immutable(),freshInputs=(await labeling.inputs(run)).filter(i=>signalListeningCalibrationShapeV1(child.configuration,i).shape_digest===shape.shape_digest);
+ assert.ok(freshInputs.length>=2);const target=freshInputs[0]!,siblingRoot=freshInputs[1]!;assert.notEqual(target.root_id,siblingRoot.root_id);
+ const beforeSibling=BigInt((await f.database.query('SELECT signal_listening_discovery_exposure_v1($1)::text n',[f.execution.id])).rows[0].n),cap=BigInt(f.execution.cap_micro_usd);
+ const siblingAmount=cap-beforeSibling-999n;assert.ok(siblingAmount>0n&&siblingAmount<=BigInt(run.cap_micro_usd!));
+ let siblingCall:LabelingCallV1<SignalListeningInputV1>|undefined,siblingRunId='';const setupClient=await f.database.connect(),stack:string[]=[];let serial=0;
+ const setupQuery=(async(sql:string,values?:unknown[])=>{
+  if(sql.startsWith('BEGIN')){const name='atomic_parent_setup_'+(++serial);stack.push(name);return setupClient.query('SAVEPOINT '+name);}
+  if(sql==='COMMIT')return setupClient.query('RELEASE SAVEPOINT '+stack.pop()!);
+  if(sql==='ROLLBACK'){const name=stack.pop()!;await setupClient.query('ROLLBACK TO SAVEPOINT '+name);return setupClient.query('RELEASE SAVEPOINT '+name);}
+  if(sql.startsWith('SET TRANSACTION'))return setupClient.query('SELECT 1');return setupClient.query(sql,values);
+ })as PoolClient['query'];
+ const scoped=Object.assign(Object.create(setupClient),{query:setupQuery,release(){}})as PoolClient;
+ const setupDatabase=Object.assign(Object.create(f.database),{query:setupQuery,connect:async()=>scoped})as NativeFixture['database'];
+ try{await setupClient.query('BEGIN');await setupClient.query("UPDATE signal_labeling_runs SET status='failed' WHERE id=$1 AND status='running' AND lease_token=$2",[run.id,run.lease_token]);
+  assert.equal((await setupClient.query('SELECT status FROM signal_labeling_runs WHERE id=$1',[run.id])).rows[0].status,'failed');
+  const owner=(await setupClient.query('SELECT configuration_id,map_id FROM signal_listening_runs WHERE run_id=$1',[run.id])).rows[0];
+  const requested=await requestSignalListeningV1({database:setupDatabase,workspace_id:run.workspace_id,actor_user_id:run.actor_user_id,
+   configuration_id:owner.configuration_id,map_id:owner.map_id,idempotency_key:randomUUID(),cap_micro_usd:Number(run.cap_micro_usd),provider_available:true});
+  siblingRunId=requested.run_id;
+  await setupClient.query('INSERT INTO signal_listening_discovery_children(execution_id,workspace_id,run_id,preparation_id,round_id) VALUES($1,$2,$3,NULL,$4)',[f.execution.id,run.workspace_id,siblingRunId,round.id]);
+  const siblingStore=createSignalListeningStoreV1({database:setupDatabase,rawPages,storeRaw:async()=>{throw Error('no provider');}}),siblingRun=await siblingStore.claim(siblingRunId);assert.ok(siblingRun);
+  const siblingInput=(await siblingStore.inputs(siblingRun)).find(i=>i.root_id===siblingRoot.root_id);assert.ok(siblingInput);
+  siblingCall=(await siblingStore.reserve(siblingRun,proposals({run:siblingRun,inputs:[siblingInput],configuration:child.configuration},Number(siblingAmount))))[0];assert.ok(siblingCall);assert.equal(siblingCall.status,'reserved');
+  await setupClient.query("UPDATE signal_labeling_runs SET status='failed' WHERE id=$1 AND status='running'",[siblingRunId]);
+  await setupClient.query("UPDATE signal_labeling_runs SET status='running',lease_until=clock_timestamp()+interval '1 hour' WHERE id=$1 AND lease_token=$2",[run.id,run.lease_token]);
+  assert.equal(stack.length,0);await setupClient.query('COMMIT');
+ }catch(error){await setupClient.query('ROLLBACK');throw error;}finally{setupClient.release();}
+ assert.ok(siblingCall);assert.deepEqual(await immutable(),invariantBefore,'caps, policy binding, source and measured32 profile are untouched');
+ const siblings=(await f.database.query('SELECT c.run_id,r.status FROM signal_listening_discovery_children c JOIN signal_labeling_runs r ON r.id=c.run_id WHERE c.execution_id=$1 AND c.run_id=ANY($2::uuid[]) ORDER BY c.run_id',[f.execution.id,[run.id,siblingRunId]])).rows;
+ assert.equal(siblings.length,2);assert.equal(siblings.find(r=>r.run_id===run.id)?.status,'running');assert.equal(siblings.find(r=>r.run_id===siblingRunId)?.status,'failed');
+ const parentHeld=BigInt((await f.database.query('SELECT signal_listening_discovery_exposure_v1($1)::text n',[f.execution.id])).rows[0].n);assert.equal(parentHeld,cap-999n);
+ const authority=(await f.database.query(`SELECT r.cap_micro_usd::text run_cap,a.policy_version_id,p.daily_cap_micro_usd::text day_cap,action.max_execution_micro_usd::text action_cap,
+  (SELECT total_micro_usd FROM signal_processing_org_exposure_v1(a.organization_id,a.budget_date,a.budget_timezone))::text day_spent
+  FROM signal_labeling_runs r JOIN signal_processing_admissions a ON a.id=r.processing_admission_id JOIN signal_processing_policy_versions p ON p.id=a.policy_version_id
+  JOIN signal_processing_policy_actions action ON action.policy_version_id=p.id AND action.action=a.action WHERE r.id=$1`,[run.id])).rows[0];assert.ok(authority);
+ const runSpent=await(async()=>{const c=await f.database.connect();try{return BigInt(await readSignalLabelingRunExposureV1(c,run.id));}finally{c.release();}})();
+ assert.ok(BigInt(authority.run_cap)-runSpent>1000n);assert.ok(authority.action_cap===null||BigInt(authority.action_cap)-runSpent>1000n);
+ assert.ok(authority.day_cap===null||BigInt(authority.day_cap)-BigInt(authority.day_spent)>1000n,'organization day is deliberately not the failing guard');
+ const heldSibling=(await f.database.query('SELECT to_jsonb(c) value FROM signal_labeling_calls c WHERE id=$1',[siblingCall.id])).rows[0].value;
+ const countBefore=(await f.database.query('SELECT count(*)::int n FROM signal_labeling_calls WHERE run_id=$1',[run.id])).rows[0].n;let lateSelected=0;
+ await assert.rejects(store.admitAndMarkSelected!(run,proposals({run,inputs:[target],configuration:child.configuration},1000),freshSelection(p=>{lateSelected++;return p;})),error=>{
+  assert.ok(error instanceof LabelingAdmissionFailureV1);assert.equal(error.outcome,'rolled_back');assert.equal(error.message,'listening_discovery_parent_cap_exhausted');
+  assert.match(String((error.cause as {where?:unknown}|undefined)?.where),/signal_listening_statement_money_v1/,'actual E parent RAISE, not BEFORE ROW or a Node budget check');return true;
+ });
+ assert.equal(lateSelected,1);assert.equal((await f.database.query('SELECT count(*)::int n FROM signal_labeling_calls WHERE run_id=$1',[run.id])).rows[0].n,countBefore);
+ assert.deepEqual((await f.database.query('SELECT to_jsonb(c) value FROM signal_labeling_calls c WHERE id=$1',[siblingCall.id])).rows[0].value,heldSibling,'the competing genuine held reservation survives the denied cohort');
+ assert.equal(BigInt((await f.database.query('SELECT signal_listening_discovery_exposure_v1($1)::text n',[f.execution.id])).rows[0].n),parentHeld);
+ assert.deepEqual(await immutable(),invariantBefore);assert.deepEqual(await attestWireObserverRuntimeV1(f.database,observer),catalogBefore);await labeling.release(run);
+},{population_count:120,initial_approved:120,cap_micro_usd:1000000}));
+
+
+// Compound lifecycle reconciliation acceptance. The thrown admission outcome is
+// UNKNOWN until authoritative ledger reconciliation; it is not a promise of
+// permanent run blocking. These are separate measured32 fixtures and execute
+// the real fail/finish/release/claim methods, including finish's FOR UPDATE.
+async function compoundNativeExposureV1(f:CoveredNativeFixture){
+ const c=await f.database.connect();try{return BigInt(await readSignalLabelingRunExposureV1(c,f.run.id));}finally{c.release();}
+}
+const nativeRunRowV1=async(f:CoveredNativeFixture)=>(await f.database.query('SELECT status,error_code,lease_token,lease_until FROM signal_labeling_runs WHERE id=$1',[f.run.id])).rows[0];
+
+test('native INSERT plus ROLLBACK ACK loss is not retried automatically; real finish reconciles zero rows before reopening the same identities',{
+ skip:!enabled,timeout:600000,
+},async()=>withCoveredNativeFixture(1000000,async f=>{
+ assert.equal(f.sourceProfile.source_run_id,f.run.id);assert.equal(f.sourceProfile.sample_count,32);
+ const rows=proposals({...f,inputs:f.inputs.slice(0,2)},1000),customIds=rows.map(p=>p.custom_id),roots=rows.map(p=>p.inputs[0]!.root_id);
+ const baseline=await coveredLedger(f),exposureBefore=await compoundNativeExposureV1(f);let inserts=0,marks=0,validations=0,backend=0;
+ let bodyTransaction='',finishTransaction='',phase:'fault'|'fail'|'finish'|'restart'='fault';
+ f.intercept.after=async(sql,c)=>{
+  if(sql.includes('labeling_native_covered_insert_v1')){inserts++;backend=Number((await c.query('SELECT pg_backend_pid() pid')).rows[0].pid);
+   bodyTransaction=String((await c.query('SELECT pg_current_xact_id()::text xid')).rows[0].xid);throw Error('synthetic_compound_insert_ack_lost');}
+  if(sql.includes('labeling_native_covered_mark_v1'))marks++;
+ };
+ f.intercept.before=async sql=>{if(sql==='ROLLBACK')throw Error('synthetic_compound_rollback_ack_lost');};
+ try{await assert.rejects(f.store.admitAndMarkSelected!(f.run,rows,freshSelection(p=>p,()=>{validations++;})),error=>{
+  assert.ok(error instanceof LabelingAdmissionFailureV1);assert.equal(error.outcome,'unknown');assert.deepEqual(error.custom_ids,customIds);
+  assert.ok(error.cause instanceof AggregateError);assert.equal(error.cause.errors.length,2);return true;});}
+ finally{f.intercept.before=undefined;f.intercept.after=undefined;}
+ assert.equal(inserts,1);assert.equal(marks,0);assert.equal(validations,0,'no committed cohort was handed to the provider');assert.ok(backend>0);assert.ok(bodyTransaction);
+ // Connection teardown is a physical observation, not a transport rollback ACK.
+ let ended=false;const deadline=Date.now()+3000;
+ do{ended=(await f.probeDatabase.query('SELECT count(*)::int n FROM pg_stat_activity WHERE pid=$1',[backend])).rows[0].n===0;if(!ended)await pageDelay(20);}while(!ended&&Date.now()<deadline);
+ assert.equal(ended,true);assert.deepEqual(await coveredLedger(f),baseline);assert.equal(await compoundNativeExposureV1(f),exposureBefore);
+ const lifecycle:string[]=[];
+ f.intercept.after=async(sql,c)=>{
+  if(sql.includes('labeling_native_covered_insert_v1'))inserts++;
+  if(sql.includes('labeling_native_covered_mark_v1'))marks++;
+  if(sql.includes('SELECT id FROM signal_labeling_runs')&&sql.includes('FOR UPDATE')){
+   lifecycle.push(phase+':FOR UPDATE');if(phase==='finish'){
+    finishTransaction=String((await c.query('SELECT pg_current_xact_id()::text xid')).rows[0].xid);
+    const actual=(await c.query("SELECT count(*)::int n FROM signal_labeling_calls WHERE run_id=$1 AND custom_id=ANY($2::text[])",[f.run.id,customIds])).rows[0];
+    assert.equal(actual.n,0,'the real finish run lock precedes the authoritative absence observation');
+   }
+  }
+ };
+ try{
+  phase='fail';await f.store.fail(f.run,'labeling_outcome_unknown',{preserve_reserved:true});
+  assert.equal((await nativeRunRowV1(f)).error_code,'labeling_outcome_unknown');assert.equal(inserts,1);
+  phase='finish';assert.equal(await f.store.finish(f.run),'running');assert.ok(lifecycle.includes('finish:FOR UPDATE'));assert.ok(finishTransaction);assert.notEqual(finishTransaction,bodyTransaction);
+  const finished=await nativeRunRowV1(f);assert.equal(finished.status,'running');assert.equal(finished.error_code,null);
+  assert.deepEqual(await coveredLedger(f),baseline);assert.equal(await compoundNativeExposureV1(f),exposureBefore);assert.equal(inserts,1);assert.equal(marks,0);
+  await f.store.release(f.run,{immediate:true});assert.equal((await nativeRunRowV1(f)).lease_token,null);
+  phase='restart';const restarted=createSignalListeningStoreV1({database:f.database,rawPages:f.rawPages,storeRaw:async()=>{throw Error('no provider or individual RAW');}});
+  const claimed=await restarted.claim(f.run.id);assert.ok(claimed);assert.notEqual(claimed.lease_token,f.run.lease_token);assert.equal(claimed.error_code,null);
+  const available=await restarted.inputs(claimed);assert.ok(roots.every(root=>available.some(input=>input.root_id===root)));
+  const again=proposals({run:claimed,inputs:roots.map(root=>available.find(input=>input.root_id===root)!),configuration:f.configuration},1000);
+  assert.deepEqual(again.map(p=>p.custom_id),customIds);assert.equal(inserts,1,'no second financial attempt precedes authoritative finish and a new lease');
+  // Explicit next operation after reconciliation, not an automatic retry of
+  // the unknown operation. It reserves once and never invokes evaluate/HTTP.
+  const admitted=await restarted.admitAndMarkSelected!(claimed,again,freshSelection(p=>p,()=>{validations++;}));assert.equal(admitted.kind,'committed');
+  if(admitted.kind!=='committed')throw Error('reconciled zero-row identities must be fresh');assert.deepEqual(admitted.calls.map(call=>call.custom_id),customIds);
+  assert.equal(inserts,2);assert.equal(marks,1);assert.equal(validations,1);assert.equal(await compoundNativeExposureV1(f),exposureBefore+2000n);
+  assert.ok(admitted.calls.every(call=>call.status==='submitting'&&!call.raw_body&&!call.raw_storage_key&&!call.results_applied));await restarted.release(claimed,{immediate:true});
+ }finally{f.intercept.after=undefined;f.intercept.before=undefined;}
+}));
+
+test('native durable COMMIT ACK loss keeps the same money and identities through real finish and restart claim; unknown calls cannot be selected for resending',{
+ skip:!enabled,timeout:600000,
+},async()=>withCoveredNativeFixture(1000000,async f=>{
+ assert.equal(f.sourceProfile.source_run_id,f.run.id);assert.equal(f.sourceProfile.sample_count,32);
+ const rows=proposals({...f,inputs:f.inputs.slice(0,2)},1000),customIds=rows.map(p=>p.custom_id),roots=rows.map(p=>p.inputs[0]!.root_id);
+ const exposureBefore=await compoundNativeExposureV1(f);let inserts=0,marks=0,validations=0,lost=false;const lifecycle:string[]=[];
+ let phase:'fault'|'fail'|'finish'|'restart'|'terminal'='fault';
+ f.intercept.after=async sql=>{if(sql.includes('labeling_native_covered_insert_v1'))inserts++;if(sql.includes('labeling_native_covered_mark_v1'))marks++;
+  if(sql==='COMMIT'&&!lost){lost=true;throw Error('synthetic_compound_durable_commit_ack_lost');}};
+ try{await assert.rejects(f.store.admitAndMarkSelected!(f.run,rows,freshSelection(p=>p,()=>{validations++;})),error=>{
+  assert.ok(error instanceof LabelingAdmissionFailureV1);assert.equal(error.outcome,'unknown');assert.equal(error.message,'synthetic_compound_durable_commit_ack_lost');
+  assert.deepEqual(error.custom_ids,customIds);assert.equal(error.call_ids.length,2);return true;});}
+ finally{f.intercept.after=undefined;}
+ assert.equal(lost,true);assert.equal(inserts,1);assert.equal(marks,1);assert.equal(validations,1);
+ const durable=async()=>(await f.database.query(`SELECT id,custom_id,request_digest,request,inputs,status,reserved_micro_usd::text,settled_micro_usd,terminal_exposure_micro_usd::text,
+  raw_body,raw_sha256,raw_storage_key,results,results_applied FROM signal_labeling_calls WHERE run_id=$1 AND custom_id=ANY($2::text[]) ORDER BY custom_id`,[f.run.id,customIds])).rows;
+ const committed=await durable();assert.equal(committed.length,2);assert.ok(committed.every(call=>call.status==='submitting'&&call.raw_body===null&&call.raw_sha256===null&&call.raw_storage_key===null&&call.results===null&&!call.results_applied));
+ assert.equal(await compoundNativeExposureV1(f),exposureBefore+2000n);
+ f.intercept.after=async(sql,c)=>{
+  if(sql.includes('labeling_native_covered_insert_v1'))inserts++;if(sql.includes('labeling_native_covered_mark_v1'))marks++;
+  if(sql.includes('SELECT id FROM signal_labeling_runs')&&sql.includes('FOR UPDATE')){
+   lifecycle.push(phase+':FOR UPDATE');if(phase==='finish')assert.equal((await c.query("SELECT count(*)::int n FROM signal_labeling_calls WHERE run_id=$1 AND custom_id=ANY($2::text[]) AND status='submitting'",[f.run.id,customIds])).rows[0].n,2);
+  }
+ };
+ try{
+  phase='fail';await f.store.fail(f.run,'labeling_outcome_unknown',{preserve_reserved:true});assert.equal((await nativeRunRowV1(f)).error_code,'labeling_outcome_unknown');
+  phase='finish';assert.equal(await f.store.finish(f.run),'running');assert.ok(lifecycle.includes('finish:FOR UPDATE'));
+  assert.deepEqual(await durable(),committed,'finish retains the submitting calls and fabricates no RAW or answer');assert.equal(await compoundNativeExposureV1(f),exposureBefore+2000n);
+  await f.store.release(f.run,{immediate:true});assert.equal((await nativeRunRowV1(f)).lease_token,null);
+  phase='restart';const restarted=createSignalListeningStoreV1({database:f.database,rawPages:f.rawPages,storeRaw:async()=>{throw Error('no provider or individual RAW');}});
+  const claimed=await restarted.claim(f.run.id);assert.ok(claimed);assert.notEqual(claimed.lease_token,f.run.lease_token);
+  const reconciled=await durable();assert.deepEqual(reconciled,committed.map(call=>({...call,status:'unknown'})),'real claim reconciles durable submitting to unknown without changing frozen bodies or exposure');
+  const available=await restarted.inputs(claimed);assert.ok(available.every(input=>!roots.includes(input.root_id)),'same-run question links exclude the paid identities');
+  const discovered=await restarted.calls(claimed);assert.deepEqual(discovered.map(call=>call.id).sort(),committed.map(call=>call.id).sort());assert.ok(discovered.every(call=>call.status==='unknown'&&!call.raw_body&&!call.raw_storage_key&&!call.results_applied));
+  const result=await restarted.admitAndMarkSelected!(claimed,rows,freshSelection(()=>{throw Error('existing unknown identities cannot claim a handoff');},()=>{throw Error('existing unknown identities cannot validate a fresh cohort');}));assert.equal(result.kind,'legacy');
+  const existing=await restarted.reserve(claimed,rows);assert.deepEqual(existing.map(call=>call.id).sort(),committed.map(call=>call.id).sort());assert.ok(existing.every(call=>call.status==='unknown'));
+  await assert.rejects(restarted.markSubmittingSelected!(claimed,()=>existing),/labeling_mark_selection_invalid/);
+  assert.equal(inserts,1);assert.equal(marks,1);assert.equal(validations,1);assert.deepEqual(await durable(),reconciled);assert.equal(await compoundNativeExposureV1(f),exposureBefore+2000n);
+  phase='terminal';assert.equal(await restarted.finish(claimed),'failed');assert.equal((await nativeRunRowV1(f)).error_code,'labeling_outcome_unknown');
+  assert.deepEqual(await durable(),reconciled);assert.equal(await compoundNativeExposureV1(f),exposureBefore+2000n);await restarted.release(claimed,{immediate:true});
+ }finally{f.intercept.after=undefined;f.intercept.before=undefined;}
+}));

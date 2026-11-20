@@ -1,5 +1,5 @@
 import {
-  createSignalListeningStoreV1,signalWorkspaceFeatureEnabledV1,loadSignalListeningCalibrationV1,deriveSignalListeningCalibrationV1,
+  nativeListeningAdmissionWorkspaceBoundV1,createSignalListeningStoreV1,signalWorkspaceFeatureEnabledV1,loadSignalListeningCalibrationV1,deriveSignalListeningCalibrationV1,
   pendingSignalListeningPreparationsV1,continueSignalListeningPreparationV1,LABELING_INPUT_MAX_WORKING_BYTES_V1,type LabelingRunV1,
 } from '@noisia/db';
 import {
@@ -13,7 +13,7 @@ import {JevProviderErrorV1,type JevProviderV1} from '../providers/typesafe-jev';
 import {processJevLabelingPageV1,jevUsageV1,type JevPreparedExecutionV1,type JevNextInputBoundsV2} from './signal-jev-labeling-page';
 import {createLabelingRawPagesStorageV1} from './signal-labeling-receipt-storage';
 import {createWorkspaceEngineStorageV1,type WorkspaceEngineStorageV1} from './signal-workspace-engine-storage';
-import {assertJevStreamingExecutionV2,jevCallWorkingBytesV2,type JevStreamingExecutionV2,type JevStreamingMetricsV2} from './signal-jev-streaming-window';
+import {assertJevStreamingExecutionV2,jevCallWorkingBytesV2,type JevStreamingExecutionV2,type JevStreamingMetricsV2,type JevFeedAdmissionHintV1} from './signal-jev-streaming-window';
 
 import {listeningHasRawV1,selectSignalListeningRecoveryV1,createSignalListeningRecoveryProviderV1} from './signal-listening-recovery';
 import {planSignalListeningCalibrationV1,createSignalListeningCalibratedProviderV1,createSignalListeningContinuationV1,type SignalListeningCalibrationEventV1} from './signal-listening-calibration';
@@ -66,6 +66,8 @@ export function processSignalListeningJevV1(args:{run_id:string;store:Store;prov
   read_next_inputs?(run:LabelingRunV1,bounds:JevNextInputBoundsV2):Promise<SignalListeningInputV1[]>;
   prepare_next?(run:LabelingRunV1,inputs:SignalListeningInputV1[]):Promise<boolean|'wait_for_apply'>;
   minimum_next_calls?:()=>number;
+  next_admission_hint?:()=>JevFeedAdmissionHintV1;
+  acknowledge_covered?(generation:number,ids:ReadonlyArray<string>):void;
   compiled_snapshot?:()=>SignalListeningCompiledSnapshotV1|undefined}){
   let preparedExecution=args.execution,preparedProvider=args.provider;
   let windowSize=args.execution.window_size,compiledRun:ReturnType<typeof compileRun>|undefined;
@@ -101,7 +103,12 @@ export function processSignalListeningJevV1(args:{run_id:string;store:Store;prov
     // retained initial calibration selection.
     read_next_inputs:(run,bounds)=>args.read_next_inputs?args.read_next_inputs(run,readBounds(bounds)):args.store.inputs(run,readBounds({...bounds,on_oversize:'empty' as const})),
     prepare:args.prepare?async run=>{compiledRun=undefined;try{const prepared=await args.prepare!(run);preparedExecution=prepared.execution;preparedProvider=prepared.provider;windowSize=prepared.execution.window_size;return prepared;}finally{selectionIndex.invalidate();}}:undefined,hooks:{
-    revisit_empty_after_apply:true,price:run=>contextOf(run).price,prepare_next:args.prepare_next?async(run,inputs)=>{try{return await args.prepare_next!(run,inputs);}finally{selectionIndex.invalidate();}}:undefined,
+    native_admission:args.store.admitAndMarkSelected?{
+      workspace_bound:(run,proposals)=>nativeListeningAdmissionWorkspaceBoundV1(run,proposals),
+      committed:(hint,ids)=>{if(hint?.kind==='bootstrap')args.acknowledge_covered?.(hint.bootstrap_id,ids);},
+    }:undefined,
+    revisit_empty_after_apply:true,price:run=>contextOf(run).price,next_admission_hint:args.next_admission_hint,
+    prepare_next:args.prepare_next?async(run,inputs)=>{try{return await args.prepare_next!(run,inputs);}finally{selectionIndex.invalidate();}}:undefined,
     select_next_inputs:args.minimum_next_calls?inputs=>({inputs:args.selection?.()??inputs,minimum_calls:args.minimum_next_calls!()}):undefined,
     propose:(run,inputs)=>select(inputs).map(input=>{
       const request=buildSignalListeningCompiledRequestV1(input,contextOf(run).snapshot);
@@ -181,6 +188,8 @@ export async function signalListeningJevJobV1(run_id:string,options:{
     const outcome=await processSignalListeningJevV1({run_id,execution,observe_stream:options.observe_stream,store:boundedStore,provider:unavailable,recovery_only:run.recovery_only,selection:()=>selection,compiled_snapshot:()=>jobContext?.snapshot,
       release_selection:()=>{selection=undefined;},
       minimum_next_calls:()=>continuation?.minimumNextCalls()??0,
+      next_admission_hint:()=>continuation?.nextAdmissionHint()??{kind:'open'},
+      acknowledge_covered:(generation,ids)=>continuation?.acknowledgeCoveredReservation(generation,ids),
       prepare_next:async(_leased,inputs)=>{
         if(!jobContext)throw Error('listening_identity_invalid');jobContext.assert(_leased);
         const {snapshot,configuration,configuration_digest}=jobContext,next=inputs.slice(0,execution.window_size);
