@@ -72,10 +72,13 @@ export async function readSignalListeningQuestionsMetricsV1(args:SignalListening
   const map=await mapCurrent(c,args.workspace_id,args.map_id);
   const results=(await c.query<{question_key:string;counts:SignalListeningMetricCountsV1;distribution:SignalListeningMetricDistributionV1[];
    trend:SignalListeningQuestionMetricsV1['trend'];topic_cross:SignalListeningQuestionMetricsV1['topic_cross'];question_digest:string}>(`WITH requested AS MATERIALIZED(
- SELECT q.question_key,q.question_digest,q.definition->>'type' question_type,q.wire
+ SELECT q.question_key,q.question_digest,q.definition->>'type' question_type,q.wire->'criteria' criteria
  FROM signal_listening_questions q WHERE q.workspace_id=$1 AND q.configuration_id=$2 AND q.question_key=ANY($5::text[])),
 p AS MATERIALIZED(
- SELECT root_id,question_key,has_topic_source,candidate,scope_state,answer,human_belongs,effective_belongs,published_at,
+ SELECT root_id,question_key,has_topic_source,candidate,scope_state,answer IS NOT NULL answered,human_belongs,effective_belongs,published_at,
+  answer->>'choice' choice_key,answer->>'type'='choice' is_choice,
+  CASE WHEN question_key=ANY($5::text[]) THEN answer->'probabilities' END probabilities,
+  CASE WHEN human_belongs IS NULL THEN(answer->>'noul')::double precision END noul_value,
   CASE WHEN human_belongs IS NOT NULL THEN CASE WHEN human_belongs THEN 'positive' ELSE 'negative' END
    WHEN(answer->>'noul')::double precision>=.7 THEN 'positive' WHEN(answer->>'noul')::double precision<=.3 THEN 'negative'
    WHEN answer->>'noul' IS NOT NULL THEN 'uncertain' END effective_class
@@ -83,16 +86,19 @@ p AS MATERIALIZED(
  WHERE($11::boolean OR COALESCE(domain,'category')<>'outside')
   AND($6::timestamptz IS NULL OR published_at>=$6) AND($7::timestamptz IS NULL OR published_at<$7)),
 root_topics AS MATERIALIZED(
- SELECT root_id,array_agg(question_key ORDER BY question_key) FILTER(WHERE candidate AND scope_state='included'
-  AND has_topic_source AND effective_belongs) topic_keys FROM p GROUP BY root_id),
+ SELECT root_id,array_agg(question_key ORDER BY question_key) topic_keys FROM p
+ WHERE candidate AND scope_state='included' AND has_topic_source AND effective_belongs GROUP BY root_id),
 target AS MATERIALIZED(
- SELECT t.* FROM p t JOIN root_topics topics ON topics.root_id=t.root_id
- WHERE t.question_key=ANY($5::text[]) AND($10::text IS NULL OR $10=ANY(topics.topic_keys))),
+ SELECT t.root_id,t.question_key,t.candidate,t.scope_state,t.answered,t.human_belongs,t.effective_class,
+  t.choice_key,t.is_choice,t.probabilities,t.noul_value,date_trunc($9,t.published_at AT TIME ZONE $8)::text bucket,
+  topics.topic_keys
+ FROM p t LEFT JOIN root_topics topics ON topics.root_id=t.root_id
+ WHERE t.root_id IS NOT NULL AND t.question_key=ANY($5::text[]) AND($10::text IS NULL OR $10=ANY(topics.topic_keys))),
 counts AS(
  SELECT q.question_key,count(t.root_id)::int corpus_eligible,count(t.root_id) FILTER(WHERE t.candidate)::int candidate,
  count(t.root_id) FILTER(WHERE t.candidate AND t.scope_state='included')::int eligible,
- count(t.root_id) FILTER(WHERE t.candidate AND t.scope_state='included' AND t.answer IS NOT NULL)::int asked,
- count(t.root_id) FILTER(WHERE t.candidate AND t.scope_state='included' AND t.answer IS NULL AND t.human_belongs IS NULL)::int pending,
+ count(t.root_id) FILTER(WHERE t.candidate AND t.scope_state='included' AND t.answered)::int asked,
+ count(t.root_id) FILTER(WHERE t.candidate AND t.scope_state='included' AND NOT t.answered AND t.human_belongs IS NULL)::int pending,
  count(t.root_id) FILTER(WHERE t.candidate AND t.scope_state='awaiting_base')::int awaiting_base,
  count(t.root_id) FILTER(WHERE t.candidate AND t.scope_state='excluded')::int excluded_scope,
  count(t.root_id) FILTER(WHERE NOT t.candidate)::int not_candidate,
@@ -101,36 +107,43 @@ counts AS(
  count(t.root_id) FILTER(WHERE t.candidate AND t.scope_state='included' AND t.human_belongs=false)::int human_negative
  FROM requested q LEFT JOIN target t ON t.question_key=q.question_key GROUP BY q.question_key),
 options AS(
- SELECT q.question_key,q.question_type,option.key FROM requested q CROSS JOIN LATERAL jsonb_each(q.wire->'criteria') option WHERE q.question_type='choice'
+ SELECT q.question_key,q.question_type,option.key FROM requested q CROSS JOIN LATERAL jsonb_each(q.criteria) option WHERE q.question_type='choice'
  UNION ALL SELECT q.question_key,q.question_type,unnest(ARRAY['positive','negative','uncertain']) FROM requested q WHERE q.question_type='noul'),
+noul_dist AS(
+ SELECT question_key,effective_class option_key,count(root_id)::int count,
+ sum(CASE WHEN human_belongs IS NULL THEN noul_value END) probability_sum
+ FROM target WHERE candidate AND scope_state='included' AND(answered OR human_belongs IS NOT NULL)
+ GROUP BY question_key,effective_class),
 dist AS(
- SELECT option.question_key,option.key option_key,count(t.root_id) FILTER(WHERE CASE WHEN option.question_type='choice'
-  THEN t.answer->>'choice'=option.key ELSE t.effective_class=option.key END)::int count,
- sum(CASE WHEN option.question_type='choice' THEN(t.answer->'probabilities'->>option.key)::double precision
-  ELSE CASE WHEN t.human_belongs IS NULL AND t.effective_class=option.key THEN(t.answer->>'noul')::double precision END END) probability_sum
+ SELECT option.question_key,option.key option_key,count(t.root_id) FILTER(WHERE t.choice_key=option.key)::int count,
+ sum((t.probabilities->>option.key)::double precision) probability_sum
  FROM options option LEFT JOIN target t ON t.question_key=option.question_key AND t.candidate AND t.scope_state='included'
-  AND(t.answer IS NOT NULL OR t.human_belongs IS NOT NULL) GROUP BY option.question_key,option.key),
+  AND(t.answered OR t.human_belongs IS NOT NULL) WHERE option.question_type='choice' GROUP BY option.question_key,option.key
+ UNION ALL
+ SELECT option.question_key,option.key option_key,COALESCE(n.count,0)::int count,n.probability_sum
+ FROM options option LEFT JOIN noul_dist n ON n.question_key=option.question_key AND n.option_key=option.key
+ WHERE option.question_type='noul'),
 trend_choices AS(
- SELECT question_key,date_trunc($9,published_at AT TIME ZONE $8)::text bucket,answer->>'choice' choice,count(*)::int n
- FROM target WHERE candidate AND scope_state='included' AND answer->>'type'='choice' GROUP BY 1,2,3),
+ SELECT question_key,bucket,choice_key choice,count(*)::int n
+ FROM target WHERE candidate AND scope_state='included' AND is_choice GROUP BY 1,2,3),
 trend_choice_buckets AS(SELECT question_key,bucket,jsonb_object_agg(choice,n) choices FROM trend_choices GROUP BY question_key,bucket),
 trend_base AS(
- SELECT question_key,date_trunc($9,published_at AT TIME ZONE $8)::text bucket,
+ SELECT question_key,bucket,
  count(*) FILTER(WHERE candidate AND scope_state='included')::int eligible,
- count(*) FILTER(WHERE candidate AND scope_state='included' AND answer IS NOT NULL)::int asked,
- count(*) FILTER(WHERE candidate AND scope_state='included' AND answer IS NULL AND human_belongs IS NULL)::int pending,
+ count(*) FILTER(WHERE candidate AND scope_state='included' AND answered)::int asked,
+ count(*) FILTER(WHERE candidate AND scope_state='included' AND NOT answered AND human_belongs IS NULL)::int pending,
  count(*) FILTER(WHERE candidate AND scope_state='included' AND effective_class='positive')::int positive,
  count(*) FILTER(WHERE candidate AND scope_state='included' AND effective_class='negative')::int negative,
  count(*) FILTER(WHERE candidate AND scope_state='included' AND effective_class='uncertain')::int uncertain FROM target GROUP BY 1,2),
 trend AS(SELECT tb.*,COALESCE(ch.choices,'{}'::jsonb) choices FROM trend_base tb LEFT JOIN trend_choice_buckets ch USING(question_key,bucket)),
 pairs AS MATERIALIZED(
- SELECT t.question_key,topic.topic_key,t.root_id,t.answer,t.effective_class FROM target t JOIN root_topics topics ON topics.root_id=t.root_id
- CROSS JOIN LATERAL unnest(topics.topic_keys) topic(topic_key) WHERE t.candidate AND t.scope_state='included'),
+ SELECT t.question_key,topic.topic_key,t.answered,t.choice_key,t.is_choice,t.effective_class FROM target t
+ CROSS JOIN LATERAL unnest(t.topic_keys) topic(topic_key) WHERE t.candidate AND t.scope_state='included'),
 topic_counts AS(
- SELECT question_key,topic_key,count(*)::int eligible,count(answer)::int asked,count(*) FILTER(WHERE effective_class='positive')::int positive
+ SELECT question_key,topic_key,count(*)::int eligible,count(*) FILTER(WHERE answered)::int asked,count(*) FILTER(WHERE effective_class='positive')::int positive
  FROM pairs GROUP BY question_key,topic_key),
 topic_choices AS(
- SELECT question_key,topic_key,answer->>'choice' choice,count(*)::int n FROM pairs WHERE answer->>'type'='choice' GROUP BY 1,2,3),
+ SELECT question_key,topic_key,choice_key choice,count(*)::int n FROM pairs WHERE is_choice GROUP BY 1,2,3),
 topic_choice_groups AS(SELECT question_key,topic_key,jsonb_object_agg(choice,n) choices FROM topic_choices GROUP BY question_key,topic_key),
 cross_counts AS(SELECT tc.*,COALESCE(ch.choices,'{}'::jsonb) choices FROM topic_counts tc LEFT JOIN topic_choice_groups ch USING(question_key,topic_key))
 SELECT q.question_key,q.question_digest,to_jsonb(counts)-'question_key' counts,

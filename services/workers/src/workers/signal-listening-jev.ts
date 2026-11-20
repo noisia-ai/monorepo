@@ -1,5 +1,5 @@
 import {
-  nativeListeningAdmissionWorkspaceBoundV1,createSignalListeningStoreV1,signalWorkspaceFeatureEnabledV1,loadSignalListeningCalibrationV1,deriveSignalListeningCalibrationV1,
+  nativeListeningAdmissionWorkspaceBoundV1,createNativeListeningAdmissionWorkspaceQuoteV1,signalListeningInputSurveyStorageBoundV1,createSignalListeningStoreV1,signalWorkspaceFeatureEnabledV1,loadSignalListeningCalibrationV1,deriveSignalListeningCalibrationV1,
   pendingSignalListeningPreparationsV1,continueSignalListeningPreparationV1,LABELING_INPUT_MAX_WORKING_BYTES_V1,type LabelingRunV1,
 } from '@noisia/db';
 import {
@@ -10,7 +10,7 @@ import {
 import {assertMassJevConsumerV1} from '../providers/mass-labeling-consumer';
 import {createCalibratedJevRuntimeProviderV2,jevStreamingExecutionFromEnvV2} from '../providers/jev-streaming-runtime';
 import {JevProviderErrorV1,type JevProviderV1} from '../providers/typesafe-jev';
-import {processJevLabelingPageV1,jevUsageV1,type JevPreparedExecutionV1,type JevNextInputBoundsV2} from './signal-jev-labeling-page';
+import {processJevLabelingPageV1,jevUsageV1,type JevPreparedExecutionV1,type JevNextInputBoundsV2,type JevNextInputReadV3} from './signal-jev-labeling-page';
 import {createLabelingRawPagesStorageV1} from './signal-labeling-receipt-storage';
 import {createWorkspaceEngineStorageV1,type WorkspaceEngineStorageV1} from './signal-workspace-engine-storage';
 import {assertJevStreamingExecutionV2,jevCallWorkingBytesV2,type JevStreamingExecutionV2,type JevStreamingMetricsV2,type JevFeedAdmissionHintV1} from './signal-jev-streaming-window';
@@ -63,8 +63,9 @@ export function processSignalListeningJevV1(args:{run_id:string;store:Store;prov
   selection?:()=>SignalListeningInputV1[]|undefined;
   /** Transfer selection ownership after proposals/reservation, not authorization. */
   release_selection?:()=>void;
-  read_next_inputs?(run:LabelingRunV1,bounds:JevNextInputBoundsV2):Promise<SignalListeningInputV1[]>;
+  read_next_inputs?(run:LabelingRunV1,bounds:JevNextInputBoundsV2,admission_signal:AbortSignal):Promise<JevNextInputReadV3<SignalListeningInputV1>>;
   prepare_next?(run:LabelingRunV1,inputs:SignalListeningInputV1[]):Promise<boolean|'wait_for_apply'>;
+  preparation_valid?:()=>boolean;
   minimum_next_calls?:()=>number;
   next_admission_hint?:()=>JevFeedAdmissionHintV1;
   acknowledge_covered?(generation:number,ids:ReadonlyArray<string>):void;
@@ -101,12 +102,14 @@ export function processSignalListeningJevV1(args:{run_id:string;store:Store;prov
     initial_reservation:args.release_selection?{max_calls:1024,release_selection:()=>{selectionIndex.invalidate();args.release_selection!();}}:undefined,
     // Subsequent windows must read fresh native pending identities, never the
     // retained initial calibration selection.
-    read_next_inputs:(run,bounds)=>args.read_next_inputs?args.read_next_inputs(run,readBounds(bounds)):args.store.inputs(run,readBounds({...bounds,on_oversize:'empty' as const})),
+    read_next_inputs:(run,bounds,signal)=>args.read_next_inputs?args.read_next_inputs(run,readBounds(bounds),signal):args.store.inputs(run,readBounds({...bounds,on_oversize:'empty' as const})),
     prepare:args.prepare?async run=>{compiledRun=undefined;try{const prepared=await args.prepare!(run);preparedExecution=prepared.execution;preparedProvider=prepared.provider;windowSize=prepared.execution.window_size;return prepared;}finally{selectionIndex.invalidate();}}:undefined,hooks:{
     native_admission:args.store.admitAndMarkSelected?{
       workspace_bound:(run,proposals)=>nativeListeningAdmissionWorkspaceBoundV1(run,proposals),
+      workspace_quote:(run,proposals)=>createNativeListeningAdmissionWorkspaceQuoteV1(run,proposals),
       committed:(hint,ids)=>{if(hint?.kind==='bootstrap')args.acknowledge_covered?.(hint.bootstrap_id,ids);},
     }:undefined,
+    preparation_valid:args.preparation_valid,
     revisit_empty_after_apply:true,price:run=>contextOf(run).price,next_admission_hint:args.next_admission_hint,
     prepare_next:args.prepare_next?async(run,inputs)=>{try{return await args.prepare_next!(run,inputs);}finally{selectionIndex.invalidate();}}:undefined,
     select_next_inputs:args.minimum_next_calls?inputs=>({inputs:args.selection?.()??inputs,minimum_calls:args.minimum_next_calls!()}):undefined,
@@ -162,7 +165,7 @@ export async function signalListeningJevJobV1(run_id:string,options:{
   let calibrated:ReturnType<typeof createSignalListeningCalibratedProviderV1>|undefined,recoveryProvider:JevProviderV1|undefined;
   let continuation:Awaited<ReturnType<typeof createSignalListeningContinuationV1>>|undefined;
   let metadata:Awaited<ReturnType<Store['calls']>>|undefined,recovery:ReturnType<typeof selectSignalListeningRecoveryV1>,hydrated:Awaited<ReturnType<Store['calls']>>|undefined;
-  let calibrationRun:Readonly<LabelingRunV1>|undefined,shapes:string[]=[],selection:SignalListeningInputV1[]|undefined;
+  let calibrationRun:Readonly<LabelingRunV1>|undefined,shapes:string[]=[],selection:SignalListeningInputV1[]|undefined,preparedSelectionEpoch:number|undefined,metadataPrepared=false,preparationSignal:AbortSignal|undefined;
   // This placeholder cannot send; the lease-held planner always selects runtime.
   const unavailable:JevProviderV1={async evaluate(){throw new JevProviderErrorV1('listening_preparation_required','definitely_not_sent');}};
   // Prepare inspects metadata only. The shared worker then loads exactly one
@@ -190,10 +193,29 @@ export async function signalListeningJevJobV1(run_id:string,options:{
       minimum_next_calls:()=>continuation?.minimumNextCalls()??0,
       next_admission_hint:()=>continuation?.nextAdmissionHint()??{kind:'open'},
       acknowledge_covered:(generation,ids)=>continuation?.acknowledgeCoveredReservation(generation,ids),
+      preparation_valid:()=>preparedSelectionEpoch===undefined||continuation?.preparationValid(preparedSelectionEpoch)===true,
+      read_next_inputs:async(leased,bounds,admissionSignal)=>{
+        preparationSignal=admissionSignal;
+        if(!continuation||!jobContext||typeof store.withInputSurvey!=='function')return store.inputs(leased,readBounds({...bounds,on_oversize:'empty'}));
+        jobContext.assert(leased);
+        const prepared=await continuation.selectNextSurvey({available_bytes:bounds.max_working_bytes,max_calls:bounds.max_rows,
+          storage_bound:signalListeningInputSurveyStorageBoundV1(leased,execution.window_size),signal:admissionSignal,
+          read:(budget,body)=>store.withInputSurvey(leased,readBounds(budget),body)});
+        if(prepared.fallback_legacy){
+          // Metadata is an optional acceleration. Preserve the ORIGINAL bounded
+          //4096-row reader/domain when its extra custody cannot fit; no reduced
+          // survey, indefinite wait or fabricated global-empty result.
+          metadataPrepared=false;preparedSelectionEpoch=undefined;
+          return store.inputs(leased,readBounds({...bounds,on_oversize:'empty'}));
+        }
+        selection=prepared.selected;prepared.selected=[];preparedSelectionEpoch=prepared.preparation_epoch;metadataPrepared=prepared.decision===true;
+        return{inputs:selection,byte_limited:prepared.byte_limited,...(prepared.admission_deferred||prepared.decision==='wait_for_apply'?{admission_deferred:true as const}:{})};
+      },
       prepare_next:async(_leased,inputs)=>{
         if(!jobContext)throw Error('listening_identity_invalid');jobContext.assert(_leased);
         const {snapshot,configuration,configuration_digest}=jobContext,next=inputs.slice(0,execution.window_size);
-        if(continuation){const prepared=await continuation.selectNext(next);selection=prepared.selected;return prepared.decision;}
+        if(metadataPrepared){metadataPrepared=false;return preparedSelectionEpoch!==undefined&&continuation?.preparationValid(preparedSelectionEpoch)===true?true:'wait_for_apply';}
+        if(continuation){const epoch=continuation.preparationEpoch(),prepared=await continuation.selectNext(next,preparationSignal);selection=prepared.selected;preparedSelectionEpoch=epoch;return prepared.decision;}
         function* requests(){for(const input of next)yield buildSignalListeningCompiledRequestV1(input,snapshot);}
         if(!calibrated||!await calibrated.prepareMeasuredRequestsWithProfiles(requests(),shape_digest=>(options.calibration?.load??loadSignalListeningCalibrationV1)({database,
           workspace_id:_leased.workspace_id,actor_user_id:_leased.actor_user_id,configuration_digest,model:configuration.model,shape_digest})))return false;

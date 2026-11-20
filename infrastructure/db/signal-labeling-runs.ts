@@ -26,10 +26,10 @@ import {createLabelingRawPageStoreV1} from "./signal-labeling-raw-page-store";
 import {LABELING_RAW_PAGE_MAX_MEMBERS_V1,type LabelingRawPageStorageV1} from "./signal-labeling-raw-pages";
 import {validateLabelingInputBoundsV1,type LabelingInputBoundsV1} from './signal-labeling-input-bounds';
 import {planNativeListeningAdmissionPacketV1,nativeListeningAdmissionCoveredV1,nativeListeningAdmissionPacketBodyV1,
- validateNativeListeningAdmissionRowsV1,validateNativeListeningAdmissionSelectionV1,NATIVE_LISTENING_COVERED_PROFILES_SQL_V1,
+ validateNativeListeningAdmissionRowsV1,reconstructNativeListeningAdmissionRowsV1,validateNativeListeningAdmissionSelectionV1,NATIVE_LISTENING_COVERED_PROFILES_SQL_V1,
  NATIVE_LISTENING_ADMISSION_INSERT_SQL_V1,NATIVE_LISTENING_ADMISSION_MARK_SQL_V1} from './signal-listening-native-admission';
 export type {LabelingInputBoundsV1} from './signal-labeling-input-bounds';
-export {nativeListeningAdmissionWorkspaceBoundV1} from './signal-listening-native-admission';
+export {nativeListeningAdmissionWorkspaceBoundV1,createNativeListeningAdmissionWorkspaceQuoteV1,type NativeListeningAdmissionWorkspaceQuoteV1} from './signal-listening-native-admission';
 export type LabelingPolicyV1={organization_id:string;budget_date:string;budget_timezone:string;daily_cap_micro_usd:string|null;
  max_execution_micro_usd:string|null;provider:string;model:string;action:string;funding_receipt_id?:string|null;effective_total_cap_micro_usd?:string};
 export type LabelingRequestPolicyV1=Pick<LabelingPolicyV1,"max_execution_micro_usd"|"provider"|"model">;
@@ -1064,14 +1064,14 @@ export function createSignalLabelingStoreV1<
             // From this point no failure, even an acknowledged rollback, can
             // return legacy or silently launch a second reservation attempt.
             dmlSent=true;
-            const inserted=await c.query<LabelingCallV1<Input>>(NATIVE_LISTENING_ADMISSION_INSERT_SQL_V1,
+            const inserted=await c.query<Record<string,unknown>>(NATIVE_LISTENING_ADMISSION_INSERT_SQL_V1,
               [run.id,run.workspace_id,run.identity.provider,run.identity.model,'sync',packet,policy.budget_date,policy.budget_timezone]);
-            calls=validateNativeListeningAdmissionRowsV1(run,selected,inserted.rows,'reserved');ids=calls.map(call=>call.id);
+            calls=reconstructNativeListeningAdmissionRowsV1(run,plan,selected,inserted.rows,'reserved');ids=calls.map(call=>call.id);
             await pageMutationFence(c,run);await authority(c,run,0);
             await lockMutationCalls(c,run,calls);await options.adapter?.beforeSubmit?.(c,run,calls);
             await rawRunReadFence(c,run);await registerMutationFence(c,run,'mark');
-            const changed=await c.query<LabelingCallV1<Input>>(NATIVE_LISTENING_ADMISSION_MARK_SQL_V1,[run.id,run.workspace_id,ids]);
-            calls=validateNativeListeningAdmissionRowsV1(run,selected,changed.rows,'submitting');
+            const changed=await c.query<Record<string,unknown>>(NATIVE_LISTENING_ADMISSION_MARK_SQL_V1,[run.id,run.workspace_id,ids,packet]);
+            calls=reconstructNativeListeningAdmissionRowsV1(run,plan,selected,changed.rows,'submitting');
           }
           const callsFingerprint=()=>createHash('sha256').update(JSON.stringify(calls)).digest('hex');
           const beforeValidation=callsFingerprint();

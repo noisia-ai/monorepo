@@ -18,9 +18,14 @@ export type JevFeedAdmissionHintV1 = {kind:'open'}|{kind:'closed'}|{
 /** Only trusted native Listening constructors return uncommitted drafts.
  * Proposal custody and the native transaction workspace coexist with returned
  * call custody; none substitutes for the paid-response allowance. */
+export type JevNativeWorkspaceQuoteV1={readonly length:number;readonly retained_bytes:number;quote(prefixLength:number):number};
 export type JevNativeAdmissionDraftV1<I extends FacetInput>={
   proposals:LabelingCallProposalV1<I>[];workspace_bytes:number;byte_limited:boolean;
-  on_committed?(call_ids:ReadonlyArray<string>):void;
+  /** Pure immutable prefix snapshot; no request bodies or authority are cached. */
+  workspace_quote?:JevNativeWorkspaceQuoteV1;
+  /** One separately charged numeric prefix; avoids allocation at final fit. */
+  call_working_prefix?:ReadonlyArray<number>;
+  on_committed?(call_ids:ReadonlyArray<string>,proposals:ReadonlyArray<LabelingCallProposalV1<I>>):void;
 };
 export type JevFeedResultV1<I extends FacetInput>=LabelingCallV1<I>[]|{
   calls:LabelingCallV1<I>[];byte_limited:boolean;admission_deferred?:true;
@@ -59,6 +64,8 @@ export async function processJevStreamingWindowV2<I extends FacetInput, R>(args:
    * Returns at most one window, already budgeted before money reservation. */
   feed_next?(available_bytes:number,max_calls:number,admission_signal:AbortSignal):Promise<JevFeedResultV1<I>>;
   next_admission_hint?():JevFeedAdmissionHintV1;
+  /** Snapshot/profile revision check before DML only; no post-ACK gate. */
+  preparation_valid?():boolean;
   /** Listening native pending eligibility can advance only after durable apply. */
   revisit_empty_after_apply?:boolean;
   /** Scheduling only: evaluate handoff is not proof of physical fetch/rate admission. */
@@ -253,7 +260,15 @@ export async function processJevStreamingWindowV2<I extends FacetInput, R>(args:
       if(!Array.isArray(next)&&'proposals' in next){
         if(!store.admitAndMarkSelected||!next.proposals.length||next.proposals.length>Math.min(maxCalls,1024)
           ||!Number.isSafeInteger(next.workspace_bytes)||next.workspace_bytes<0)throw Error('jev_native_draft_invalid');
-        const bytes=next.proposals.reduce((n,p)=>n+jevCallWorkingBytesV2(p)+8192,0);
+        const quote=next.workspace_quote,prefix=next.call_working_prefix;
+        if(quote&&(quote.length!==next.proposals.length||!Number.isSafeInteger(quote.retained_bytes)||quote.retained_bytes<0||typeof quote.quote!=='function'
+          ||!prefix||!Object.isFrozen(prefix)||prefix.length!==next.proposals.length+1||prefix[0]!==0))throw Error('jev_native_quote_invalid');
+        let returnedBytes=0;
+        for(let index=0;index<next.proposals.length;index++){
+          returnedBytes+=jevCallWorkingBytesV2(next.proposals[index]!);
+          if(quote&&prefix![index+1]!==returnedBytes)throw Error('jev_native_quote_invalid');
+        }
+        const bytes=returnedBytes+8192*next.proposals.length+(quote?quote.retained_bytes+256+8*prefix!.length:0);
         if(bytes>available)throw Error('jev_native_draft_memory_bound');
         retained=bytes;draftBytes=bytes;draft=next;byteLimitedAvailable=next.byte_limited?available:undefined;return;
       }
@@ -341,32 +356,49 @@ export async function processJevStreamingWindowV2<I extends FacetInput, R>(args:
       prefetch();
       if(draft&&!reserved.length){
         const pending=draft;
+        if(args.preparation_valid?.()===false){draft=undefined;release(draftBytes);draftBytes=0;continue;}
         if(workers<=inFlight){
           if(activeSends.size||active.size||buffered.length){flush(true);await wait();continue;}
           throw Error('jev_stream_configuration_invalid');
         }
-        // The quote covers native temporaries before the native function may
-        // allocate them. Real progress can release custody; quiet metadata cannot.
-        if(memory+pending.workspace_bytes+reservationBytes+jevCallWorkingBytesV2(pending.proposals[0]!)>e.max_buffered_bytes){
+        // The reader owns only preparation custody. Choose the paid prefix
+        // here, AFTER feed released its temporary hold and HTTP/APPLY advanced.
+        // Keep ALL prepared proposals and the numeric vector charged until ACK;
+        // unadmitted bodies are then discarded, never reused by a later cohort.
+        let nativeProposals=pending.proposals,workspaceBytes=pending.workspace_bytes;
+        if(pending.workspace_quote){
+          const quote=pending.workspace_quote,costs=pending.call_working_prefix!;
+          let low=1,high=Math.min(pending.proposals.length,workers-inFlight),best=0,bestWorkspace=0;
+          while(low<=high){
+            const mid=Math.floor((low+high)/2),workspace=quote.quote(mid);
+            if(!Number.isSafeInteger(workspace)||workspace<0)throw Error('jev_native_workspace_invalid');
+            if(memory+workspace+costs[mid]!+reservationBytes*mid<=e.max_buffered_bytes){best=mid;bestWorkspace=workspace;low=mid+1;}
+            else high=mid-1;
+          }
+          if(best){nativeProposals=pending.proposals.slice(0,best);workspaceBytes=bestWorkspace;}
+          else workspaceBytes=Infinity; // Existing finite escape below; no DML occurred.
+        }
+        // Real progress can release custody; quiet metadata cannot.
+        if(memory+workspaceBytes+reservationBytes+jevCallWorkingBytesV2(nativeProposals[0]!)>e.max_buffered_bytes){
           if(activeSends.size||active.size||buffered.length){flush(true);await wait();continue;}
           // No native invocation/DML/selector occurred: retain the old complete
           // reservation protocol on this prepared prefix, without rereading it.
-          const rows=await store.reserve(run,pending.proposals);
+          const rows=await store.reserve(run,pending.workspace_quote?nativeProposals.slice(0,1):nativeProposals);
           const bytes=rows.reduce((n,c)=>n+jevCallWorkingBytesV2(c),0);
           if(memory+bytes>e.max_buffered_bytes)throw Error('jev_native_legacy_memory_bound');
           memory+=bytes;for(const row of rows)roster.set(row.id,row);reserved.push(...rows);totalRoots+=rows.length;
           draft=undefined;release(draftBytes);draftBytes=0;continue;
         }
-        let workspaceClaim=pending.workspace_bytes,selectionCalled=false,validationCalled=false;
+        let workspaceClaim=workspaceBytes,selectionCalled=false,validationCalled=false;
         let responseClaim=0,callClaim=0,selected:ReadonlyArray<LabelingCallProposalV1<I>>=[],
           validated:ReadonlyArray<LabelingCallV1<I>>=[],validatedIds:ReadonlyArray<string>=[];
-        memory+=pending.workspace_bytes;observe();markingInProgress=true;
+        memory+=workspaceBytes;observe();markingInProgress=true;
         try{
-          const result=await store.admitAndMarkSelected!(run,pending.proposals,{
+          const result=await store.admitAndMarkSelected!(run,nativeProposals,{
             selectFresh(candidates){
               if(selectionCalled)throw Error('jev_native_selection_repeated');selectionCalled=true;
               const priority=args.next_admission_hint?.();
-              if(fatal||admission.signal.aborted||cancellation.signal.aborted||priority?.kind==='closed'
+              if(fatal||admission.signal.aborted||cancellation.signal.aborted||args.preparation_valid?.()===false||priority?.kind==='closed'
                 ||priority?.kind==='bootstrap'&&priority.wait_for_apply)return[];
               const count=Math.min(workers-inFlight,candidates.length,priority?.kind==='bootstrap'?priority.covered_call_limit:Infinity),chosen:LabelingCallProposalV1<I>[]=[];
               let cost=0;
@@ -396,7 +428,10 @@ export async function processJevStreamingWindowV2<I extends FacetInput, R>(args:
           });
           if(result.kind==='legacy'){
             release(workspaceClaim);workspaceClaim=0;
+            if(args.preparation_valid?.()===false)continue;
             // Native guarantees this branch precedes selector and every DML.
+            // Unsupported shapes retain the COMPLETE prepared legacy prefix;
+            // a Native workspace fit must not trim bootstrap/finite coverage.
             const rows=await store.reserve(run,pending.proposals);
             const bytes=rows.reduce((n,c)=>n+jevCallWorkingBytesV2(c),0);
             if(memory+bytes>e.max_buffered_bytes)throw Error('jev_native_legacy_memory_bound');
@@ -408,7 +443,7 @@ export async function processJevStreamingWindowV2<I extends FacetInput, R>(args:
             totalRoots+=validated.length;recentIdentities=new Set(selected.map(p=>p.request_digest));
             for(const row of validated){const task=send(row).finally(()=>{activeSends.delete(task);wake();});activeSends.add(task);}
             responseClaim=0;callClaim=0;if(validated.length)initialHandoffComplete=true;
-            try{if(validated.length)pending.on_committed?.(validatedIds);}catch(error){
+            try{if(validated.length)pending.on_committed?.(validatedIds,selected);}catch(error){
               // Close future admission, but let ALL paid siblings drain without
               // aborting their transport because a scheduling notice failed.
               notificationFailure??=error;feedClosed=true;admission.abort();

@@ -3,9 +3,10 @@ import test from 'node:test';
 import {randomUUID} from 'node:crypto';
 import {signalListeningBaseTemplateV1,signalListeningJevIdentityV1,buildSignalListeningJevRequestV1,
  signalListeningRequestDigestV1,signalListeningCalibrationShapeV1,type SignalListeningInputV1} from '@noisia/query-engine';
+import {signalListeningInputSurveyStorageBoundV1} from '../signal-listening-runs';
 import type {LabelingRunV1,LabelingCallProposalV1,LabelingCallV1} from '../signal-labeling-runs';
 import {planNativeListeningAdmissionPacketV1,nativeListeningAdmissionCoveredV1,nativeListeningAdmissionPacketBodyV1,
- validateNativeListeningAdmissionRowsV1,nativeListeningAdmissionWorkspaceBoundV1} from '../signal-listening-native-admission';
+ validateNativeListeningAdmissionRowsV1,reconstructNativeListeningAdmissionRowsV1,nativeListeningAdmissionWorkspaceBoundV1,createNativeListeningAdmissionWorkspaceQuoteV1} from '../signal-listening-native-admission';
 
 function fixture(){
  const configuration=signalListeningBaseTemplateV1({category:'synthetic bicycles',lexicon_terms:['synthetic']});
@@ -137,4 +138,130 @@ test('native workspace quote precedes allocation and charges repeated payload oc
  const cycle:Record<string,unknown>={};cycle.self=cycle;poisoned.request=cycle;
  assert.throws(()=>nativeListeningAdmissionWorkspaceBoundV1(f.run,[poisoned]),/workspace_invalid/);
  assert.throws(()=>nativeListeningAdmissionWorkspaceBoundV1(f.run,Array(1025).fill(f.proposals[0]!)),/workspace_invalid/);
+});
+
+
+// Prefix quote is a numeric snapshot only. The production worker owns an
+// immutable draft while retaining this handle; no DB decision is cached.
+test('prefix workspace quotes equal the complete original bound for every prefix, Unicode and repeated graph occurrences',()=>{
+ const f=fixture(),rows=[...f.proposals,f.proposals[0]!,f.proposals[0]!];
+ const quote=createNativeListeningAdmissionWorkspaceQuoteV1(f.run,rows);assert.ok(quote);
+ assert.equal(quote.length,rows.length);assert.equal(quote.retained_bytes,256+8*(rows.length+1));
+ assert.ok(Object.isFrozen(quote));
+ for(let i=0;i<=rows.length;i++)assert.equal(quote.quote(i),nativeListeningAdmissionWorkspaceBoundV1(f.run,rows.slice(0,i)));
+ // Array keys are not charged by index length: suffix reindexing preserves
+ // the exact additive model, so an unconsumed draft needs no second DFS.
+ for(let offset=0;offset<=rows.length;offset++)for(let n=0;n<=rows.length-offset;n++)
+  assert.equal(quote.quote(offset+n)-quote.quote(offset)+quote.quote(0),nativeListeningAdmissionWorkspaceBoundV1(f.run,rows.slice(offset,offset+n)));
+ const full=Array(1024).fill(f.proposals[0]!),fullQuote=createNativeListeningAdmissionWorkspaceQuoteV1(f.run,full);assert.ok(fullQuote);
+ for(const [offset,n]of [[1000,24],[511,512],[1024,0],[0,1024]]as const)
+  assert.equal(fullQuote.quote(offset+n)-fullQuote.quote(offset)+fullQuote.quote(0),nativeListeningAdmissionWorkspaceBoundV1(f.run,full.slice(offset,offset+n)));
+ const empty=createNativeListeningAdmissionWorkspaceQuoteV1(f.run,[]);assert.ok(empty);
+ assert.equal(empty.quote(0),nativeListeningAdmissionWorkspaceBoundV1(f.run,[]));
+ assert.ok(quote.quote(5)-quote.quote(4)>53952,'the same proposal alias still pays its full graph again');
+ for(const n of [-1,rows.length+1,NaN,Infinity,.5])assert.throws(()=>quote.quote(n),/workspace_invalid/);
+});
+
+test('prefix quote reads each graph once and later binary-search probes never revisit request/configuration objects',()=>{
+ const f=fixture();let descriptors=0;
+ f.proposals[0]!.request=new Proxy(f.proposals[0]!.request,{getOwnPropertyDescriptor(target,key){descriptors++;return Reflect.getOwnPropertyDescriptor(target,key);}});
+ const quote=createNativeListeningAdmissionWorkspaceQuoteV1(f.run,f.proposals);assert.ok(quote);assert.ok(descriptors>0);
+ const afterBuild=descriptors;
+ for(let i=0;i<32;i++)for(let n=0;n<=f.proposals.length;n++)quote.quote(n);
+ assert.equal(descriptors,afterBuild,'no request traversal per prefix probe');
+});
+
+for(const defect of ['cycle','accessor','nonfinite','prototype','undefined','bigint','symbol']as const)
+test('prefix workspace quote preserves the original graph rejection for '+defect,()=>{
+ const f=fixture(),request=f.proposals[0]!.request as Record<string,unknown>;
+ if(defect==='cycle')request.extra=request;
+ if(defect==='accessor')Object.defineProperty(request,'extra',{get(){throw Error('getter must not be invoked');},enumerable:true});
+ if(defect==='nonfinite')request.extra=Infinity;
+ if(defect==='prototype')request.extra=new Date(0);
+ if(defect==='undefined')request.extra=undefined;
+ if(defect==='bigint')request.extra=1n;
+ if(defect==='symbol')request.extra=Symbol('not JSON');
+ assert.throws(()=>nativeListeningAdmissionWorkspaceBoundV1(f.run,f.proposals),/workspace_invalid/);
+ assert.throws(()=>createNativeListeningAdmissionWorkspaceQuoteV1(f.run,f.proposals),/workspace_invalid/);
+});
+
+test('unusual top-level arrays retain the complete original quote path without invoking accessors',()=>{
+ const f=fixture(),hole=f.proposals.slice();delete (hole as unknown as Record<string,unknown>)['1'];
+ assert.equal(createNativeListeningAdmissionWorkspaceQuoteV1(f.run,hole),null);
+ const extra=f.proposals.slice()as typeof f.proposals&{extra?:number};extra.extra=7;
+ assert.equal(createNativeListeningAdmissionWorkspaceQuoteV1(f.run,extra),null);
+ assert.ok(nativeListeningAdmissionWorkspaceBoundV1(f.run,extra)>nativeListeningAdmissionWorkspaceBoundV1(f.run,f.proposals));
+ const accessor=f.proposals.slice();let invoked=0;
+ Object.defineProperty(accessor,'1',{get(){invoked++;throw Error('getter must not run');},enumerable:true});
+ assert.equal(createNativeListeningAdmissionWorkspaceQuoteV1(f.run,accessor),null);assert.equal(invoked,0);
+ assert.throws(()=>nativeListeningAdmissionWorkspaceBoundV1(f.run,accessor),/workspace_invalid/);assert.equal(invoked,0);
+ const species=f.proposals.slice();let speciesRead=0;
+ Object.defineProperty(species,'constructor',{get(){speciesRead++;throw Error('constructor getter must not run');}});
+ assert.equal(createNativeListeningAdmissionWorkspaceQuoteV1(f.run,species),null);assert.equal(speciesRead,0);
+ const ownSlice=f.proposals.slice();Object.defineProperty(ownSlice,'slice',{get(){throw Error('slice getter must not run');}});
+ assert.equal(createNativeListeningAdmissionWorkspaceQuoteV1(f.run,ownSlice),null);
+ const customSpecies=f.proposals.slice();Object.defineProperty(customSpecies,'constructor',{value:{[Symbol.species]:class extends Array{extra=1;}}});
+ assert.equal(createNativeListeningAdmissionWorkspaceQuoteV1(f.run,customSpecies),null);
+ assert.throws(()=>createNativeListeningAdmissionWorkspaceQuoteV1(f.run,Array(1025).fill(f.proposals[0]!)),/workspace_invalid/);
+});
+
+
+test('complete cohort validation retains exact reordered identities without quadratic custom-id searches',()=>{
+ const f=fixture(),selected=Array.from({length:64},(_,i)=>({...structuredClone(f.proposals[0]!),custom_id:'listening_'+i.toString(16).padStart(60,'0')}));
+ let reads=0;
+ const rows=selected.map(p=>{const row={...structuredClone(p),id:randomUUID(),run_id:f.run.id,workspace_id:f.run.workspace_id,status:'submitting',provider:'typesafe',model:'jev-1.13.0',transport:'sync',
+  request_storage_key:null,raw_sha256:null,raw_storage_key:null,raw_size_bytes:null,raw_storage_verified_at:null,raw_storage_verified_key:null,
+  provider_batch_id:null,usage:null,results:null,settled_micro_usd:null,terminal_exposure_micro_usd:'0',stop_reason:null,refusal_category:null,results_applied:false};
+  Object.defineProperty(row,'custom_id',{get(){reads++;return p.custom_id;},enumerable:true});return row as LabelingCallV1<SignalListeningInputV1>;
+ }).reverse();
+ const normalized=validateNativeListeningAdmissionRowsV1(f.run,selected,rows,'submitting');
+ assert.deepEqual(normalized.map(row=>row.id),rows.slice().reverse().map(row=>row.id));
+ assert.ok(reads<=5*selected.length,'linear identity reads even with a reversed complete cohort');
+});
+
+
+test('survey storage is a separate bounded metadata model and does not retain definition text or share repeated hints for free',()=>{
+ const f=fixture(),one=signalListeningInputSurveyStorageBoundV1(f.run,1),full=signalListeningInputSurveyStorageBoundV1(f.run,4096);
+ assert.ok(Number.isSafeInteger(one)&&one>0);assert.ok(full>one*1000&&full<512*1024*1024);
+ const changed=structuredClone(f.run);const configuration=changed.identity.params.configuration as {instructions:string};configuration.instructions+=' Additional unchanged-schema instructions.';
+ assert.equal(signalListeningInputSurveyStorageBoundV1(changed,4096),full,'only bounded hint fields, never question definitions/instructions');
+ const metadataOnly=structuredClone(f.run),raw=metadataOnly.identity.params.configuration as {questions:Array<{key:string;text:string}>};
+ Object.defineProperty(raw.questions[0]!,'text',{get(){throw Error('pricing must not traverse or clone definitions');},enumerable:true});
+ assert.equal(signalListeningInputSurveyStorageBoundV1(metadataOnly,4096),full);
+ let invoked=0;Object.defineProperty(raw.questions[0]!,'key',{get(){invoked++;return 'poison';},enumerable:true});
+ assert.throws(()=>signalListeningInputSurveyStorageBoundV1(metadataOnly,4096),/bounds_invalid/);assert.equal(invoked,0);
+ for(const n of [0,-1,4097,1.5,NaN])assert.throws(()=>signalListeningInputSurveyStorageBoundV1(f.run,n),/bounds_invalid/);
+});
+
+
+function compactReturnFixture(){
+ const f=fixture(),selected=f.proposals.slice(0,2),plan=planNativeListeningAdmissionPacketV1(f.run,selected,1024);assert.ok(plan);
+ const rows=selected.map(p=>({id:randomUUID(),custom_id:p.custom_id,request_digest:p.request_digest,reserved_micro_usd:'37',retry_depth:0,
+  run_id:f.run.id,workspace_id:f.run.workspace_id,status:'submitting',provider:'typesafe',model:'jev-1.13.0',transport:'sync',payload_matches:true,
+  request_storage_key:null,raw_sha256:null,raw_storage_key:null,raw_size_bytes:null,raw_storage_verified_at:null,raw_storage_verified_key:null,
+  provider_batch_id:null,usage:null,results:null,settled_micro_usd:null,terminal_exposure_micro_usd:'0',stop_reason:null,refusal_category:null,results_applied:false,
+  created_at:new Date('2026-11-20T00:00:00.000Z'),updated_at:new Date('2026-11-20T00:00:00.000Z')}));
+ return{...f,selected,plan,rows};
+}
+test('compact RETURNING proves full original packet equality before reconstructing private immutable provider bodies',()=>{
+ const f=compactReturnFixture(),calls=reconstructNativeListeningAdmissionRowsV1(f.run,f.plan,f.selected,f.rows.slice().reverse(),'submitting');
+ assert.deepEqual(calls.map(c=>c.id),f.rows.map(r=>r.id));assert.deepEqual(calls.map(c=>c.request),f.selected.map(p=>p.request));
+ assert.notEqual(calls[0]!.request,f.selected[0]!.request);assert.notEqual(calls[0]!.inputs,f.selected[0]!.inputs);
+ assert.ok(calls.every(c=>c.raw_body===null&&c.created_at instanceof Date&&!Object.hasOwn(c,'payload_matches')));
+ for(const flag of [false,undefined,null,'true',1]){const bad=structuredClone(f.rows);Object.assign(bad[0]!,{payload_matches:flag});assert.throws(()=>reconstructNativeListeningAdmissionRowsV1(f.run,f.plan,f.selected,bad,'submitting'));}
+ for(const key of ['request','inputs']){const bad=structuredClone(f.rows)as Array<Record<string,unknown>>;bad[0]![key]={poison:true};assert.throws(()=>reconstructNativeListeningAdmissionRowsV1(f.run,f.plan,f.selected,bad,'submitting'));}
+ // Original packet's SQL true flag cannot authorize a mutation during await.
+ f.selected[0]!.request.state='poison after SQL';assert.throws(()=>reconstructNativeListeningAdmissionRowsV1(f.run,f.plan,f.selected,f.rows,'submitting'),/selection_invalid/);
+});
+
+test('compact reconstruction preserves PG JSONB key ordering and numeric round trips before JSON.stringify transport',()=>{
+ const f=fixture(),proposal=f.proposals[0]!;
+ const input=proposal.inputs[0]!as SignalListeningInputV1&{extra:Record<string,unknown>};input.extra={'zz':1e-7,'a':-0,'é':1e20,'z':.25,'10':'ten','2':'two'};
+ const plan=planNativeListeningAdmissionPacketV1(f.run,[proposal],1024);assert.ok(plan);
+ const baseline=compactReturnFixture().rows[0]!;const row={...baseline,custom_id:proposal.custom_id,request_digest:proposal.request_digest,run_id:f.run.id,workspace_id:f.run.workspace_id};
+ const call=reconstructNativeListeningAdmissionRowsV1(f.run,plan,[proposal],[row],'submitting')[0]!;
+ assert.deepEqual(Object.keys((call.inputs[0]as typeof input).extra),['2','10','a','z','zz','é']);
+ assert.equal(Object.is((call.inputs[0]as typeof input).extra.a,-0),false);
+ assert.deepEqual(Object.keys(call.request),['model','state','questions']);
+ assert.deepEqual(call.inputs,JSON.parse(JSON.stringify([input])));
 });

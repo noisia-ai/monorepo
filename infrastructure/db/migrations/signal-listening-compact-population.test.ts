@@ -1,3 +1,5 @@
+import {invertSignalListeningServingTailV1,assertServingTailOriginalSqlV1} from './signal-listening-serving-tail.oracle';
+import {invertSignalListeningSurveyReaderV1,assertSurveyReaderNegativeFixturesV1} from './signal-listening-survey-source-chain.test-support';
 import {invertWirePopulationMetadataV1} from './signal-listening-wire-population.oracle';
 import assert from 'node:assert/strict';
 import test from 'node:test';
@@ -28,12 +30,12 @@ test('compact projection exact inverses retain0333 authority and0316 H5; unrelat
  assert.ok(!/GRANT SELECT|ALTER ROLE|CREATE ROLE/.test(parts.acl));
 });
 test('compact readers reverse exactly to T before the retained CE38 and historical suffix identities',async()=>{
- const current=await readFile(new URL('../signal-listening-runs.ts',import.meta.url),'utf8'),source=invertSignalListeningCompiler21006V1(invertWirePopulationMetadataV1(current));assertCompiler21006NegativeFixturesV1(current);
+ const current=await readFile(new URL('../signal-listening-runs.ts',import.meta.url),'utf8'),beforeSurvey=invertSignalListeningSurveyReaderV1(current),source=invertSignalListeningCompiler21006V1(invertWirePopulationMetadataV1(beforeSurvey));assertSurveyReaderNegativeFixturesV1(current);assertCompiler21006NegativeFixturesV1(beforeSurvey);
  assert.equal(compactShaV1(invertCompactListeningRunsV1(source)),compactBaselineListeningShaV1);
  const unrelatedNeedle=' const limit=options.page_size??200;';assert.equal(current.split(unrelatedNeedle).length-1,1);
  const unrelated=current.replace(unrelatedNeedle,' const limit=options.page_size??201;');
- assert.notEqual(compactShaV1(invertCompactListeningRunsV1(invertSignalListeningCompiler21006V1(invertWirePopulationMetadataV1(unrelated)))),compactBaselineListeningShaV1,
-  'unrelated runtime edits survive only the compiler inverse and still fail the frozen complete-source hash');
+ assert.notEqual(compactShaV1(invertCompactListeningRunsV1(invertSignalListeningCompiler21006V1(invertWirePopulationMetadataV1(invertSignalListeningSurveyReaderV1(unrelated))))),compactBaselineListeningShaV1,
+  'unrelated runtime edits survive every registered inverse and still fail the frozen complete-source hash');
  for(const changed of[source.replace(compactReaderCallV1,'signal_listening_population_v1($1,$2,$3,$4)'),source.replace('sum(body_chars+wire_chars+512)','sum(body_chars+wire_chars+511)'),source+compactReaderCallV1,source+'\n'])assert.throws(()=>assert.equal(compactShaV1(invertCompactListeningRunsV1(changed)),compactBaselineListeningShaV1));
 });
 
@@ -45,7 +47,13 @@ test('quote and metrics retain their full T source after only the registered com
  assert.equal(compactShaV1(oldQuote),'3d24c7182a06150275108cdd98440d475747d560278be23c09b711ac58ef2fc5','quote guard order, own predicate, TX, rounding and quote digest remain exact');
  const metrics=await readFile(new URL('../signal-listening-serving.ts',import.meta.url),'utf8');
  assert.equal(metrics.split('FROM signal_listening_effective_compact_population_roots_v1(').length,2);
- const oldMetrics=metrics.replace('FROM signal_listening_effective_compact_population_roots_v1(','FROM signal_listening_effective_population_roots_v2(').replace('SELECT root_id,question_key,has_topic_source,',"SELECT root_id,question_key,(definition ? 'topic_source') has_topic_source,").replace("COALESCE(domain,'category')","COALESCE(definition->>'domain','category')");
+ const originalBatch=invertSignalListeningServingTailV1(metrics);
+ const frozen=await readFile(new URL('./signal-listening-question-metrics-before-tail.fixture.sql',import.meta.url),'utf8');assertServingTailOriginalSqlV1(frozen);
+ const actualSql=extractCompactExecuteReaderSqlV1(await readFile(new URL('../signal-listening-runs.ts',import.meta.url),'utf8'),quote,metrics).metrics;
+ assert.equal(invertSignalListeningServingTailV1(actualSql)+'\n',frozen,'closed inverse restores the complete frozen batchN query');
+ for(const mutation of [metrics.replace("COALESCE(n.count,0)","COALESCE(n.count,1)"),metrics.replace('t.root_id IS NOT NULL','t.root_id IS NULL')])assert.throws(()=>invertSignalListeningServingTailV1(mutation));
+ const unrelated=metrics.replace("fail('listening_filters_invalid',422)","fail('listening_filters_invalid',403)");assert.notEqual(compactShaV1(invertSignalListeningServingTailV1(unrelated)),compactShaV1(originalBatch),'an unrelated guard edit survives the inverse and cannot match the historical whole-source SHA');
+ const oldMetrics=originalBatch.replace('FROM signal_listening_effective_compact_population_roots_v1(','FROM signal_listening_effective_population_roots_v2(').replace('SELECT root_id,question_key,has_topic_source,',"SELECT root_id,question_key,(definition ? 'topic_source') has_topic_source,").replace("COALESCE(domain,'category')","COALESCE(definition->>'domain','category')");
  assert.equal(compactShaV1(oldMetrics),'78b5db1ee2b31f4e8dc138b53925ec3c7b68b49fa1c47511c2c68d669b54f042','all count/trend/cross/choice/probability/order/error precedence stays literal');
 });
 

@@ -4,7 +4,7 @@ import test from 'node:test';
 import {buildSignalListeningJevRequestV1,signalListeningRequestDigestV1,signalListeningBaseTemplateV1,signalListeningJevIdentityV1,signalListeningQuestionDigestV1,
   signalListeningCalibrationShapeV1,signalListeningConsumerCutV1,validateSignalListeningConfigurationV1,compileSignalListeningSnapshotV1,labelerDigestV1,entityContextDigestV1,signalWorkspaceEmbeddingDigestV1 as digest,
   type SignalListeningCalibrationProfileV1,type SignalListeningConfigurationV1,type SignalListeningInputV1,type SignalListeningResultV1} from '@noisia/query-engine';
-import {LABELING_INPUT_MAX_WORKING_BYTES_V1,type LabelingRunV1,type LabelingCallV1} from '@noisia/db';
+import {signalListeningInputSurveyStorageBoundV1,LABELING_INPUT_MAX_WORKING_BYTES_V1,type LabelingRunV1,type LabelingCallV1} from '@noisia/db';
 import type {JevProviderV1,JevRequestV1} from '../providers/typesafe-jev';
 import {processSignalListeningJevV1,signalListeningJevJobV1,createSignalListeningSelectionIndexV1} from './signal-listening-jev';
 import {jevCallWorkingBytesV2} from './signal-jev-streaming-window';
@@ -476,4 +476,36 @@ test('larger Listening stream custody keeps initial and continuous reads inside 
   assert.equal(reads[0]!.on_oversize,'error');assert.ok(reads.slice(1).some(r=>r.on_oversize==='empty'));
   assert.ok(reads.every(r=>r.max_rows<=2&&r.max_working_bytes<=LABELING_INPUT_MAX_WORKING_BYTES_V1));
  }finally{names.forEach((k,i)=>{if(previous[i]===undefined)delete process.env[k];else process.env[k]=previous[i];});}
+});
+
+
+test('a large metadata quote opts out to the original4096 legacy reader and physically drains its next pending input',async()=>{
+ const draft=signalListeningBaseTemplateV1({category:'tea',lexicon_terms:['tea']});
+ for(let index=draft.questions.length;index<256;index++)draft.questions.push({key:'q'+String(index).padStart(3,'0')+'x'.repeat(60),type:'noul',text:'Pending optional question',
+  positive:'Present',negative:'Absent',scope:'all',origin:'brand_os',human_locked:true});
+ const configuration=validateSignalListeningConfigurationV1(draft),f=fixture(configuration,[['voice','promotion']]),sample=(await f.store.inputs(f.run))[0]!;
+ const corpus=[{...sample,root_id:randomUUID()},{...sample,root_id:randomUUID()}],reads:Array<{max_rows:number;max_working_bytes:number}>=[];
+ const capacity={...execution,window_size:4096,max_buffered_bytes:512*1024*1024};
+ assert.ok(signalListeningInputSurveyStorageBoundV1(f.run,4096)>capacity.max_buffered_bytes,'the additive metadata acceleration itself cannot fit');
+ let first=true,surveys=0;
+ f.store.withInputSurvey=async()=>{surveys++;throw Error('oversized metadata must never be allocated or silently shrink4096');};
+ f.store.inputs=async(_run,bounds)=>{
+  assert.ok(bounds);reads.push({...bounds});const pending=corpus.filter(input=>!f.calls.some(call=>call.inputs[0]!.root_id===input.root_id));
+  const count=first?1:bounds.max_rows;first=false;return pending.slice(0,count);
+ };
+ f.store.finish=async()=>{const status=f.results.length===2?'completed' as const:'running' as const;f.run.status=status;return status;};
+ const shape=signalListeningCalibrationShapeV1(configuration,sample),bytes=Buffer.byteLength(JSON.stringify(buildSignalListeningJevRequestV1(sample,configuration))),
+  scope={workspace_id:f.run.workspace_id,configuration_digest:digest(configuration),model:shape.model,compiler_version:shape.compiler_version,phase:shape.phase,shape_digest:shape.shape_digest};
+ const profile:SignalListeningCalibrationProfileV1={scope,scope_digest:digest(scope),source_digest:digest('known-large-config-profile'),source_run_id:f.run.id,
+  source_call_ids:Array.from({length:32},()=>randomUUID()),sample_count:32,request_min_bytes:bytes,request_max_bytes:bytes,max_input_tokens_per_byte:.25,status:'measured'};
+ const database={query:async(sql:string)=>({rows:sql.includes('signal_workspace_features')?[{enabled:true}]:[{workspace_id:f.run.workspace_id,labeler_digest:f.run.labeler_digest,recovery_only:false}]})}as NonNullable<Parameters<typeof signalListeningJevJobV1>[1]>['database'];
+ const names=['NOISIA_SIGNAL_LISTENING_ENABLED','NOISIA_JEV_PROVIDER_ENABLED']as const,previous=names.map(key=>process.env[key]);
+ try{
+  names.forEach(key=>process.env[key]='true');const outcome=await signalListeningJevJobV1(f.run.id,{database,store:f.store,provider:f.provider,execution:capacity,preflight:async()=>{},
+   calibration:{load:async()=>profile,derive:async()=>{throw Error('no bootstrap needed');}}});
+  assert.equal(outcome.status,'completed');assert.equal(surveys,0);assert.equal(f.requests.length,2);assert.equal(f.results.length,2);
+  assert.equal(new Set(f.calls.map(call=>call.inputs[0]!.root_id)).size,2);assert.ok(f.calls.every(call=>call.results_applied&&call.status==='settled'));
+  assert.ok(reads.length>=2);assert.equal(reads[0]!.max_rows,4096);assert.equal(reads[1]!.max_rows,4096,'the continuous fallback preserves the original complete window');
+  assert.ok(reads.every(bounds=>bounds.max_rows<=4096&&bounds.max_working_bytes<=LABELING_INPUT_MAX_WORKING_BYTES_V1));
+ }finally{names.forEach((key,index)=>{if(previous[index]===undefined)delete process.env[key];else process.env[key]=previous[index];});}
 });

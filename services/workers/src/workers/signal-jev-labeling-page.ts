@@ -1,4 +1,4 @@
-import { assertJevStreamingExecutionV2, jevCallWorkingBytesV2, processJevStreamingWindowV2, type JevStreamingExecutionV2, type JevStreamingMetricsV2, type JevFeedAdmissionHintV1, type JevFeedResultV1 } from './signal-jev-streaming-window';
+import { assertJevStreamingExecutionV2, jevCallWorkingBytesV2, processJevStreamingWindowV2, type JevStreamingExecutionV2, type JevStreamingMetricsV2, type JevFeedAdmissionHintV1, type JevFeedResultV1, type JevNativeWorkspaceQuoteV1 } from './signal-jev-streaming-window';
 import { setMaxListeners } from "node:events";
 import { setImmediate as yieldToEventLoop } from "node:timers/promises";
 import { llmCostMicroUsdV1, type FacetInput, type LlmPriceV1, type LlmUsageV1 } from "@noisia/query-engine";
@@ -22,9 +22,31 @@ function validatePreparedExecution(value:JevPreparedExecutionV1){
     ||value.bootstrap_initial_calls<1||value.bootstrap_initial_calls>32||value.bootstrap_initial_calls>e.window_size
     ||value.continuous_windows!==true||value.recovery_only===true||value.max_windows!==undefined))throw Error('jev_bootstrap_initial_invalid');
 }
+export type JevNextInputReadV3<Input>=Input[]|{inputs:Input[];byte_limited?:boolean;admission_deferred?:true};
 export type JevNextInputBoundsV2={max_rows:number;max_working_bytes:number;
   /** Private synchronous notice from the canonical bounded prefix only. */
   on_byte_limit?:()=>void};
+/** Native draft transport owns this fresh graph. Freeze it before creating a
+ * reusable numeric quote; the quote never authenticates the later DB write. */
+function freezeNativeDraft(value:unknown,budget:number,seen=new Set<object>(),cost={retained:0,temporary:0}):void{
+ if(!value||typeof value!=='object'||seen.has(value))return;
+ const prototype=Object.getPrototypeOf(value);
+ if(prototype!==Object.prototype&&prototype!==Array.prototype&&prototype!==null)throw Error('jev_native_draft_invalid');
+ // One retained Set entry/object reference and bounded DFS/key/descriptor
+ // scratch; bodies and the two future numeric vectors are charged separately.
+ if(cost.retained+cost.temporary+64>budget)throw Error('jev_native_draft_memory_bound');
+ cost.retained+=64;seen.add(value);
+ const keys=Reflect.ownKeys(value),temporary=128+16*keys.length;
+ if(cost.retained+cost.temporary+temporary>budget)throw Error('jev_native_draft_memory_bound');
+ cost.temporary+=temporary;
+ try{for(const key of keys){
+  if(typeof key!=='string')throw Error('jev_native_draft_invalid');
+  const descriptor=Object.getOwnPropertyDescriptor(value,key)!;
+  if(!('value'in descriptor))throw Error('jev_native_draft_invalid');
+  freezeNativeDraft(descriptor.value,budget,seen,cost);
+ }}finally{cost.temporary-=temporary;}
+ Object.freeze(value);
+}
 async function withReleasedSelection<T>(body:()=>Promise<T>,release:()=>void):Promise<T>{
  let failed=false,primary:unknown,result:T|undefined;
  try{result=await body();}catch(error){failed=true;primary=error;}
@@ -39,7 +61,7 @@ export async function processJevLabelingPageV1<Input extends FacetInput,Result>(
   run_id:string;signal?:AbortSignal;store:ReturnType<typeof createSignalLabelingStoreV1<Input,Result>>;provider:JevProviderV1;
   prepare?(run:Readonly<LabelingRunV1>):Promise<JevPreparedExecutionV1>;
   /** DB-owned metadata/ID selection can enforce a byte bound before hydration. */
-  read_next_inputs?(run:LabelingRunV1,bounds:JevNextInputBoundsV2):Promise<Input[]>;
+  read_next_inputs?(run:LabelingRunV1,bounds:JevNextInputBoundsV2,admission_signal:AbortSignal):Promise<JevNextInputReadV3<Input>>;
   /** Native continuous admission intentionally permits paid prefix progress
    * before a later budget/revocation failure. This is not cached authority. */
   initial_reservation?:{max_calls:1024;release_selection:()=>void};
@@ -56,6 +78,8 @@ export async function processJevLabelingPageV1<Input extends FacetInput,Result>(
     /** Only native adapters whose inputs exclude reserved identities opt in. */
     continuous_windows?(run:LabelingRunV1):boolean;
     prepare_next?(run:LabelingRunV1,inputs:Input[]):Promise<boolean|'wait_for_apply'>;
+    /** Local immutable preparation revision only, never a permission decision. */
+    preparation_valid?():boolean;
     /** Preserve a native calibration cohort's anchor order without compiling a
      * second request page. Its minimum must fit wholly before reservation. */
     select_next_inputs?(inputs:Input[]):{inputs:Input[];minimum_calls:number};
@@ -66,7 +90,8 @@ export async function processJevLabelingPageV1<Input extends FacetInput,Result>(
     /** Constructor-only native adapter. No identity/configuration flag grants it. */
     native_admission?:{
       workspace_bound(run:LabelingRunV1,proposals:LabelingCallProposalV1<Input>[]):number;
-      committed?(hint:JevFeedAdmissionHintV1|undefined,ids:ReadonlyArray<string>):void;
+      workspace_quote?(run:LabelingRunV1,proposals:LabelingCallProposalV1<Input>[]):JevNativeWorkspaceQuoteV1|null;
+      committed?(hint:JevFeedAdmissionHintV1|undefined,ids:ReadonlyArray<string>,proposals:ReadonlyArray<LabelingCallProposalV1<Input>>):void;
     };
     max_in_flight?(run:LabelingRunV1):number|undefined;
   };
@@ -167,7 +192,10 @@ export async function processJevLabelingPageV1<Input extends FacetInput,Result>(
               if(beforeRead?.kind==='bootstrap'&&beforeRead.wait_for_apply)return{calls:[],byte_limited:false,admission_deferred:true};
               let byteLimited=false;
               const bounds={max_rows:maxCalls,max_working_bytes:available,on_byte_limit:()=>{byteLimited=true;}};
-              const inputs=(await(args.read_next_inputs?args.read_next_inputs(run,bounds):store.inputs(run,{...bounds,on_oversize:'empty'}))).slice(0,maxCalls);
+              const read=await(args.read_next_inputs?args.read_next_inputs(run,bounds,admissionSignal):store.inputs(run,{...bounds,on_oversize:'empty'}));
+              if(admissionSignal.aborted||cancellation.signal.aborted)return{closed:true};
+              const inputs=(Array.isArray(read)?read:read.inputs).slice(0,maxCalls);
+              if(!Array.isArray(read)){byteLimited||=read.byte_limited===true;if(read.admission_deferred)return{calls:[],byte_limited:byteLimited,admission_deferred:true};}
               if(admissionSignal.aborted||cancellation.signal.aborted)return{closed:true};
               const afterRead=hooks.next_admission_hint?.();
               if(afterRead?.kind==='closed')return{closed:true};
@@ -175,11 +203,12 @@ export async function processJevLabelingPageV1<Input extends FacetInput,Result>(
               if(!inputs.length)return byteLimited?{calls:[],byte_limited:true}:[];
               if(hooks.prepare_next){
                 const prepared=await hooks.prepare_next(run,inputs);
-                if(prepared==='wait_for_apply')return[];
+                if(prepared==='wait_for_apply')return{calls:[],byte_limited:false,admission_deferred:true};
                 if(prepared===false)return{closed:true};
                 if(prepared!==true)throw Error('jev_preparation_invalid');
               }
               if(admissionSignal.aborted||cancellation.signal.aborted)return{closed:true};
+              if(hooks.preparation_valid?.()===false)return{calls:[],byte_limited:false,admission_deferred:true};
               const priority=hooks.next_admission_hint?.();
               if(priority?.kind==='closed')return{closed:true};
               if(priority?.kind==='bootstrap'&&priority.wait_for_apply)return{calls:[],byte_limited:false,admission_deferred:true};
@@ -210,18 +239,45 @@ export async function processJevLabelingPageV1<Input extends FacetInput,Result>(
                for(const proposal of proposals){
                 const cost=jevCallWorkingBytesV2(proposal)+8192;
                 if(bounded.length>=limit)break outer;
-                if(bytes+cost>available){byteLimited=true;break outer;}
+                const quoteMetadata=nativePrefix&&hooks.native_admission?.workspace_quote?2*(256+8*(bounded.length+2)):0;
+                if(bytes+cost+quoteMetadata>available){byteLimited=true;break outer;}
                 bytes+=cost;bounded.push(proposal);
                 // Compile outside the native reservation transaction without
                 // monopolizing the event loop while other HTTP timers run.
                 if(bounded.length%64===0){
                   await yieldToEventLoop();
                   if(admissionSignal.aborted||cancellation.signal.aborted)return{closed:true};
+                  if(hooks.preparation_valid?.()===false)return{calls:[],byte_limited:false,admission_deferred:true};
                 }
                }
               }
               if(!bounded.length||bounded.length<selected.minimum_calls||admissionSignal.aborted||cancellation.signal.aborted)return{closed:true};
               if(nativePrefix){
+                if(hooks.native_admission!.workspace_quote){
+                  // Preparation is bounded independently of the earlier free
+                  // snapshot. Pure O(1) prefix queries will be used by the ONE
+                  // coordinator against its current custody, not this `available`.
+                  const metadataBeforeFreeze=2*(256+8*(bounded.length+1)),bodyBeforeFreeze=bounded.reduce((n,p)=>n+jevCallWorkingBytesV2(p)+8192,0);
+                  const freezeBudget=available-metadataBeforeFreeze-bodyBeforeFreeze;
+                  if(freezeBudget<0)throw Error('jev_native_draft_memory_bound');
+                  for(let index=0;index<bounded.length;index++){
+                    freezeNativeDraft(bounded[index],freezeBudget);
+                    if((index+1)%64===0){await yieldToEventLoop();if(admissionSignal.aborted||cancellation.signal.aborted)return{closed:true};if(hooks.preparation_valid?.()===false)return{calls:[],byte_limited:false,admission_deferred:true};}
+                  }
+                  const expectedMetadata=256+8*(bounded.length+1),returnedPrefix=[0];
+                  for(const proposal of bounded)returnedPrefix.push(returnedPrefix.at(-1)!+jevCallWorkingBytesV2(proposal));
+                  const retained=returnedPrefix.at(-1)!+8192*bounded.length;
+                  if(retained+2*expectedMetadata>available)throw Error('jev_native_draft_memory_bound');
+                  const workspaceQuote=hooks.native_admission!.workspace_quote(run,bounded);
+                  if(workspaceQuote){
+                    if(workspaceQuote.length!==bounded.length||workspaceQuote.retained_bytes!==expectedMetadata)throw Error('jev_native_quote_invalid');
+                    const workspace=workspaceQuote.quote(bounded.length);
+                    if(!Number.isSafeInteger(workspace)||workspace<0)throw Error('jev_native_workspace_invalid');
+                    Object.freeze(bounded);
+                    fedWindows++;return{proposals:bounded,workspace_bytes:workspace,workspace_quote:workspaceQuote,call_working_prefix:Object.freeze(returnedPrefix),byte_limited:byteLimited,
+                      on_committed:(ids,admitted)=>hooks.native_admission!.committed?.(priority,ids,admitted)};
+                  }
+                }
                 // The 4096-row survey is intact. Only the fresh native draft is
                 // smaller; skipped identities remain pending for a fresh RR.
                 const reservation=assertJevStreamingExecutionV2(execution!,provider);
@@ -253,7 +309,7 @@ export async function processJevLabelingPageV1<Input extends FacetInput,Result>(
                 }catch{workspace=undefined;}
                 if(workspace!==undefined&&bounded.length){
                   fedWindows++;return{proposals:bounded,workspace_bytes:workspace,byte_limited:byteLimited,
-                    on_committed:ids=>hooks.native_admission!.committed?.(priority,ids)};
+                    on_committed:(ids,admitted)=>hooks.native_admission!.committed?.(priority,ids,admitted)};
                 }
                 // Invalid/too-large native workspace never invokes native DML.
                 // If a fitting draft is impossible, retain the old protocol.
@@ -265,7 +321,7 @@ export async function processJevLabelingPageV1<Input extends FacetInput,Result>(
               if(incrementalInitial)try{args.initial_reservation!.release_selection();}catch(secondary){if(failed)throw new AggregateError([primary,secondary],'jev_selection_primary_and_release_failed',{cause:primary});throw secondary;}
             }
           }:undefined;
-        const outcome = await processJevStreamingWindowV2({run,calls,send_calls:reserved,store,provider,execution:execution,price,cancellation,hooks,observe_stream:args.observe_stream,feed_next:feed,next_admission_hint:hooks.next_admission_hint,revisit_empty_after_apply:Boolean(feed)&&hooks.revisit_empty_after_apply===true,defer_initial_prefetch_until_handoff:incrementalInitial&&reserved.length>0});
+        const outcome = await processJevStreamingWindowV2({run,calls,send_calls:reserved,store,provider,execution:execution,price,cancellation,hooks,observe_stream:args.observe_stream,feed_next:feed,next_admission_hint:hooks.next_admission_hint,revisit_empty_after_apply:Boolean(feed)&&hooks.revisit_empty_after_apply===true,defer_initial_prefetch_until_handoff:incrementalInitial&&reserved.length>0,preparation_valid:hooks.preparation_valid});
         aggregate = { ...outcome, roots:(aggregate?.roots??0)+outcome.roots,
           labeled:(aggregate?.labeled??0)+outcome.labeled,
           settled_micro_usd:(aggregate?.settled_micro_usd??0)+outcome.settled_micro_usd,

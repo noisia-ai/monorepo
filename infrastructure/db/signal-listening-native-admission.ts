@@ -60,6 +60,65 @@ export function nativeListeningAdmissionWorkspaceBoundV1(run:Pick<LabelingRunV1,
  const bytes=jsonAndWire+treesAndSlots+n*(returningMetadata+measuredProfile+rowArraysAndHashes);
  if(!Number.isSafeInteger(bytes)||bytes<0)throw Error('labeling_admission_workspace_invalid');return bytes;
 }
+/** An immutable numeric quote for one caller-owned proposal snapshot. The
+ * caller must keep that snapshot immutable for the handle's entire lifetime.
+ * This caches only a logical byte calculation, never eligibility/authority. */
+export type NativeListeningAdmissionWorkspaceQuoteV1={readonly length:number;readonly retained_bytes:number;quote(prefixLength:number):number};
+function nativeWorkspacePrefixHandleV1(prefixBytes:number[]):NativeListeningAdmissionWorkspaceQuoteV1{
+ // This separate scope retains only numbers: no proposal, request, run or config.
+ const bytes=Object.freeze(prefixBytes),length=bytes.length-1;
+ return Object.freeze({length,retained_bytes:256+8*bytes.length,quote(prefixLength:number):number{
+  if(!Number.isSafeInteger(prefixLength)||prefixLength<0||prefixLength>length)throw Error('labeling_admission_workspace_invalid');
+  return bytes[prefixLength]!;
+ }});
+}
+/** Build in O(total input graph occurrences); quote each contiguous prefix in
+ * O(1), byte-identical to workspaceBound(run,proposals.slice(0,n)). Shared
+ * objects are counted per occurrence, exactly as in the original bound.
+ *
+ * Only normal dense data-property arrays take this optimization. Unusual
+ * arrays return null so callers keep the original complete quote/guard path.
+ * The extra vector/handle is charged separately through retained_bytes. Its
+ * 256 fixed logical bytes cover array/object/closure slots; this is not RSS.
+ */
+export function createNativeListeningAdmissionWorkspaceQuoteV1(run:Pick<LabelingRunV1,'identity'>,
+ proposals:ReadonlyArray<LabelingCallProposalV1<FacetInput>>):NativeListeningAdmissionWorkspaceQuoteV1|null{
+ if(!Array.isArray(proposals)||proposals.length>1024)throw Error('labeling_admission_workspace_invalid');
+ // Private Node path assumes standard Array intrinsics. An own constructor
+ // (including species) or slice override must retain the complete old path.
+ const length=proposals.length;if(Object.getPrototypeOf(proposals)!==Array.prototype||Object.hasOwn(proposals,'constructor')||Object.hasOwn(proposals,'slice'))return null;
+ let index=0;
+ for(const key in proposals){if(!Object.hasOwn(proposals,key))continue;
+  const descriptor=Object.getOwnPropertyDescriptor(proposals,key);
+  if(key!==String(index)||!descriptor||!('value'in descriptor)||!descriptor.enumerable)return null;index++;
+ }
+ if(index!==length)return null;
+ const ancestors=new Set<object>();
+ const count=(value:unknown):{units:number;nodes:number}=>{
+  if(value===null||typeof value==='boolean')return{units:5,nodes:1};
+  if(typeof value==='number'){if(!Number.isFinite(value))throw Error('labeling_admission_workspace_invalid');return{units:25,nodes:1};}
+  if(typeof value==='string')return{units:2+6*value.length,nodes:1};
+  if(!value||typeof value!=='object'||ancestors.has(value)
+   ||!Array.isArray(value)&&Object.getPrototypeOf(value)!==Object.prototype&&Object.getPrototypeOf(value)!==null)
+   throw Error('labeling_admission_workspace_invalid');
+  ancestors.add(value);let units=2,nodes=1;
+  for(const key in value){if(!Object.hasOwn(value,key))continue;
+   const descriptor=Object.getOwnPropertyDescriptor(value,key);if(!descriptor||!('value'in descriptor))throw Error('labeling_admission_workspace_invalid');
+   const child=count(descriptor.value);units+=child.units+1+(Array.isArray(value)?0:3+6*key.length);nodes+=child.nodes+1;
+  }
+  ancestors.delete(value);if(!Number.isSafeInteger(units)||!Number.isSafeInteger(nodes))throw Error('labeling_admission_workspace_invalid');return{units,nodes};
+ };
+ const config=count(run.identity.params.configuration),fixed=14*config.units+384*config.nodes;
+ const prefixBytes:number[]=[14*2+384+fixed];let units=2,nodes=1;
+ if(!Number.isSafeInteger(prefixBytes[0]))throw Error('labeling_admission_workspace_invalid');
+ for(let i=0;i<length;i++){const descriptor=Object.getOwnPropertyDescriptor(proposals,String(i));
+  if(!descriptor||!('value'in descriptor))throw Error('labeling_admission_workspace_invalid');
+  const child=count(descriptor.value);units+=child.units+1;nodes+=child.nodes+1;
+  const bytes=14*units+384*nodes+fixed+(prefixBytes.length)*53952;
+  if(!Number.isSafeInteger(bytes)||bytes<0)throw Error('labeling_admission_workspace_invalid');prefixBytes.push(bytes);
+ }
+ return nativeWorkspacePrefixHandleV1(prefixBytes);
+}
 /** Operation-local data projection only. It never contains authority or a
  * reusable native validation decision. The store retains the real proposals. */
 export type NativeListeningAdmissionPacketV1<Input extends FacetInput>={run_id:string;workspace_id:string;configuration_digest:string;model:string;
@@ -136,25 +195,76 @@ export function nativeListeningAdmissionPacketBodyV1<Input extends FacetInput>(p
 
 /** Two ordinary DML commands retain the installed BEFORE ROW and independent
  * E statement guards. Packet data is reconstituted; no authorization marker. */
+// The inner DML RETURNING * is intentional: PostgreSQL must continue to
+// require SELECT on every target column, including unused future columns. The
+// outer projection keeps driver-native numeric/date metadata and returns no
+// duplicated request/input trees. A strict server equality proof is checked
+// against the ORIGINAL packet, then JS revalidates the selected plan before
+// it reconstructs any immutable provider payload.
+const nativeReturnedMetadataV1=`actual.id,actual.run_id,actual.workspace_id,actual.provider,actual.model,actual.transport,
+ actual.provider_batch_id,actual.custom_id,actual.request_digest,actual.request_storage_key,actual.retry_depth,actual.status,
+ actual.reserved_micro_usd,actual.settled_micro_usd,actual.usage,actual.raw_sha256,actual.raw_storage_key,actual.stop_reason,
+ actual.refusal_category,actual.results_applied,actual.results,actual.budget_date,actual.budget_timezone,actual.created_at,actual.updated_at,
+ actual.raw_storage_verified_at,actual.raw_storage_verified_key,actual.raw_size_bytes,actual.terminal_exposure_micro_usd,
+ (actual.request IS NOT DISTINCT FROM planned.request AND actual.inputs IS NOT DISTINCT FROM planned.inputs) payload_matches`;
+const nativePlannedPacketV1=`SELECT x.custom_id,x.request_digest,
+ jsonb_build_object('model',packet.payload->'model','state',x.inputs->0->'text','questions',
+  (SELECT jsonb_object_agg(keys.key,packet.payload->'questions'->keys.key) FROM jsonb_array_elements_text(x.question_keys) keys(key))) request,
+ x.inputs,x.reserved_micro_usd,x.retry_depth
+ FROM packet CROSS JOIN LATERAL jsonb_to_recordset(packet.payload->'rows') x(custom_id text,request_digest text,inputs jsonb,question_keys jsonb,reserved_micro_usd bigint,retry_depth integer)`;
 export const NATIVE_LISTENING_ADMISSION_INSERT_SQL_V1=`/* labeling_native_covered_insert_v1 */
- WITH packet AS MATERIALIZED(SELECT $6::jsonb payload)
+ WITH packet AS MATERIALIZED(SELECT $6::jsonb payload),planned AS MATERIALIZED(${nativePlannedPacketV1}),actual AS MATERIALIZED(
  INSERT INTO signal_labeling_calls(run_id,workspace_id,provider,model,transport,custom_id,request_digest,request,inputs,reserved_micro_usd,retry_depth,budget_date,budget_timezone)
- SELECT $1,$2,$3,$4,$5,x.custom_id,x.request_digest,
-  jsonb_build_object('model',packet.payload->'model','state',x.inputs->0->'text','questions',
-   (SELECT jsonb_object_agg(keys.key,packet.payload->'questions'->keys.key) FROM jsonb_array_elements_text(x.question_keys) keys(key))),
-  x.inputs,x.reserved_micro_usd,x.retry_depth,$7::date,$8
- FROM packet CROSS JOIN LATERAL jsonb_to_recordset(packet.payload->'rows') x(custom_id text,request_digest text,inputs jsonb,question_keys jsonb,reserved_micro_usd bigint,retry_depth integer)
- ON CONFLICT(custom_id) DO NOTHING RETURNING *`;
+ SELECT $1,$2,$3,$4,$5,custom_id,request_digest,request,inputs,reserved_micro_usd,retry_depth,$7::date,$8 FROM planned
+ ON CONFLICT(custom_id) DO NOTHING RETURNING *)
+ SELECT ${nativeReturnedMetadataV1} FROM actual JOIN planned ON planned.custom_id=actual.custom_id`;
 export const NATIVE_LISTENING_ADMISSION_MARK_SQL_V1=`/* labeling_native_covered_mark_v1 */
+ WITH packet AS MATERIALIZED(SELECT $4::jsonb payload),planned AS MATERIALIZED(${nativePlannedPacketV1}),actual AS MATERIALIZED(
  UPDATE signal_labeling_calls SET status='submitting',updated_at=now()
- WHERE run_id=$1 AND workspace_id=$2 AND id=ANY($3::uuid[]) AND status='reserved' RETURNING *`;
+ WHERE run_id=$1 AND workspace_id=$2 AND id=ANY($3::uuid[]) AND status='reserved' RETURNING *)
+ SELECT ${nativeReturnedMetadataV1} FROM actual JOIN planned ON planned.custom_id=actual.custom_id`;
+
+/** Match pg's JSONB->text->JSON.parse object construction, including UTF8
+ * length/byte ordering. Numeric JS property ordering is then applied by JS as
+ * it was by JSON.parse. This preserves the provider's JSON.stringify bytes;
+ * returning a plain compiler-order clone would only prove semantic equality. */
+function cloneNativePostgresJsonV1(value:unknown):unknown{
+ if(value===null||typeof value!=='object')return typeof value==='number'&&value===0?0:value;
+ if(Array.isArray(value))return value.map(cloneNativePostgresJsonV1);
+ const record=value as Record<string,unknown>,keys=Object.keys(record).map(key=>({key,bytes:Buffer.from(key,'utf8')}));
+ keys.sort((a,b)=>a.bytes.length-b.bytes.length||Buffer.compare(a.bytes,b.bytes));
+ return Object.fromEntries(keys.map(({key})=>[key,cloneNativePostgresJsonV1(record[key])]));
+}
+export function reconstructNativeListeningAdmissionRowsV1<Input extends FacetInput>(run:LabelingRunV1,plan:NativeListeningAdmissionPacketV1<Input>,
+ selected:ReadonlyArray<LabelingCallProposalV1<Input>>,rows:ReadonlyArray<Record<string,unknown>>,status:'reserved'|'submitting'):LabelingCallV1<Input>[] {
+ // The SQL await is a mutation boundary. A true comparison against its original
+ // packet cannot authorize a subsequently changed in-memory proposal.
+ validateNativeListeningAdmissionSelectionV1(plan,selected);
+ if(rows.length!==selected.length)throw Error('labeling_admission_return_invalid');
+ const proposals=new Map(selected.map(proposal=>[proposal.custom_id,proposal]));
+ const calls=rows.map(row=>{
+  if(row.payload_matches!==true||Object.hasOwn(row,'request')||Object.hasOwn(row,'inputs')||typeof row.custom_id!=='string')throw Error('labeling_admission_return_invalid');
+  const proposal=proposals.get(row.custom_id);if(!proposal)throw Error('labeling_admission_return_invalid');
+  const metadata={...row};delete metadata.payload_matches;
+  return{...metadata,request:cloneNativePostgresJsonV1(proposal.request),inputs:cloneNativePostgresJsonV1(proposal.inputs)} as LabelingCallV1<Input>;
+ });
+ return validateNativeListeningAdmissionRowsV1(run,selected,calls,status);
+}
 
 export function validateNativeListeningAdmissionRowsV1<Input extends FacetInput>(run:LabelingRunV1,selected:ReadonlyArray<LabelingCallProposalV1<Input>>,
  rows:ReadonlyArray<LabelingCallV1<Input>>,status:'reserved'|'submitting'):LabelingCallV1<Input>[] {
- if(rows.length!==selected.length||new Set(rows.map(r=>r.id)).size!==rows.length||new Set(rows.map(r=>r.custom_id)).size!==rows.length)
+ if(rows.length!==selected.length||new Set(rows.map(r=>r.id)).size!==rows.length)
   throw Error('labeling_admission_return_invalid');
+ // Reuse the old custom-id uniqueness census as the lookup index. Construct
+ // directly: no per-row tuple arrays. Its row-reference slots replace the old
+ // transient rows.map(custom_id) array slots; the working quote is unchanged.
+ const byCustomId=new Map<string,LabelingCallV1<Input>&Record<string,unknown>>();
+ for(const row of rows){if(byCustomId.has(row.custom_id))throw Error('labeling_admission_return_invalid');
+  byCustomId.set(row.custom_id,row as LabelingCallV1<Input>&Record<string,unknown>);}
  const ordered=selected.map(proposal=>{
-  const row=rows.find(r=>r.custom_id===proposal.custom_id) as (LabelingCallV1<Input>&Record<string,unknown>)|undefined;
+  const candidate=byCustomId.get(proposal.custom_id);
+  // Retain the former strict-equality semantics, including adversarial NaN.
+  const row=candidate?.custom_id===proposal.custom_id?candidate:undefined;
   const nullFields=['request_storage_key','raw_sha256','raw_storage_key','raw_size_bytes','raw_storage_verified_at','raw_storage_verified_key',
    'provider_batch_id','usage','results','settled_micro_usd','stop_reason','refusal_category'];
   if(!row||nullFields.some(key=>!Object.hasOwn(row,key)||row[key]!==null)||!Object.hasOwn(row,'terminal_exposure_micro_usd')

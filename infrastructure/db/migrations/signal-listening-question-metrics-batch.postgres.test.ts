@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
-import {randomUUID} from 'node:crypto';
+import {createHash,randomUUID} from 'node:crypto';
 import {readFile} from 'node:fs/promises';
 import test from 'node:test';
+import type {QueryResult} from 'pg';
 import {runMassLabelingAcceptanceFixtureV1} from './signal-mass-labeling-acceptance.synthetic.fixture';
 import {withSignalStudyFixtureV1} from './signal-study.synthetic.fixture';
 import {saveSignalListeningConfigurationV1,loadSignalListeningConfigurationWithClientV1,type SignalListeningAccessV1} from '../signal-listening-configuration';
@@ -10,21 +11,124 @@ import * as human from '../signal-listening-human-edits';
 import {setSignalListeningDiscoveryManualV1} from '../signal-listening-discovery';
 import {localizeSyntheticListeningConfigurationV1} from './signal-listening-localized.synthetic.fixture';
 import {r16ListeningWorkloadV1} from '../../../scripts/r16/listening-workload';
+import {assertServingTailOriginalSqlV1,invertSignalListeningServingTailV1} from './signal-listening-serving-tail.oracle';
+import {sanitizeProjectionLinearPlanV1} from './signal-listening-projection-linear-joins.oracle';
 import {assertCompactNativeCasesV1} from './signal-listening-compact-population.synthetic.fixture';
 const enabled=process.env.NOISIA_R16_LISTENING_METRICS_BATCH_PG==='true';
-async function parity(access:SignalListeningAccessV1,args:SignalListeningMetricsFiltersV1){
+async function parity(access:SignalListeningAccessV1,args:SignalListeningMetricsFiltersV1,profile=false,requestedKeys?:string[],edges=false){
+ const frozen=await readFile(new URL('./signal-listening-question-metrics-before-tail.fixture.sql',import.meta.url),'utf8');
+ assertServingTailOriginalSqlV1(frozen);
+ const sha=(value:string)=>createHash('sha256').update(value).digest('hex');
  const c=await access.database.connect();let configuration;try{
   configuration=await loadSignalListeningConfigurationWithClientV1(c,access.workspace_id,args.configuration_id);
- }finally{c.release();}assert.ok(configuration);
- const questions=configuration.configuration.questions.filter(q=>args.include_outside||q.domain!=='outside');
+ }finally{c.release();}assert.ok(configuration);const capturedConfiguration=configuration;
+ const questions=configuration.configuration.questions.filter(q=>(args.include_outside||q.domain!=='outside')&&(!requestedKeys||requestedKeys.includes(q.key)));
  const map=(await access.database.query('SELECT entity_context_digest FROM signal_mass_labeling_maps WHERE id=$1',[args.map_id])).rows[0]!;
  let populationReads=0;
  const database={query:access.database.query.bind(access.database),connect:async()=>{
   const client=await access.database.connect();return new Proxy(client,{get(target,key){
    if(key!=='query'){const value=Reflect.get(target,key);return typeof value==='function'?value.bind(target):value;}
    return async(sql:string,values?:unknown[])=>{
-   if(sql.includes("FROM signal_listening_effective_compact_population_roots_v1("))populationReads++;
-   return client.query(sql,values);
+   if(sql==='BEGIN')return client.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
+   if(!sql.includes("FROM signal_listening_effective_compact_population_roots_v1("))return client.query(sql,values);
+   populationReads++;
+   assert.equal(invertSignalListeningServingTailV1(sql)+'\n',frozen,'actual SQL must invert exactly to the frozen original batchN');
+   const identity=async()=>(await client.query("SELECT pg_current_snapshot()::text snapshot,current_setting('transaction_isolation') isolation,current_setting('transaction_read_only') read_only")).rows[0];
+   const anchor=await identity();assert.ok(anchor);assert.equal(anchor.isolation,'repeatable read');assert.equal(anchor.read_only,'on');
+   const observations:Array<{arm:string;wall_ms:number;result_sha256:string}>=[];
+   let current:QueryResult|undefined,expected:unknown;
+   for(const arm of profile?['original','optimized','optimized','original']:['original','optimized']){
+    const start=process.hrtime.bigint(),result=await client.query(arm==='original'?frozen:sql,values);
+    observations.push({arm,wall_ms:Number(process.hrtime.bigint()-start)/1e6,result_sha256:sha(JSON.stringify(result.rows))});
+    if(arm==='original'){if(expected)assert.deepEqual(result.rows,expected);else expected=result.rows;}
+    else{assert.deepEqual(result.rows,expected,'complete original batch and optimized metrics in the SAME RR snapshot');current=result;}
+    assert.deepEqual(await identity(),anchor,'both arms retain the same PostgreSQL snapshot');
+   }
+   if(profile){
+    const plans:Record<string,unknown>={};
+    for(const [arm,statement]of [['original',frozen],['optimized',sql]]as const){
+     const result=(await client.query('EXPLAIN (ANALYZE,BUFFERS,TIMING OFF,FORMAT JSON) '+statement,values)).rows[0]['QUERY PLAN'][0];
+     plans[arm]={planning_ms:result['Planning Time'],execution_ms:result['Execution Time'],plan:sanitizeProjectionLinearPlanV1(result.Plan)};assert.deepEqual(await identity(),anchor);
+    }
+    console.log('# serving tail native pair '+JSON.stringify({contract:'r16-serving-tail-native-pair-v1',evidence_kind:'SUPPLEMENTAL',order:'ORIGINAL-OPTIMIZED-OPTIMIZED-ORIGINAL',original_sql_sha256:sha(frozen),optimized_sql_sha256:sha(sql),snapshot_sha256:sha(anchor.snapshot),observations,plans,cpu_claim:false,gain_claim:false,h1_accepted:false}));
+   }
+   if(edges){
+    // Supplemental real-PG aggregation edge cases, separate from the actual
+    // native population comparison above. No table/history/trigger is changed.
+    const records=capturedConfiguration.configuration.questions.flatMap(q=>Array.from({length:12},(_,i)=>{
+     const noul=([.3,.7,.5,null,null,.9,.8,.8,null,.9,.6,.7][i]??null),human=q.topic_source?(i===4?true:i===5?false:null):null;
+     const answer=noul===null?null:q.type==='noul'?{type:'noul',noul}:{type:'choice',choice:q.options[0]!.key,confidence:1,
+      probabilities:Object.fromEntries(q.options.map((option,index)=>[option.key,index===0?1:0]))};
+     return{root_id:i===11?null:'00000000-0000-4000-8000-'+String(i+1).padStart(12,'0'),question_key:q.key,
+      has_topic_source:!!q.topic_source,candidate:i!==8,scope_state:i===6?'awaiting_base':i===7?'excluded':'included',
+      answer,human_belongs:human,effective_belongs:q.topic_source?(human??(noul!==null&&noul>=.7)):null,
+      published_at:i===10?null:'2026-01-02T01:30:00.123456Z',domain:i===9?'outside':q.domain??'category'};
+    }));
+    const call="signal_listening_effective_compact_population_roots_v1($1::uuid,$2::uuid,$3::uuid,$4,NULL::uuid[],'client-derived-metrics')";
+    const replacement='jsonb_to_recordset(CASE WHEN $3::uuid IS NOT NULL AND $4::text IS NOT NULL THEN $12::jsonb END) AS population(root_id uuid,question_key text,has_topic_source boolean,candidate boolean,scope_state text,answer jsonb,human_belongs boolean,effective_belongs boolean,published_at timestamptz,domain text)';
+    for(const statement of [frozen,sql])assert.equal(statement.split(call).length,2);
+    const expected=(await client.query(frozen.replace(call,replacement),[...values!,JSON.stringify(records)])).rows;
+    const actual=(await client.query(sql.replace(call,replacement),[...values!,JSON.stringify(records)])).rows;
+    assert.deepEqual(actual,expected,'real PG preserves .3/.7 thresholds, uncertain/null, human precedence, null dates/roots, scopes and zero choice options');
+    const topic=capturedConfiguration.configuration.questions.find(q=>q.topic_source&&q.domain!=='outside');assert.ok(topic);
+    const distribution=actual.find(row=>row.question_key===topic.key).distribution;
+    assert.deepEqual(distribution.map((row:{option_key:string;count:number})=>[row.option_key,row.count]),[['negative',2],['positive',2],['uncertain',2]]);
+    // SUM(double precision) is order-sensitive. Exercise at least three
+    // heterogeneous summands per effective noul class and per choice option,
+    // under identical reproducible input order/settings for both SQL arms.
+    const scores=[.7,.8,.9,.1,.2,.3,.4,.5,.6],choiceScores=[.7,.8,.9];
+    for(const group of [scores.slice(0,3),scores.slice(3,6),scores.slice(6)])assert.equal(new Set(group).size,3);
+    const floatRecords=capturedConfiguration.configuration.questions.flatMap(q=>scores.map((noul,i)=>{
+     const selected=choiceScores[i%choiceScores.length]!,probabilities=q.type==='choice'
+      ?Object.fromEntries(q.options.map((option,index)=>[option.key,index===0?selected:(1-selected)/(q.options.length-1)])):null;
+     return{root_id:'00000000-0000-4000-8000-'+String(i+101).padStart(12,'0'),question_key:q.key,
+      has_topic_source:!!q.topic_source,candidate:true,scope_state:'included',human_belongs:null,
+      answer:q.type==='noul'?{type:'noul',noul}:{type:'choice',choice:q.options[0]!.key,confidence:selected,probabilities},
+      effective_belongs:q.topic_source?noul>=.7:null,published_at:'2026-01-02T01:30:00.123456Z',domain:q.domain??'category'};
+    }));
+    const choiceKey=capturedConfiguration.configuration.questions.find(q=>q.type==='choice')!.key;
+    const choiceInputs=floatRecords.filter(row=>row.question_key===choiceKey).map(row=>row.answer.probabilities!);
+    for(const option of Object.keys(choiceInputs[0]!))assert.equal(new Set(choiceInputs.map(input=>input[option])).size,3,'each choice option has three heterogeneous double inputs');
+    const orders=[{name:'question_root_ascending',records:floatRecords},
+     {name:'question_root_descending',records:[...floatRecords].reverse()},
+     {name:'sha256_permutation',records:floatRecords.map(row=>({row,key:sha(row.question_key+':'+row.root_id)})).sort((a,b)=>a.key<b.key?-1:a.key>b.key?1:0).map(value=>value.row)}];
+    assert.equal(new Set(orders.map(order=>sha(JSON.stringify(order.records)))).size,3,'three reproducible and different physical recordset orders');
+    const aggregateStrategies=(node:Record<string,unknown>):string[]=>[
+     ...(typeof node.Strategy==='string'?[node.Strategy]:[]),
+     ...(Array.isArray(node.Plans)?node.Plans.flatMap(child=>aggregateStrategies(child as Record<string,unknown>)):[])];
+    const settings=(await client.query("SELECT current_setting('enable_hashagg') hashagg")).rows[0];assert.ok(settings);
+    const floatObservations:Array<Record<string,unknown>>=[];
+    try{
+     for(const hashagg of ['on','off']){
+      await client.query("SELECT set_config('enable_hashagg',$1,true)",[hashagg]);
+      assert.equal((await client.query("SELECT current_setting('enable_hashagg') hashagg")).rows[0].hashagg,hashagg);
+      for(const order of orders){
+       const parameters=[...values!,JSON.stringify(order.records)],plans:Record<string,unknown>={};
+       const expected=(await client.query(frozen.replace(call,replacement),parameters)).rows;
+       const actual=(await client.query(sql.replace(call,replacement),parameters)).rows;
+       for(const [arm,statement]of [['original',frozen],['optimized',sql]]as const){
+        const plan=(await client.query('EXPLAIN (ANALYZE,BUFFERS,TIMING OFF,FORMAT JSON) '+statement.replace(call,replacement),parameters)).rows[0]['QUERY PLAN'][0];
+        const strategies=aggregateStrategies(plan.Plan);
+        if(hashagg==='off')assert.ok(strategies.every(strategy=>strategy!=='Hashed'&&strategy!=='Mixed'),'hash aggregation is actually absent from sort-only plans');
+        plans[arm]={aggregate_strategies:strategies,plan:sanitizeProjectionLinearPlanV1(plan.Plan)};
+       }
+       const observation={order:order.name,input_sha256:sha(JSON.stringify(order.records)),enable_hashagg:hashagg,
+        original_result_sha256:sha(JSON.stringify(expected)),optimized_result_sha256:sha(JSON.stringify(actual)),plans};
+       floatObservations.push(observation);
+       // Keep the exact case/actual plans even if strict comparison rejects it.
+       console.log('# serving tail heterogeneous sum pair '+JSON.stringify({contract:'r16-serving-tail-heterogeneous-sum-pair-v2',evidence_kind:'SUPPLEMENTAL',snapshot_sha256:sha(anchor.snapshot),observation,cpu_claim:false,gain_claim:false,h1_accepted:false}));
+       assert.deepEqual(actual,expected,'strict heterogeneous double SUM equality; order='+order.name+'; enable_hashagg='+hashagg);
+       const actualTopic=actual.find(row=>row.question_key===topic.key);assert.ok(actualTopic);
+       assert.deepEqual(actualTopic.distribution.map((row:{option_key:string;count:number})=>[row.option_key,row.count]),[['negative',3],['positive',3],['uncertain',3]]);
+       assert.deepEqual(await identity(),anchor);
+      }
+     }
+    }finally{await client.query("SELECT set_config('enable_hashagg',$1,true)",[settings.hashagg]);}
+    assert.equal((await client.query("SELECT current_setting('enable_hashagg') hashagg")).rows[0].hashagg,settings.hashagg);
+    console.log('# serving tail heterogeneous sums '+JSON.stringify({contract:'r16-serving-tail-heterogeneous-sums-v2',evidence_kind:'SUPPLEMENTAL',comparison:'strict full JSON; no rounding or tolerance',snapshot_sha256:sha(anchor.snapshot),strict_pairs_compared:floatObservations.length,cpu_claim:false,gain_claim:false,h1_accepted:false}));
+    assert.deepEqual(await identity(),anchor);
+   }
+   assert.ok(current);return current;
   };}});
  }};
  const result=await readSignalListeningQuestionsMetricsV1({...access,database,...args,question_keys:questions.map(q=>q.key)});
@@ -68,6 +172,7 @@ test('batch metrics preserve pending roots, both scopes, zero options, periods a
   assert.equal((await f.database.query('SELECT count(*)::int n FROM signal_mass_labeling_items WHERE workspace_id=$1 AND map_id=$2',[f.workspace_id,f.map_id])).rows[0].n,1002);
   const cfg=await saveSignalListeningConfigurationV1({...access,expected_revision:0,provenance:'human',configuration:r16ListeningWorkloadV1('defined_consumer_second_pass').configuration});
   await assertCompactNativeCasesV1(access,{configuration_id:cfg.id,map_id:f.map_id},{profile_full:true});
+  await parity(access,{configuration_id:cfg.id,map_id:f.map_id},true);
  }});
 });
 test('batch metrics preserve completed classifier probabilities, H5 precedence and confirmed topic cross denominators',{
@@ -77,6 +182,11 @@ test('batch metrics preserve completed classifier probabilities, H5 precedence a
  const ctx=await human.getSignalListeningHumanEditContextV1(access);const key=ctx.configuration.questions.find(q=>q.topic_source==='discovered')!.key;
  await assertCompactNativeCasesV1(access,{configuration_id:ctx.expected.configuration_id,map_id:f.map_id});
  await parity(access,{configuration_id:ctx.expected.configuration_id,map_id:f.map_id,topic_key:key});
+ await parity(access,{configuration_id:ctx.expected.configuration_id,map_id:f.map_id},false,undefined,true);
+ const subset=await parity(access,{configuration_id:ctx.expected.configuration_id,map_id:f.map_id,topic_key:key},false,['voice','promotion']);
+ assert.ok(subset.every(metric=>metric.topic_cross.some(topic=>topic.topic_key===key)),'unrequested topics still govern filtering and cross denominators');
+ const ordered=await readSignalListeningQuestionsMetricsV1({...access,configuration_id:ctx.expected.configuration_id,map_id:f.map_id,topic_key:key,question_keys:['voice','promotion','voice']});
+ assert.deepEqual(ordered, [...subset].reverse(),'requested order and first-occurrence deduplication remain part of the public result');
  const changed=await human.correctSignalListeningTopicMembershipV1({...access,expected:ctx.expected,root_id:f.roots[0]!,from_question_key:key,idempotency_key:randomUUID()});
  await assertCompactNativeCasesV1(access,{configuration_id:changed.configuration_id,map_id:f.map_id},{extended:true});
  const results=await parity(access,{configuration_id:changed.configuration_id,map_id:f.map_id});

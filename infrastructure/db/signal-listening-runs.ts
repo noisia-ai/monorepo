@@ -3,7 +3,7 @@ import type {PoolClient} from 'pg';
 import {signalListeningJevIdentityV1,validateSignalListeningConfigurationV1,labelerDigestV1,compileSignalListeningSnapshotV1,buildSignalListeningCompiledRequestV1,
  signalWorkspaceEmbeddingDigestV1 as digest,type SignalListeningInputV1,type SignalListeningResultV1,type SignalListeningConfigurationV1} from '@noisia/query-engine';
 import {requestMentionFacetsV1,createSignalLabelingStoreV1,type LabelingRunV1,type LabelingCallV1} from './signal-labeling-runs';
-import {type LabelingInputBoundsV1} from './signal-labeling-input-bounds';
+import {type LabelingInputBoundsV1,validateLabelingInputBoundsV1,selectLabelingInputPrefixV1} from './signal-labeling-input-bounds';
 import {hydrateListeningInputProjectionV1,type ListeningInputProjectionRowV1} from './signal-listening-input-projection';
 import type {LabelingDatabaseV1} from './signal-mention-facets';
 import {mapCurrent,assertMassLabelingMapCurrentV1} from './signal-mass-labeling';
@@ -72,14 +72,14 @@ async function inputMetadata(c:Pick<PoolClient,'query'>,run:LabelingRunV1,limit:
  return{o,rows};
 }
 // Bounded read only: projection lifetime ends with the caller's RR snapshot.
-async function inputProjectionMetadata(c:Pick<PoolClient,'query'>,run:LabelingRunV1,bounds:LabelingInputBoundsV1){
+async function inputProjectionMetadata(c:Pick<PoolClient,'query'>,run:LabelingRunV1,bounds:LabelingInputBoundsV1,selection:{survey?:true}={}){
  const limit=bounds.max_rows;
  const o=await owner(c,run,false);
  if(await latestConfigurationId(c,run.workspace_id)!==o.configuration_id)return{o,rows:[]};
  const fixed=Buffer.byteLength(JSON.stringify(run.identity))+Buffer.byteLength(JSON.stringify(run.context))+Buffer.byteLength(JSON.stringify(config(run)));
  // This cursor belongs only to the caller's RR snapshot. Never retain it on
  // the run: applying base answers may enable an earlier consumer root next TX.
- const rows:ListeningInputProjectionRowV1[]=[];
+ const rows:Array<ListeningInputProjectionRowV1&{state_json_bytes?:string}>=[];
  let remaining=BigInt(bounds.max_working_bytes);
  let cursor:string|null=null;
  const sliceSize=Math.min(4096,Math.max(64,limit));
@@ -92,7 +92,7 @@ async function inputProjectionMetadata(c:Pick<PoolClient,'query'>,run:LabelingRu
     ${cursor?'AND i.root_id>$6::uuid':''} ORDER BY i.root_id LIMIT $3`,
    [run.workspace_id,o.map_id,sliceSize,o.configuration_id,run.id,...(cursor?[cursor]:[])])).rows.map(row=>row.root_id);
   if(!ids.length)break;
-  const page=(await c.query<ListeningInputProjectionRowV1>(`/* labeling_listening_input_metadata_v1 */ WITH candidates AS MATERIALIZED(
+  const page=(await c.query<ListeningInputProjectionRowV1&{state_json_bytes?:string}>(`/* labeling_listening_input_metadata_v1 */ WITH candidates AS MATERIALIZED(
    SELECT p.root_id,p.input_digest,p.question_key,p.question_digest,p.scope_basis,p.body_octets::bigint text_bytes,octet_length(p.wire::text)::bigint wire_bytes,
     (octet_length(p.question_key)+octet_length(p.question_digest)+octet_length(COALESCE(p.scope_basis,'')))::bigint question_metadata_bytes,
     p.platform_octets::bigint platform_bytes
@@ -108,7 +108,21 @@ async function inputProjectionMetadata(c:Pick<PoolClient,'query'>,run:LabelingRu
    , root_metadata AS MATERIALIZED(
     SELECT root_id,(4::bigint*(12*max(text_bytes)+2*sum(wire_bytes)+6*sum(question_metadata_bytes)+6*max(platform_bytes)+$7::bigint+2048)+8192)::text working_bytes
     FROM pending WHERE n<=256 GROUP BY root_id ORDER BY root_id LIMIT $6
-   ), prefix AS MATERIALIZED(
+   ) ${selection.survey?`, survey_prefix AS MATERIALIZED(
+    SELECT root_id,working_bytes,sum(working_bytes::numeric) OVER(ORDER BY root_id ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) cumulative_bytes FROM root_metadata
+   ),survey_fitting AS MATERIALIZED(SELECT root_id FROM survey_prefix WHERE cumulative_bytes<=$9::numeric),survey_projection AS MATERIALIZED(
+    SELECT pending.root_id,input_digest,array_agg(question_key ORDER BY question_key) question_keys,
+     jsonb_object_agg(question_key,question_digest) question_digests,
+     COALESCE(jsonb_object_agg(question_key,scope_basis) FILTER(WHERE scope_basis IS NOT NULL),'{}'::jsonb) scope_basis
+    FROM pending JOIN survey_fitting fitting ON fitting.root_id=pending.root_id WHERE n<=256 GROUP BY pending.root_id,input_digest),survey_state_bytes AS MATERIALIZED(
+    SELECT metadata.root_id,CASE WHEN fitting.root_id IS NOT NULL THEN octet_length(to_json(item.text)::text)::text END state_json_bytes
+    FROM root_metadata metadata JOIN signal_mass_labeling_items item ON item.root_id=metadata.root_id AND item.workspace_id=$1 AND item.map_id=$3
+    LEFT JOIN survey_fitting fitting ON fitting.root_id=metadata.root_id)
+    SELECT metadata.root_id,metadata.working_bytes,encoded.state_json_bytes,CASE WHEN projection.root_id IS NOT NULL THEN
+     jsonb_build_object('input_digest',projection.input_digest,'question_keys',projection.question_keys,
+     'question_digests',projection.question_digests,'scope_basis',projection.scope_basis) END projection
+    FROM root_metadata metadata LEFT JOIN survey_projection projection ON projection.root_id=metadata.root_id
+    JOIN survey_state_bytes encoded ON encoded.root_id=metadata.root_id ORDER BY metadata.root_id`:` , prefix AS MATERIALIZED(
     SELECT root_id,working_bytes,sum(working_bytes::numeric) OVER(ORDER BY root_id ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) cumulative_bytes
     FROM root_metadata
    ), fitting AS MATERIALIZED(SELECT root_id FROM prefix WHERE cumulative_bytes<=$9::numeric),
@@ -128,7 +142,7 @@ async function inputProjectionMetadata(c:Pick<PoolClient,'query'>,run:LabelingRu
    SELECT root_id,working_bytes,CASE WHEN projection_root_id IS NOT NULL THEN
     jsonb_build_object('input_digest',input_digest,'question_keys',question_keys,
       'question_digests',question_digests,'scope_basis',scope_basis) END projection
-   FROM projection_rows WHERE root_id IS NOT NULL ORDER BY root_id`,
+   FROM projection_rows WHERE root_id IS NOT NULL ORDER BY root_id`}`,
    [run.workspace_id,o.configuration_id,o.map_id,run.entity_context_digest,run.id,limit-rows.length,fixed,ids,remaining.toString()])).rows;
   rows.push(...page);
   // Budget belongs to the complete ordered read, never to each ID slice.
@@ -238,6 +252,73 @@ async function getForRequest(args:SignalListeningAccessV1&{configuration_id:stri
  });
 }
 
+/** Read hints carry no body, cached permission or reusable eligibility seal. */
+export type SignalListeningInputHintV1={readonly root_id:string;readonly working_bytes:string;readonly input_digest:string;readonly state_json_bytes:number;
+ readonly question_keys:readonly string[];readonly question_digests:Readonly<Record<string,string>>;readonly scope_basis:Readonly<Record<string,string>>};
+export type SignalListeningInputSurveyHydrationV1={kind:'ready';inputs:SignalListeningInputV1[];retained_bytes:number}|{kind:'stale'};
+export type SignalListeningInputSurveyV1={readonly hints:readonly SignalListeningInputHintV1[];readonly retained_bytes:number;
+ hydrate(rootIds:readonly string[],bounds:LabelingInputBoundsV1):Promise<SignalListeningInputSurveyHydrationV1>};
+/** Logical storage, not heap/RSS. Hint strings contain only canonical UUIDs,
+ * SHA256 digests, decimal byte counts and validated ASCII question keys. A
+ * configuration-wide maximal hint bounds every pending subset without sharing
+ * credit. We charge TWO complete 64-byte-node/UTF16-string trees, two
+ * arrays of row references, and PG UTF8+decoded UTF16 wire (3 times a 2x JSON
+ * bound including PG whitespace). Per-row512 covers the private Map slots,
+ * repeated UUID key storage and the extra projection wrapper. The extra row pays the temporary prototype.
+ * No input text, question definition or provider request is retained here. */
+export function signalListeningInputSurveyStorageBoundV1(run:Pick<LabelingRunV1,'identity'>,maxRows:number):number{
+ if(!Number.isSafeInteger(maxRows)||maxRows<1||maxRows>4096)throw Error('labeling_input_bounds_invalid');
+ // Price only the schema keys: do not clone arbitrary definition text just
+ // to quote a metadata buffer. The normal owner/read path still performs its
+ // complete configuration/identity validation before executing any query.
+ const configuration=run.identity.params.configuration;
+ if(!configuration||typeof configuration!=='object')throw Error('labeling_input_bounds_invalid');
+ const descriptor=Object.getOwnPropertyDescriptor(configuration,'questions');
+ if(!descriptor||!('value'in descriptor)||!Array.isArray(descriptor.value)||descriptor.value.length<1||descriptor.value.length>256)throw Error('labeling_input_bounds_invalid');
+ const keys:string[]=[];
+ for(let i=0;i<descriptor.value.length;i++){
+  const item=Object.getOwnPropertyDescriptor(descriptor.value,String(i));
+  if(!item||!('value'in item)||!item.value||typeof item.value!=='object')throw Error('labeling_input_bounds_invalid');
+  const key=Object.getOwnPropertyDescriptor(item.value,'key');
+  if(!key||!('value'in key)||typeof key.value!=='string'||!key.value.length||key.value.length>160)throw Error('labeling_input_bounds_invalid');keys.push(key.value);
+ }
+ if(new Set(keys).size!==keys.length)throw Error('labeling_input_bounds_invalid');
+ const hash='sha256:'+'f'.repeat(64);
+ const prototype={root_id:'f'.repeat(8)+'-'+('f'.repeat(4)+'-').repeat(3)+'f'.repeat(12),working_bytes:'9'.repeat(20),state_json_bytes:'9'.repeat(20),input_digest:hash,question_keys:keys,
+  question_digests:Object.fromEntries(keys.map(key=>[key,hash])),scope_basis:Object.fromEntries(keys.map(key=>[key,hash]))};
+ let nodes=0,units=0;
+ const count=(value:unknown)=>{nodes++;
+  if(typeof value==='string'){units+=value.length;return;}
+  if(Array.isArray(value)){for(const item of value)count(item);return;}
+  if(value&&typeof value==='object')for(const[key,child]of Object.entries(value)){nodes++;units+=key.length;count(child);}
+ };
+ count(prototype);const wire=2*Buffer.byteLength(JSON.stringify(prototype)),perRow=2*64*nodes+4*units+3*wire+512;
+ const bytes=256+(maxRows+1)*perRow+16*maxRows;
+ if(!Number.isSafeInteger(bytes)||bytes<0)throw Error('labeling_input_bounds_invalid');return bytes;
+}
+const surveyUuid=/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/iu;
+function inputSurveyIdsV1(ids:readonly string[],bounds:LabelingInputBoundsV1):string[]{
+ if(!Array.isArray(ids)||ids.length<1||ids.length>1024||ids.length>bounds.max_rows||ids.some(id=>typeof id!=='string'||!surveyUuid.test(id))
+  ||new Set(ids.map(id=>id.toLowerCase())).size!==ids.length)throw Error('labeling_input_bounds_invalid');
+ return ids.map(id=>id.toLowerCase());
+}
+async function hydrateInputSurveyV1(c:PoolClient,source:{workspace_id:string;map_id:string;configuration_digest:string},
+ privateRows:ReadonlyMap<string,ListeningInputProjectionRowV1>,ids:readonly string[],bounds:LabelingInputBoundsV1):Promise<SignalListeningInputSurveyHydrationV1>{
+ const rootIds=inputSurveyIdsV1(ids,bounds);
+ if(rootIds.some(id=>!privateRows.has(id)))throw Error('labeling_input_survey_selection_invalid');
+ // These are PRIVATE projections created on this SAME still-live RR client.
+ // Public hint values are never used for body identity, eligibility or price.
+ // Match the original body helper's canonical root order, then restore the
+ // caller's selected anchor order only after the complete chosen group fits.
+ const rows=rootIds.map(id=>privateRows.get(id)!).sort((a,b)=>a.root_id<b.root_id?-1:a.root_id>b.root_id?1:0);
+ const inputs=await hydrateListeningInputProjectionV1(c,source,rows,bounds);
+ if(inputs.length!==rootIds.length)return{kind:'stale'};
+ const byRoot=new Map(inputs.map(input=>[input.root_id,input]));
+ if(rootIds.some(id=>!byRoot.has(id)))return{kind:'stale'};
+ // The unchanged canonical prefix guard just proved safe terms/current budget.
+ const retained_bytes=rows.reduce((sum,row)=>sum+Number(row.working_bytes),0);
+ return{kind:'ready',inputs:rootIds.map(id=>byRoot.get(id)!),retained_bytes};
+}
 export function createSignalListeningStoreV1(options:Omit<Parameters<typeof createSignalLabelingStoreV1>[0],'adapter'>){
  const limit=options.page_size??200;
  const store=createSignalLabelingStoreV1<SignalListeningInputV1,SignalListeningResultV1>({...options,adapter:{
@@ -282,7 +363,39 @@ export function createSignalListeningStoreV1(options:Omit<Parameters<typeof crea
     ON CONFLICT(call_id) DO NOTHING`,[run.workspace_id,run.id,JSON.stringify(failures)]);
   },
  }});
- return {...store,async claim(id:string){
+ return {...store,
+ async withInputSurvey<T>(run:LabelingRunV1,bounds:LabelingInputBoundsV1,fn:(scope:SignalListeningInputSurveyV1)=>Promise<T>):Promise<T>{
+  const read=validateLabelingInputBoundsV1(bounds,limit),retained=signalListeningInputSurveyStorageBoundV1(run,read.max_rows);
+  if(retained>read.max_working_bytes)throw Error('labeling_input_memory_bound');
+  return listeningTransactionV1(options.database,async c=>{
+   await c.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY');
+   const metadata=await inputProjectionMetadata(c,run,read,{survey:true});
+   // Apply the ORIGINAL whole-read prefix/oversize guard before exposing hints.
+   // The SQL CASE encodes state only for this same domain, never its sentinel.
+   const fitting=new Set(selectLabelingInputPrefixV1(metadata.rows,read));
+   metadata.rows=metadata.rows.filter(row=>fitting.has(row.root_id));fitting.clear();
+   const hints=Object.freeze(metadata.rows.map(row=>{const stateJsonBytes=Number(row.state_json_bytes);
+    if(!row.projection||!Number.isSafeInteger(stateJsonBytes)||stateJsonBytes<2)throw Error('labeling_input_metadata_invalid');
+    const p=row.projection;return Object.freeze({root_id:row.root_id,working_bytes:row.working_bytes,input_digest:p.input_digest,state_json_bytes:stateJsonBytes,
+     question_keys:Object.freeze(p.question_keys),question_digests:Object.freeze(p.question_digests),scope_basis:Object.freeze(p.scope_basis)});
+   }));
+   // Row wrapper + private Map slots/repeated UUID key are in perRow's512.
+   const privateRows=new Map<string,ListeningInputProjectionRowV1>();for(const row of metadata.rows)privateRows.set(row.root_id,row);
+   let active=true,inflight:Promise<SignalListeningInputSurveyHydrationV1>|null=null;
+   const pendingRead=():Promise<SignalListeningInputSurveyHydrationV1>|null=>inflight;
+   const scope:SignalListeningInputSurveyV1=Object.freeze({hints,retained_bytes:retained,hydrate(rootIds:readonly string[],budget:LabelingInputBoundsV1){
+    if(!active)return Promise.reject(Error('labeling_input_survey_expired'));
+    if(inflight)return Promise.reject(Error('labeling_input_survey_reentrant'));
+    const bounded=validateLabelingInputBoundsV1(budget,Math.min(limit,1024)),canonical=inputSurveyIdsV1(rootIds,bounded);
+    if(canonical.some(id=>!privateRows.has(id)))return Promise.reject(Error('labeling_input_survey_selection_invalid'));
+    const operation=hydrateInputSurveyV1(c,{workspace_id:run.workspace_id,map_id:metadata.o.map_id,configuration_digest:metadata.o.configuration_digest},privateRows,canonical,bounded);inflight=operation;
+    void operation.catch(()=>undefined);const observed=operation.finally(()=>{inflight=null;});void observed.catch(()=>undefined);return observed;
+   }});
+   try{const result=await fn(scope);if(pendingRead())throw Error('labeling_input_survey_unawaited');return result;}
+   finally{active=false;const pending=pendingRead();if(pending)await pending.catch(()=>undefined);privateRows.clear();metadata.rows.length=0;}
+  });
+ },
+ async claim(id:string){
   if(!(await options.database.query('SELECT 1 FROM signal_listening_runs WHERE run_id=$1',[id])).rows.length)return null;
   return store.claim(id);
  }};

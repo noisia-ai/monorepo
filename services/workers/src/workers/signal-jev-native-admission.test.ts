@@ -2,7 +2,9 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {llmPriceV1,type FacetInput} from '@noisia/query-engine';
 import type {LabelingCallV1,LabelingCallProposalV1,LabelingRunV1} from '@noisia/db';
-import {processJevStreamingWindowV2,jevCallWorkingBytesV2} from './signal-jev-streaming-window';
+import {processJevStreamingWindowV2,jevCallWorkingBytesV2,type JevNativeAdmissionDraftV1} from './signal-jev-streaming-window';
+import {createNativeListeningAdmissionWorkspaceQuoteV1,nativeListeningAdmissionWorkspaceBoundV1} from '@noisia/db';
+import {signalListeningBaseTemplateV1,signalListeningJevIdentityV1} from '@noisia/query-engine';
 const execution={max_in_flight:8,window_size:4096,max_buffered_bytes:16*1024*1024,flush_size:1,max_flushes:2,flush_interval_ms:250};
 function gate(){let resolve!:()=>void;return{promise:new Promise<void>(done=>{resolve=done;}),resolve:()=>resolve()};}
 type Args=Parameters<typeof processJevStreamingWindowV2<FacetInput,string>>[0];
@@ -14,7 +16,11 @@ function call(p:LabelingCallProposalV1<FacetInput>,status:'reserved'|'submitting
  return{...p,request:JSON.parse(JSON.stringify(p.request)),inputs:JSON.parse(JSON.stringify(p.inputs)),id:'call-'+p.custom_id,
   status,raw_body:null,results_applied:false,provider_batch_id:null,retry_depth:0};
 }
-function fixture(){
+function numericDraft(draft:JevNativeAdmissionDraftV1<FacetInput>):JevNativeAdmissionDraftV1<FacetInput>{
+ const prefix=[0];for(const p of draft.proposals)prefix.push(prefix.at(-1)!+jevCallWorkingBytesV2(p));
+ return{...draft,workspace_quote:{length:draft.proposals.length,retained_bytes:256+8*prefix.length,quote:()=>draft.workspace_bytes},call_working_prefix:Object.freeze(prefix)};
+}
+function fixture(quoted=false){
  const run={id:'native-fresh',lease_token:'lease',error_code:null,status:'running'}as LabelingRunV1;
  const proposals=[proposal(1),proposal(2)],rows:LabelingCallV1<FacetInput>[]=[],physical:string[]=[],applied:string[]=[],memory:number[]=[];
  const cancellation=new AbortController();let reserves=0,marks=0,feeds=0,notified=0,unknownFailures=0;
@@ -30,11 +36,11 @@ function fixture(){
   body:JSON.stringify({model:request.model,usage:{input_tokens:1,output_tokens:0},answers:{q:{type:'noul',noul:.9}}})};}};
  const args:Args={run,calls:[],store,provider,execution,price:llmPriceV1('typesafe','jev-1.13.0','sync',.042),cancellation,
   hooks:{map:(_run,row)=>[row.id],error:()=>[],labeled:()=>true,fail_on_error:true},observe_stream:metrics=>memory.push(metrics.reserved_working_bytes),
-  feed_next:async()=>{feeds++;return feeds===1?{proposals,workspace_bytes:64*1024,byte_limited:false,on_committed:()=>{notified++;}}:{closed:true};}};
+  feed_next:async()=>{feeds++;const draft={proposals,workspace_bytes:64*1024,byte_limited:false,on_committed:()=>{notified++;}};return feeds===1?(quoted?numericDraft(draft):draft):{closed:true};}};
  return{args,run,proposals,rows,physical,applied,memory,cancellation,state:()=>({reserves,marks,feeds,notified,unknownFailures})};
 }
-test('fresh native admission owns proposals and workspace before authority and all return custody before COMMIT',async()=>{
- const f=fixture(),authority=gate(),entered=gate();let validationMemory=0,selectedCount=0;
+for(const quoted of[false,true])test(`fresh native admission owns all proposal/vector/workspace/call/response custody before COMMIT (${quoted?'numeric quote':'legacy quote'})`,async()=>{
+ const f=fixture(quoted),authority=gate(),entered=gate();let validationMemory=0,selectedCount=0;
  f.args.store.admitAndMarkSelected=async(_run,drafts,callbacks)=>{
   entered.resolve();await authority.promise;
   const selected=callbacks.selectFresh(drafts);selectedCount=selected.length;const rows=selected.map(p=>call(p));f.rows.push(...rows);
@@ -42,8 +48,10 @@ test('fresh native admission owns proposals and workspace before authority and a
   assert.equal(f.physical.length,0,'COMMIT has not been acknowledged');return{kind:'committed',calls:rows};
  };
  const running=processJevStreamingWindowV2(f.args);await entered.promise;
- const proposalBytes=f.proposals.reduce((n,p)=>n+jevCallWorkingBytesV2(p)+8192,0);assert.ok(f.memory.at(-1)!>=proposalBytes+64*1024);assert.equal(f.physical.length,0);assert.equal(f.state().feeds,1,'the single feeder cannot open another draft while native authority is pending');
- authority.resolve();const result=await running;assert.equal(selectedCount,2);assert.ok(validationMemory>proposalBytes+64*1024);
+ const proposalBytes=f.proposals.reduce((n,p)=>n+jevCallWorkingBytesV2(p)+8192,0),vectors=quoted?2*(256+8*(f.proposals.length+1)):0;assert.ok(f.memory.at(-1)!>=proposalBytes+vectors+64*1024);assert.equal(f.physical.length,0);assert.equal(f.state().feeds,1,'the single feeder cannot open another draft while native authority is pending');
+ authority.resolve();const result=await running;assert.equal(selectedCount,2);
+ const returnCustody=f.proposals.reduce((sum,p)=>sum+jevCallWorkingBytesV2(p),0),responses=f.proposals.length*(f.args.provider.max_response_bytes!*24+64*1024);
+ assert.ok(validationMemory>=proposalBytes+vectors+64*1024+returnCustody+responses,'both numeric vectors coexist with ALL proposals, workspace, returned calls and complete response allowances before COMMIT');
  assert.equal(result.status,'completed');assert.deepEqual(f.state(),{reserves:0,marks:0,feeds:2,notified:1,unknownFailures:0});assert.equal(f.physical.length,2);assert.equal(f.applied.length,2);assert.equal(f.memory.at(-1),0);
  assert.ok(f.memory.every(bytes=>bytes>=0&&bytes<=execution.max_buffered_bytes));
 });
@@ -52,24 +60,25 @@ test('native unsupported preflight consumes no cohort credits and retains the co
  const result=await processJevStreamingWindowV2(f.args);assert.equal(result.status,'completed');assert.equal(f.state().reserves,1);assert.equal(f.state().marks,1);
  assert.equal(f.state().notified,0);assert.equal(f.physical.length,2);assert.equal(f.memory.at(-1),0);
 });
-for(const outcome of ['rolled_back','unknown']as const)test(`native post-DML ${outcome} releases provisional custody without fallback or physical retry`,async()=>{
- const f=fixture();f.args.store.admitAndMarkSelected=async(_run,drafts,callbacks)=>{
+for(const outcome of ['rolled_back','unknown']as const)for(const quoted of[false,true])test(`native post-DML ${outcome} releases provisional custody without fallback or physical retry (${quoted?'numeric quote':'legacy quote'})`,async()=>{
+ const f=fixture(quoted);f.args.store.admitAndMarkSelected=async(_run,drafts,callbacks)=>{
   const selected=callbacks.selectFresh(drafts),rows=selected.map(p=>call(p));callbacks.validateBeforeCommit(rows,selected);
   if(outcome==='unknown')f.rows.push(...rows);
   throw Object.assign(Error('native handoff fault'),{name:'LabelingAdmissionFailureV1',outcome,call_ids:rows.map(row=>row.id),custom_ids:selected.map(row=>row.custom_id)});
  };
  await assert.rejects(processJevStreamingWindowV2(f.args),/native handoff fault/);assert.equal(f.state().reserves,0);assert.equal(f.state().marks,0);assert.equal(f.physical.length,0);assert.equal(f.applied.length,0);assert.equal(f.state().notified,0);
- assert.equal(f.state().unknownFailures,outcome==='unknown'?1:0);assert.equal(f.memory.at(-1),0);assert.ok(f.rows.every(row=>row.status==='submitting'&&!row.results_applied),'no unconfirmed row is reclassified as applied or definitely-not-sent');
+ assert.equal(f.state().unknownFailures,outcome==='unknown'?1:0);assert.equal(f.memory.at(-1),0);assert.ok(f.memory.every(bytes=>bytes>=0&&bytes<=execution.max_buffered_bytes));assert.ok(f.rows.every(row=>row.status==='submitting'&&!row.results_applied),'no unconfirmed row is reclassified as applied or definitely-not-sent');
 });
-test('native handoff delivers every prevalidated call after ACK despite cancellation and a notification failure',async()=>{
- const f=fixture();f.args.feed_next=async()=>{return{proposals:f.proposals,workspace_bytes:64*1024,byte_limited:false,on_committed:()=>{throw Error('budget notification failed');}};};
- f.args.store.admitAndMarkSelected=async(_run,drafts,callbacks)=>{const selected=callbacks.selectFresh(drafts),rows=selected.map(p=>call(p));f.rows.push(...rows);callbacks.validateBeforeCommit(rows,selected);f.cancellation.abort();return{kind:'committed',calls:rows};};
- await assert.rejects(processJevStreamingWindowV2(f.args),/budget notification failed/);assert.equal(f.physical.length,2);assert.equal(f.applied.length,2);assert.equal(f.memory.at(-1),0);
+for(const quoted of[false,true])test(`native handoff delivers every prevalidated call after ACK despite cancellation and notification failure (${quoted?'numeric quote':'legacy quote'})`,async()=>{
+ const f=fixture(quoted);let valid=true;f.args.preparation_valid=()=>valid;
+ f.args.feed_next=async()=>{const draft={proposals:f.proposals,workspace_bytes:64*1024,byte_limited:false,on_committed:()=>{throw Error('budget notification failed');}};return quoted?numericDraft(draft):draft;};
+ f.args.store.admitAndMarkSelected=async(_run,drafts,callbacks)=>{const selected=callbacks.selectFresh(drafts),rows=selected.map(p=>call(p));f.rows.push(...rows);callbacks.validateBeforeCommit(rows,selected);valid=false;f.cancellation.abort();return{kind:'committed',calls:rows};};
+ await assert.rejects(processJevStreamingWindowV2(f.args),/budget notification failed/);assert.equal(f.physical.length,2);assert.equal(f.applied.length,2);assert.equal(f.memory.at(-1),0);assert.ok(f.memory.every(bytes=>bytes>=0&&bytes<=execution.max_buffered_bytes));
 });
-test('native cancellation before the late selector commits an empty roster with no provider call',async()=>{
- const f=fixture();let validations=0;
+for(const quoted of[false,true])test(`native cancellation before the late selector commits an empty roster with no provider call (${quoted?'numeric quote':'legacy quote'})`,async()=>{
+ const f=fixture(quoted);let validations=0;
  f.args.store.admitAndMarkSelected=async(_run,drafts,callbacks)=>{f.cancellation.abort();const selected=callbacks.selectFresh(drafts);assert.equal(selected.length,0);const rows:LabelingCallV1<FacetInput>[]=[];callbacks.validateBeforeCommit(rows,selected);validations++;return{kind:'committed',calls:rows};};
- await processJevStreamingWindowV2(f.args);assert.equal(validations,1);assert.equal(f.physical.length,0);assert.equal(f.state().reserves,0);assert.equal(f.memory.at(-1),0);
+ await processJevStreamingWindowV2(f.args);assert.equal(validations,1);assert.equal(f.physical.length,0);assert.equal(f.state().reserves,0);assert.equal(f.memory.at(-1),0);assert.ok(f.memory.every(bytes=>bytes>=0&&bytes<=execution.max_buffered_bytes));
 });
 test('native expansion that exceeds the preclaimed call custody rejects before COMMIT and never evaluates',async()=>{
  const f=fixture();f.args.store.admitAndMarkSelected=async(_run,drafts,callbacks)=>{
@@ -200,4 +209,89 @@ for(const shape of ['full','partial','none','cancel']as const)test(`native prefi
   if(shape==='cancel'){assert.deepEqual(draftSizes,[]);assert.deepEqual(legacySizes,[1]);assert.equal(f.physical.length,1);}
   assert.equal(f.memory.at(-1),0);assert.ok(f.memory.every(bytes=>bytes>=0&&bytes<=e.max_buffered_bytes));
  }finally{first.resolve();await running.catch(()=>{});}
+});
+
+// Regression: fitting against free bytes captured before feed held the previous
+// HTTP cohort produced a stable smaller cohort even after APPLY released it.
+for(const mode of['native','legacy']as const)test(`numeric prefix uses current postfeed custody; ${mode} preserves the correct suffix protocol`,async()=>{
+ const f=fixture(),initialApplied=gate(),initial=Array.from({length:8},(_,i)=>call(proposal(100+i),'reserved'));
+ const prepared=Array.from({length:8},(_,i)=>proposal(200+i)),workspace=(n:number)=>64*1024+n*2*1024*1024;
+ const reservation=f.args.provider.max_response_bytes!*24+64*1024,selectedSizes:number[]=[],notices:string[][]=[];
+ let reads=0,availableAtLaunch=0,initialCount=0;
+ f.args.calls=initial;f.rows.push(...initial);
+ const baseApply=f.args.store.apply,baseReserve=f.args.store.reserve,legacySizes:number[]=[];
+ f.args.store.reserve=async(...args:Parameters<typeof baseReserve>)=>{legacySizes.push(args[1].length);return baseReserve(...args);};
+ f.args.store.apply=async(...args:Parameters<typeof baseApply>)=>{await baseApply(...args);for(const row of args[1])if(initial.includes(row.call))initialCount++;
+  if(initialCount===initial.length)initialApplied.resolve();};
+ const makeDraft=(proposals:typeof prepared)=>{
+  const prefix=[0];for(const p of proposals)prefix.push(prefix.at(-1)!+jevCallWorkingBytesV2(p));
+  const metadata=256+8*prefix.length;
+  return{proposals,workspace_bytes:workspace(proposals.length),workspace_quote:{length:proposals.length,retained_bytes:metadata,quote:workspace},
+   call_working_prefix:Object.freeze(prefix),byte_limited:false,on_committed:(_ids:ReadonlyArray<string>,admitted:ReadonlyArray<LabelingCallProposalV1<FacetInput>>)=>{notices.push(admitted.map(p=>p.custom_id));}};
+ };
+ f.args.feed_next=async available=>{
+  if(reads++===0){availableAtLaunch=available;await initialApplied.promise;await new Promise<void>(resolve=>setImmediate(resolve));return makeDraft(prepared);}
+  if(reads===2&&mode==='native'){
+   assert.equal(notices[0]!.length,7,'only ACK identities may advance the external metadata cursor');
+   // A new RR changed the unpaid suffix body. The stream must not retain and
+   // silently send the previous prepared object after its first prefix ACK.
+   const fresh={...prepared[7]!,request_digest:'fresh-suffix-digest',request:{...prepared[7]!.request,state:'fresh-suffix'}};
+   return makeDraft([fresh]);
+  }
+  return{closed:true};
+ };
+ f.args.store.admitAndMarkSelected=async(_run,drafts,callbacks)=>{
+  selectedSizes.push(drafts.length);if(mode==='legacy')return{kind:'legacy'};const selected=callbacks.selectFresh(drafts),rows=selected.map(p=>call(p));
+  callbacks.validateBeforeCommit(rows,selected);f.rows.push(...rows);return{kind:'committed',calls:rows};
+ };
+ const callCosts=[0];for(const p of prepared)callCosts.push(callCosts.at(-1)!+jevCallWorkingBytesV2(p));
+ const result=await processJevStreamingWindowV2(f.args);
+ // Recompute the old prefeed oracle only after its observed available is known.
+ let staleBest=0;for(let n=1;n<=prepared.length;n++)if(callCosts[n]!*2+8192*n+workspace(n)+reservation*n<=availableAtLaunch)staleBest=n;
+ assert.equal(staleBest,6,'the retained old timing would have cut a different prefix');
+ assert.deepEqual(selectedSizes,mode==='native'?[7,1]:[7]);assert.equal(result.roots,16);assert.equal(f.physical.length,16);assert.equal(new Set(f.applied).size,16);
+ assert.deepEqual(legacySizes,mode==='native'?[]:[8],'unsupported preflight preserves the ENTIRE prepared eight-call legacy prefix');
+ assert.equal(f.physical.includes('text-207'),mode==='legacy');assert.equal(f.physical.includes('fresh-suffix'),mode==='native');
+ assert.deepEqual(notices.map(ids=>ids.length),mode==='native'?[7,1]:[]);assert.equal(f.memory.at(-1),0);
+ assert.ok(f.memory.every(bytes=>bytes>=0&&bytes<=execution.max_buffered_bytes),'both numeric vectors and the entire unused draft stay charged');
+});
+
+
+test('page constructs the real numeric factory only after freezing its private draft and retains both vectors through ACK',async()=>{
+ const f=fixture(),entered=gate(),ack=gate(),initial={root_id:'real-quote-initial',text:'initial'}as FacetInput;
+ const inputs=Array.from({length:3},(_,i)=>({root_id:'real-quote-'+i,text:'real-quote-'+i}))as FacetInput[];
+ Object.assign(f.run,{kind:'mass_labeling',identity:signalListeningJevIdentityV1(signalListeningBaseTemplateV1({category:'tea',lexicon_terms:['tea']}))});
+ let factories=0,workspace=0,proposals:LabelingCallProposalV1<FacetInput>[]=[],selected:LabelingCallProposalV1<FacetInput>[]=[],reads=0;
+ const store={...f.args.store,claim:async()=>f.run,renew:async()=>{},release:async()=>{},calls:async()=>[],inputs:async()=>[initial],
+  admitAndMarkSelected:async(_run:LabelingRunV1,drafts:LabelingCallProposalV1<FacetInput>[],callbacks:Parameters<NonNullable<Args['store']['admitAndMarkSelected']>>[2])=>{
+   selected=[...callbacks.selectFresh(drafts)];const rows=selected.map(p=>call(p));callbacks.validateBeforeCommit(rows,selected);entered.resolve();await ack.promise;
+   f.rows.push(...rows);return{kind:'committed' as const,calls:rows};
+  }}as PageArgs['store'];
+ const running=processJevLabelingPageV1({run_id:f.run.id,store,provider:f.args.provider,execution,
+  initial_reservation:{max_calls:1024,release_selection:()=>{}},prepare:async()=>({provider:f.args.provider,execution,continuous_windows:true,bootstrap_initial_calls:1}),
+  read_next_inputs:async()=>reads++===0?inputs:[],observe_stream:value=>f.memory.push(value.reserved_working_bytes),
+  hooks:{continuous_windows:()=>true,revisit_empty_after_apply:true,price:()=>f.args.price,
+   native_admission:{workspace_bound:nativeListeningAdmissionWorkspaceBoundV1,workspace_quote:(run,drafts)=>{
+    factories++;proposals=[...drafts];
+    for(const draft of drafts){assert.ok(Object.isFrozen(draft)&&Object.isFrozen(draft.request)&&Object.isFrozen(draft.inputs)&&Object.isFrozen(draft.inputs[0]!));
+     assert.equal(Reflect.set(draft.request,'state','mutated-after-preparation'),false,'the reusable quote has an immutable body snapshot');}
+    const quote=createNativeListeningAdmissionWorkspaceQuoteV1(run,drafts);assert.ok(quote);workspace=quote.quote(drafts.length);return quote;
+   }},
+   propose:(_run,values)=>values.map(input=>({...proposal(0),custom_id:input.root_id,request_digest:input.root_id,inputs:[input],request:{...proposal(0).request,state:input.text}})),
+   map:(_run,row)=>[row.id],error:()=>[],labeled:()=>true,fail_on_error:true}});
+ try{await entered.promise;assert.equal(factories,1);assert.equal(proposals.length,3);assert.equal(selected.length,3);
+  const proposalCustody=proposals.reduce((sum,p)=>sum+jevCallWorkingBytesV2(p)+8192,0),vectors=2*(256+8*(proposals.length+1)),returned=selected.reduce((sum,p)=>sum+jevCallWorkingBytesV2(p),0),responses=selected.length*(f.args.provider.max_response_bytes!*24+64*1024);
+  assert.ok(f.memory.at(-1)!>=proposalCustody+vectors+workspace+returned+responses,'all five custody owners coexist until native ACK');
+  assert.equal(f.physical.filter(value=>value.startsWith('real-quote-')).length,0);
+  ack.resolve();const result=await running;assert.equal(result.status,'completed');assert.equal(f.physical.length,4);assert.equal(f.applied.length,4);assert.equal(f.memory.at(-1),0);
+ }finally{ack.resolve();await running.catch(()=>{});}
+});
+
+
+for(const quoted of[false,true])test(`profile preparation invalidated while native authority waits selects no paid cohort (${quoted?'numeric quote':'legacy quote'})`,async()=>{
+ const f=fixture(quoted);let valid=true;f.args.preparation_valid=()=>valid;
+ f.args.store.admitAndMarkSelected=async(_run,drafts,callbacks)=>{valid=false;const selected=callbacks.selectFresh(drafts);assert.equal(selected.length,0);
+  const rows:LabelingCallV1<FacetInput>[]=[];callbacks.validateBeforeCommit(rows,selected);return{kind:'committed',calls:rows};};
+ await processJevStreamingWindowV2(f.args);assert.equal(f.physical.length,0);assert.equal(f.state().reserves,0);assert.equal(f.memory.at(-1),0);
+ assert.ok(f.memory.every(bytes=>bytes>=0&&bytes<=execution.max_buffered_bytes));
 });
