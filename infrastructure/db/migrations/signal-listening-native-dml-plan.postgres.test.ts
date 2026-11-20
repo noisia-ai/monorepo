@@ -136,8 +136,8 @@ test(NATIVE_DML_PLAN_TITLE_V1,{skip:!enabled,timeout:30*60*1000},async()=>{
      await store.apply(run,pages.map(row=>({call:row.call,results:[row.result]})));
     };
     for(const phase of ['base','consumer']as const){
-     const pending=phase==='base'?chosen:await store.inputs(run,bounds);
-     const selected=pending.filter(i=>anchorIds.has(i.root_id)||nativeIds.has(i.root_id));assert.equal(selected.length,752);
+     const pending:SignalListeningInputV1[]=phase==='base'?chosen:await store.inputs(run,bounds);
+     const selected:SignalListeningInputV1[]=pending.filter(i=>anchorIds.has(i.root_id)||nativeIds.has(i.root_id));assert.equal(selected.length,752);
      const keys=phase==='base'?['promotion','voice']:workload.question_keys.filter(key=>!['promotion','voice'].includes(key));
      assert.ok(selected.every(input=>JSON.stringify([...input.question_keys].sort())===JSON.stringify([...keys].sort())));
      const anchors=selected.filter(i=>anchorIds.has(i.root_id)),batch=selected.filter(i=>nativeIds.has(i.root_id));
@@ -147,7 +147,7 @@ test(NATIVE_DML_PLAN_TITLE_V1,{skip:!enabled,timeout:30*60*1000},async()=>{
      assert.ok(profile);assert.equal(profile.sample_count,32);assert.equal(profile.source_run_id,run.id);
      assert.equal(new Set(profile.source_call_ids).size,32);assert.equal(profile.scope.phase,phase==='base'?'base':'consumer_category');
      assert.ok(batch.every(input=>size(input)>=profile.request_min_bytes&&size(input)<=profile.request_max_bytes));
-     const paid=(await f.access.database.query(`SELECT count(*)::int n FROM signal_labeling_calls c
+     const paid:{n:number}=(await f.access.database.query(`SELECT count(*)::int n FROM signal_labeling_calls c
       WHERE c.run_id=$1 AND c.id=ANY($2::uuid[]) AND c.status='settled' AND c.results_applied
       AND c.raw_storage_verified_at IS NOT NULL AND c.raw_storage_verified_key=c.raw_storage_key`,[run.id,profile.source_call_ids])).rows[0];
      assert.equal(paid.n,32);await store.renew(run);

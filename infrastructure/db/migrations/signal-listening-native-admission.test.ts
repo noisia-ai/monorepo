@@ -209,10 +209,10 @@ test('unusual top-level arrays retain the complete original quote path without i
 test('complete cohort validation retains exact reordered identities without quadratic custom-id searches',()=>{
  const f=fixture(),selected=Array.from({length:64},(_,i)=>({...structuredClone(f.proposals[0]!),custom_id:'listening_'+i.toString(16).padStart(60,'0')}));
  let reads=0;
- const rows=selected.map(p=>{const row={...structuredClone(p),id:randomUUID(),run_id:f.run.id,workspace_id:f.run.workspace_id,status:'submitting',provider:'typesafe',model:'jev-1.13.0',transport:'sync',
+ const rows=selected.map(p=>{const row={...structuredClone(p),id:randomUUID(),run_id:f.run.id,workspace_id:f.run.workspace_id,status:'submitting' satisfies LabelingCallV1<SignalListeningInputV1>['status'],provider:'typesafe',model:'jev-1.13.0',transport:'sync',
   request_storage_key:null,raw_sha256:null,raw_storage_key:null,raw_size_bytes:null,raw_storage_verified_at:null,raw_storage_verified_key:null,
-  provider_batch_id:null,usage:null,results:null,settled_micro_usd:null,terminal_exposure_micro_usd:'0',stop_reason:null,refusal_category:null,results_applied:false} satisfies Omit<LabelingCallV1<SignalListeningInputV1>,'raw_body'>;
-  Object.defineProperty(row,'custom_id',{get(){reads++;return p.custom_id;},enumerable:true});return row;
+  provider_batch_id:null,usage:null,results:null,settled_micro_usd:null,terminal_exposure_micro_usd:'0',stop_reason:null,refusal_category:null,results_applied:false};
+  Object.defineProperty(row,'custom_id',{get(){reads++;return p.custom_id;},enumerable:true});return row satisfies Omit<LabelingCallV1<SignalListeningInputV1>,'raw_body'>;
  }).reverse();
  const normalized=validateNativeListeningAdmissionRowsV1(f.run,selected,rows,'submitting');
  assert.deepEqual(normalized.map(row=>row.id),rows.slice().reverse().map(row=>row.id));
