@@ -119,7 +119,7 @@ export async function observeNativeLateSurveyV1<D extends InputPlanDatabaseV1>(a
    assert.ok(Number.isSafeInteger(hydrated.retained_bytes)&&hydrated.retained_bytes>=0&&hydrated.retained_bytes+scope.retained_bytes<=limit.max_working_bytes);
    receipt.shape.hydration_retained_bytes=hydrated.retained_bytes;
    assert.equal(hydrated.inputs.length,limit.hydrate_rows);assert.deepEqual(hydrated.inputs.map(input=>input.root_id),ids);
-   for(let i=0;i<hydrated.inputs.length;i++){const input=hydrated.inputs[i]!,hint=selected[i]!;
+   for(let i=0;i<hydrated.inputs.length;i++){const input:SignalListeningInputV1=hydrated.inputs[i]!,hint=selected[i]!;
     assert.deepEqual(Object.keys(input).sort(),['root_id','input_digest','text','title','platform','content_type','author','published_at','language','map_id','configuration_digest','question_keys','question_digests','scope_basis'].sort());
     assert.equal(input.input_digest,hint.input_digest);assert.deepEqual(input.question_keys,hint.question_keys);
     assert.deepEqual(input.question_digests,hint.question_digests);assert.deepEqual(input.scope_basis,hint.scope_basis);
