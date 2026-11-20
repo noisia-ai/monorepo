@@ -4113,7 +4113,7 @@ jobs:
                 if type(late_nested.get(key)) is not type(value) or late_nested.get(key)!=value: raise SystemExit('Native LATE nested source/diagnostic metadata is invalid')
             if late_nested.get('failure') is not None or late_nested.get('limits')!=limits:
                 raise SystemExit('Successful Native LATE nested receipt has failure or changed recorder limits')
-            early_retained,early_types=totals['retained'],totals['types'];totals={'types':0,'retained':0}
+            early_retained,early_types=totals['retained'],totals['types'];totals={'types':0,'retained':0};session_pids={}
             late_preflight=late_nested.get('preflight_receipt');validate_lifecycle(late_preflight,True)
             late_probes=late_nested.get('probes')
             if type(late_probes) is not list or len(late_probes)!=3 or [(p.get('phase'),p.get('operation')) for p in late_probes if type(p) is dict]!=late_order:

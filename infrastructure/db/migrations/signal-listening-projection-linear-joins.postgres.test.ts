@@ -1,3 +1,4 @@
+import {runSurveyWorkMemExperimentV1} from './signal-listening-survey-work-mem.experimental.test-support';
 import {runSurveyQuestionBytesExperimentV1,compareSurveyQuestionBytesEdgeV1} from './signal-listening-survey-question-bytes.experimental.test-support';
 import {compareWirePopulationV1} from './signal-listening-wire-population.oracle';
 import assert from 'node:assert/strict';
@@ -193,7 +194,7 @@ test('projection linear joins native4096 paired RRRO preserves rows and removes 
   // Its old Source1dd arm runs on this exact still-open RR/RO client before
   // the real API hydrates every bounded chunk. Neither arm mutates fixtures.
   let surveyQueries=0,bodyQueries=0;const snapshots:Array<{pid:number;snapshot:string;isolation:string;readonly:string}>=[];
-  const surveyDatabase={query:f.database.query.bind(f.database),connect:async()=>{const c=await f.database.connect();return new Proxy(c,{get(target,key){if(key==='query')return async(sql:string,params?:unknown[])=>{
+  const surveyDatabase={query:f.database.query.bind(f.database),connect:async()=>{const c=await f.database.connect();let workMemDiscard=false;return new Proxy(c,{get(target,key){if(key==='release')return(error?:Error|boolean)=>target.release(workMemDiscard?true:error);if(key==='query')return async(sql:string,params?:unknown[])=>{
    const metadata=sql.startsWith('/* labeling_listening_input_metadata_v1 */'),body=sql.startsWith('/* labeling_listening_input_body_v1 */');
    const identity=async()=>(await target.query("SELECT pg_backend_pid() pid,pg_current_snapshot()::text snapshot,current_setting('transaction_isolation') isolation,current_setting('transaction_read_only') readonly")).rows[0];
    const anchor=metadata||body?await identity():null,result=await target.query(sql,params);
@@ -202,7 +203,10 @@ test('projection linear joins native4096 paired RRRO preserves rows and removes 
     // Experimental SQL only; the API, original oracle, and its receipt remain Q8.
     const experiment=await runSurveyQuestionBytesExperimentV1(target,{sql,params,actual:result.rows,
      scope:{workspace_id:f.workspace_id,map_id:f.map_id,configuration_digest:cfg.configuration_digest},expectedInputs:rows});
-    console.log('# experimental survey question bytes Q8 pair4096 '+JSON.stringify(experiment));}
+    console.log('# experimental survey question bytes Q8 pair4096 '+JSON.stringify(experiment));
+    const workMem=await runSurveyWorkMemExperimentV1(target,{sql,params,actual:result.rows,
+     scope:{workspace_id:f.workspace_id,map_id:f.map_id,configuration_digest:cfg.configuration_digest},expectedInputs:rows,markConnectionUncertain:()=>{workMemDiscard=true;}});
+    console.log('# experimental survey work_mem Q8 pair4096 '+JSON.stringify(workMem));}
    if(body){bodyQueries++;assert.ok(params&&Array.isArray(params[2])&&params[2].length<=1024);}
    if(anchor){assert.deepEqual(await identity(),anchor);snapshots.push(anchor);}return result;
   };const value=Reflect.get(target,key);return typeof value==='function'?value.bind(target):value;}});}}as LabelingDatabaseV1;
