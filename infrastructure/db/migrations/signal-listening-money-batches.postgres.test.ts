@@ -1446,7 +1446,7 @@ test('atomic same-run32 covered child admission preserves real parent exposure a
  // occur in one fixture transaction; caps, funding, source and profiles stay
  // immutable. No role/trigger/function changes or fabricated money rows.
  const immutable=async()=>({parent:(await f.database.query('SELECT cap_micro_usd,policy_version_id,policy_digest,actor_user_id,map_id FROM signal_listening_discovery_executions WHERE id=$1',[f.execution.id])).rows[0],
-  run:(await f.database.query('SELECT cap_micro_usd,processing_admission_id,labeler_digest,entity_context_digest FROM signal_labeling_runs WHERE id=$1',[run.id])).rows[0],
+  run:(await f.database.query('SELECT r.cap_micro_usd,r.processing_admission_id,l.labeler_digest,r.entity_context_digest FROM signal_labeling_runs r JOIN signal_labeler_versions l ON l.id=r.labeler_version_id WHERE r.id=$1',[run.id])).rows[0],
   profile:(await f.database.query('SELECT source_run_id,profile FROM signal_listening_calibrations WHERE source_run_id=$1 ORDER BY created_at,id',[run.id])).rows});
  const invariantBefore=await immutable(),freshInputs=(await labeling.inputs(run)).filter(i=>signalListeningCalibrationShapeV1(child.configuration,i).shape_digest===shape.shape_digest);
  assert.ok(freshInputs.length>=2);const target=freshInputs[0]!;
