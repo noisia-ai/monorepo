@@ -1691,13 +1691,26 @@ test('each new survey feed observes current reservations and Brand OS; only its 
   assert.equal(scope.hints.length,f.inputs.length-1);
   await assert.rejects(scope.hydrate([selected[0]!],{max_rows:1,max_working_bytes:512*1024*1024}),/survey_selection_invalid/);
  });
+ assert.deepEqual(await coveredLedger(f),before,'the reservation-aware survey is read-only before publication');
  const current=(await f.database.query("SELECT revision FROM signal_listening_configurations WHERE workspace_id=$1 AND state='published' ORDER BY revision DESC LIMIT 1",[f.run.workspace_id])).rows[0];
  await saveSignalListeningConfigurationV1({database:f.database,workspace_id:f.run.workspace_id,actor_user_id:f.run.actor_user_id,expected_revision:current.revision,
   provenance:'human',configuration:{...f.configuration,instructions:f.configuration.instructions+' A fresh human instruction.'}});
+ // Publication's deferred 0298 supersede trigger retires the one unsent
+ // reservation. Compare the read-only survey against that committed boundary,
+ // while independently checking every permitted publication change below.
+ const published=await coveredLedger(f),retired=published.find(entry=>entry.row.id===reserved[0]!.id);
+ assert.ok(retired);assert.ok(Number.isFinite(Date.parse(retired.row.updated_at)));
+ assert.deepEqual(published,before.map(entry=>entry.row.id===reserved[0]!.id?{row:{...entry.row,
+  status:'failed',results:[],results_applied:true,stop_reason:'listening_configuration_changed',updated_at:retired.row.updated_at}}:entry),
+ 'publication retires only the unsent call; paid RAW, answers, request identities and money remain exact');
+ const publishedRun=await nativeRunRowV1(f);assert.equal(publishedRun.status,'failed');assert.equal(publishedRun.error_code,'listening_configuration_changed');
  await f.store.withInputSurvey(f.run,{max_rows:4096,max_working_bytes:512*1024*1024},async scope=>{
   assert.deepEqual(scope.hints,[],'a new published Brand OS configuration invalidates the old run before any body is hydrated');
+  await assert.rejects(scope.hydrate([selected[1]!],{max_rows:1,max_working_bytes:512*1024*1024}),/survey_selection_invalid/);
  });
- assert.deepEqual(await coveredLedger(f),before);
+ await assert.rejects(f.store.markSubmitting(f.run,reserved),/listening_configuration_changed/,'a retained pre-publication call cannot obtain a provider handoff');
+ assert.deepEqual(await coveredLedger(f),published,'neither the stale survey nor the rejected handoff mutates the publication result');
+ assert.deepEqual(await nativeRunRowV1(f),publishedRun);
 }));
 
 for(const stage of ['insert','mark']as const)test('compact actual '+stage+' result rejects proposal mutation across SQL await before reconstructing a provider handoff',{

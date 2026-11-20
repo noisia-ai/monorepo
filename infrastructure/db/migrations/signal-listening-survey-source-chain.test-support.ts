@@ -38,8 +38,22 @@ const surveyReaderChangesV1 = [
   ]
 ] as const;
 
+// Second closed source delta: the reviewed survey-only linear graph restores
+// exact Source1dd before the older eight-block inverse below restores GitN.
+const surveyLinearGraphChangeV1 = ["${selection.survey?`, survey_prefix AS MATERIALIZED(\n    SELECT root_id,working_bytes,sum(working_bytes::numeric) OVER(ORDER BY root_id ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) cumulative_bytes FROM root_metadata\n   ),survey_fitting AS MATERIALIZED(SELECT root_id FROM survey_prefix WHERE cumulative_bytes<=$9::numeric),survey_projection AS MATERIALIZED(\n    SELECT pending.root_id,input_digest,array_agg(question_key ORDER BY question_key) question_keys,\n     jsonb_object_agg(question_key,question_digest) question_digests,\n     COALESCE(jsonb_object_agg(question_key,scope_basis) FILTER(WHERE scope_basis IS NOT NULL),'{}'::jsonb) scope_basis\n    FROM pending JOIN survey_fitting fitting ON fitting.root_id=pending.root_id WHERE n<=256 GROUP BY pending.root_id,input_digest),survey_state_bytes AS MATERIALIZED(\n    SELECT metadata.root_id,CASE WHEN fitting.root_id IS NOT NULL THEN octet_length(to_json(item.text)::text)::text END state_json_bytes\n    FROM root_metadata metadata JOIN signal_mass_labeling_items item ON item.root_id=metadata.root_id AND item.workspace_id=$1 AND item.map_id=$3\n    LEFT JOIN survey_fitting fitting ON fitting.root_id=metadata.root_id)\n    SELECT metadata.root_id,metadata.working_bytes,encoded.state_json_bytes,CASE WHEN projection.root_id IS NOT NULL THEN\n     jsonb_build_object('input_digest',projection.input_digest,'question_keys',projection.question_keys,\n     'question_digests',projection.question_digests,'scope_basis',projection.scope_basis) END projection\n    FROM root_metadata metadata LEFT JOIN survey_projection projection ON projection.root_id=metadata.root_id\n    JOIN survey_state_bytes encoded ON encoded.root_id=metadata.root_id ORDER BY metadata.root_id",
+ "${selection.survey?`, survey_prefix AS MATERIALIZED(\n    SELECT root_id,working_bytes,sum(working_bytes::numeric) OVER(ORDER BY root_id ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) cumulative_bytes FROM root_metadata\n   ),survey_fitting AS MATERIALIZED(SELECT root_id FROM survey_prefix WHERE cumulative_bytes<=$9::numeric),survey_fit_matches AS MATERIALIZED(\n    SELECT p.root_id,p.input_digest,p.question_key,p.question_digest,p.scope_basis,p.n,fitting.root_id fitting_root_id\n    FROM pending p FULL JOIN survey_fitting fitting ON fitting.root_id=p.root_id\n   ),survey_projection AS MATERIALIZED(\n    SELECT p.root_id,p.input_digest,array_agg(p.question_key ORDER BY p.question_key) question_keys,\n     jsonb_object_agg(p.question_key,p.question_digest) question_digests,\n     COALESCE(jsonb_object_agg(p.question_key,p.scope_basis) FILTER(WHERE p.scope_basis IS NOT NULL),'{}'::jsonb) scope_basis\n    FROM survey_fit_matches p WHERE p.root_id IS NOT NULL AND p.fitting_root_id IS NOT NULL AND p.n<=256 GROUP BY p.root_id,p.input_digest\n   ),survey_projection_rows AS MATERIALIZED(\n    SELECT prefix.root_id,prefix.working_bytes,prefix.cumulative_bytes,projection.root_id projection_root_id,\n     projection.input_digest,projection.question_keys,projection.question_digests,projection.scope_basis\n    FROM survey_prefix prefix FULL JOIN survey_projection projection ON projection.root_id=prefix.root_id\n   ),survey_state_bytes AS MATERIALIZED(\n    SELECT metadata.root_id,metadata.working_bytes,metadata.projection_root_id,metadata.input_digest,\n     metadata.question_keys,metadata.question_digests,metadata.scope_basis,\n     CASE WHEN metadata.cumulative_bytes<=$9::numeric THEN octet_length(to_json(item.text)::text)::text END state_json_bytes\n    FROM survey_projection_rows metadata JOIN signal_mass_labeling_items item ON item.root_id=metadata.root_id AND item.workspace_id=$1 AND item.map_id=$3\n    WHERE metadata.root_id IS NOT NULL)\n    SELECT root_id,working_bytes,state_json_bytes,CASE WHEN projection_root_id IS NOT NULL THEN\n     jsonb_build_object('input_digest',input_digest,'question_keys',question_keys,\n     'question_digests',question_digests,'scope_basis',scope_basis) END projection\n    FROM survey_state_bytes ORDER BY root_id"] as const;
+export function restoreSignalListeningSurveyBeforeLinearV1(source:string):string {
+ const [before,after]=surveyLinearGraphChangeV1;
+ assert.equal(source.split(after).length,2,'one exact registered linear survey branch is required');
+ const previous=source.replace(after,before);
+ assert.equal(previous.split(before).length,2,'one exact prior survey branch is required');
+ assert.equal(previous.replace(before,after),source,'linear survey inverse must reconstruct every current byte');
+ return previous;
+}
+
 export function invertSignalListeningSurveyReaderV1(source:string):string {
  const current=source;
+ source=restoreSignalListeningSurveyBeforeLinearV1(source);
  for(const [before,after]of [...surveyReaderChangesV1].reverse()){
   assert.equal(source.split(after).length,2,'one exact registered survey reader block is required');
   source=source.replace(after,before);
@@ -49,11 +63,16 @@ export function invertSignalListeningSurveyReaderV1(source:string):string {
   assert.equal(forward.split(before).length,2,'one exact baseline survey reader anchor is required');
   forward=forward.replace(before,after);
  }
+ const [beforeLinear,afterLinear]=surveyLinearGraphChangeV1;assert.equal(forward.split(beforeLinear).length,2);forward=forward.replace(beforeLinear,afterLinear);
  assert.equal(forward,current,'the survey inverse must reconstruct every current source byte');
  return source;
 }
 
 export function assertSurveyReaderNegativeFixturesV1(source:string):void {
+ const [beforeLinear,afterLinear]=surveyLinearGraphChangeV1;assert.equal(source.split(afterLinear).length,2);
+ assert.throws(()=>restoreSignalListeningSurveyBeforeLinearV1(source.replace('survey_fit_matches AS MATERIALIZED(','survey_fit_matches AS NOT MATERIALIZED(')),'a changed linear survey block cannot be normalized');
+ assert.throws(()=>restoreSignalListeningSurveyBeforeLinearV1(source+'\n'+afterLinear),'a duplicated linear survey block cannot be normalized');
+ assert.throws(()=>restoreSignalListeningSurveyBeforeLinearV1(source.replace(afterLinear,beforeLinear)),'prior survey SQL cannot silently impersonate the current linear graph');
  const needle="labeling_input_survey_expired";
  assert.equal(source.split(needle).length,2);
  assert.throws(()=>invertSignalListeningSurveyReaderV1(source.replace(needle,needle+'_changed')),

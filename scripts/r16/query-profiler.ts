@@ -2,7 +2,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash } from "node:crypto";
 import { performance } from "node:perf_hooks";
 
-export const R16_STORE_OPERATIONS_V1 = ["inputs", "calls", "reserve", "markSubmitting", "admitAndMarkSelected", "persistRawPage",
+export const R16_STORE_OPERATIONS_V1 = ["inputs", "calls", "reserve", "markSubmitting", "admitAndMarkSelected", "inputSurvey", "persistRawPage",
   "settlePage", "apply", "finish", "refresh", "requeueUnsent"] as const;
 export type R16StoreOperationV1 = typeof R16_STORE_OPERATIONS_V1[number];
 
@@ -36,6 +36,7 @@ function queryTemplateHash(query: unknown): string {
 }
 
 function batchSize(operation: R16StoreOperationV1, args: readonly unknown[], result: unknown): number | undefined {
+  if (operation === "inputSurvey") return undefined;
   if (operation === "inputs" || operation === "calls") return Array.isArray(result) ? result.length : undefined;
   if (operation === "admitAndMarkSelected") {
     if (!result || typeof result !== "object") return undefined;
@@ -84,7 +85,8 @@ export class R16QueryProfilerV1 {
     elapsedMs: () => number = () => performance.now()): T {
     return new Proxy(store, { get: (target, property, receiver) => {
       const value = Reflect.get(target, property, receiver);
-      const operationName = property === "markSubmittingSelected" ? "markSubmitting" : property;
+      const operationName = property === "markSubmittingSelected" ? "markSubmitting"
+        : property === "withInputSurvey" ? "inputSurvey" : property;
       if (typeof operationName !== "string" || !(R16_STORE_OPERATIONS_V1 as readonly string[]).includes(operationName)
         || typeof value !== "function") return typeof value === "function" ? value.bind(target) : value;
       const operation = operationName as R16StoreOperationV1;

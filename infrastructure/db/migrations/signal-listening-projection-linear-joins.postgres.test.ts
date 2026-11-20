@@ -13,7 +13,7 @@ import {requestSignalListeningV1,createSignalListeningStoreV1} from '../signal-l
 import {setSignalListeningDiscoveryManualV1} from '../signal-listening-discovery';
 import * as human from '../signal-listening-human-edits';
 import {signalListeningBaseTemplateV1,buildSignalListeningJevRequestV1,signalListeningRequestDigestV1} from '@noisia/query-engine';
-import {candidateProjectionMetadataSqlV1,projectionMetadataBeforeLinearJoinsV1,compareProjectionLinearJoinsOnClientV1,
+import {candidateProjectionMetadataSqlV1,projectionMetadataBeforeLinearJoinsV1,projectionSurveyMetadataBeforeLinearV1,compareProjectionLinearJoinsOnClientV1,compareProjectionSurveyOnClientV1,
  runProjectionLinearPair4096V1,type ProjectionLinearJoinsOracleContextV1,type ProjectionLinearJoinsOracleCountersV1} from './signal-listening-projection-linear-joins.oracle';
 const enabled=process.env.NOISIA_R16_PROJECTION_LINEAR_JOINS_PG==='true';
 const budget=512*1024*1024;
@@ -30,7 +30,8 @@ async function pair(c:PoolClient,sql:string,params:unknown[]){
  assert.deepEqual((await c.query("SELECT current_setting('transaction_isolation') isolation,current_setting('transaction_read_only') readonly")).rows[0],{isolation:'repeatable read',readonly:'on'});
  await compareWirePopulationV1(c,[params[0],params[1],params[2],params[3],params[7],'llm-processing']);
  const before=(await c.query(projectionMetadataBeforeLinearJoinsV1,params)).rows,after=(await c.query(sql,params)).rows;
- assert.deepEqual(after,before,'complete metadata rows, projection and weights match frozen a883 in one RR/RO');return after;
+ assert.deepEqual(after,before,'complete metadata rows, projection and weights match frozen a883 in one RR/RO');
+ await compareProjectionSurveyOnClientV1(c,params,before);return after;
 }
 test('projection linear joins native preserves256keys, Unicode microseconds, byte sentinels, reservations and rights',{
  skip:!enabled,timeout:600000,
@@ -55,6 +56,11 @@ test('projection linear joins native preserves256keys, Unicode microseconds, byt
    const fixed=Buffer.byteLength(JSON.stringify(run.identity))+Buffer.byteLength(JSON.stringify(run.context))+Buffer.byteLength(JSON.stringify(cfg.configuration));
    const rows=await pair(c,await candidateProjectionMetadataSqlV1(),[f.workspace_id,cfg.id,f.map_id,run.entity_context_digest,run.id,3,fixed,bounded.map(i=>i.root_id),String(budget)]);weights=rows.map(r=>Number(r.working_bytes));
    const date=(await c.query("SELECT to_jsonb(m)->>'published_at' value FROM mentions m WHERE workspace_id=$1 AND id=$2",[f.workspace_id,bounded[0]!.root_id])).rows[0].value;assert.match(date,/\.123456/);
+   for(const [available,expected]of [[1,0],[weights[0]!-1,0],[weights[0]!,1],[weights[0]!+weights[1]!-1,1],[weights[0]!+weights[1]!,2]]as const){
+    const paired=await pair(c,await candidateProjectionMetadataSqlV1(),[f.workspace_id,cfg.id,f.map_id,run.entity_context_digest,run.id,3,fixed,bounded.map(input=>input.root_id),String(available)]);
+    assert.equal(paired.filter(row=>row.projection!==null).length,expected,'both survey SQL arms preserve the exact fitting prefix with256 question keys');
+   }
+
   }finally{await c.query('ROLLBACK');c.release();}
   assert.deepEqual(await store.inputs(run,{max_rows:3,max_working_bytes:weights[0]!+weights[1]!-1}),bounded.slice(0,1));
   assert.deepEqual(await store.inputs(run,{max_rows:3,max_working_bytes:weights[0]!+weights[1]!}),bounded.slice(0,2));
@@ -169,12 +175,35 @@ test('projection linear joins native4096 paired RRRO preserves rows and removes 
  const database={query:f.database.query.bind(f.database),connect:async()=>{const c=await f.database.connect(),context:ProjectionLinearJoinsOracleContextV1={};return new Proxy(c,{get(target,key){if(key==='query')return async(sql:string,params?:unknown[])=>{
   const result=await target.query(sql,params);await compareProjectionLinearJoinsOnClientV1(target,sql,params,result,context,counters);
   if(sql.startsWith('/* labeling_listening_input_metadata_v1 */')&&params?.length===9){assert.equal((params[7] as string[]).length,4096);assert.equal(captures,0);captures++;
-   const receipt=await runProjectionLinearPair4096V1(target,params);assert.equal(receipt.output_count,4096);
+   const receipt=await runProjectionLinearPair4096V1(target,params);assert.equal(receipt.output_count,4096);assert.equal(receipt.survey_pair.output_count,4096);
    console.log('# projection linear joins pair4096 '+JSON.stringify(receipt));
   }return result;
  };const value=Reflect.get(target,key);return typeof value==='function'?value.bind(target):value;}});}} as LabelingDatabaseV1;
  const store=createSignalListeningStoreV1({database,page_size:4096,storeRaw:async()=>{throw Error('no provider');}}),run=await store.claim(admitted.run_id);assert.ok(run);
  try{const rows=await store.inputs(run,{max_rows:4096,max_working_bytes:budget});assert.equal(rows.length,4096);assert.equal(captures,1);assert.equal(counters.metadata,1);assert.equal(counters.hydrated,1);
   assert.equal((await f.database.query('SELECT count(*)::int n FROM signal_labeling_calls WHERE run_id=$1',[run.id])).rows[0].n,0,'paired READ ONLY queries create no calls');
+  // Observe the ACTUAL withInputSurvey SQL, not only a source-extracted query.
+  // Its old Source1dd arm runs on this exact still-open RR/RO client before
+  // the real API hydrates every bounded chunk. Neither arm mutates fixtures.
+  let surveyQueries=0,bodyQueries=0;const snapshots:Array<{pid:number;snapshot:string;isolation:string;readonly:string}>=[];
+  const surveyDatabase={query:f.database.query.bind(f.database),connect:async()=>{const c=await f.database.connect();return new Proxy(c,{get(target,key){if(key==='query')return async(sql:string,params?:unknown[])=>{
+   const metadata=sql.startsWith('/* labeling_listening_input_metadata_v1 */'),body=sql.startsWith('/* labeling_listening_input_body_v1 */');
+   const identity=async()=>(await target.query("SELECT pg_backend_pid() pid,pg_current_snapshot()::text snapshot,current_setting('transaction_isolation') isolation,current_setting('transaction_read_only') readonly")).rows[0];
+   const anchor=metadata||body?await identity():null,result=await target.query(sql,params);
+   if(metadata){surveyQueries++;assert.ok(params);assert.equal(sql,await candidateProjectionMetadataSqlV1('survey'),'the real survey API executes the reviewed candidate query');
+    assert.deepEqual(result.rows,(await target.query(projectionSurveyMetadataBeforeLinearV1,params)).rows,'ACTUAL4096 survey metadata equals frozen Source1dd on its own RR/RO client');}
+   if(body){bodyQueries++;assert.ok(params&&Array.isArray(params[2])&&params[2].length<=1024);}
+   if(anchor){assert.deepEqual(await identity(),anchor);snapshots.push(anchor);}return result;
+  };const value=Reflect.get(target,key);return typeof value==='function'?value.bind(target):value;}});}}as LabelingDatabaseV1;
+  const surveyStore=createSignalListeningStoreV1({database:surveyDatabase,page_size:4096,storeRaw:async()=>{throw Error('no provider');}});
+  await surveyStore.withInputSurvey(run,{max_rows:4096,max_working_bytes:budget},async scope=>{
+   assert.equal(scope.hints.length,4096);assert.deepEqual(scope.hints.map(hint=>hint.root_id),rows.map(input=>input.root_id));
+   for(let offset=0;offset<rows.length;offset+=1024){const expected=rows.slice(offset,offset+1024),hydrated=await scope.hydrate(expected.map(input=>input.root_id),{max_rows:1024,max_working_bytes:budget});
+    assert.equal(hydrated.kind,'ready');if(hydrated.kind!=='ready')throw Error('complete native4096 survey chunk expected');assert.deepEqual(hydrated.inputs,expected);}
+  });
+  assert.equal(surveyQueries,1);assert.equal(bodyQueries,4);assert.equal(snapshots.length,5);
+  assert.ok(snapshots.every(row=>row.readonly==='on'&&row.isolation==='repeatable read'));assert.equal(new Set(snapshots.map(row=>row.pid+':'+row.snapshot)).size,1);
+  assert.equal((await f.database.query('SELECT count(*)::int n FROM signal_labeling_calls WHERE run_id=$1',[run.id])).rows[0].n,0,'actual survey and hydration create no calls');
+
  }finally{await store.release(run);}
 }}}));

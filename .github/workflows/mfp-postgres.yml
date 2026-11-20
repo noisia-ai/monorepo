@@ -9,7 +9,7 @@ on:
   workflow_dispatch:
     inputs:
       scope:
-        description: Run the full suite or a focused R16 policy, listening, or partial-admission smoke
+        description: Run the full suite or a focused R16 policy, listening, partial-admission, or native DML-plan diagnostic
         type: choice
         options:
           - full
@@ -17,6 +17,7 @@ on:
           - listening-smoke
           - partial-admission-only
           - input-plan-only
+          - native-dml-plan-only
         default: full
         required: true
       listening_startup_prefix:
@@ -64,13 +65,13 @@ permissions:
   contents: read
 
 concurrency:
-  group: mfp-postgres-${{ github.ref }}${{ github.event_name == 'workflow_dispatch' && inputs.scope == 'policy-smoke' && '-policy-smoke' || github.event_name == 'workflow_dispatch' && inputs.scope == 'listening-smoke' && '-listening-smoke' || github.event_name == 'workflow_dispatch' && inputs.scope == 'partial-admission-only' && '-partial-admission-only' || github.event_name == 'workflow_dispatch' && inputs.scope == 'input-plan-only' && '-input-plan-only' || '' }}
+  group: mfp-postgres-${{ github.ref }}${{ github.event_name == 'workflow_dispatch' && inputs.scope == 'policy-smoke' && '-policy-smoke' || github.event_name == 'workflow_dispatch' && inputs.scope == 'listening-smoke' && '-listening-smoke' || github.event_name == 'workflow_dispatch' && inputs.scope == 'partial-admission-only' && '-partial-admission-only' || github.event_name == 'workflow_dispatch' && inputs.scope == 'input-plan-only' && '-input-plan-only' || github.event_name == 'workflow_dispatch' && inputs.scope == 'native-dml-plan-only' && '-native-dml-plan-only' || '' }}
   cancel-in-progress: true
 
 jobs:
   numeric-python:
-    name: ${{ github.event_name == 'workflow_dispatch' && inputs.scope == 'policy-smoke' && 'policy-smoke-numeric-python' || github.event_name == 'workflow_dispatch' && inputs.scope == 'listening-smoke' && 'listening-smoke-numeric-python' || github.event_name == 'workflow_dispatch' && inputs.scope == 'partial-admission-only' && 'partial-admission-only-numeric-python-not-run' || github.event_name == 'workflow_dispatch' && inputs.scope == 'input-plan-only' && 'input-plan-only-numeric-python-not-run' || 'numeric-python' }}
-    if: ${{ github.event_name != 'workflow_dispatch' || (inputs.scope != 'listening-smoke' && inputs.scope != 'partial-admission-only' && inputs.scope != 'input-plan-only') }}
+    name: ${{ github.event_name == 'workflow_dispatch' && inputs.scope == 'policy-smoke' && 'policy-smoke-numeric-python' || github.event_name == 'workflow_dispatch' && inputs.scope == 'listening-smoke' && 'listening-smoke-numeric-python' || github.event_name == 'workflow_dispatch' && inputs.scope == 'partial-admission-only' && 'partial-admission-only-numeric-python-not-run' || github.event_name == 'workflow_dispatch' && inputs.scope == 'input-plan-only' && 'input-plan-only-numeric-python-not-run' || github.event_name == 'workflow_dispatch' && inputs.scope == 'native-dml-plan-only' && 'native-dml-plan-only-numeric-python-not-run' || 'numeric-python' }}
+    if: ${{ github.event_name != 'workflow_dispatch' || (inputs.scope != 'listening-smoke' && inputs.scope != 'partial-admission-only' && inputs.scope != 'input-plan-only' && inputs.scope != 'native-dml-plan-only') }}
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -355,8 +356,8 @@ jobs:
           retention-days: 14
 
   migrated-schema:
-    name: ${{ github.event_name == 'workflow_dispatch' && inputs.scope == 'policy-smoke' && 'policy-smoke-migrated-schema-not-run' || github.event_name == 'workflow_dispatch' && inputs.scope == 'listening-smoke' && 'listening-smoke-migrated-schema' || github.event_name == 'workflow_dispatch' && inputs.scope == 'partial-admission-only' && 'partial-admission-only-migrated-schema-not-run' || github.event_name == 'workflow_dispatch' && inputs.scope == 'input-plan-only' && 'input-plan-only-migrated-schema-not-run' || 'migrated-schema' }}
-    if: ${{ github.event_name != 'workflow_dispatch' || (inputs.scope != 'policy-smoke' && inputs.scope != 'partial-admission-only' && inputs.scope != 'input-plan-only') }}
+    name: ${{ github.event_name == 'workflow_dispatch' && inputs.scope == 'policy-smoke' && 'policy-smoke-migrated-schema-not-run' || github.event_name == 'workflow_dispatch' && inputs.scope == 'listening-smoke' && 'listening-smoke-migrated-schema' || github.event_name == 'workflow_dispatch' && inputs.scope == 'partial-admission-only' && 'partial-admission-only-migrated-schema-not-run' || github.event_name == 'workflow_dispatch' && inputs.scope == 'input-plan-only' && 'input-plan-only-migrated-schema-not-run' || github.event_name == 'workflow_dispatch' && inputs.scope == 'native-dml-plan-only' && 'native-dml-plan-only-migrated-schema-not-run' || 'migrated-schema' }}
+    if: ${{ github.event_name != 'workflow_dispatch' || (inputs.scope != 'policy-smoke' && inputs.scope != 'partial-admission-only' && inputs.scope != 'input-plan-only' && inputs.scope != 'native-dml-plan-only') }}
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -3330,5 +3331,285 @@ jobs:
             .data/piloto-masivo/r16/input-plan-native-evidence/input-plan-observer.json
             .data/piloto-masivo/r16/input-plan-native-evidence/input-plan-measurement.json
           if-no-files-found: ignore
+          retention-days: 14
+          include-hidden-files: true
+
+  listening-native-dml-plan-diagnostic:
+    name: R16 Native DML plan diagnostic (isolated lab)
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.scope == 'full' || (inputs.scope == 'native-dml-plan-only' && github.ref == 'refs/heads/codex/r16-native-dml-profile') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      R16BENCH_RUN_ID: benchmark-pg17
+      R16BENCH_SERVICES: postgres,redis
+      NOISIA_R16_LOCAL_PG_LAB: r16-benchmark-pg17
+      DATABASE_SSL: 'false'
+      R16_NATIVE_DML_PLAN_EVIDENCE_DIR: .data/piloto-masivo/r16/native-dml-plan-evidence
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+      - name: Install frozen Node workspace dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Typecheck database package before fixture setup
+        env:
+          NODE_OPTIONS: --max-old-space-size=1024
+        run: pnpm --filter @noisia/db typecheck
+      - name: Typecheck workers package before fixture setup
+        env:
+          NODE_OPTIONS: --max-old-space-size=1024
+        run: pnpm --filter @noisia/workers typecheck
+      - name: Require the owned benchmark lab and evidence path to be absent
+        run: |
+          set -euo pipefail
+          if docker inspect r16-benchmark-pg17 >/dev/null 2>&1; then
+            echo '::error::The named R16 benchmark PostgreSQL container already exists'
+            exit 1
+          fi
+          if docker volume inspect r16bench-benchmark-pg17_postgres-data >/dev/null 2>&1; then
+            echo '::error::The named R16 benchmark PostgreSQL volume already exists'
+            exit 1
+          fi
+          remaining_containers="$(docker ps -aq --filter label=com.docker.compose.project=r16bench-benchmark-pg17)"
+          remaining_volumes="$(docker volume ls -q --filter label=com.docker.compose.project=r16bench-benchmark-pg17)"
+          if [[ -n "$remaining_containers" || -n "$remaining_volumes" ]]; then
+            echo '::error::An R16 benchmark PostgreSQL or Redis lab resource already exists'
+            exit 1
+          fi
+          lab_dir=.data/piloto-masivo/r16/labs/benchmark-pg17
+          evidence_dir=.data/piloto-masivo/r16/native-dml-plan-evidence
+          archive_file=.data/piloto-masivo/r16/native-dml-plan-evidence.zip
+          if [[ -e "$lab_dir/private.env" || -e "$lab_dir/connection.env" || -e "$evidence_dir" || -e "$archive_file" ]]; then
+            echo '::error::Private files for the named R16 benchmark lab or DML-plan evidence already exist'
+            exit 1
+          fi
+      - name: Initialize private native DML-plan TAP receipt
+        run: |
+          set -euo pipefail
+          evidence_dir=.data/piloto-masivo/r16/native-dml-plan-evidence
+          mkdir -m 700 -p "$evidence_dir"
+          (umask 077; printf '%s\n' '# native Listening DML-plan diagnostic did not start' > "$evidence_dir/native-dml-plan.tap")
+          chmod 600 "$evidence_dir/native-dml-plan.tap"
+      - name: Capture workflow and clean-source control before the diagnostic
+        run: |
+          set -euo pipefail
+          workflow_sha="$(shasum -a 256 .github/workflows/mfp-postgres.yml | awk '{print $1}')"
+          status_sha="$(git status --porcelain=v1 -z | shasum -a 256 | awk '{print $1}')"
+          printf 'R16_NATIVE_DML_WORKFLOW_SHA_BEFORE=%s\n' "$workflow_sha" >> "$GITHUB_ENV"
+          printf 'R16_NATIVE_DML_STATUS_SHA_BEFORE=%s\n' "$status_sha" >> "$GITHUB_ENV"
+      - name: Start the owned official PostgreSQL 17 and Redis lab
+        run: |
+          set -euo pipefail
+          printf '%s\n' 'R16_NATIVE_DML_PLAN_LAB_OWNED=true' >> "$GITHUB_ENV"
+          scripts/r16/lab-up.sh
+      - name: Apply migrations to the fresh native DML-plan lab
+        env:
+          NOISIA_DB_SMOKE_RESET_SCHEMA: 'true'
+          NOISIA_DB_SMOKE_EMULATE_SUPABASE_ROLES: 'true'
+          NOISIA_MFP_PG_CI: 'true'
+        run: |
+          set -euo pipefail
+          connection_file=.data/piloto-masivo/r16/labs/benchmark-pg17/connection.env
+          test -f "$connection_file"
+          set -a
+          source "$connection_file"
+          set +a
+          export DATABASE_SSL=false
+          export NOISIA_R16_LOCAL_PG_LAB=r16-benchmark-pg17
+          pnpm --filter @noisia/db db:smoke:migrations
+      - name: Run native INSERT, MARK, and APPLY plans against real guards
+        id: profile
+        env:
+          NOISIA_R16_NATIVE_DML_PLAN_PG: 'true'
+          NOISIA_R16_NATIVE_FIXTURE_PG: 'true'
+          NOISIA_MASS_LABELING_ENABLED: 'true'
+          NOISIA_SIGNAL_LISTENING_ENABLED: 'true'
+          NOISIA_JEV_PROVIDER_ENABLED: 'true'
+          NOISIA_JEV_STREAMING_V2_ENABLED: 'true'
+        run: |
+          set -euo pipefail
+          connection_file=.data/piloto-masivo/r16/labs/benchmark-pg17/connection.env
+          test -f "$connection_file"
+          set -a
+          source "$connection_file"
+          set +a
+          export DATABASE_SSL=false
+          export NOISIA_R16_LOCAL_PG_LAB=r16-benchmark-pg17
+          set +e
+          pnpm exec node --max-old-space-size=1024 --test --test-concurrency=1 --import tsx \
+            infrastructure/db/migrations/signal-listening-native-dml-plan.postgres.test.ts \
+            2>&1 | tee .data/piloto-masivo/r16/native-dml-plan-evidence/native-dml-plan.tap
+          test_status=${PIPESTATUS[0]}
+          set -e
+          if [[ "$test_status" -ne 0 ]] \
+            || ! grep -qx '# tests 1' .data/piloto-masivo/r16/native-dml-plan-evidence/native-dml-plan.tap \
+            || ! grep -qx '# pass 1' .data/piloto-masivo/r16/native-dml-plan-evidence/native-dml-plan.tap \
+            || ! grep -qx '# fail 0' .data/piloto-masivo/r16/native-dml-plan-evidence/native-dml-plan.tap \
+            || ! grep -qx '# cancelled 0' .data/piloto-masivo/r16/native-dml-plan-evidence/native-dml-plan.tap \
+            || ! grep -qx '# skipped 0' .data/piloto-masivo/r16/native-dml-plan-evidence/native-dml-plan.tap \
+            || ! grep -qx '# Subtest: native Listening32768 INSERT MARK APPLY plans preserve real guards in base and consumer cohorts' .data/piloto-masivo/r16/native-dml-plan-evidence/native-dml-plan.tap; then
+            echo '::error::The native DML-plan diagnostic failed, was skipped, or did not execute exactly once'
+            exit 1
+          fi
+      - name: Stop and remove only the owned benchmark lab
+        id: cleanup
+        if: ${{ always() && env.R16_NATIVE_DML_PLAN_LAB_OWNED == 'true' }}
+        run: |
+          set -euo pipefail
+          lab_dir=.data/piloto-masivo/r16/labs/benchmark-pg17
+          if [[ -f "$lab_dir/private.env" ]]; then
+            scripts/r16/lab-down.sh
+          fi
+          if docker inspect r16-benchmark-pg17 >/dev/null 2>&1; then
+            echo '::error::Owned R16 benchmark PostgreSQL container survived cleanup'
+            exit 1
+          fi
+          if docker volume inspect r16bench-benchmark-pg17_postgres-data >/dev/null 2>&1; then
+            echo '::error::Owned R16 benchmark PostgreSQL volume survived cleanup'
+            exit 1
+          fi
+          remaining_containers="$(docker ps -aq --filter label=com.docker.compose.project=r16bench-benchmark-pg17)"
+          remaining_volumes="$(docker volume ls -q --filter label=com.docker.compose.project=r16bench-benchmark-pg17)"
+          if [[ -n "$remaining_containers" || -n "$remaining_volumes" ]]; then
+            echo '::error::An owned R16 benchmark PostgreSQL or Redis resource survived cleanup'
+            exit 1
+          fi
+      - name: Validate and package bounded native DML-plan evidence
+        id: evidence
+        if: always()
+        env:
+          PROFILE_CONCLUSION: ${{ steps.profile.conclusion }}
+          CLEANUP_CONCLUSION: ${{ steps.cleanup.conclusion }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import hashlib, json, os, re, stat, subprocess, zipfile
+          from pathlib import Path
+
+          root=Path(os.environ['GITHUB_WORKSPACE'])
+          evidence=root / os.environ['R16_NATIVE_DML_PLAN_EVIDENCE_DIR']
+          tap=evidence / 'native-dml-plan.tap'
+          archive=root / '.data/piloto-masivo/r16/native-dml-plan-evidence.zip'
+          plan_names=[f'plan-{phase}-{op}.json' for phase in ('base','consumer') for op in ('insert','mark','apply')]
+          manifest_name='native-dml-plans.json';control_name='workflow-control.json'
+          max_plan=4*1024*1024;max_manifest=1024*1024;max_control=16*1024;max_tap=1024*1024;max_expanded=32*1024*1024;max_zip=16*1024*1024-65536
+          profile_ok=os.environ.get('PROFILE_CONCLUSION')=='success';cleanup_ok=os.environ.get('CLEANUP_CONCLUSION')=='success'
+          actual_workflow=hashlib.sha256((root/'.github/workflows/mfp-postgres.yml').read_bytes()).hexdigest()
+          status=subprocess.run(['git','status','--porcelain=v1','-z'],cwd=root,stdout=subprocess.PIPE,check=True).stdout
+          status_after=hashlib.sha256(status).hexdigest()
+          before_workflow=os.environ.get('R16_NATIVE_DML_WORKFLOW_SHA_BEFORE','')
+          before_status=os.environ.get('R16_NATIVE_DML_STATUS_SHA_BEFORE','')
+          control={'contract':'r16-native-dml-plan-workflow-control-v1','github':{'GITHUB_SHA':os.environ.get('GITHUB_SHA'),
+            'GITHUB_REF':os.environ.get('GITHUB_REF'),'GITHUB_EVENT_NAME':os.environ.get('GITHUB_EVENT_NAME'),
+            'GITHUB_RUN_ID':os.environ.get('GITHUB_RUN_ID'),'GITHUB_RUN_ATTEMPT':os.environ.get('GITHUB_RUN_ATTEMPT')},
+            'GITHUB_WORKFLOW_SHA':{'path':'.github/workflows/mfp-postgres.yml','sha256_before':before_workflow,'sha256_after':actual_workflow},
+            'git_status':{'sha256_before':before_status,'sha256_after':status_after,'clean_before':before_status==hashlib.sha256(b'').hexdigest(),
+              'clean_after':status_after==hashlib.sha256(b'').hexdigest()},
+            'source_provenance_note':'The independently derived full runtime source binding excludes mfp-postgres.yml; this separate receipt binds the actual workflow bytes and event/ref.'}
+          if not evidence.exists(): evidence.mkdir(parents=True,mode=0o700)
+          if evidence.is_symlink() or not evidence.is_dir(): raise SystemExit('native DML-plan evidence path is unsafe')
+          if stat.S_IMODE(evidence.stat().st_mode)!=0o700: raise SystemExit('native DML-plan evidence directory must be private mode 0700')
+          control_path=evidence/control_name
+          raw_control=(json.dumps(control,sort_keys=True,separators=(',',':'))+'\n').encode()
+          fd=os.open(control_path,os.O_CREAT|os.O_EXCL|os.O_WRONLY,0o600)
+          try: os.write(fd,raw_control);os.fsync(fd)
+          finally: os.close(fd)
+          allow=set(plan_names+[manifest_name,control_name,'native-dml-plan.tap']);available=[]
+          for path in evidence.iterdir():
+            if path.name not in allow or path.is_symlink() or not path.is_file(): raise SystemExit('native DML-plan evidence contains unsafe/unexpected entry')
+            cap=max_manifest if path.name==manifest_name else max_control if path.name==control_name else max_tap if path.name=='native-dml-plan.tap' else max_plan
+            if path.stat().st_size<=0 or path.stat().st_size>cap or stat.S_IMODE(path.stat().st_mode)!=0o600:
+              raise SystemExit('native DML-plan JSON is empty, over cap, or not mode 0600')
+            available.append(path)
+          if len(raw_control)>max_control: raise SystemExit('workflow-control JSON exceeds 16 KiB')
+          expanded=sum(p.stat().st_size for p in available)
+          if expanded>max_expanded: raise SystemExit('native DML-plan expanded evidence exceeds 32 MiB')
+          if archive.exists(): raise SystemExit('native DML-plan ZIP already exists')
+          archive_fd=os.open(archive,os.O_CREAT|os.O_EXCL|os.O_RDWR,0o600)
+          with os.fdopen(archive_fd,'w+b') as archive_file:
+            with zipfile.ZipFile(archive_file,'w',compression=zipfile.ZIP_DEFLATED,compresslevel=9) as z:
+              for path in sorted(available,key=lambda p:p.name): z.write(path,arcname=path.name)
+            archive_file.flush();os.fsync(archive_file.fileno())
+          if stat.S_IMODE(archive.stat().st_mode)!=0o600: raise SystemExit('native DML-plan ZIP must be private mode 0600')
+          if archive.stat().st_size>max_zip: raise SystemExit('native DML-plan ZIP exceeds conservative 16 MiB artifact bound')
+          with open(os.environ['GITHUB_OUTPUT'],'a',encoding='utf-8') as output: output.write('artifact_eligible=true\n')
+          manifest_path=evidence/manifest_name
+          if not manifest_path.is_file(): raise SystemExit('native DML-plan manifest is missing')
+          manifest=json.loads(manifest_path.read_text(encoding='utf-8'))
+          if type(manifest) is not dict or manifest.get('contract')!='r16-listening-native-dml-plan-v1':
+            raise SystemExit('native DML-plan receipt contract is invalid')
+          if profile_ok:
+            title='native Listening32768 INSERT MARK APPLY plans preserve real guards in base and consumer cohorts'
+            for key,value in {'status':'observed','diagnostic_only':True,'h1_accepted':False,'cpu':'UNKNOWN',
+              'external_provider_requests':0,'external_provider_spend_micro_usd':0}.items():
+              if type(manifest.get(key)) is not type(value) or manifest.get(key)!=value: raise SystemExit('native DML-plan metadata is invalid')
+            if len(available)!=9 or {p.name for p in available}!={manifest_name,control_name,'native-dml-plan.tap',*plan_names}:
+              raise SystemExit('successful Native DML receipt must contain manifest, control, TAP, and six plans')
+            source=manifest.get('source');expected=source.get('expected_git') if type(source) is dict else None
+            if type(source) is not dict or type(expected) is not dict or source.get('before')!=expected or source.get('after')!=expected or expected.get('head_sha')!=os.environ.get('GITHUB_SHA'):
+              raise SystemExit('native DML source binding must be actual clean Git source before and after')
+            workflow=source.get('workflow')
+            if type(workflow) is not dict or workflow.get('path')!='.github/workflows/mfp-postgres.yml' or workflow.get('sha256')!=actual_workflow:
+              raise SystemExit('test source workflow binding differs from actual workflow bytes')
+            if before_workflow!=actual_workflow or before_status!=hashlib.sha256(b'').hexdigest() or status_after!=hashlib.sha256(b'').hexdigest():
+              raise SystemExit('workflow or Git source changed during the diagnostic')
+            witness=manifest.get('runtime_witness');groups=('main_money','compact','answer_guard')
+            if type(witness) is not dict or witness.get('contract')!='r16-listening-runtime-witness-v1' or witness.get('before') is None or witness.get('after') is None or any(type(witness.get(g)) is not dict or witness[g].get('before') is None or witness[g].get('after') is None for g in groups):
+              raise SystemExit('all four MAIN runtime witness groups must have before/after receipts')
+            if witness['before']!=witness['after'] or any(witness[g]['before']!=witness[g]['after'] for g in groups):
+              raise SystemExit('MAIN runtime witness values changed across diagnostic')
+            triggers=manifest.get('answer_triggers')
+            if type(triggers) is not dict or triggers.get('before') is None or triggers.get('after')!=triggers.get('before'):
+              raise SystemExit('answer trigger witness changed across diagnostic')
+            if manifest.get('connection_uncertainty')!=[]:
+              raise SystemExit('successful native DML receipt must contain no connection uncertainty')
+            fixture=manifest.get('fixture');expected_fixture={'population':32768,'bootstrap_calls':64,'native_calls':1440,'total_calls':1504,'resolved_roots':752,'unresolved_roots':32016}
+            if type(fixture) is not dict or any(fixture.get(k)!=v for k,v in expected_fixture.items()): raise SystemExit('fixture census is invalid')
+            phases=fixture.get('phases')
+            if type(phases) is not list or [x.get('phase') for x in phases if type(x) is dict]!=['base','consumer'] or any(type(x) is not dict or x.get('bootstrap_calls')!=32 or x.get('native_calls')!=720 for x in phases):
+              raise SystemExit('base/consumer phase census is invalid')
+            phase_rosters={}
+            for phase_receipt in phases:
+              digest=phase_receipt.get('native_call_ids_sha256')
+              if not re.fullmatch(r'[0-9a-f]{64}',str(digest)): raise SystemExit('actual returned native call roster digest is missing')
+              phase_rosters[phase_receipt['phase']]=digest
+            plans=manifest.get('plans');expected_rows=[(phase,op) for phase in ('base','consumer') for op in ('insert','mark','apply')]
+            if type(plans) is not list or len(plans)!=6 or [(p.get('phase'),p.get('operation')) for p in plans if type(p) is dict]!=expected_rows:
+              raise SystemExit('six-plan phase/operation matrix is invalid')
+            count_keys={'calls','links','answers','failures','raw_pages','raw_members','mutation_fences','run','admission'}
+            true_keys=('savepoint_ack','rollback_sent','rollback_ack','release_ack','snapshot_equal','normal_original_sent','normal_original_succeeded')
+            for row in plans:
+              phase,op=row['phase'],row['operation'];name=f'plan-{phase}-{op}.json';plan=evidence/name
+              if row.get('file')!=name or row.get('calls')!=720 or row.get('answers')!=(1440 if op=='apply' else None): raise SystemExit('plan call/answer census is invalid')
+              expected_roster=phase_rosters[phase] if op=='apply' else None
+              if row.get('apply_roster_sha256')!=expected_roster: raise SystemExit('APPLY roster digest differs from returned Native call IDs')
+              if any(row.get(k) is not True for k in true_keys) or row.get('unknown_ack') is not False: raise SystemExit('plan rollback/normal-commit acknowledgements are invalid')
+              if not re.fullmatch(r'[0-9a-f]{64}',str(row.get('plan_sha256'))) or row.get('plan_bytes')!=plan.stat().st_size or hashlib.sha256(plan.read_bytes()).hexdigest()!=row.get('plan_sha256'):
+                raise SystemExit('plan file bytes/SHA differ from receipt')
+              for k in ('query_raw_sha256','query_normalized_sha256','snapshot_before_sha256','snapshot_after_sha256'):
+                if not re.fullmatch(r'[0-9a-f]{64}',str(row.get(k))): raise SystemExit('plan observation digest is malformed')
+              if row.get('snapshot_before_sha256')!=row.get('snapshot_after_sha256') or type(row.get('snapshot_counts')) is not dict or set(row['snapshot_counts'])!=count_keys:
+                raise SystemExit('full transactional snapshot did not restore exactly')
+            tap_text=tap.read_text(encoding='utf-8',errors='replace') if tap.is_file() and not tap.is_symlink() and tap.stat().st_size<=max_tap else ''
+            if '# tests 1' not in tap_text or '# pass 1' not in tap_text or '# fail 0' not in tap_text or '# skipped 0' not in tap_text or title not in tap_text:
+              raise SystemExit('Native DML TAP census is not exactly one passing case with zero skips')
+          if not profile_ok or not cleanup_ok: raise SystemExit('native DML test or owned-lab cleanup did not succeed')
+          print('Native DML plans and workflow control validated; result remains diagnostic only, not H1 acceptance')
+          PY
+      - name: Upload bounded native DML-plan evidence
+        if: ${{ always() && steps.evidence.outputs.artifact_eligible == 'true' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: r16-native-dml-plan-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            .data/piloto-masivo/r16/native-dml-plan-evidence/*.json
+            .data/piloto-masivo/r16/native-dml-plan-evidence/native-dml-plan.tap
+          if-no-files-found: error
+          compression-level: 9
           retention-days: 14
           include-hidden-files: true

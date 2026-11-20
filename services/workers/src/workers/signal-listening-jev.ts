@@ -196,7 +196,7 @@ export async function signalListeningJevJobV1(run_id:string,options:{
       preparation_valid:()=>preparedSelectionEpoch===undefined||continuation?.preparationValid(preparedSelectionEpoch)===true,
       read_next_inputs:async(leased,bounds,admissionSignal)=>{
         preparationSignal=admissionSignal;
-        if(!continuation||!jobContext||typeof store.withInputSurvey!=='function')return store.inputs(leased,readBounds({...bounds,on_oversize:'empty'}));
+        if(!continuation||!jobContext||typeof store.withInputSurvey!=='function')return store.inputs(leased,readBounds({...bounds,on_oversize:'empty' as const}));
         jobContext.assert(leased);
         const prepared=await continuation.selectNextSurvey({available_bytes:bounds.max_working_bytes,max_calls:bounds.max_rows,
           storage_bound:signalListeningInputSurveyStorageBoundV1(leased,execution.window_size),signal:admissionSignal,
@@ -206,7 +206,7 @@ export async function signalListeningJevJobV1(run_id:string,options:{
           //4096-row reader/domain when its extra custody cannot fit; no reduced
           // survey, indefinite wait or fabricated global-empty result.
           metadataPrepared=false;preparedSelectionEpoch=undefined;
-          return store.inputs(leased,readBounds({...bounds,on_oversize:'empty'}));
+          return store.inputs(leased,readBounds({...bounds,on_oversize:'empty' as const}));
         }
         selection=prepared.selected;prepared.selected=[];preparedSelectionEpoch=prepared.preparation_epoch;metadataPrepared=prepared.decision===true;
         return{inputs:selection,byte_limited:prepared.byte_limited,...(prepared.admission_deferred||prepared.decision==='wait_for_apply'?{admission_deferred:true as const}:{})};

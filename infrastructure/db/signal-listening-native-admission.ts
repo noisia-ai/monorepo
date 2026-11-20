@@ -251,16 +251,21 @@ export function reconstructNativeListeningAdmissionRowsV1<Input extends FacetInp
  return validateNativeListeningAdmissionRowsV1(run,selected,calls,status);
 }
 
+// PostgreSQL rows lack the virtual loaded-bytes field removed by 0255.
+// Runtime validation still rejects any present non-null raw_body and normalizes
+// it to null only after every persisted RAW marker and cohort field is checked.
+type NativeListeningAdmissionReturnedRowV1<Input extends FacetInput> =
+ Omit<LabelingCallV1<Input>,'raw_body'>&{raw_body?:LabelingCallV1<Input>['raw_body']};
 export function validateNativeListeningAdmissionRowsV1<Input extends FacetInput>(run:LabelingRunV1,selected:ReadonlyArray<LabelingCallProposalV1<Input>>,
- rows:ReadonlyArray<LabelingCallV1<Input>>,status:'reserved'|'submitting'):LabelingCallV1<Input>[] {
+ rows:ReadonlyArray<NativeListeningAdmissionReturnedRowV1<Input>>,status:'reserved'|'submitting'):LabelingCallV1<Input>[] {
  if(rows.length!==selected.length||new Set(rows.map(r=>r.id)).size!==rows.length)
   throw Error('labeling_admission_return_invalid');
  // Reuse the old custom-id uniqueness census as the lookup index. Construct
  // directly: no per-row tuple arrays. Its row-reference slots replace the old
  // transient rows.map(custom_id) array slots; the working quote is unchanged.
- const byCustomId=new Map<string,LabelingCallV1<Input>&Record<string,unknown>>();
+ const byCustomId=new Map<string,NativeListeningAdmissionReturnedRowV1<Input>&Record<string,unknown>>();
  for(const row of rows){if(byCustomId.has(row.custom_id))throw Error('labeling_admission_return_invalid');
-  byCustomId.set(row.custom_id,row as LabelingCallV1<Input>&Record<string,unknown>);}
+  byCustomId.set(row.custom_id,row as NativeListeningAdmissionReturnedRowV1<Input>&Record<string,unknown>);}
  const ordered=selected.map(proposal=>{
   const candidate=byCustomId.get(proposal.custom_id);
   // Retain the former strict-equality semantics, including adversarial NaN.

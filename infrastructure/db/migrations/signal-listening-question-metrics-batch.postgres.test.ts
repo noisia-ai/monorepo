@@ -3,10 +3,11 @@ import {createHash,randomUUID} from 'node:crypto';
 import {readFile} from 'node:fs/promises';
 import test from 'node:test';
 import type {QueryResult} from 'pg';
+import type {SignalListeningQuestionMetricsV1 as CrossMetricsV1} from '../signal-listening-serving';
 import {runMassLabelingAcceptanceFixtureV1} from './signal-mass-labeling-acceptance.synthetic.fixture';
 import {withSignalStudyFixtureV1} from './signal-study.synthetic.fixture';
 import {saveSignalListeningConfigurationV1,loadSignalListeningConfigurationWithClientV1,type SignalListeningAccessV1} from '../signal-listening-configuration';
-import {readSignalListeningQuestionsMetricsV1,readSignalListeningQuestionMetricsV1,type SignalListeningMetricsFiltersV1} from '../signal-listening-serving';
+import {readSignalListeningQuestionsMetricsV1,readSignalListeningQuestionMetricsV1,type SignalListeningMetricsFiltersV1,type SignalListeningQuestionMetricsV1} from '../signal-listening-serving';
 import * as human from '../signal-listening-human-edits';
 import {setSignalListeningDiscoveryManualV1} from '../signal-listening-discovery';
 import {localizeSyntheticListeningConfigurationV1} from './signal-listening-localized.synthetic.fixture';
@@ -73,6 +74,36 @@ async function parity(access:SignalListeningAccessV1,args:SignalListeningMetrics
     const topic=capturedConfiguration.configuration.questions.find(q=>q.topic_source&&q.domain!=='outside');assert.ok(topic);
     const distribution=actual.find(row=>row.question_key===topic.key).distribution;
     assert.deepEqual(distribution.map((row:{option_key:string;count:number})=>[row.option_key,row.count]),[['negative',2],['positive',2],['uncertain',2]]);
+    const voice=capturedConfiguration.configuration.questions.find(q=>q.key==='voice');assert.ok(voice&&voice.type==='choice');
+    const crossVoice:Pick<CrossMetricsV1,'question_key'|'distribution'|'topic_cross'>|undefined=actual.find(row=>row.question_key===voice.key);assert.ok(crossVoice);
+    assert.ok(crossVoice.topic_cross.length>0);
+    for(const cross of crossVoice.topic_cross){
+     assert.ok(Object.values(cross.choices).every(count=>count>0),'unobserved choice options never acquire zero-valued topic-cross keys');
+     assert.ok(Object.keys(cross.choices).every(key=>key===voice.options[0]!.key));
+    }
+    assert.ok(crossVoice.distribution.some(option=>option.count===0),'zero choice distribution options coexist with sparse topic-cross choices');
+    for(const row of actual.filter(row=>capturedConfiguration.configuration.questions.some(q=>q.key===row.question_key&&q.type==='noul'))){
+     assert.ok(row.topic_cross.every((cross:{choices:Record<string,number>})=>Object.keys(cross.choices).length===0),'non-choice NULL grouping keys cannot enter jsonb_object_agg');
+    }
+    const zeroRecords=records.map(row=>row.question_key===voice.key?{...row,candidate:false}:row),zeroParameters=[...values!,JSON.stringify(zeroRecords)];
+    const zeroBefore=(await client.query(frozen.replace(call,replacement),zeroParameters)).rows;
+    const zeroAfter=(await client.query(sql.replace(call,replacement),zeroParameters)).rows;
+    assert.deepEqual(zeroAfter,zeroBefore,'integer rollup preserves zero eligible cross denominators under the same topic memberships');
+    const zeroVoice:Pick<CrossMetricsV1,'question_key'|'counts'|'topic_cross'>|undefined=zeroAfter.find(row=>row.question_key===voice.key);assert.ok(zeroVoice);
+    assert.equal(zeroVoice.counts.eligible,0);assert.deepEqual(zeroVoice.topic_cross,[]);
+    const nullRoot='00000000-0000-4000-8000-000000000002';
+    const nullChoiceRecords=records.map(row=>row.question_key===voice.key&&row.root_id===nullRoot&&row.answer
+     ?{...row,answer:{...row.answer,choice:null}}:row);
+    assert.equal(nullChoiceRecords.filter(row=>row.question_key===voice.key&&row.root_id===nullRoot&&row.answer?.choice===null).length,1,'one real NULL choice key belongs to a confirmed topic');
+    const nullChoiceCode=async(statement:string)=>{
+     await client.query('SAVEPOINT serving_cross_null_choice');
+     try{await client.query(statement.replace(call,replacement),[...values!,JSON.stringify(nullChoiceRecords)]);assert.fail('a real NULL choice key must retain the original JSON object aggregate error');}
+     catch(error){return(error as {code?:string}).code;}
+     finally{await client.query('ROLLBACK TO SAVEPOINT serving_cross_null_choice');await client.query('RELEASE SAVEPOINT serving_cross_null_choice');}
+    };
+    const originalNullCode=await nullChoiceCode(frozen);assert.equal(originalNullCode,'22023');
+    assert.equal(await nullChoiceCode(sql),originalNullCode,'GROUPING(choice_key) distinguishes the total row from a real NULL choice and preserves the original SQLSTATE');
+    assert.deepEqual(await identity(),anchor);
     // SUM(double precision) is order-sensitive. Exercise at least three
     // heterogeneous summands per effective noul class and per choice option,
     // under identical reproducible input order/settings for both SQL arms.
@@ -118,7 +149,7 @@ async function parity(access:SignalListeningAccessV1,args:SignalListeningMetrics
        // Keep the exact case/actual plans even if strict comparison rejects it.
        console.log('# serving tail heterogeneous sum pair '+JSON.stringify({contract:'r16-serving-tail-heterogeneous-sum-pair-v2',evidence_kind:'SUPPLEMENTAL',snapshot_sha256:sha(anchor.snapshot),observation,cpu_claim:false,gain_claim:false,h1_accepted:false}));
        assert.deepEqual(actual,expected,'strict heterogeneous double SUM equality; order='+order.name+'; enable_hashagg='+hashagg);
-       const actualTopic=actual.find(row=>row.question_key===topic.key);assert.ok(actualTopic);
+       const actualTopic:Pick<SignalListeningQuestionMetricsV1,'question_key'|'distribution'>|undefined=actual.find(row=>row.question_key===topic.key);assert.ok(actualTopic);
        assert.deepEqual(actualTopic.distribution.map((row:{option_key:string;count:number})=>[row.option_key,row.count]),[['negative',3],['positive',3],['uncertain',3]]);
        assert.deepEqual(await identity(),anchor);
       }

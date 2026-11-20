@@ -277,3 +277,55 @@ test("R16 operation timeline reports overflow after 8192 closed spans while exac
   assert.equal(snapshot.operations.find(row => row.operation === "finish")?.duration_ms.calls, 8193, "timeline truncation must not truncate historical aggregates");
   assert.ok(Buffer.byteLength(JSON.stringify(timeline)) < 2 * 1024 * 1024, "bounded synthetic timeline adds under 2MiB, without relaxing the artifact cap");
 });
+
+test("R16 profiler labels InputSurvey once and preserves callback results and failures without retaining payloads", async () => {
+  const profiler = new R16QueryProfilerV1();
+  const statements: Array<{ sql: string; binds: unknown[] }> = [];
+  const database = profiler.wrapDatabase({ async query(sql: string, binds: unknown[] = []) {
+    statements.push({ sql, binds }); return { rows: [] };
+  } });
+  const run = { id: "private-survey-run" };
+  const bounds = { max_rows: 2, max_working_bytes: 4096 };
+  const survey = { hints: [{ root_id: "private-survey-root" }], retained_bytes: 1024 };
+  const returned = { marker: "private-survey-return" };
+  const failure = new Error("private-survey-failure");
+  let storeCalls = 0, callbackCalls = 0, tick = 0;
+  const store = profiler.wrapStore({
+    async withInputSurvey(passedRun: typeof run, passedBounds: typeof bounds,
+      callback: (scope: typeof survey) => Promise<unknown>) {
+      storeCalls++;
+      assert.equal(passedRun, run); assert.equal(passedBounds, bounds);
+      await database.query("SELECT private_survey_metadata", [run.id]);
+      return callback(survey);
+    },
+  }, undefined, () => ++tick);
+  const callback = async (scope: typeof survey) => {
+    callbackCalls++; assert.equal(scope, survey);
+    await database.query("SELECT private_survey_hydration", [scope.hints[0]!.root_id]);
+    if (callbackCalls === 2) throw failure;
+    return returned;
+  };
+  assert.equal(await store.withInputSurvey(run, bounds, callback), returned);
+  await assert.rejects(store.withInputSurvey(run, bounds, callback), error => error === failure);
+  assert.deepEqual([storeCalls, callbackCalls, statements.length, tick], [2, 2, 4, 4],
+    "the wrapper forwards each method and callback exactly once and adds no clock reads or SQL");
+  assert.deepEqual(statements.map(row => row.sql), [
+    "SELECT private_survey_metadata", "SELECT private_survey_hydration",
+    "SELECT private_survey_metadata", "SELECT private_survey_hydration",
+  ]);
+  const snapshot = profiler.snapshot(), metric = snapshot.operations.find(row => row.operation === "inputSurvey");
+  assert.equal(metric?.duration_ms.calls, 2); assert.equal(metric?.batch_size, null,
+    "survey bounds or callback results are not invented as batch sizes");
+  assert.equal(snapshot.operations.length, 1);
+  assert.equal(snapshot.queries.length, 2);
+  assert.ok(snapshot.queries.every(row => row.operation === "inputSurvey"),
+    "metadata and hydration SQL inherit the InputSurvey AsyncLocalStorage label");
+  assert.deepEqual(snapshot.operation_timeline.spans.map(span =>
+    [span.operation, span.start_ms, span.end_ms, span.batch_size, span.outcome]), [
+    ["inputSurvey", 1, 2, null, "completed"], ["inputSurvey", 3, 4, null, "failed"],
+  ]);
+  assert.deepEqual([snapshot.operation_timeline.started_spans, snapshot.operation_timeline.completed_spans,
+    snapshot.operation_timeline.in_flight_spans], [2, 2, 0]);
+  assert.doesNotMatch(JSON.stringify(snapshot), /private_survey|SELECT |hydration|failure/u,
+    "the profile keeps only operation labels, scalar timings and SQL hashes");
+});

@@ -1,3 +1,4 @@
+import {invertSignalListeningSurveyReaderV1} from './signal-listening-survey-source-chain.test-support';
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import type {PoolClient} from 'pg';
@@ -7,11 +8,15 @@ import {assertSharedWireDefaultRuntimeV1,statementNativeFunctionCatalogV1} from 
 const populationSignature='public.signal_listening_wire_population_roots_v1(uuid,uuid,uuid,text,uuid[],text)';
 const outputTypes=['uuid','text','text','text','jsonb','text','boolean','text','jsonb','integer','integer'];
 export function wireObserverContractV1(raw:string,moneyD:string,sourceE:string,runs:string){
- const proof=wirePopulationSourceV1(raw,moneyD,sourceE),previous=invertWirePopulationMetadataV1(runs);assert.equal(wirePopulationMetadataV1(previous),runs);
- const metadataSql=projectionHelperPartsV1(runs).sql,metadataBefore=projectionHelperPartsV1(previous).sql;
+ const proof=wirePopulationSourceV1(raw,moneyD,sourceE),beforeSurvey=invertSignalListeningSurveyReaderV1(runs),previous=invertWirePopulationMetadataV1(beforeSurvey);assert.equal(wirePopulationMetadataV1(previous),beforeSurvey);
+ const metadataSql=projectionHelperPartsV1(runs).sql,metadataBefore=projectionHelperPartsV1(previous).sql,metadataBeforeSurvey=projectionHelperPartsV1(beforeSurvey).sql;
  assert.equal(wirePopulationShaV1(metadataBefore),'56cd8ee4ddbc1073082bd8fabac8cd4ed46151186f9039e76b2a4ca4801b0db6','complete frozen pre-E nine-bind query');
- assert.equal(wirePopulationShaV1(metadataSql),'fdc142c1d04a0c102bba69480a7eb6fa12c0137a3dd5c0687185a9dffc58eb64','complete E query, not an arbitrary matching reader');
- return{metadataSql,metadataBefore,populationSignature,populationBody:proof.raw.split('AS $function$')[1]!.split('$function$;')[0]!,moneyBody:proof.money.split('AS $$')[1]!.split('$$;')[0]!};
+ assert.equal(wirePopulationShaV1(metadataBeforeSurvey),'fdc142c1d04a0c102bba69480a7eb6fa12c0137a3dd5c0687185a9dffc58eb64','complete historical E query stays frozen independently of the current candidate');
+ const previousJoin='   ), prefix AS MATERIALIZED(',currentJoin='   )  , prefix AS MATERIALIZED(';
+ assert.equal(metadataBeforeSurvey.split(previousJoin).length,2);assert.equal(metadataSql.split(currentJoin).length,2);
+ assert.equal(metadataSql,metadataBeforeSurvey.replace(previousJoin,currentJoin),'actual legacy reader differs only at the reviewed survey conditional whitespace');
+ assert.equal(metadataSql.replace(currentJoin,previousJoin),metadataBeforeSurvey,'closed whitespace inverse preserves the original complete E SQL witness');
+ return{metadataSql,metadataBefore,metadataBeforeSurvey,populationSignature,populationBody:proof.raw.split('AS $function$')[1]!.split('$function$;')[0]!,moneyBody:proof.money.split('AS $$')[1]!.split('$$;')[0]!};
 }
 export async function loadWireObserverContractV1(){
  const [raw,d,e,runs]=await Promise.all(['./0333_signal_listening_bounded_mentions.sql','./0336_signal_listening_statement_native_projection.sql','./0337_signal_listening_wire_population.sql','../signal-listening-runs.ts'].map(path=>readFile(new URL(path,import.meta.url),'utf8')));

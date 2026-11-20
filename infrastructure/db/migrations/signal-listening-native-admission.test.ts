@@ -211,8 +211,8 @@ test('complete cohort validation retains exact reordered identities without quad
  let reads=0;
  const rows=selected.map(p=>{const row={...structuredClone(p),id:randomUUID(),run_id:f.run.id,workspace_id:f.run.workspace_id,status:'submitting',provider:'typesafe',model:'jev-1.13.0',transport:'sync',
   request_storage_key:null,raw_sha256:null,raw_storage_key:null,raw_size_bytes:null,raw_storage_verified_at:null,raw_storage_verified_key:null,
-  provider_batch_id:null,usage:null,results:null,settled_micro_usd:null,terminal_exposure_micro_usd:'0',stop_reason:null,refusal_category:null,results_applied:false};
-  Object.defineProperty(row,'custom_id',{get(){reads++;return p.custom_id;},enumerable:true});return row as LabelingCallV1<SignalListeningInputV1>;
+  provider_batch_id:null,usage:null,results:null,settled_micro_usd:null,terminal_exposure_micro_usd:'0',stop_reason:null,refusal_category:null,results_applied:false} satisfies Omit<LabelingCallV1<SignalListeningInputV1>,'raw_body'>;
+  Object.defineProperty(row,'custom_id',{get(){reads++;return p.custom_id;},enumerable:true});return row;
  }).reverse();
  const normalized=validateNativeListeningAdmissionRowsV1(f.run,selected,rows,'submitting');
  assert.deepEqual(normalized.map(row=>row.id),rows.slice().reverse().map(row=>row.id));
@@ -255,13 +255,14 @@ test('compact RETURNING proves full original packet equality before reconstructi
 });
 
 test('compact reconstruction preserves PG JSONB key ordering and numeric round trips before JSON.stringify transport',()=>{
- const f=fixture(),proposal=f.proposals[0]!;
- const input=proposal.inputs[0]!as SignalListeningInputV1&{extra:Record<string,unknown>};input.extra={'zz':1e-7,'a':-0,'é':1e20,'z':.25,'10':'ten','2':'two'};
+ const f=fixture(),original=f.proposals[0]!;
+ const input={...original.inputs[0]!,extra:{'zz':1e-7,'a':-0,'é':1e20,'z':.25,'10':'ten','2':'two'}};
+ const proposal={...original,inputs:[input]};
  const plan=planNativeListeningAdmissionPacketV1(f.run,[proposal],1024);assert.ok(plan);
  const baseline=compactReturnFixture().rows[0]!;const row={...baseline,custom_id:proposal.custom_id,request_digest:proposal.request_digest,run_id:f.run.id,workspace_id:f.run.workspace_id};
  const call=reconstructNativeListeningAdmissionRowsV1(f.run,plan,[proposal],[row],'submitting')[0]!;
- assert.deepEqual(Object.keys((call.inputs[0]as typeof input).extra),['2','10','a','z','zz','é']);
- assert.equal(Object.is((call.inputs[0]as typeof input).extra.a,-0),false);
+ assert.deepEqual(Object.keys(call.inputs[0]!.extra),['2','10','a','z','zz','é']);
+ assert.equal(Object.is(call.inputs[0]!.extra.a,-0),false);
  assert.deepEqual(Object.keys(call.request),['model','state','questions']);
  assert.deepEqual(call.inputs,JSON.parse(JSON.stringify([input])));
 });

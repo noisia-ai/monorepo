@@ -110,19 +110,28 @@ async function inputProjectionMetadata(c:Pick<PoolClient,'query'>,run:LabelingRu
     FROM pending WHERE n<=256 GROUP BY root_id ORDER BY root_id LIMIT $6
    ) ${selection.survey?`, survey_prefix AS MATERIALIZED(
     SELECT root_id,working_bytes,sum(working_bytes::numeric) OVER(ORDER BY root_id ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) cumulative_bytes FROM root_metadata
-   ),survey_fitting AS MATERIALIZED(SELECT root_id FROM survey_prefix WHERE cumulative_bytes<=$9::numeric),survey_projection AS MATERIALIZED(
-    SELECT pending.root_id,input_digest,array_agg(question_key ORDER BY question_key) question_keys,
-     jsonb_object_agg(question_key,question_digest) question_digests,
-     COALESCE(jsonb_object_agg(question_key,scope_basis) FILTER(WHERE scope_basis IS NOT NULL),'{}'::jsonb) scope_basis
-    FROM pending JOIN survey_fitting fitting ON fitting.root_id=pending.root_id WHERE n<=256 GROUP BY pending.root_id,input_digest),survey_state_bytes AS MATERIALIZED(
-    SELECT metadata.root_id,CASE WHEN fitting.root_id IS NOT NULL THEN octet_length(to_json(item.text)::text)::text END state_json_bytes
-    FROM root_metadata metadata JOIN signal_mass_labeling_items item ON item.root_id=metadata.root_id AND item.workspace_id=$1 AND item.map_id=$3
-    LEFT JOIN survey_fitting fitting ON fitting.root_id=metadata.root_id)
-    SELECT metadata.root_id,metadata.working_bytes,encoded.state_json_bytes,CASE WHEN projection.root_id IS NOT NULL THEN
-     jsonb_build_object('input_digest',projection.input_digest,'question_keys',projection.question_keys,
-     'question_digests',projection.question_digests,'scope_basis',projection.scope_basis) END projection
-    FROM root_metadata metadata LEFT JOIN survey_projection projection ON projection.root_id=metadata.root_id
-    JOIN survey_state_bytes encoded ON encoded.root_id=metadata.root_id ORDER BY metadata.root_id`:` , prefix AS MATERIALIZED(
+   ),survey_fitting AS MATERIALIZED(SELECT root_id FROM survey_prefix WHERE cumulative_bytes<=$9::numeric),survey_fit_matches AS MATERIALIZED(
+    SELECT p.root_id,p.input_digest,p.question_key,p.question_digest,p.scope_basis,p.n,fitting.root_id fitting_root_id
+    FROM pending p FULL JOIN survey_fitting fitting ON fitting.root_id=p.root_id
+   ),survey_projection AS MATERIALIZED(
+    SELECT p.root_id,p.input_digest,array_agg(p.question_key ORDER BY p.question_key) question_keys,
+     jsonb_object_agg(p.question_key,p.question_digest) question_digests,
+     COALESCE(jsonb_object_agg(p.question_key,p.scope_basis) FILTER(WHERE p.scope_basis IS NOT NULL),'{}'::jsonb) scope_basis
+    FROM survey_fit_matches p WHERE p.root_id IS NOT NULL AND p.fitting_root_id IS NOT NULL AND p.n<=256 GROUP BY p.root_id,p.input_digest
+   ),survey_projection_rows AS MATERIALIZED(
+    SELECT prefix.root_id,prefix.working_bytes,prefix.cumulative_bytes,projection.root_id projection_root_id,
+     projection.input_digest,projection.question_keys,projection.question_digests,projection.scope_basis
+    FROM survey_prefix prefix FULL JOIN survey_projection projection ON projection.root_id=prefix.root_id
+   ),survey_state_bytes AS MATERIALIZED(
+    SELECT metadata.root_id,metadata.working_bytes,metadata.projection_root_id,metadata.input_digest,
+     metadata.question_keys,metadata.question_digests,metadata.scope_basis,
+     CASE WHEN metadata.cumulative_bytes<=$9::numeric THEN octet_length(to_json(item.text)::text)::text END state_json_bytes
+    FROM survey_projection_rows metadata JOIN signal_mass_labeling_items item ON item.root_id=metadata.root_id AND item.workspace_id=$1 AND item.map_id=$3
+    WHERE metadata.root_id IS NOT NULL)
+    SELECT root_id,working_bytes,state_json_bytes,CASE WHEN projection_root_id IS NOT NULL THEN
+     jsonb_build_object('input_digest',input_digest,'question_keys',question_keys,
+     'question_digests',question_digests,'scope_basis',scope_basis) END projection
+    FROM survey_state_bytes ORDER BY root_id`:` , prefix AS MATERIALIZED(
     SELECT root_id,working_bytes,sum(working_bytes::numeric) OVER(ORDER BY root_id ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) cumulative_bytes
     FROM root_metadata
    ), fitting AS MATERIALIZED(SELECT root_id FROM prefix WHERE cumulative_bytes<=$9::numeric),
