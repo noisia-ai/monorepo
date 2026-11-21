@@ -82,13 +82,13 @@ export async function processJevStreamingWindowV2<I extends FacetInput, R>(args:
   type Row = { call: LabelingCallV1<I>; raw: string; bytes: number; memory_bytes: number };
   let buffered: Row[] = [], bufferedBytes = 0,
     memory = calls.reduce((n, call) => n + Buffer.byteLength(call.raw_body ?? '')+jevCallWorkingBytesV2(call), 0),
-    inFlight = 0, fatal: unknown;
+    inFlight = 0, fatal: unknown,fatalKnown=false;
   const admission=new AbortController();
   let totalRoots=calls.length,feedClosed=!args.feed_next,feeding:Promise<void>|undefined;
   // A scheduling hint from the exact bounded prefix, never retained inputs or
   // permission to reserve. A later read still obtains a fresh native snapshot.
   let byteLimitedAvailable:number|undefined;
-  let draft:JevNativeAdmissionDraftV1<I>|undefined,draftBytes=0,notificationFailure:unknown;
+  let draft:JevNativeAdmissionDraftV1<I>|undefined,draftBytes=0,notificationFailure:unknown,notificationFailureKnown=false;
   let durableEpoch=0,emptyAtEpoch:number|undefined;
   const roster=new Map(calls.map(call=>[call.id,call])),initialIds=new Set(calls.map(call=>call.id));
   let recentIdentities=new Set(calls.map(call=>call.request_digest));
@@ -104,7 +104,7 @@ export async function processJevStreamingWindowV2<I extends FacetInput, R>(args:
   const wake = () => { for (const resolve of waiters) resolve(); waiters.clear(); };
   const wait = () => new Promise<void>(resolve => { waiters.add(resolve); });
   const release = (bytes: number) => { memory -= bytes; observe(); wake(); };
-  const fail = (error: unknown) => { fatal ??= error; cancellation.abort(); wake(); };
+  const fail = (error: unknown) => { if(!fatalKnown){fatalKnown=true;fatal=error;} cancellation.abort(); wake(); };
   const record = (call: LabelingCallV1<I>, unknown: boolean, code: string, write_result = true) => {
     errors.set(call.id, { call, unknown, code, write_result });
     if(hooks.fail_on_error&&write_result){
@@ -217,7 +217,7 @@ export async function processJevStreamingWindowV2<I extends FacetInput, R>(args:
     // rather than waiting until only one cohort remains. Small windows retain
     // their original tail/bootstrap behavior instead of requiring a full gap.
     const refillAt=Math.max(workers,e.window_size-workers);
-    if(feedClosed||feeding||draft||fatal||admission.signal.aborted||cancellation.signal.aborted||reserved.length>refillAt||reserved.length>=e.window_size)return;
+    if(feedClosed||feeding||draft||fatalKnown||admission.signal.aborted||cancellation.signal.aborted||reserved.length>refillAt||reserved.length>=e.window_size)return;
     const priority=args.next_admission_hint?.();
     if(priority?.kind==='closed'){feedClosed=true;return;}
     if(priority?.kind==='bootstrap'&&priority.wait_for_apply){
@@ -320,7 +320,7 @@ export async function processJevStreamingWindowV2<I extends FacetInput, R>(args:
     for (const call of calls.filter(call => Boolean(call.raw_body))) {
       const raw = call.raw_body!, bytes = Buffer.byteLength(raw);
       await consume([{ call, raw, bytes, memory_bytes: bytes }], true);
-      if (fatal) throw fatal;
+      if (fatalKnown) throw fatal;
     }
     async function send(call:LabelingCallV1<I>){
       let ownedReservation=reservationBytes;
@@ -352,7 +352,7 @@ export async function processJevStreamingWindowV2<I extends FacetInput, R>(args:
     }
     // Keep never-assigned calls reserved. Persist only a cohort whose HTTP slots
     // and response memory are already available, using one governed bulk write.
-    while((reserved.length||draft||!feedClosed||feeding)&&!fatal&&!admission.signal.aborted&&!cancellation.signal.aborted){
+    while((reserved.length||draft||!feedClosed||feeding)&&!fatalKnown&&!admission.signal.aborted&&!cancellation.signal.aborted){
       prefetch();
       if(draft&&!reserved.length){
         const pending=draft;
@@ -398,7 +398,7 @@ export async function processJevStreamingWindowV2<I extends FacetInput, R>(args:
             selectFresh(candidates){
               if(selectionCalled)throw Error('jev_native_selection_repeated');selectionCalled=true;
               const priority=args.next_admission_hint?.();
-              if(fatal||admission.signal.aborted||cancellation.signal.aborted||args.preparation_valid?.()===false||priority?.kind==='closed'
+              if(fatalKnown||admission.signal.aborted||cancellation.signal.aborted||args.preparation_valid?.()===false||priority?.kind==='closed'
                 ||priority?.kind==='bootstrap'&&priority.wait_for_apply)return[];
               const count=Math.min(workers-inFlight,candidates.length,priority?.kind==='bootstrap'?priority.covered_call_limit:Infinity),chosen:LabelingCallProposalV1<I>[]=[];
               let cost=0;
@@ -446,7 +446,7 @@ export async function processJevStreamingWindowV2<I extends FacetInput, R>(args:
             try{if(validated.length)pending.on_committed?.(validatedIds,selected);}catch(error){
               // Close future admission, but let ALL paid siblings drain without
               // aborting their transport because a scheduling notice failed.
-              notificationFailure??=error;feedClosed=true;admission.abort();
+              if(!notificationFailureKnown){notificationFailureKnown=true;notificationFailure=error;}feedClosed=true;admission.abort();
             }
           }
         }catch(error){
@@ -490,7 +490,7 @@ export async function processJevStreamingWindowV2<I extends FacetInput, R>(args:
           const committed=await store.markSubmittingSelected(run,()=>{
             if(selected)throw Error('jev_stream_selection_repeated');
             selected=true;
-            if(fatal||admission.signal.aborted||cancellation.signal.aborted)return[];
+            if(fatalKnown||admission.signal.aborted||cancellation.signal.aborted)return[];
             // Responses, durable flushes and an already-committed input page
             // may advance while native authority is waiting. Claim their newly
             // available slots only now, before the native call-row locks.
@@ -546,8 +546,8 @@ export async function processJevStreamingWindowV2<I extends FacetInput, R>(args:
         const batch=technical.slice(offset,offset+2000);await store.apply(run,batch);for(const row of batch)applied.add(row.call.id);
       }
     }
-    if (fatal) throw fatal;
-    if(notificationFailure)throw notificationFailure;
+    if (fatalKnown) throw fatal;
+    if(notificationFailureKnown)throw notificationFailure;
     const status=await store.finish(run);
     // Invocation ownership ends here, including retained terminal errors
     // and the reserved frontier that was never sent. A cancelled reader may
