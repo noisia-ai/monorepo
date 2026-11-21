@@ -599,7 +599,7 @@ test('absent dominance protocol reuses the independent 1dd legacy plan, immutabl
  assert.deepEqual(f.output!.dominance,signalStudyDominancePlanV1({roots:context.roots,motives:context.motives,memberships,cut_root_ids:context.cut_root_ids}));
  const goldenOutput=JSON.stringify(f.output),steps=new Map([...f.journal].map(([key,value])=>[key,structuredClone(value)])),numerics=new Map([...f.numericCheckpoints].map(([key,value])=>[key,structuredClone(value)]));
  const batches=await Promise.all([...f.batches].map(async([id,b])=>({id,stage:b.plan.stage,plan_digest:b.plan.plan_digest,status:b.status,checkpoint:structuredClone(await f.store.jevBatchCheckpoint(f.lease,id))})));
- const checkpoint=batches.find(b=>b.id===repeated[0])!.checkpoint;assert.equal(checkpoint.plan_digest,goldenPlan.plan_digest);
+ const checkpoint=batches.find(b=>b.id===repeated[0])!.checkpoint;assert.ok(checkpoint);assert.equal(checkpoint.plan_digest,goldenPlan.plan_digest);
  const {checkpoint_digest,...checkpointBody}=checkpoint;assert.equal(checkpoint_digest,digest(checkpointBody));
  const sends=f.sends.length,counts={steps:f.journal.size,numeric:f.numericCheckpoints.size,batches:f.batches.size},queries:string[]=[];
  const client={query:async(sql:string,params:unknown[])=>{
