@@ -358,7 +358,7 @@ export async function processJevStreamingWindowV2<I extends FacetInput, R>(args:
       for(const call of rows)roster.set(call.id,call);reserved.push(...rows);observe();
     })().catch(fail).finally(()=>{release(available-retained);feeding=undefined;wake();});
   }
-  let requeueAttempted=false,markingInProgress=false,markingUnsent:LabelingCallV1<I>[]=[];
+  let requeueAttempted=false,requeueFailureKnown=false,requeueFailure:unknown,markingInProgress=false,markingUnsent:LabelingCallV1<I>[]=[];
   const activeSends=new Set<Promise<void>>(),prefetchCanceled:LabelingCallV1<I>[]=[];
   async function drainAndRequeue(){
     if(feeding)await feeding;
@@ -367,8 +367,10 @@ export async function processJevStreamingWindowV2<I extends FacetInput, R>(args:
     const pending=[...markingUnsent,...prefetchCanceled];
     if(pending.length&&!requeueAttempted){
       requeueAttempted=true;
-      if(!store.requeueUnsent)throw Error('jev_unsent_recovery_unavailable');
-      await store.requeueUnsent(run,pending);
+      try{
+        if(!store.requeueUnsent)throw Error('jev_unsent_recovery_unavailable');
+        await store.requeueUnsent(run,pending);
+      }catch(error){if(!requeueFailureKnown){requeueFailureKnown=true;requeueFailure=error;}throw error;}
     }
   }
   cancellation.signal.addEventListener('abort', wake, { once: true });
@@ -682,7 +684,10 @@ export async function processJevStreamingWindowV2<I extends FacetInput, R>(args:
     // Only the ledger can tell whether a lost SQL acknowledgement committed.
     // Reconcile under the existing lease after any failed stage, including a
     // technical-error apply; never infer state from an in-memory acknowledgement.
-    const primary=fatalKnown?fatal:notificationFailureKnown?notificationFailure:error;
+    // A failed operational unsent requeue is the outer failure, as in the
+    // original drain/lease contract. Preserve it even when falsy; without that
+    // failure retain first fatal, then notification, before any later error.
+    const primary=requeueFailureKnown?requeueFailure:fatalKnown?fatal:notificationFailureKnown?notificationFailure:error;
     try { await drainAndRequeue();await store.finish(run);reconcilePhase(); }
     catch (reconciliation) { throw new AggregateError([primary, reconciliation], 'jev_stream_reconciliation_failed',{cause:primary}); }
     throw primary;

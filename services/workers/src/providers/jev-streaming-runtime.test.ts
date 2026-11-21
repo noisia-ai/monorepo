@@ -3,6 +3,8 @@ import test from 'node:test';
 import {readFileSync} from 'node:fs';
 import ts from 'typescript';
 import * as accountRate from './jev-account-rate-limit';
+import * as deferredRaw from './jev-deferred-raw';
+import * as phaseProvider from './jev-phase-provider-v3';
 import * as transport from './typesafe-jev';
 import {createCalibratedJevRuntimeProviderV2,jevStreamingExecutionFromEnvV2} from './jev-streaming-runtime';
 import {JevProviderErrorV1,type JevRequestV1} from './typesafe-jev';
@@ -65,7 +67,7 @@ test('runtime shares one pending Redis connection before parallel admissions ins
   }
   const source=readFileSync(new URL('./jev-streaming-runtime.ts',import.meta.url),'utf8'),exports:Record<string,unknown>={};
   new Function('require','exports',ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,esModuleInterop:true}}).outputText)(
-    (name:string)=>name==='ioredis'?LocalRedis:name==='./jev-account-rate-limit'?accountRate:name==='./typesafe-jev'?transport:(()=>{throw Error('unexpected module');})(),exports);
+    (name:string)=>name==='ioredis'?LocalRedis:name==='./jev-account-rate-limit'?accountRate:name==='./jev-deferred-raw'?deferredRaw:name==='./jev-phase-provider-v3'?phaseProvider:name==='./typesafe-jev'?transport:(()=>{throw Error('unexpected module');})(),exports);
   const create=exports.createCalibratedJevRuntimeProviderV2 as typeof createCalibratedJevRuntimeProviderV2;
   const provider=create({labeler_digest:digest,execution,env:{...env,NOISIA_TYPESAFE_ACCOUNT_REDIS_URL:'redis://127.0.0.1:1'},
     fetch:async()=>{sends++;return Response.json({model:request.model,usage:{input_tokens:200,output_tokens:0},answers:{topic:{type:'choice',choice:'a',confidence:.8,probabilities:{a:.8,b:.2}}}});}});

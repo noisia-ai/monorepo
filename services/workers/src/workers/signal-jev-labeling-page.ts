@@ -135,6 +135,9 @@ export async function processJevLabelingPageV1<Input extends FacetInput,Result>(
     const price=hooks.price(run);
     const maxInFlight=execution?.max_in_flight??hooks.max_in_flight?.(run);
     if(maxInFlight!==undefined&&(!Number.isSafeInteger(maxInFlight)||maxInFlight<1||maxInFlight>(execution?4096:200)))throw new Error("jev_page_concurrency_invalid");
+    // Resolve prepare first, then validate the actual stream before hydration
+    // or headroom arithmetic can mask its canonical configuration error.
+    if(execution)assertJevStreamingExecutionV2(execution,provider);
     let windows=0;
     let aggregate: Awaited<ReturnType<typeof processJevStreamingWindowV2<Input,Result>>> | undefined;
     for (;;) {

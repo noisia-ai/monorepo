@@ -1019,3 +1019,34 @@ test('a storage failure after observed-custody transfer releases no response res
  assert.equal(f.calls[0]!.status,'unknown');assert.equal(f.calls[0]!.results_applied,false);
  assert.equal((await processMassLabelingJevV1(args)).status,'outcome_unknown');assert.equal(sends,1);
 });
+
+for(const [label,requeueFailure]of [['null',null],['undefined',undefined],['zero',0]]as const)
+ test(`lost cohort-mark ACK preserves ${label} unsent-requeue failure after paid drain`,async()=>{
+  const f=fixture(3,true);let unlock!:()=>void,entered!:()=>void;
+  const blocked=new Promise<void>(resolve=>{unlock=resolve;}),started=new Promise<void>(resolve=>{entered=resolve;});
+  let requeues=0,releases=0,finishes=0,drained=false,sends=0;
+  f.store.persistRawPage=async(_run,rows)=>{entered();await blocked;for(const row of rows)row.call.raw_body=row.raw;drained=true;};
+  const mark=f.store.markSubmitting;
+  f.store.markSubmitting=async(run,rows)=>{await mark(run,rows);if(rows.some(row=>row.id==='call-2'))throw Error('synthetic_mark_ack_lost');};
+  f.store.requeueUnsent=async(_run,rows)=>{
+   requeues++;assert.ok(drained);assert.deepEqual(rows.map(row=>row.id),['call-2']);
+   assert.ok(f.calls.slice(0,2).every(call=>call.results_applied),'both paid calls finish APPLY before unsent requeue');
+   throw requeueFailure;
+  };
+  const release=f.store.release,finish=f.store.finish;
+  f.store.release=async(...args)=>{releases++;await release(...args);};
+  f.store.finish=async(...args)=>{finishes++;assert.ok(drained);return finish(...args);};
+  const provider:JevProviderV1={max_concurrency:2,max_response_bytes:16384,
+   async evaluate(request){if(++sends>1)await started;return f.response(request);}};
+  const task=processMassLabelingJevV1({run_id:f.run.id,store:f.store,provider,
+   execution:{...streaming,max_in_flight:2,flush_size:1,max_flushes:1,window_size:3,max_buffered_bytes:(16384*24+65536)*3}});
+  let rejected=false,caught:unknown;
+  const observed=task.catch(error=>{rejected=true;caught=error;});
+  try{
+   await started;await delay(15);assert.equal(requeues,0);assert.equal(releases,0);assert.equal(finishes,0);
+   unlock();await observed;
+  }finally{unlock();}
+  assert.equal(rejected,true);assert.strictEqual(caught,requeueFailure,'falsy operational failure must not fall back to the older mark failure');
+  assert.equal(requeues,1,'never retry an unsent requeue whose acknowledgement failed');assert.equal(releases,1);assert.equal(finishes,1);
+  assert.equal(sends,2,'no unsent third call or paid sibling is replayed');assert.equal(f.calls[2]!.results_applied,false);
+ });
