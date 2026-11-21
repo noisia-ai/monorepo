@@ -80,7 +80,7 @@ function fixture(count=160,dominancePairScope=false){
       diagnostics:payload.diagnostics.map((d:{key:string;layer:string})=>({key:d.key,result:d.layer===layer?'yes':'no',force_disappears_without:d.layer===layer,reason:'Synthetic counterfactual'})),
       evidence:{root_id:m.sample[0]!.root_id,quote:'feel calm',private_person_names:[]},normative_evidence:null,permission_override:override&&a?{permission:'partial',reason:'Exact stored analyst justification.'}:null}]};})};
    }
-   return receipt({model:'claude-sonnet-4-6',...(dominancePairScope?{stop_reason:'end_turn'}:{}),content:[{type:'text',text:JSON.stringify(value)}],usage:{input_tokens:10,output_tokens:5}});
+   return receipt({model:'claude-sonnet-4-6',stop_reason:'end_turn',content:[{type:'text',text:JSON.stringify(value)}],usage:{input_tokens:10,output_tokens:5}});
   };
  const drivers={preflight:async()=>{if(preflightError)throw Error('not ready');},
   send:(plan:StudyRuntimeStepPlanV1)=>physicalSend(plan),
