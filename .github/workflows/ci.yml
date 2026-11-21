@@ -59,10 +59,6 @@ jobs:
       - run: pnpm exec tsc --project scripts/dev-corpus/tsconfig.json
       - run: pnpm exec tsc --project scripts/providers/tsconfig.json
       - run: pnpm typecheck
-      - run: pnpm lint
-      - run: pnpm test
-      - name: R16 audit helper unit tests
-        run: node --test --import tsx scripts/r16/blind-package.test.ts scripts/r16/study-audit-custody.test.ts scripts/r16/native-audit-export.test.ts scripts/r16/native-audit-export-receipts.test.ts scripts/r16/preparation-observation-scalars.test.ts
       - name: Typecheck R16 audit helpers
         env:
           NODE_OPTIONS: --max-old-space-size=4096
@@ -71,6 +67,10 @@ jobs:
         env:
           NODE_OPTIONS: --max-old-space-size=4096
         run: pnpm exec tsc --project scripts/r16/tsconfig.listening.json
+      - run: pnpm lint
+      - run: pnpm test
+      - name: R16 audit helper unit tests
+        run: node --test --import tsx scripts/r16/blind-package.test.ts scripts/r16/study-audit-custody.test.ts scripts/r16/native-audit-export.test.ts scripts/r16/native-audit-export-receipts.test.ts scripts/r16/preparation-observation-scalars.test.ts
       - name: Studio production build
         # Build-time placeholders exercise route collection without any live
         # service credential or database connection. Runtime secrets stay in Railway.

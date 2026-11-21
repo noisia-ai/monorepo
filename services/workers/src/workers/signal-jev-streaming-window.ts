@@ -332,6 +332,8 @@ export async function processJevStreamingWindowV2<I extends FacetInput, R>(args:
     memory+=available;observe();let retained=0;
     feeding=(async()=>{
       const maxCalls=e.window_size-reserved.length;
+      if(args.observe_preparation)preparation({kind:'feed_budget',free_bytes:free,headroom_bytes:headroom,available_bytes:available,
+        slots:workers-inFlight,ready_slots:readySlots,reserved_calls:reserved.length,max_calls:maxCalls});
       const readEpoch=durableEpoch;
       const next=await args.feed_next!(available,maxCalls,admission.signal);
       if(!Array.isArray(next)&&'closed' in next){feedClosed=true;return;}
@@ -466,29 +468,38 @@ export async function processJevStreamingWindowV2<I extends FacetInput, R>(args:
         // Keep ALL prepared proposals and the numeric vector charged until ACK;
         // unadmitted bodies are then discarded, never reused by a later cohort.
         let nativeProposals=pending.proposals,workspaceBytes=pending.workspace_bytes;
+        const prefixSlots=workers-inFlight,prefixMemory=memory;let prefixBest:number|undefined,prefixProbes=0,prefixResponseMax=0,prefixResponseUnfit=0;
+        const prefixResponse=(value:number)=>{if(args.observe_preparation){prefixProbes++;if(Number.isFinite(value))prefixResponseMax=Math.max(prefixResponseMax,value);else prefixResponseUnfit++;}return value;};
+        const prefixObservation=(outcome:'native'|'legacy_escape')=>{if(args.observe_preparation)preparation({kind:'native_prefix_clip',prepared_calls:pending.proposals.length,
+          slot_limit:prefixSlots,fitted_calls:prefixBest??nativeProposals.length,workspace_bytes:Number.isFinite(workspaceBytes)?workspaceBytes:null,
+          memory_bytes:prefixMemory,draft_bytes:draftBytes,probes:prefixProbes,response_max_bytes:prefixResponseMax,response_unfit_probes:prefixResponseUnfit,
+          slot_clip:prefixBest!==undefined&&prefixSlots<pending.proposals.length,memory_clip:outcome==='legacy_escape'||prefixBest!==undefined&&prefixBest<Math.min(pending.proposals.length,prefixSlots),outcome});};
         if(pending.workspace_quote){
           const quote=pending.workspace_quote,costs=pending.call_working_prefix!;
           let low=1,high=Math.min(pending.proposals.length,workers-inFlight),best=0,bestWorkspace=0;
           while(low<=high){
             const mid=Math.floor((low+high)/2),workspace=quote.quote(mid);
             if(!Number.isSafeInteger(workspace)||workspace<0)throw Error('jev_native_workspace_invalid');
-            if(memory+workspace+costs[mid]!+responseCost(pending.proposals,mid,workspace+costs[mid]!)<=e.max_buffered_bytes){best=mid;bestWorkspace=workspace;low=mid+1;}
+            if(memory+workspace+costs[mid]!+prefixResponse(responseCost(pending.proposals,mid,workspace+costs[mid]!))<=e.max_buffered_bytes){best=mid;bestWorkspace=workspace;low=mid+1;}
             else high=mid-1;
           }
+          prefixBest=best;
           if(best){nativeProposals=pending.proposals.slice(0,best);workspaceBytes=bestWorkspace;}
           else workspaceBytes=Infinity; // Existing finite escape below; no DML occurred.
         }
         // Real progress can release custody; quiet metadata cannot.
-        if(memory+workspaceBytes+jevCallWorkingBytesV2(nativeProposals[0]!)+responseCost(nativeProposals,1,workspaceBytes+jevCallWorkingBytesV2(nativeProposals[0]!))>e.max_buffered_bytes){
+        if(memory+workspaceBytes+jevCallWorkingBytesV2(nativeProposals[0]!)+prefixResponse(responseCost(nativeProposals,1,workspaceBytes+jevCallWorkingBytesV2(nativeProposals[0]!)))>e.max_buffered_bytes){
           if(activeSends.size||active.size||buffered.length){flush(true);await wait();continue;}
           // No native invocation/DML/selector occurred: retain the old complete
           // reservation protocol on this prepared prefix, without rereading it.
+          prefixObservation('legacy_escape');
           const rows=await store.reserve(run,pending.workspace_quote?nativeProposals.slice(0,1):nativeProposals);
           const bytes=rows.reduce((n,c)=>n+jevCallWorkingBytesV2(c),0);
           if(memory+bytes>e.max_buffered_bytes)throw Error('jev_native_legacy_memory_bound');
           memory+=bytes;for(const row of rows)roster.set(row.id,row);reserved.push(...rows);totalRoots+=rows.length;
           draft=undefined;release(draftBytes);draftBytes=0;continue;
         }
+        prefixObservation('native');
         let workspaceClaim=workspaceBytes,selectionCalled=false,validationCalled=false;
         let selectorObservation:SignalListeningNativeSelectorObservationV1='not_observed';
         let phaseLeases:readonly JevPhaseCaptureLeaseV3[]=[];
@@ -510,11 +521,13 @@ export async function processJevStreamingWindowV2<I extends FacetInput, R>(args:
               if(priority?.kind==='closed'){selectorObservation='closed';return[];}
               if(priority?.kind==='bootstrap'&&priority.wait_for_apply){selectorObservation='bootstrap_wait';return[];}
               const count=Math.min(workers-inFlight,candidates.length,priority?.kind==='bootstrap'?priority.covered_call_limit:Infinity),chosen:LabelingCallProposalV1<I>[]=[];
+              const selectorMemory=memory,selectorSlots=workers-inFlight;let selectorProbes=0,selectorResponseMax=0,selectorResponseUnfit=0;
+              const selectorResponse=(value:number)=>{if(args.observe_preparation){selectorProbes++;if(Number.isFinite(value))selectorResponseMax=Math.max(selectorResponseMax,value);else selectorResponseUnfit++;}return value;};
               if(phase){
                 const prefix=[0];for(const proposal of candidates.slice(0,count))prefix.push(prefix.at(-1)!+jevCallWorkingBytesV2(proposal));
                 let low=1,high=count,best=0;
                 while(low<=high){const mid=Math.floor((low+high)/2),cost=prefix[mid]!;
-                  if(memory+cost+responseCost(candidates,mid,cost)<=e.max_buffered_bytes){best=mid;low=mid+1;}else high=mid-1;}
+                  if(memory+cost+selectorResponse(responseCost(candidates,mid,cost))<=e.max_buffered_bytes){best=mid;low=mid+1;}else high=mid-1;}
                 chosen.push(...candidates.slice(0,best));callClaim=prefix[best]!;memory+=callClaim;
                 const held=phase.reservePrefix(chosen.map(quoteCall));
                 if(chosen.length&&held?.leases.length!==chosen.length)throw Error('jev_phase_selection_drift');phaseLeases=held?.leases??[];
@@ -528,7 +541,13 @@ export async function processJevStreamingWindowV2<I extends FacetInput, R>(args:
                 callClaim=chosen.reduce((n,p)=>n+jevCallWorkingBytesV2(p),0);
                 responseClaim=chosen.length*reservationBytes;memory+=callClaim+responseClaim;
               }
-              selected=chosen;selectorObservation=chosen.length?'selected':'zero_selected';observe();return chosen;
+              selected=chosen;selectorObservation=chosen.length?'selected':'zero_selected';
+              if(args.observe_preparation)preparation({kind:'native_selector_clip',candidate_calls:candidates.length,slot_limit:selectorSlots,
+                bootstrap_limit:priority?.kind==='bootstrap'?priority.covered_call_limit:null,limit_calls:count,selected_calls:chosen.length,
+                memory_before_bytes:selectorMemory,call_bytes:callClaim,response_bytes:phase?null:responseClaim,probes:selectorProbes,response_max_bytes:selectorResponseMax,
+                response_unfit_probes:selectorResponseUnfit,slot_tie:count===selectorSlots,candidate_tie:count===candidates.length,
+                bootstrap_tie:priority?.kind==='bootstrap'&&count===priority.covered_call_limit,memory_clip:chosen.length<count,phase:Boolean(phase)});
+              observe();return chosen;
             },
             validateBeforeCommit(rows,proposals){
               if(!selectionCalled||validationCalled)throw Error('jev_native_validation_invalid');validationCalled=true;

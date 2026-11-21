@@ -194,34 +194,38 @@ export async function processJevLabelingPageV1<Input extends FacetInput,Result>(
         const feed=continuous&&!pending.length&&!recoveryOnly&&!run.error_code&&(maxWindows??Infinity)>windows+1
           ?async(available:number,maxCalls:number,admissionSignal:AbortSignal):Promise<JevFeedResultV1<Input>>=>{
             let failed=false,primary:unknown;
+            const clip:Extract<SignalListeningPreparationObservationV1,{kind:'compile_clip'}>|undefined=hooks.observe_preparation?{
+              kind:'compile_clip',outcome:'closed',read_calls:null,selected_calls:null,compiled_calls:null,returned_calls:null,workspace_clip:false,limit_calls:null,max_calls:maxCalls,
+              minimum_calls:null,covered_limit:null,native_prefix:null,available_bytes:available,compiled_bytes:null,quote_metadata_bytes:null,
+              window_tie:false,physical_tie:false,provider_tie:false,native_tie:false,bootstrap_tie:false,stop:'unreached'}:undefined;
             try{
               if(renewal)await renewal;if(leaseError)throw leaseError;
               if(admissionSignal.aborted||cancellation.signal.aborted||windows+fedWindows>=(maxWindows??Infinity))return{closed:true};
               const beforeRead=hooks.next_admission_hint?.();
-              if(beforeRead?.kind==='closed')return{closed:true};
-              if(beforeRead?.kind==='bootstrap'&&beforeRead.wait_for_apply)return{calls:[],byte_limited:false,admission_deferred:true};
+              if(beforeRead?.kind==='closed'){if(clip)clip.stop='closed';return{closed:true};}
+              if(beforeRead?.kind==='bootstrap'&&beforeRead.wait_for_apply){if(clip){clip.outcome='deferred';clip.stop='preparation_deferred';}return{calls:[],byte_limited:false,admission_deferred:true};}
               let byteLimited=false;
               const bounds={max_rows:maxCalls,max_working_bytes:available,on_byte_limit:()=>{byteLimited=true;}};
               const read=await(args.read_next_inputs?args.read_next_inputs(run,bounds,admissionSignal):store.inputs(run,{...bounds,on_oversize:'empty'}));
-              if(admissionSignal.aborted||cancellation.signal.aborted)return{closed:true};
-              const inputs=(Array.isArray(read)?read:read.inputs).slice(0,maxCalls);
-              if(!Array.isArray(read)){byteLimited||=read.byte_limited===true;if(read.admission_deferred)return{calls:[],byte_limited:byteLimited,admission_deferred:true};}
-              if(admissionSignal.aborted||cancellation.signal.aborted)return{closed:true};
+              if(admissionSignal.aborted||cancellation.signal.aborted){if(clip)clip.stop='aborted';return{closed:true};}
+              const inputs=(Array.isArray(read)?read:read.inputs).slice(0,maxCalls);if(clip)clip.read_calls=inputs.length;
+              if(!Array.isArray(read)){byteLimited||=read.byte_limited===true;if(read.admission_deferred){if(clip){clip.outcome='deferred';clip.stop='preparation_deferred';}return{calls:[],byte_limited:byteLimited,admission_deferred:true};}}
+              if(admissionSignal.aborted||cancellation.signal.aborted){if(clip)clip.stop='aborted';return{closed:true};}
               const afterRead=hooks.next_admission_hint?.();
-              if(afterRead?.kind==='closed')return{closed:true};
-              if(afterRead?.kind==='bootstrap'&&afterRead.wait_for_apply)return{calls:[],byte_limited:false,admission_deferred:true};
-              if(!inputs.length)return byteLimited?{calls:[],byte_limited:true}:[];
+              if(afterRead?.kind==='closed'){if(clip)clip.stop='closed';return{closed:true};}
+              if(afterRead?.kind==='bootstrap'&&afterRead.wait_for_apply){if(clip){clip.outcome='deferred';clip.stop='preparation_deferred';}return{calls:[],byte_limited:false,admission_deferred:true};}
+              if(!inputs.length){if(clip){clip.outcome='empty';clip.stop='input_exhausted';}return byteLimited?{calls:[],byte_limited:true}:[];}
               if(hooks.prepare_next){
                 const prepared=await hooks.prepare_next(run,inputs);
-                if(prepared==='wait_for_apply')return{calls:[],byte_limited:false,admission_deferred:true};
-                if(prepared===false)return{closed:true};
+                if(prepared==='wait_for_apply'){if(clip){clip.outcome='deferred';clip.stop='preparation_deferred';}return{calls:[],byte_limited:false,admission_deferred:true};}
+                if(prepared===false){if(clip)clip.stop='closed';return{closed:true};}
                 if(prepared!==true)throw Error('jev_preparation_invalid');
               }
-              if(admissionSignal.aborted||cancellation.signal.aborted)return{closed:true};
-              if(hooks.preparation_valid?.()===false)return{calls:[],byte_limited:false,admission_deferred:true};
+              if(admissionSignal.aborted||cancellation.signal.aborted){if(clip)clip.stop='aborted';return{closed:true};}
+              if(hooks.preparation_valid?.()===false){if(clip){clip.outcome='deferred';clip.stop='invalidated';}return{calls:[],byte_limited:false,admission_deferred:true};}
               const priority=hooks.next_admission_hint?.();
-              if(priority?.kind==='closed')return{closed:true};
-              if(priority?.kind==='bootstrap'&&priority.wait_for_apply)return{calls:[],byte_limited:false,admission_deferred:true};
+              if(priority?.kind==='closed'){if(clip)clip.stop='closed';return{closed:true};}
+              if(priority?.kind==='bootstrap'&&priority.wait_for_apply){if(clip){clip.outcome='deferred';clip.stop='preparation_deferred';}return{calls:[],byte_limited:false,admission_deferred:true};}
               // Compile incrementally: never retain a second full request page
               // merely to discover that its copied bodies exceed free memory.
               const selected=hooks.select_next_inputs?.(inputs)??{inputs,minimum_calls:0};
@@ -235,29 +239,37 @@ export async function processJevLabelingPageV1<Input extends FacetInput,Result>(
               // are read fresh after this intentionally smaller paid prefix.
               const coveredLimit=priority?.kind==='bootstrap'&&selected.minimum_calls===0?priority.covered_call_limit:undefined;
               if(coveredLimit!==undefined&&(!Number.isSafeInteger(coveredLimit)||coveredLimit<1||coveredLimit>32))throw Error('jev_bootstrap_overlap_invalid');
+              let physicalLimit:number|undefined,providerLimit:number|undefined;
               let nativePrefix=Boolean(hooks.native_admission&&store.admitAndMarkSelected&&selected.minimum_calls===0),
                 anchorPrefix=selected.minimum_calls>0,coveredPrefix=coveredLimit!==undefined,
-                limit=Math.min(maxCalls,selected.minimum_calls||coveredLimit||(nativePrefix?Math.min(1024,execution!.max_in_flight,provider.max_concurrency??execution!.max_in_flight):maxCalls));
+                limit=Math.min(maxCalls,selected.minimum_calls||coveredLimit||(nativePrefix?Math.min(1024,(physicalLimit=execution!.max_in_flight),(providerLimit=provider.max_concurrency??execution!.max_in_flight)):maxCalls));
               const bounded:LabelingCallProposalV1<Input>[]=[];let bytes=0;
+              if(clip){clip.selected_calls=selected.inputs.length;clip.minimum_calls=selected.minimum_calls;clip.covered_limit=coveredLimit??null;
+                clip.limit_calls=limit;clip.native_prefix=nativePrefix;clip.compiled_calls=0;clip.compiled_bytes=0;clip.stop='input_exhausted';
+                clip.window_tie=limit===maxCalls;clip.physical_tie=nativePrefix&&limit===physicalLimit;
+                clip.provider_tie=nativePrefix&&limit===providerLimit;clip.native_tie=nativePrefix&&limit===1024;
+                clip.bootstrap_tie=(anchorPrefix&&limit===selected.minimum_calls)||(coveredPrefix&&limit===coveredLimit);}
+
               outer:for(const input of selected.inputs){
-               if((anchorPrefix||coveredPrefix||nativePrefix)&&bounded.length>=limit)break;
+               if((anchorPrefix||coveredPrefix||nativePrefix)&&bounded.length>=limit){if(clip)clip.stop='call_limit';break;}
                const proposals=hooks.propose(run,[input]);
                // Native anchors map one-to-one to calls. A generic hook can
                // emit zero/many; retain its legacy window without re-proposing
                // inputs or cutting that group at an assumed anchor boundary.
-               if((anchorPrefix||coveredPrefix||nativePrefix)&&proposals.length!==1){anchorPrefix=false;coveredPrefix=false;nativePrefix=false;limit=maxCalls;}
+               if((anchorPrefix||coveredPrefix||nativePrefix)&&proposals.length!==1){anchorPrefix=false;coveredPrefix=false;nativePrefix=false;limit=maxCalls;if(clip){clip.native_prefix=false;clip.limit_calls=limit;clip.window_tie=true;clip.physical_tie=false;clip.provider_tie=false;clip.native_tie=false;clip.bootstrap_tie=false;}}
                for(const proposal of proposals){
                 const cost=jevCallWorkingBytesV2(proposal)+8192;
-                if(bounded.length>=limit)break outer;
+                if(bounded.length>=limit){if(clip)clip.stop='call_limit';break outer;}
                 const quoteMetadata=nativePrefix&&hooks.native_admission?.workspace_quote?2*(256+8*(bounded.length+2)):0;
-                if(bytes+cost+quoteMetadata>available){byteLimited=true;break outer;}
-                bytes+=cost;bounded.push(proposal);
+                if(clip)clip.quote_metadata_bytes=quoteMetadata;
+                if(bytes+cost+quoteMetadata>available){if(clip)clip.stop='compile_memory';byteLimited=true;break outer;}
+                bytes+=cost;bounded.push(proposal);if(clip){clip.compiled_calls=bounded.length;clip.compiled_bytes=bytes;}
                 // Compile outside the native reservation transaction without
                 // monopolizing the event loop while other HTTP timers run.
                 if(bounded.length%64===0){
                   await yieldToEventLoop();
-                  if(admissionSignal.aborted||cancellation.signal.aborted)return{closed:true};
-                  if(hooks.preparation_valid?.()===false)return{calls:[],byte_limited:false,admission_deferred:true};
+                  if(admissionSignal.aborted||cancellation.signal.aborted){if(clip)clip.stop='aborted';return{closed:true};}
+                  if(hooks.preparation_valid?.()===false){if(clip){clip.outcome='deferred';clip.stop='invalidated';}return{calls:[],byte_limited:false,admission_deferred:true};}
                 }
                }
               }
@@ -272,7 +284,7 @@ export async function processJevLabelingPageV1<Input extends FacetInput,Result>(
                   if(freezeBudget<0)throw Error('jev_native_draft_memory_bound');
                   for(let index=0;index<bounded.length;index++){
                     freezeNativeDraft(bounded[index],freezeBudget);
-                    if((index+1)%64===0){await yieldToEventLoop();if(admissionSignal.aborted||cancellation.signal.aborted)return{closed:true};if(hooks.preparation_valid?.()===false)return{calls:[],byte_limited:false,admission_deferred:true};}
+                    if((index+1)%64===0){await yieldToEventLoop();if(admissionSignal.aborted||cancellation.signal.aborted){if(clip)clip.stop='aborted';return{closed:true};}if(hooks.preparation_valid?.()===false){if(clip){clip.outcome='deferred';clip.stop='invalidated';}return{calls:[],byte_limited:false,admission_deferred:true};}}
                   }
                   const expectedMetadata=256+8*(bounded.length+1),returnedPrefix=[0];
                   for(const proposal of bounded)returnedPrefix.push(returnedPrefix.at(-1)!+jevCallWorkingBytesV2(proposal));
@@ -284,6 +296,7 @@ export async function processJevLabelingPageV1<Input extends FacetInput,Result>(
                     const workspace=workspaceQuote.quote(bounded.length);
                     if(!Number.isSafeInteger(workspace)||workspace<0)throw Error('jev_native_workspace_invalid');
                     Object.freeze(bounded);
+                    if(clip){clip.outcome='native';clip.returned_calls=bounded.length;}
                     fedWindows++;return{proposals:bounded,workspace_bytes:workspace,workspace_quote:workspaceQuote,call_working_prefix:Object.freeze(returnedPrefix),byte_limited:byteLimited,
                       on_committed:(ids,admitted)=>hooks.native_admission!.committed?.(priority,ids,admitted)};
                   }
@@ -317,10 +330,11 @@ export async function processJevLabelingPageV1<Input extends FacetInput,Result>(
                       if(fits(mid,value)){best=mid;workspace=value;low=mid+1;}
                       else high=mid-1;
                     }
-                    bounded.length=best||1;bytes=returnedCosts[bounded.length]!+8192*bounded.length;
+                    bounded.length=best||1;if(clip)clip.workspace_clip=true;bytes=returnedCosts[bounded.length]!+8192*bounded.length;
                   }
                 }catch{workspace=undefined;}
                 if(workspace!==undefined&&bounded.length){
+                  if(clip){clip.outcome='native';clip.returned_calls=bounded.length;}
                   fedWindows++;return{proposals:bounded,workspace_bytes:workspace,byte_limited:byteLimited,
                     on_committed:(ids,admitted)=>hooks.native_admission!.committed?.(priority,ids,admitted)};
                 }
@@ -328,9 +342,10 @@ export async function processJevLabelingPageV1<Input extends FacetInput,Result>(
                 // If a fitting draft is impossible, retain the old protocol.
                 if(!bounded.length)return{closed:true};
               }
-              const next=await store.reserve(run,bounded);fedWindows++;
+              const next=await store.reserve(run,bounded);if(clip){clip.outcome='legacy';clip.returned_calls=next.length;}fedWindows++;
               return next.length?{calls:next,byte_limited:byteLimited&&selected.minimum_calls===0}:{closed:true};
-            }catch(error){failed=true;primary=error;throw error;}finally{
+            }catch(error){if(clip)clip.outcome='threw';failed=true;primary=error;throw error;}finally{
+              if(clip)try{hooks.observe_preparation?.(clip);}catch{/* A diagnostic never replaces the first error or release. */}
               if(incrementalInitial)try{args.initial_reservation!.release_selection();}catch(secondary){if(failed)throw new AggregateError([primary,secondary],'jev_selection_primary_and_release_failed',{cause:primary});throw secondary;}
             }
           }:undefined;

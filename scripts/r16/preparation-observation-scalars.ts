@@ -6,6 +6,14 @@ const validDuration=(n:unknown):n is number=>typeof n==='number'&&Number.isFinit
 const has=(value:object,key:unknown):key is string=>typeof key==='string'&&Object.hasOwn(value,key);
 function add(counter:ReturnType<typeof timed>,duration:number){counter.count++;counter.total_ms+=duration;counter.max_ms=Math.max(counter.max_ms,duration);}
 
+const scalar=()=>({count:0,unknown:0,sum:0,min:null as number|null,max:null as number|null});
+function recordScalars(target:Record<string,ReturnType<typeof scalar>>,fields:Record<string,number|null>){
+ for(const [key,n]of Object.entries(fields))if(!Object.hasOwn(target,key)||n!==null&&!validCount(n))return false;
+ for(const [key,n]of Object.entries(fields)){const t=target[key]!;if(n===null)t.unknown++;else{t.count++;t.sum+=n;t.min=t.min===null?n:Math.min(t.min,n);t.max=t.max===null?n:Math.max(t.max,n);}}
+ return true;
+}
+const booleanFields=(fields:Record<string,boolean>)=>Object.values(fields).every(n=>typeof n==='boolean');
+
 /** Fixed-size descriptive counters. No event, identifier, body or per-root/job
  * array is retained. These elapsed durations may overlap other pipeline work;
  * they are neither CPU time nor an amount to subtract from the original wall. */
@@ -19,6 +27,12 @@ export function createR16PreparationObservationScalarsV1(){
   native_admission:{outcomes:{committed:timed(),legacy:timed(),threw:timed()},proposed_calls:0,selected_calls:0,validated_calls:0,
    returned_calls_known:0,returned_calls_unknown_events:0,committed_empty:0,selector_called:0,validation_called:0,
    selector_observation:{not_observed:0,fatal:0,admission_aborted:0,cancellation_aborted:0,preparation_invalid:0,closed:0,bootstrap_wait:0,zero_selected:0,selected:0}},
+  clips:{
+   feed:{events:0,metrics:{free_bytes:scalar(),headroom_bytes:scalar(),available_bytes:scalar(),slots:scalar(),ready_slots:scalar(),reserved_calls:scalar(),max_calls:scalar()}},
+   compile:{events:0,outcomes:{native:0,legacy:0,deferred:0,closed:0,empty:0,threw:0},stops:{unreached:0,input_exhausted:0,call_limit:0,compile_memory:0,invalidated:0,aborted:0,preparation_deferred:0,closed:0},
+    ties:{window:0,physical:0,provider:0,native:0,bootstrap:0},workspace_clip:0,metrics:{read_calls:scalar(),selected_calls:scalar(),compiled_calls:scalar(),returned_calls:scalar(),limit_calls:scalar(),max_calls:scalar(),minimum_calls:scalar(),covered_limit:scalar(),available_bytes:scalar(),compiled_bytes:scalar(),quote_metadata_bytes:scalar()}},
+   prefix:{events:0,outcomes:{native:0,legacy_escape:0},slot_clip:0,memory_clip:0,metrics:{prepared_calls:scalar(),slot_limit:scalar(),fitted_calls:scalar(),workspace_bytes:scalar(),memory_bytes:scalar(),draft_bytes:scalar(),probes:scalar(),response_max_bytes:scalar(),response_unfit_probes:scalar()}},
+   selector:{events:0,ties:{slot:0,candidate:0,bootstrap:0},memory_clip:0,phase:0,metrics:{candidate_calls:scalar(),slot_limit:scalar(),bootstrap_limit:scalar(),limit_calls:scalar(),selected_calls:scalar(),memory_before_bytes:scalar(),call_bytes:scalar(),response_bytes:scalar(),probes:scalar(),response_max_bytes:scalar(),response_unfit_probes:scalar()}}},
   draft_discard:{pre_native:0,post_legacy:0},elapsed_durations_may_overlap:true as const,CPU_or_RSS_measurement:false as const};
  const invalid=()=>{value.invalid_events++;};
  return{
@@ -56,6 +70,28 @@ export function createR16PreparationObservationScalarsV1(){
      if(event.outcome==='committed'&&event.returned_calls===0)native.committed_empty++;
      if(event.selector_called)native.selector_called++;if(event.validation_called)native.validation_called++;
      native.selector_observation[event.selector_observation]++;break;
+    }
+    case'feed_budget':{
+     const c=value.clips.feed;if(!recordScalars(c.metrics,{free_bytes:event.free_bytes,headroom_bytes:event.headroom_bytes,available_bytes:event.available_bytes,slots:event.slots,ready_slots:event.ready_slots,reserved_calls:event.reserved_calls,max_calls:event.max_calls})){invalid();return;}c.events++;break;
+    }
+    case'compile_clip':{
+     const c=value.clips.compile;
+     if(!has(c.outcomes,event.outcome)||!has(c.stops,event.stop)||!(event.native_prefix===null||typeof event.native_prefix==='boolean')
+      ||!booleanFields({window:event.window_tie,physical:event.physical_tie,provider:event.provider_tie,native:event.native_tie,bootstrap:event.bootstrap_tie,workspace:event.workspace_clip})
+      ||!recordScalars(c.metrics,{read_calls:event.read_calls,selected_calls:event.selected_calls,compiled_calls:event.compiled_calls,returned_calls:event.returned_calls,limit_calls:event.limit_calls,max_calls:event.max_calls,minimum_calls:event.minimum_calls,covered_limit:event.covered_limit,available_bytes:event.available_bytes,compiled_bytes:event.compiled_bytes,quote_metadata_bytes:event.quote_metadata_bytes})){invalid();return;}
+     c.events++;c.outcomes[event.outcome]++;c.stops[event.stop]++;if(event.workspace_clip)c.workspace_clip++;if(event.window_tie)c.ties.window++;if(event.physical_tie)c.ties.physical++;if(event.provider_tie)c.ties.provider++;if(event.native_tie)c.ties.native++;if(event.bootstrap_tie)c.ties.bootstrap++;break;
+    }
+    case'native_prefix_clip':{
+     const c=value.clips.prefix;
+     if(!has(c.outcomes,event.outcome)||!booleanFields({slot:event.slot_clip,memory:event.memory_clip})
+      ||!recordScalars(c.metrics,{prepared_calls:event.prepared_calls,slot_limit:event.slot_limit,fitted_calls:event.fitted_calls,workspace_bytes:event.workspace_bytes,memory_bytes:event.memory_bytes,draft_bytes:event.draft_bytes,probes:event.probes,response_max_bytes:event.response_max_bytes,response_unfit_probes:event.response_unfit_probes})){invalid();return;}
+     c.events++;c.outcomes[event.outcome]++;if(event.slot_clip)c.slot_clip++;if(event.memory_clip)c.memory_clip++;break;
+    }
+    case'native_selector_clip':{
+     const c=value.clips.selector;
+     if(!booleanFields({slot:event.slot_tie,candidate:event.candidate_tie,bootstrap:event.bootstrap_tie,memory:event.memory_clip,phase:event.phase})
+      ||!recordScalars(c.metrics,{candidate_calls:event.candidate_calls,slot_limit:event.slot_limit,bootstrap_limit:event.bootstrap_limit,limit_calls:event.limit_calls,selected_calls:event.selected_calls,memory_before_bytes:event.memory_before_bytes,call_bytes:event.call_bytes,response_bytes:event.response_bytes,probes:event.probes,response_max_bytes:event.response_max_bytes,response_unfit_probes:event.response_unfit_probes})){invalid();return;}
+     c.events++;if(event.slot_tie)c.ties.slot++;if(event.candidate_tie)c.ties.candidate++;if(event.bootstrap_tie)c.ties.bootstrap++;if(event.memory_clip)c.memory_clip++;if(event.phase)c.phase++;break;
     }
     case'draft_discard':
      if(!has(value.draft_discard,event.point)){invalid();return;}value.draft_discard[event.point]++;break;

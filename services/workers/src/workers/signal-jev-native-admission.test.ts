@@ -317,7 +317,7 @@ test('preparation diagnostics distinguish Native empty selectors, legacy returns
   assert.deepEqual(trace,before,mode);assert.equal(observed.memory,0);
   assert.equal(observed.validations,mode==='pre_native'||mode==='empty'?1:2,'diagnostics must not reevaluate the native preparation gate');
   const native=events.find((e):e is Extract<SignalListeningPreparationObservationV1,{kind:'native_admission'}>=>e.kind==='native_admission');
-  if(mode==='pre_native'){assert.equal(native,undefined);assert.deepEqual(events,[{kind:'draft_discard',point:'pre_native'}]);continue;}
+  if(mode==='pre_native'){assert.equal(native,undefined);assert.deepEqual(events.filter(e=>e.kind==='draft_discard'),[{kind:'draft_discard',point:'pre_native'}]);continue;}
   assert.ok(native);assert.equal(native.proposed_calls,2);assert.ok(native.duration_ms>=0);
   if(mode==='legacy'||mode==='post_legacy'){assert.equal(native.outcome,'legacy');assert.equal(native.returned_calls,null);assert.equal(native.selector_called,false);assert.equal(native.selector_observation,'not_observed');}
   else{assert.equal(native.outcome,'committed');assert.equal(native.validation_called,true);assert.equal(native.returned_calls,mode==='empty'?0:2);assert.equal(native.selector_observation,mode==='empty'?'cancellation_aborted':'selected');}
@@ -344,4 +344,53 @@ test('preparation diagnostics retain an unknown COMMIT outcome without fallback,
  assert.equal(event.outcome,'threw');assert.equal(event.returned_calls,null);assert.equal(event.selected_calls,2);assert.equal(event.validated_calls,2);
  assert.equal(invocations,1);assert.equal(f.state().unknownFailures,1);assert.equal(f.state().reserves,0);assert.equal(f.physical.length,0);assert.equal(f.memory.at(-1),0);
  assert.ok(f.rows.every(row=>row.status==='submitting'&&!row.results_applied));
+});
+
+test('capacity clips distinguish a slot cap from a quoted memory cap without extra quotes, guards, receipts or sends',async()=>{
+ for(const mode of['slots','memory']as const){
+  async function execute(observe:boolean){
+   const f=fixture(true),observed:SignalListeningPreparationObservationV1[]=[];let quotes=0,validations=0,hints=0,selects=0;
+   if(mode==='slots')f.args.provider.max_concurrency=1;
+   const feed=f.args.feed_next!;f.args.feed_next=async(...args)=>{const next=await feed(...args);if(!Array.isArray(next)&&'proposals'in next&&next.workspace_quote){const quote=next.workspace_quote.quote;next.workspace_quote={...next.workspace_quote,quote:count=>{quotes++;return mode==='memory'&&count>1?execution.max_buffered_bytes:quote(count);}};}return next;};
+   f.args.preparation_valid=()=>{validations++;return true;};f.args.next_admission_hint=()=>{hints++;return{kind:'open'};};
+   if(observe)f.args.observe_preparation=event=>{observed.push(structuredClone(event));throw undefined;};
+   f.args.store.admitAndMarkSelected=async(_run,drafts,callbacks)=>{selects++;const selected=callbacks.selectFresh(drafts),rows=selected.map(p=>call(p));callbacks.validateBeforeCommit(rows,selected);f.rows.push(...rows);return{kind:'committed',calls:rows};};
+   const result=await processJevStreamingWindowV2(f.args);return{observed,result,quotes,validations,hints,selects,requests:f.physical,receipts:f.rows,applied:f.applied,state:f.state(),memory:f.memory};
+  }
+  const baseline=await execute(false),diagnosed=await execute(true),{observed,...trace}=diagnosed,{observed:_none,...before}=baseline;assert.deepEqual(trace,before);
+  const prefixes=observed.filter((e):e is Extract<SignalListeningPreparationObservationV1,{kind:'native_prefix_clip'}>=>e.kind==='native_prefix_clip');
+  assert.equal(prefixes.length,1);const prefix=prefixes[0]!;assert.equal(prefix.prepared_calls,2);assert.equal(prefix.fitted_calls,1);
+  assert.equal(prefix.slot_clip,mode==='slots');assert.equal(prefix.memory_clip,mode==='memory');assert.equal(prefix.probes,diagnosed.quotes+1,'the existing single-fit response quote is included without another workspace quote');
+  assert.equal(observed.filter(e=>e.kind==='native_selector_clip').length,1);assert.equal(diagnosed.requests.length,1);assert.equal(diagnosed.memory.at(-1),0);
+  const text=JSON.stringify(observed);assert.ok(!text.includes('root-')&&!text.includes('text-')&&!text.includes('call-'));
+ }
+});
+
+test('compile clip preserves tied physical and provider limits and keeps proposal, quote, gate and receipt traces identical',async()=>{
+ async function execute(observe:boolean,invalid=false){
+  const f=fixture(),initial={root_id:'compile-initial',text:'initial'}as FacetInput,inputs=Array.from({length:3},(_,i)=>({root_id:'compile-'+i,text:'compiled-'+i}))as FacetInput[];
+  Object.assign(f.run,{kind:'mass_labeling',identity:signalListeningJevIdentityV1(signalListeningBaseTemplateV1({category:'tea',lexicon_terms:['tea']}))});
+  const observed:SignalListeningPreparationObservationV1[]=[];let reads=0,proposes=0,quotes=0,guards=0;
+  f.args.provider.max_concurrency=3;const capacity={...execution,max_in_flight:3};
+  const store={...f.args.store,claim:async()=>f.run,renew:async()=>{},release:async()=>{},calls:async()=>[],inputs:async()=>[initial],
+   admitAndMarkSelected:async(_run:LabelingRunV1,drafts:LabelingCallProposalV1<FacetInput>[],callbacks:Parameters<NonNullable<Args['store']['admitAndMarkSelected']>>[2])=>{
+    const selected=callbacks.selectFresh(drafts),rows=selected.map(p=>call(p));callbacks.validateBeforeCommit(rows,selected);f.rows.push(...rows);return{kind:'committed' as const,calls:rows};
+   }}as PageArgs['store'];
+  const result=await processJevLabelingPageV1({run_id:f.run.id,store,provider:f.args.provider,execution:capacity,
+   initial_reservation:{max_calls:1024,release_selection:()=>{}},prepare:async()=>({provider:f.args.provider,execution:capacity,continuous_windows:true,bootstrap_initial_calls:1}),
+   read_next_inputs:async()=>reads++===0?inputs:[],observe_stream:value=>f.memory.push(value.reserved_working_bytes),
+   hooks:{continuous_windows:()=>true,revisit_empty_after_apply:true,price:()=>f.args.price,preparation_valid:()=>{guards++;return!invalid;},
+    ...(observe?{observe_preparation:(event:SignalListeningPreparationObservationV1)=>{observed.push(structuredClone(event));throw null;}}:{}),
+    native_admission:{workspace_bound:nativeListeningAdmissionWorkspaceBoundV1,workspace_quote:(run,drafts)=>{quotes++;return createNativeListeningAdmissionWorkspaceQuoteV1(run,drafts);}},
+    propose:(_run,values)=>{proposes++;return values.map(input=>({...proposal(0),custom_id:input.root_id,request_digest:input.root_id,inputs:[input],request:{...proposal(0).request,state:input.text}}));},
+    map:(_run,row)=>[row.id],error:()=>[],labeled:()=>true,fail_on_error:true}});
+  return{observed,result,reads,proposes,quotes,guards,requests:f.physical,receipts:f.rows,applied:f.applied,state:f.state(),memory:f.memory};
+ }
+ for(const invalid of[false,true]){
+ const baseline=await execute(false,invalid),diagnosed=await execute(true,invalid),{observed,...trace}=diagnosed,{observed:_none,...before}=baseline;assert.deepEqual(trace,before);
+ if(invalid){assert.ok(observed.some(e=>e.kind==='compile_clip'&&e.outcome==='deferred'&&e.stop==='invalidated'));assert.equal(diagnosed.requests.length,1);assert.equal(diagnosed.quotes,0);continue;}
+ const compiled=observed.filter((e):e is Extract<SignalListeningPreparationObservationV1,{kind:'compile_clip'}>=>e.kind==='compile_clip'&&e.outcome==='native');
+ assert.equal(compiled.length,1);assert.equal(compiled[0]!.compiled_calls,3);assert.equal(compiled[0]!.returned_calls,3);assert.equal(compiled[0]!.physical_tie,true);assert.equal(compiled[0]!.provider_tie,true);
+ assert.ok(diagnosed.requests.length>=2&&diagnosed.requests.length<=4);assert.equal(new Set(diagnosed.requests).size,diagnosed.requests.length);assert.equal(diagnosed.applied.length,diagnosed.requests.length);assert.equal(diagnosed.memory.at(-1),0);
+ }
 });
