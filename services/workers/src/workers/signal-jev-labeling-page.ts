@@ -1,3 +1,4 @@
+import type{SignalListeningPreparationObservationV1}from'./signal-listening-preparation-observation';
 import {jevResponseInitialHeadroomV3,selectJevPhaseInitialBindingV3} from './signal-jev-phase-profile-v3';
 import type {JevPhaseClosedBindingV3} from './signal-jev-response-budget-v3';
 import { assertJevStreamingExecutionV2, jevCallWorkingBytesV2, processJevStreamingWindowV2, type JevStreamingExecutionV2, type JevStreamingMetricsV2, type JevFeedAdmissionHintV1, type JevFeedResultV1, type JevNativeWorkspaceQuoteV1 } from './signal-jev-streaming-window';
@@ -83,6 +84,7 @@ export async function processJevLabelingPageV1<Input extends FacetInput,Result>(
     prepare_next?(run:LabelingRunV1,inputs:Input[]):Promise<boolean|'wait_for_apply'>;
     /** Local immutable preparation revision only, never a permission decision. */
     preparation_valid?():boolean;
+    observe_preparation?(event:SignalListeningPreparationObservationV1):void;
     /** Preserve a native calibration cohort's anchor order without compiling a
      * second request page. Its minimum must fit wholly before reservation. */
     select_next_inputs?(inputs:Input[]):{inputs:Input[];minimum_calls:number};
@@ -332,7 +334,7 @@ export async function processJevLabelingPageV1<Input extends FacetInput,Result>(
               if(incrementalInitial)try{args.initial_reservation!.release_selection();}catch(secondary){if(failed)throw new AggregateError([primary,secondary],'jev_selection_primary_and_release_failed',{cause:primary});throw secondary;}
             }
           }:undefined;
-        const outcome = await processJevStreamingWindowV2({run,calls,send_calls:reserved,store,provider,execution:execution,price,cancellation,hooks,observe_stream:args.observe_stream,feed_next:feed,next_admission_hint:hooks.next_admission_hint,revisit_empty_after_apply:Boolean(feed)&&hooks.revisit_empty_after_apply===true,defer_initial_prefetch_until_handoff:incrementalInitial&&reserved.length>0,preparation_valid:hooks.preparation_valid,response_budget_binding:responseBinding});
+        const outcome = await processJevStreamingWindowV2({run,calls,send_calls:reserved,store,provider,execution:execution,price,cancellation,hooks,observe_stream:args.observe_stream,feed_next:feed,next_admission_hint:hooks.next_admission_hint,revisit_empty_after_apply:Boolean(feed)&&hooks.revisit_empty_after_apply===true,defer_initial_prefetch_until_handoff:incrementalInitial&&reserved.length>0,preparation_valid:hooks.preparation_valid,observe_preparation:hooks.observe_preparation,response_budget_binding:responseBinding});
         aggregate = { ...outcome, roots:(aggregate?.roots??0)+outcome.roots,
           labeled:(aggregate?.labeled??0)+outcome.labeled,
           settled_micro_usd:(aggregate?.settled_micro_usd??0)+outcome.settled_micro_usd,

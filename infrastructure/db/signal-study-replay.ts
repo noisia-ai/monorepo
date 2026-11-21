@@ -9,9 +9,10 @@ import {
  validateSignalStudyExecutionConfigurationV1,buildSignalStudyConfiguredAxesRequestV1,resolveSignalStudyConfiguredAxesV1,signalStudyConfiguredCutV1,
  buildSignalStudyMotiveFitPlanV1,buildSignalStudyMotivePopulationV1,sampleSignalStudyGroupV1,signalStudyConfirmedCentroidV1,
  buildSignalStudyMotiveReviewV1,validateSignalStudyMotiveReviewV1,buildSignalStudyConfiguredLayerReviewV1,validateSignalStudyLayerReviewV1,
- signalStudyLayerStabilityV1,signalStudyBoundaryRuleStabilityV1,signalStudyUnmeasurableMotivePartitionsV1,SIGNAL_STUDY_UNMEASURED_LAYER_NOTE_V1,applySignalStudyBoundaryRecodeV1,signalStudyJevMotiveConfigurationV1,buildSignalStudyMotiveRequestV1,buildSignalStudyMotiveReaskRequestV1,
+ signalStudyLayerStabilityV1,signalStudyBoundaryRuleStabilityV1,signalStudyUnmeasurableMotivePartitionsV1,SIGNAL_STUDY_UNMEASURED_LAYER_NOTE_V1,applySignalStudyBoundaryRecodeV1,signalStudyJevMotiveConfigurationV1,buildSignalStudyMotiveRequestV1,
  signalStudyDominancePlanV1,buildSignalStudyContrastReviewV1,validateSignalStudyContrastReviewV1,buildSignalStudySummaryV1,
  signalStudyQueryBiasV1,verifySignalStudyVerbatimV1,materializeSignalStudyEvidenceV1,SIGNAL_STUDY_EVIDENCE_ASSOCIATION_VERSION_V1,assertSignalStudyRootsV1,signalWorkspaceEmbeddingDigestV1 as digest,
+ resolveSignalStudyDominanceReaskVersionV1,compileSignalStudyDominanceReaskV1,replaceSignalStudyDominanceMembershipsV1,
  SIGNAL_STUDY_BOUNDARY_RULE_VERSION_V1,compileSignalStudyBoundaryRuleBatchesV1,validateSignalStudyBoundaryRuleReviewV1,
  SIGNAL_STUDY_EDITORIAL_COMPILER_V2,compileSignalStudyDiscoveryBatchesV2,compileSignalStudyLayerPairV2,compileSignalStudyContrastBatchesV2,
  validateSignalStudyDiscoveryBatchPrefixV2,buildSignalStudyMotiveReconciliationV2,validateSignalStudyMotiveReconciliationV2,
@@ -56,6 +57,7 @@ async function replayStudy(c:PoolClient,execution_id:string,raw:StudyRuntimeSour
  target?:CurrentTargetV1):Promise<ReplayNextV1|{validation:SignalStudyCurrentStepValidationV1}>{
  try{
  const configuration=validateSignalStudyExecutionConfigurationV1(raw.configuration),source_digest=raw.source_digest,useV2=raw.editorial_compiler_version===SIGNAL_STUDY_EDITORIAL_COMPILER_V2;
+ const dominanceReaskVersion=resolveSignalStudyDominanceReaskVersionV1(raw.dominance_reask_version);
  if(raw.evidence_association_version!==undefined&&raw.evidence_association_version!==SIGNAL_STUDY_EVIDENCE_ASSOCIATION_VERSION_V1)fail('evidence_association_version_invalid');
  if(raw.editorial_compiler_version!==undefined&&!useV2)fail('editorial_compiler_invalid');
  if(raw.layer_boundary_rule_version!==undefined&&(raw.layer_boundary_rule_version!==SIGNAL_STUDY_BOUNDARY_RULE_VERSION_V1||!useV2))fail('boundary_rule_version_invalid');
@@ -222,9 +224,9 @@ function jevResponse(request:JevRequestV1,value:unknown):Record<string,JevAnswer
   }
   let memberships:SignalStudyMembershipV1[]=[];
   const classify=async(selected:SignalStudyRootV1[],candidates:SignalStudyMotiveV1[],stage:string,affected?:readonly string[])=>{
-   const config=signalStudyJevMotiveConfigurationV1(configuration,candidates),rows:SignalStudyMembershipV1[]=[];
-   const lockedByRoot=new Map<string,string[]>();if(affected)for(const row of memberships)if(row.human_locked){const keys=lockedByRoot.get(row.root_id)??[];keys.push(row.motive_key);lockedByRoot.set(row.root_id,keys);}
-   const inputs=selected.flatMap(root=>{const request=affected?buildSignalStudyMotiveReaskRequestV1(root,candidates,config,{affected_keys:affected,locked_keys:lockedByRoot.get(root.root_id)??[]}):buildSignalStudyMotiveRequestV1(root,candidates,config);return request?[{root_id:root.root_id,request}]:[];});
+   const reask=affected?compileSignalStudyDominanceReaskV1({version:dominanceReaskVersion,configuration,roots:selected,motives:candidates,memberships,affected_keys:affected}):null;
+   const config=reask?.stage_configuration??signalStudyJevMotiveConfigurationV1(configuration,candidates),rows:SignalStudyMembershipV1[]=[];
+   const inputs=reask?.inputs??selected.flatMap(root=>{const request=buildSignalStudyMotiveRequestV1(root,candidates,config);return request?[{root_id:root.root_id,request}]:[];});
    const result=await jevBatch(stage,inputs,config);
    for(const root of inputs)for(const [key,answer]of Object.entries(result.get(root.root_id)!)){
     if(answer.type!=='noul')fail('motive_response_invalid');rows.push({root_id:root.root_id,motive_key:key,probability:answer.noul,source:'jev',human_locked:false});
@@ -244,8 +246,7 @@ function jevResponse(request:JevRequestV1,value:unknown):Record<string,JevAnswer
    motives=motives.map(m=>{const d=contrasted.definitions.find(d=>d.key===m.key);return d?{...m,name:d.name,definition:d.definition}:m;});
    const target=new Set(dominance.reask_root_ids);
    const reasked=await classify(population.roots.filter(r=>target.has(r.root_id)),motives,'dominance_membership',affected);
-   const replaced=new Set(reasked.map(row=>JSON.stringify([row.root_id,row.motive_key])));
-   memberships=[...memberships.filter(row=>row.human_locked||!replaced.has(JSON.stringify([row.root_id,row.motive_key]))),...reasked];
+   memberships=replaceSignalStudyDominanceMembershipsV1({version:dominanceReaskVersion,memberships,reasked,target_root_ids:target,affected_keys:affected});
    dominance=signalStudyDominancePlanV1({roots,motives,memberships,cut_root_ids:roots.map(r=>r.root_id)});
   }
   const verified_evidence=materializeSignalStudyEvidenceV1(decisions,byRoot,raw.evidence_association_version);

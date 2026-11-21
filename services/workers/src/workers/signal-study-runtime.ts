@@ -2,6 +2,7 @@ import{studySourceRootWithAxesV1,studySourcePagesManifestV1,studyRuntimeSourceDi
 import {createHash} from 'node:crypto';
 import type{StudyNumericManifestV1}from'@noisia/query-engine';
 import {
+ SIGNAL_STUDY_DOMINANCE_REASK_VERSION_V1,resolveSignalStudyDominanceReaskVersionV1,compileSignalStudyDominanceReaskV1,replaceSignalStudyDominanceMembershipsV1,
  SIGNAL_STUDY_BOUNDARY_RULE_VERSION_V1,compileSignalStudyBoundaryRuleBatchesV1,validateSignalStudyBoundaryRuleReviewV1,
  SIGNAL_STUDY_EDITORIAL_COMPILER_V2,compileSignalStudyDiscoveryBatchesV2,compileSignalStudyLayerPairV2,compileSignalStudyContrastBatchesV2,
  buildSignalStudyMotiveReconciliationV2,validateSignalStudyMotiveReconciliationV2,validateSignalStudyDiscoveryBatchPrefixV2,
@@ -10,7 +11,7 @@ import {
  validateSignalStudyExecutionConfigurationV1,buildSignalStudyConfiguredAxesRequestV1,resolveSignalStudyConfiguredAxesV1,signalStudyConfiguredCutV1,
  buildSignalStudyMotiveFitPlanV1,buildSignalStudyMotivePopulationV1,sampleSignalStudyGroupV1,signalStudyConfirmedCentroidV1,
  buildSignalStudyMotiveReviewV1,validateSignalStudyMotiveReviewV1,buildSignalStudyConfiguredLayerReviewV1,validateSignalStudyLayerReviewV1,
- signalStudyLayerStabilityV1,signalStudyBoundaryRuleStabilityV1,signalStudyUnmeasurableMotivePartitionsV1,SIGNAL_STUDY_UNMEASURED_LAYER_NOTE_V1,applySignalStudyBoundaryRecodeV1,signalStudyJevMotiveConfigurationV1,buildSignalStudyMotiveRequestV1,buildSignalStudyMotiveReaskRequestV1,
+ signalStudyLayerStabilityV1,signalStudyBoundaryRuleStabilityV1,signalStudyUnmeasurableMotivePartitionsV1,SIGNAL_STUDY_UNMEASURED_LAYER_NOTE_V1,applySignalStudyBoundaryRecodeV1,signalStudyJevMotiveConfigurationV1,buildSignalStudyMotiveRequestV1,
  signalStudyDominancePlanV1,buildSignalStudyContrastReviewV1,validateSignalStudyContrastReviewV1,buildSignalStudySummaryV1,
  signalStudyQueryBiasV1,materializeSignalStudyEvidenceV1,SIGNAL_STUDY_EVIDENCE_ASSOCIATION_VERSION_V1,assertSignalStudyRootsV1,signalWorkspaceEmbeddingDigestV1 as digest,
  type SignalStudyExecutionConfigurationV1,type SignalStudyRootV1,type SignalStudyMotiveV1,type SignalStudyMembershipV1,
@@ -36,7 +37,7 @@ export type StudyRuntimeSourceV1={configuration:SignalStudyExecutionConfiguratio
   eligible_roots:number;pending_base_roots:number;corpus_roots:number};
  embedding_space_digest:string;source_preparation_run_ids:string[];sampling_seed:string;query_terms:string[];problem_terms:string[];query_metadata?:{query_terms_declared:boolean;problem_terms_declared:boolean};brand_baseline_roots:number;
  acquisition_query_metadata?:{contract_version:'signal-study-acquisition-query-metadata-v1';complete:boolean;source_batches:number;unavailable_batches:number};
- source_digest:string;human_revision_digest:string;max_roots:number;max_bytes:number;source_storage?:import('./signal-study-source-pages').StudySourcePagesManifestV1;editorial_compiler_version?:typeof SIGNAL_STUDY_EDITORIAL_COMPILER_V2;layer_boundary_rule_version?:typeof SIGNAL_STUDY_BOUNDARY_RULE_VERSION_V1;evidence_association_version?:typeof SIGNAL_STUDY_EVIDENCE_ASSOCIATION_VERSION_V1};
+ source_digest:string;human_revision_digest:string;max_roots:number;max_bytes:number;source_storage?:import('./signal-study-source-pages').StudySourcePagesManifestV1;editorial_compiler_version?:typeof SIGNAL_STUDY_EDITORIAL_COMPILER_V2;layer_boundary_rule_version?:typeof SIGNAL_STUDY_BOUNDARY_RULE_VERSION_V1;evidence_association_version?:typeof SIGNAL_STUDY_EVIDENCE_ASSOCIATION_VERSION_V1;dominance_reask_version?:typeof SIGNAL_STUDY_DOMINANCE_REASK_VERSION_V1};
 export type StudyRuntimeReceiptV1={body_base64:string;body_bytes:number;sha256:string;complete:boolean;http_status:number|null;provider_request_id:string|null};
 export type StudyRuntimeStepPlanV1={key:string;kind:'sonnet';request_body:string;request_sha256:string;source_digest:string};
 export type StudyRuntimeStepV1=StudyRuntimeStepPlanV1&{status:'planned'|'sent'|'raw'|'committed'|'unknown';
@@ -154,6 +155,7 @@ export async function signalStudyRuntimeJobV1(execution_id:string,options:{store
  try{
   if(lease.execution_id!==execution_id||!uuid.test(lease.workspace_id)||!uuid.test(lease.execution_token))fail('lease_invalid');
   const raw=await store.source(lease);runtimeSource=raw;if(!raw)throw new Paused('stale');
+  const dominanceReaskVersion=resolveSignalStudyDominanceReaskVersionV1(raw.dominance_reask_version);
   if(raw.evidence_association_version!==undefined&&raw.evidence_association_version!==SIGNAL_STUDY_EVIDENCE_ASSOCIATION_VERSION_V1)fail('evidence_association_version_invalid');
   if(raw.editorial_compiler_version!==undefined&&raw.editorial_compiler_version!==SIGNAL_STUDY_EDITORIAL_COMPILER_V2)fail('editorial_compiler_invalid');
   const batching=raw.editorial_compiler_version===SIGNAL_STUDY_EDITORIAL_COMPILER_V2;
@@ -375,9 +377,9 @@ export async function signalStudyRuntimeJobV1(execution_id:string,options:{store
   }
   let memberships:SignalStudyMembershipV1[]=[];
   const classify=async(selected:SignalStudyRootV1[],candidates:SignalStudyMotiveV1[],stage:string,affected?:readonly string[])=>{
-   const config=signalStudyJevMotiveConfigurationV1(configuration,candidates),rows:SignalStudyMembershipV1[]=[];
-   const lockedByRoot=new Map<string,string[]>();if(affected)for(const row of memberships)if(row.human_locked){const keys=lockedByRoot.get(row.root_id)??[];keys.push(row.motive_key);lockedByRoot.set(row.root_id,keys);}
-   const inputs=selected.flatMap(root=>{const request=affected?buildSignalStudyMotiveReaskRequestV1(root,candidates,config,{affected_keys:affected,locked_keys:lockedByRoot.get(root.root_id)??[]}):buildSignalStudyMotiveRequestV1(root,candidates,config);return request?[{root_id:root.root_id,request}]:[];});
+   const reask=affected?compileSignalStudyDominanceReaskV1({version:dominanceReaskVersion,configuration,roots:selected,motives:candidates,memberships,affected_keys:affected}):null;
+   const config=reask?.stage_configuration??signalStudyJevMotiveConfigurationV1(configuration,candidates),rows:SignalStudyMembershipV1[]=[];
+   const inputs=reask?.inputs??selected.flatMap(root=>{const request=buildSignalStudyMotiveRequestV1(root,candidates,config);return request?[{root_id:root.root_id,request}]:[];});
    const result=await jevBatch(stage,inputs,config);
    for(const root of inputs)for(const [key,answer]of Object.entries(result.get(root.root_id)!)){
     if(answer.type!=='noul')fail('motive_response_invalid');rows.push({root_id:root.root_id,motive_key:key,probability:answer.noul,source:'jev',human_locked:false});
@@ -396,8 +398,7 @@ export async function signalStudyRuntimeJobV1(execution_id:string,options:{store
    motives=motives.map(m=>{const d=contrasted.definitions.find(d=>d.key===m.key);return d?{...m,name:d.name,definition:d.definition}:m;});
    const target=new Set(dominance.reask_root_ids);
    const reasked=await classify(population.roots.filter(r=>target.has(r.root_id)),motives,'dominance_membership',affected);
-   const replaced=new Set(reasked.map(row=>JSON.stringify([row.root_id,row.motive_key])));
-   memberships=[...memberships.filter(row=>row.human_locked||!replaced.has(JSON.stringify([row.root_id,row.motive_key]))),...reasked];
+   memberships=replaceSignalStudyDominanceMembershipsV1({version:dominanceReaskVersion,memberships,reasked,target_root_ids:target,affected_keys:affected});
    dominance=signalStudyDominancePlanV1({roots,motives,memberships,cut_root_ids:roots.map(r=>r.root_id)});
   }
   const verified_evidence=materializeSignalStudyEvidenceV1(decisions,byRoot,raw.evidence_association_version);

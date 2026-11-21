@@ -1,3 +1,4 @@
+import type{SignalListeningPreparationObservationV1,SignalListeningPreparationEpochCauseV1}from'./signal-listening-preparation-observation';
 import {createJevDeferredRawWitnessV1} from '../providers/jev-deferred-raw';
 import {registerJevPhaseProviderV3,isJevPhaseProviderV3,isJevPhaseSyntheticFactoryV3} from '../providers/jev-phase-provider-v3';
 import {jevResponseInitialHeadroomV3,jevLegacyCaptureParametersV3} from './signal-jev-phase-profile-v3';
@@ -236,6 +237,7 @@ export function createSignalListeningCalibratedProviderV1(args:{plan:SignalListe
 export type SignalListeningCalibrationEventV1={warmup:boolean;selected_roots:number;max_in_flight:number;shape_digests:string[];
   transition?:'bootstrap_start'|'bootstrap_end'|'measured';bootstrap_id?:number;
   outcome?:'measured'|'partial'|'unavailable'|'failed'};
+export type SignalListeningCalibrationObservationV1=SignalListeningCalibrationEventV1|{preparation:SignalListeningPreparationObservationV1};
 const continuationInputKey=(input:Pick<SignalListeningInputV1,'root_id'|'input_digest'|'question_digests'>)=>digest({root_id:input.root_id,input_digest:input.input_digest,question_digests:input.question_digests});
 type BootstrapV1={id:number;shape:string;descriptor:ReturnType<typeof signalListeningCalibrationShapeV1>;order:string[];unreserved:Set<string>;pending:Set<string>;sources:Set<string>;
   requests:Map<string,number>;lo:number;hi:number;deriving:boolean;covered_acknowledged:boolean;covered_ids:Set<string>};
@@ -246,10 +248,10 @@ type ContinuationRowV1={input:SignalListeningInputV1;key:string;index:number;com
  * continues to use the original finite planner/provider above. */
 export async function createSignalListeningContinuationV1({run_id,
   initial_plan:{scope,configuration,snapshot,profiles:initialProfiles,warmup},initial_inputs,
-  execution:requestedExecution,loadProfile,deriveProfile,env,factory,observe,phase_budget_sizing=false,
+  execution:requestedExecution,loadProfile,deriveProfile,env,factory,observe,observe_preparation,phase_budget_sizing=false,
 }:{run_id:string;initial_plan:SignalListeningCalibrationPlanV1;
   initial_inputs:SignalListeningInputV1[];execution:JevStreamingExecutionV2;phase_budget_sizing?:boolean;loadProfile:LoadProfile;deriveProfile:LoadProfile;
-  env?:NodeJS.ProcessEnv;factory?:typeof createCalibratedJevRuntimeProviderV2;observe?:(event:SignalListeningCalibrationEventV1)=>void}){
+  env?:NodeJS.ProcessEnv;factory?:typeof createCalibratedJevRuntimeProviderV2;observe?:(event:SignalListeningCalibrationEventV1)=>void;observe_preparation?:(event:SignalListeningPreparationObservationV1)=>void}){
   // Destructure the plan in the parameter itself: no retained args/plan object
   // can alias its original selected_inputs or the full hydrated input page.
   const execution=Object.freeze({...requestedExecution}),profiles=new Map(initialProfiles),shapeCompiler=createSignalListeningShapeCompilerV1(snapshot);
@@ -271,10 +273,13 @@ export async function createSignalListeningContinuationV1({run_id,
   const headerTemporaryBytes=14*headerUnits+384*headerNodes;
   if(!Number.isSafeInteger(headerTemporaryBytes)||headerTemporaryBytes<0)fail('listening_selection_memory_bound');
   function event(value:SignalListeningCalibrationEventV1){try{observe?.({...value,shape_digests:[...value.shape_digests]});}catch{/* Observation cannot change admission. */}}
+  function preparation(value:SignalListeningPreparationObservationV1){try{observe_preparation?.(value);}catch{/* Optional diagnostics cannot change admission or replace its failure. */}}
+  function reportEpoch(cause:SignalListeningPreparationEpochCauseV1,count:number){if(observe_preparation&&count)preparation({kind:'epoch_advanced',cause,count});}
+  function advanceEpoch(cause:SignalListeningPreparationEpochCauseV1){preparationEpoch++;reportEpoch(cause,1);}
   function endBootstrap(current:BootstrapV1,outcome:NonNullable<SignalListeningCalibrationEventV1['outcome']>){
     event({warmup:true,selected_roots:current.order.length,max_in_flight:Math.min(32,execution.max_in_flight),shape_digests:[current.shape],
       transition:'bootstrap_end',bootstrap_id:current.id,outcome});
-    if(bootstrap===current){bootstrap=undefined;preparationEpoch++;}
+    if(bootstrap===current){bootstrap=undefined;advanceEpoch('bootstrap_end');}
   }
   function nextAdmissionHint():JevFeedAdmissionHintV1{
     if(stopped)return{kind:'closed'};
@@ -289,7 +294,7 @@ export async function createSignalListeningContinuationV1({run_id,
     const current=bootstrap;if(!current||current.id!==generation||!ids.length)return;
     const limit=Math.min(32,current.order.length);
     for(const id of ids){if(current.covered_ids.size>=limit)break;current.covered_ids.add(id);}
-    current.covered_acknowledged=true;preparationEpoch++;
+    current.covered_acknowledged=true;advanceEpoch('covered_reservation');
   }
   const runtime=createSignalListeningCalibratedProviderV1({plan:{scope,configuration,snapshot,profiles,execution,warmup,response_bound_bytes,
       selected_inputs:[],calibration_shapes:[]},
@@ -386,13 +391,14 @@ export async function createSignalListeningContinuationV1({run_id,
     const legacy=()=>({...deferred(),fallback_legacy:true as const});
     let staleReads=0;
     try{for(;;){
-      if(stopped||args.signal.aborted)return{selected:[],decision:false,preparation_epoch:preparationEpoch};
+      if(stopped||args.signal.aborted){if(observe_preparation)preparation({kind:'survey_short_circuit',outcome:'closed'});return{selected:[],decision:false,preparation_epoch:preparationEpoch};}
       if(!Number.isSafeInteger(args.available_bytes)||args.available_bytes<0||!Number.isSafeInteger(args.max_calls)||args.max_calls<1
         ||!Number.isSafeInteger(args.storage_bound)||args.storage_bound<0)fail('listening_selection_memory_bound');
-      if(args.storage_bound+8192>args.available_bytes)return legacy();
+      if(args.storage_bound+8192>args.available_bytes){if(observe_preparation)preparation({kind:'survey_short_circuit',outcome:'legacy'});return legacy();}
       const epoch=preparationEpoch,current=bootstrap;let surveyByteLimited=false;
       const valid=()=>!args.signal.aborted&&!stopped&&epoch===preparationEpoch&&bootstrap===current;
-      const plan=await args.read<Plan>({max_rows:execution.window_size,max_working_bytes:args.available_bytes,on_oversize:'empty',on_byte_limit:()=>{surveyByteLimited=true;}},async survey=>{
+      const surveyStarted=observe_preparation?performance.now():0;let plan:Plan;
+      try{plan=await args.read<Plan>({max_rows:execution.window_size,max_working_bytes:args.available_bytes,on_oversize:'empty',on_byte_limit:()=>{surveyByteLimited=true;}},async survey=>{
         if(!valid())return{kind:'stale'};
         if(survey.hints.length>execution.window_size||!Number.isSafeInteger(survey.retained_bytes)||survey.retained_bytes<0||survey.retained_bytes>args.storage_bound)
           fail('listening_survey_metadata_invalid');
@@ -538,12 +544,22 @@ export async function createSignalListeningContinuationV1({run_id,
             lo:Math.min(...prepared.rows.map(row=>row.bytes)),hi:Math.max(...prepared.rows.map(row=>row.bytes)),deriving:false,covered_acknowledged:false,covered_ids:new Set()};
         }
         return{kind:'ready',rows:prepared.rows,...(nextBootstrap?{bootstrap:nextBootstrap}:{}),byte_limited:surveyByteLimited||prepared.byte_limited===true||!chosen.anchors&&chosen.rows.length<requestedBeforeBudget};
-      });
-      if(!valid())return deferred();
+      });}catch(error){
+        if(observe_preparation)preparation({kind:'survey_result',outcome:'threw',duration_ms:performance.now()-surveyStarted,plan_rows:0,
+          post_rr_invalid:null,epoch_changed:epoch!==preparationEpoch,bootstrap_changed:bootstrap!==current,stopped,aborted:args.signal.aborted});
+        throw error;
+      }
+      const surveyDuration=observe_preparation?performance.now()-surveyStarted:0,validAfterRead=valid();
+      if(observe_preparation)preparation({kind:'survey_result',outcome:plan.kind,duration_ms:surveyDuration,plan_rows:plan.kind==='ready'?plan.rows.length:0,
+        post_rr_invalid:!validAfterRead,epoch_changed:epoch!==preparationEpoch,bootstrap_changed:bootstrap!==current,stopped,aborted:args.signal.aborted});
+      if(!validAfterRead)return deferred();
       if(plan.kind==='profile'){
         if(profiles.size>=execution.window_size){stopped=true;reason='listening_calibration_metadata_bound';return{selected:[],decision:false,preparation_epoch:preparationEpoch};}
-        const loaded=await loadProfile(plan.shape.shape_digest);if(loaded)validateProfile(loaded,scope,plan.shape);
-        profiles.set(plan.shape.shape_digest,loaded?structuredClone(loaded):null);preparationEpoch++;continue;
+        const profileStarted=observe_preparation?performance.now():0;let loaded:Profile|null;
+        try{loaded=await loadProfile(plan.shape.shape_digest);}catch(error){if(observe_preparation)preparation({kind:'survey_profile_load',outcome:'threw',duration_ms:performance.now()-profileStarted});throw error;}
+        if(observe_preparation)preparation({kind:'survey_profile_load',outcome:loaded?'loaded':'missing',duration_ms:performance.now()-profileStarted});
+        if(loaded)validateProfile(loaded,scope,plan.shape);
+        profiles.set(plan.shape.shape_digest,loaded?structuredClone(loaded):null);advanceEpoch('profile_load');continue;
       }
       if(plan.kind==='closed'){stopped=true;reason=plan.reason;return{selected:[],decision:false,preparation_epoch:preparationEpoch};}
       if(plan.kind==='stale'){if(++staleReads<2)continue;return deferred();}
@@ -551,7 +567,10 @@ export async function createSignalListeningContinuationV1({run_id,
       if(plan.kind==='legacy')return legacy();
       // RR is closed and its client released. This is the sole place that may
       // publish bootstrap state or construct final runtime clients. No DB await.
-      const selected=await finalizeRows(plan.rows,false,plan.bootstrap,valid);plan.rows=[];
+      const selectionStarted=observe_preparation?performance.now():0;let selected:ContinuationSelectionV1;
+      try{selected=await finalizeRows(plan.rows,false,plan.bootstrap,valid);}catch(error){if(observe_preparation)preparation({kind:'survey_selection',outcome:'threw',duration_ms:performance.now()-selectionStarted,selected_rows:0});throw error;}
+      if(observe_preparation)preparation({kind:'survey_selection',outcome:selected.decision===true?'ready':selected.decision===false?'closed':'wait_for_apply',duration_ms:performance.now()-selectionStarted,selected_rows:selected.selected.length});
+      plan.rows=[];
       return{...selected,preparation_epoch:epoch,byte_limited:plan.byte_limited};
     }}finally{surveyBusy=false;}
   }
@@ -595,19 +614,22 @@ export async function createSignalListeningContinuationV1({run_id,
         else if(shapeCompiler.shape(call.inputs[0]!).shape_digest===current.shape)fail('listening_calibration_reservation_invalid');
         else coveredIds.push(call.id);
       }
-      preparationEpoch++;acknowledgeCoveredReservation(current.id,coveredIds);
+      advanceEpoch('reserved');acknowledgeCoveredReservation(current.id,coveredIds);
     },
     async applied(rows:Array<{call:LabelingCallV1<SignalListeningInputV1>;results:SignalListeningResultV1[]}>){
       // A BASE APPLY can enable an earlier consumer root. No preparation may
       // carry its previous snapshot through the next Native selector.
-      if(rows.some(row=>row.call.inputs.some(input=>input.question_keys.some(key=>baseQuestionKeys.has(key)))))preparationEpoch++;
+      if(rows.some(row=>row.call.inputs.some(input=>input.question_keys.some(key=>baseQuestionKeys.has(key)))))advanceEpoch('base_apply');
       const current=bootstrap;if(!current||current.deriving)return;
+      let pendingAdvances=0;
       for(const row of rows)if(current.pending.has(row.call.id)){
         if(row.results.length!==1||!['labeled','abstained'].includes(row.results[0]!.status)){
+          reportEpoch('bootstrap_pending_apply',pendingAdvances);
           stopped=true;reason='listening_calibration_results_invalid';endBootstrap(current,'failed');return;
         }
-        current.pending.delete(row.call.id);preparationEpoch++;
+        current.pending.delete(row.call.id);preparationEpoch++;pendingAdvances++;
       }
+      reportEpoch('bootstrap_pending_apply',pendingAdvances);
       if(current.pending.size||current.unreserved.size||!current.sources.size)return;
       current.deriving=true;
       // APPLY has already committed. A calibration error must not turn that ACK
@@ -621,7 +643,7 @@ export async function createSignalListeningContinuationV1({run_id,
         if(!loaded||digest(loaded)!==digest(derived)||derived.source_run_id!==run_id
           ||derived.sample_count<current.sources.size||[...current.sources].some(id=>!derived.source_call_ids.includes(id))
           ||derived.request_min_bytes>current.lo||derived.request_max_bytes<current.hi)fail('listening_calibration_evidence_invalid');
-        profiles.set(current.shape,structuredClone(derived));preparationEpoch++;
+        profiles.set(current.shape,structuredClone(derived));advanceEpoch('derived_profile');
         endBootstrap(current,derived.sample_count>=32?'measured':'partial');
       }catch(error){failed=true;failure=error;stopped=true;reason='listening_calibration_failed';endBootstrap(current,'failed');}
     },

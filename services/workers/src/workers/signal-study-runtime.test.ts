@@ -2,10 +2,11 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import type{PoolClient}from'pg';
 import{replaySignalStudyWithClientV1}from'../../../../infrastructure/db/signal-study-replay';
+import{legacyDominancePlan1dd,legacyDominanceReplacement1dd}from'./signal-study-dominance-legacy.fixture';
 import {createHash,randomUUID} from 'node:crypto';
 import {SIGNAL_STUDY_TB_TEMPLATE_V1,SIGNAL_STUDY_TB_ROLES_V1,createSignalStudyTemplateSnapshotV1,
- buildSignalStudyExecutionConfigurationV1,buildSignalStudyConfiguredAxesRequestV1,resolveSignalStudyConfiguredAxesV1,signalStudyJevMotiveConfigurationV1,buildSignalStudyMotiveRequestV1,type SignalStudyMotiveV1,signalListeningBaseTemplateV1,signalWorkspaceEmbeddingDigestV1 as digest,
- SIGNAL_STUDY_BOUNDARY_RULE_VERSION_V1,SIGNAL_STUDY_EDITORIAL_COMPILER_V2,type SignalStudyEditorialFormatStopV1,type SignalStudyV1} from '@noisia/query-engine';
+ buildSignalStudyExecutionConfigurationV1,buildSignalStudyConfiguredAxesRequestV1,resolveSignalStudyConfiguredAxesV1,signalStudyJevMotiveConfigurationV1,buildSignalStudyMotiveRequestV1,signalStudyConfirmedCentroidV1,signalStudyDominancePlanV1,buildSignalStudySummaryV1,type SignalStudyRootV1,type SignalStudyMembershipV1,type SignalStudyMotiveV1,signalListeningBaseTemplateV1,signalWorkspaceEmbeddingDigestV1 as digest,
+ SIGNAL_STUDY_DOMINANCE_REASK_VERSION_V1,SIGNAL_STUDY_BOUNDARY_RULE_VERSION_V1,SIGNAL_STUDY_EDITORIAL_COMPILER_V2,type SignalStudyEditorialFormatStopV1,type SignalStudyV1} from '@noisia/query-engine';
 import type{StudyNumericManifestV1}from'./signal-study-numeric';
 import {signalStudyRuntimeJobV1,studyRuntimeJevQuestionIdentityV1,type StudyRuntimeJevBatchPlanV1,type StudyRuntimeJevBatchCheckpointV1,type StudyRuntimeStoreV1,type StudyRuntimeLeaseV1,type StudyRuntimeSourceV1,
  type StudyRuntimeStepV1,type StudyRuntimeStepPlanV1,type StudyRuntimeReceiptV1,type StudyRuntimeOutputV1,type StudyRuntimeNumericComputedV1,type StudyRuntimeNumericPlanV1,type StudyRuntimeStoredNumericV1} from './signal-study-runtime';
@@ -415,7 +416,7 @@ test('new null-kappa sources retain uncertainty and second-pass split identities
 });
 
 test('worker and native replay reask only original global pairs after five-motive layer dominance',async()=>{
- const f=fixture(320,true);f.dominant=true;
+ const f=fixture(320,true);f.source.dominance_reask_version=SIGNAL_STUDY_DOMINANCE_REASK_VERSION_V1;f.dominant=true;
  const originalMotives:SignalStudyMotiveV1[]=dominanceLetters.map((letter,index):SignalStudyMotiveV1=>({key:'force_'+letter,name:'Partition motive_'+letter,
   definition:'Evidence-backed synthetic force',centroid:dominanceVector(index),layer:index<5?'psychological':'personal',human_locked:false}));
  const originalConfig=signalStudyJevMotiveConfigurationV1(f.source.configuration,originalMotives);
@@ -539,4 +540,79 @@ test('unknown or null evidence association versions fail before work in runtime 
   await assert.rejects(replaySignalStudyWithClientV1({query:async()=>{throw Error('must not query');}}as unknown as PoolClient,f.execution_id,f.source),/evidence_association_version_invalid/);
   assert.equal(f.sends.length,0);assert.equal(f.fitCalls,0);
  }
+});
+
+
+test('unknown or null dominance reask versions fail before provider, numeric or native replay work',async()=>{
+ for(const version of [null,'future']){
+  const f=fixture(2);f.source.dominance_reask_version=version as never;sealSource(f);
+  await assert.rejects(signalStudyRuntimeJobV1(f.execution_id,f),/dominance_reask_version_invalid/);
+  await assert.rejects(replaySignalStudyWithClientV1({query:async()=>{throw Error('must not query');}}as unknown as PoolClient,f.execution_id,f.source),/dominance_reask_version_invalid/);
+  assert.equal(f.sends.length,0);assert.equal(f.fitCalls,0);assert.equal(f.batches.size,0);assert.equal(f.journal.size,0);
+ }
+});
+
+
+function legacyDominanceContext1dd(f:ReturnType<typeof fixture>){
+ const axes=[...f.batches.values()].find(b=>b.plan.stage==='axes')!,initial=[...f.batches.values()].find(b=>b.plan.stage==='membership')!;
+ const axesByRoot=new Map(axes.results.map(row=>[row.root_id,(row.response as{answers:Parameters<typeof resolveSignalStudyConfiguredAxesV1>[1]}).answers]));
+ const roots:SignalStudyRootV1[]=f.source.roots.map(root=>({...root,axes:resolveSignalStudyConfiguredAxesV1(f.source.configuration,axesByRoot.get(root.root_id)!)}));
+ const byRoot=new Map(roots.map(root=>[root.root_id,root]));
+ type LayerRaw={contract_version:'signal-study-layer-output-v1';motives:Array<{partitions:Array<{key:string;name:string;definition:string;sample_root_ids:string[];layer:SignalStudyMotiveV1['layer']}>}>};
+ type ContrastRaw={contract_version:'signal-study-contrast-output-v1';definitions:Array<{key:string;name:string;definition:string}>};
+ const values=[...f.journal.values()].filter(s=>s.status==='committed').map(s=>JSON.parse((s.value as{content:Array<{text:string}>}).content[0]!.text)as LayerRaw|ContrastRaw);
+ const layer=values.find((v):v is LayerRaw=>v.contract_version==='signal-study-layer-output-v1')!;
+ const contrast=values.find((v):v is ContrastRaw=>v.contract_version==='signal-study-contrast-output-v1')!;
+ const originalMotives:SignalStudyMotiveV1[]=layer.motives.flatMap(m=>m.partitions.map(p=>({key:p.key,name:p.name,definition:p.definition,
+  centroid:signalStudyConfirmedCentroidV1(p.sample_root_ids.map(id=>byRoot.get(id)!)),layer:p.layer,human_locked:false})));
+ const membershipsFrom=(results:StudyRuntimeJevBatchCheckpointV1['results']):SignalStudyMembershipV1[]=>results.flatMap(row=>Object.entries((row.response as{answers:Record<string,{type:'noul';noul:number}>}).answers)
+  .map(([motive_key,a])=>{assert.equal(a.type,'noul');return{root_id:row.root_id,motive_key,probability:a.noul,source:'jev' as const,human_locked:false};}));
+ const previous=membershipsFrom(initial.results),cut_root_ids=roots.map(r=>r.root_id);
+ const dominance=signalStudyDominancePlanV1({roots,motives:originalMotives,memberships:previous,cut_root_ids});
+ const motives=originalMotives.map(m=>{const changed=contrast.definitions.find(d=>d.key===m.key);return changed?{...m,name:changed.name,definition:changed.definition}:m;});
+ return{roots,motives,previous,affected:dominance.motive_keys,target:new Set(dominance.reask_root_ids),membershipsFrom,cut_root_ids};
+}
+test('absent dominance protocol reuses the independent 1dd legacy plan, immutable checkpoints and output without new sends',async()=>{
+ const f=fixture(320,true);f.dominant=true;
+ assert.equal(Object.hasOwn(f.source,'dominance_reask_version'),false);assert.equal(Object.hasOwn(f.source,'evidence_association_version'),false);
+ assert.ok(f.source.roots.every(root=>!root.question_cache?.length),'the extracted old oracle covers this explicitly uncached fixture');
+ const prepare=f.store.prepareJevBatch,goldenPlans:StudyRuntimeJevBatchPlanV1[]=[];
+ f.store.prepareJevBatch=async(lease,plan)=>{
+  if(plan.stage!=='dominance_membership')return prepare(lease,plan);
+  const context=legacyDominanceContext1dd(f);
+  const oracle=legacyDominancePlan1dd({...context,configuration:f.source.configuration,header:plan});
+  assert.deepEqual(plan,oracle,'the plan must come from the exact old subset configuration, requests and identity');
+  goldenPlans.push(structuredClone(oracle));
+  return prepare(lease,oracle); // Journal/checkpoints are generated with the independent 1dd oracle.
+ };
+ assert.equal((await signalStudyRuntimeJobV1(f.execution_id,f)).status,'completed');assert.equal(goldenPlans.length,1);const goldenPlan=goldenPlans[0]!;
+ const repeated=[...f.batches.entries()].find(([,b])=>b.plan.stage==='dominance_membership')!;
+ assert.deepEqual(repeated[1].plan,goldenPlan);
+ const first=JSON.parse(goldenPlan.requests.find(r=>r.root_id==='root_0')!.request_body)as{questions:Record<string,unknown>};
+ assert.deepEqual(Object.keys(first.questions),['force_a','force_b','force_c','force_d'],'legacy ranking is deliberately within the affected population');
+ assert.deepEqual(goldenPlan.stage_configuration.questions.filter(q=>q.origin==='methodology').map(q=>q.key),['force_a','force_b','force_c','force_d','force_e']);
+ const context=legacyDominanceContext1dd(f),reasked=context.membershipsFrom(repeated[1].results);
+ const memberships=legacyDominanceReplacement1dd(context.previous,reasked,context.target,context.affected);
+ const expectedSummary=buildSignalStudySummaryV1({study:f.source.configuration.study,template_snapshot:f.source.configuration.template_snapshot,
+  roots:context.roots,motives:context.motives,memberships,cut_root_ids:context.cut_root_ids,unresolved_root_ids:[]});
+ assert.deepEqual(f.output!.summary,expectedSummary,'legacy output replacement is independently derived from baseline 1dd');
+ assert.deepEqual(f.output!.dominance,signalStudyDominancePlanV1({roots:context.roots,motives:context.motives,memberships,cut_root_ids:context.cut_root_ids}));
+ const goldenOutput=JSON.stringify(f.output),steps=new Map([...f.journal].map(([key,value])=>[key,structuredClone(value)])),numerics=new Map([...f.numericCheckpoints].map(([key,value])=>[key,structuredClone(value)]));
+ const batches=await Promise.all([...f.batches].map(async([id,b])=>({id,stage:b.plan.stage,plan_digest:b.plan.plan_digest,status:b.status,checkpoint:structuredClone(await f.store.jevBatchCheckpoint(f.lease,id))})));
+ const checkpoint=batches.find(b=>b.id===repeated[0])!.checkpoint;assert.equal(checkpoint.plan_digest,goldenPlan.plan_digest);
+ const {checkpoint_digest,...checkpointBody}=checkpoint;assert.equal(checkpoint_digest,digest(checkpointBody));
+ const sends=f.sends.length,counts={steps:f.journal.size,numeric:f.numericCheckpoints.size,batches:f.batches.size},queries:string[]=[];
+ const client={query:async(sql:string,params:unknown[])=>{
+  queries.push(sql);
+  if(sql.includes('FROM signal_study_steps')){const step=steps.get(String(params[1]));return{rows:step?[step]:[]};}
+  if(sql.includes('FROM signal_study_numeric_checkpoints')){const stored=numerics.get(String(params[1]));assert.ok(stored&&'verified'in stored);return{rows:[{...stored,verification_status:'verified'}]};}
+  if(sql.includes('FROM signal_study_jev_batches')){const batch=batches.find(b=>b.stage===params[1]&&b.plan_digest===params[2]);return{rows:batch?[batch]:[]};}
+  throw Error('unexpected legacy replay query');
+ }}as unknown as PoolClient;
+ const replay=await replaySignalStudyWithClientV1(client,f.execution_id,f.source);assert.equal(replay.operation.kind,'output');
+ if(replay.operation.kind!=='output')throw Error('legacy checkpoints must not compile a replacement paid batch');
+ assert.equal(JSON.stringify(replay.operation.output),goldenOutput);assert.ok(queries.every(sql=>sql.startsWith('SELECT ')));
+ assert.equal((await signalStudyRuntimeJobV1(f.execution_id,f)).status,'completed');assert.equal(JSON.stringify(f.output),goldenOutput);
+ assert.equal(f.sends.length,sends);assert.deepEqual({steps:f.journal.size,numeric:f.numericCheckpoints.size,batches:f.batches.size},counts);
+ assert.equal(digest([...f.journal]),digest([...steps]),'restart leaves the original immutable journal unchanged');
 });

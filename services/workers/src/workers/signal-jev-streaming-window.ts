@@ -1,3 +1,4 @@
+import type{SignalListeningPreparationObservationV1,SignalListeningNativeSelectorObservationV1}from'./signal-listening-preparation-observation';
 import {createJevListeningMetadataScopeV3,isJevListeningMetadataBindingV3} from './signal-jev-listening-metadata-v3';
 import {selectJevPhaseInitialBindingV3} from './signal-jev-phase-profile-v3';
 import type { FacetInput, LlmPriceV1 } from '@noisia/query-engine';
@@ -67,6 +68,7 @@ export async function processJevStreamingWindowV2<I extends FacetInput, R>(args:
   }; provider: JevProviderV1;
   execution: JevStreamingExecutionV2; price: LlmPriceV1; cancellation: AbortController;
   observe_stream?(metrics: JevStreamingMetricsV2): void;
+  observe_preparation?(event:SignalListeningPreparationObservationV1):void;
   /** First-party adapters only: inputs exclude every already reserved identity.
    * Returns at most one window, already budgeted before money reservation. */
   feed_next?(available_bytes:number,max_calls:number,admission_signal:AbortSignal):Promise<JevFeedResultV1<I>>;
@@ -140,6 +142,7 @@ export async function processJevStreamingWindowV2<I extends FacetInput, R>(args:
   const errors = new Map<string, { call: LabelingCallV1<I>; unknown: boolean; code: string; write_result: boolean }>();
   const applied = new Set<string>(), observedRaw = new Set(calls.filter(c => Boolean(c.raw_body)).map(c => c.id));
   const active = new Set<Promise<void>>(); const waiters = new Set<() => void>();
+  const preparation=(event:SignalListeningPreparationObservationV1)=>{try{args.observe_preparation?.(event);}catch{/* Diagnostics cannot replace a Native result or its original failure. */}};
   const observe = () => {
     // Instrumentation never changes physical attempts or their financial outcome.
     try { args.observe_stream?.({ in_flight: inFlight, reserved_working_bytes: memory,
@@ -453,7 +456,7 @@ export async function processJevStreamingWindowV2<I extends FacetInput, R>(args:
       prefetch();
       if(draft&&!reserved.length){
         const pending=draft;
-        if(args.preparation_valid?.()===false){draft=undefined;release(draftBytes);draftBytes=0;continue;}
+        if(args.preparation_valid?.()===false){if(args.observe_preparation)preparation({kind:'draft_discard',point:'pre_native'});draft=undefined;release(draftBytes);draftBytes=0;continue;}
         if(workers<=inFlight){
           if(activeSends.size||active.size||buffered.length){flush(true);await wait();continue;}
           throw Error('jev_stream_configuration_invalid');
@@ -487,17 +490,25 @@ export async function processJevStreamingWindowV2<I extends FacetInput, R>(args:
           draft=undefined;release(draftBytes);draftBytes=0;continue;
         }
         let workspaceClaim=workspaceBytes,selectionCalled=false,validationCalled=false;
+        let selectorObservation:SignalListeningNativeSelectorObservationV1='not_observed';
         let phaseLeases:readonly JevPhaseCaptureLeaseV3[]=[];
         let responseClaim=0,callClaim=0,selected:ReadonlyArray<LabelingCallProposalV1<I>>=[],
           validated:ReadonlyArray<LabelingCallV1<I>>=[],validatedIds:ReadonlyArray<string>=[];
         memory+=workspaceBytes;observe();markingInProgress=true;
         try{
-          const result=await store.admitAndMarkSelected!(run,nativeProposals,{
+          const admissionStarted=args.observe_preparation?performance.now():0;let result:LabelingAdmissionResultV1<I>;
+          try{result=await store.admitAndMarkSelected!(run,nativeProposals,{
             selectFresh(candidates){
               if(selectionCalled)throw Error('jev_native_selection_repeated');selectionCalled=true;
               const priority=args.next_admission_hint?.();
-              if(fatalKnown||admission.signal.aborted||cancellation.signal.aborted||args.preparation_valid?.()===false||priority?.kind==='closed'
-                ||priority?.kind==='bootstrap'&&priority.wait_for_apply)return[];
+              // Preserve the original short-circuit order and call count. Only
+              // the branch actually reached labels this local rejection.
+              if(fatalKnown){selectorObservation='fatal';return[];}
+              if(admission.signal.aborted){selectorObservation='admission_aborted';return[];}
+              if(cancellation.signal.aborted){selectorObservation='cancellation_aborted';return[];}
+              if(args.preparation_valid?.()===false){selectorObservation='preparation_invalid';return[];}
+              if(priority?.kind==='closed'){selectorObservation='closed';return[];}
+              if(priority?.kind==='bootstrap'&&priority.wait_for_apply){selectorObservation='bootstrap_wait';return[];}
               const count=Math.min(workers-inFlight,candidates.length,priority?.kind==='bootstrap'?priority.covered_call_limit:Infinity),chosen:LabelingCallProposalV1<I>[]=[];
               if(phase){
                 const prefix=[0];for(const proposal of candidates.slice(0,count))prefix.push(prefix.at(-1)!+jevCallWorkingBytesV2(proposal));
@@ -517,7 +528,7 @@ export async function processJevStreamingWindowV2<I extends FacetInput, R>(args:
                 callClaim=chosen.reduce((n,p)=>n+jevCallWorkingBytesV2(p),0);
                 responseClaim=chosen.length*reservationBytes;memory+=callClaim+responseClaim;
               }
-              selected=chosen;observe();return chosen;
+              selected=chosen;selectorObservation=chosen.length?'selected':'zero_selected';observe();return chosen;
             },
             validateBeforeCommit(rows,proposals){
               if(!selectionCalled||validationCalled)throw Error('jev_native_validation_invalid');validationCalled=true;
@@ -545,10 +556,20 @@ export async function processJevStreamingWindowV2<I extends FacetInput, R>(args:
               // Prepare every recipient and notification identifier before ACK.
               validated=rows;validatedIds=rows.map(row=>row.id);
             }
-          });
+          });}catch(error){
+            if(args.observe_preparation)preparation({kind:'native_admission',outcome:'threw',duration_ms:performance.now()-admissionStarted,
+              proposed_calls:nativeProposals.length,selected_calls:selected.length,validated_calls:validated.length,returned_calls:null,
+              selector_called:selectionCalled,validation_called:validationCalled,selector_observation:selectorObservation});
+            // In particular, a lost COMMIT ACK remains unknown, not a failed
+            // transaction. The existing owner below keeps the original error.
+            throw error;
+          }
+          if(args.observe_preparation)preparation({kind:'native_admission',outcome:result.kind,duration_ms:performance.now()-admissionStarted,
+            proposed_calls:nativeProposals.length,selected_calls:selected.length,validated_calls:validated.length,returned_calls:result.kind==='committed'?result.calls.length:null,
+            selector_called:selectionCalled,validation_called:validationCalled,selector_observation:selectorObservation});
           if(result.kind==='legacy'){
             release(workspaceClaim);workspaceClaim=0;
-            if(args.preparation_valid?.()===false)continue;
+            if(args.preparation_valid?.()===false){if(args.observe_preparation)preparation({kind:'draft_discard',point:'post_legacy'});continue;}
             // Native guarantees this branch precedes selector and every DML.
             // Unsupported shapes retain the COMPLETE prepared legacy prefix;
             // a Native workspace fit must not trim bootstrap/finite coverage.

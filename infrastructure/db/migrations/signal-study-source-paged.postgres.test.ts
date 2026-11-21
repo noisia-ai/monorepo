@@ -20,6 +20,7 @@ test('native paged Study source freezes the complete cut and exact raw/vector/me
  const counts=async()=>(await f.database.query('SELECT (SELECT count(*) FROM signal_workspace_embedding_calls)::int embeddings,(SELECT count(*) FROM engine_cost_events)::int editorial,(SELECT count(*) FROM signal_labeling_calls)::int jev,(SELECT count(*) FROM signal_processing_admissions)::int admissions')).rows[0];
  const before=await counts(),execution=await f.request();assert.equal(execution.status,'queued');assert.equal(execution.source_roots,3);
  assert.equal((execution.source_header.source_storage as {contract_version:string}).contract_version,'signal-study-source-pages-v1');
+ assert.equal(execution.source_header.dominance_reask_version,'signal-study-dominance-reask-v1');
  const native=(await f.database.query('SELECT signal_labeling_digest_v1(source_header) header_digest,signal_study_census_v1(id) census FROM signal_study_executions WHERE id=$1',[execution.id])).rows[0];
  assert.equal(native.header_digest,execution.source_digest);assert.equal(native.census,execution.source_census_digest);
  const lease=await claimSignalStudyExecutionV1({database:f.database,execution_id:execution.id});assert.ok(lease);
@@ -77,6 +78,7 @@ test('native V3 header rejects forged protocol, byte budgets, vector census and 
  });
  const legacy=await requestSignalStudyExecutionV1({...f,database:legacyDatabase,configuration_id:legacyStudy.configuration.id,idempotency_key:randomUUID(),cap_micro_usd:4000000});
  assert.equal(Object.hasOwn(legacy.source_header,'source_storage'),false);assert.equal(legacy.source_digest,legacyDigest);
+ assert.equal(legacy.source_header.dominance_reask_version,'signal-study-dominance-reask-v1','new inline creators also seal the protocol before digesting');
  const lease=await claimSignalStudyExecutionV1({database:f.database,execution_id:legacy.id});assert.ok(lease);
  const source=await readSignalStudyRuntimeSourceV1({database:f.database,lease});assert.ok(source);
  assert.equal(assertStudySourcePagesV1(source),false);assert.equal(studyRuntimeSourceDigestV1(source),legacyDigest);assert.equal(source.roots.length,3);

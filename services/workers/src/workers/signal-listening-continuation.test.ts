@@ -1,3 +1,4 @@
+import type{SignalListeningPreparationObservationV1}from'./signal-listening-preparation-observation';
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
 import test from 'node:test';
@@ -235,11 +236,11 @@ function orderedInput(f:ReturnType<typeof fixture>,index:number,keys=['voice','p
  return{...f.input(index,keys),root_id};
 }
 async function measuredSurveyController(f:ReturnType<typeof fixture>,inputs:SignalListeningInputV1[],reader:ReturnType<typeof scopedSurveyMock>,
- profiles=new Map<string,SignalListeningCalibrationProfileV1>(),events:SignalListeningCalibrationEventV1[]=[]){
+ profiles=new Map<string,SignalListeningCalibrationProfileV1>(),events:SignalListeningCalibrationEventV1[]=[],observe_preparation?:(event:SignalListeningPreparationObservationV1)=>void){
  const known=f.profile([inputs[0]!,inputs.at(-1)!]);profiles.set(known.scope.shape_digest,known);
  const load=async(id:string)=>{assert.equal(reader.state().active,false,'profile SQL belongs outside the RR/poolmax1 callback');return profiles.get(id)??null;};
  const plan=await planSignalListeningCalibrationV1({...f,inputs:[inputs[0]!],execution,loadProfile:load});
- const controller=await createSignalListeningContinuationV1({run_id:f.run_id,initial_plan:plan,initial_inputs:[inputs[0]!],execution,loadProfile:load,deriveProfile:async()=>null,observe:event=>events.push(event),
+ const controller=await createSignalListeningContinuationV1({run_id:f.run_id,initial_plan:plan,initial_inputs:[inputs[0]!],execution,loadProfile:load,deriveProfile:async()=>null,observe:event=>events.push(event),observe_preparation,
   factory:()=>{assert.equal(reader.state().active,false,'final runtime client construction belongs outside RR');return{evaluate:async()=>{throw Error('selection proof must not physically send');}};}});
  controller.takeInitialSelection();return controller;
 }
@@ -333,4 +334,78 @@ test('an epoch change during final real descriptor preparation publishes no boot
  assert.equal(controller.nextAdmissionHint().kind,'open');assert.equal(controller.preparationValid(stale.preparation_epoch),false);
  const fresh=await controller.selectNextSurvey(surveyArgs(reader));assert.equal(fresh.decision,true);assert.equal(fresh.selected.length,128);
  controller.closeObservation();await controller.runtime.provider.close!();
+});
+
+
+test('preparation observations identify profile-driven survey retries and actual selection without keeping hint identities',async()=>{
+ const f=fixture(),initial=[orderedInput(f,1)],pending=Array.from({length:40},(_,i)=>orderedInput(f,100+i,['topic'])),reader=scopedSurveyMock(()=>pending),profiles=new Map<string,SignalListeningCalibrationProfileV1>(),observed:SignalListeningPreparationObservationV1[]=[];
+ const known=f.profile([pending[0]!,pending.at(-1)!]);profiles.set(known.scope.shape_digest,known);
+ const controller=await measuredSurveyController(f,initial,reader,profiles,[],event=>observed.push(event));
+ try{
+  const next=await controller.selectNextSurvey(surveyArgs(reader));assert.equal(next.decision,true);assert.equal(next.selected.length,40);assert.equal(reader.state().reads,2);
+  const surveys=observed.filter((event):event is Extract<SignalListeningPreparationObservationV1,{kind:'survey_result'}>=>event.kind==='survey_result');
+  assert.deepEqual(surveys.map(event=>event.outcome),['profile','ready']);assert.deepEqual(surveys.map(event=>event.plan_rows),[0,40]);
+  assert.ok(surveys.every(event=>event.post_rr_invalid===false&&event.duration_ms>=0));
+  assert.deepEqual(observed.filter(event=>event.kind==='survey_profile_load').map(event=>event.outcome),['loaded']);
+  assert.equal(observed.filter(event=>event.kind==='epoch_advanced'&&event.cause==='profile_load').length,1);
+  assert.ok(observed.some(event=>event.kind==='survey_selection'&&event.outcome==='ready'&&event.selected_rows===40));
+  const body=JSON.stringify(observed);for(const input of[...initial,...pending])assert.ok(!body.includes(input.root_id)&&!body.includes(input.text));
+ }finally{controller.closeObservation();await controller.runtime.provider.close!();}
+});
+test('preparation observations expose a BASE apply invalidation after RR without retrying a stale cohort',async()=>{
+ const f=fixture(),inputs=Array.from({length:4},(_,i)=>orderedInput(f,i)),reader=scopedSurveyMock(()=>inputs),observed:SignalListeningPreparationObservationV1[]=[];
+ const controller=await measuredSurveyController(f,inputs,reader,new Map(),[],event=>observed.push(event));
+ try{
+  const read:typeof reader.read=async(bounds,body)=>{const result=await reader.read(bounds,body);assert.equal(reader.state().active,false);await controller.applied(f.applied(f.calls([inputs[0]!])));return result;};
+  const result=await controller.selectNextSurvey({...surveyArgs(reader),read});assert.equal(result.decision,'wait_for_apply');assert.equal(result.selected.length,0);assert.equal(reader.state().reads,1);
+  assert.equal(observed.filter(event=>event.kind==='epoch_advanced'&&event.cause==='base_apply').length,1);
+  const survey=observed.find((event):event is Extract<SignalListeningPreparationObservationV1,{kind:'survey_result'}>=>event.kind==='survey_result')!;
+  assert.equal(survey.outcome,'ready');assert.equal(survey.plan_rows,4);assert.equal(survey.post_rr_invalid,true);assert.equal(survey.epoch_changed,true);
+  assert.equal(observed.some(event=>event.kind==='survey_selection'),false,'invalid RR plans are not claimed as published selections');
+ }finally{controller.closeObservation();await controller.runtime.provider.close!();}
+});
+test('preparation observations keep stale retries, byte deferrals and pre-read exits distinct',async()=>{
+ const f=fixture(),inputs=Array.from({length:4},(_,i)=>orderedInput(f,i)),observed:SignalListeningPreparationObservationV1[]=[];
+ const stale=scopedSurveyMock(()=>inputs,{stale:()=>true}),controller=await measuredSurveyController(f,inputs,stale,new Map(),[],event=>observed.push(event));
+ try{
+  const result=await controller.selectNextSurvey(surveyArgs(stale));assert.equal(result.decision,'wait_for_apply');
+  assert.deepEqual(observed.filter(event=>event.kind==='survey_result').map(event=>event.outcome),['stale','stale']);assert.equal(stale.state().reads,2);
+  observed.length=0;const bounded=scopedSurveyMock(()=>inputs,{working:()=>execution.max_buffered_bytes+1});
+  const deferred=await controller.selectNextSurvey(surveyArgs(bounded));assert.equal(deferred.decision,'wait_for_apply');
+  assert.deepEqual(observed.filter(event=>event.kind==='survey_result').map(event=>event.outcome),['deferred']);
+  observed.length=0;const legacy=await controller.selectNextSurvey({...surveyArgs(bounded),available_bytes:1});assert.equal(legacy.fallback_legacy,true);
+  assert.deepEqual(observed,[{kind:'survey_short_circuit',outcome:'legacy'}]);
+  observed.length=0;const abort=new AbortController();abort.abort();await controller.selectNextSurvey({...surveyArgs(bounded),signal:abort.signal});
+  assert.deepEqual(observed,[{kind:'survey_short_circuit',outcome:'closed'}]);
+ }finally{controller.closeObservation();await controller.runtime.provider.close!();}
+});
+test('preparation observer exceptions cannot replace falsy survey failures or leave the RR coordinator busy',async()=>{
+ for(const failure of[0,null,undefined]){
+  const f=fixture(),inputs=[orderedInput(f,1)],reader=scopedSurveyMock(()=>inputs);
+  const controller=await measuredSurveyController(f,inputs,reader,new Map(),[],()=>{throw Error('observer only');});
+  try{
+   await assert.rejects(controller.selectNextSurvey({...surveyArgs(reader),read:async()=>{throw failure;}}),error=>error===failure);
+   const fresh=await controller.selectNextSurvey(surveyArgs(reader));assert.equal(fresh.decision,true);assert.equal(fresh.selected.length,1);
+   assert.equal(controller.failure().failed,false);
+  }finally{controller.closeObservation();await controller.runtime.provider.close!();}
+ }
+});
+
+test('preparation epoch diagnostics coalesce a complete32 ACK and preserve the valid prefix before an invalid result',async()=>{
+ for(const invalid of[false,true]){
+  const f=fixture(),inputs=Array.from({length:32},(_,i)=>f.input(i)),observed:SignalListeningPreparationObservationV1[]=[];
+  const plan=await planSignalListeningCalibrationV1({...f,inputs,execution,loadProfile:async()=>null});
+  const controller=await createSignalListeningContinuationV1({run_id:f.run_id,initial_plan:plan,initial_inputs:inputs,execution,
+   loadProfile:async()=>null,deriveProfile:async()=>null,observe_preparation:event=>observed.push(event),
+   factory:()=>({evaluate:async()=>{throw Error('no physical send for scalar diagnostics');}})});
+  try{
+   const rows=f.calls(controller.takeInitialSelection());controller.reserved(rows);observed.length=0;
+   const ack=f.applied(rows);if(invalid)ack[7]!.results=[];
+   await controller.applied(ack);
+   const pending=observed.filter(event=>event.kind==='epoch_advanced'&&event.cause==='bootstrap_pending_apply');
+   assert.deepEqual(pending,[{kind:'epoch_advanced',cause:'bootstrap_pending_apply',count:invalid?7:32}]);
+   assert.equal(controller.stopReason(),invalid?'listening_calibration_results_invalid':'listening_calibration_profile_unavailable');
+   assert.equal(controller.failure().failed,false);
+  }finally{controller.closeObservation();await controller.runtime.provider.close!();}
+ }
 });

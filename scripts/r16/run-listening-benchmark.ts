@@ -297,7 +297,9 @@ export async function runR16ListeningBenchmarkV1(args:{arm:R16ListeningArmV1;obj
     try{
      outcome=await signalListeningJevJobV1(f.run_id,{database:f.access.database,store,execution,preflight:()=>assertR16ListeningSyntheticPreflightV1({storage,storage_url:storageServer.base_url,configuration:workload.configuration,configuration_digest:workload.configuration_digest,env:process.env}),calibrated_provider_factory,
       observe_stream:metrics=>{metadataReceipt.observe(metrics);if(metrics.response_phase){phaseObservations++;phaseCapturesObserved||=metrics.response_phase.capture_bytes>0;}resources.observeStream(metrics);},
+      observe_preparation:true,
       observe_calibration:event=>{
+       if('preparation'in event){calibrationRecorder.observe(jobOrdinal,event);return;}
        if(event.warmup)jobWarmup=true;
        // Preserve compatibility with the current worker callback while also
        // observing optional lifecycle fields from a source-compatible worker.
@@ -337,6 +339,7 @@ export async function runR16ListeningBenchmarkV1(args:{arm:R16ListeningArmV1;obj
    warmup_wall_ms_basis:calibrationObservation.warmup_wall_ms_basis,warmup_intervals_may_overlap_processing:calibrationObservation.warmup_intervals_may_overlap_processing,
    bootstrap_observation_status:calibrationObservation.bootstrap_observation_status,
    bootstrap_observation_issues:calibrationObservation.bootstrap_observation_issues,bootstrap_spans:calibrationObservation.bootstrap_spans,
+   preparation_observation:calibrationObservation.preparation_observation,
    response_phase_budget:{contract_version:'jev-legacy-capture-phase-v3',observed:phaseObservations>0&&phaseCapturesObserved,observations:phaseObservations,capture_policy:'24B+64KiB; unchanged',synthetic_geometry:'identical_native_production',metadata:metadataReceipt.snapshot()},
    workload,root_census_digest:digest([...expected].sort()),cold_elapsed_ms:performance.now()-coldStart,wall_elapsed_ms,classification_wall_elapsed_ms,
    fully_resolved_distinct_roots:resolved.size,requests:syntheticRuntime.requests(),requests_per_resolved_root:resolved.size?syntheticRuntime.requests()/resolved.size:null,latency_ms,calibration:calibrationObservation.calibration,commits,jobs,metrics,storage:storageServer.metrics(),

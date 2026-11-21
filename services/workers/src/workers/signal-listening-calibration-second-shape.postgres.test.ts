@@ -42,7 +42,7 @@ test('default native Listening continuation keeps one lease through both real ba
      q.type==='noul'?{type:'noul',noul:key==='promotion'?.1:.9}:{type:'choice',choice:'individual',confidence:.9,
       probabilities:Object.fromEntries(Object.keys(q.criteria).map(option=>[option,option==='individual'?.9:.1/(Object.keys(q.criteria).length-1)]))}]))})};}};
    const outcome=await signalListeningJevJobV1(admitted.run_id,{database:f.database,store,execution,provider,preflight:async()=>{},observe_stream:value=>{memory.push(value.reserved_working_bytes);assert.ok(value.in_flight<=1&&value.active_flushes<=2);},
-    observe_calibration:event=>{if(event.transition==='bootstrap_start')starts.push(...event.shape_digests);if(event.transition==='bootstrap_end'){assert.equal(event.outcome,'measured');ends.push(...event.shape_digests);}}});
+    observe_calibration:event=>{if('preparation'in event)return;if(event.transition==='bootstrap_start')starts.push(...event.shape_digests);if(event.transition==='bootstrap_end'){assert.equal(event.outcome,'measured');ends.push(...event.shape_digests);}}});
    assert.equal(outcome.status,'completed');assert.equal(physical,128);assert.equal(outcome.labeled,128);assert.deepEqual([claims,finishes,releases],[1,1,1]);
    assert.equal(firstReserve,32);assert.equal(starts.length,2);assert.deepEqual(ends,starts);assert.equal(new Set(starts).size,2);assert.equal(memory.at(-1),0);assert.ok(memory.every(n=>n>=0&&n<=execution.max_buffered_bytes));
    const receipts=(await f.database.query(`SELECT call.id,call.request,call.inputs,call.status,call.results_applied,call.raw_storage_key,call.raw_storage_verified_at,

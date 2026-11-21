@@ -1,3 +1,4 @@
+import type{SignalListeningPreparationObservationV1}from'./signal-listening-preparation-observation';
 import {bindJevListeningMetadataV3,registerJevListeningMetadataMapperV3} from './signal-jev-listening-metadata-v3';
 import {createJevListeningPhaseBindingV3,jevResponseInitialHeadroomV3} from './signal-jev-phase-profile-v3';
 import {isJevPhaseSyntheticFactoryV3,registerJevPhaseStoreV3,isJevPhaseStoreV3} from '../providers/jev-phase-provider-v3';
@@ -19,7 +20,7 @@ import {createWorkspaceEngineStorageV1,type WorkspaceEngineStorageV1} from './si
 import {jevCallWorkingBytesV2,type JevStreamingExecutionV2,type JevStreamingMetricsV2,type JevFeedAdmissionHintV1} from './signal-jev-streaming-window';
 
 import {listeningHasRawV1,selectSignalListeningRecoveryV1,createSignalListeningRecoveryProviderV1} from './signal-listening-recovery';
-import {planSignalListeningCalibrationV1,createSignalListeningCalibratedProviderV1,createSignalListeningContinuationV1,type SignalListeningCalibrationEventV1} from './signal-listening-calibration';
+import {planSignalListeningCalibrationV1,createSignalListeningCalibratedProviderV1,createSignalListeningContinuationV1,type SignalListeningCalibrationObservationV1} from './signal-listening-calibration';
 
 // Stream response custody and one native input read have independent budgets.
 // Invalid numbers remain invalid for the existing native validator.
@@ -63,6 +64,7 @@ const phaseOwnedListeningJobs=new WeakSet<object>();
 export function processSignalListeningJevV1(args:{run_id:string;store:Store;provider:JevProviderV1;
   execution:JevStreamingExecutionV2;lease_renewal_ms?:number;recovery_only?:boolean;
   observe_stream?:(metrics:JevStreamingMetricsV2)=>void;
+  observe_preparation?:(event:SignalListeningPreparationObservationV1)=>void;
   prepare?(run:Readonly<LabelingRunV1>):Promise<JevPreparedExecutionV1>;
   selection?:()=>SignalListeningInputV1[]|undefined;
   /** Transfer selection ownership after proposals/reservation, not authorization. */
@@ -117,7 +119,7 @@ export function processSignalListeningJevV1(args:{run_id:string;store:Store;prov
       workspace_quote:(run,proposals)=>createNativeListeningAdmissionWorkspaceQuoteV1(run,proposals),
       committed:(hint,ids)=>{if(hint?.kind==='bootstrap')args.acknowledge_covered?.(hint.bootstrap_id,ids);},
     }:undefined,
-    preparation_valid:args.preparation_valid,
+    preparation_valid:args.preparation_valid,observe_preparation:args.observe_preparation,
     revisit_empty_after_apply:true,price:run=>contextOf(run).price,next_admission_hint:args.next_admission_hint,
     prepare_next:args.prepare_next?async(run,inputs)=>{try{return await args.prepare_next!(run,inputs);}finally{selectionIndex.invalidate();}}:undefined,
     select_next_inputs:args.minimum_next_calls?inputs=>({inputs:args.selection?.()??inputs,minimum_calls:args.minimum_next_calls!()}):undefined,
@@ -157,12 +159,16 @@ export async function signalListeningJevJobV1(run_id:string,options:{
   execution?:JevStreamingExecutionV2;preflight?:()=>Promise<void>;
   /** Instrumentation sees copied scalar metadata, never the mutable plan. */
   observe_stream?:(metrics:JevStreamingMetricsV2)=>void;
-  observe_calibration?:(event:SignalListeningCalibrationEventV1)=>void;
+  observe_calibration?:(event:SignalListeningCalibrationObservationV1)=>void;
+  /** Explicit R16 diagnostics opt-in; legacy listeners receive only their original events. */
+  observe_preparation?:true;
   calibrated_provider_factory?:typeof createCalibratedJevRuntimeProviderV2;
   calibration?:{load:typeof loadSignalListeningCalibrationV1;derive:typeof deriveSignalListeningCalibrationV1};
 }={}){
   if(process.env.NOISIA_SIGNAL_LISTENING_ENABLED!=='true'||process.env.NOISIA_JEV_PROVIDER_ENABLED==='false')
     throw Error('listening_provider_disabled');
+  const observeCalibration=options.observe_calibration;
+  const observePreparation=options.observe_preparation&&observeCalibration?(preparation:SignalListeningPreparationObservationV1)=>observeCalibration({preparation}):undefined;
   const execution=options.execution??jevStreamingExecutionFromEnvV2();
   if(!execution)throw Error('listening_streaming_required');
   await (options.preflight??(()=>assertMassJevConsumerV1({api_key:process.env.TYPESAFE_API_KEY??'',enabled:true})))();
@@ -213,6 +219,7 @@ export async function signalListeningJevJobV1(run_id:string,options:{
       next_admission_hint:()=>continuation?.nextAdmissionHint()??{kind:'open'},
       acknowledge_covered:(generation,ids)=>continuation?.acknowledgeCoveredReservation(generation,ids),
       preparation_valid:()=>preparedSelectionEpoch===undefined||continuation?.preparationValid(preparedSelectionEpoch)===true,
+      observe_preparation:observePreparation,
       read_next_inputs:async(leased,bounds,admissionSignal)=>{
         preparationSignal=admissionSignal;
         if(!continuation||!jobContext||typeof store.withInputSurvey!=='function')return store.inputs(leased,readBounds({...bounds,on_oversize:'empty' as const}));
@@ -278,7 +285,7 @@ export async function signalListeningJevJobV1(run_id:string,options:{
               deriveProfile:shape_digest=>(options.calibration?.derive??deriveSignalListeningCalibrationV1)({database,workspace_id:leased.workspace_id,
                 actor_user_id:leased.actor_user_id,run_id:leased.id,shape_digest}),
               ...(options.calibrated_provider_factory?{factory:options.calibrated_provider_factory}:{}),
-              ...(options.provider?{factory:()=>({...options.provider!,close:undefined})}:{}),observe:options.observe_calibration});
+              ...(options.provider?{factory:()=>({...options.provider!,close:undefined})}:{}),observe:observeCalibration,observe_preparation:observePreparation});
             selection=continuation.takeInitialSelection();calibrated=continuation.runtime;shapes=[];
             return{provider:calibrated.provider,execution:continuation.execution,continuous_windows:true,
               ...(continuation.bootstrap_initial_calls?{bootstrap_initial_calls:continuation.bootstrap_initial_calls}:{})};

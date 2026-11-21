@@ -60,6 +60,11 @@ on:
         type: boolean
         default: false
         required: false
+      survey_scalar_profile:
+        description: Run the isolated Survey wire-scalar PostgreSQL diagnostic
+        type: boolean
+        default: false
+        required: false
       native_link_batch_abba:
         description: Run the isolated Native link statement parity and ABBA DML diagnostic on disposable PostgreSQL 17
         type: boolean
@@ -3342,6 +3347,249 @@ jobs:
             .data/piloto-masivo/r16/input-plan-native-evidence/input-plan-observer.json
             .data/piloto-masivo/r16/input-plan-native-evidence/input-plan-measurement.json
           if-no-files-found: ignore
+          retention-days: 14
+          include-hidden-files: true
+
+  survey-wire-scalars-profile:
+    name: R16 Survey wire scalars profile (isolated PG17 lab)
+    needs: listening-input-plan-probe-experimental
+    if: ${{ always() && github.event_name == 'workflow_dispatch' && inputs.scope == 'input-plan-only' && inputs.survey_scalar_profile && github.ref == 'refs/heads/codex/r16-native-link-acceptance' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      R16BENCH_RUN_ID: benchmark-pg17
+      R16BENCH_SERVICES: postgres,redis
+      NOISIA_R16_LOCAL_PG_LAB: r16-benchmark-pg17
+      DATABASE_SSL: 'false'
+      R16_SURVEY_WIRE_SCALARS_EVIDENCE_DIR: .data/piloto-masivo/r16/survey-wire-scalars-evidence
+      R16_SURVEY_WIRE_SCALARS_PACKAGER_SHA256: 707cd343b8424e6f0e7632c72fa3037d618513aa09e77ee10c146ed5da9ba66e
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+      - name: Install frozen Node workspace dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Typecheck database package before fixture setup
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
+        run: pnpm --filter @noisia/db typecheck
+      - name: Typecheck workers package before fixture setup
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
+        run: pnpm --filter @noisia/workers typecheck
+      - name: Run pure Survey scalar contracts without PostgreSQL opt-in
+        run: |
+          set -euo pipefail
+          set -o pipefail
+          pnpm exec node --test --test-concurrency=1 --import tsx \
+            infrastructure/db/migrations/signal-listening-survey-wire-scalars.test.ts | tee "$RUNNER_TEMP/survey-wire-scalars-pure.tap"
+          python - <<'PYTAP'
+          import re
+          from pathlib import Path
+          text=(Path(__import__('os').environ['RUNNER_TEMP'])/'survey-wire-scalars-pure.tap').read_text(encoding='utf-8')
+          lines=text.splitlines(); summaries={}
+          for key in ('tests','pass','fail','cancelled','skipped','todo'):
+              matches=[re.fullmatch(rf'# {key} ([0-9]+)',line) for line in lines]
+              values=[int(m.group(1)) for m in matches if m]
+              if len(values)!=1: raise SystemExit(f'Pure Survey scalar TAP must contain exactly one #{key} summary')
+              summaries[key]=values[0]
+          expected_titles=[
+              'Survey scalar experiment pins independent Git353 and preserves every unknown SQL byte',
+              'Survey scalar experiment derives representatives only after unchanged sent and human predicates',
+              'Survey scalar experiment proves full and bounded0337 question wire lineage without changing native source',
+              'Survey scalar experiment redacts synthetic plan expressions and rejects unbounded or nonfinite plans',
+              'Survey scalar experiment reports balanced client and backend elapsed ratios without a gain or H1 gate',
+          ]
+          ok=[]; subtests=[]
+          for line in lines:
+              match=re.fullmatch(r'ok ([0-9]+) - (.+?)(?: #.*)?',line)
+              if match: ok.append(match.group(2))
+              if line.startswith('# Subtest: '): subtests.append(line[len('# Subtest: '):])
+          if summaries!={'tests':5,'pass':5,'fail':0,'cancelled':0,'skipped':0,'todo':0} or ok!=expected_titles or subtests!=expected_titles:
+              raise SystemExit(f'Pure Survey scalar TAP must be the exact five approved tests with no skips: {summaries}')
+          PYTAP
+      - name: Require the owned benchmark lab and evidence paths to be absent
+        run: |
+          set -euo pipefail
+          if docker inspect r16-benchmark-pg17 >/dev/null 2>&1; then
+            echo '::error::The named R16 benchmark PostgreSQL container already exists'
+            exit 1
+          fi
+          if docker volume inspect r16bench-benchmark-pg17_postgres-data >/dev/null 2>&1; then
+            echo '::error::The named R16 benchmark PostgreSQL volume already exists'
+            exit 1
+          fi
+          remaining_containers="$(docker ps -aq --filter label=com.docker.compose.project=r16bench-benchmark-pg17)"
+          remaining_volumes="$(docker volume ls -q --filter label=com.docker.compose.project=r16bench-benchmark-pg17)"
+          if [[ -n "$remaining_containers" || -n "$remaining_volumes" ]]; then
+            echo '::error::An R16 benchmark PostgreSQL or Redis lab resource already exists'
+            exit 1
+          fi
+          lab_dir=.data/piloto-masivo/r16/labs/benchmark-pg17
+          evidence_dir="$R16_SURVEY_WIRE_SCALARS_EVIDENCE_DIR"
+          archive_file=".data/piloto-masivo/r16/survey-wire-scalars-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.zip"
+          if [[ -e "$lab_dir/private.env" || -e "$lab_dir/connection.env" || -e "$evidence_dir" || -e "$archive_file" ]]; then
+            echo '::error::Private files for the named R16 lab or Survey scalar evidence already exist'
+            exit 1
+          fi
+      - name: Initialize private Survey scalar TAP receipt
+        run: |
+          set -euo pipefail
+          evidence_dir="$R16_SURVEY_WIRE_SCALARS_EVIDENCE_DIR"
+          mkdir -m 700 -p "$evidence_dir"
+          (umask 077; printf '%s\n' '# Survey wire-scalar diagnostic did not start' > "$evidence_dir/survey-wire-scalars.tap")
+          chmod 600 "$evidence_dir/survey-wire-scalars.tap"
+      - name: Capture source, workflow, and pinned packager before the diagnostic
+        run: |
+          set -euo pipefail
+          workflow_sha="$(sha256sum .github/workflows/mfp-postgres.yml | awk '{print $1}')"
+          status_sha="$(git status --porcelain=v1 -z | sha256sum | awk '{print $1}')"
+          test "$(git status --porcelain=v1 -z | wc -c | tr -d ' ')" = 0
+          packager_sha="$(sha256sum scripts/r16/package-survey-wire-scalars.py | awk '{print $1}')"
+          test "$packager_sha" = "$R16_SURVEY_WIRE_SCALARS_PACKAGER_SHA256"
+          printf 'R16_SURVEY_WORKFLOW_SHA_BEFORE=%s\n' "$workflow_sha" >> "$GITHUB_ENV"
+          printf 'R16_SURVEY_STATUS_SHA_BEFORE=%s\n' "$status_sha" >> "$GITHUB_ENV"
+          printf 'R16_SURVEY_PACKAGER_SHA_BEFORE=%s\n' "$packager_sha" >> "$GITHUB_ENV"
+      - name: Start the owned official PostgreSQL 17 and Redis lab
+        run: |
+          set -euo pipefail
+          printf '%s\n' 'R16_SURVEY_WIRE_SCALARS_LAB_OWNED=true' >> "$GITHUB_ENV"
+          scripts/r16/lab-up.sh
+      - name: Apply migrations to the fresh Survey scalar lab
+        id: migrations
+        env:
+          NOISIA_DB_SMOKE_RESET_SCHEMA: 'true'
+          NOISIA_DB_SMOKE_EMULATE_SUPABASE_ROLES: 'true'
+          NOISIA_MFP_PG_CI: 'true'
+        run: |
+          set -euo pipefail
+          connection_file=.data/piloto-masivo/r16/labs/benchmark-pg17/connection.env
+          test -f "$connection_file"
+          set -a
+          source "$connection_file"
+          set +a
+          export DATABASE_SSL=false
+          export NOISIA_R16_LOCAL_PG_LAB=r16-benchmark-pg17
+          pnpm --filter @noisia/db db:smoke:migrations
+      - name: Run the exact three native Survey scalar PostgreSQL cases
+        id: profile
+        continue-on-error: true
+        env:
+          NOISIA_R16_SURVEY_WIRE_SCALARS_PG: 'true'
+        run: |
+          set -euo pipefail
+          connection_file=.data/piloto-masivo/r16/labs/benchmark-pg17/connection.env
+          test -f "$connection_file"
+          set -a
+          source "$connection_file"
+          set +a
+          export DATABASE_SSL=false
+          export NOISIA_R16_LOCAL_PG_LAB=r16-benchmark-pg17
+          set +e
+          pnpm exec node --max-old-space-size=1024 --test --test-concurrency=1 --import tsx \
+            infrastructure/db/migrations/signal-listening-survey-wire-scalars.postgres.test.ts \
+            2>&1 | tee "$R16_SURVEY_WIRE_SCALARS_EVIDENCE_DIR/survey-wire-scalars.tap"
+          test_status=${PIPESTATUS[0]}
+          set -e
+          if [[ "$test_status" -ne 0 ]]; then
+            echo '::error::Survey scalar PostgreSQL test process failed'
+            exit 1
+          fi
+      - name: Stop and remove only the owned benchmark lab
+        id: cleanup
+        if: ${{ always() && env.R16_SURVEY_WIRE_SCALARS_LAB_OWNED == 'true' }}
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          lab_dir=.data/piloto-masivo/r16/labs/benchmark-pg17
+          if [[ -f "$lab_dir/private.env" ]]; then
+            scripts/r16/lab-down.sh
+          fi
+          if docker inspect r16-benchmark-pg17 >/dev/null 2>&1; then
+            echo '::error::Owned R16 Survey scalar PostgreSQL container survived cleanup'
+            exit 1
+          fi
+          if docker volume inspect r16bench-benchmark-pg17_postgres-data >/dev/null 2>&1; then
+            echo '::error::Owned R16 Survey scalar PostgreSQL volume survived cleanup'
+            exit 1
+          fi
+          remaining_containers="$(docker ps -aq --filter label=com.docker.compose.project=r16bench-benchmark-pg17)"
+          remaining_volumes="$(docker volume ls -q --filter label=com.docker.compose.project=r16bench-benchmark-pg17)"
+          if [[ -n "$remaining_containers" || -n "$remaining_volumes" || -e "$lab_dir/private.env" || -e "$lab_dir/connection.env" ]]; then
+            echo '::error::An owned R16 Survey scalar lab resource or private connection file survived cleanup'
+            exit 1
+          fi
+      - name: Validate exact TAP and package bounded private evidence
+        id: evidence
+        if: always()
+        env:
+          MIGRATIONS_OUTCOME: ${{ steps.migrations.outcome }}
+          PROFILE_OUTCOME: ${{ steps.profile.outcome }}
+          CLEANUP_OUTCOME: ${{ steps.cleanup.outcome }}
+          LAB_OWNED: ${{ env.R16_SURVEY_WIRE_SCALARS_LAB_OWNED }}
+        run: |
+          set -euo pipefail
+          python - <<'PYTAP'
+          import os,re
+          from pathlib import Path
+          path=Path(os.environ['R16_SURVEY_WIRE_SCALARS_EVIDENCE_DIR'])/'survey-wire-scalars.tap'
+          if not path.is_file() or path.is_symlink() or path.stat().st_size>1024*1024:
+              raise SystemExit('Survey scalar TAP is missing, linked, or exceeds 1 MiB')
+          lines=path.read_text(encoding='utf-8').splitlines()
+          summaries={}
+          for key in ('tests','pass','fail','cancelled','skipped','todo'):
+              matches=[re.fullmatch(rf'# {key} ([0-9]+)',line) for line in lines]
+              values=[int(m.group(1)) for m in matches if m]
+              if len(values)!=1: raise SystemExit(f'Survey scalar TAP needs exactly one #{key} summary')
+              summaries[key]=values[0]
+          titles=[
+              'Survey scalar synthetic PostgreSQL matrix preserves rows bounds empty and nullable domains',
+              'Survey scalar native PostgreSQL parity preserves source0337 permissions and current scope',
+              'Survey scalar native32768 PostgreSQL ABBA reports client and server time without capacity claims',
+          ]
+          if summaries!={'tests':3,'pass':3,'fail':0,'cancelled':0,'skipped':0,'todo':0}:
+              raise SystemExit(f'Survey scalar TAP must be exactly 3/3 PASS with no skipped/cancelled/todo: {summaries}')
+          ok=[]; subtests=[]
+          for line in lines:
+              match=re.fullmatch(r'ok ([0-9]+) - (.+?)(?: #.*)?',line)
+              if match: ok.append(match.group(2))
+              if line.startswith('# Subtest: '): subtests.append(line[len('# Subtest: '):])
+          if ok!=titles or subtests!=titles:
+              raise SystemExit('Survey scalar TAP titles must match the exact three preregistered cases once and in order')
+          PYTAP
+          if [[ "$MIGRATIONS_OUTCOME" != success || "$PROFILE_OUTCOME" != success || "$CLEANUP_OUTCOME" != success || "$LAB_OWNED" != true ]]; then
+            echo '::error::Survey scalar migrations, profile, and owned-lab cleanup must all succeed'
+            exit 1
+          fi
+          packager=scripts/r16/package-survey-wire-scalars.py
+          before="$(sha256sum "$packager" | awk '{print $1}')"
+          if [[ "$before" != "$R16_SURVEY_WIRE_SCALARS_PACKAGER_SHA256" || "$before" != "$R16_SURVEY_PACKAGER_SHA_BEFORE" ]]; then
+            echo '::error::Survey scalar packager differs from its pinned preflight SHA-256'
+            exit 1
+          fi
+          archive=".data/piloto-masivo/r16/survey-wire-scalars-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.zip"
+          if [[ -e "$archive" || -L "$archive" ]]; then
+            echo '::error::Survey scalar evidence archive already exists'
+            exit 1
+          fi
+          python3 -B "$packager" --directory "$R16_SURVEY_WIRE_SCALARS_EVIDENCE_DIR" --tap "$R16_SURVEY_WIRE_SCALARS_EVIDENCE_DIR/survey-wire-scalars.tap" --output "$archive"
+          after="$(sha256sum "$packager" | awk '{print $1}')"
+          if [[ "$after" != "$R16_SURVEY_WIRE_SCALARS_PACKAGER_SHA256" || "$after" != "$before" ]]; then
+            echo '::error::Survey scalar packager changed during private artifact validation'
+            exit 1
+          fi
+          printf 'artifact_eligible=true\n' >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v4
+        if: ${{ always() && steps.evidence.outputs.artifact_eligible == 'true' }}
+        with:
+          name: r16-survey-wire-scalars-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .data/piloto-masivo/r16/survey-wire-scalars-${{ github.run_id }}-${{ github.run_attempt }}.zip
+          if-no-files-found: error
           retention-days: 14
           include-hidden-files: true
 

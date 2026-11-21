@@ -1,3 +1,4 @@
+import type{SignalListeningCalibrationObservationV1,SignalListeningCalibrationEventV1}from'./signal-listening-calibration';
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
 import test from 'node:test';
@@ -329,7 +330,7 @@ test('default Listening job with one HTTP slot keeps the distant anchor and both
  const database={query:async(sql:string)=>({rows:sql.includes('signal_workspace_features')?[{enabled:true}]:[{workspace_id:f.run.workspace_id,labeler_digest:f.run.labeler_digest,recovery_only:false}]})}as NonNullable<Parameters<typeof signalListeningJevJobV1>[1]>['database'];
  const names=['NOISIA_SIGNAL_LISTENING_ENABLED','NOISIA_JEV_PROVIDER_ENABLED']as const,previous=names.map(key=>process.env[key]);
  try{for(const name of names)process.env[name]='true';
-  const result=await signalListeningJevJobV1(f.run.id,{database,store:f.store,provider:f.provider,execution:{...execution,max_in_flight:1,flush_size:8,max_flushes:2},preflight:async()=>{},observe_stream:value=>metrics.push(value),observe_calibration:value=>events.push(value),
+  const result=await signalListeningJevJobV1(f.run.id,{database,store:f.store,provider:f.provider,execution:{...execution,max_in_flight:1,flush_size:8,max_flushes:2},preflight:async()=>{},observe_stream:value=>metrics.push(value),observe_calibration:value=>{if(!('preparation'in value))events.push(value);},
    calibration:{load:async args=>profiles.get(args.shape_digest)??null,derive:async args=>{
     const receipts=f.calls.filter(call=>call.results_applied&&call.status==='settled'&&signalListeningCalibrationShapeV1(configuration,call.inputs[0]!).shape_digest===args.shape_digest).slice(-32);
     assert.ok(receipts.length>0);const shape=signalListeningCalibrationShapeV1(configuration,receipts[0]!.inputs[0]!),sizes=receipts.map(call=>Buffer.byteLength(JSON.stringify(call.request))),scope={workspace_id:f.run.workspace_id,configuration_digest:digest(configuration),model:shape.model,compiler_version:shape.compiler_version,phase:shape.phase,shape_digest:shape.shape_digest};
@@ -508,4 +509,29 @@ test('a large metadata quote opts out to the original4096 legacy reader and phys
   assert.ok(reads.length>=2);assert.equal(reads[0]!.max_rows,4096);assert.equal(reads[1]!.max_rows,4096,'the continuous fallback preserves the original complete window');
   assert.ok(reads.every(bounds=>bounds.max_rows<=4096&&bounds.max_working_bytes<=LABELING_INPUT_MAX_WORKING_BYTES_V1));
  }finally{names.forEach((key,index)=>{if(previous[index]===undefined)delete process.env[key];else process.env[key]=previous[index];});}
+});
+
+
+test('preparation observations require an explicit opt-in and leave legacy calibration, requests and custody unchanged',async()=>{
+ const config=signalListeningBaseTemplateV1({category:'tea',lexicon_terms:['tea']});
+ const names=['NOISIA_SIGNAL_LISTENING_ENABLED','NOISIA_JEV_PROVIDER_ENABLED']as const,previous=names.map(k=>process.env[k]);
+ async function execute(optIn:boolean){
+  const f=fixture(config,[['voice','promotion']]),sample=(await f.store.inputs(f.run))[0]!;let reserved=false;
+  f.store.inputs=async()=>reserved?[]:[sample];const reserve=f.store.reserve;f.store.reserve=async(run,rows)=>{reserved=true;return reserve(run,rows);};
+  const database={query:async(sql:string)=>({rows:sql.includes('signal_workspace_features')?[{enabled:true}]:[{workspace_id:f.run.workspace_id,labeler_digest:f.run.labeler_digest,recovery_only:false}]})}as NonNullable<Parameters<typeof signalListeningJevJobV1>[1]>['database'];
+  const legacy:SignalListeningCalibrationEventV1[]=[],preparation:SignalListeningCalibrationObservationV1[]=[];
+  const outcome=await signalListeningJevJobV1(f.run.id,{database,store:f.store,provider:f.provider,execution,preflight:async()=>{},calibration:{load:async()=>null,derive:async()=>null},
+   ...(optIn?{observe_preparation:true as const}:{}),observe_calibration:event=>{
+    if('preparation'in event){preparation.push(structuredClone(event));event.preparation={kind:'draft_discard',point:'pre_native'};throw Error('observer only');}
+    legacy.push(structuredClone(event));
+   }});
+  return{outcome,legacy,preparation,requests:f.requests,events:f.events,answers:f.results.map(r=>r.answers),calls:f.calls.map(c=>({status:c.status,applied:c.results_applied,reserved:c.reserved_micro_usd,raw:c.raw_body}))};
+ }
+ try{
+  names.forEach(k=>process.env[k]='true');const baseline=await execute(false),observed=await execute(true);
+  assert.equal(baseline.preparation.length,0);assert.ok(observed.preparation.length>0);
+  for(const event of observed.preparation){assert.equal('preparation'in event,true);assert.equal('warmup'in event,false);assert.equal('shape_digests'in event,false);}
+  const {preparation:_base,...before}=baseline,{preparation:_observed,...after}=observed;assert.deepEqual(after,before);
+  assert.equal(observed.requests.length,1);assert.equal(observed.outcome.labeled,1);assert.deepEqual(observed.events,['durable','settled','apply']);
+ }finally{names.forEach((key,i)=>{if(previous[i]===undefined)delete process.env[key];else process.env[key]=previous[i];});}
 });

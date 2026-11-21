@@ -230,7 +230,7 @@ export async function runListeningPipelineProfileV1(options?:{observeWorker?:(bo
    const start=clock();
    const outcome=await signalListeningJevJobV1(f.run.id,{database:access.database,store:store as never,execution,
     preflight:f.assertRawReady,observe_stream:metrics=>recorder.recordStream(clock(),metrics),
-    observe_calibration:event=>recorder.append('calibration',[roundMs(clock()),Number(event.warmup),event.selected_roots,event.max_in_flight]),
+    observe_calibration:event=>{if('preparation'in event)return;recorder.append('calibration',[roundMs(clock()),Number(event.warmup),event.selected_roots,event.max_in_flight]);},
     calibrated_provider_factory:providerFactory});
    lastOutcome=typeof outcome.status==='string'?outcome.status:'unknown';
    const requestCount=physicalRequests,applied=recorder.getAppliedCalls();

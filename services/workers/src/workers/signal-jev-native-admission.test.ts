@@ -1,3 +1,4 @@
+import type{SignalListeningPreparationObservationV1}from'./signal-listening-preparation-observation';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {llmPriceV1,type FacetInput} from '@noisia/query-engine';
@@ -294,4 +295,53 @@ for(const quoted of[false,true])test(`profile preparation invalidated while nati
   const rows:LabelingCallV1<FacetInput>[]=[];callbacks.validateBeforeCommit(rows,selected);return{kind:'committed',calls:rows};};
  await processJevStreamingWindowV2(f.args);assert.equal(f.physical.length,0);assert.equal(f.state().reserves,0);assert.equal(f.memory.at(-1),0);
  assert.ok(f.memory.every(bytes=>bytes>=0&&bytes<=execution.max_buffered_bytes));
+});
+
+
+test('preparation diagnostics distinguish Native empty selectors, legacy returns and draft discards without changing gate evaluations',async()=>{
+ for(const mode of['full','empty','legacy','pre_native','post_legacy']as const){
+  async function execute(observe:boolean){
+   const f=fixture(),events:SignalListeningPreparationObservationV1[]=[];let valid=true,validations=0,invocations=0;
+   f.args.preparation_valid=()=>{validations++;return mode==='pre_native'?false:valid;};
+   if(observe)f.args.observe_preparation=event=>events.push(event);
+   f.args.store.admitAndMarkSelected=async(_run,drafts,callbacks)=>{
+    invocations++;
+    if(mode==='legacy'||mode==='post_legacy'){if(mode==='post_legacy')valid=false;return{kind:'legacy'};}
+    if(mode==='empty')f.cancellation.abort();
+    const selected=callbacks.selectFresh(drafts),rows=selected.map(p=>call(p));callbacks.validateBeforeCommit(rows,selected);f.rows.push(...rows);return{kind:'committed',calls:rows};
+   };
+   const result=await processJevStreamingWindowV2(f.args);
+   return{events,validations,invocations,result,physical:f.physical,applied:f.applied,state:f.state(),memory:f.memory.at(-1)};
+  }
+  const baseline=await execute(false),observed=await execute(true),{events,...trace}=observed,{events:_none,...before}=baseline;
+  assert.deepEqual(trace,before,mode);assert.equal(observed.memory,0);
+  assert.equal(observed.validations,mode==='pre_native'||mode==='empty'?1:2,'diagnostics must not reevaluate the native preparation gate');
+  const native=events.find((e):e is Extract<SignalListeningPreparationObservationV1,{kind:'native_admission'}>=>e.kind==='native_admission');
+  if(mode==='pre_native'){assert.equal(native,undefined);assert.deepEqual(events,[{kind:'draft_discard',point:'pre_native'}]);continue;}
+  assert.ok(native);assert.equal(native.proposed_calls,2);assert.ok(native.duration_ms>=0);
+  if(mode==='legacy'||mode==='post_legacy'){assert.equal(native.outcome,'legacy');assert.equal(native.returned_calls,null);assert.equal(native.selector_called,false);assert.equal(native.selector_observation,'not_observed');}
+  else{assert.equal(native.outcome,'committed');assert.equal(native.validation_called,true);assert.equal(native.returned_calls,mode==='empty'?0:2);assert.equal(native.selector_observation,mode==='empty'?'cancellation_aborted':'selected');}
+  assert.equal(events.some(e=>e.kind==='draft_discard'&&e.point==='post_legacy'),mode==='post_legacy');
+  const text=JSON.stringify(events);assert.ok(!text.includes('fresh-')&&!text.includes('text-')&&!text.includes('call-'));
+ }
+});
+test('preparation observer errors preserve falsy Native failures and do not fabricate committed calls',async()=>{
+ for(const failure of[0,null,undefined]){
+  const f=fixture(),events:SignalListeningPreparationObservationV1[]=[];
+  f.args.observe_preparation=event=>{events.push(event);throw Error('observer only');};f.args.store.admitAndMarkSelected=async()=>{throw failure;};
+  await assert.rejects(processJevStreamingWindowV2(f.args),error=>error===failure);
+  assert.equal(f.physical.length,0);assert.equal(f.state().reserves,0);assert.equal(f.memory.at(-1),0);
+  const event=events.find((e):e is Extract<SignalListeningPreparationObservationV1,{kind:'native_admission'}>=>e.kind==='native_admission')!;
+  assert.equal(event.outcome,'threw');assert.equal(event.returned_calls,null);assert.equal(event.selector_called,false);assert.equal(event.validation_called,false);
+ }
+});
+test('preparation diagnostics retain an unknown COMMIT outcome without fallback, retry or observer replacement',async()=>{
+ const f=fixture(),failure=Object.assign(Error('lost commit ACK'),{outcome:'unknown'}),events:SignalListeningPreparationObservationV1[]=[];let invocations=0;
+ f.args.observe_preparation=event=>{events.push(event);throw null;};
+ f.args.store.admitAndMarkSelected=async(_run,drafts,callbacks)=>{invocations++;const selected=callbacks.selectFresh(drafts),rows=selected.map(p=>call(p));callbacks.validateBeforeCommit(rows,selected);f.rows.push(...rows);throw failure;};
+ await assert.rejects(processJevStreamingWindowV2(f.args),error=>error===failure);
+ const event=events.find((e):e is Extract<SignalListeningPreparationObservationV1,{kind:'native_admission'}>=>e.kind==='native_admission')!;
+ assert.equal(event.outcome,'threw');assert.equal(event.returned_calls,null);assert.equal(event.selected_calls,2);assert.equal(event.validated_calls,2);
+ assert.equal(invocations,1);assert.equal(f.state().unknownFailures,1);assert.equal(f.state().reserves,0);assert.equal(f.physical.length,0);assert.equal(f.memory.at(-1),0);
+ assert.ok(f.rows.every(row=>row.status==='submitting'&&!row.results_applied));
 });

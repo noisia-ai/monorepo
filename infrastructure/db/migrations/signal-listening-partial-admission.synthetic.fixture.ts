@@ -122,7 +122,7 @@ export async function runListeningPartialAdmissionV1(directory:string):Promise<P
     let capDenied=false;
     for(let i=0;i<MAX_JOBS;i++){
      const before=await money(observer,ctx.workspace_id,runId);let outcome:string;
-     try{const value=await signalListeningJevJobV1(runId,{database,store,execution,preflight:()=>storage.assertReady!(),calibrated_provider_factory:factory,observe_calibration:event=>{warmup=event.warmup;selected=event.selected_roots;}});outcome=value.status;
+     try{const value=await signalListeningJevJobV1(runId,{database,store,execution,preflight:()=>storage.assertReady!(),calibrated_provider_factory:factory,observe_calibration:event=>{if('preparation'in event)return;warmup=event.warmup;selected=event.selected_roots;}});outcome=value.status;
      }catch(error){if(partialAdmissionErrorKindV1(error)!=='labeling_cap_exhausted')throw error;outcome='labeling_cap_exhausted';capDenied=true;}
      jobs.push({warmup,selected_roots:selected,status:outcome});const after=await money(observer,ctx.workspace_id,runId);
      if(capDenied||outcome==='completed')break;if(after.calls<=before.calls){report.inconclusive_reason='no_native_progress';break;}

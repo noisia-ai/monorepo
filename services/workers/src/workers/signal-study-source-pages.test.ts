@@ -82,3 +82,21 @@ test('inline and paged source digests bind only explicit new evidence associatio
   }
  }finally{await pages.dispose();}
 });
+
+
+test('inline and paged source digests bind the dominance protocol independently while retaining absent-header bytes',async()=>{
+ const pages=await createStudySourcePagesV1({cache_working_bytes:256*1024});
+ try{
+  const r=root(1);await pages.append(r,{});const complete=await pages.finish();
+  for(const source_storage of [undefined,complete.manifest]){
+   const header={...(source_storage?{source_storage}:{}),evidence_association_version:'signal-study-evidence-association-v1' as const,human_revision_digest:digest('frozen')};
+   const legacy={...header,roots:source_storage?complete.roots:[r]}as unknown as StudyRuntimeSourceV1;
+   if(source_storage)bindStudySourcePagesV1(legacy,pages);
+   const expected=digest(source_storage?header:{...header,roots:[r]});assert.equal(studyRuntimeSourceDigestV1(legacy),expected);
+   const next={...legacy,dominance_reask_version:'signal-study-dominance-reask-v1' as const};
+   if(source_storage)bindStudySourcePagesV1(next,pages);assert.notEqual(studyRuntimeSourceDigestV1(next),expected);
+   const {dominance_reask_version:_,...without}=next;if(source_storage)bindStudySourcePagesV1(without,pages);
+   assert.equal(studyRuntimeSourceDigestV1(without),expected);assert.equal(without.evidence_association_version,header.evidence_association_version);
+  }
+ }finally{await pages.dispose();}
+});

@@ -2,7 +2,7 @@ import {aggregateSignalStudyLayerBatchesV2} from './signal-study-editorial-batch
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {createHash} from 'node:crypto';
-import {SIGNAL_STUDY_TB_TEMPLATE_V1,SIGNAL_STUDY_TB_TEMPLATE_DIGEST_V1,validateSignalStudyV1,
+import {SIGNAL_STUDY_TB_TEMPLATE_V1,SIGNAL_STUDY_TB_TEMPLATE_DIGEST_V1,SIGNAL_STUDY_TB_ROLES_V1,createSignalStudyTemplateSnapshotV1,validateSignalStudyV1,
   buildSignalStudyListeningConfigurationV1,buildSignalStudyAxesRequestV1,signalStudyCutV1,resolveSignalStudyAxesV1,
   SIGNAL_STUDY_DIRECTIONS_V1,SIGNAL_STUDY_TARGETS_V1,SIGNAL_STUDY_USES_V1,type SignalStudyV1,type SignalStudyLayerV1} from './signal-study-contracts';
 import {signalListeningBaseTemplateV1,buildSignalListeningJevRequestV1} from './signal-listening-contracts';
@@ -15,6 +15,8 @@ import {buildSignalStudyMotiveReviewV1,validateSignalStudyMotiveReviewV1,buildSi
   buildSignalStudyContrastReviewV1,validateSignalStudyContrastReviewV1,type SignalStudyLayerDecisionV1} from './signal-study-editorial';
 import {buildSignalStudyMotiveConfigurationV1,buildSignalStudyMotiveRequestV1,buildSignalStudyMotiveReaskRequestV1,buildSignalStudySummaryV1} from './signal-study-output';
 import type {JevAnswerV1} from './signal-mention-facets-jev-v1';
+import{buildSignalStudyExecutionConfigurationV1}from'./signal-study-configuration';
+import{SIGNAL_STUDY_DOMINANCE_REASK_VERSION_V1,resolveSignalStudyDominanceReaskVersionV1,compileSignalStudyDominanceReaskV1,replaceSignalStudyDominanceMembershipsV1}from'./signal-study-dominance-reask';
 const id=(n:number)=>`00000000-0000-4000-8000-${String(n).padStart(12,'0')}`;
 const base=signalListeningBaseTemplateV1({category:'synthetic bicycles',lexicon_terms:['bicycle']});
 const study:SignalStudyV1={contract_version:'signal-study-v1',workspace_id:id(1),corpus_id:id(2),listening_configuration_id:id(3),
@@ -429,4 +431,44 @@ test('multibatch partial recode exposes only demonstrable association fields and
  for(const row of rows)assert.deepEqual(Object.keys(row.association!).sort(),allowed);
  const serialized=JSON.stringify(rows);assert.ok(!serialized.includes(privateName));assert.ok(!serialized.includes('@private_b'));
  for(const field of ['partition_name','request_digest','recode_attempt','study_digest'])assert.ok(!serialized.includes('"'+field+'"'));
+});
+
+
+function dominanceProtocolFixture(){
+ const template_snapshot=createSignalStudyTemplateSnapshotV1({template:SIGNAL_STUDY_TB_TEMPLATE_V1,roles:SIGNAL_STUDY_TB_ROLES_V1,provenance:'human',revision:1,human_locked:false});
+ const configuration=buildSignalStudyExecutionConfigurationV1({study,template_snapshot,source_listening:{configuration_id:study.listening_configuration_id,configuration_digest:study.listening_configuration_digest,configuration:base}});
+ const pairs=[[1,0],[.9,.1],[.8,.2],[.7,.3],[-1,0]],motives=pairs.map((pair,i):SignalStudyMotiveV1=>{const norm=Math.hypot(...pair);return{key:'force_'+String.fromCharCode(97+i),name:'Force '+i,definition:'Definition '+i,
+  centroid:Array.from({length:1024},(_,j)=>j<2?pair[j]!/norm:0),layer:'personal',human_locked:false};});
+ return{configuration,motives,roots:[root(0,'trigger')],affected_keys:['force_a','force_e'],memberships:[]};
+}
+test('source-sealed dominance protocol preserves the legacy candidate configuration and selects global pairs only for new sources',()=>{
+ const f=dominanceProtocolFixture();
+ const legacy=compileSignalStudyDominanceReaskV1({...f,version:undefined}),current=compileSignalStudyDominanceReaskV1({...f,version:SIGNAL_STUDY_DOMINANCE_REASK_VERSION_V1});
+ assert.deepEqual(Object.keys(legacy.inputs[0]!.request.questions),['force_a','force_e']);
+ assert.deepEqual(legacy.stage_configuration.questions.filter(q=>q.origin==='methodology').map(q=>q.key),['force_a','force_e']);
+ assert.deepEqual(Object.keys(current.inputs[0]!.request.questions),['force_a']);
+ assert.deepEqual(current.stage_configuration.questions.filter(q=>q.origin==='methodology').map(q=>q.key),['force_a','force_b','force_c','force_d','force_e']);
+ assert.notEqual(digest(legacy.stage_configuration),digest(current.stage_configuration));
+ assert.equal(resolveSignalStudyDominanceReaskVersionV1(undefined),undefined);
+});
+test('new dominance protocol preserves per-root and motive human locks without padding from affected neighbors',()=>{
+ const f=dominanceProtocolFixture(),human={root_id:f.roots[0]!.root_id,motive_key:'force_a',probability:1,source:'human' as const,human_locked:true};
+ assert.deepEqual(compileSignalStudyDominanceReaskV1({...f,version:SIGNAL_STUDY_DOMINANCE_REASK_VERSION_V1,memberships:[human]}).inputs,[]);
+ assert.deepEqual(compileSignalStudyDominanceReaskV1({...f,version:SIGNAL_STUDY_DOMINANCE_REASK_VERSION_V1,motives:f.motives.map(m=>({...m,human_locked:m.key==='force_a'}))}).inputs,[]);
+ assert.deepEqual(compileSignalStudyDominanceReaskV1({...f,version:SIGNAL_STUDY_DOMINANCE_REASK_VERSION_V1,roots:[root(0,'none')]}).inputs,[]);
+});
+test('legacy dominance replacement keeps its frozen whole-affected behavior while new sources replace only answered pairs',()=>{
+ const memberships=[{root_id:'r',motive_key:'force_a',probability:.9,source:'jev' as const,human_locked:false},
+  {root_id:'r',motive_key:'force_e',probability:.4,source:'jev' as const,human_locked:false},
+  {root_id:'r',motive_key:'force_d',probability:.2,source:'jev' as const,human_locked:false},
+  {root_id:'locked',motive_key:'force_e',probability:1,source:'human' as const,human_locked:true}],reasked=[{...memberships[0]!,probability:.1}],
+  args={memberships,reasked,target_root_ids:new Set(['r','locked']),affected_keys:['force_a','force_e']};
+ assert.deepEqual(replaceSignalStudyDominanceMembershipsV1({...args,version:undefined}),[memberships[2],memberships[3],reasked[0]]);
+ assert.deepEqual(replaceSignalStudyDominanceMembershipsV1({...args,version:SIGNAL_STUDY_DOMINANCE_REASK_VERSION_V1}),[memberships[1],memberships[2],memberships[3],reasked[0]]);
+});
+test('null and unknown dominance reask protocol versions are rejected without a legacy fallback',()=>{
+ for(const version of [null,'future',0,{},[]]){
+  assert.throws(()=>resolveSignalStudyDominanceReaskVersionV1(version),/dominance_reask_version_invalid/);
+  assert.throws(()=>compileSignalStudyDominanceReaskV1({...dominanceProtocolFixture(),version}),/dominance_reask_version_invalid/);
+ }
 });

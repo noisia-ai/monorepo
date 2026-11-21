@@ -1,9 +1,11 @@
+import type{SignalListeningPreparationObservationV1}from'../../services/workers/src/workers/signal-listening-preparation-observation';
+import{createR16PreparationObservationScalarsV1}from'./preparation-observation-scalars';
 export type R16BootstrapTransitionV1='bootstrap_start'|'bootstrap_end'|'measured';
 export type R16BootstrapOutcomeV1='measured'|'partial'|'unavailable'|'failed';
 
 /** The legacy fields remain byte-for-byte compatible with the worker callback.
  * New transition fields are optional until the worker event contract lands. */
-export type R16CalibrationObservationInputV1={
+export type R16CalibrationLifecycleInputV1={
  warmup:boolean;
  selected_roots:number;
  max_in_flight:number;
@@ -12,7 +14,8 @@ export type R16CalibrationObservationInputV1={
  bootstrap_id?:number;
  outcome?:string;
 };
-export type R16CalibrationObservationV1=R16CalibrationObservationInputV1&{
+export type R16CalibrationObservationInputV1=R16CalibrationLifecycleInputV1|{preparation:SignalListeningPreparationObservationV1};
+export type R16CalibrationObservationV1=R16CalibrationLifecycleInputV1&{
  job_ordinal:number;
  at_ms:number;
 };
@@ -189,16 +192,18 @@ export function summarizeR16BootstrapObservationV1(
  * performance.now()-start clock. It is descriptive only and has no worker gates. */
 export function createR16BootstrapObservationRecorderV1(args:{start_time_ms:number;now:()=>number}){
  const calibration:R16CalibrationObservationV1[]=[],jobSpans:R16ListeningJobSpanInputV1[]=[];
+ const preparation=createR16PreparationObservationScalarsV1();
  const elapsed=()=>args.now()-args.start_time_ms;
  return{
   elapsed,
   observe(job_ordinal:number,event:R16CalibrationObservationInputV1){
+   if('preparation'in event){preparation.observe(event.preparation);return;}
    const recorded={...event,job_ordinal,at_ms:elapsed(),shape_digests:[...event.shape_digests]};
    calibration.push(recorded);return recorded;
   },
   finishJob(job_ordinal:number,start_ms:number,warmup:boolean){
    jobSpans.push({job_ordinal,start_ms,end_ms:elapsed(),warmup});
   },
-  snapshot(){return summarizeR16BootstrapObservationV1(calibration,jobSpans);},
+  snapshot(){return{...summarizeR16BootstrapObservationV1(calibration,jobSpans),preparation_observation:preparation.snapshot()};},
  };
 }
