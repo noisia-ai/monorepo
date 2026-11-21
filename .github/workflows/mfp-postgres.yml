@@ -4358,7 +4358,7 @@ jobs:
           import hashlib
           from pathlib import Path
           source=Path('services/workers/src/workers/signal-jev-listening-metadata.postgres.test.ts')
-          if not source.is_file() or source.is_symlink() or hashlib.sha256(source.read_bytes()).hexdigest()!='0e693746926d4733e4df0aec28be27d97d6359b4498f84e98f47f05618e94f91':
+          if not source.is_file() or source.is_symlink() or hashlib.sha256(source.read_bytes()).hexdigest()!='5fe71e9aa3402b1416bed4eb00510f8acd4cda6c2b1056f4b1fc1f92800ce310':
               raise SystemExit('listening metadata PostgreSQL source differs from the reviewed Q21 fixture')
           PY
           metadata_tap=.data/piloto-masivo/r16/native-link-statement-evidence/listening-metadata.tap

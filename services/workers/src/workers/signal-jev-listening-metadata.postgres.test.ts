@@ -14,7 +14,7 @@ import {jevListeningSqlMetadataBytesV3} from './signal-jev-phase-geometry-v3';
 test('Listening metadata PostgreSQL serializes four disjoint per-call lanes and five exact mixed query frames',{
  skip:process.env.NOISIA_R16_LISTENING_METADATA_SQL_PG!=='true',timeout:600000,
 },async()=>{
- await runMassLabelingAcceptanceFixtureV1('product',{seed_published_at:'2026-11-21T00:00:00.000Z',beforeProcessing:async ctx=>{
+ await runMassLabelingAcceptanceFixtureV1('product',{seed_published_at:'2026-11-21T00:00:00.000000Z',beforeProcessing:async ctx=>{
   await ctx.database.query("UPDATE signal_labeling_runs SET status='canceled' WHERE id=$1",[ctx.run_id]);
   const access={database:ctx.database,workspace_id:ctx.workspace_id,actor_user_id:ctx.actor_user_id};
   const configuration=await saveSignalListeningConfigurationV1({...access,expected_revision:0,
