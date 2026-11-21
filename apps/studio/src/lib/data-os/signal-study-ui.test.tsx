@@ -58,7 +58,7 @@ test('native report mounts in both languages, loads bounded sections and shows o
    assert.equal(calls.length,2);assert.ok(calls[1]!.url.includes('section=motives&offset=0&limit=30'));
    const evidence=[...m.host.querySelectorAll('button')].find(b=>b.textContent?.startsWith(messages.StudioStudy.section.evidence))!;
    await act(async()=>{evidence.click();});assert.ok(m.host.textContent?.includes('Beer with [person]'));assert.ok(!m.host.textContent?.includes('private-root'));assert.ok(!m.host.textContent?.includes('sha256:sealed'));
-   assert.equal(m.host.querySelector('a')?.href,'https://example.test/post');assert.ok(calls.every(c=>c.method==='GET'));
+   assert.ok(m.host.textContent?.includes(messages.StudioStudy.evidenceAssociationUnavailable));assert.equal(m.host.querySelector('a')?.href,'https://example.test/post');assert.ok(calls.every(c=>c.method==='GET'));
   }finally{await m.close();}
  }}finally{globalThis.fetch=original;}
 });
@@ -212,4 +212,20 @@ test('read-only accounts keep both edit and paid controls disabled even when the
 test('paid capability is independent of human editing rather than inferred from it',async()=>{
  const original=fetch;let posts=0;globalThis.fetch=async(_input,options)=>{if(options?.method==='POST')posts++;return Response.json({...detail(null),can_edit:false,can_execute:true,processing_ready:true});};
  const m=mount(<Detail workspaceId="workspace" studyId="study"/>);try{await m.render();assert.equal(button(m.host,en.StudioStudy.run).disabled,false);assert.ok(m.host.textContent?.includes(en.StudioStudy.readOnly));assert.ok(!m.host.textContent?.includes(en.StudioStudy.processingNotAllowed));assert.equal(posts,0);}finally{await m.close();globalThis.fetch=original;}
+});
+
+
+test('report shows assessment partition, layer, role and pass for identical quotes in both locales',async()=>{
+ const original=fetch;
+ try{for(const [locale,messages]of [['en-US',en],['es-MX',es]]as const){
+  globalThis.fetch=async(input)=>{const section=new URL(String(input),'https://studio.invalid').searchParams.get('section');
+   if(section!=='evidence')return Response.json(section?page(section):detail());
+   const base=page('evidence').rows[0];return Response.json({section,offset:0,total:2,next_offset:null,rows:(['layer','normative']as const).map((role,index)=>({...base,association:{motive_key:'force',partition_key:'partition_'+index,partition_name:index?'Only B Private Person @private_b':'Assignment 0',assessed_layer:'cultural',role,pass:index?'b':'a',recode_attempt:1,request_digest:'sha256:private-request',study_digest:'sha256:private-study'}}))});};
+  const m=mount(<Detail workspaceId="workspace" studyId="study"/>,messages,locale);
+  try{await m.render();const button=[...m.host.querySelectorAll('button')].find(b=>b.textContent?.startsWith(messages.StudioStudy.section.evidence))!;await act(async()=>button.click());
+   for(const label of ['partition_0','partition_1',messages.StudioStudy.layer.cultural,messages.StudioStudy.evidenceRole.layer,messages.StudioStudy.evidenceRole.normative])assert.ok(m.host.textContent?.includes(label));
+   assert.ok(!m.host.textContent?.includes('Only B Private Person'));assert.ok(!m.host.textContent?.includes('@private_b'));assert.ok(!m.host.textContent?.includes('Assignment 0'));
+   assert.equal(m.host.querySelectorAll('blockquote').length,2);assert.ok(!m.host.textContent?.includes(messages.StudioStudy.evidenceAssociationUnavailable));assert.ok(!m.host.textContent?.includes('sha256:private'));
+  }finally{await m.close();}
+ }}finally{globalThis.fetch=original;}
 });

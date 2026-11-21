@@ -28,6 +28,8 @@ export async function readSignalStudyOutputV1(args:StudyAccessV1&{execution_id:s
 
 type StudySummaryV1=StudyRuntimeOutputV1['summary'];
 export type SignalStudyReportSectionV1='motives'|'topics'|'channels'|'series'|'evidence';
+/** Evidence rows retain optional source-sealed assessment associations. Legacy
+ * rows pass through unchanged; serving never infers associations or backfills them. */
 export type SignalStudyReportRowsV1={motives:StudySummaryV1['motives'];topics:StudySummaryV1['motive_by_topic'];channels:StudySummaryV1['motive_by_channel'];series:StudySummaryV1['series'];evidence:StudyRuntimeOutputV1['verified_evidence']};
 const reportScope=`FROM signal_study_outputs o JOIN signal_study_executions p ON p.id=o.execution_id AND p.workspace_id=o.workspace_id
  JOIN signal_study_configurations cfg ON cfg.id=o.configuration_id AND cfg.workspace_id=o.workspace_id JOIN signal_study_configuration_sources_v1 s ON s.study_configuration_id=cfg.id AND s.workspace_id=o.workspace_id

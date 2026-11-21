@@ -1,3 +1,4 @@
+import {aggregateSignalStudyLayerBatchesV2} from './signal-study-editorial-batches';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {createHash} from 'node:crypto';
@@ -7,7 +8,7 @@ import {SIGNAL_STUDY_TB_TEMPLATE_V1,SIGNAL_STUDY_TB_TEMPLATE_DIGEST_V1,validateS
 import {signalListeningBaseTemplateV1,buildSignalListeningJevRequestV1} from './signal-listening-contracts';
 import {signalWorkspaceEmbeddingDigestV1 as digest} from './signal-workspace-embeddings-v1';
 import {buildSignalStudyMotivePopulationV1,buildSignalStudyMotiveFitPlanV1,sampleSignalStudyGroupV1,signalStudyConfirmedCentroidV1,signalStudyNearestMotivesV1,
-  signalStudySourceUrlStateV1,signalStudyEvidencePublishableV1,signalStudyDominancePlanV1,verifySignalStudyVerbatimV1,signalStudyQueryBiasV1,signalStudyPromotionProposalV1,
+  signalStudySourceUrlStateV1,signalStudyEvidencePublishableV1,signalStudyDominancePlanV1,verifySignalStudyVerbatimV1,materializeSignalStudyEvidenceV1,SIGNAL_STUDY_EVIDENCE_ASSOCIATION_VERSION_V1,signalStudyQueryBiasV1,signalStudyPromotionProposalV1,
   type SignalStudyRootV1,type SignalStudyMotiveV1,type SignalStudySampleV1} from './signal-study-evidence';
 import {buildSignalStudyMotiveReviewV1,validateSignalStudyMotiveReviewV1,buildSignalStudyLayerReviewV1,
   validateSignalStudyLayerReviewV1,signalStudyLayerStabilityV1,applySignalStudyBoundaryRecodeV1,
@@ -380,4 +381,52 @@ test('dominance request preserves pair and motive human locks without filling th
   for(const scope of [{affected_keys:['missing']},{affected_keys:[first,first]},{affected_keys:[first],locked_keys:['missing']}])
     assert.throws(()=>buildSignalStudyMotiveReaskRequestV1(selected,motives,config,scope),/reask_scope_invalid/);
   assert.equal(buildSignalStudyMotiveReaskRequestV1(root(0,'none'),motives,config,{affected_keys:[first]}),null);
+});
+
+
+test('evidence keeps identical literal bytes distinct by assignment, role and blind provenance; legacy stays byteexact',()=>{
+ const sample=samples()[0],review=layerReview(sample),decision=validateSignalStudyLayerReviewV1(review,layerOutput(review,'cultural'));
+ const roots=new Map(Array.from({length:100},(_,i)=>root(i)).map(r=>[r.root_id,r]));
+ const p=decision.motives[0]!.partitions[0]!,quote='I enjoy it with @fixture and Private Fixture.';
+ p.evidence={root_id:p.sample_root_ids[0]!,quote,private_person_names:['Private Fixture']};
+ p.normative_evidence={...p.normative_evidence!,quote};
+ decision.motives.push({motive_key:'second_motive',partitions:[{...p,key:'second_partition',name:'Second partition'}]});
+ const old=decision.motives.flatMap(m=>m.partitions.flatMap(part=>[part.evidence,part.normative_evidence].filter(e=>e!==null)
+  .map(e=>verifySignalStudyVerbatimV1(roots.get(e.root_id)!,e.quote,e.private_person_names))));
+ const legacy=materializeSignalStudyEvidenceV1([decision],roots);
+ assert.equal(JSON.stringify(legacy),JSON.stringify(old));assert.equal(digest(legacy),digest(old));
+ const next=materializeSignalStudyEvidenceV1([decision],roots,SIGNAL_STUDY_EVIDENCE_ASSOCIATION_VERSION_V1);
+ assert.equal(next.length,4);assert.deepEqual(next.map(row=>row.association!.role),['layer','normative','layer','normative']);
+ assert.deepEqual(next.map(row=>row.association!.partition_key),[p.key,p.key,'second_partition','second_partition']);
+ assert.equal(new Set(next.map(row=>row.literal_sha256)).size,1);
+ assert.ok(next.every(row=>row.display_text==='I enjoy it with [usuario] and [persona].'&&row.redacted));
+ assert.ok(next.every(row=>row.association!.pass==='a'&&row.association!.assessed_layer==='cultural'));
+ assert.notEqual(digest(next),digest(legacy));
+ assert.throws(()=>materializeSignalStudyEvidenceV1([decision],roots,'unknown' as never),/version_invalid/);
+ const originalRoot=p.evidence.root_id;p.evidence.root_id=root(101).root_id;
+ roots.set(root(101).root_id,root(101));assert.throws(()=>materializeSignalStudyEvidenceV1([decision],roots,SIGNAL_STUDY_EVIDENCE_ASSOCIATION_VERSION_V1),/partition_mismatch/);p.evidence.root_id=originalRoot;
+ p.evidence.quote='Invented';assert.throws(()=>materializeSignalStudyEvidenceV1([decision],roots,SIGNAL_STUDY_EVIDENCE_ASSOCIATION_VERSION_V1),/not_literal/);
+});
+
+
+test('multibatch partial recode exposes only demonstrable association fields and no blind-B private name',()=>{
+ const base=decisions(['psychological','personal','social','cultural'],['psychological','psychological','social','cultural']);
+ const privateName='Only B Private Person @private_b';
+ base[1].motives[2]!.partitions[0]!.name=privateName;
+ const aggregate=(pair:[SignalStudyLayerDecisionV1,SignalStudyLayerDecisionV1])=>{
+  const values=pair.flatMap(d=>[0,2].map(offset=>({...d,request_digest:digest({batch:offset,pass:d.pass}),motives:d.motives.slice(offset,offset+2)})));
+  return aggregateSignalStudyLayerBatchesV2({item_keys:pair[0].motives.map(m=>m.motive_key)} as Parameters<typeof aggregateSignalStudyLayerBatchesV2>[0],values);
+ };
+ const initial=aggregate(base);assert.notEqual(initial[1].request_digest,base[1].request_digest);
+ const boundary=signalStudyLayerStabilityV1(...initial).boundary_keys;assert.deepEqual(boundary,['motive_1']);
+ const recoded=initial.map(d=>({...d,recode_attempt:1 as const,request_digest:digest({repair:d.pass}),motives:d.motives.filter(m=>boundary.includes(m.motive_key)).map(m=>({...m,partitions:m.partitions.map(p=>({...p,layer:'personal' as const}))}))}))as [SignalStudyLayerDecisionV1,SignalStudyLayerDecisionV1];
+ const repaired=applySignalStudyBoundaryRecodeV1({initial,recoded}).decisions;
+ assert.equal(repaired[1].recode_attempt,1);assert.equal(repaired[1].motives[2]!.partitions[0]!.name,privateName);
+ const roots=new Map(Array.from({length:100},(_,i)=>root(i)).map(r=>[r.root_id,r]));
+ const rows=materializeSignalStudyEvidenceV1(repaired,roots,SIGNAL_STUDY_EVIDENCE_ASSOCIATION_VERSION_V1);
+ const intactB=rows.find(row=>row.association?.motive_key==='motive_2'&&row.association.pass==='b');assert.ok(intactB);
+ const allowed=['assessed_layer','motive_key','partition_key','pass','role'];
+ for(const row of rows)assert.deepEqual(Object.keys(row.association!).sort(),allowed);
+ const serialized=JSON.stringify(rows);assert.ok(!serialized.includes(privateName));assert.ok(!serialized.includes('@private_b'));
+ for(const field of ['partition_name','request_digest','recode_attempt','study_digest'])assert.ok(!serialized.includes('"'+field+'"'));
 });

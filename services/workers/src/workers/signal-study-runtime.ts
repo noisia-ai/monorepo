@@ -12,7 +12,7 @@ import {
  buildSignalStudyMotiveReviewV1,validateSignalStudyMotiveReviewV1,buildSignalStudyConfiguredLayerReviewV1,validateSignalStudyLayerReviewV1,
  signalStudyLayerStabilityV1,signalStudyBoundaryRuleStabilityV1,signalStudyUnmeasurableMotivePartitionsV1,SIGNAL_STUDY_UNMEASURED_LAYER_NOTE_V1,applySignalStudyBoundaryRecodeV1,signalStudyJevMotiveConfigurationV1,buildSignalStudyMotiveRequestV1,buildSignalStudyMotiveReaskRequestV1,
  signalStudyDominancePlanV1,buildSignalStudyContrastReviewV1,validateSignalStudyContrastReviewV1,buildSignalStudySummaryV1,
- signalStudyQueryBiasV1,verifySignalStudyVerbatimV1,assertSignalStudyRootsV1,signalWorkspaceEmbeddingDigestV1 as digest,
+ signalStudyQueryBiasV1,materializeSignalStudyEvidenceV1,SIGNAL_STUDY_EVIDENCE_ASSOCIATION_VERSION_V1,assertSignalStudyRootsV1,signalWorkspaceEmbeddingDigestV1 as digest,
  type SignalStudyExecutionConfigurationV1,type SignalStudyRootV1,type SignalStudyMotiveV1,type SignalStudyMembershipV1,
  type SignalStudyEditorialRequestV1,type SignalStudyLayerDecisionV1,type SignalListeningConfigurationV1,signalStudyJevAxesConfigurationV1,
 } from '@noisia/query-engine';
@@ -36,7 +36,7 @@ export type StudyRuntimeSourceV1={configuration:SignalStudyExecutionConfiguratio
   eligible_roots:number;pending_base_roots:number;corpus_roots:number};
  embedding_space_digest:string;source_preparation_run_ids:string[];sampling_seed:string;query_terms:string[];problem_terms:string[];query_metadata?:{query_terms_declared:boolean;problem_terms_declared:boolean};brand_baseline_roots:number;
  acquisition_query_metadata?:{contract_version:'signal-study-acquisition-query-metadata-v1';complete:boolean;source_batches:number;unavailable_batches:number};
- source_digest:string;human_revision_digest:string;max_roots:number;max_bytes:number;source_storage?:import('./signal-study-source-pages').StudySourcePagesManifestV1;editorial_compiler_version?:typeof SIGNAL_STUDY_EDITORIAL_COMPILER_V2;layer_boundary_rule_version?:typeof SIGNAL_STUDY_BOUNDARY_RULE_VERSION_V1};
+ source_digest:string;human_revision_digest:string;max_roots:number;max_bytes:number;source_storage?:import('./signal-study-source-pages').StudySourcePagesManifestV1;editorial_compiler_version?:typeof SIGNAL_STUDY_EDITORIAL_COMPILER_V2;layer_boundary_rule_version?:typeof SIGNAL_STUDY_BOUNDARY_RULE_VERSION_V1;evidence_association_version?:typeof SIGNAL_STUDY_EVIDENCE_ASSOCIATION_VERSION_V1};
 export type StudyRuntimeReceiptV1={body_base64:string;body_bytes:number;sha256:string;complete:boolean;http_status:number|null;provider_request_id:string|null};
 export type StudyRuntimeStepPlanV1={key:string;kind:'sonnet';request_body:string;request_sha256:string;source_digest:string};
 export type StudyRuntimeStepV1=StudyRuntimeStepPlanV1&{status:'planned'|'sent'|'raw'|'committed'|'unknown';
@@ -108,7 +108,7 @@ export type StudyRuntimeDriversV1={
 export type StudyRuntimeOutputV1={contract_version:'signal-study-runtime-output-v1';status:'directional';source_digest:string;
  configuration_digest:string;summary:ReturnType<typeof buildSignalStudySummaryV1>;query_bias:ReturnType<typeof signalStudyQueryBiasV1>;
  stability:ReturnType<typeof signalStudyLayerStabilityV1>|null;dominance:ReturnType<typeof signalStudyDominancePlanV1>|null;
- verified_evidence:ReturnType<typeof verifySignalStudyVerbatimV1>[];insufficient_group_keys:string[];
+ verified_evidence:ReturnType<typeof materializeSignalStudyEvidenceV1>;insufficient_group_keys:string[];
  promotion:{status:'explicit_action_required';automatic:false}};
 class EditorialFormatStopped extends Error{constructor(readonly stop:SignalStudyEditorialFormatStopV1){super('format_stop');}}
 class Paused extends Error {constructor(readonly status:string,readonly progress?:{batch_id:string;completed:number;total:number}){super(status);}}
@@ -154,6 +154,7 @@ export async function signalStudyRuntimeJobV1(execution_id:string,options:{store
  try{
   if(lease.execution_id!==execution_id||!uuid.test(lease.workspace_id)||!uuid.test(lease.execution_token))fail('lease_invalid');
   const raw=await store.source(lease);runtimeSource=raw;if(!raw)throw new Paused('stale');
+  if(raw.evidence_association_version!==undefined&&raw.evidence_association_version!==SIGNAL_STUDY_EVIDENCE_ASSOCIATION_VERSION_V1)fail('evidence_association_version_invalid');
   if(raw.editorial_compiler_version!==undefined&&raw.editorial_compiler_version!==SIGNAL_STUDY_EDITORIAL_COMPILER_V2)fail('editorial_compiler_invalid');
   const batching=raw.editorial_compiler_version===SIGNAL_STUDY_EDITORIAL_COMPILER_V2;
   if(raw.layer_boundary_rule_version!==undefined&&(raw.layer_boundary_rule_version!==SIGNAL_STUDY_BOUNDARY_RULE_VERSION_V1||!batching))fail('boundary_rule_version_invalid');
@@ -399,8 +400,7 @@ export async function signalStudyRuntimeJobV1(execution_id:string,options:{store
    memberships=[...memberships.filter(row=>row.human_locked||!replaced.has(JSON.stringify([row.root_id,row.motive_key]))),...reasked];
    dominance=signalStudyDominancePlanV1({roots,motives,memberships,cut_root_ids:roots.map(r=>r.root_id)});
   }
-  const verified_evidence=decisions?.flatMap(d=>d.motives.flatMap(m=>m.partitions.flatMap(p=>[p.evidence,p.normative_evidence].filter(e=>e!==null)
-   .map(e=>verifySignalStudyVerbatimV1(byRoot.get(e.root_id)!,e.quote,e.private_person_names)))))??[];
+  const verified_evidence=materializeSignalStudyEvidenceV1(decisions,byRoot,raw.evidence_association_version);
   const summary=buildSignalStudySummaryV1({study,template_snapshot:snapshot,roots,motives,memberships,cut_root_ids:roots.map(r=>r.root_id),unresolved_root_ids:[]});
   if(raw.layer_boundary_rule_version&&stability?.kappa===null)summary.limitations.push(SIGNAL_STUDY_UNMEASURED_LAYER_NOTE_V1);
   const output:StudyRuntimeOutputV1={contract_version:'signal-study-runtime-output-v1',status:'directional',source_digest,configuration_digest:lease.configuration_digest,

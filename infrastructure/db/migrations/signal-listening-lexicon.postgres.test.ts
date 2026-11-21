@@ -72,3 +72,75 @@ test('native lexical evidence uses configured category topics without trigger/ba
     }finally{await rm(dir,{recursive:true,force:true});}
   }});
 });
+
+test('lexical foreground follows versioned human remove, move and merge while outside conversation stays in background',{
+  skip:process.env.NOISIA_R16_LISTENING_LEXICON_PG!=='true',timeout:600000,
+},async()=>{
+  const {withDiscoveryAdvanceFixtureV1}=await import('./signal-listening-discovery-advance.synthetic.fixture');
+  const {createSignalListeningDiscoveryAdvanceStoreV1}=await import('../signal-listening-discovery-advance');
+  const {activateSignalListeningServingSnapshotV1}=await import('../signal-listening-discovery-money');
+  const human=await import('../signal-listening-human-edits');
+  await withDiscoveryAdvanceFixtureV1(async f=>{
+    const access={database:f.database,workspace_id:f.workspace_id,actor_user_id:f.actor_user_id};
+    const store=createSignalListeningDiscoveryAdvanceStoreV1({database:f.database,numeric_storage:f.storage});
+    for(let i=1;i<=3;i++){
+      const lease=await store.claim({database:f.database,execution_id:f.execution.id});assert.ok(lease);
+      const subset=await store.ensureSubset({database:f.database,lease,generation_id:lease.source_generation_id});
+      const numeric=await f.emptyNumeric(subset);await store.persistNumeric({database:f.database,lease,subset_id:subset.id,numeric});
+      const round=await store.enqueue({database:f.database,lease,generation_id:lease.source_generation_id,expected_ordinal:lease.next_ordinal,
+        expected_policy_version_id:lease.policy_version_id,expected_policy_digest:lease.policy_digest,
+        expected_human_revision_digest:lease.human_revision_digest,numeric_manifest_sha256:numeric.manifest_sha256,provider_available:true});
+      if(!round||round.status==='budget_exhausted')throw Error('fixture native round missing');
+      await store.release({database:f.database,lease});await f.finishRound(round,3);await activateSignalListeningServingSnapshotV1({...f,round_id:round.id});
+      if((await f.database.query('SELECT status FROM signal_listening_discovery_executions WHERE id=$1',[f.execution.id])).rows[0]!.status==='completed')break;
+    }
+    let ctx=await human.getSignalListeningHumanEditContextV1(access);assert.equal(ctx.can_edit,true);
+    const category=ctx.configuration.questions.find(q=>q.topic_source==='discovered'&&q.domain==='category')!.key;
+    const outside=ctx.configuration.questions.find(q=>q.topic_source==='defined'&&q.domain==='outside')!.key;
+    assert.equal(ctx.configuration.questions.filter(q=>q.topic_source&&q.domain==='category').length,1);
+    const originalConfiguration=ctx.expected.configuration_id;
+    const read=(configuration_id:string)=>loadSignalListeningLexiconSuggestionsV1({...access,configuration_id,map_id:f.map_id});
+    const labels=(configuration_id:string,root_id:string)=>human.readSignalListeningEffectiveTopicLabelsV1({...access,configuration_id,map_id:f.map_id,root_ids:[root_id],question_keys:[category]});
+    const originals=(await f.database.query('SELECT * FROM signal_listening_answers WHERE workspace_id=$1 ORDER BY root_id,question_digest',[f.workspace_id])).rows;
+    // One deterministic lexical root keeps the native discovery population
+    // nonempty; UUID ordering must not decide which cases the test exercises.
+    const outsideLexicon=new Set((await f.database.query<{id:string}>(`SELECT id FROM mentions WHERE workspace_id=$1 AND id=ANY($2::uuid[])
+      AND NOT signal_mass_labeling_category_matches_v1(text_clean,ARRAY['0000'])`,[f.workspace_id,f.roots])).rows.map(row=>row.id));
+    assert.equal(outsideLexicon.size,59);
+    const initialForeground=f.roots.slice(0,3).filter(id=>outsideLexicon.has(id)).length;
+    const root=f.roots.slice(0,3).find(id=>outsideLexicon.has(id))!;
+    const negativeRoot=f.roots.slice(3).find(id=>outsideLexicon.has(id))!;assert.ok(root);assert.ok(negativeRoot);
+    const initial=await read(originalConfiguration);assert.equal(initial.foreground_size,initialForeground);assert.equal(initial.background_size,60);
+    const original=(await labels(originalConfiguration,root))[0]!;
+    assert.equal((original.answer as {noul:number}).noul,.9);
+    const removed=await human.correctSignalListeningTopicMembershipV1({...access,expected:ctx.expected,root_id:root,from_question_key:category,idempotency_key:randomUUID()});
+    const negative=(await labels(removed.configuration_id,root))[0]!;
+    assert.deepEqual(negative.answer,original.answer);assert.equal(negative.human_belongs,false);assert.equal(negative.effective_belongs,false);
+    const afterRemove=await read(removed.configuration_id);
+    assert.equal(afterRemove.foreground_size,initialForeground-1,'a positive provider answer cannot restore a human removal; outside membership is not category confirmation');
+    assert.equal(afterRemove.background_size,60,'outside-only consumer conversation remains in the comparison population');
+    assert.deepEqual(afterRemove.items,[],'fewer than three foreground roots do not meet the unchanged minimum');
+    assert.deepEqual(await read(originalConfiguration),initial,'later decisions cannot leak into the original configuration revision');
+    ctx=await human.getSignalListeningHumanEditContextV1(access);
+    const moved=await human.correctSignalListeningTopicMembershipV1({...access,expected:ctx.expected,root_id:root,from_question_key:outside,to_question_key:category,idempotency_key:randomUUID()});
+    const afterMove=await read(moved.configuration_id);assert.equal(afterMove.foreground_size,initialForeground);assert.equal(afterMove.background_size,60);
+    assert.equal((await labels(moved.configuration_id,root))[0]!.human_belongs,true);
+    const rawNegative=(await labels(moved.configuration_id,negativeRoot))[0]!;
+    assert.equal((rawNegative.answer as {noul:number}).noul,.1);assert.equal(rawNegative.effective_belongs,false);
+    ctx=await human.getSignalListeningHumanEditContextV1(access);
+    const merged=await human.mergeSignalListeningTopicsV1({...access,expected:ctx.expected,source_question_keys:[category,outside],target_question_key:category,idempotency_key:randomUUID()});
+    const afterMerge=await read(merged.configuration_id);assert.equal(afterMerge.foreground_size,59);assert.equal(afterMerge.background_size,60);
+    assert.ok(afterMerge.items.length>0);assert.ok(afterMerge.items.every(item=>item.foreground_roots>=3&&item.foreground_roots<=59&&item.background_roots<=60));
+    const mergedLabel=(await labels(merged.configuration_id,negativeRoot))[0]!;
+    assert.deepEqual(mergedLabel.answer,rawNegative.answer);assert.equal(mergedLabel.human_belongs,true);assert.equal(mergedLabel.effective_belongs,true);
+    assert.equal((await read(moved.configuration_id)).foreground_size,initialForeground,'a later merge does not alter the prior revision');
+
+    assert.deepEqual((await f.database.query('SELECT * FROM signal_listening_answers WHERE workspace_id=$1 ORDER BY root_id,question_digest',[f.workspace_id])).rows,originals);
+    await assert.rejects(loadSignalListeningLexiconSuggestionsV1({...access,configuration_id:merged.configuration_id,map_id:f.map_id,workspace_id:randomUUID()}),/listening_forbidden/);
+    await assert.rejects(read(randomUUID()),/listening_configuration_unavailable/);
+    await assert.rejects(loadSignalListeningLexiconSuggestionsV1({...access,configuration_id:merged.configuration_id,map_id:randomUUID()}),/map_stale/);
+    await f.database.query("UPDATE users SET status='suspended' WHERE id=$1",[f.actor_user_id]);
+    try{await assert.rejects(read(merged.configuration_id),/listening_forbidden/);}
+    finally{await f.database.query("UPDATE users SET status='active' WHERE id=$1",[f.actor_user_id]);}
+  },{population_count:60,initial_approved:60,additional_defined_topic:true,additional_defined_topic_domain:'outside',lexicon_terms:['0000']});
+});

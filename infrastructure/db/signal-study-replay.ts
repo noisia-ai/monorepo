@@ -11,7 +11,7 @@ import {
  buildSignalStudyMotiveReviewV1,validateSignalStudyMotiveReviewV1,buildSignalStudyConfiguredLayerReviewV1,validateSignalStudyLayerReviewV1,
  signalStudyLayerStabilityV1,signalStudyBoundaryRuleStabilityV1,signalStudyUnmeasurableMotivePartitionsV1,SIGNAL_STUDY_UNMEASURED_LAYER_NOTE_V1,applySignalStudyBoundaryRecodeV1,signalStudyJevMotiveConfigurationV1,buildSignalStudyMotiveRequestV1,buildSignalStudyMotiveReaskRequestV1,
  signalStudyDominancePlanV1,buildSignalStudyContrastReviewV1,validateSignalStudyContrastReviewV1,buildSignalStudySummaryV1,
- signalStudyQueryBiasV1,verifySignalStudyVerbatimV1,assertSignalStudyRootsV1,signalWorkspaceEmbeddingDigestV1 as digest,
+ signalStudyQueryBiasV1,verifySignalStudyVerbatimV1,materializeSignalStudyEvidenceV1,SIGNAL_STUDY_EVIDENCE_ASSOCIATION_VERSION_V1,assertSignalStudyRootsV1,signalWorkspaceEmbeddingDigestV1 as digest,
  SIGNAL_STUDY_BOUNDARY_RULE_VERSION_V1,compileSignalStudyBoundaryRuleBatchesV1,validateSignalStudyBoundaryRuleReviewV1,
  SIGNAL_STUDY_EDITORIAL_COMPILER_V2,compileSignalStudyDiscoveryBatchesV2,compileSignalStudyLayerPairV2,compileSignalStudyContrastBatchesV2,
  validateSignalStudyDiscoveryBatchPrefixV2,buildSignalStudyMotiveReconciliationV2,validateSignalStudyMotiveReconciliationV2,
@@ -56,6 +56,7 @@ async function replayStudy(c:PoolClient,execution_id:string,raw:StudyRuntimeSour
  target?:CurrentTargetV1):Promise<ReplayNextV1|{validation:SignalStudyCurrentStepValidationV1}>{
  try{
  const configuration=validateSignalStudyExecutionConfigurationV1(raw.configuration),source_digest=raw.source_digest,useV2=raw.editorial_compiler_version===SIGNAL_STUDY_EDITORIAL_COMPILER_V2;
+ if(raw.evidence_association_version!==undefined&&raw.evidence_association_version!==SIGNAL_STUDY_EVIDENCE_ASSOCIATION_VERSION_V1)fail('evidence_association_version_invalid');
  if(raw.editorial_compiler_version!==undefined&&!useV2)fail('editorial_compiler_invalid');
  if(raw.layer_boundary_rule_version!==undefined&&(raw.layer_boundary_rule_version!==SIGNAL_STUDY_BOUNDARY_RULE_VERSION_V1||!useV2))fail('boundary_rule_version_invalid');
  const dependencies=new Map<string,StudyRuntimeStageDependencyV1>();
@@ -247,8 +248,7 @@ function jevResponse(request:JevRequestV1,value:unknown):Record<string,JevAnswer
    memberships=[...memberships.filter(row=>row.human_locked||!replaced.has(JSON.stringify([row.root_id,row.motive_key]))),...reasked];
    dominance=signalStudyDominancePlanV1({roots,motives,memberships,cut_root_ids:roots.map(r=>r.root_id)});
   }
-  const verified_evidence=decisions?.flatMap(d=>d.motives.flatMap(m=>m.partitions.flatMap(p=>[p.evidence,p.normative_evidence].filter(e=>e!==null)
-   .map(e=>verifySignalStudyVerbatimV1(byRoot.get(e.root_id)!,e.quote,e.private_person_names)))))??[];
+  const verified_evidence=materializeSignalStudyEvidenceV1(decisions,byRoot,raw.evidence_association_version);
   const summary=buildSignalStudySummaryV1({study,template_snapshot:snapshot,roots,motives,memberships,cut_root_ids:roots.map(r=>r.root_id),unresolved_root_ids:[]});
   if(raw.layer_boundary_rule_version&&stability?.kappa===null)summary.limitations.push(SIGNAL_STUDY_UNMEASURED_LAYER_NOTE_V1);
   const output:StudyRuntimeOutputV1={contract_version:'signal-study-runtime-output-v1',status:'directional',source_digest,configuration_digest:digest(configuration),

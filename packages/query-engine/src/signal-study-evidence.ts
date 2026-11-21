@@ -1,3 +1,4 @@
+import type {SignalStudyLayerDecisionV1} from './signal-study-editorial';
 import {validateSignalListeningTopicLocalizationV1,type SignalListeningTopicLocalizationV1} from './signal-listening-contracts';
 import {createHash} from 'node:crypto';
 import {signalWorkspaceEmbeddingDigestV1 as digest} from './signal-workspace-embeddings-v1';
@@ -184,6 +185,27 @@ export function verifySignalStudyVerbatimV1(root:SignalStudyRootV1,quote:string,
   const display=redactSignalStudyTextV1(quote,[...root.private_person_names,...additional_private_person_names]);
   return{root_id:root.root_id,literal_sha256:'sha256:'+createHash('sha256').update(quote).digest('hex'),...display,
     source_url:url.href,channel:root.channel,occurred_at:root.occurred_at};
+}
+/** New source headers opt in; old receipts keep their exact output bytes. */
+export const SIGNAL_STUDY_EVIDENCE_ASSOCIATION_VERSION_V1='signal-study-evidence-association-v1';
+export type SignalStudyVerifiedEvidenceV1=ReturnType<typeof verifySignalStudyVerbatimV1>&{
+ association?:{motive_key:string;partition_key:string;assessed_layer:SignalStudyLayerV1;
+  role:'layer'|'normative';pass:'a'|'b'}};
+/** Retain every assessment, even when two assignments quote identical bytes.
+ * These are coder assessments, not an assertion of a validated final layer.
+ * Aggregated decisions cannot prove per-partition request/recode provenance.
+ * Free names are private assessment data and are never added to this projection. */
+export function materializeSignalStudyEvidenceV1(decisions:readonly SignalStudyLayerDecisionV1[]|null|undefined,
+ roots:ReadonlyMap<string,SignalStudyRootV1>,version?:typeof SIGNAL_STUDY_EVIDENCE_ASSOCIATION_VERSION_V1):SignalStudyVerifiedEvidenceV1[]{
+ if(version!==undefined&&version!==SIGNAL_STUDY_EVIDENCE_ASSOCIATION_VERSION_V1)fail('study_evidence_association_version_invalid');
+ return decisions?.flatMap(d=>d.motives.flatMap(m=>m.partitions.flatMap(p=>(['layer','normative'] as const).flatMap(role=>{
+  const e=role==='layer'?p.evidence:p.normative_evidence;if(!e)return[];
+  if(version&&!p.sample_root_ids.includes(e.root_id))fail('study_evidence_partition_mismatch');
+  const root=roots.get(e.root_id);if(!root)fail('study_evidence_root_missing');
+  const verified=verifySignalStudyVerbatimV1(root,e.quote,e.private_person_names);
+  return[{...verified,...(version?{association:{motive_key:m.motive_key,partition_key:p.key,
+   assessed_layer:p.layer,role,pass:d.pass}}:{})}];
+ }))))??[];
 }
 export function signalStudyQueryBiasV1(args:{query_terms:string[];problem_terms:string[];subject_roots:number;brand_baseline_roots:number;metadata?:{query_terms_declared:boolean;problem_terms_declared:boolean}}):{
   status:'possible_query_bias'|'query_not_problem_selected'|'unknown_query_metadata';reason:string;base_ratio:number|null;subject_roots:number;brand_baseline_roots:number}{

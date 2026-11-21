@@ -3,8 +3,8 @@ import {createHash,randomUUID} from 'node:crypto';
 import {readFile,stat,writeFile} from 'node:fs/promises';
 import test from 'node:test';
 import {signalWorkspaceEmbeddingDigestV1 as digest} from '@noisia/query-engine';
-import {createStudySourcePagesV1,studySourceRootWithAxesV1} from './signal-study-source-pages';
-import type{StudyRuntimeRootV1}from'./signal-study-runtime';
+import {createStudySourcePagesV1,studySourceRootWithAxesV1,studyRuntimeSourceDigestV1,bindStudySourcePagesV1} from './signal-study-source-pages';
+import type{StudyRuntimeRootV1,StudyRuntimeSourceV1}from'./signal-study-runtime';
 const sha=(value:string)=>'sha256:'+createHash('sha256').update(value).digest('hex');
 function root(index:number):StudyRuntimeRootV1{
  const text='A complete synthetic source with a force '+index;
@@ -61,5 +61,24 @@ test('18,845 dense native vectors stay deferred with bounded cache and a small w
   assert.ok(Buffer.byteLength(JSON.stringify({manifest:done.manifest,roots:done.roots}))<2*1024*1024);
   for(let n=18844;n>=0;n--){assert.equal(done.roots[n]!.vector.length,1024);assert.equal(done.roots[n]!.embedding_proof.vector_digest,digest(done.roots[n]!.vector));assert.ok(pages.diagnostics().cache_working_bytes<=16*1024*1024);if(n%128===0)peakRss=Math.max(peakRss,process.memoryUsage().rss);}
   assert.ok(peakRss<512*1024*1024,`observed source process RSS ${peakRss} must remain below 512 MiB`);
+ }finally{await pages.dispose();}
+});
+
+
+test('inline and paged source digests bind only explicit new evidence association versions',async()=>{
+ const pages=await createStudySourcePagesV1({cache_working_bytes:256*1024});
+ try{
+  const r=root(1);await pages.append(r,{});const complete=await pages.finish();
+  for(const source_storage of [undefined,complete.manifest]){
+   const header={...(source_storage?{source_storage}:{}),human_revision_digest:digest('frozen')};
+   const legacy={...header,roots:source_storage?complete.roots:[r]}as unknown as StudyRuntimeSourceV1;
+   if(source_storage)bindStudySourcePagesV1(legacy,pages);
+   const expected=digest(source_storage?header:{...header,roots:[r]});
+   assert.equal(studyRuntimeSourceDigestV1(legacy),expected);
+   const next={...legacy,evidence_association_version:'signal-study-evidence-association-v1' as const};
+   if(source_storage)bindStudySourcePagesV1(next,pages);
+   assert.notEqual(studyRuntimeSourceDigestV1(next),expected);
+   const {evidence_association_version:_,...without}=next;if(source_storage)bindStudySourcePagesV1(without,pages);assert.equal(studyRuntimeSourceDigestV1(without),expected);
+  }
  }finally{await pages.dispose();}
 });

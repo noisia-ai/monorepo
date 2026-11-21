@@ -510,3 +510,33 @@ test('worker and native replay reask only original global pairs after five-motiv
  const sendCount=f.sends.length;
  assert.equal((await signalStudyRuntimeJobV1(f.execution_id,f)).status,'completed');assert.equal(f.sends.length,sendCount,'restart reuses exact old and revised identities without another send');
 });
+
+
+test('native replay and worker preserve legacy output or source-sealed evidence associations without new provider work',async()=>{
+ for(const version of [undefined,'signal-study-evidence-association-v1'] as const){
+  const f=fixture();if(version)f.source.evidence_association_version=version;sealSource(f);
+  assert.equal((await signalStudyRuntimeJobV1(f.execution_id,f)).status,'completed');
+  const client={query:async(sql:string,params:unknown[])=>{
+   if(sql.includes('FROM signal_study_steps')){const step=f.journal.get(String(params[1]));return{rows:step?[step]:[]};}
+   if(sql.includes('FROM signal_study_numeric_checkpoints')){const stored=f.numericCheckpoints.get(String(params[1]));assert.ok(stored&&'verified'in stored);return{rows:[{...stored,verification_status:'verified'}]};}
+   if(sql.includes('FROM signal_study_jev_batches')){const entry=[...f.batches.entries()].find(([,batch])=>batch.plan.stage===params[1]&&batch.plan.plan_digest===params[2]);return{rows:entry?[{id:entry[0],status:entry[1].status,checkpoint:await f.store.jevBatchCheckpoint(f.lease,entry[0])}]:[]};}
+   throw Error('unexpected evidence replay query');
+  }} as unknown as PoolClient;
+  const sends=f.sends.length,replay=await replaySignalStudyWithClientV1(client,f.execution_id,f.source);
+  assert.equal(replay.operation.kind,'output');if(replay.operation.kind!=='output')throw Error('expected output');
+  assert.equal(JSON.stringify(replay.operation.output),JSON.stringify(f.output));assert.equal(f.sends.length,sends);
+  assert.ok(f.output!.verified_evidence.length>0);
+  assert.ok(f.output!.verified_evidence.every(row=>version?Boolean(row.association&&['a','b'].includes(row.association.pass)):!Object.hasOwn(row,'association')));
+  const oldDigest=f.source.source_digest;f.source.evidence_association_version=version?undefined:'signal-study-evidence-association-v1';sealSource(f);assert.notEqual(f.source.source_digest,oldDigest);
+ }
+});
+
+
+test('unknown or null evidence association versions fail before work in runtime and native replay',async()=>{
+ for(const version of ['future',null]){
+  const f=fixture(2);f.source.evidence_association_version=version as never;sealSource(f);
+  await assert.rejects(signalStudyRuntimeJobV1(f.execution_id,f),/evidence_association_version_invalid/);
+  await assert.rejects(replaySignalStudyWithClientV1({query:async()=>{throw Error('must not query');}}as unknown as PoolClient,f.execution_id,f.source),/evidence_association_version_invalid/);
+  assert.equal(f.sends.length,0);assert.equal(f.fitCalls,0);
+ }
+});

@@ -4,7 +4,7 @@ import {authorizeSignalListeningV1,loadSignalListeningConfigurationWithClientV1,
   listeningFailV1 as fail,type SignalListeningAccessV1} from './signal-listening-configuration';
 
 /** Aggregate-only evidence from the same rights-scoped listening population.
- * Foreground is confirmed category conversation missing from the current lexicon;
+ * Foreground uses effective category membership, with human decisions taking precedence;
  * background is all classified consumer conversation. No methodology is required. */
 export async function loadSignalListeningLexiconSuggestionsV1(args:SignalListeningAccessV1&{
   configuration_id:string;map_id:string;limit?:number;
@@ -18,13 +18,13 @@ export async function loadSignalListeningLexiconSuggestionsV1(args:SignalListeni
     const map=await mapCurrent(client,args.workspace_id,args.map_id);
     const row=(await client.query<{foreground_size:number;background_size:number;category_topics:number;items:SignalLexiconEvidenceCountsV1[]}>(`
       WITH population AS MATERIALIZED (
-        SELECT * FROM signal_listening_population_v1($1::uuid,$2::uuid,$3::uuid,$4,'client-derived-metrics')
+        SELECT * FROM signal_listening_effective_population_roots_v2($1::uuid,$2::uuid,$3::uuid,$4,NULL::uuid[],'client-derived-metrics')
       ), roots AS MATERIALIZED (
         SELECT root_id,
           bool_or(question_key='voice' AND answer->>'choice'='individual') consumer,
           bool_or(question_key='promotion' AND (answer->>'noul')::double precision<=.7) not_promotional,
           bool_or(candidate AND scope_state='included' AND definition->>'domain'='category'
-            AND definition ? 'topic_source' AND (answer->>'noul')::double precision>=.7) category_confirmed
+            AND definition ? 'topic_source' AND effective_belongs IS TRUE) category_confirmed
         FROM population GROUP BY root_id
       ), conversation AS MATERIALIZED (
         SELECT roots.root_id,mention.language,

@@ -15,7 +15,7 @@ import type {ListeningDiscoveryAdvanceSubsetV1,ListeningDiscoveryNumericInputV1,
 import {jevUsageV1} from '../../../services/workers/src/workers/signal-jev-labeling-page';
 import {localizeSyntheticListeningConfigurationV1} from './signal-listening-localized.synthetic.fixture';
 const sha=(raw:string|Buffer)=>'sha256:'+createHash('sha256').update(raw).digest('hex');
-type FixtureOptions={population_count?:number;study_author_metadata?:boolean;study_text_length?:number;initial_approved?:number;no_category?:boolean;cap_micro_usd?:number;org_race?:boolean;additional_defined_topic?:boolean};
+type FixtureOptions={population_count?:number;study_author_metadata?:boolean;study_text_length?:number;initial_approved?:number;no_category?:boolean;cap_micro_usd?:number;org_race?:boolean;additional_defined_topic?:boolean;lexicon_terms?:string[];additional_defined_topic_domain?:'category'|'adjacent'|'outside'};
 export async function withDiscoveryAdvanceFixtureV1(fn:(f:Awaited<ReturnType<typeof seed>>)=>Promise<void>,options:FixtureOptions={}){
  await runMassLabelingAcceptanceFixtureV1('product',{population_count:options.population_count,study_author_metadata:options.study_author_metadata,study_text_length:options.study_text_length,beforeProcessing:async ctx=>{
   const files=await mkdtemp(join(tmpdir(),'r16-discovery-advance-'));
@@ -26,10 +26,10 @@ type FixtureContext={database:SignalListeningAccessV1['database'];workspace_id:s
 async function seed(ctx:FixtureContext,files:string,options:FixtureOptions){
  const db=ctx.database,access={database:db,workspace_id:ctx.workspace_id,actor_user_id:ctx.actor_user_id};
  await db.query("UPDATE signal_labeling_runs SET status='canceled' WHERE id=$1",[ctx.run_id]);
- const base=await saveSignalListeningConfigurationV1({...access,expected_revision:0,provenance:'human',configuration:signalListeningBaseTemplateV1({category:'bicycles',lexicon_terms:['synthetic']})});
+ const base=await saveSignalListeningConfigurationV1({...access,expected_revision:0,provenance:'human',configuration:signalListeningBaseTemplateV1({category:'bicycles',lexicon_terms:options.lexicon_terms??['synthetic']})});
  const proposal=await proposeSignalListeningDiscoveryBootstrapV1({...access,configuration_id:base.id,map_id:ctx.map_id});
  if(options.additional_defined_topic){const source=proposal.configuration.questions.find(q=>q.topic_source==='discovered');assert.ok(source);
-  const key='additional_defined_topic';proposal.configuration.questions.push({...source,key,topic_source:'defined',human_locked:false});}
+  const key='additional_defined_topic';proposal.configuration.questions.push({...source,key,topic_source:'defined',domain:options.additional_defined_topic_domain??source.domain,human_locked:false});}
  const cfg=await saveSignalListeningConfigurationV1({...access,expected_revision:base.revision,provenance:'agent',source_digest:proposal.source_digest,
   configuration:localizeSyntheticListeningConfigurationV1(proposal.configuration)});
  const initial=await bootstrapSignalListeningDiscoveryV1({...access,configuration_id:cfg.id,map_id:ctx.map_id,bindings:proposal.bindings});
