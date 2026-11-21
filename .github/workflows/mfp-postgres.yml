@@ -60,6 +60,11 @@ on:
         type: boolean
         default: false
         required: false
+      native_link_batch_abba:
+        description: Run the isolated Native link statement parity and ABBA DML diagnostic on disposable PostgreSQL 17
+        type: boolean
+        default: false
+        required: false
 
 permissions:
   contents: read
@@ -4244,5 +4249,252 @@ jobs:
             .data/piloto-masivo/r16/native-dml-plan-evidence/native-dml-plan.tap
           if-no-files-found: error
           compression-level: 9
+          retention-days: 14
+          include-hidden-files: true
+
+
+  native-link-statement-abba-experimental:
+    name: R16 Native link statement parity and ABBA DML (isolated PG17 lab)
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.scope == 'native-dml-plan-only' && inputs.native_link_batch_abba == true && github.ref != 'refs/heads/codex/r16-native-dml-profile' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      R16BENCH_RUN_ID: benchmark-pg17
+      R16BENCH_SERVICES: postgres
+      NOISIA_R16_LOCAL_PG_LAB: r16-benchmark-pg17
+      DATABASE_SSL: 'false'
+      R16_NATIVE_LINK_STATEMENT_EVIDENCE_DIR: .data/piloto-masivo/r16/native-link-statement-evidence
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+      - name: Install frozen Node workspace dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Typecheck database package before fixture setup
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
+        run: pnpm --filter @noisia/db typecheck
+      - name: Typecheck workers package before fixture setup
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
+        run: pnpm --filter @noisia/workers typecheck
+      - name: Require the owned benchmark lab and evidence path to be absent
+        run: |
+          set -euo pipefail
+          if docker inspect r16-benchmark-pg17 >/dev/null 2>&1; then
+            echo '::error::The named R16 benchmark PostgreSQL container already exists'
+            exit 1
+          fi
+          if docker volume inspect r16bench-benchmark-pg17_postgres-data >/dev/null 2>&1; then
+            echo '::error::The named R16 benchmark PostgreSQL volume already exists'
+            exit 1
+          fi
+          remaining_containers="$(docker ps -aq --filter label=com.docker.compose.project=r16bench-benchmark-pg17)"
+          remaining_volumes="$(docker volume ls -q --filter label=com.docker.compose.project=r16bench-benchmark-pg17)"
+          if [[ -n "$remaining_containers" || -n "$remaining_volumes" ]]; then
+            echo '::error::An R16 benchmark PostgreSQL lab resource already exists'
+            exit 1
+          fi
+          lab_dir=.data/piloto-masivo/r16/labs/benchmark-pg17
+          evidence_dir=.data/piloto-masivo/r16/native-link-statement-evidence
+          if [[ -e "$lab_dir/private.env" || -e "$lab_dir/connection.env" || -e "$evidence_dir" ]]; then
+            echo '::error::Private files for the named R16 lab or link-statement evidence already exist'
+            exit 1
+          fi
+      - name: Initialize private Native link statement evidence
+        run: |
+          set -euo pipefail
+          evidence_dir=.data/piloto-masivo/r16/native-link-statement-evidence
+          mkdir -m 700 -p "$evidence_dir"
+          (umask 077; printf '%s\n' '# Native link statement ABBA diagnostic did not start' > "$evidence_dir/native-link-statement.tap")
+          chmod 600 "$evidence_dir/native-link-statement.tap"
+      - name: Capture source and workflow control before the diagnostic
+        run: |
+          set -euo pipefail
+          workflow_sha="$(sha256sum .github/workflows/mfp-postgres.yml | awk '{print $1}')"
+          status_sha="$(git status --porcelain=v1 -z | sha256sum | awk '{print $1}')"
+          test "$(git status --porcelain=v1 -z | wc -c | tr -d ' ')" = 0
+          printf 'R16_NATIVE_LINK_WORKFLOW_SHA_BEFORE=%s\n' "$workflow_sha" >> "$GITHUB_ENV"
+          printf 'R16_NATIVE_LINK_STATUS_SHA_BEFORE=%s\n' "$status_sha" >> "$GITHUB_ENV"
+      - name: Start the owned PostgreSQL 17 only lab
+        run: |
+          set -euo pipefail
+          printf '%s\n' 'R16_NATIVE_LINK_LAB_OWNED=true' >> "$GITHUB_ENV"
+          scripts/r16/lab-up.sh
+      - name: Apply migrations to the fresh native link-statement lab
+        env:
+          NOISIA_DB_SMOKE_RESET_SCHEMA: 'true'
+          NOISIA_DB_SMOKE_EMULATE_SUPABASE_ROLES: 'true'
+          NOISIA_MFP_PG_CI: 'true'
+        run: |
+          set -euo pipefail
+          connection_file=.data/piloto-masivo/r16/labs/benchmark-pg17/connection.env
+          test -f "$connection_file"
+          set -a
+          source "$connection_file"
+          set +a
+          export DATABASE_SSL=false
+          export NOISIA_R16_LOCAL_PG_LAB=r16-benchmark-pg17
+          pnpm --filter @noisia/db db:smoke:migrations
+      - name: Run Native link statement parity and bounded ABBA DML on PostgreSQL 17
+        id: profile
+        env:
+          NOISIA_R16_LINK_STATEMENT_PG: 'true'
+          NOISIA_R16_LINK_STATEMENT_BENCHMARK_PG: 'true'
+          NOISIA_R16_NATIVE_FIXTURE_PG: 'true'
+        run: |
+          set -euo pipefail
+          connection_file=.data/piloto-masivo/r16/labs/benchmark-pg17/connection.env
+          test -f "$connection_file"
+          set -a
+          source "$connection_file"
+          set +a
+          export DATABASE_SSL=false
+          export NOISIA_R16_LOCAL_PG_LAB=r16-benchmark-pg17
+          set +e
+          pnpm exec node --max-old-space-size=1024 --test --test-concurrency=1 --import tsx \
+            infrastructure/db/migrations/signal-listening-link-statement.postgres.test.ts \
+            2>&1 | tee .data/piloto-masivo/r16/native-link-statement-evidence/native-link-statement.tap
+          test_status=${PIPESTATUS[0]}
+          set -e
+          if [[ "$test_status" -ne 0 ]] \
+            || ! grep -qx '# tests 17' .data/piloto-masivo/r16/native-link-statement-evidence/native-link-statement.tap \
+            || ! grep -qx '# pass 17' .data/piloto-masivo/r16/native-link-statement-evidence/native-link-statement.tap \
+            || ! grep -qx '# fail 0' .data/piloto-masivo/r16/native-link-statement-evidence/native-link-statement.tap \
+            || ! grep -qx '# cancelled 0' .data/piloto-masivo/r16/native-link-statement-evidence/native-link-statement.tap \
+            || ! grep -qx '# skipped 0' .data/piloto-masivo/r16/native-link-statement-evidence/native-link-statement.tap \
+            || ! grep -qx '# Subtest: native Listening link statement preserves guards, valid ACLs, rejected writes and bounded ABBA DML' .data/piloto-masivo/r16/native-link-statement-evidence/native-link-statement.tap; then
+            echo '::error::Native link-statement TAP count, title, parity, benchmark, or skip contract failed'
+            exit 1
+          fi
+      - name: Stop and remove only the owned benchmark lab
+        id: cleanup
+        if: ${{ always() && env.R16_NATIVE_LINK_LAB_OWNED == 'true' }}
+        run: |
+          set -euo pipefail
+          lab_dir=.data/piloto-masivo/r16/labs/benchmark-pg17
+          if [[ -f "$lab_dir/private.env" ]]; then
+            scripts/r16/lab-down.sh
+          fi
+          if docker inspect r16-benchmark-pg17 >/dev/null 2>&1; then
+            echo '::error::Owned R16 benchmark PostgreSQL container survived cleanup'
+            exit 1
+          fi
+          if docker volume inspect r16bench-benchmark-pg17_postgres-data >/dev/null 2>&1; then
+            echo '::error::Owned R16 benchmark PostgreSQL volume survived cleanup'
+            exit 1
+          fi
+          remaining_containers="$(docker ps -aq --filter label=com.docker.compose.project=r16bench-benchmark-pg17)"
+          remaining_volumes="$(docker volume ls -q --filter label=com.docker.compose.project=r16bench-benchmark-pg17)"
+          if [[ -n "$remaining_containers" || -n "$remaining_volumes" || -e "$lab_dir/private.env" || -e "$lab_dir/connection.env" ]]; then
+            echo '::error::An owned R16 benchmark PostgreSQL resource or private connection file survived cleanup'
+            exit 1
+          fi
+      - name: Validate bounded synthetic ABBA receipt and private evidence
+        id: evidence
+        if: always()
+        env:
+          PROFILE_CONCLUSION: ${{ steps.profile.conclusion }}
+          CLEANUP_CONCLUSION: ${{ steps.cleanup.conclusion }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import hashlib, json, os, re, stat
+          from pathlib import Path
+          root=Path(os.environ['GITHUB_WORKSPACE'])
+          evidence=root/os.environ['R16_NATIVE_LINK_STATEMENT_EVIDENCE_DIR']
+          tap=evidence/'native-link-statement.tap'
+          candidate=root/'infrastructure/db/migrations/signal-listening-link-statement.candidate.sql'
+          test_source=root/'infrastructure/db/migrations/signal-listening-link-statement.postgres.test.ts'
+          if not evidence.is_dir() or evidence.is_symlink() or stat.S_IMODE(evidence.stat().st_mode)!=0o700:
+              raise SystemExit('private evidence directory is missing, linked, or not mode 0700')
+          if not tap.is_file() or tap.is_symlink() or stat.S_IMODE(tap.stat().st_mode)!=0o600 or tap.stat().st_size>4*1024*1024:
+              raise SystemExit('private TAP is missing, unsafe, not mode 0600, or exceeds 4 MiB')
+          text=tap.read_text(encoding='utf-8')
+          marker='r16-native-link-statement-v1 '
+          matches=[line[2:] if line.startswith('# ') else line for line in text.splitlines() if line.startswith(marker) or line.startswith('# '+marker)]
+          receipt=None
+          if len(matches)==1 and len(matches[0].encode('utf-8'))<=64*1024:
+              try: receipt=json.loads(matches[0][len(marker):])
+              except (ValueError,UnicodeError): receipt=None
+          if type(receipt) is not dict:
+              raise SystemExit('exactly one bounded private Native link-statement receipt is required')
+          expected={'contract':'r16-native-link-statement-abba-v1','fixture_root_count':1024,
+            'protected_catalog_unchanged':True,'provider_spend0':True,'auto_explain_loaded':False,
+            'fixture_drop_acknowledged':True,'fixture_no_sessions_or_database':True}
+          for key,value in expected.items():
+              if receipt.get(key)!=value: raise SystemExit(f'Native link-statement receipt invariant failed: {key}')
+          version=receipt.get('postgres_version')
+          if type(version) is not int or not 170000<=version<180000: raise SystemExit('receipt is not from PostgreSQL 17')
+          if not re.fullmatch(r'[0-9a-f]{64}',str(receipt.get('candidate_sql_sha256',''))): raise SystemExit('candidate SQL SHA-256 is absent')
+          if not candidate.is_file() or candidate.is_symlink() or hashlib.sha256(candidate.read_bytes()).hexdigest()!=receipt['candidate_sql_sha256']:
+              raise SystemExit('receipt candidate SQL digest does not bind the executed unnumbered candidate')
+          if hashlib.sha256(candidate.read_bytes()).hexdigest()!='f0d4d95a27db9f0bf462f04dc7a73fec2254a9855febc2bb21cfaf3889f3730d':
+              raise SystemExit('executed SQL candidate differs from the frozen author source')
+          if not test_source.is_file() or test_source.is_symlink() or hashlib.sha256(test_source.read_bytes()).hexdigest()!='ba83f2f7c0ce24fe859f5338f66183db7eb75f20fe73b97ac1317f65cb7cb7e6':
+              raise SystemExit('executed PostgreSQL test differs from the frozen author source')
+          scope=str(receipt.get('benchmark_scope',''))
+          if 'no COMMIT' not in scope or 'no H1' not in scope:
+              raise SystemExit('receipt must limit scope to DML and explicitly exclude COMMIT/H1')
+          records=receipt.get('parity_cases')
+          if type(records) is not list or len(records)!=17 or any(type(x) is not dict or x.get('parity') is not True for x in records):
+              raise SystemExit('all 17 semantic/guard parity cases must be present and true')
+          measurements=receipt.get('measurements')
+          if type(measurements) is not list or [x.get('size') for x in measurements if type(x) is dict]!=[720,1024]:
+              raise SystemExit('the preregistered 720 and 1024 DML sizes are required')
+          expected_order=['baseline','candidate','candidate','baseline']
+          for result in measurements:
+              if type(result) is not dict or result.get('order')!=expected_order or type(result.get('samples')) is not list or len(result['samples'])!=4:
+                  raise SystemExit('ABBA order/arms are malformed')
+              size=result['size']
+              for sample,arm in zip(result['samples'],expected_order):
+                  if type(sample) is not dict or sample.get('arm')!=arm or sample.get('count')!=size or sample.get('links')!=2*size or sample.get('rollback_acknowledged') is not True:
+                      raise SystemExit('ABBA sample count, exact link count, or rollback is malformed')
+              means=result.get('means')
+              ratio=result.get('ratio')
+              if type(means) is not dict or not all(type(means.get(k)) in (int,float) and means[k]>0 for k in ('baseline','candidate')):
+                  raise SystemExit('ABBA means are absent or invalid')
+              if type(ratio) not in (int,float) or abs(ratio-means['candidate']/means['baseline'])>1e-9:
+                  raise SystemExit('ABBA ratio does not match its recorded means')
+              if result.get('materially_faster') is not (ratio<=.9):
+                  raise SystemExit('per-size 10% acceptance flag does not match ratio')
+          if receipt.get('materially_faster') is not all(x['ratio']<=.9 for x in measurements):
+              raise SystemExit('overall material-improvement flag does not match both sizes')
+          receipt_path=evidence/'native-link-statement-receipt.json'
+          raw=(json.dumps(receipt,sort_keys=True,separators=(',',':'))+'\n').encode('utf-8')
+          fd=os.open(receipt_path,os.O_CREAT|os.O_EXCL|os.O_WRONLY,0o600)
+          try: os.write(fd,raw); os.fsync(fd)
+          finally: os.close(fd)
+          import subprocess
+          git_status=subprocess.run(['git','status','--porcelain=v1','-z'],cwd=root,stdout=subprocess.PIPE,check=True).stdout
+          status_after=hashlib.sha256(git_status).hexdigest()
+          if git_status: raise SystemExit('source tree changed during the owned PostgreSQL diagnostic')
+          control={'contract':'r16-native-link-statement-workflow-control-v1','github':{k:os.environ.get(k) for k in ('GITHUB_SHA','GITHUB_REF','GITHUB_EVENT_NAME','GITHUB_RUN_ID','GITHUB_RUN_ATTEMPT')},
+            'workflow_sha256_before':os.environ.get('R16_NATIVE_LINK_WORKFLOW_SHA_BEFORE'),'workflow_sha256_after':hashlib.sha256((root/'.github/workflows/mfp-postgres.yml').read_bytes()).hexdigest(),
+            'git_status_sha256_before':os.environ.get('R16_NATIVE_LINK_STATUS_SHA_BEFORE'),'git_status_sha256_after':status_after,'git_clean_after':True,
+            'profile_conclusion':os.environ.get('PROFILE_CONCLUSION'),'cleanup_conclusion':os.environ.get('CLEANUP_CONCLUSION'),
+            'runtime_known':True,'provider_spend':0,'source_note':'CI revision and synthetic-only Native INSERT+MARK DML receipt; no caller COMMIT or H1 claim.'}
+          control_path=evidence/'workflow-control.json'
+          fd=os.open(control_path,os.O_CREAT|os.O_EXCL|os.O_WRONLY,0o600)
+          try: os.write(fd,(json.dumps(control,sort_keys=True,separators=(',',':'))+'\n').encode()); os.fsync(fd)
+          finally: os.close(fd)
+          if os.environ.get('CLEANUP_CONCLUSION')!='success': raise SystemExit('owned PostgreSQL lab cleanup was not acknowledged')
+          if receipt_path.stat().st_size>64*1024 or control_path.stat().st_size>16*1024: raise SystemExit('private evidence exceeds bounded JSON size')
+          with open(os.environ['GITHUB_OUTPUT'],'a',encoding='utf-8') as output: output.write('eligible=true\n')
+          PY
+      - uses: actions/upload-artifact@v4
+        if: ${{ always() && steps.evidence.outputs.eligible == 'true' }}
+        with:
+          name: r16-native-link-statement-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            .data/piloto-masivo/r16/native-link-statement-evidence/native-link-statement.tap
+            .data/piloto-masivo/r16/native-link-statement-evidence/native-link-statement-receipt.json
+            .data/piloto-masivo/r16/native-link-statement-evidence/workflow-control.json
+          if-no-files-found: error
           retention-days: 14
           include-hidden-files: true
