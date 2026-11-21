@@ -12,7 +12,7 @@ import {buildSignalStudyMotivePopulationV1,buildSignalStudyMotiveFitPlanV1,sampl
 import {buildSignalStudyMotiveReviewV1,validateSignalStudyMotiveReviewV1,buildSignalStudyLayerReviewV1,
   validateSignalStudyLayerReviewV1,signalStudyLayerStabilityV1,applySignalStudyBoundaryRecodeV1,
   buildSignalStudyContrastReviewV1,validateSignalStudyContrastReviewV1,type SignalStudyLayerDecisionV1} from './signal-study-editorial';
-import {buildSignalStudyMotiveConfigurationV1,buildSignalStudyMotiveRequestV1,buildSignalStudySummaryV1} from './signal-study-output';
+import {buildSignalStudyMotiveConfigurationV1,buildSignalStudyMotiveRequestV1,buildSignalStudyMotiveReaskRequestV1,buildSignalStudySummaryV1} from './signal-study-output';
 import type {JevAnswerV1} from './signal-mention-facets-jev-v1';
 const id=(n:number)=>`00000000-0000-4000-8000-${String(n).padStart(12,'0')}`;
 const base=signalListeningBaseTemplateV1({category:'synthetic bicycles',lexicon_terms:['bicycle']});
@@ -348,4 +348,36 @@ test('zero publishable rows use null-only quote schema and preserve an unclear f
  const stability=signalStudyLayerStabilityV1(decisions[0]!,decisions[1]!);assert.equal(stability.kappa,null);assert.notEqual(stability.action,'stable');
  const sample=pair[0],missing={...sample,rows:sample.rows.map(({evidence_publishable,...row})=>row)};const {sample_digest,...rest}=missing;
  assert.throws(()=>layerReview({...rest,sample_digest:digest(rest)}as SignalStudySampleV1),/sample_invalid/);
+});
+
+test('dominance request intersects affected keys with the original global four and never pads from the affected subset',()=>{
+  const vectors=[[1,0],[0,1],[0,-1],[-1,.1],[-1,0],[1,.1],[1,.2],[1,.3]];
+  const keys=['force_a','force_b','force_c','force_d','force_e','force_x','force_y','force_z'];
+  const motives=keys.map((key,index)=>({...motive(key),name:'Original '+key,definition:'Original definition '+key,
+    centroid:Array.from({length:1024},(_,i)=>i<2?vectors[index]![i]!:0)}));
+  const selected=root(0),before=buildSignalStudyMotiveRequestV1(selected,motives,buildSignalStudyMotiveConfigurationV1(base,motives))!;
+  assert.deepEqual(Object.keys(before.questions),['force_a','force_x','force_y','force_z']);
+  const affected=keys.slice(0,5),changed=motives.map(m=>affected.includes(m.key)?{...m,name:'Revised '+m.key,definition:'Revised definition '+m.key}:m);
+  const config=buildSignalStudyMotiveConfigurationV1(base,changed);
+  assert.deepEqual(Object.keys(buildSignalStudyMotiveRequestV1(selected,changed.filter(m=>affected.includes(m.key)),config)!.questions),
+    ['force_a','force_b','force_c','force_d'],'ranking inside the affected subset would introduce previously unasked questions');
+  const reask=buildSignalStudyMotiveReaskRequestV1(selected,changed,config,{affected_keys:affected})!;
+  assert.deepEqual(Object.keys(reask.questions),['force_a']);
+  assert.equal(reask.questions.force_a!.criteria?.true,'Revised definition force_a');
+  assert.equal(reask.state,before.state);assert.equal(reask.model,before.model);
+  for(const key of ['force_x','force_y','force_z'])assert.deepEqual(buildSignalStudyMotiveRequestV1(selected,changed,config)!.questions[key],before.questions[key]);
+  assert.equal(buildSignalStudyMotiveReaskRequestV1(selected,changed,config,{affected_keys:affected.slice(1)}),null);
+});
+
+test('dominance request preserves pair and motive human locks without filling their slots',()=>{
+  const motives=['a','b','c','d','e'].map((key,i)=>({...motive('lock_'+key),centroid:root(i).vector}));
+  const selected=root(0),config=buildSignalStudyMotiveConfigurationV1(base,motives);
+  const original=buildSignalStudyMotiveRequestV1(selected,motives,config)!;
+  const first=Object.keys(original.questions)[0]!;
+  assert.equal(buildSignalStudyMotiveReaskRequestV1(selected,motives,config,{affected_keys:[first],locked_keys:[first]}),null);
+  const locked=motives.map(m=>m.key===first?{...m,human_locked:true}:m);
+  assert.equal(buildSignalStudyMotiveReaskRequestV1(selected,locked,buildSignalStudyMotiveConfigurationV1(base,locked),{affected_keys:[first]}),null);
+  for(const scope of [{affected_keys:['missing']},{affected_keys:[first,first]},{affected_keys:[first],locked_keys:['missing']}])
+    assert.throws(()=>buildSignalStudyMotiveReaskRequestV1(selected,motives,config,scope),/reask_scope_invalid/);
+  assert.equal(buildSignalStudyMotiveReaskRequestV1(root(0,'none'),motives,config,{affected_keys:[first]}),null);
 });

@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import type{PoolClient}from'pg';
+import{replaySignalStudyWithClientV1}from'../../../../infrastructure/db/signal-study-replay';
 import {createHash,randomUUID} from 'node:crypto';
 import {SIGNAL_STUDY_TB_TEMPLATE_V1,SIGNAL_STUDY_TB_ROLES_V1,createSignalStudyTemplateSnapshotV1,
- buildSignalStudyExecutionConfigurationV1,buildSignalStudyConfiguredAxesRequestV1,signalListeningBaseTemplateV1,signalWorkspaceEmbeddingDigestV1 as digest,
+ buildSignalStudyExecutionConfigurationV1,buildSignalStudyConfiguredAxesRequestV1,resolveSignalStudyConfiguredAxesV1,signalStudyJevMotiveConfigurationV1,buildSignalStudyMotiveRequestV1,type SignalStudyMotiveV1,signalListeningBaseTemplateV1,signalWorkspaceEmbeddingDigestV1 as digest,
  SIGNAL_STUDY_BOUNDARY_RULE_VERSION_V1,SIGNAL_STUDY_EDITORIAL_COMPILER_V2,type SignalStudyEditorialFormatStopV1,type SignalStudyV1} from '@noisia/query-engine';
 import type{StudyNumericManifestV1}from'./signal-study-numeric';
 import {signalStudyRuntimeJobV1,studyRuntimeJevQuestionIdentityV1,type StudyRuntimeJevBatchPlanV1,type StudyRuntimeJevBatchCheckpointV1,type StudyRuntimeStoreV1,type StudyRuntimeLeaseV1,type StudyRuntimeSourceV1,
@@ -10,7 +12,9 @@ import {signalStudyRuntimeJobV1,studyRuntimeJevQuestionIdentityV1,type StudyRunt
 const sha=(s:string|Buffer)=>'sha256:'+createHash('sha256').update(s).digest('hex');
 const receipt=(value:unknown):StudyRuntimeReceiptV1=>{const b=Buffer.from(JSON.stringify(value));return{body_base64:b.toString('base64'),body_bytes:b.length,sha256:sha(b),complete:true,http_status:200,provider_request_id:'synthetic-request'};};
 const choice=(keys:string[],selected:string)=>({type:'choice' as const,choice:selected,confidence:1,probabilities:Object.fromEntries(keys.map(k=>[k,k===selected?1:0]))});
-function fixture(count=160){
+const dominanceLetters=['a','b','c','d','e','x','y','z']as const;
+function dominanceVector(group:number){const pair=[[1,0],[0,1],[0,-1],[-1,.1],[-1,0],[1,.1],[1,.2],[1,.3]][group]!,norm=Math.hypot(...pair);return Array.from({length:1024},(_,i)=>i<2?pair[i]!/norm:0);}
+function fixture(count=160,dominancePairScope=false){
  const execution_id=randomUUID(),workspace_id=randomUUID(),template={...structuredClone(SIGNAL_STUDY_TB_TEMPLATE_V1),version:'saved-runtime-v2'};
  template.diagnostics[1]!.question='Frozen saved monthly diagnostic.';
  const template_snapshot=createSignalStudyTemplateSnapshotV1({template,roles:SIGNAL_STUDY_TB_ROLES_V1,provenance:'human',revision:2,human_locked:true});
@@ -21,10 +25,10 @@ function fixture(count=160){
   cut:{start_at:'2026-01-01T00:00:00Z',end_at:'2027-01-01T00:00:00Z',timezone:'America/Sao_Paulo',voice:'individual',promotion_max:.7,exclude_hashtag_only:true,require_category_lexicon:true,filters:{}},provenance:'human',revision:2};
  const configuration=buildSignalStudyExecutionConfigurationV1({study,template_snapshot,source_listening:{configuration_id:study.listening_configuration_id,configuration_digest:study.listening_configuration_digest,configuration:listening}});
  const vector=Array.from({length:1024},(_,i)=>i===0?1:0);
- const body={configuration:structuredClone(configuration),roots:Array.from({length:count},(_,i)=>{const text=`id=${i} I enjoy a bicycle and feel calm with enough time.`;return{root_id:'root_'+i,text,text_sha256:sha(text),vector,
+ const body={configuration:structuredClone(configuration),roots:Array.from({length:count},(_,i)=>{const text=`id=${i} I enjoy a bicycle and feel calm with enough time.`,rootVector=dominancePairScope?dominanceVector(i%8):vector;return{root_id:'root_'+i,text,text_sha256:sha(text),vector:rootVector,
   occurred_at:'2026-02-01T00:00:00Z',channel:'synthetic',source_url:'https://example.com/'+i,listening_topic_keys:['topic'],private_person_names:[],
   base_answers:{voice:choice(['individual','brand'],'individual'),promotion:{type:'noul' as const,noul:.1}},
-  embedding_proof:{embedding_call_id:randomUUID(),embedding_run_id:randomUUID(),preparation_run_id:null,input_contract:'synthetic-source',proof_json:'{}',proof_digest:sha('{}'),vector_json:JSON.stringify(vector),vector_digest:digest(vector),text_sha256:sha(text)}};}),
+  embedding_proof:{embedding_call_id:randomUUID(),embedding_run_id:randomUUID(),preparation_run_id:null,input_contract:'synthetic-source',proof_json:'{}',proof_digest:sha('{}'),vector_json:JSON.stringify(rootVector),vector_digest:digest(rootVector),text_sha256:sha(text)}};}),
   selection:{scope:'listening_consumer_cut' as const,source_listening_digest:configuration.source_listening.configuration_digest,cut_digest:digest(study.cut),eligible_root_ids_digest:digest(Array.from({length:count},(_,i)=>'root_'+i).sort()),eligible_roots:count,pending_base_roots:0,corpus_roots:83_000},
   source_preparation_run_ids:[],embedding_space_digest:digest('synthetic-vectors'),sampling_seed:'sealed-synthetic-seed',query_terms:['bicycle'],problem_terms:['problem'],brand_baseline_roots:count,human_revision_digest:digest('human-2'),max_roots:1000,max_bytes:8*1024*1024};
  const source:StudyRuntimeSourceV1={...body,source_digest:digest(body)};
@@ -59,30 +63,30 @@ function fixture(count=160){
    if(plan.kind==='jev'){
     const id=Number(/id=(\d+)/u.exec(body.state)?.[1]);
     const answers=Object.fromEntries(Object.entries(body.questions as Record<string,{type:string;criteria:Record<string,unknown>}>).map(([key,q])=>{
-     if(q.type==='choice'){const selected=key==='study_direction'?(id%2?'barrier':'trigger'):key==='study_target'?'category':'literal';return[key,choice(Object.keys(q.criteria),selected)];}
-     const probability=dominant?(key==='force_a'?.9:.1):key===(id%2?'force_b':'force_a')?.9:.1;
+     if(q.type==='choice'){const selected=key==='study_direction'?(dominancePairScope&&id===1?'none':id%2?'barrier':'trigger'):key==='study_target'?'category':'literal';return[key,choice(Object.keys(q.criteria),selected)];}
+     const probability=dominancePairScope?(dominant?(['force_a','force_b','force_c','force_d','force_e'].includes(key)?.9:.1):.2):dominant?(key==='force_a'?.9:.1):key===(id%2?'force_b':'force_a')?.9:.1;
      return[key,{type:'noul',noul:probability}];
     }));return receipt({model:'jev-1.13.0',answers,usage:{input_tokens:10,output_tokens:5}});
    }
    const payload=JSON.parse(body.messages[0].content).untrusted_data,input_digest=digest(payload);let value:unknown;
    if(payload.contract_version==='signal-study-reconciliation-input-v2')value={contract_version:'signal-study-reconciliation-output-v2',input_digest,clusters:payload.candidates.map((c:{candidate_id:string})=>({representative_id:c.candidate_id,member_ids:[c.candidate_id]}))};
    else if(payload.purpose==='rewrite_layer_boundary_rules')value={contract_version:SIGNAL_STUDY_BOUNDARY_RULE_VERSION_V1,input_digest,rules:payload.boundary_keys.map((motive_key:string)=>({motive_key,contrast_rule:'Separate the private counterfactual force from a resource constraint; never infer layer from shared vocabulary.',reason:'The original counterfactual diagnostics differed.'}))};
-   else if(payload.groups)value={contract_version:'signal-study-motive-output-v1',input_digest,insufficient_group_keys:[],motives:payload.groups.map((g:{group_key:string;rows:Array<{root_id:string}>},i:number)=>({key:i?'motive_b':'motive_a',name:'Synthetic force '+i,definition:'Synthetic force evidence '+i,group_keys:[g.group_key],evidence_root_ids:[g.rows[0]!.root_id]}))};
-   else if(payload.affected_keys){dominant=false;value={contract_version:'signal-study-contrast-output-v1',input_digest,definitions:payload.motives.map((m:{key:string;sample:Array<{root_id:string}>})=>({key:m.key,name:'Contrasted force',definition:'A narrower synthetic force',contrast_reason:'Synthetic contrast',evidence_root_ids:[m.sample[0]!.root_id]}))};}
+   else if(payload.groups)value={contract_version:'signal-study-motive-output-v1',input_digest,insufficient_group_keys:[],motives:payload.groups.map((g:{group_key:string;rows:Array<{root_id:string}>},i:number)=>({key:dominancePairScope?'motive_'+dominanceLetters[i]!:i?'motive_b':'motive_a',name:'Synthetic force '+i,definition:'Synthetic force evidence '+i,group_keys:[g.group_key],evidence_root_ids:[g.rows[0]!.root_id]}))};
+   else if(payload.affected_keys){dominant=false;value={contract_version:'signal-study-contrast-output-v1',input_digest,definitions:payload.motives.map((m:{key:string;sample:Array<{root_id:string}>})=>({key:m.key,name:dominancePairScope?'Contrasted '+m.key:'Contrasted force',definition:dominancePairScope?'Narrowed definition '+m.key:'A narrower synthetic force',contrast_reason:'Synthetic contrast',evidence_root_ids:[m.sample[0]!.root_id]}))};}
    else{const passB=payload.motives[0].sampling.independence==='disjoint'&&sends.filter(p=>p.kind==='sonnet'&&p.request_body.includes('"diagnostics"')).length%2===0;
     value={contract_version:'signal-study-layer-output-v1',input_digest,motives:payload.motives.map((m:{key:string;name:string;partition_keys?:string[];sample:Array<{root_id:string;text:string}>})=>{
-     const a=m.key==='motive_a'||Boolean(m.partition_keys&&m.name==='Synthetic force 0'),layer=repair&&!payload.contrast_rule&&passB?(a?'personal':'psychological'):(a?'psychological':'personal');
-     return{motive_key:m.key,partitions:[{key:m.partition_keys?.[0]??(a?'force_a':'force_b'),name:'Partition '+m.key,definition:'Evidence-backed synthetic force',sample_root_ids:m.sample.map(r=>r.root_id),layer,
+     const a=m.key==='motive_a'||Boolean(m.partition_keys&&m.name==='Synthetic force 0'),layer=dominancePairScope?(['a','b','c','d','e'].includes(m.key.slice('motive_'.length))?'psychological':'personal'):repair&&!payload.contrast_rule&&passB?(a?'personal':'psychological'):(a?'psychological':'personal');
+     return{motive_key:m.key,partitions:[{key:dominancePairScope?'force_'+m.key.slice('motive_'.length):m.partition_keys?.[0]??(a?'force_a':'force_b'),name:'Partition '+m.key,definition:'Evidence-backed synthetic force',sample_root_ids:m.sample.map(r=>r.root_id),layer,
       diagnostics:payload.diagnostics.map((d:{key:string;layer:string})=>({key:d.key,result:d.layer===layer?'yes':'no',force_disappears_without:d.layer===layer,reason:'Synthetic counterfactual'})),
       evidence:{root_id:m.sample[0]!.root_id,quote:'feel calm',private_person_names:[]},normative_evidence:null,permission_override:override&&a?{permission:'partial',reason:'Exact stored analyst justification.'}:null}]};})};
    }
-   return receipt({model:'claude-sonnet-4-6',content:[{type:'text',text:JSON.stringify(value)}],usage:{input_tokens:10,output_tokens:5}});
+   return receipt({model:'claude-sonnet-4-6',...(dominancePairScope?{stop_reason:'end_turn'}:{}),content:[{type:'text',text:JSON.stringify(value)}],usage:{input_tokens:10,output_tokens:5}});
   };
  const drivers={preflight:async()=>{if(preflightError)throw Error('not ready');},
   send:(plan:StudyRuntimeStepPlanV1)=>physicalSend(plan),
   fit:async(args:{numeric_plan:StudyRuntimeNumericPlanV1;fit_plan:{plan_digest:string;configuration:unknown;rows:Array<{root_id:string}>}}):Promise<StudyRuntimeNumericComputedV1>=>{
-   fitCalls++;const plan=args.fit_plan,value={plan_digest:plan.plan_digest,groups:plan.rows.length?[{key:'group_a',root_ids:plan.rows.filter(r=>Number(r.root_id.slice(5))%2===0).map(r=>r.root_id)},
-    {key:'group_b',root_ids:plan.rows.filter(r=>Number(r.root_id.slice(5))%2===1).map(r=>r.root_id)}].filter(g=>g.root_ids.length):[],unassigned_root_ids:[]};
+   fitCalls++;const plan=args.fit_plan,value={plan_digest:plan.plan_digest,groups:plan.rows.length?(dominancePairScope?dominanceLetters.map((letter,index)=>({key:'group_'+letter,root_ids:plan.rows.filter(r=>Number(r.root_id.slice(5))%8===index).map(r=>r.root_id)})):[{key:'group_a',root_ids:plan.rows.filter(r=>Number(r.root_id.slice(5))%2===0).map(r=>r.root_id)},
+    {key:'group_b',root_ids:plan.rows.filter(r=>Number(r.root_id.slice(5))%2===1).map(r=>r.root_id)}]).filter(g=>g.root_ids.length):[],unassigned_root_ids:[]};
    const manifest:StudyNumericManifestV1={contract_version:'signal-study-numeric-v1',workspace_id,execution_id,source_digest:source.source_digest,study_digest:source.configuration.study_digest,cut_digest:digest(source.configuration.study.cut),
     request_sha256:args.numeric_plan.request_sha256,fit_plan_digest:plan.plan_digest,numeric_config:plan.configuration as StudyNumericManifestV1['numeric_config'],numeric_config_digest:digest(plan.configuration),seed_digest:digest(source.sampling_seed),
     embedding_space_digest:source.embedding_space_digest,proof_census_digest:digest(plan.rows.map(r=>r.root_id)),source_proofs_sha256:digest('synthetic-source-proofs'),
@@ -128,7 +132,7 @@ function fixture(count=160){
    flush();if(!isUnknown()&&b.results.length===b.plan.requests.length)b.status='completed';
   },
  };
- return{execution_id,lease,source,journal,sends,events,store,drivers,batches,get output(){return output;},get fitCalls(){return fitCalls;},
+ return{execution_id,lease,source,journal,sends,events,store,drivers,batches,numericCheckpoints,get output(){return output;},get fitCalls(){return fitCalls;},
   get maxInFlight(){return maxInFlight;},get maxBuffered(){return maxBuffered;},get pageWrites(){return pageWrites;},
   set batchStop(v:boolean){batchStop=v;},set batchRawAck(v:boolean){batchRawAck=v;},set batchIncomplete(v:boolean){batchIncomplete=v;},set override(v:boolean){override=v;},
   set mark(v:typeof mark){mark=v;},set renew(v:boolean){renew=v;},set preflightError(v:boolean){preflightError=v;},set sendError(v:boolean){sendError=v;},
@@ -408,4 +412,101 @@ test('new null-kappa sources retain uncertainty and second-pass split identities
   if(mode==='split_b'){assert.equal(f.output?.summary.motives.length,3);assert.ok(f.output?.summary.motives.some(m=>m.name==='Force alone'));assert.ok(f.output?.summary.motives.some(m=>m.name==='Force resources'));}
   assert.equal(f.output?.summary.limitations.some(note=>note.startsWith('Layer agreement is not estimable.')),mode!=='legacy_unclear');
  }
+});
+
+test('worker and native replay reask only original global pairs after five-motive layer dominance',async()=>{
+ const f=fixture(320,true);f.dominant=true;
+ const originalMotives:SignalStudyMotiveV1[]=dominanceLetters.map((letter,index):SignalStudyMotiveV1=>({key:'force_'+letter,name:'Partition motive_'+letter,
+  definition:'Evidence-backed synthetic force',centroid:dominanceVector(index),layer:index<5?'psychological':'personal',human_locked:false}));
+ const originalConfig=signalStudyJevMotiveConfigurationV1(f.source.configuration,originalMotives);
+ const resolved=(root:StudyRuntimeSourceV1['roots'][number])=>{
+  const request=buildSignalStudyConfiguredAxesRequestV1({text:root.text},f.source.configuration),id=Number(root.root_id.slice(5));
+  const answers=Object.fromEntries(Object.entries(request.questions).map(([key,q])=>[key,choice(Object.keys(q.criteria!),
+   key==='study_direction'?(id===1?'none':id%2?'barrier':'trigger'):key==='study_target'?'category':'literal')]));
+  return{...root,axes:resolveSignalStudyConfiguredAxesV1(f.source.configuration,answers)};
+ };
+ const target=f.source.roots[0]!,oldRequest=buildSignalStudyMotiveRequestV1(resolved(target),originalMotives,originalConfig)!;
+ assert.deepEqual(Object.keys(oldRequest.questions),['force_a','force_x','force_y','force_z']);
+ const cache=(root:StudyRuntimeSourceV1['roots'][number],keys:string[],probability:(key:string)=>number)=>{
+  const request=buildSignalStudyMotiveRequestV1(resolved(root),originalMotives,originalConfig)!;
+  root.question_cache=keys.map(key=>({question_key:key,identity_digest:studyRuntimeJevQuestionIdentityV1(request,key),state_sha256:root.text_sha256,
+   jev_call_id:randomUUID(),answer:{type:'noul' as const,noul:probability(key)},receipt_page:{page_id:randomUUID(),sha256:digest('old-definition-cache'),verified:true}}));
+ };
+ // Negative A must still be asked after its wording changes. XYZ are real
+ // unchanged cached memberships; E has a separate old-definition cache entry.
+ cache(target,Object.keys(oldRequest.questions),key=>key==='force_a'?.1:.9);
+ const oldE=f.source.roots[4]!;cache(oldE,['force_e'],()=>.1);sealSource(f);
+ const result=await signalStudyRuntimeJobV1(f.execution_id,f);assert.equal(result.status,'completed');
+ const initialBatch=[...f.batches.values()].find(batch=>batch.plan.stage==='membership')!,initial=initialBatch.plan;
+ const repeatedBatch=[...f.batches.values()].find(batch=>batch.plan.stage==='dominance_membership')!,repeated=repeatedBatch.plan;
+ assert.ok(!initial.requests.some(row=>row.root_id===target.root_id),'the original four answers were actually cached');
+ assert.ok(!initial.requests.some(row=>row.root_id===oldE.root_id&&Object.hasOwn(JSON.parse(row.request_body).questions,'force_e')));
+ const contrast=f.sends.filter(plan=>plan.kind==='sonnet').map(plan=>JSON.parse(JSON.parse(plan.request_body).messages[0].content).untrusted_data)
+  .find(payload=>payload.affected_keys);
+ assert.deepEqual(contrast.affected_keys,['force_a','force_b','force_c','force_d','force_e']);
+ const reask=repeated.requests.find(row=>row.root_id===target.root_id)!;
+ const narrowed=JSON.parse(reask.request_body)as NonNullable<ReturnType<typeof buildSignalStudyMotiveRequestV1>>;
+ assert.deepEqual(Object.keys(narrowed.questions),['force_a']);
+ assert.equal(narrowed.questions.force_a!.criteria?.true,'Narrowed definition force_a');assert.equal(narrowed.state,oldRequest.state);
+ assert.notEqual(studyRuntimeJevQuestionIdentityV1(narrowed,'force_a'),target.question_cache!.find(row=>row.question_key==='force_a')!.identity_digest);
+ const eReask=JSON.parse(repeated.requests.find(row=>row.root_id===oldE.root_id)!.request_body)as typeof narrowed;
+ assert.ok(Object.hasOwn(eReask.questions,'force_e'));assert.equal(eReask.questions.force_e!.criteria?.true,'Narrowed definition force_e');
+ assert.notEqual(studyRuntimeJevQuestionIdentityV1(eReask,'force_e'),oldE.question_cache![0]!.identity_digest,'old E never answers new E');
+ for(const plan of [initial,repeated])for(const row of plan.requests){
+  const root=f.source.roots.find(root=>root.root_id===row.root_id)!,original=buildSignalStudyMotiveRequestV1(resolved(root),originalMotives,originalConfig)!;
+  const request=JSON.parse(row.request_body)as typeof narrowed,keys=Object.keys(request.questions);
+  assert.ok(keys.length>0&&keys.length<=4);assert.ok(keys.every(key=>Object.hasOwn(original.questions,key)),'no previously unasked global pair becomes active');
+  assert.equal(row.request_sha256,sha(row.request_body));
+  if(plan.stage==='dominance_membership')assert.deepEqual(keys,Object.keys(original.questions).filter(key=>contrast.affected_keys.includes(key)),
+   'every original affected pair, including prior rejection, is asked exactly once with no padding');
+ }
+ assert.equal(repeated.requests.length,319,'only the319 originally directed literal roots participate');
+ // Fold the actual cached and native checkpoint answers without dropping low
+ // probabilities. The final domain must be exactly the original four pairs.
+ const activated=new Map<string,Map<string,number>>();
+ for(const root of f.source.roots){
+  const original=buildSignalStudyMotiveRequestV1(resolved(root),originalMotives,originalConfig);if(!original)continue;
+  const values=new Map<string,number>();activated.set(root.root_id,values);
+  for(const entry of root.question_cache??[])if(Object.hasOwn(original.questions,entry.question_key)
+   &&entry.identity_digest===studyRuntimeJevQuestionIdentityV1(original,entry.question_key)&&entry.answer.type==='noul')values.set(entry.question_key,entry.answer.noul);
+ }
+ for(const batch of [initialBatch,repeatedBatch])for(const row of batch.results){
+  const response=row.response as{answers:Record<string,{type:'noul';noul:number}>},values=activated.get(row.root_id)!;
+  for(const [key,answer]of Object.entries(response.answers)){assert.equal(answer.type,'noul');values.set(key,answer.noul);}
+ }
+ assert.equal([...activated.values()].reduce((total,values)=>total+values.size,0),319*4);
+ for(const root of f.source.roots){
+  const original=buildSignalStudyMotiveRequestV1(resolved(root),originalMotives,originalConfig);if(!original)continue;
+  assert.equal(activated.get(root.root_id)!.size,4);
+  assert.deepEqual([...activated.get(root.root_id)!.keys()].sort(),Object.keys(original.questions).sort());
+ }
+ assert.equal(activated.get(target.root_id)!.get('force_a'),.2);
+ assert.equal(activated.get(oldE.root_id)!.get('force_e'),.2,'the revised E response replaces the old .1 cache value');
+ for(const key of ['force_x','force_y','force_z'])assert.equal(activated.get(target.root_id)!.get(key),.9);
+ const none=f.source.roots[1]!.root_id;
+ assert.ok(!initial.requests.some(row=>row.root_id===none)&&!repeated.requests.some(row=>row.root_id===none),'none is not added to either membership stage');
+ for(const key of ['force_x','force_y','force_z'])assert.equal(f.output!.summary.motives.find(m=>m.key===key)!.mentions,1,'unchanged cached XYZ memberships remain in the output');
+
+ // Native replay consumes the actual immutable fake-provider journal produced
+ // above. A mismatched worker/replay request compiles a new operation instead
+ // of output, so both real paths must agree on the exact partial request.
+ const reads:string[]=[];
+ const client={query:async(sql:string,params:unknown[])=>{
+  reads.push(sql);
+  if(sql.includes('FROM signal_study_steps')){const step=f.journal.get(String(params[1]));return{rows:step?[step]:[]};}
+  if(sql.includes('FROM signal_study_numeric_checkpoints')){
+   const stored=f.numericCheckpoints.get(String(params[1]));assert.ok(stored&&'verified'in stored);
+   return{rows:[{...stored,verification_status:'verified'}]};
+  }
+  if(sql.includes('FROM signal_study_jev_batches')){
+   const entry=[...f.batches.entries()].find(([,batch])=>batch.plan.stage===params[1]&&batch.plan.plan_digest===params[2]);
+   return{rows:entry?[{id:entry[0],status:entry[1].status,checkpoint:await f.store.jevBatchCheckpoint(f.lease,entry[0])}]:[]};
+  }
+  throw Error('unexpected dominance replay query');
+ }}as unknown as PoolClient;
+ const replay=await replaySignalStudyWithClientV1(client,f.execution_id,f.source);assert.equal(replay.operation.kind,'output');
+ if(replay.operation.kind!=='output')throw Error('native replay must consume the exact existing partial dominance checkpoint');
+ assert.deepEqual(replay.operation.output,f.output);assert.ok(reads.every(sql=>sql.startsWith('SELECT ')));
+ const sendCount=f.sends.length;
+ assert.equal((await signalStudyRuntimeJobV1(f.execution_id,f)).status,'completed');assert.equal(f.sends.length,sendCount,'restart reuses exact old and revised identities without another send');
 });

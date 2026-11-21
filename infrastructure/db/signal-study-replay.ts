@@ -9,7 +9,7 @@ import {
  validateSignalStudyExecutionConfigurationV1,buildSignalStudyConfiguredAxesRequestV1,resolveSignalStudyConfiguredAxesV1,signalStudyConfiguredCutV1,
  buildSignalStudyMotiveFitPlanV1,buildSignalStudyMotivePopulationV1,sampleSignalStudyGroupV1,signalStudyConfirmedCentroidV1,
  buildSignalStudyMotiveReviewV1,validateSignalStudyMotiveReviewV1,buildSignalStudyConfiguredLayerReviewV1,validateSignalStudyLayerReviewV1,
- signalStudyLayerStabilityV1,signalStudyBoundaryRuleStabilityV1,signalStudyUnmeasurableMotivePartitionsV1,SIGNAL_STUDY_UNMEASURED_LAYER_NOTE_V1,applySignalStudyBoundaryRecodeV1,signalStudyJevMotiveConfigurationV1,buildSignalStudyMotiveRequestV1,
+ signalStudyLayerStabilityV1,signalStudyBoundaryRuleStabilityV1,signalStudyUnmeasurableMotivePartitionsV1,SIGNAL_STUDY_UNMEASURED_LAYER_NOTE_V1,applySignalStudyBoundaryRecodeV1,signalStudyJevMotiveConfigurationV1,buildSignalStudyMotiveRequestV1,buildSignalStudyMotiveReaskRequestV1,
  signalStudyDominancePlanV1,buildSignalStudyContrastReviewV1,validateSignalStudyContrastReviewV1,buildSignalStudySummaryV1,
  signalStudyQueryBiasV1,verifySignalStudyVerbatimV1,assertSignalStudyRootsV1,signalWorkspaceEmbeddingDigestV1 as digest,
  SIGNAL_STUDY_BOUNDARY_RULE_VERSION_V1,compileSignalStudyBoundaryRuleBatchesV1,validateSignalStudyBoundaryRuleReviewV1,
@@ -220,9 +220,10 @@ function jevResponse(request:JevRequestV1,value:unknown):Record<string,JevAnswer
     ...(stability?.action==='stable'&&p.permission_overridden?{permission_override:{permission:p.permission,reason:p.permission_override!.reason}}:{})})));
   }
   let memberships:SignalStudyMembershipV1[]=[];
-  const classify=async(selected:SignalStudyRootV1[],candidates:SignalStudyMotiveV1[],stage:string)=>{
+  const classify=async(selected:SignalStudyRootV1[],candidates:SignalStudyMotiveV1[],stage:string,affected?:readonly string[])=>{
    const config=signalStudyJevMotiveConfigurationV1(configuration,candidates),rows:SignalStudyMembershipV1[]=[];
-   const inputs=selected.flatMap(root=>{const request=buildSignalStudyMotiveRequestV1(root,candidates,config);return request?[{root_id:root.root_id,request}]:[];});
+   const lockedByRoot=new Map<string,string[]>();if(affected)for(const row of memberships)if(row.human_locked){const keys=lockedByRoot.get(row.root_id)??[];keys.push(row.motive_key);lockedByRoot.set(row.root_id,keys);}
+   const inputs=selected.flatMap(root=>{const request=affected?buildSignalStudyMotiveReaskRequestV1(root,candidates,config,{affected_keys:affected,locked_keys:lockedByRoot.get(root.root_id)??[]}):buildSignalStudyMotiveRequestV1(root,candidates,config);return request?[{root_id:root.root_id,request}]:[];});
    const result=await jevBatch(stage,inputs,config);
    for(const root of inputs)for(const [key,answer]of Object.entries(result.get(root.root_id)!)){
     if(answer.type!=='noul')fail('motive_response_invalid');rows.push({root_id:root.root_id,motive_key:key,probability:answer.noul,source:'jev',human_locked:false});
@@ -241,8 +242,9 @@ function jevResponse(request:JevRequestV1,value:unknown):Record<string,JevAnswer
    const contrasted=await contrast();
    motives=motives.map(m=>{const d=contrasted.definitions.find(d=>d.key===m.key);return d?{...m,name:d.name,definition:d.definition}:m;});
    const target=new Set(dominance.reask_root_ids);
-   memberships=[...memberships.filter(row=>!target.has(row.root_id)||!affected.includes(row.motive_key)||row.human_locked),
-    ...await classify(population.roots.filter(r=>target.has(r.root_id)),motives.filter(m=>affected.includes(m.key)),'dominance_membership')];
+   const reasked=await classify(population.roots.filter(r=>target.has(r.root_id)),motives,'dominance_membership',affected);
+   const replaced=new Set(reasked.map(row=>JSON.stringify([row.root_id,row.motive_key])));
+   memberships=[...memberships.filter(row=>row.human_locked||!replaced.has(JSON.stringify([row.root_id,row.motive_key]))),...reasked];
    dominance=signalStudyDominancePlanV1({roots,motives,memberships,cut_root_ids:roots.map(r=>r.root_id)});
   }
   const verified_evidence=decisions?.flatMap(d=>d.motives.flatMap(m=>m.partitions.flatMap(p=>[p.evidence,p.normative_evidence].filter(e=>e!==null)

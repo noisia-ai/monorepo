@@ -21,6 +21,21 @@ export function buildSignalStudyMotiveRequestV1(root:SignalStudyRootV1,motives:S
   return buildSignalListeningJevRequestV1({text:root.selected_fragment?.text??root.text,question_keys:candidates.map(c=>c.key)},config);
 }
 
+/** Contrast changes wording, never the global nearest-four domain. Select the
+ * original global request first, then intersect its actual question keys with
+ * affected/unlocked pairs. Filtering the motive population before ranking
+ * would pad the request with previously unasked motives. */
+export function buildSignalStudyMotiveReaskRequestV1(root:SignalStudyRootV1,motives:SignalStudyMotiveV1[],configuration:SignalListeningConfigurationV1,
+ scope:{affected_keys:readonly string[];locked_keys?:readonly string[]}):JevRequestV1|null{
+  const byKey=new Map(motives.map(m=>[m.key,m])),locked=scope.locked_keys===undefined?[]:scope.locked_keys;
+  for(const keys of [scope.affected_keys,locked])if(!Array.isArray(keys)||new Set(keys).size!==keys.length||keys.some(key=>!byKey.has(key)))
+    throw Error('study_motive_reask_scope_invalid');
+  const original=buildSignalStudyMotiveRequestV1(root,motives,configuration);if(!original)return null;
+  const affected=new Set(scope.affected_keys),protectedKeys=new Set(locked);
+  const questions=Object.fromEntries(Object.entries(original.questions).filter(([key])=>affected.has(key)&&!protectedKeys.has(key)&&!byKey.get(key)!.human_locked));
+  return Object.keys(questions).length?{...original,questions}:null;
+}
+
 type Counts=Record<SignalStudyDirectionV1,number>;
 type Aggregate='subject'|'competitor'|'alternative';
 const counts=():Counts=>({trigger:0,barrier:0,mixed:0,none:0});
