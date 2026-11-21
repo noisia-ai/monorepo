@@ -4436,7 +4436,7 @@ jobs:
               raise SystemExit('receipt candidate SQL digest does not bind the executed unnumbered candidate')
           if hashlib.sha256(candidate.read_bytes()).hexdigest()!='f0d4d95a27db9f0bf462f04dc7a73fec2254a9855febc2bb21cfaf3889f3730d':
               raise SystemExit('executed SQL candidate differs from the frozen author source')
-          if not test_source.is_file() or test_source.is_symlink() or hashlib.sha256(test_source.read_bytes()).hexdigest()!='fe6f2325465ddfad33e3329c0e1498c4d2d9dacfe8b601a49b8c5289f07bb84e':
+          if not test_source.is_file() or test_source.is_symlink() or hashlib.sha256(test_source.read_bytes()).hexdigest()!='2c83222e9e40dbb5f33bcb12d21e7932ba0ab6c7ca2754bd95d09f77dc7df76b':
               raise SystemExit('executed PostgreSQL test differs from the frozen author source')
           scope=str(receipt.get('benchmark_scope',''))
           if 'no COMMIT' not in scope or 'no H1' not in scope:
