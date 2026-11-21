@@ -1,3 +1,4 @@
+import {withWireWidthShadowV1,compareWireWidthPopulationV1,compareWireWidthMetadataV1,assertWireWidthPermissionsV1,runSurveyWireWidthExperimentV1,releaseWireWidthClientV1,rollbackReleaseWireWidthClientV1} from './signal-listening-wire-width.experimental.test-support';
 import {runSurveyWorkMemExperimentV1} from './signal-listening-survey-work-mem.experimental.test-support';
 import {runSurveyQuestionBytesExperimentV1,compareSurveyQuestionBytesEdgeV1} from './signal-listening-survey-question-bytes.experimental.test-support';
 import {compareWirePopulationV1} from './signal-listening-wire-population.oracle';
@@ -22,22 +23,24 @@ const budget=512*1024*1024;
 function oracleDatabase(database:LabelingDatabaseV1,counters:ProjectionLinearJoinsOracleCountersV1):LabelingDatabaseV1{
  return{query:database.query.bind(database),connect:async()=>{
   const c=await database.connect(),context:ProjectionLinearJoinsOracleContextV1={};
-  return new Proxy(c,{get(target,key){if(key==='query')return async(sql:string,params?:unknown[])=>{
+  return new Proxy(c,{get(target,key){if(key==='release')return(error?:Error|boolean)=>releaseWireWidthClientV1(c,error);if(key==='query')return async(sql:string,params?:unknown[])=>{
    const result:QueryResult=await target.query(sql,params);
-   await compareProjectionLinearJoinsOnClientV1(target,sql,params,result,context,counters);return result;
+   await compareProjectionLinearJoinsOnClientV1(target,sql,params,result,context,counters);await compareWireWidthMetadataV1(target,sql,params,result);return result;
   };const value=Reflect.get(target,key);return typeof value==='function'?value.bind(target):value;}});
  }} as LabelingDatabaseV1;
 }
 async function pair(c:PoolClient,sql:string,params:unknown[]){
  assert.deepEqual((await c.query("SELECT current_setting('transaction_isolation') isolation,current_setting('transaction_read_only') readonly")).rows[0],{isolation:'repeatable read',readonly:'on'});
  await compareWirePopulationV1(c,[params[0],params[1],params[2],params[3],params[7],'llm-processing']);
- const before=(await c.query(projectionMetadataBeforeLinearJoinsV1,params)).rows,after=(await c.query(sql,params)).rows;
+ await compareWireWidthPopulationV1(c,[params[0],params[1],params[2],params[3],params[7],'llm-processing']);
+ const before=(await c.query(projectionMetadataBeforeLinearJoinsV1,params)).rows,afterResult=await c.query(sql,params),after=afterResult.rows;
+ await compareWireWidthMetadataV1(c,sql,params,afterResult);
  assert.deepEqual(after,before,'complete metadata rows, projection and weights match frozen a883 in one RR/RO');
  await compareProjectionSurveyOnClientV1(c,params,before);return after;
 }
 test('projection linear joins native preserves256keys, Unicode microseconds, byte sentinels, reservations and rights',{
  skip:!enabled,timeout:600000,
-},async()=>runMassLabelingAcceptanceFixtureV1('product',{seed_published_at:'2026-01-01T00:00:00.123456Z',study_author_metadata:true,wire_octet_probe:true,beforeProcessing:async f=>{
+},async()=>runMassLabelingAcceptanceFixtureV1('product',{seed_published_at:'2026-01-01T00:00:00.123456Z',study_author_metadata:true,wire_octet_probe:true,beforeProcessing:async f=>withWireWidthShadowV1(f.database,async()=>{
  const canceled=await f.database.query("UPDATE signal_labeling_runs SET status='canceled' WHERE id=$1 AND workspace_id=$2 AND status='queued' AND NOT EXISTS(SELECT 1 FROM signal_labeling_calls WHERE run_id=$1) RETURNING id",[f.run_id,f.workspace_id]);assert.equal(canceled.rows.length,1);
  const access={database:f.database,workspace_id:f.workspace_id,actor_user_id:f.actor_user_id},base=signalListeningBaseTemplateV1({category:'bicycles',lexicon_terms:['synthetic']});
  const cfg=await saveSignalListeningConfigurationV1({...access,expected_revision:0,provenance:'human',configuration:localizeSyntheticListeningConfigurationV1({...base,instructions:'Café 😀 漢字 "evidence"\n',questions:[...base.questions,
@@ -53,7 +56,8 @@ test('projection linear joins native preserves256keys, Unicode microseconds, byt
   const full=await store.inputs(run),bounded=await store.inputs(run,{max_rows:3,max_working_bytes:budget});assert.deepEqual(bounded,full.slice(0,3));assert.ok(bounded.length>=2);
   assert.ok(bounded.every(i=>i.question_keys.length===256&&Object.keys(i.question_digests).length===256));
   assert.ok(bounded.every(i=>i.author===null&&i.title===null&&i.language===null&&i.content_type===null&&i.published_at.endsWith('.123Z')));
-  const c=await f.database.connect();let weights:number[]=[];
+  await assertWireWidthPermissionsV1(f.database,[f.workspace_id,cfg.id,f.map_id,run.entity_context_digest,bounded.map(input=>input.root_id),'llm-processing']);
+  const c=await f.database.connect();let weights:number[]=[],widthPrimaryKnown=false,widthPrimary:unknown;
   try{await c.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
    const fixed=Buffer.byteLength(JSON.stringify(run.identity))+Buffer.byteLength(JSON.stringify(run.context))+Buffer.byteLength(JSON.stringify(cfg.configuration));
    const rows=await pair(c,await candidateProjectionMetadataSqlV1(),[f.workspace_id,cfg.id,f.map_id,run.entity_context_digest,run.id,3,fixed,bounded.map(i=>i.root_id),String(budget)]);weights=rows.map(r=>Number(r.working_bytes));
@@ -69,7 +73,7 @@ test('projection linear joins native preserves256keys, Unicode microseconds, byt
      {workspace_id:f.workspace_id,map_id:f.map_id,configuration_digest:cfg.configuration_digest},bounded)));
    }
 
-  }finally{await c.query('ROLLBACK');c.release();}
+  }catch(error){widthPrimaryKnown=true;widthPrimary=error;throw error;}finally{await rollbackReleaseWireWidthClientV1(c,widthPrimaryKnown,widthPrimary);}
   assert.deepEqual(await store.inputs(run,{max_rows:3,max_working_bytes:weights[0]!+weights[1]!-1}),bounded.slice(0,1));
   assert.deepEqual(await store.inputs(run,{max_rows:3,max_working_bytes:weights[0]!+weights[1]!}),bounded.slice(0,2));
   assert.ok(counters.metadata>0&&counters.hydrated>0&&counters.sentinel>0);
@@ -84,16 +88,16 @@ test('projection linear joins native preserves256keys, Unicode microseconds, byt
   const read=async(bounded:boolean)=>{try{return{rows:await store.inputs(run,bounded?{max_rows:3,max_working_bytes:budget}:undefined)}}catch(e){return{error:(e as Error).message}}};
   assert.deepEqual(await read(true),await read(false),'current source denial remains the same native result/error');
  }finally{await store.release(run);}
-}}));
+})}));
 
 test('projection linear joins native preserves awaiting/excluded, H5 precedence and a global byte prefix across pages',{skip:!enabled,timeout:600000},async()=>{
- await withDiscoveryAdvanceFixtureV1(async f=>{
+ await withDiscoveryAdvanceFixtureV1(async f=>withWireWidthShadowV1(f.database,async()=>{
  const access={database:f.database,workspace_id:f.workspace_id,actor_user_id:f.actor_user_id};
  const scoped={key:'consumer_probe',type:'noul' as const,text:'Does this describe category use?',positive:'Category use',negative:'Other',scope:'consumer_category' as const,origin:'brand_os' as const,human_locked:false,topic_source:'defined' as const};
  const excluded=await saveSignalListeningConfigurationV1({...access,expected_revision:f.cfg.revision,provenance:'human',configuration:localizeSyntheticListeningConfigurationV1({...f.cfg.configuration,questions:[...f.cfg.configuration.questions,scoped]})});
  const awaiting=await saveSignalListeningConfigurationV1({...access,expected_revision:excluded.revision,provenance:'human',configuration:{...excluded.configuration,questions:excluded.configuration.questions.map(q=>q.key==='promotion'?{...q,text:q.text+' New pending version.',human_locked:true}:q)}});
  const ctx=(await f.database.query('SELECT entity_context_digest FROM signal_mass_labeling_maps WHERE id=$1',[f.map_id])).rows[0].entity_context_digest;
- const c=await f.database.connect();try{await c.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');const sql=await candidateProjectionMetadataSqlV1();
+ const c=await f.database.connect();let widthPrimaryKnown=false,widthPrimary:unknown;try{await c.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');const sql=await candidateProjectionMetadataSqlV1();
   for(const [cfg,state]of [[excluded,'excluded'],[awaiting,'awaiting_base']] as const){
    const native=(await c.query("SELECT scope_state,answer FROM signal_listening_population_roots_v1($1,$2,$3,$4,$5,'llm-processing') WHERE question_key='consumer_probe'",[f.workspace_id,cfg.id,f.map_id,ctx,f.roots])).rows;assert.ok(native.length>0&&native.every(r=>r.scope_state===state&&r.answer===null));
    const rows=await pair(c,sql,[f.workspace_id,cfg.id,f.map_id,ctx,randomUUID(),4096,1000,f.roots,String(budget)]);
@@ -102,10 +106,10 @@ test('projection linear joins native preserves awaiting/excluded, H5 precedence 
   for(const roots of [[],[null],Array(4097).fill(f.roots[0])])assert.deepEqual(await pair(c,sql,[f.workspace_id,awaiting.id,f.map_id,ctx,randomUUID(),4096,1000,roots,String(budget)]),[]);
   assert.deepEqual(await pair(c,sql,[randomUUID(),awaiting.id,f.map_id,ctx,randomUUID(),4096,1000,f.roots,String(budget)]),[]);
   assert.deepEqual(await pair(c,sql,[f.workspace_id,randomUUID(),f.map_id,ctx,randomUUID(),4096,1000,f.roots,String(budget)]),[]);
- }finally{await c.query('ROLLBACK');c.release();}
-},{no_category:true});
+ }catch(error){widthPrimaryKnown=true;widthPrimary=error;throw error;}finally{await rollbackReleaseWireWidthClientV1(c,widthPrimaryKnown,widthPrimary);}
+}),{no_category:true});
 
- await withSignalStudyFixtureV1(async f=>{
+ await withSignalStudyFixtureV1(async f=>withWireWidthShadowV1(f.database,async()=>{
   const access={database:f.database,workspace_id:f.workspace_id,actor_user_id:f.actor_user_id};
   const initial=await human.getSignalListeningHumanEditContextV1(access),from=initial.configuration.questions.find(q=>q.topic_source==='discovered')!.key,to='additional_defined_topic';
   const moved=await human.correctSignalListeningTopicMembershipV1({...access,expected:initial.expected,root_id:f.roots[0]!,from_question_key:from,to_question_key:to,idempotency_key:randomUUID()});
@@ -113,7 +117,7 @@ test('projection linear joins native preserves awaiting/excluded, H5 precedence 
   const removed=await human.correctSignalListeningTopicMembershipV1({...access,expected:next.expected,root_id:f.roots[0]!,from_question_key:to,idempotency_key:randomUUID()});
   await setSignalListeningDiscoveryManualV1({...access,configuration_id:removed.configuration_id,map_id:f.map_id,question_key:from,root_id:f.roots[2]!,belongs:false});
   const before=(await f.database.query('SELECT id,revision,configuration_id FROM signal_listening_human_edits WHERE workspace_id=$1 ORDER BY revision',[f.workspace_id])).rows;
-  const c=await f.database.connect();try{await c.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');const sql=await candidateProjectionMetadataSqlV1();
+  const c=await f.database.connect();let widthPrimaryKnown=false,widthPrimary:unknown;try{await c.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');const sql=await candidateProjectionMetadataSqlV1();
    const ctx=(await c.query('SELECT entity_context_digest FROM signal_mass_labeling_maps WHERE id=$1',[f.map_id])).rows[0].entity_context_digest;
    const decisions=(await c.query('SELECT belongs FROM signal_listening_human_memberships WHERE workspace_id=$1',[f.workspace_id])).rows;
    assert.ok(decisions.some(d=>d.belongs===true)&&decisions.some(d=>d.belongs===false));
@@ -123,18 +127,18 @@ test('projection linear joins native preserves awaiting/excluded, H5 precedence 
    }
    const labels=(await c.query("SELECT human_belongs,effective_belongs,label_source,answer,cache_call_id FROM signal_listening_effective_population_roots_v2($1,$2,$3,$4,$5,'client-derived-metrics') WHERE root_id=$6 AND question_key=$7",[f.workspace_id,removed.configuration_id,f.map_id,ctx,f.roots,f.roots[0],to])).rows;
    assert.equal(labels.length,1);assert.equal(labels[0].human_belongs,false);assert.equal(labels[0].effective_belongs,false);assert.equal(labels[0].label_source,'human');assert.ok(labels[0].cache_call_id);
-  }finally{await c.query('ROLLBACK');c.release();}
+  }catch(error){widthPrimaryKnown=true;widthPrimary=error;throw error;}finally{await rollbackReleaseWireWidthClientV1(c,widthPrimaryKnown,widthPrimary);}
   assert.deepEqual((await f.database.query('SELECT id,revision,configuration_id FROM signal_listening_human_edits WHERE workspace_id=$1 ORDER BY revision',[f.workspace_id])).rows,before);
- },{complete_listening:true,additional_defined_topic:true});
+ }),{complete_listening:true,additional_defined_topic:true});
 
- await runMassLabelingAcceptanceFixtureV1('product',{population_count:70,beforeProcessing:async f=>{
+ await runMassLabelingAcceptanceFixtureV1('product',{population_count:70,beforeProcessing:async f=>withWireWidthShadowV1(f.database,async()=>{
   const canceled=await f.database.query("UPDATE signal_labeling_runs SET status='canceled' WHERE id=$1 AND workspace_id=$2 AND status='queued' AND NOT EXISTS(SELECT 1 FROM signal_labeling_calls WHERE run_id=$1) RETURNING id",[f.run_id,f.workspace_id]);assert.equal(canceled.rows.length,1);
   const access={database:f.database,workspace_id:f.workspace_id,actor_user_id:f.actor_user_id};
   const base=signalListeningBaseTemplateV1({category:'bicycles',lexicon_terms:['synthetic']});
   const cfg=await saveSignalListeningConfigurationV1({...access,expected_revision:0,provenance:'human',configuration:localizeSyntheticListeningConfigurationV1({...base,questions:[...base.questions,{key:'consumer_probe',type:'noul',text:'Does this describe category use?',positive:'Category use',negative:'Other',scope:'consumer_category',origin:'brand_os',human_locked:false,topic_source:'defined'}]})});
   const admitted=await requestSignalListeningV1({...access,configuration_id:cfg.id,map_id:f.map_id,cap_micro_usd:1000000,idempotency_key:randomUUID(),provider_available:true});
   const counters={metadata:0,hydrated:0,sentinel:0};let pages:Array<Array<{root_id:string;working_bytes:string;projection:unknown}>>=[],pageBudgets:string[]=[],rootPages=0;
-  const original=oracleDatabase(f.database,counters),database={query:original.query.bind(original),connect:async()=>{const c=await original.connect();return new Proxy(c,{get(target,key){if(key==='query')return async(sql:string,params?:unknown[])=>{
+  const original=oracleDatabase(f.database,counters),database={query:original.query.bind(original),connect:async()=>{const c=await original.connect();return new Proxy(c,{get(target,key){if(key==='release')return(error?:Error|boolean)=>releaseWireWidthClientV1(c,error);if(key==='query')return async(sql:string,params?:unknown[])=>{
    const result=await target.query(sql,params);if(sql.startsWith('/* labeling_listening_root_page_v1 */'))rootPages++;if(sql.startsWith('/* labeling_listening_input_metadata_v1 */')){pages.push(result.rows);pageBudgets.push(String(params?.[8]));}return result;
   };const value=Reflect.get(target,key);return typeof value==='function'?value.bind(target):value;}});}} as LabelingDatabaseV1;
   const store=createSignalListeningStoreV1({database,page_size:4096,storeRaw:async()=>{throw Error('no provider');}}),run=await store.claim(admitted.run_id);assert.ok(run);
@@ -166,7 +170,7 @@ test('projection linear joins native preserves awaiting/excluded, H5 precedence 
    assert.equal(counters.metadata-beforeShort.metadata,1);assert.equal(counters.hydrated-beforeShort.hydrated,1);assert.equal(counters.sentinel-beforeShort.sentinel,1);
    assert.ok(counters.metadata>0&&counters.hydrated>0&&counters.sentinel>0);
   }finally{await store.release(run);}
- }});
+ })});
 });
 
 // IMPORTANT: benchmark fixture uses the accredited GLOBAL R16 lab Pool and
@@ -174,14 +178,14 @@ test('projection linear joins native preserves awaiting/excluded, H5 precedence 
 // never before Main/mini in the same populated base. No rollback workaround.
 test('projection linear joins native4096 paired RRRO preserves rows and removes both materialized CTE rescans',{
  skip:!enabled,timeout:600000,
-},async()=>runMassLabelingAcceptanceFixtureV1('product-recovery',{benchmark:{root_count:4096,execution_cap_micro_usd:1000000,import_batch_size:256,preparation_page_size:100,embedding_page_limit:264,beforeProcessing:async f=>{
+},async()=>runMassLabelingAcceptanceFixtureV1('product-recovery',{benchmark:{root_count:4096,execution_cap_micro_usd:1000000,import_batch_size:256,preparation_page_size:100,embedding_page_limit:264,beforeProcessing:async f=>withWireWidthShadowV1(f.database,async()=>{
  const canceled=await f.database.query("UPDATE signal_labeling_runs SET status='canceled' WHERE id=$1 AND workspace_id=$2 AND status='queued' AND NOT EXISTS(SELECT 1 FROM signal_labeling_calls WHERE run_id=$1) RETURNING id",[f.run_id,f.workspace_id]);assert.equal(canceled.rows.length,1);
  const access={database:f.database,workspace_id:f.workspace_id,actor_user_id:f.actor_user_id};
  const cfg=await saveSignalListeningConfigurationV1({...access,expected_revision:0,provenance:'human',configuration:signalListeningBaseTemplateV1({category:'bicycles',lexicon_terms:['synthetic']})});
  const admitted=await requestSignalListeningV1({...access,configuration_id:cfg.id,map_id:f.map_id,cap_micro_usd:1000000,idempotency_key:randomUUID(),provider_available:true});
  const counters={metadata:0,hydrated:0,sentinel:0};let captures=0;
- const database={query:f.database.query.bind(f.database),connect:async()=>{const c=await f.database.connect(),context:ProjectionLinearJoinsOracleContextV1={};return new Proxy(c,{get(target,key){if(key==='query')return async(sql:string,params?:unknown[])=>{
-  const result=await target.query(sql,params);await compareProjectionLinearJoinsOnClientV1(target,sql,params,result,context,counters);
+ const database={query:f.database.query.bind(f.database),connect:async()=>{const c=await f.database.connect(),context:ProjectionLinearJoinsOracleContextV1={};return new Proxy(c,{get(target,key){if(key==='release')return(error?:Error|boolean)=>releaseWireWidthClientV1(c,error);if(key==='query')return async(sql:string,params?:unknown[])=>{
+  const result=await target.query(sql,params);await compareProjectionLinearJoinsOnClientV1(target,sql,params,result,context,counters);await compareWireWidthMetadataV1(target,sql,params,result);
   if(sql.startsWith('/* labeling_listening_input_metadata_v1 */')&&params?.length===9){assert.equal((params[7] as string[]).length,4096);assert.equal(captures,0);captures++;
    const receipt=await runProjectionLinearPair4096V1(target,params);assert.equal(receipt.output_count,4096);assert.equal(receipt.survey_pair.output_count,4096);
    console.log('# projection linear joins pair4096 '+JSON.stringify(receipt));
@@ -194,7 +198,7 @@ test('projection linear joins native4096 paired RRRO preserves rows and removes 
   // Its old Source1dd arm runs on this exact still-open RR/RO client before
   // the real API hydrates every bounded chunk. Neither arm mutates fixtures.
   let surveyQueries=0,bodyQueries=0;const snapshots:Array<{pid:number;snapshot:string;isolation:string;readonly:string}>=[];
-  const surveyDatabase={query:f.database.query.bind(f.database),connect:async()=>{const c=await f.database.connect();let workMemDiscard=false;return new Proxy(c,{get(target,key){if(key==='release')return(error?:Error|boolean)=>target.release(workMemDiscard?true:error);if(key==='query')return async(sql:string,params?:unknown[])=>{
+  const surveyDatabase={query:f.database.query.bind(f.database),connect:async()=>{const c=await f.database.connect();let workMemDiscard=false;return new Proxy(c,{get(target,key){if(key==='release')return(error?:Error|boolean)=>releaseWireWidthClientV1(target,workMemDiscard?true:error);if(key==='query')return async(sql:string,params?:unknown[])=>{
    const metadata=sql.startsWith('/* labeling_listening_input_metadata_v1 */'),body=sql.startsWith('/* labeling_listening_input_body_v1 */');
    const identity=async()=>(await target.query("SELECT pg_backend_pid() pid,pg_current_snapshot()::text snapshot,current_setting('transaction_isolation') isolation,current_setting('transaction_read_only') readonly")).rows[0];
    const anchor=metadata||body?await identity():null,result=await target.query(sql,params);
@@ -206,7 +210,10 @@ test('projection linear joins native4096 paired RRRO preserves rows and removes 
     console.log('# experimental survey question bytes Q8 pair4096 '+JSON.stringify(experiment));
     const workMem=await runSurveyWorkMemExperimentV1(target,{sql,params,actual:result.rows,
      scope:{workspace_id:f.workspace_id,map_id:f.map_id,configuration_digest:cfg.configuration_digest},expectedInputs:rows,markConnectionUncertain:()=>{workMemDiscard=true;}});
-    console.log('# experimental survey work_mem Q8 pair4096 '+JSON.stringify(workMem));}
+    console.log('# experimental survey work_mem Q8 pair4096 '+JSON.stringify(workMem));
+    const width=await runSurveyWireWidthExperimentV1(target,{sql,params,actual:result.rows,
+     scope:{workspace_id:f.workspace_id,map_id:f.map_id,configuration_digest:cfg.configuration_digest},expectedInputs:rows});
+    console.log('# experimental survey wire width Q13 pair4096 '+JSON.stringify(width));}
    if(body){bodyQueries++;assert.ok(params&&Array.isArray(params[2])&&params[2].length<=1024);}
    if(anchor){assert.deepEqual(await identity(),anchor);snapshots.push(anchor);}return result;
   };const value=Reflect.get(target,key);return typeof value==='function'?value.bind(target):value;}});}}as LabelingDatabaseV1;
@@ -221,4 +228,4 @@ test('projection linear joins native4096 paired RRRO preserves rows and removes 
   assert.equal((await f.database.query('SELECT count(*)::int n FROM signal_labeling_calls WHERE run_id=$1',[run.id])).rows[0].n,0,'actual survey and hydration create no calls');
 
  }finally{await store.release(run);}
-}}}));
+})}}));

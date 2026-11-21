@@ -291,20 +291,16 @@ export function buildBlindPackageV1(snapshotValue: unknown, seed: string) {
   const axisIds = new Set<string>();
   const axisCoverage: Array<{ code: string; required: number; selected: number; shortfall: number }> = [];
   const takeAxis = (code: string, rows: typeof t, required: number, trackCoverage = true) => {
+    const already = trackCoverage ? rows.filter(r => axisIds.has(r.mention_id)).length : 0;
     const eligible = rows.filter(r => !usedIdentities.has(r.mention_id) && !axisIds.has(r.mention_id));
-    const chosen = choose(eligible, required, seed, `axes:${code}`, r => r.mention_id);
+    const chosen = choose(eligible, Math.max(0, required - already), seed, `axes:${code}`, r => r.mention_id);
     for (const row of chosen) { axisSelected.push(row); axisIds.add(row.mention_id); }
-    if (trackCoverage) axisCoverage.push({ code, required, selected: chosen.length, shortfall: Math.max(0, required - chosen.length) });
+    if (trackCoverage) axisCoverage.push({ code, required, selected: already + chosen.length, shortfall: Math.max(0, required - already - chosen.length) });
   };
   takeAxis("mixed", t.filter(r => r.direction === "mixed"), 50);
   takeAxis("false_irony", t.filter(r => r.review_flags.includes("false_irony_candidate")), 30);
   takeAxis("ambiguous_brand", t.filter(r => r.review_flags.includes("ambiguous_brand_candidate")), 30);
-  for (const target of TARGETS) {
-    const already = axisSelected.filter(r => r.target === target).length;
-    takeAxis(`target_${target}`, t.filter(r => r.target === target), Math.max(0, 40 - already));
-    const coverage = axisCoverage.at(-1)!;
-    coverage.required = 40; coverage.selected += already; coverage.shortfall = Math.max(0, 40 - coverage.selected);
-  }
+  for (const target of TARGETS) takeAxis(`target_${target}`, t.filter(r => r.target === target), 40);
   takeAxis("false_none_inside", t.filter(r => r.direction === "none" && r.in_cut && r.review_flags.includes("false_none_candidate")), 30);
   takeAxis("axes_total", t.filter(r => r.axes_status === "observed" && r.direction !== "none"), Math.max(0, 200 - axisSelected.length), false);
   const guidance = s.study_guidance;

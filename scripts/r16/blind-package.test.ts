@@ -60,6 +60,126 @@ function syntheticSnapshot(): BlindSnapshotV1 {
       layer: "social", mentions: 100 - i, volume_cohort: LISTENING_COHORTS_V1[Math.min(9, Math.floor(i / 2))]! })), study };
 }
 
+type AxisOverlapKind = "false_irony" | "ambiguous_brand" | "false_none_inside";
+function axisOverlapSnapshot(kind: AxisOverlapKind): BlindSnapshotV1 {
+  const snapshot = syntheticSnapshot();
+  // Keep unrelated official-motive, nearest and outside-cut populations intact.
+  snapshot.study = snapshot.study.filter(row => row.motive_key || row.nearest_volume_cohort || row.axes_status === "not_asked_outside_cut");
+  const add = (count: number, part: string, overrides: Partial<BlindSnapshotV1["study"][number]> = {}) => {
+    for (let i = 0; i < count; i++) snapshot.study.push({ mention_id: `overlap-${kind}-${part}-${i}`,
+      redacted_text: "Synthetic axis overlap example.", axes_status: "observed", direction: "trigger", target: "category", use: "literal",
+      in_cut: true, lexical_filter_match: true, base_voice_valid: true, review_flags: [], ...overrides });
+  };
+  if (kind === "false_irony") {
+    add(50, "mixed", { direction: "mixed", use: "figurative_or_ironic", review_flags: ["false_irony_candidate"] });
+    add(40, "own", { target: "own_brand", review_flags: ["ambiguous_brand_candidate"] });
+    add(40, "competitor", { target: "competitor_brand" });
+    add(40, "alternative", { target: "alternative" });
+    add(30, "none", { direction: "none", review_flags: ["false_none_candidate"] });
+  } else if (kind === "ambiguous_brand") {
+    add(50, "mixed", { direction: "mixed", review_flags: ["ambiguous_brand_candidate"] });
+    add(30, "irony", { target: "own_brand", use: "figurative_or_ironic", review_flags: ["false_irony_candidate", "ambiguous_brand_candidate"] });
+    add(10, "own", { target: "own_brand", review_flags: ["ambiguous_brand_candidate"] });
+    add(40, "competitor", { target: "competitor_brand" });
+    add(40, "alternative", { target: "alternative" });
+    add(30, "none", { direction: "none", review_flags: ["false_none_candidate"] });
+  } else {
+    add(50, "mixed", { direction: "mixed" });
+    add(30, "irony", { target: "competitor_brand", use: "figurative_or_ironic", review_flags: ["false_irony_candidate"] });
+    add(30, "none", { direction: "none", target: "own_brand", review_flags: ["ambiguous_brand_candidate", "false_none_candidate"] });
+    add(10, "own", { target: "own_brand" });
+    add(10, "competitor", { target: "competitor_brand" });
+    add(40, "alternative", { target: "alternative" });
+    // The overlapping minima above cover170 distinct cases. Any30 eligible
+    // filler cases may be sampled without exhausting another official packet:
+    // each motive retains >=10 and each nearest cohort retains >=20 even if
+    // the entire filler comes from that one population.
+    for (let motive = 0; motive < 20; motive++) {
+      const exemplar = snapshot.study.find(row => row.motive_key === `m${motive}`)!;
+      for (let i = 0; i < 15; i++) snapshot.study.push({ ...exemplar, mention_id: `overlap-spare-motive-${motive}-${i}` });
+    }
+    for (const cohort of LISTENING_COHORTS_V1) {
+      const exemplar = snapshot.study.find(row => row.nearest_volume_cohort === cohort)!;
+      for (let i = 0; i < 25; i++) snapshot.study.push({ ...exemplar, mention_id: `overlap-spare-nearest-${cohort}-${i}` });
+    }
+  }
+  return snapshot;
+}
+type AxisOverlapAnswer = { axes_status: string; direction: string; target: string; use: string; in_cut: boolean; review_flags: string[] };
+function assertOverlapAxisSample(built: ReturnType<typeof buildBlindPackageV1>, expectedReady = true) {
+  const rows = built.key.rows.filter(row => row.sample_code === "TAX");
+  const answers = rows.map(row => row.answer as AxisOverlapAnswer);
+  assert.ok(rows.length >= 200, "combined axes sample still has at least200 distinct cases");
+  assert.equal(new Set(rows.map(row => row.mention_id)).size, rows.length);
+  assert.equal(new Set(built.key.rows.map(row => row.mention_id)).size, built.key.rows.length, "overlap never repeats an identity across packets");
+  assert.ok(answers.every(answer => answer.axes_status === "observed"));
+  assert.ok(answers.filter(answer => answer.direction === "mixed").length >= 50);
+  for (const target of ["category", "own_brand", "competitor_brand", "alternative"]) {
+    assert.ok(answers.filter(answer => answer.target === target).length >= 40);
+  }
+  const stratum = built.key.custody_manifest.strata.find(row => row.sample_code === "TAX")!;
+  assert.equal(stratum.quota, 200); assert.equal(stratum.selected, rows.length);
+  const visible = built.packets.find(packet => packet.packet_ref === stratum.packet_ref)!;
+  assert.equal(visible.cases.length, rows.length);
+  for (const packet of built.packets) validatePacketV1(packet);
+  assert.doesNotMatch(JSON.stringify(visible), /"(?:mention_id|sample_code|answer|direction|target|use|review_flags)":/u);
+  if (expectedReady) {
+    assert.equal(built.manifest.readiness, "ready");
+    assert.deepEqual(built.manifest.readiness_reasons, []);
+    assert.equal(built.manifest.shortfall_count, 0);
+    assert.ok(built.key.custody_manifest.axis_coverage.every(row => row.selected >= row.required && row.shortfall === 0));
+    assert.ok(answers.filter(answer => answer.review_flags.includes("false_irony_candidate")).length >= 30);
+    assert.ok(answers.filter(answer => answer.review_flags.includes("ambiguous_brand_candidate")).length >= 30);
+    assert.ok(answers.filter(answer => answer.direction === "none" && answer.in_cut && answer.review_flags.includes("false_none_candidate")).length >= 30);
+  }
+  return answers;
+}
+
+test("axis coverage reuses mixed cases that also meet the false-irony minimum", () => {
+  const built = buildBlindPackageV1(axisOverlapSnapshot("false_irony"), seed);
+  const answers = assertOverlapAxisSample(built);
+  assert.equal(answers.filter(answer => answer.review_flags.includes("false_irony_candidate")).length, 50);
+  const coverage = built.key.custody_manifest.axis_coverage.find(row => row.code === "false_irony")!;
+  assert.deepEqual([coverage.required, coverage.selected, coverage.shortfall], [30, 50, 0]);
+});
+
+test("axis coverage counts ambiguous brands already selected for mixed and irony without demanding thirty new identities", () => {
+  const built = buildBlindPackageV1(axisOverlapSnapshot("ambiguous_brand"), seed);
+  const answers = assertOverlapAxisSample(built);
+  assert.equal(answers.filter(answer => answer.review_flags.includes("ambiguous_brand_candidate")).length, 90);
+  const coverage = built.key.custody_manifest.axis_coverage.find(row => row.code === "ambiguous_brand")!;
+  assert.equal(coverage.required, 30); assert.ok(coverage.selected >= 30); assert.equal(coverage.shortfall, 0);
+});
+
+test("axis coverage credits none cases already selected for brands and targets while filling the combined sample to two hundred", () => {
+  const built = buildBlindPackageV1(axisOverlapSnapshot("false_none_inside"), seed);
+  const answers = assertOverlapAxisSample(built);
+  assert.equal(answers.filter(answer => answer.direction === "none" && answer.in_cut && answer.review_flags.includes("false_none_candidate")).length, 30);
+  const coverage = built.key.custody_manifest.axis_coverage.find(row => row.code === "false_none_inside")!;
+  assert.deepEqual([coverage.required, coverage.selected, coverage.shortfall], [30, 30, 0]);
+});
+
+test("axis coverage keeps a genuine twenty-nine-case population not ready with the original thirty-case minimum", () => {
+  for (const kind of ["false_irony", "ambiguous_brand", "false_none_inside"] as const) {
+    const snapshot = axisOverlapSnapshot(kind);
+    const flag = kind === "false_none_inside" ? "false_none_candidate" : `${kind}_candidate`;
+    for (const row of snapshot.study) row.review_flags = row.review_flags.filter(value => value !== flag);
+    const available = snapshot.study.filter(row => row.mention_id.startsWith(`overlap-${kind}-${kind === "false_none_inside" ? "none" : "mixed"}-`)).slice(0, 29);
+    assert.equal(available.length, 29);
+    for (const row of available) row.review_flags = [...row.review_flags, flag];
+    assert.equal(snapshot.study.filter(row => row.review_flags.includes(flag)).length, 29, "the source really lacks a thirtieth candidate");
+    const built = buildBlindPackageV1(snapshot, seed);
+    const answers = assertOverlapAxisSample(built, false);
+    assert.equal(answers.filter(answer => answer.review_flags.includes(flag)).length, 29);
+    const coverage = built.key.custody_manifest.axis_coverage.find(row => row.code === kind)!;
+    assert.deepEqual([coverage.required, coverage.selected, coverage.shortfall], [30, 29, 1]);
+    assert.equal(built.manifest.readiness, "not_ready");
+    assert.ok(built.manifest.readiness_reasons.includes("sampling_shortfalls"));
+    assert.equal(built.manifest.shortfall_count, 1, "only the real missing thirtieth case remains a shortfall");
+  }
+});
+
+
 test("same synthetic snapshot and custody seed produce identical blind packets and key", () => {
   const snapshot = syntheticSnapshot();
   const a = buildBlindPackageV1(snapshot, seed); const b = buildBlindPackageV1(snapshot, seed);
