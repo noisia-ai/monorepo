@@ -19,7 +19,7 @@ test('R16 native Node20 Fetch records its actual bounded response-header frontie
     response.setHeader('content-length',bodyBytes);
     response.setHeader('retry-after',currentValue);
     response.setHeader('connection','close');
-    response.end(body);
+    response.end(Buffer.from(body,'utf8'));
   });
   server.on('connection',socket=>{sockets.add(socket);socket.once('close',()=>sockets.delete(socket));});
   try{
