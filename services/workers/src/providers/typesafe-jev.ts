@@ -1,4 +1,6 @@
 import { createHash } from 'node:crypto';
+import {createJevDeferredRawWitnessV1} from './jev-deferred-raw';
+import {registerJevPhaseProviderV3,isJevPhaseTransportV3} from './jev-phase-provider-v3';
 import { setTimeout as sleep } from 'node:timers/promises';
 import type { JevAccountRateLimiter, JevRateReservation } from './jev-account-rate-limit';
 
@@ -64,7 +66,7 @@ export function createTypesafeJevClientV1(options: {
   let active = 0; const waiting: Array<() => void> = [];
   let rejections = 0, localCooldownUntil = 0, rateUnavailable = false;
   const responseLimit = options.max_response_bytes ?? MAX_RESPONSE_BYTES;
-  return { max_concurrency: concurrency, max_response_bytes: responseLimit,
+  const provider:JevProviderV1={ max_concurrency: concurrency, max_response_bytes: responseLimit,
     async observeUsage(raw, input_tokens) {
       if (raw.rate_reservation && options.rate_limiter) await options.rate_limiter.observe(raw.rate_reservation, input_tokens);
     }, async evaluate(request, cancellation = {}) {
@@ -126,13 +128,16 @@ export function createTypesafeJevClientV1(options: {
       const [physical, rateUpdateFailed] = await Promise.all([bodyPromise, cooldownPromise]);
       // Preserve physical rejection evidence. The scheduler must persist this response
       // before admitting any new attempt; this client never retries an HTTP request.
-      return { body: physical.body, ...(reservation ? { rate_reservation: reservation } : {}), ...(rateUpdateFailed ? { rate_limit_update_failed: true as const } : {}), http_status: response.status, latency_ms: physical.latency,
+      return witness({ body: physical.body, ...(reservation ? { rate_reservation: reservation } : {}), ...(rateUpdateFailed ? { rate_limit_update_failed: true as const } : {}), http_status: response.status, latency_ms: physical.latency,
         ...(backoff === undefined ? {} : { rate_backoff_ms: backoff }),
         ...(retryAfter === null ? {} : { retry_after: retryAfter }),
-        ...(retryDelay === undefined ? {} : { retry_after_ms: retryDelay }) };
+        ...(retryDelay === undefined ? {} : { retry_after_ms: retryDelay }) });
     } catch (error) { throw jevProviderErrorV1(error); }
     finally { if (timer) clearTimeout(timer); const next = waiting.shift(); if (next) next(); else active--; }
   } };
+  const witness=createJevDeferredRawWitnessV1(provider);
+  if(!options.rate_limiter&&!options.estimate_input_tokens&&isJevPhaseTransportV3(options.fetch))registerJevPhaseProviderV3(provider,()=>true);
+  return provider;
 }
 const record = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value);
 const probability = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 1;

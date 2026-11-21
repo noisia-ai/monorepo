@@ -1,4 +1,8 @@
+import {selectJevPhaseInitialBindingV3} from './signal-jev-phase-profile-v3';
 import type { FacetInput, LlmPriceV1 } from '@noisia/query-engine';
+import {captureJevDeferredRawV1,packJevDeferredRawV3,materializeJevDeferredRawV1,type JevDeferredPacketV3,type JevPackedRawV3} from '../providers/jev-deferred-raw';
+import {tryCreateJevPhaseBudgetOwnerV3,resolveJevPhaseClosedBindingV3,type JevPhaseClosedBindingV3,type JevPhaseCaptureLeaseV3,type JevPhaseCallQuoteV3,type JevPhaseSnapshotV3} from './signal-jev-response-budget-v3';
+import {jevDeferredRetainedBytesV3,jevLegacyPhaseFlushBytesV3,jevLegacyPhaseMaximumFlushBytesV3,jevPhaseQuestionSlotsV3} from './signal-jev-phase-geometry-v3';
 import { llmCostMicroUsdV1 } from '@noisia/query-engine';
 import type { createSignalLabelingStoreV1, LabelingRunV1, LabelingCallV1, LabelingCallProposalV1, LabelingAdmissionSelectionV1, LabelingAdmissionResultV1 } from '@noisia/db';
 import { validateJevResponseV1, jevProviderErrorV1, isJevPreFetchCancellationV1, type JevProviderV1, type JevRawResponseV1,
@@ -10,7 +14,7 @@ export type JevStreamingExecutionV2 = {
   max_buffered_bytes: number; flush_interval_ms: number; window_size: number;
 };
 export type JevStreamingMetricsV2 = { in_flight: number; reserved_working_bytes: number;
-  buffered_responses: number; active_flushes: number; prefetch_canceled_requests?:number;admission_closed?:boolean };
+  buffered_responses: number; active_flushes: number; prefetch_canceled_requests?:number;admission_closed?:boolean;response_phase?:JevPhaseSnapshotV3 };
 /** Private scheduling metadata. It never supplies inputs or grants authority. */
 export type JevFeedAdmissionHintV1 = {kind:'open'}|{kind:'closed'}|{
   kind:'bootstrap';bootstrap_id:number;covered_call_limit:number;wait_for_apply:boolean;acknowledged_covered_calls?:number;
@@ -50,6 +54,7 @@ export function jevCallWorkingBytesV2(call:Pick<LabelingCallV1<FacetInput>,'requ
  * its page is durable, billed and applied. No provider request is retried here. */
 export async function processJevStreamingWindowV2<I extends FacetInput, R>(args: {
   run: LabelingRunV1; calls: LabelingCallV1<I>[]; send_calls?:LabelingCallV1<I>[];
+  response_budget_binding?:JevPhaseClosedBindingV3;
   store: ReturnType<typeof createSignalLabelingStoreV1<I, R>> & {
     /** Native adapters select only after their fresh authority fences, and
      * return the exact cohort after its submitting transaction commits. */
@@ -79,10 +84,39 @@ export async function processJevStreamingWindowV2<I extends FacetInput, R>(args:
   const reservationBytes=assertJevStreamingExecutionV2(e,provider);
   const workers = Math.min(args.feed_next?e.max_in_flight:calls.length, e.max_in_flight, provider.max_concurrency ?? e.max_in_flight,
     Math.floor(e.max_buffered_bytes / reservationBytes));
-  type Row = { call: LabelingCallV1<I>; raw: string; bytes: number; memory_bytes: number };
+  type Row = { call: LabelingCallV1<I>; raw: string; bytes: number; memory_bytes: number; deferred?:JevDeferredPacketV3; phase_lease?:JevPhaseCaptureLeaseV3 };
   let buffered: Row[] = [], bufferedBytes = 0,
     memory = calls.reduce((n, call) => n + Buffer.byteLength(call.raw_body ?? '')+jevCallWorkingBytesV2(call), 0),
     inFlight = 0, fatal: unknown,fatalKnown=false;
+  const phaseArgs={binding:selectJevPhaseInitialBindingV3(args.response_budget_binding,provider,e,hooks.map,calls,memory),provider_owner:provider,mapper_owner:hooks.map,
+    recovery_only:calls.some(call=>Boolean(call.raw_body))};
+  const resolvedPhase=resolveJevPhaseClosedBindingV3(phaseArgs);
+  const phaseProfile=resolvedPhase?.capture_mode==='legacy_capture'?resolvedPhase:null;
+  const phase=phaseProfile?tryCreateJevPhaseBudgetOwnerV3({...phaseArgs,shared:{limit:e.max_buffered_bytes,used:()=>memory,
+    tryClaim:bytes=>{if(bytes>e.max_buffered_bytes-memory)return false;memory+=bytes;return true;},release:bytes=>{memory-=bytes;}}}):null;
+  if(phaseProfile&&!phase)throw Error('jev_phase_initial_memory_bound');
+  const phaseQuotes=new WeakMap<object,JevPhaseCallQuoteV3>();
+  const quoteCall=(call:Pick<LabelingCallV1<I>,'request'|'inputs'>)=>{
+    let quote=phaseQuotes.get(call);if(quote)return quote;
+    const questions=jevPhaseQuestionSlotsV3(call);
+    quote=phase!.quoteCall({capture_bytes:reservationBytes,retained_bound_bytes:reservationBytes,
+      max_raw_wrapper_bytes:reservationBytes,max_row_flush_bytes:jevLegacyPhaseMaximumFlushBytesV3(provider.max_response_bytes!,reservationBytes,questions)});
+    phaseQuotes.set(call,quote);return quote;
+  };
+  const responseCost=(list:ReadonlyArray<Pick<LabelingCallV1<I>,'request'|'inputs'>>,count:number,external=0)=>{
+    if(!phase)return count*reservationBytes;
+    const quotes=list.slice(0,count).map(quoteCall),quote=phase.quotePrefix(quotes,count,external);
+    return quote.count===count?quote.required_bytes:Infinity;
+  };
+  const reserveResponses=(list:ReadonlyArray<LabelingCallV1<I>>,count:number)=>phase?.reservePrefix(list.slice(0,count).map(quoteCall),count)??null;
+  const quarantined:Array<{lease:JevPhaseCaptureLeaseV3;packet:JevPackedRawV3}>=[],errorCalls:LabelingCallV1<I>[]=[];
+  const reconcilePhase=()=>{
+    if(!phase||phase.snapshot().closed)return;
+    const leases=quarantined.map(row=>row.lease);quarantined.length=0;phase.reconcileQuarantined(leases);
+    // Opaque primary errors escape by identity. Their F/call aliases still
+    // belong to the exceptional job egress; never report a false closed owner.
+    if(!phase.snapshot().error_retained_bytes)phase.close();observe();wake();
+  };
   const admission=new AbortController();
   let totalRoots=calls.length,feedClosed=!args.feed_next,feeding:Promise<void>|undefined;
   // A scheduling hint from the exact bounded prefix, never retained inputs or
@@ -99,7 +133,7 @@ export async function processJevStreamingWindowV2<I extends FacetInput, R>(args:
   const observe = () => {
     // Instrumentation never changes physical attempts or their financial outcome.
     try { args.observe_stream?.({ in_flight: inFlight, reserved_working_bytes: memory,
-      buffered_responses: buffered.length, active_flushes: active.size,prefetch_canceled_requests:prefetchCanceled.length,admission_closed:admission.signal.aborted }); } catch { /* Observer only. */ }
+      buffered_responses: buffered.length, active_flushes: active.size,prefetch_canceled_requests:prefetchCanceled.length,admission_closed:admission.signal.aborted,...(phase?{response_phase:phase.snapshot()}:{}) }); } catch { /* Observer only. */ }
   };
   const wake = () => { for (const resolve of waiters) resolve(); waiters.clear(); };
   const wait = () => new Promise<void>(resolve => { waiters.add(resolve); });
@@ -114,7 +148,11 @@ export async function processJevStreamingWindowV2<I extends FacetInput, R>(args:
     }
   };
   async function consume(rows: Row[], alreadyDurable = false) {
+    let failed=false,retainError=false;
     try {
+      // Every row still owns its unchanged legacy codec/copy allowance through
+      // this await. Build exact RAW only after flush selected its bounded prefix.
+      for(const row of rows)if(row.deferred){row.raw=materializeJevDeferredRawV1(row.deferred);if(!row.phase_lease)row.deferred=undefined;}
       if (!alreadyDurable) await store.persistRawPage(run, rows.map(({ call, raw }) => ({ call, raw })));
       const results: Array<{ call: LabelingCallV1<I>; results: R[] }> = [];
       const settled: Parameters<typeof store.settlePage>[1] = [];
@@ -164,11 +202,12 @@ export async function processJevStreamingWindowV2<I extends FacetInput, R>(args:
       // particular, settlement may have committed even if its acknowledgement
       // was lost. Preserve the pending result for a durable, idempotent replay;
       // never replace it with a technical label in a second apply.
+      failed=true;
       const pending = rows.filter(row => !applied.has(row.call.id));
       for (const row of pending) record(row.call, true, 'jev_stream_persistence_failed', false);
       try { if (pending.length) await store.markFailed(run, pending.map(row => row.call), true); }
-      catch (markError) { fail(new AggregateError([error, markError], 'jev_stream_persistence_failed')); }
-      fail(error);
+      catch (markError) { retainError=!fatalKnown;fail(new AggregateError([error, markError], 'jev_stream_persistence_failed')); }
+      if(!fatalKnown)retainError=true;fail(error);
     } finally {
       // Durable storage, not the retained window of call objects, owns these bytes.
       for (const row of rows) {
@@ -177,11 +216,14 @@ export async function processJevStreamingWindowV2<I extends FacetInput, R>(args:
           roster.delete(row.call.id);observedRaw.delete(row.call.id);if(!errors.has(row.call.id))applied.delete(row.call.id);
           // The caller still owns the initial bounded page. Later pages have no
           // retained corpus roster once their durable application completes.
-          if(!initialIds.has(row.call.id)&&!errors.has(row.call.id))release(jevCallWorkingBytesV2(row.call));
+          if(!initialIds.has(row.call.id)&&!errors.has(row.call.id)){
+            if(phase&&retainError)errorCalls.push(row.call);else release(jevCallWorkingBytesV2(row.call));
+          }
         }
       }
-      release(rows.reduce((n, row) => n + row.memory_bytes, 0));
+      if(!phase)release(rows.reduce((n, row) => n + row.memory_bytes, 0));
     }
+    return {failed,retainError,terminal:rows.some(row=>errors.get(row.call.id)?.write_result&&!applied.has(row.call.id))};
   }
   function flush(force = false) {
     while (buffered.length && active.size < e.max_flushes && (force || buffered.length >= e.flush_size)) {
@@ -194,11 +236,27 @@ export async function processJevStreamingWindowV2<I extends FacetInput, R>(args:
         size += encoded; count++;
       }
       if(!count) { fail(Error('jev_stream_page_memory_bound')); return; }
+      // Own F before removing any prefix or allocating wrappers/codec/parse.
+      // One flush borrows protected G; a concurrent second flush pays full F.
+      const phaseFlush=phase?.takeFlushPrefix(buffered.map(row=>row.phase_lease!),count);
+      if(phase&&!phaseFlush)return;
+      if(phaseFlush){count=phaseFlush.count;observe();}
       const rows = buffered.splice(0, count); bufferedBytes -= rows.reduce((n, row) => n + row.bytes, 0);
       // A timer/pressure flush is a one-shot request, not a mode inherited by
       // subsequent pages. Keep batching later responses while HTTP is active;
       // the timer or final drain will flush the bounded tail when needed.
-      const task = consume(rows).finally(() => {
+      const task = consume(rows).then(outcome=>{
+        if(phaseFlush){
+          // consume's async frame (results/settled/observations/SQL) has EXITED.
+          // Erase materialized RAW aliases before releasing only its workspace.
+          for(const row of rows){row.raw='';if(!outcome.failed&&!outcome.terminal)row.deferred=undefined;}
+          if(outcome.failed||outcome.terminal){
+            const leases=phase!.quarantineFlush(phaseFlush.lease,outcome.retainError);
+            for(let i=0;i<rows.length;i++)quarantined.push({lease:leases[i]!,packet:rows[i]!.deferred! as JevPackedRawV3});
+          }else phase!.finishFlush(phaseFlush.lease);
+          observe();wake();
+        }
+      }).finally(() => {
         // consume releases its real custody before this completion. Even if
         // it failed, fatal/cancellation prevents another admission; do not
         // treat a lost RAW/settlement/APPLY acknowledgement as durable success.
@@ -230,7 +288,9 @@ export async function processJevStreamingWindowV2<I extends FacetInput, R>(args:
     // One fresh read per acknowledged apply epoch; never poll an empty SQL frontier.
     if(emptyAtEpoch!==undefined&&durableEpoch===emptyAtEpoch)return;
     // Do not read another full input page while paid responses own all memory.
-    const free=e.max_buffered_bytes-memory;if(free<8192+reservationBytes)return;
+    const free=e.max_buffered_bytes-memory;
+    const nextResponse=reserved.length?responseCost(reserved,1):phase?reservationBytes+Math.max(0,phaseProfile!.flush_fixed_bytes+phaseProfile!.max_row_flush_bytes-phase.snapshot().protected_bytes)+Math.max(0,phaseProfile!.flush_fixed_bytes+phaseProfile!.max_row_flush_bytes-phase.snapshot().error_protected_bytes):reservationBytes;
+    if(free<8192+(Number.isFinite(nextResponse)?nextResponse:reservationBytes))return;
     // Protect currently free HTTP slots, plus at least one waiting committed
     // call when every slot is occupied. Even a maximum-size paid response can
     // then wake another Mark while both APPLY and this future read wait. Other
@@ -238,7 +298,7 @@ export async function processJevStreamingWindowV2<I extends FacetInput, R>(args:
     // all of them again needlessly prevents a useful input prefix from fitting.
     // Headroom is not another charge: Mark claims actual response memory later.
     const readySlots=Math.min(reserved.length,Math.max(1,workers-inFlight),Math.floor(free/reservationBytes));
-    const headroom=readySlots*reservationBytes;
+    const headroom=readySlots?Math.max(readySlots*reservationBytes,responseCost(reserved,Math.min(readySlots,reserved.length))):phase?nextResponse:0;
     // The bounded reader and compiler use the actual remaining shared budget,
     // rather than a second heuristic page ceiling. Larger native reservations
     // can reject a different prefix at a financial boundary; caps are unchanged.
@@ -322,25 +382,42 @@ export async function processJevStreamingWindowV2<I extends FacetInput, R>(args:
       await consume([{ call, raw, bytes, memory_bytes: bytes }], true);
       if (fatalKnown) throw fatal;
     }
-    async function send(call:LabelingCallV1<I>){
-      let ownedReservation=reservationBytes;
+    async function send(call:LabelingCallV1<I>,phaseLease?:JevPhaseCaptureLeaseV3){
+      let ownedReservation=phaseLease?0:reservationBytes;
+      let ownsPhase=Boolean(phaseLease);
       inFlight++;observe();
       try{
-        const physical=await provider.evaluate(call.request as JevRequestV1,{signal:cancellation.signal});
-        const raw=JSON.stringify(physical),bytes=Buffer.byteLength(raw);
+        let physical:JevRawResponseV1|undefined=await provider.evaluate(call.request as JevRequestV1,{signal:cancellation.signal});
+        let deferred:JevDeferredPacketV3|null=captureJevDeferredRawV1(provider,physical);
+
+        // Untrusted adapters and historical recovery retain their full legacy
+        // representation and timing; field shape never enables this protocol.
+        const raw=deferred?'':JSON.stringify(physical),bytes=deferred?.bytes??Buffer.byteLength(raw);
+        const throttled=phaseLease?[429,529].includes(physical.http_status):false,rateUpdateFailed=phaseLease?physical.rate_limit_update_failed:undefined;
         if(bytes>reservationBytes)throw Error('jev_stream_response_memory_bound');
         // The bounded reader has completed. Keep conservative codec/copy
         // custody for these exact bytes, rather than the largest possible body.
         // Only the excess peak reservation is now available to another HTTP.
-        const custodyBytes=Math.min(reservationBytes,bytes*24+64*1024);
-        release(ownedReservation-custodyBytes);ownedReservation=custodyBytes;
-        observedRaw.add(call.id);buffered.push({call,raw,bytes,memory_bytes:custodyBytes});
+        // All new packing copies coexist with P under the separately prepaid
+        // synchronous scratch. Retire BOTH original physical and UTF16 snapshot
+        // aliases before publishing any reduced response credit.
+        let custodyBytes:number;
+        if(phaseLease){
+          if(!deferred)throw Error('jev_phase_physical_contract_invalid');
+          const working=jevLegacyPhaseFlushBytesV3(deferred.body,bytes,jevPhaseQuestionSlotsV3(call));
+          deferred=packJevDeferredRawV3(deferred);physical=undefined;
+          custodyBytes=jevDeferredRetainedBytesV3(deferred);
+          phase!.transferToRetained(phaseLease,{retained_bytes:custodyBytes,raw_wrapper_bytes:bytes,row_flush_bytes:working});
+        }else{custodyBytes=Math.min(reservationBytes,bytes*24+64*1024);release(ownedReservation-custodyBytes);ownedReservation=custodyBytes;}
+        observedRaw.add(call.id);buffered.push({call,raw,bytes,memory_bytes:custodyBytes,...(deferred?{deferred}:{}),...(phaseLease?{phase_lease:phaseLease}:{})});
+        ownsPhase=false;
         ownedReservation=0; // consume owns this reservation through apply/feedback
         bufferedBytes+=bytes;observe();
-        const throttled=[429,529].includes(physical.http_status);if(throttled)cancellation.abort();
-        flush(throttled||bufferedBytes>=e.max_buffered_bytes/2);
-        if(physical.rate_limit_update_failed)fail(Error('jev_rate_cooldown_unavailable'));
+        const wasThrottled=phaseLease?throttled:[429,529].includes(physical!.http_status);if(wasThrottled)cancellation.abort();
+        flush(wasThrottled||bufferedBytes>=e.max_buffered_bytes/2);
+        if(phaseLease?rateUpdateFailed:physical!.rate_limit_update_failed)fail(Error('jev_rate_cooldown_unavailable'));
       }catch(error){
+        if(ownsPhase)phase!.releaseUnsent(phaseLease!);
         if(ownedReservation)release(ownedReservation);const failure=jevProviderErrorV1(error);
         if(cancellation.signal.aborted&&isJevPreFetchCancellationV1(error)){
           // First-party identity proves fetch never started. Keep the same money
@@ -372,14 +449,14 @@ export async function processJevStreamingWindowV2<I extends FacetInput, R>(args:
           while(low<=high){
             const mid=Math.floor((low+high)/2),workspace=quote.quote(mid);
             if(!Number.isSafeInteger(workspace)||workspace<0)throw Error('jev_native_workspace_invalid');
-            if(memory+workspace+costs[mid]!+reservationBytes*mid<=e.max_buffered_bytes){best=mid;bestWorkspace=workspace;low=mid+1;}
+            if(memory+workspace+costs[mid]!+responseCost(pending.proposals,mid,workspace+costs[mid]!)<=e.max_buffered_bytes){best=mid;bestWorkspace=workspace;low=mid+1;}
             else high=mid-1;
           }
           if(best){nativeProposals=pending.proposals.slice(0,best);workspaceBytes=bestWorkspace;}
           else workspaceBytes=Infinity; // Existing finite escape below; no DML occurred.
         }
         // Real progress can release custody; quiet metadata cannot.
-        if(memory+workspaceBytes+reservationBytes+jevCallWorkingBytesV2(nativeProposals[0]!)>e.max_buffered_bytes){
+        if(memory+workspaceBytes+jevCallWorkingBytesV2(nativeProposals[0]!)+responseCost(nativeProposals,1,workspaceBytes+jevCallWorkingBytesV2(nativeProposals[0]!))>e.max_buffered_bytes){
           if(activeSends.size||active.size||buffered.length){flush(true);await wait();continue;}
           // No native invocation/DML/selector occurred: retain the old complete
           // reservation protocol on this prepared prefix, without rereading it.
@@ -390,6 +467,7 @@ export async function processJevStreamingWindowV2<I extends FacetInput, R>(args:
           draft=undefined;release(draftBytes);draftBytes=0;continue;
         }
         let workspaceClaim=workspaceBytes,selectionCalled=false,validationCalled=false;
+        let phaseLeases:readonly JevPhaseCaptureLeaseV3[]=[];
         let responseClaim=0,callClaim=0,selected:ReadonlyArray<LabelingCallProposalV1<I>>=[],
           validated:ReadonlyArray<LabelingCallV1<I>>=[],validatedIds:ReadonlyArray<string>=[];
         memory+=workspaceBytes;observe();markingInProgress=true;
@@ -401,14 +479,25 @@ export async function processJevStreamingWindowV2<I extends FacetInput, R>(args:
               if(fatalKnown||admission.signal.aborted||cancellation.signal.aborted||args.preparation_valid?.()===false||priority?.kind==='closed'
                 ||priority?.kind==='bootstrap'&&priority.wait_for_apply)return[];
               const count=Math.min(workers-inFlight,candidates.length,priority?.kind==='bootstrap'?priority.covered_call_limit:Infinity),chosen:LabelingCallProposalV1<I>[]=[];
-              let cost=0;
-              for(const proposal of candidates.slice(0,count)){
-                const bytes=jevCallWorkingBytesV2(proposal);
-                if(memory+cost+bytes+reservationBytes>e.max_buffered_bytes)break;
-                chosen.push(proposal);cost+=bytes+reservationBytes;
+              if(phase){
+                const prefix=[0];for(const proposal of candidates.slice(0,count))prefix.push(prefix.at(-1)!+jevCallWorkingBytesV2(proposal));
+                let low=1,high=count,best=0;
+                while(low<=high){const mid=Math.floor((low+high)/2),cost=prefix[mid]!;
+                  if(memory+cost+responseCost(candidates,mid,cost)<=e.max_buffered_bytes){best=mid;low=mid+1;}else high=mid-1;}
+                chosen.push(...candidates.slice(0,best));callClaim=prefix[best]!;memory+=callClaim;
+                const held=phase.reservePrefix(chosen.map(quoteCall));
+                if(chosen.length&&held?.leases.length!==chosen.length)throw Error('jev_phase_selection_drift');phaseLeases=held?.leases??[];
+              }else{
+                let cost=0;
+                for(const proposal of candidates.slice(0,count)){
+                  const bytes=jevCallWorkingBytesV2(proposal);
+                  if(memory+cost+bytes+reservationBytes>e.max_buffered_bytes)break;
+                  chosen.push(proposal);cost+=bytes+reservationBytes;
+                }
+                callClaim=chosen.reduce((n,p)=>n+jevCallWorkingBytesV2(p),0);
+                responseClaim=chosen.length*reservationBytes;memory+=callClaim+responseClaim;
               }
-              selected=chosen;callClaim=chosen.reduce((n,p)=>n+jevCallWorkingBytesV2(p),0);
-              responseClaim=chosen.length*reservationBytes;memory+=callClaim+responseClaim;observe();return chosen;
+              selected=chosen;observe();return chosen;
             },
             validateBeforeCommit(rows,proposals){
               if(!selectionCalled||validationCalled)throw Error('jev_native_validation_invalid');validationCalled=true;
@@ -441,8 +530,8 @@ export async function processJevStreamingWindowV2<I extends FacetInput, R>(args:
             // expansion, cancellation, authority or residency gate belongs here.
             for(const row of validated)roster.set(row.id,row);
             totalRoots+=validated.length;recentIdentities=new Set(selected.map(p=>p.request_digest));
-            for(const row of validated){const task=send(row).finally(()=>{activeSends.delete(task);wake();});activeSends.add(task);}
-            responseClaim=0;callClaim=0;if(validated.length)initialHandoffComplete=true;
+            for(let i=0;i<validated.length;i++){const row=validated[i]!;const task=send(row,phaseLeases[i]).finally(()=>{activeSends.delete(task);wake();});activeSends.add(task);}
+            phaseLeases=[];responseClaim=0;callClaim=0;if(validated.length)initialHandoffComplete=true;
             try{if(validated.length)pending.on_committed?.(validatedIds,selected);}catch(error){
               // Close future admission, but let ALL paid siblings drain without
               // aborting their transport because a scheduling notice failed.
@@ -455,6 +544,7 @@ export async function processJevStreamingWindowV2<I extends FacetInput, R>(args:
           throw error;
         }finally{
           markingInProgress=false;draft=undefined;
+          for(const lease of phaseLeases)phase!.releaseUnsent(lease);
           release(workspaceClaim+draftBytes+responseClaim+callClaim);draftBytes=0;
         }
         continue;
@@ -471,7 +561,9 @@ export async function processJevStreamingWindowV2<I extends FacetInput, R>(args:
         }
         feedClosed=true;break;
       }
-      const slots=Math.min(workers-inFlight,Math.floor((e.max_buffered_bytes-memory)/reservationBytes),reserved.length);
+      const maxSlots=Math.min(workers-inFlight,reserved.length);
+      const slots=phase?phase.quotePrefix(reserved.slice(0,maxSlots).map(quoteCall),maxSlots).count:
+        Math.min(maxSlots,Math.floor((e.max_buffered_bytes-memory)/reservationBytes));
       if(slots<1){
         // Already reserved calls can regain slots before the future page commits.
         // Feeding's finally also wakes this single coordinator after releasing bytes.
@@ -482,7 +574,7 @@ export async function processJevStreamingWindowV2<I extends FacetInput, R>(args:
         if(!inFlight||e.max_buffered_bytes-memory<reservationBytes)flush(true);
         await wait();continue;
       }
-      let cohort:LabelingCallV1<I>[]=[];
+      let cohort:LabelingCallV1<I>[]=[],cohortLeases:readonly JevPhaseCaptureLeaseV3[]=[];
       try{
         markingInProgress=true;
         if(store.markSubmittingSelected){
@@ -494,24 +586,27 @@ export async function processJevStreamingWindowV2<I extends FacetInput, R>(args:
             // Responses, durable flushes and an already-committed input page
             // may advance while native authority is waiting. Claim their newly
             // available slots only now, before the native call-row locks.
-            const available=Math.min(workers-inFlight,Math.floor((e.max_buffered_bytes-memory)/reservationBytes),reserved.length);
-            cohort=reserved.slice(0,available);
-            memory+=reservationBytes*cohort.length;markingUnsent=cohort;observe();
+            const maxAvailable=Math.min(workers-inFlight,reserved.length);
+            if(phase){const held=reserveResponses(reserved,maxAvailable);cohortLeases=held?.leases??[];cohort=reserved.slice(0,cohortLeases.length);}
+            else{const available=Math.min(maxAvailable,Math.floor((e.max_buffered_bytes-memory)/reservationBytes));cohort=reserved.slice(0,available);memory+=reservationBytes*cohort.length;}
+            markingUnsent=cohort;observe();
             return cohort;
           });
           if(!selected||committed.length!==cohort.length||committed.some((call,index)=>call!==cohort[index]))
             throw Error('jev_stream_selection_handoff_invalid');
         }else{
-          cohort=reserved.slice(0,slots);memory+=reservationBytes*cohort.length;observe();markingUnsent=cohort;
+          if(phase){const held=reserveResponses(reserved,slots);cohortLeases=held?.leases??[];cohort=reserved.slice(0,cohortLeases.length);}
+          else{cohort=reserved.slice(0,slots);memory+=reservationBytes*cohort.length;}
+          observe();markingUnsent=cohort;
           await store.markSubmitting(run,cohort);
         }
-      }catch(error){release(reservationBytes*cohort.length);fail(error);break;}
+      }catch(error){if(phase){for(const lease of cohortLeases)phase.releaseUnsent(lease);}else release(reservationBytes*cohort.length);fail(error);break;}
       finally{markingInProgress=false;}
       // There is deliberately no await/cancellation check between the successful
       // durable handoff and delivering EVERY cohort member to evaluate. A sync
       // provider rejection is classified normally, without stranding siblings.
       reserved.splice(0,cohort.length);markingUnsent=[];
-      for(const call of cohort){const task=send(call).finally(()=>{activeSends.delete(task);});activeSends.add(task);}
+      for(let i=0;i<cohort.length;i++){const call=cohort[i]!;const task=send(call,cohortLeases[i]).finally(()=>{activeSends.delete(task);});activeSends.add(task);}
       // No physical-fetch promise: providers may still await account quotas.
       // Open only after EVERY committed cohort member has been handed off.
       if(cohort.length)initialHandoffComplete=true;
@@ -539,6 +634,29 @@ export async function processJevStreamingWindowV2<I extends FacetInput, R>(args:
     if (hooks.fail_on_error && terminalErrors.length) await store.fail(run,
       terminalErrors.some(x => x.unknown) ? 'labeling_outcome_unknown' : terminalErrors[0]!.code,{preserve_reserved:true});
     for (const unknown of [false, true]) {
+      if(phase){
+        const pending=[...errors.values()].filter(error=>error.unknown===unknown&&error.write_result&&!applied.has(error.call.id));
+        for(let offset=0;offset<pending.length;){
+          const candidates=pending.slice(offset,offset+e.flush_size),costs=candidates.map(row=>
+            jevLegacyPhaseFlushBytesV3('',1,jevPhaseQuestionSlotsV3(row.call)));
+          const workspace=phase.takeTerminalWorkspace(costs,e.flush_size);
+          if(!workspace)throw Error('jev_phase_terminal_progress_invalid');
+          observe();
+          // Returning only scalar outcome ensures result/SQL frame aliases die
+          // unless the ORIGINAL first fatal explicitly retains them in escrow.
+          const outcome=await(async()=>{
+            try{
+              const batch=candidates.slice(0,workspace.count).map(row=>({call:row.call,
+                results:hooks.error(run,row.call,row.code,unknown)})).filter(row=>row.results.length);
+              if(batch.length){await store.apply(run,batch);for(const row of batch)applied.add(row.call.id);}
+              return{failed:false,retainError:false};
+            }catch(error){const retainError=!fatalKnown;fail(error);return{failed:true,retainError};}
+          })();
+          if(outcome.failed)phase.quarantineFlush(workspace.lease,outcome.retainError);else phase.finishFlush(workspace.lease);
+          observe();wake();offset+=workspace.count;if(outcome.failed)throw fatal;
+        }
+        continue;
+      }
       const technical = [...errors.values()].filter(error => error.unknown === unknown && error.write_result
         && !applied.has(error.call.id)).map(error => ({call:error.call,
         results:hooks.error(run,error.call,error.code,unknown)})).filter(row => row.results.length);
@@ -549,6 +667,7 @@ export async function processJevStreamingWindowV2<I extends FacetInput, R>(args:
     if (fatalKnown) throw fatal;
     if(notificationFailureKnown)throw notificationFailure;
     const status=await store.finish(run);
+    reconcilePhase();
     // Invocation ownership ends here, including retained terminal errors
     // and the reserved frontier that was never sent. A cancelled reader may
     // also have returned a draft: this full release owns its charge, so retire
@@ -563,8 +682,9 @@ export async function processJevStreamingWindowV2<I extends FacetInput, R>(args:
     // Only the ledger can tell whether a lost SQL acknowledgement committed.
     // Reconcile under the existing lease after any failed stage, including a
     // technical-error apply; never infer state from an in-memory acknowledgement.
-    try { await drainAndRequeue();await store.finish(run); }
-    catch (reconciliation) { throw new AggregateError([error, reconciliation], 'jev_stream_reconciliation_failed'); }
-    throw error;
+    const primary=fatalKnown?fatal:notificationFailureKnown?notificationFailure:error;
+    try { await drainAndRequeue();await store.finish(run);reconcilePhase(); }
+    catch (reconciliation) { throw new AggregateError([primary, reconciliation], 'jev_stream_reconciliation_failed',{cause:primary}); }
+    throw primary;
   } finally { if(draft){draft=undefined;release(draftBytes);draftBytes=0;}clearInterval(timer); cancellation.signal.removeEventListener('abort', wake); }
 }

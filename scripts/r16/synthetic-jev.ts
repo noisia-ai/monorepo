@@ -1,3 +1,5 @@
+import {createCalibratedJevRuntimeProviderV2} from '../../services/workers/src/providers/jev-streaming-runtime';
+import {registerJevPhaseSyntheticFetchV3,registerJevPhaseSyntheticFactoryV3} from '../../services/workers/src/providers/jev-phase-provider-v3';
 type SyntheticQuestionV1 =
   | { type: "noul"; [key: string]: unknown }
   | { type: "choice"; criteria: Record<string, unknown>; [key: string]: unknown };
@@ -56,3 +58,23 @@ export function createSyntheticJevFetchV1(options: { latencyForRequest(index: nu
 // Keep margin at both contract edges because the measured fetch latency includes
 // timer scheduling and local HTTP serialization overhead.
 export const deterministicR16LatencyV1 = (index: number): number => 125 + ((index * 137 + 47) % 351);
+
+/** Closed first-party H1 transport: no injected hooks/response builders. It uses
+ * exactly the existing deterministic125..475ms simulator, the same Typesafe
+ * decoded body guard, native account limiter and the production P/R/F model.
+ * Scalar observation never exposes a body/Response or changes transport. Other
+ * injected simulators/fault callbacks retain the complete legacy path. */
+export function createR16FirstpartySyntheticJevRuntimeV3(options:{redis_url:string;account_id:string;requests_per_second:number;input_tokens_per_second:number}){
+  const providerFetch=createSyntheticJevFetchV1({latencyForRequest:deterministicR16LatencyV1});
+  const latency_ms:number[]=[];let requests=0;
+  const measuredFetch:typeof fetch=async(...params)=>{
+    requests++;const began=performance.now();try{return await providerFetch(...params);}finally{latency_ms.push(performance.now()-began);}
+  };
+  registerJevPhaseSyntheticFetchV3(measuredFetch);
+  const factory:typeof createCalibratedJevRuntimeProviderV2=opts=>createCalibratedJevRuntimeProviderV2({...opts,
+    env:{...opts.env,TYPESAFE_API_KEY:'synthetic-local-only',NOISIA_TYPESAFE_ACCOUNT_ID:options.account_id,
+      NOISIA_TYPESAFE_ACCOUNT_REDIS_URL:options.redis_url,NOISIA_TYPESAFE_ACCOUNT_RPS:String(options.requests_per_second),
+      NOISIA_TYPESAFE_ACCOUNT_INPUT_TPS:String(options.input_tokens_per_second)},fetch:measuredFetch});
+  registerJevPhaseSyntheticFactoryV3(factory);
+  return{factory,latency_ms,requests:()=>requests};
+}

@@ -1,3 +1,6 @@
+import {createJevDeferredRawWitnessV1} from '../providers/jev-deferred-raw';
+import {registerJevPhaseProviderV3,isJevPhaseProviderV3,isJevPhaseSyntheticFactoryV3} from '../providers/jev-phase-provider-v3';
+import {jevResponseInitialHeadroomV3,jevLegacyCaptureParametersV3} from './signal-jev-phase-profile-v3';
 import {setImmediate as yieldToEventLoop} from 'node:timers/promises';
 import {
   signalListeningCalibrationShapeV1,signalWorkspaceEmbeddingDigestV1 as digest,
@@ -34,7 +37,7 @@ export type SignalListeningCalibrationPlanV1={scope:Access;configuration:SignalL
 /** Only committed, verified receipt profiles can unlock full measured coverage. Missing or
  * out-of-coverage shapes use normal reusable labels in one bounded parallel warmup window. */
 export async function planSignalListeningCalibrationV1(args:Access&{configuration:SignalListeningConfigurationV1;
-  inputs:SignalListeningInputV1[];execution:JevStreamingExecutionV2;loadProfile:LoadProfile;snapshot?:SignalListeningCompiledSnapshotV1;compile_request?:(input:SignalListeningInputV1)=>JevRequestV1}):Promise<SignalListeningCalibrationPlanV1>{
+  inputs:SignalListeningInputV1[];execution:JevStreamingExecutionV2;phase_budget_sizing?:boolean;loadProfile:LoadProfile;snapshot?:SignalListeningCompiledSnapshotV1;compile_request?:(input:SignalListeningInputV1)=>JevRequestV1}):Promise<SignalListeningCalibrationPlanV1>{
   if(args.compile_request!==undefined&&typeof args.compile_request!=='function')fail('listening_calibration_compiler_invalid');
   if(digest(args.configuration)!==args.configuration_digest||args.inputs.some(input=>input.configuration_digest!==args.configuration_digest))fail('listening_calibration_configuration_invalid');
   const snapshot=args.snapshot??compileSignalListeningSnapshotV1(args.configuration),state=readSignalListeningSnapshotV1(snapshot);
@@ -79,7 +82,10 @@ export async function planSignalListeningCalibrationV1(args:Access&{configuratio
     // separately per request by the shared account limiter (65536, never learned).
     const rawBytes=assertJevStreamingExecutionV2(execution,{evaluate:async()=>{throw Error('unreachable');},max_response_bytes:response_bound_bytes});
     const retained=selected.reduce((sum,row)=>sum+jevCallWorkingBytesV2({request:row.request,inputs:[row.input]})+8192,0);
-    const slots=Math.floor((execution.max_buffered_bytes-retained)/rawBytes);
+    const phase=args.phase_budget_sizing?jevLegacyCaptureParametersV3(response_bound_bytes,execution):null;
+    const desired=phase?phase.ledger_bytes+2*(phase.flush_fixed_bytes+phase.max_row_flush_bytes):0;
+    const fixed=retained+desired+rawBytes<=execution.max_buffered_bytes?desired:0;
+    const slots=Math.floor((execution.max_buffered_bytes-retained-fixed)/rawBytes);
     if(slots<1)fail('listening_selection_memory_bound');
     execution.max_in_flight=Math.min(execution.max_in_flight,slots);
   }
@@ -136,7 +142,7 @@ export function createSignalListeningCalibratedProviderV1(args:{plan:SignalListe
       if(closing)fail('listening_provider_closed');
       const inner=client(request);if(inner.warmup)continuation?.consumeOfficial(request);
       const pending=inner.provider.evaluate(request,options);active.add(pending);
-      try{return await pending;}finally{active.delete(pending);}
+      try{return witness(await pending);}finally{active.delete(pending);}
     },
     async observeUsage(raw,tokens){
       const inner=raw.rate_calibration?clientsByScope.get(raw.rate_calibration.labeler_digest):undefined;
@@ -144,6 +150,9 @@ export function createSignalListeningCalibratedProviderV1(args:{plan:SignalListe
     },
     async close(){closing=true;await Promise.allSettled([...active]);await Promise.all([...clients.values()].map(provider=>provider.close?.()));},
   };
+  const witness=createJevDeferredRawWitnessV1(provider);
+  if(factory===createCalibratedJevRuntimeProviderV2||isJevPhaseSyntheticFactoryV3(factory))
+    registerJevPhaseProviderV3(provider,()=>!closing&&clients.size>0&&[...clients.values()].every(isJevPhaseProviderV3));
   function coveredMeasuredRequest(request:JevRequestV1,shape:ReturnType<typeof signalListeningCalibrationShapeV1>,bytes:number,profile:Profile|null|undefined){
     if(!profile||profile.sample_count<32||request.model!==shape.model||bytes<profile.request_min_bytes||bytes>profile.request_max_bytes
       ||signalListeningResponseBoundV1(request)>plan.response_bound_bytes)return false;
@@ -237,9 +246,9 @@ type ContinuationRowV1={input:SignalListeningInputV1;key:string;index:number;com
  * continues to use the original finite planner/provider above. */
 export async function createSignalListeningContinuationV1({run_id,
   initial_plan:{scope,configuration,snapshot,profiles:initialProfiles,warmup},initial_inputs,
-  execution:requestedExecution,loadProfile,deriveProfile,env,factory,observe,
+  execution:requestedExecution,loadProfile,deriveProfile,env,factory,observe,phase_budget_sizing=false,
 }:{run_id:string;initial_plan:SignalListeningCalibrationPlanV1;
-  initial_inputs:SignalListeningInputV1[];execution:JevStreamingExecutionV2;loadProfile:LoadProfile;deriveProfile:LoadProfile;
+  initial_inputs:SignalListeningInputV1[];execution:JevStreamingExecutionV2;phase_budget_sizing?:boolean;loadProfile:LoadProfile;deriveProfile:LoadProfile;
   env?:NodeJS.ProcessEnv;factory?:typeof createCalibratedJevRuntimeProviderV2;observe?:(event:SignalListeningCalibrationEventV1)=>void}){
   // Destructure the plan in the parameter itself: no retained args/plan object
   // can alias its original selected_inputs or the full hydrated input page.
@@ -338,7 +347,7 @@ export async function createSignalListeningContinuationV1({run_id,
     // publish coverage. Keep admission waiting through both asynchronous steps.
     if(!selected.length)return{selected:[],decision:candidate&&(candidate.pending.size||candidate.deriving)?'wait_for_apply':false};
     if(initial){
-      const rawBytes=assertJevStreamingExecutionV2(execution,runtime.provider),retained=selected.reduce((sum,row)=>sum+jevCallWorkingBytesV2({request:row.compiled,inputs:[row.input]})+8192,0);
+      const retained=selected.reduce((sum,row)=>sum+jevCallWorkingBytesV2({request:row.compiled,inputs:[row.input]})+8192,0),rawBytes=jevResponseInitialHeadroomV3(runtime.provider,execution,retained,phase_budget_sizing);
       if(retained+rawBytes>execution.max_buffered_bytes)fail('listening_selection_memory_bound');
     }
     const compiled=selected.map(row=>row.compiled);

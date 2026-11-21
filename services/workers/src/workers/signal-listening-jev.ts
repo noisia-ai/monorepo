@@ -1,6 +1,8 @@
+import {createJevListeningPhaseBindingV3,jevResponseInitialHeadroomV3} from './signal-jev-phase-profile-v3';
+import {isJevPhaseSyntheticFactoryV3,registerJevPhaseStoreV3,isJevPhaseStoreV3} from '../providers/jev-phase-provider-v3';
 import {
   nativeListeningAdmissionWorkspaceBoundV1,createNativeListeningAdmissionWorkspaceQuoteV1,signalListeningInputSurveyStorageBoundV1,createSignalListeningStoreV1,signalWorkspaceFeatureEnabledV1,loadSignalListeningCalibrationV1,deriveSignalListeningCalibrationV1,
-  pendingSignalListeningPreparationsV1,continueSignalListeningPreparationV1,LABELING_INPUT_MAX_WORKING_BYTES_V1,type LabelingRunV1,
+  pendingSignalListeningPreparationsV1,continueSignalListeningPreparationV1,LABELING_INPUT_MAX_WORKING_BYTES_V1,type LabelingRunV1,type LabelingCallV1,
 } from '@noisia/db';
 import {
   buildSignalListeningCompiledRequestV1,mapSignalListeningCompiledResponseV1,signalListeningRequestDigestV1,
@@ -9,11 +11,11 @@ import {
 } from '@noisia/query-engine';
 import {assertMassJevConsumerV1} from '../providers/mass-labeling-consumer';
 import {createCalibratedJevRuntimeProviderV2,jevStreamingExecutionFromEnvV2} from '../providers/jev-streaming-runtime';
-import {JevProviderErrorV1,type JevProviderV1} from '../providers/typesafe-jev';
+import {JevProviderErrorV1,type JevProviderV1,type JevResponseV1} from '../providers/typesafe-jev';
 import {processJevLabelingPageV1,jevUsageV1,type JevPreparedExecutionV1,type JevNextInputBoundsV2,type JevNextInputReadV3} from './signal-jev-labeling-page';
 import {createLabelingRawPagesStorageV1} from './signal-labeling-receipt-storage';
 import {createWorkspaceEngineStorageV1,type WorkspaceEngineStorageV1} from './signal-workspace-engine-storage';
-import {assertJevStreamingExecutionV2,jevCallWorkingBytesV2,type JevStreamingExecutionV2,type JevStreamingMetricsV2,type JevFeedAdmissionHintV1} from './signal-jev-streaming-window';
+import {jevCallWorkingBytesV2,type JevStreamingExecutionV2,type JevStreamingMetricsV2,type JevFeedAdmissionHintV1} from './signal-jev-streaming-window';
 
 import {listeningHasRawV1,selectSignalListeningRecoveryV1,createSignalListeningRecoveryProviderV1} from './signal-listening-recovery';
 import {planSignalListeningCalibrationV1,createSignalListeningCalibratedProviderV1,createSignalListeningContinuationV1,type SignalListeningCalibrationEventV1} from './signal-listening-calibration';
@@ -56,6 +58,7 @@ export function createSignalListeningSelectionIndexV1(key:(input:SignalListening
 }
 /** The DB adapter selects only eligible missing question digests. This transport
  * never invents questions, negative labels, eligibility or a second provider attempt. */
+const phaseOwnedListeningJobs=new WeakSet<object>();
 export function processSignalListeningJevV1(args:{run_id:string;store:Store;provider:JevProviderV1;
   execution:JevStreamingExecutionV2;lease_renewal_ms?:number;recovery_only?:boolean;
   observe_stream?:(metrics:JevStreamingMetricsV2)=>void;
@@ -76,6 +79,10 @@ export function processSignalListeningJevV1(args:{run_id:string;store:Store;prov
   const key=(input:SignalListeningInputV1)=>digest({root_id:input.root_id,input_digest:input.input_digest,question_digests:input.question_digests});
   const selectionIndex=createSignalListeningSelectionIndexV1(key);
   const select=(inputs:SignalListeningInputV1[])=>selectionIndex.select(inputs,args.selection?.(),windowSize);
+  const listeningMap=(run:LabelingRunV1,call:LabelingCallV1<SignalListeningInputV1>,raw:JevResponseV1)=>{
+    if(call.inputs.length!==1)throw Error('listening_input_invalid');
+    return [mapSignalListeningCompiledResponseV1(call.inputs[0]!,run.context,contextOf(run).snapshot,raw)];
+  };
   const schedulerStore={...args.store,async inputs(run:LabelingRunV1,bounds?:Parameters<Store['inputs']>[1]){
     const selection=args.selection?.();
     if(!selection)return args.store.inputs(run,bounds?readBounds(bounds):bounds);
@@ -83,7 +90,7 @@ export function processSignalListeningJevV1(args:{run_id:string;store:Store;prov
     // extrema may lie outside a warmup-sized prefix; never reread that prefix
     // and silently discard the anchors. Reserve still validates native rights.
     const budget=Math.min(bounds?.max_working_bytes??Infinity,
-      preparedExecution.max_buffered_bytes-assertJevStreamingExecutionV2(preparedExecution,preparedProvider));
+      preparedExecution.max_buffered_bytes-jevResponseInitialHeadroomV3(preparedProvider,preparedExecution,undefined,phaseOwnedListeningJobs.has(args)&&isJevPhaseStoreV3(args.store)));
     if(selection.length>Math.min(windowSize,bounds?.max_rows??Infinity))throw Error('listening_selection_memory_bound');
     let bytes=0;
     for(const input of selection){
@@ -119,22 +126,25 @@ export function processSignalListeningJevV1(args:{run_id:string;store:Store;prov
       return {custom_id:`listening_${request_digest.slice(7,67)}`,request_digest,request,inputs:[input],
         reserved_micro_usd:llmCostMicroUsdV1(jevUsageV1({input_tokens:Buffer.byteLength(JSON.stringify(request))*4+8192,output_tokens:0}),contextOf(run).price)};
     }),
-    map:(run,call,raw)=>{
-      if(call.inputs.length!==1)throw Error('listening_input_invalid');
-      return [mapSignalListeningCompiledResponseV1(call.inputs[0]!,run.context,contextOf(run).snapshot,raw)];
-    },
+    map:listeningMap,
+    response_budget_binding:(provider,execution,recovery)=>phaseOwnedListeningJobs.has(args)&&isJevPhaseStoreV3(args.store)?createJevListeningPhaseBindingV3(provider,execution,listeningMap,recovery):undefined,
     error:(run,call,code)=>call.inputs.map(input=>({root_id:input.root_id,input_digest:input.input_digest,
       entity_context_digest:run.entity_context_digest,status:'error',answers:{},question_digests:{...input.question_digests},error_code:code})),
     labeled:result=>result.status==='labeled',fail_on_error:true,recovery_only:args.recovery_only,
   }});
 }
+function processOwnedListeningPhaseJobV3(args:Parameters<typeof processSignalListeningJevV1>[0],closedCallbacks:boolean){
+  if(closedCallbacks)phaseOwnedListeningJobs.add(args);return processSignalListeningJevV1(args);
+}
 export function createSignalListeningRuntimeStoreV1(database:Parameters<typeof createSignalListeningStoreV1>[0]['database'],
   options:{execution:JevStreamingExecutionV2;storage?:WorkspaceEngineStorageV1}){
   const storage=options.storage??createWorkspaceEngineStorageV1();
-  return createSignalListeningStoreV1({database,page_size:options.execution.window_size,
+  const store=createSignalListeningStoreV1({database,page_size:options.execution.window_size,
     storeRaw:async()=>{throw Error('listening_page_writer_required');},
     storeRawVerified:true,assertRawReady:async()=>{await storage.assertReady?.();},
     rawPages:createLabelingRawPagesStorageV1(storage)});
+  if(!options.storage)registerJevPhaseStoreV3(store);
+  return store;
 }
 export async function signalListeningJevJobV1(run_id:string,options:{
   database?:Parameters<typeof createSignalListeningStoreV1>[0]['database'];store?:Store;provider?:JevProviderV1;
@@ -161,6 +171,8 @@ export async function signalListeningJevJobV1(run_id:string,options:{
   if(!run||!await signalWorkspaceFeatureEnabledV1({queryable:database,workspace_id:run.workspace_id,feature:'mass_labeling'}))
     throw Error('listening_not_enabled');
   const store=options.store??createSignalListeningRuntimeStoreV1(database,{execution});
+  const phaseCandidateJob=isJevPhaseStoreV3(store)&&!options.calibration&&!options.provider
+    &&(!options.calibrated_provider_factory||options.calibrated_provider_factory===createCalibratedJevRuntimeProviderV2||isJevPhaseSyntheticFactoryV3(options.calibrated_provider_factory));
   let jobContext:ReturnType<typeof compileRun>|undefined;
   let calibrated:ReturnType<typeof createSignalListeningCalibratedProviderV1>|undefined,recoveryProvider:JevProviderV1|undefined;
   let continuation:Awaited<ReturnType<typeof createSignalListeningContinuationV1>>|undefined;
@@ -188,7 +200,8 @@ export async function signalListeningJevJobV1(run_id:string,options:{
     return hydrated??metadata??await store.calls(leased,{metadata_only:true});
   }};
   try{
-    const outcome=await processSignalListeningJevV1({run_id,execution,observe_stream:options.observe_stream,store:boundedStore,provider:unavailable,recovery_only:run.recovery_only,selection:()=>selection,compiled_snapshot:()=>jobContext?.snapshot,
+    if(isJevPhaseStoreV3(store))registerJevPhaseStoreV3(boundedStore);
+    const outcome=await processOwnedListeningPhaseJobV3({run_id,execution,observe_stream:options.observe_stream,store:boundedStore,provider:unavailable,recovery_only:run.recovery_only,selection:()=>selection,compiled_snapshot:()=>jobContext?.snapshot,
       release_selection:()=>{selection=undefined;},
       minimum_next_calls:()=>continuation?.minimumNextCalls()??0,
       next_admission_hint:()=>continuation?.nextAdmissionHint()??{kind:'open'},
@@ -249,10 +262,11 @@ export async function signalListeningJevJobV1(run_id:string,options:{
           }
           const inputs=pending.length?(hydrated??pending).filter(call=>!call.results_applied&&(!run.recovery_only||Boolean(call.raw_body))).flatMap(call=>call.inputs):await store.inputs(leased,readBounds({max_rows:execution.window_size,max_working_bytes:execution.max_buffered_bytes,on_oversize:'error' as const}));
           const plan=await planSignalListeningCalibrationV1({workspace_id:leased.workspace_id,configuration_digest,
+            phase_budget_sizing:phaseCandidateJob,
             configuration,snapshot,inputs,execution,loadProfile:shape_digest=>(options.calibration?.load??loadSignalListeningCalibrationV1)({database,
               workspace_id:leased.workspace_id,actor_user_id:leased.actor_user_id,configuration_digest,model:configuration.model,shape_digest})});
           if(!pending.length){
-            continuation=await createSignalListeningContinuationV1({run_id:leased.id,initial_plan:plan,initial_inputs:inputs,execution,
+            continuation=await createSignalListeningContinuationV1({run_id:leased.id,initial_plan:plan,initial_inputs:inputs,execution,phase_budget_sizing:phaseCandidateJob,
               loadProfile:shape_digest=>(options.calibration?.load??loadSignalListeningCalibrationV1)({database,workspace_id:leased.workspace_id,
                 actor_user_id:leased.actor_user_id,configuration_digest,model:configuration.model,shape_digest}),
               deriveProfile:shape_digest=>(options.calibration?.derive??deriveSignalListeningCalibrationV1)({database,workspace_id:leased.workspace_id,
@@ -281,7 +295,7 @@ export async function signalListeningJevJobV1(run_id:string,options:{
             await store.fail(leased,error instanceof JevProviderErrorV1?error.code:(error as Error).message,{preserve_reserved:true});
           throw error;
         }
-      }});
+      }},phaseCandidateJob);
     const failure=continuation?.failure();if(failure?.failed)throw failure.error;
     return outcome;
   }finally{

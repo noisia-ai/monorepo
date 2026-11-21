@@ -11,7 +11,7 @@ import {runMassLabelingAcceptanceFixtureV1} from './signal-mass-labeling-accepta
 import {saveSignalListeningConfigurationV1} from '../signal-listening-configuration';
 import {createSignalListeningStoreV1,requestSignalListeningV1} from '../signal-listening-runs';
 import {createMassLabelingStoreV1} from '../signal-mass-labeling';
-import type {LabelingRunV1} from '../signal-labeling-runs';
+import type {LabelingRunV1,LabelingCallV1} from '../signal-labeling-runs';
 import type {LabelingDatabaseV1} from '../signal-mention-facets';
 import {planNativeListeningAdmissionPacketV1,nativeListeningAdmissionPacketBodyV1,
  NATIVE_LISTENING_ADMISSION_INSERT_SQL_V1,NATIVE_LISTENING_ADMISSION_MARK_SQL_V1,
@@ -26,6 +26,16 @@ type Fixture={database:LabelingDatabaseV1;run:LabelingRunV1;inputs:SignalListeni
  configuration:ReturnType<typeof signalListeningBaseTemplateV1>;renew:()=>Promise<void>};
 type Arm='baseline'|'candidate';
 type PgFailure={code:string|null;message:string;constraint:string|null};
+type CallJsonData=Record<string,unknown>&{id:string;custom_id:string};
+type CallJsonRow={row:CallJsonData};
+type CallQuestionRow={workspace_id:string;run_id:string;call_id:string;root_id:string;question_key:string;question_digest:string};
+type ExposureRow={confirmed_micro_usd:string;reserved_micro_usd:string;ambiguous_micro_usd:string;total_micro_usd:string};
+type Snapshot={calls:CallJsonRow[];links:CallQuestionRow[];exposure:ExposureRow[]};
+type ArmResult<T>={value?:T;error?:PgFailure;rows:Snapshot;rollback_acknowledged:boolean};
+type NativeDmlValue={elapsed_ms:number;count:number;links:number};
+type NormalizedLinkRow=Omit<CallQuestionRow,'call_id'>&{call_id:string|undefined};
+type NativeDmlSemantic={calls:Record<string,unknown>[];links:NormalizedLinkRow[];exposure:ExposureRow[]};
+type NativeDmlSample=NativeDmlValue&{arm:Arm;semantic:NativeDmlSemantic;rollback_acknowledged:boolean};
 const failure=(error:unknown):PgFailure=>{
  const e=error as {code?:string;message?:string;constraint?:string};
  return{code:typeof e?.code==='string'?e.code:null,message:typeof e?.message==='string'?e.message:String(error),constraint:e?.constraint??null};
@@ -75,21 +85,21 @@ async function insert(c:PoolClient,f:Fixture,rows:Proposal[],conflict:boolean|'u
  [f.run.id,f.run.workspace_id,JSON.stringify(rows),f.run.processing_admission_id]);
  return{rows:result.rows,rowCount:result.rowCount,command:result.command};
 }
-async function snapshot(c:Pick<PoolClient,'query'>,run_id:string){
- const calls=(await c.query(`SELECT to_jsonb(c)-ARRAY['created_at','updated_at'] row FROM signal_labeling_calls c
+async function snapshot(c:Pick<PoolClient,'query'>,run_id:string):Promise<Snapshot>{
+ const calls=(await c.query<CallJsonRow>(`SELECT to_jsonb(c)-ARRAY['created_at','updated_at'] row FROM signal_labeling_calls c
  WHERE run_id=$1 ORDER BY custom_id`,[run_id])).rows;
- const links=(await c.query(`SELECT q.* FROM signal_listening_call_questions q WHERE run_id=$1
+ const links=(await c.query<CallQuestionRow>(`SELECT q.* FROM signal_listening_call_questions q WHERE run_id=$1
  ORDER BY call_id,question_key`,[run_id])).rows;
- const exposure=(await c.query('SELECT * FROM signal_processing_org_exposure_v1((SELECT organization_id FROM signal_workspaces WHERE id=(SELECT workspace_id FROM signal_labeling_runs WHERE id=$1)),(SELECT a.budget_date FROM signal_labeling_runs r JOIN signal_processing_admissions a ON a.id=r.processing_admission_id WHERE r.id=$1),(SELECT a.budget_timezone FROM signal_labeling_runs r JOIN signal_processing_admissions a ON a.id=r.processing_admission_id WHERE r.id=$1))',[run_id])).rows;
+ const exposure=(await c.query<ExposureRow>('SELECT * FROM signal_processing_org_exposure_v1((SELECT organization_id FROM signal_workspaces WHERE id=(SELECT workspace_id FROM signal_labeling_runs WHERE id=$1)),(SELECT a.budget_date FROM signal_labeling_runs r JOIN signal_processing_admissions a ON a.id=r.processing_admission_id WHERE r.id=$1),(SELECT a.budget_timezone FROM signal_labeling_runs r JOIN signal_processing_admissions a ON a.id=r.processing_admission_id WHERE r.id=$1))',[run_id])).rows;
  return{calls,links,exposure};
 }
-async function arm<T>(f:Fixture,kind:Arm,sql:string,body:(c:PoolClient)=>Promise<T>,role?:'no_child_insert'|'no_child_and_owner'){
+async function arm<T>(f:Fixture,kind:Arm,sql:string,body:(c:PoolClient)=>Promise<T>,role?:'no_child_insert'|'no_child_and_owner'):Promise<ArmResult<T>>{
  await f.renew();
  const before=await catalogs(f.database),baseline=await snapshot(f.database,f.run.id);
  // The actual arm owns exactly one client and one transaction. No paid calls
  // are sent; ROLLBACK, not ledger deletion, restores the starting history.
  const c=await f.database.connect();let rollbackAck=false,primary:unknown,known=false,roleName:string|undefined;
- let result:undefined|{value?:T;error?:PgFailure;rows:Awaited<ReturnType<typeof snapshot>>};
+ let result:Omit<ArmResult<T>,'rollback_acknowledged'>|undefined;
  try{
   await c.query('BEGIN');await c.query("SET LOCAL statement_timeout='20s';SET LOCAL lock_timeout='1s'");
   if(kind==='candidate')await c.query(sql);
@@ -198,26 +208,26 @@ test('native Listening link statement preserves guards, valid ACLs, rejected wri
    for(const size of [720,1024]){
     const rows=proposals(f,f.inputs.slice(0,size));assert.equal(rows.length,size);
     const plan=planNativeListeningAdmissionPacketV1(f.run,rows,1024);assert.ok(plan);
-    const packet=nativeListeningAdmissionPacketBodyV1(plan,rows),samples=[];
+    const packet=nativeListeningAdmissionPacketBodyV1(plan,rows),samples:NativeDmlSample[]=[];
     for(const kind of ['baseline','candidate','candidate','baseline']as const){
      assert.ok(await walBytes()<48*1024*1024,'stop before another DML arm if the local64MiB WAL allowance lacks16MiB headroom');
-     const output=await arm(f,kind,candidate,async c=>{
-      const a=(await c.query('SELECT budget_date::text,budget_timezone FROM signal_processing_admissions WHERE id=$1',[f.run.processing_admission_id])).rows[0];assert.ok(a);
+     const output:ArmResult<NativeDmlValue>=await arm<NativeDmlValue>(f,kind,candidate,async(c:PoolClient):Promise<NativeDmlValue>=>{
+      const a=(await c.query<{budget_date:string;budget_timezone:string}>('SELECT budget_date::text,budget_timezone FROM signal_processing_admissions WHERE id=$1',[f.run.processing_admission_id])).rows[0];assert.ok(a);
       const begin=performance.now();
-      const inserted=await c.query(NATIVE_LISTENING_ADMISSION_INSERT_SQL_V1,[f.run.id,f.run.workspace_id,'typesafe','jev-1.13.0','sync',packet,a.budget_date,a.budget_timezone]);
-      const reserved=reconstructNativeListeningAdmissionRowsV1(f.run,plan,rows,inserted.rows,'reserved');
-      const marked=await c.query(NATIVE_LISTENING_ADMISSION_MARK_SQL_V1,[f.run.id,f.run.workspace_id,reserved.map(v=>v.id),packet]);
-      const calls=reconstructNativeListeningAdmissionRowsV1(f.run,plan,rows,marked.rows,'submitting');
+      const inserted=await c.query<Record<string,unknown>>(NATIVE_LISTENING_ADMISSION_INSERT_SQL_V1,[f.run.id,f.run.workspace_id,'typesafe','jev-1.13.0','sync',packet,a.budget_date,a.budget_timezone]);
+      const reserved:LabelingCallV1<SignalListeningInputV1>[]=reconstructNativeListeningAdmissionRowsV1(f.run,plan,rows,inserted.rows,'reserved');
+      const marked=await c.query<Record<string,unknown>>(NATIVE_LISTENING_ADMISSION_MARK_SQL_V1,[f.run.id,f.run.workspace_id,reserved.map(v=>v.id),packet]);
+      const calls:LabelingCallV1<SignalListeningInputV1>[]=reconstructNativeListeningAdmissionRowsV1(f.run,plan,rows,marked.rows,'submitting');
       const elapsed_ms=performance.now()-begin;
       assert.equal(calls.length,size);assert.ok(calls.every(v=>v.status==='submitting'));
-      const links=(await c.query('SELECT count(*)::int n FROM signal_listening_call_questions WHERE run_id=$1',[f.run.id])).rows[0]!.n;
+      const links=(await c.query<{n:number}>('SELECT count(*)::int n FROM signal_listening_call_questions WHERE run_id=$1',[f.run.id])).rows[0]!.n;
       assert.equal(links,size*2);return{elapsed_ms,count:calls.length,links};
      });assert.equal(output.error,undefined);assert.ok(output.value);
      // Generated IDs differ by design. Compare every remaining immutable field
      // and bind each link back to its exact request identity before comparing.
-     const idToCustom=new Map(output.rows.calls.map(v=>[v.row.id,v.row.custom_id]));
-     const semantic={calls:output.rows.calls.map(v=>{const{id,...rest}=v.row;return rest;}),
-      links:output.rows.links.map(v=>({...v,call_id:idToCustom.get(v.call_id)})).sort((a,b)=>String(a.call_id).localeCompare(String(b.call_id))||a.question_key.localeCompare(b.question_key)),exposure:output.rows.exposure};
+     const idToCustom=new Map<string,string>(output.rows.calls.map((v:CallJsonRow):[string,string]=>[v.row.id,v.row.custom_id]));
+     const semantic:NativeDmlSemantic={calls:output.rows.calls.map((v:CallJsonRow):Record<string,unknown>=>{const{id,...rest}=v.row;return rest;}),
+      links:output.rows.links.map((v:CallQuestionRow):NormalizedLinkRow=>({...v,call_id:idToCustom.get(v.call_id)})).sort((a:NormalizedLinkRow,b:NormalizedLinkRow)=>String(a.call_id).localeCompare(String(b.call_id))||a.question_key.localeCompare(b.question_key)),exposure:output.rows.exposure};
      samples.push({arm:kind,...output.value,semantic,rollback_acknowledged:output.rollback_acknowledged});
      assert.ok(await walBytes()<=64*1024*1024,'local WAL budget is not silently expanded');
     }

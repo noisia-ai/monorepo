@@ -1,3 +1,5 @@
+import {jevResponseInitialHeadroomV3,selectJevPhaseInitialBindingV3} from './signal-jev-phase-profile-v3';
+import type {JevPhaseClosedBindingV3} from './signal-jev-response-budget-v3';
 import { assertJevStreamingExecutionV2, jevCallWorkingBytesV2, processJevStreamingWindowV2, type JevStreamingExecutionV2, type JevStreamingMetricsV2, type JevFeedAdmissionHintV1, type JevFeedResultV1, type JevNativeWorkspaceQuoteV1 } from './signal-jev-streaming-window';
 import { setMaxListeners } from "node:events";
 import { setImmediate as yieldToEventLoop } from "node:timers/promises";
@@ -72,6 +74,7 @@ export async function processJevLabelingPageV1<Input extends FacetInput,Result>(
     error(run:LabelingRunV1,call:LabelingCallV1<Input>,code:string,unknown:boolean):Result[];
     labeled(result:Result):boolean;
     invalidUsage?(failure:JevProviderErrorV1):JevResponseV1["usage"]|undefined;
+    response_budget_binding?(provider:JevProviderV1,execution:JevStreamingExecutionV2,recovery:boolean):JevPhaseClosedBindingV3|undefined;
     fail_on_error?:boolean;
     durable_raw_per_response?:boolean;
     recovery_only?:boolean;
@@ -146,6 +149,7 @@ export async function processJevLabelingPageV1<Input extends FacetInput,Result>(
           await store.fail(run,"labeling_outcome_unknown",{preserve_reserved:true});return {status:"outcome_unknown"};
         }
       }
+      let responseBinding=execution&&!recoveryOnly&&!pending.some(call=>Boolean(call.raw_body))?hooks.response_budget_binding?.(provider,execution,recoveryOnly):undefined;
       const incrementalInitial=Boolean(args.initial_reservation&&execution&&continuous&&maxWindows===undefined&&args.max_windows===undefined&&windows===0
         &&hooks.revisit_empty_after_apply===true&&!pending.length&&!run.error_code&&!recoveryOnly&&!cancellation.signal.aborted);
       let calls=(recoveryOnly?pending.filter(call=>Boolean(call.raw_body)):pending).slice(0,execution?.window_size??200);
@@ -153,7 +157,7 @@ export async function processJevLabelingPageV1<Input extends FacetInput,Result>(
       if(!calls.length&&!run.error_code&&!recoveryOnly&&!cancellation.signal.aborted){
         // Native continuous consumers reserve room for at least one response
         // before hydrating input text or compiling copied request bodies.
-        const inputBudget=execution&&continuous?execution.max_buffered_bytes-assertJevStreamingExecutionV2(execution,provider):undefined;
+        const inputBudget=execution&&continuous?execution.max_buffered_bytes-jevResponseInitialHeadroomV3(provider,execution,undefined,Boolean(responseBinding)):undefined;
         if(inputBudget!==undefined&&inputBudget<1)throw Error('jev_stream_input_memory_budget_exceeded');
         if(incrementalInitial){
           calls=await withReleasedSelection(async()=>{
@@ -174,6 +178,7 @@ export async function processJevLabelingPageV1<Input extends FacetInput,Result>(
           if(proposals.length)calls=(await store.reserve(run,proposals)).slice(0,execution?.window_size??200);
         }
       }
+      if(execution)responseBinding=selectJevPhaseInitialBindingV3(responseBinding,provider,execution,hooks.map,calls,calls.reduce((sum,call)=>sum+Buffer.byteLength(call.raw_body??'')+jevCallWorkingBytesV2(call),0));
       const reserved=run.error_code?[]:calls.filter(call=>call.status==="reserved"&&!call.raw_body);
       if(execution)assertJevStreamingExecutionV2(execution,provider);
       if(!execution&&reserved.length)await store.markSubmitting(run,reserved);
@@ -292,6 +297,9 @@ export async function processJevLabelingPageV1<Input extends FacetInput,Result>(
                   if(!Number.isSafeInteger(value)||value<0)throw Error('jev_native_workspace_invalid');
                   return value;
                 };
+                // Existing escrows already belong to the shared stream counter;
+                // do not charge them again to this unpaid preparation quote.
+                // Fresh selectFresh/Mark recomputes exact growth before COMMIT.
                 const fits=(count:number,value:number)=>returnedCosts[count]!*2+8192*count+value+reservation*count<=available;
                 let workspace:number|undefined;
                 try{
@@ -321,7 +329,7 @@ export async function processJevLabelingPageV1<Input extends FacetInput,Result>(
               if(incrementalInitial)try{args.initial_reservation!.release_selection();}catch(secondary){if(failed)throw new AggregateError([primary,secondary],'jev_selection_primary_and_release_failed',{cause:primary});throw secondary;}
             }
           }:undefined;
-        const outcome = await processJevStreamingWindowV2({run,calls,send_calls:reserved,store,provider,execution:execution,price,cancellation,hooks,observe_stream:args.observe_stream,feed_next:feed,next_admission_hint:hooks.next_admission_hint,revisit_empty_after_apply:Boolean(feed)&&hooks.revisit_empty_after_apply===true,defer_initial_prefetch_until_handoff:incrementalInitial&&reserved.length>0,preparation_valid:hooks.preparation_valid});
+        const outcome = await processJevStreamingWindowV2({run,calls,send_calls:reserved,store,provider,execution:execution,price,cancellation,hooks,observe_stream:args.observe_stream,feed_next:feed,next_admission_hint:hooks.next_admission_hint,revisit_empty_after_apply:Boolean(feed)&&hooks.revisit_empty_after_apply===true,defer_initial_prefetch_until_handoff:incrementalInitial&&reserved.length>0,preparation_valid:hooks.preparation_valid,response_budget_binding:responseBinding});
         aggregate = { ...outcome, roots:(aggregate?.roots??0)+outcome.roots,
           labeled:(aggregate?.labeled??0)+outcome.labeled,
           settled_micro_usd:(aggregate?.settled_micro_usd??0)+outcome.settled_micro_usd,

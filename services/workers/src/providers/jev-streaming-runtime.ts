@@ -1,4 +1,6 @@
 import Redis from 'ioredis';
+import {createJevDeferredRawWitnessV1} from './jev-deferred-raw';
+import {registerJevPhaseProviderV3,isJevPhaseTransportV3} from './jev-phase-provider-v3';
 import { createJevAccountRateLimiter, type JevRedisEval } from './jev-account-rate-limit';
 import { createTypesafeJevClientV1, type JevProviderV1, type JevRawResponseV1, JevProviderErrorV1 } from './typesafe-jev';
 import type { JevStreamingExecutionV2 } from '../workers/signal-jev-streaming-window';
@@ -72,7 +74,7 @@ export function createCalibratedJevRuntimeProviderV2(args: {
     // evaluate wrapper reads the latest shared adaptive bound before admitting this request.
     estimate_input_tokens:request=>estimates.get(request) ?? (()=>{throw Error('jev_stream_calibration_not_loaded');})() });
   const estimates = new WeakMap<object,number>();
-  return { max_concurrency:inner.max_concurrency,max_response_bytes:inner.max_response_bytes,
+  const provider:JevProviderV1={ max_concurrency:inner.max_concurrency,max_response_bytes:inner.max_response_bytes,
     async close(){
       const owned=client;client=undefined;
       const pending=connecting;connecting=undefined;
@@ -93,7 +95,7 @@ export function createCalibratedJevRuntimeProviderV2(args: {
       const raw=await inner.evaluate(request,options);
       const receipt={labeler_digest:args.labeler_digest,input_bytes:bytes,
         kind:calibration.kind??'measured',...(official?{source_url:calibration.source_url,model:calibration.model}:{})};
-      return {...raw,rate_calibration:receipt};
+      return witness({...raw,rate_calibration:receipt});
     },
     async observeUsage(raw:JevRawResponseV1,tokens:number) {
       await inner.observeUsage?.(raw,tokens);
@@ -107,4 +109,7 @@ export function createCalibratedJevRuntimeProviderV2(args: {
       await evaluate(CALIBRATION_LUA,[calibrationKey],[args.labeler_digest,'observe',String(tokens/receipt.input_bytes)]);
     },
   };
+  const witness=createJevDeferredRawWitnessV1(provider);
+  if(!args.evaluateRedis&&isJevPhaseTransportV3(args.fetch))registerJevPhaseProviderV3(provider,()=>true);
+  return provider;
 }
