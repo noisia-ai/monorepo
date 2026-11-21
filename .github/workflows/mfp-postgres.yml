@@ -4327,6 +4327,7 @@ jobs:
           printf '%s\n' 'R16_NATIVE_LINK_LAB_OWNED=true' >> "$GITHUB_ENV"
           scripts/r16/lab-up.sh
       - name: Apply migrations to the fresh native link-statement lab
+        id: migrations
         env:
           NOISIA_DB_SMOKE_RESET_SCHEMA: 'true'
           NOISIA_DB_SMOKE_EMULATE_SUPABASE_ROLES: 'true'
@@ -4343,6 +4344,8 @@ jobs:
           pnpm --filter @noisia/db db:smoke:migrations
       - name: Run opt-in listening metadata PostgreSQL serializer on the owned lab
         id: listening_metadata
+        if: ${{ always() && steps.migrations.outcome == 'success' && env.R16_NATIVE_LINK_LAB_OWNED == 'true' }}
+        continue-on-error: true
         env:
           NOISIA_R16_LISTENING_METADATA_SQL_PG: 'true'
         run: |
@@ -4358,7 +4361,7 @@ jobs:
           import hashlib
           from pathlib import Path
           source=Path('services/workers/src/workers/signal-jev-listening-metadata.postgres.test.ts')
-          if not source.is_file() or source.is_symlink() or hashlib.sha256(source.read_bytes()).hexdigest()!='20ab517a5fadc610997b84bb6886c2c7b2c18cfefa52aff2f5fea5457f549b34':
+          if not source.is_file() or source.is_symlink() or hashlib.sha256(source.read_bytes()).hexdigest()!='963e12dc8a362c39deecf8d076e14e5686445defa5656f898850111ae3fe1b4b':
               raise SystemExit('listening metadata PostgreSQL source differs from the reviewed Q21 fixture')
           PY
           metadata_tap=.data/piloto-masivo/r16/native-link-statement-evidence/listening-metadata.tap
@@ -4382,6 +4385,8 @@ jobs:
           fi
       - name: Run Native link statement parity and bounded ABBA DML on PostgreSQL 17
         id: profile
+        if: ${{ always() && steps.migrations.outcome == 'success' && env.R16_NATIVE_LINK_LAB_OWNED == 'true' }}
+        continue-on-error: true
         env:
           NOISIA_R16_LINK_STATEMENT_PG: 'true'
           NOISIA_R16_LINK_STATEMENT_BENCHMARK_PG: 'true'
@@ -4438,8 +4443,11 @@ jobs:
         id: evidence
         if: always()
         env:
-          PROFILE_CONCLUSION: ${{ steps.profile.conclusion }}
-          CLEANUP_CONCLUSION: ${{ steps.cleanup.conclusion }}
+          MIGRATIONS_OUTCOME: ${{ steps.migrations.outcome }}
+          LISTENING_METADATA_OUTCOME: ${{ steps.listening_metadata.outcome }}
+          PROFILE_OUTCOME: ${{ steps.profile.outcome }}
+          CLEANUP_OUTCOME: ${{ steps.cleanup.outcome }}
+          LAB_OWNED: ${{ env.R16_NATIVE_LINK_LAB_OWNED }}
         run: |
           set -euo pipefail
           python - <<'PY'
@@ -4452,9 +4460,25 @@ jobs:
           test_source=root/'infrastructure/db/migrations/signal-listening-link-statement.postgres.test.ts'
           if not evidence.is_dir() or evidence.is_symlink() or stat.S_IMODE(evidence.stat().st_mode)!=0o700:
               raise SystemExit('private evidence directory is missing, linked, or not mode 0700')
+          outcomes={key:os.environ.get(env) for key,env in (
+              ('migrations','MIGRATIONS_OUTCOME'),('listening_metadata','LISTENING_METADATA_OUTCOME'),
+              ('abba','PROFILE_OUTCOME'),('cleanup','CLEANUP_OUTCOME'))}
+          print('native_link_step_outcomes='+json.dumps(outcomes,sort_keys=True,separators=(',',':')))
+          if os.environ.get('LAB_OWNED')!='true' or any(value!='success' for value in outcomes.values()):
+              raise SystemExit(f'all owned migrations, J-PG, ABBA, and cleanup outcomes must be success: {outcomes}')
           if not tap.is_file() or tap.is_symlink() or stat.S_IMODE(tap.stat().st_mode)!=0o600 or tap.stat().st_size>4*1024*1024:
               raise SystemExit('private TAP is missing, unsafe, not mode 0600, or exceeds 4 MiB')
           text=tap.read_text(encoding='utf-8')
+          metadata_tap=evidence/'listening-metadata.tap'
+          if not metadata_tap.is_file() or metadata_tap.is_symlink() or stat.S_IMODE(metadata_tap.stat().st_mode)!=0o600 or metadata_tap.stat().st_size>4*1024*1024:
+              raise SystemExit('private listening metadata TAP is missing, unsafe, not mode 0600, or exceeds 4 MiB')
+          metadata_text=metadata_tap.read_text(encoding='utf-8')
+          expected_metadata_lines={'# tests 1','# pass 1','# fail 0','# cancelled 0','# skipped 0','# Subtest: Listening metadata PostgreSQL serializes four disjoint per-call lanes and five exact mixed query frames'}
+          if not expected_metadata_lines.issubset(set(metadata_text.splitlines())):
+              raise SystemExit('listening metadata TAP must contain its exact passing no-skip contract')
+          expected_profile_lines={'# tests 17','# pass 17','# fail 0','# cancelled 0','# skipped 0','# Subtest: native Listening link statement preserves guards, valid ACLs, rejected writes and bounded ABBA DML'}
+          if not expected_profile_lines.issubset(set(text.splitlines())):
+              raise SystemExit('Native link-statement TAP must contain all 17 exact passing no-skip cases')
           marker='r16-native-link-statement-v1 '
           matches=[line[2:] if line.startswith('# ') else line for line in text.splitlines() if line.startswith(marker) or line.startswith('# '+marker)]
           receipt=None
@@ -4516,13 +4540,12 @@ jobs:
           control={'contract':'r16-native-link-statement-workflow-control-v1','github':{k:os.environ.get(k) for k in ('GITHUB_SHA','GITHUB_REF','GITHUB_EVENT_NAME','GITHUB_RUN_ID','GITHUB_RUN_ATTEMPT')},
             'workflow_sha256_before':os.environ.get('R16_NATIVE_LINK_WORKFLOW_SHA_BEFORE'),'workflow_sha256_after':hashlib.sha256((root/'.github/workflows/mfp-postgres.yml').read_bytes()).hexdigest(),
             'git_status_sha256_before':os.environ.get('R16_NATIVE_LINK_STATUS_SHA_BEFORE'),'git_status_sha256_after':status_after,'git_clean_after':True,
-            'profile_conclusion':os.environ.get('PROFILE_CONCLUSION'),'cleanup_conclusion':os.environ.get('CLEANUP_CONCLUSION'),
+            'step_outcomes':outcomes,'lab_owned':os.environ.get('LAB_OWNED')=='true',
             'runtime_known':True,'provider_spend':0,'source_note':'CI revision and synthetic-only Native INSERT+MARK DML receipt; no caller COMMIT or H1 claim.'}
           control_path=evidence/'workflow-control.json'
           fd=os.open(control_path,os.O_CREAT|os.O_EXCL|os.O_WRONLY,0o600)
           try: os.write(fd,(json.dumps(control,sort_keys=True,separators=(',',':'))+'\n').encode()); os.fsync(fd)
           finally: os.close(fd)
-          if os.environ.get('CLEANUP_CONCLUSION')!='success': raise SystemExit('owned PostgreSQL lab cleanup was not acknowledged')
           if receipt_path.stat().st_size>64*1024 or control_path.stat().st_size>16*1024: raise SystemExit('private evidence exceeds bounded JSON size')
           with open(os.environ['GITHUB_OUTPUT'],'a',encoding='utf-8') as output: output.write('eligible=true\n')
           PY

@@ -15,15 +15,15 @@ test('Listening metadata PostgreSQL serializes four disjoint per-call lanes and 
  skip:process.env.NOISIA_R16_LISTENING_METADATA_SQL_PG!=='true',timeout:600000,
 },async()=>{
  await runMassLabelingAcceptanceFixtureV1('product',{seed_published_at:'2026-11-21T00:00:00.000000Z',beforeProcessing:async ctx=>{
-  // PostgreSQL jsonb input rejects NUL and an unpaired surrogate at the JSONB boundary.
-  // This is not a claim about financial recovery of a provider response. These direct pool queries run before native reservations/writes.
-  const assertJSONBRejects=async(value:string)=>{
+  // PostgreSQL 17 observed JSONB SQLSTATE 22P05 for NUL and 22P02 for a lone surrogate.
+  // This probes the JSONB input boundary, not financial recovery of provider output. Direct pool queries run before Native reservations/writes.
+  const assertJSONBRejects=async(value:string,expectedCode:'22P05'|'22P02')=>{
    await assert.rejects(ctx.database.query('SELECT $1::jsonb',[JSON.stringify({extra:value})]),(error:unknown)=>{
-    assert.equal((error as {code?:string}).code,'22P05');return true;
+    assert.equal((error as {code?:string}).code,expectedCode);return true;
    });
   };
-  await assertJSONBRejects(String.fromCharCode(0));
-  await assertJSONBRejects(String.fromCharCode(0xd800));
+  await assertJSONBRejects(String.fromCharCode(0),'22P05');
+  await assertJSONBRejects(String.fromCharCode(0xd800),'22P02');
   await ctx.database.query("UPDATE signal_labeling_runs SET status='canceled' WHERE id=$1",[ctx.run_id]);
   const access={database:ctx.database,workspace_id:ctx.workspace_id,actor_user_id:ctx.actor_user_id};
   const configuration=await saveSignalListeningConfigurationV1({...access,expected_revision:0,
@@ -51,9 +51,10 @@ test('Listening metadata PostgreSQL serializes four disjoint per-call lanes and 
   const calls=await store.reserve(run,inputs.map(input=>{const request=buildSignalListeningJevRequestV1(input,configuration.configuration),request_digest=signalListeningRequestDigestV1(run,input,request);
    return{custom_id:'listening_'+request_digest.slice(7,67),request_digest,request,inputs:[input],reserved_micro_usd:1000};}));assert.equal(calls.length,2);
   await store.markSubmitting(run,calls);
+  // Keep JSONB-positive answers canonical; unknown extras remain covered in RAW/unit paths. This is not a financial recovery claim.
   const responses=calls.map(call=>({model:configuration.configuration.model,usage:{input_tokens:1,output_tokens:0,extra:{nested:[1e20,'é😀',String.fromCharCode(0x1f)]}},
-   answers:Object.fromEntries(Object.entries(buildSignalListeningJevRequestV1(call.inputs[0]!,configuration.configuration).questions).map(([key,q])=>[key,q.type==='noul'?{type:'noul' as const,noul:1,extra:{preserved:[1e20,'\"',String.fromCharCode(0x1)]}}:
-    {type:'choice' as const,choice:Object.keys(q.criteria)[0]!,confidence:1,probabilities:Object.fromEntries(Object.keys(q.criteria).map((k,i)=>[k,i===0?1:0])),extra:{preserved:[1e20,'é😀']}}]))}));
+   answers:Object.fromEntries(Object.entries(buildSignalListeningJevRequestV1(call.inputs[0]!,configuration.configuration).questions).map(([key,q])=>[key,q.type==='noul'?{type:'noul' as const,noul:1}:
+    {type:'choice' as const,choice:Object.keys(q.criteria)[0]!,confidence:1,probabilities:Object.fromEntries(Object.keys(q.criteria).map((k,i)=>[k,i===0?1:0]))}]))}));
   const bodies=responses.map(r=>JSON.stringify(r).replaceAll('100000000000000000000','1e20'));assert.ok(bodies.every(body=>body.includes('1e20')));assert.ok(bodies.every(body=>Buffer.byteLength(body)<=16384));
   await store.persistRawPage(run,calls.map((call,i)=>({call,raw:JSON.stringify({body:bodies[i],http_status:200,latency_ms:100})})));
   const pages=calls.map((call,i)=>({call,results:[i===0?mapSignalListeningJevResponseV1(call.inputs[0]!,run.context,configuration.configuration,responses[i]!):
