@@ -3,7 +3,7 @@ import {createHash} from 'node:crypto';
 import test from 'node:test';
 import {llmPriceV1,type FacetInput} from '@noisia/query-engine';
 import type {LabelingCallV1,LabelingRunV1} from '@noisia/db';
-import {createTypesafeJevClientV1,type JevResponseV1} from '../providers/typesafe-jev';
+import {createTypesafeJevClientV1,type JevResponseV1,type JevRequestV1} from '../providers/typesafe-jev';
 import {captureJevDeferredRawV1} from '../providers/jev-deferred-raw';
 import {processJevStreamingWindowV2} from './signal-jev-streaming-window';
 
@@ -13,10 +13,13 @@ type Stage='none'|'RAW'|'settle'|'APPLY'|'feedback';
 function gate(){let resolve!:()=>void;return{promise:new Promise<void>(done=>{resolve=done;}),resolve:()=>resolve()};}
 function fixture(stage:Stage){
   const failure=Error('deferred '+stage),rawGate=gate(),feedbackGate=gate(),rawEntered=gate(),feedbackEntered=gate();
-  const calls=Array.from({length:2},(_,i)=>({id:'deferred-'+i,custom_id:'custom-'+i,request_digest:'digest-'+i,reserved_micro_usd:100,
-    request:{model:'jev-1.13.0',state:'state-'+i,questions:{q:{type:'noul',instructions:'Configured question'}}},
-    inputs:[{root_id:'root-'+i,input_digest:'input-'+i,text:'state-'+i}],status:'reserved',raw_body:null,
-    results_applied:false,provider_batch_id:null,retry_depth:0}))as LabelingCallV1<FacetInput>[];
+  const calls=Array.from({length:2},(_,i):LabelingCallV1<FacetInput>=>{
+    const input={root_id:'root-'+i,input_digest:'input-'+i,text:'state-'+i,title:null,platform:'instagram',
+      content_type:'comment',author:null,published_at:'2026-11-20T00:00:00.000Z',language:'pt'} satisfies FacetInput;
+    const request={model:'jev-1.13.0',state:'state-'+i,questions:{q:{type:'noul',instructions:'Configured question'}}} satisfies JevRequestV1;
+    return{id:'deferred-'+i,custom_id:'custom-'+i,request_digest:'digest-'+i,reserved_micro_usd:100,
+      request,inputs:[input],status:'reserved',raw_body:null,results_applied:false,provider_batch_id:null,retry_depth:0};
+  });
   const value={model:'jev-1.13.0',answers:{q:{type:'noul',noul:.9,extra:{unicode:'é😀',numbers:[1e20],nested:{k:true}}}},
     usage:{input_tokens:10,output_tokens:0,extra:{nested:['\ud800','kept']}}};
   const compact=JSON.stringify(value),body=compact+' '.repeat(16384-Buffer.byteLength(compact));

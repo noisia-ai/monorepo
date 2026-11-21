@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {llmPriceV1,type FacetInput} from '@noisia/query-engine';
 import type {LabelingCallV1,LabelingRunV1} from '@noisia/db';
-import {createTypesafeJevClientV1,type JevResponseV1} from '../providers/typesafe-jev';
+import {createTypesafeJevClientV1,type JevResponseV1,type JevRequestV1} from '../providers/typesafe-jev';
 import {registerJevPhaseProviderV3,isJevPhaseProviderV3} from '../providers/jev-phase-provider-v3';
 import {processJevStreamingWindowV2,jevCallWorkingBytesV2,type JevStreamingMetricsV2} from './signal-jev-streaming-window';
 import {createJevListeningPhaseBindingV3,jevLegacyCaptureProfileV3} from './signal-jev-phase-profile-v3';
@@ -14,10 +14,13 @@ type Args=Parameters<typeof processJevStreamingWindowV2<FacetInput,Result>>[0];
 function gate(){let resolve!:()=>void;return{promise:new Promise<void>(done=>{resolve=done;}),resolve:()=>resolve()};}
 function fixture(options:{fault?:'RAW'|'settle'|'APPLY'|'feedback';loseMark?:boolean;loseFinish?:boolean;large?:boolean;survey?:boolean;registered?:boolean;captureAliases?:boolean;adversarialValue?:unknown;invalidBody?:boolean}={}){
  const execution={max_in_flight:3,window_size:4,flush_size:1,max_flushes:2,flush_interval_ms:1000,max_buffered_bytes:512*1024*1024};
- const calls=Array.from({length:3},(_,i)=>({id:'phase-'+i,custom_id:'custom-'+i,request_digest:'digest-'+i,reserved_micro_usd:100,
-  request:{model:'jev-1.13.0',state:'state-'+i,questions:{q:{type:'noul',instructions:'configured'}}},
-  inputs:[{root_id:'root-'+i,input_digest:'input-'+i,text:'state-'+i}],status:'reserved',raw_body:null,results_applied:false,
-  provider_batch_id:null,retry_depth:0}))as LabelingCallV1<FacetInput>[];
+ const calls=Array.from({length:3},(_,i):LabelingCallV1<FacetInput>=>{
+  const input={root_id:'root-'+i,input_digest:'input-'+i,text:'state-'+i,title:null,platform:'instagram',
+   content_type:'comment',author:null,published_at:'2026-11-20T00:00:00.000Z',language:'pt'} satisfies FacetInput;
+  const request={model:'jev-1.13.0',state:'state-'+i,questions:{q:{type:'noul',instructions:'configured'}}} satisfies JevRequestV1;
+  return{id:'phase-'+i,custom_id:'custom-'+i,request_digest:'digest-'+i,reserved_micro_usd:100,
+   request,inputs:[input],status:'reserved',raw_body:null,results_applied:false,provider_batch_id:null,retry_depth:0};
+ });
  const payload={model:'jev-1.13.0',answers:{q:{type:'noul',noul:1,extra:{nested:[1e20,'é😀']}}},usage:{input_tokens:1,output_tokens:0,extra:{nested:['kept']}}};
  const compact=JSON.stringify(options.invalidBody?{model:payload.model,answers:payload.answers}:payload),body=options.large?compact+' '.repeat(16384-Buffer.byteLength(compact)):compact;
  const rawGates=[gate(),gate(),gate()],settleGates=[gate(),gate(),gate()],rawEntered=[gate(),gate(),gate()],settleEntered=[gate(),gate(),gate()];
