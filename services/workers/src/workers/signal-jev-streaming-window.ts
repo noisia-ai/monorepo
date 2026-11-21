@@ -1,8 +1,9 @@
+import {createJevListeningMetadataScopeV3,isJevListeningMetadataBindingV3} from './signal-jev-listening-metadata-v3';
 import {selectJevPhaseInitialBindingV3} from './signal-jev-phase-profile-v3';
 import type { FacetInput, LlmPriceV1 } from '@noisia/query-engine';
 import {captureJevDeferredRawV1,packJevDeferredRawV3,materializeJevDeferredRawV1,type JevDeferredPacketV3,type JevPackedRawV3} from '../providers/jev-deferred-raw';
 import {tryCreateJevPhaseBudgetOwnerV3,resolveJevPhaseClosedBindingV3,type JevPhaseClosedBindingV3,type JevPhaseCaptureLeaseV3,type JevPhaseCallQuoteV3,type JevPhaseSnapshotV3} from './signal-jev-response-budget-v3';
-import {jevDeferredRetainedBytesV3,jevLegacyPhaseFlushBytesV3,jevLegacyPhaseMaximumFlushBytesV3,jevPhaseQuestionSlotsV3} from './signal-jev-phase-geometry-v3';
+import {jevDeferredRetainedBytesV3,jevListeningPhaseFlushBytesV3,jevLegacyPhaseFlushBytesV3,jevLegacyPhaseMaximumFlushBytesV3,jevPhaseQuestionSlotsV3} from './signal-jev-phase-geometry-v3';
 import { llmCostMicroUsdV1 } from '@noisia/query-engine';
 import type { createSignalLabelingStoreV1, LabelingRunV1, LabelingCallV1, LabelingCallProposalV1, LabelingAdmissionSelectionV1, LabelingAdmissionResultV1 } from '@noisia/db';
 import { validateJevResponseV1, jevProviderErrorV1, isJevPreFetchCancellationV1, type JevProviderV1, type JevRawResponseV1,
@@ -14,7 +15,8 @@ export type JevStreamingExecutionV2 = {
   max_buffered_bytes: number; flush_interval_ms: number; window_size: number;
 };
 export type JevStreamingMetricsV2 = { in_flight: number; reserved_working_bytes: number;
-  buffered_responses: number; active_flushes: number; prefetch_canceled_requests?:number;admission_closed?:boolean;response_phase?:JevPhaseSnapshotV3 };
+  buffered_responses: number; active_flushes: number; prefetch_canceled_requests?:number;admission_closed?:boolean;response_phase?:JevPhaseSnapshotV3;
+  response_metadata_native_rows?:number;response_metadata_legacy_received_rows?:number;response_metadata_legacy_terminal_rows?:number };
 /** Private scheduling metadata. It never supplies inputs or grants authority. */
 export type JevFeedAdmissionHintV1 = {kind:'open'}|{kind:'closed'}|{
   kind:'bootstrap';bootstrap_id:number;covered_call_limit:number;wait_for_apply:boolean;acknowledged_covered_calls?:number;
@@ -84,7 +86,7 @@ export async function processJevStreamingWindowV2<I extends FacetInput, R>(args:
   const reservationBytes=assertJevStreamingExecutionV2(e,provider);
   const workers = Math.min(args.feed_next?e.max_in_flight:calls.length, e.max_in_flight, provider.max_concurrency ?? e.max_in_flight,
     Math.floor(e.max_buffered_bytes / reservationBytes));
-  type Row = { call: LabelingCallV1<I>; raw: string; bytes: number; memory_bytes: number; deferred?:JevDeferredPacketV3; phase_lease?:JevPhaseCaptureLeaseV3 };
+  type Row = { call: LabelingCallV1<I>; raw: string; bytes: number; memory_bytes: number; deferred?:JevDeferredPacketV3; phase_lease?:JevPhaseCaptureLeaseV3;metadata_reduced?:boolean };
   let buffered: Row[] = [], bufferedBytes = 0,
     memory = calls.reduce((n, call) => n + Buffer.byteLength(call.raw_body ?? '')+jevCallWorkingBytesV2(call), 0),
     inFlight = 0, fatal: unknown,fatalKnown=false;
@@ -95,6 +97,14 @@ export async function processJevStreamingWindowV2<I extends FacetInput, R>(args:
   const phase=phaseProfile?tryCreateJevPhaseBudgetOwnerV3({...phaseArgs,shared:{limit:e.max_buffered_bytes,used:()=>memory,
     tryClaim:bytes=>{if(bytes>e.max_buffered_bytes-memory)return false;memory+=bytes;return true;},release:bytes=>{memory-=bytes;}}}):null;
   if(phaseProfile&&!phase)throw Error('jev_phase_initial_memory_bound');
+  // The scope is allocated only AFTER the owner prepaid all fixed/row slots.
+  // Identity is separate from the generic V3 representation/resource binding.
+  // One <=1024-row APPLY batch means at most five SQL frames. Wider or
+  // non-H1 execution profiles retain the original per-row metadata allowance.
+  const metadata=phase&&e.flush_size<=1024&&e.max_flushes<=2&&e.max_in_flight<=1024
+    &&e.window_size<=4096&&e.max_buffered_bytes<=512*1024*1024&&isJevListeningMetadataBindingV3(args.response_budget_binding,provider,hooks.map,store)
+    ?createJevListeningMetadataScopeV3(run):undefined;
+  let metadataNativeRows=0,metadataLegacyReceivedRows=0,metadataLegacyTerminalRows=0;
   const phaseQuotes=new WeakMap<object,JevPhaseCallQuoteV3>();
   const quoteCall=(call:Pick<LabelingCallV1<I>,'request'|'inputs'>)=>{
     let quote=phaseQuotes.get(call);if(quote)return quote;
@@ -133,7 +143,8 @@ export async function processJevStreamingWindowV2<I extends FacetInput, R>(args:
   const observe = () => {
     // Instrumentation never changes physical attempts or their financial outcome.
     try { args.observe_stream?.({ in_flight: inFlight, reserved_working_bytes: memory,
-      buffered_responses: buffered.length, active_flushes: active.size,prefetch_canceled_requests:prefetchCanceled.length,admission_closed:admission.signal.aborted,...(phase?{response_phase:phase.snapshot()}:{}) }); } catch { /* Observer only. */ }
+      buffered_responses: buffered.length, active_flushes: active.size,prefetch_canceled_requests:prefetchCanceled.length,admission_closed:admission.signal.aborted,...(phase?{response_phase:phase.snapshot(),response_metadata_native_rows:metadataNativeRows,
+        response_metadata_legacy_received_rows:metadataLegacyReceivedRows,response_metadata_legacy_terminal_rows:metadataLegacyTerminalRows}:{}) }); } catch { /* Observer only. */ }
   };
   const wake = () => { for (const resolve of waiters) resolve(); waiters.clear(); };
   const wait = () => new Promise<void>(resolve => { waiters.add(resolve); });
@@ -242,6 +253,10 @@ export async function processJevStreamingWindowV2<I extends FacetInput, R>(args:
       if(phase&&!phaseFlush)return;
       if(phaseFlush){count=phaseFlush.count;observe();}
       const rows = buffered.splice(0, count); bufferedBytes -= rows.reduce((n, row) => n + row.bytes, 0);
+      // Count ACTUAL received-row F claims, not merely a provider binding or
+      // an unused quote. Every row contributes once; terminal applications are
+      // independent and may later include this same call. No IDs/RAW escape.
+      if(phaseFlush){for(const row of rows){if(row.metadata_reduced)metadataNativeRows++;else metadataLegacyReceivedRows++;}observe();}
       // A timer/pressure flush is a one-shot request, not a mode inherited by
       // subsequent pages. Keep batching later responses while HTTP is active;
       // the timer or final drain will flush the bounded tail when needed.
@@ -386,7 +401,7 @@ export async function processJevStreamingWindowV2<I extends FacetInput, R>(args:
     }
     async function send(call:LabelingCallV1<I>,phaseLease?:JevPhaseCaptureLeaseV3){
       let ownedReservation=phaseLease?0:reservationBytes;
-      let ownsPhase=Boolean(phaseLease);
+      let ownsPhase=Boolean(phaseLease),metadataReduced=false;
       inFlight++;observe();
       try{
         let physical:JevRawResponseV1|undefined=await provider.evaluate(call.request as JevRequestV1,{signal:cancellation.signal});
@@ -406,12 +421,15 @@ export async function processJevStreamingWindowV2<I extends FacetInput, R>(args:
         let custodyBytes:number;
         if(phaseLease){
           if(!deferred)throw Error('jev_phase_physical_contract_invalid');
-          const working=jevLegacyPhaseFlushBytesV3(deferred.body,bytes,jevPhaseQuestionSlotsV3(call));
+          const metadataQuestions=metadata?.takeQuestionSlots(call);
+          const working=metadataQuestions===undefined?jevLegacyPhaseFlushBytesV3(deferred.body,bytes,jevPhaseQuestionSlotsV3(call))
+            :jevListeningPhaseFlushBytesV3(deferred.body,bytes,metadataQuestions);
           deferred=packJevDeferredRawV3(deferred);physical=undefined;
           custodyBytes=jevDeferredRetainedBytesV3(deferred);
           phase!.transferToRetained(phaseLease,{retained_bytes:custodyBytes,raw_wrapper_bytes:bytes,row_flush_bytes:working});
+          metadataReduced=metadataQuestions!==undefined;
         }else{custodyBytes=Math.min(reservationBytes,bytes*24+64*1024);release(ownedReservation-custodyBytes);ownedReservation=custodyBytes;}
-        observedRaw.add(call.id);buffered.push({call,raw,bytes,memory_bytes:custodyBytes,...(deferred?{deferred}:{}),...(phaseLease?{phase_lease:phaseLease}:{})});
+        observedRaw.add(call.id);buffered.push({call,raw,bytes,memory_bytes:custodyBytes,...(deferred?{deferred}:{}),...(phaseLease?{phase_lease:phaseLease,metadata_reduced:metadataReduced}:{})});
         ownsPhase=false;
         ownedReservation=0; // consume owns this reservation through apply/feedback
         bufferedBytes+=bytes;observe();
@@ -427,7 +445,7 @@ export async function processJevStreamingWindowV2<I extends FacetInput, R>(args:
           prefetchCanceled.push(call);
         }else record(call,failure.outcome!=='definitely_not_sent',failure.code);
         if(hooks.fail_on_error)cancellation.abort();
-      }finally{inFlight--;observe();wake();}
+      }finally{metadata?.takeQuestionSlots(call);inFlight--;observe();wake();}
     }
     // Keep never-assigned calls reserved. Persist only a cohort whose HTTP slots
     // and response memory are already available, using one governed bulk write.
@@ -513,6 +531,17 @@ export async function processJevStreamingWindowV2<I extends FacetInput, R>(args:
                 ids.add(row.id);digests.add(row.request_digest);bytes+=jevCallWorkingBytesV2(row);
               }
               if(bytes>callClaim||memory>e.max_buffered_bytes)throw Error('jev_native_memory_bound');
+              // Final Native request/input graphs are fresh constructor-owned clones;
+              // their producer no longer mutates them. Seal before COMMIT under
+              // prepaid P/ledger, without changing serialized fields or status.
+              // Unsupported lineage remains on the complete Legacy F path.
+              // Official bootstrap rows retain Legacy F: their continuation
+              // may derive/load a calibration profile after APPLY. Measured
+              // open-hint rows cannot belong to a bootstrap's pending IDs.
+              if(metadata&&args.next_admission_hint?.().kind==='open'
+                &&isJevListeningMetadataBindingV3(args.response_budget_binding,provider,hooks.map,store)
+                &&rows.every(row=>metadata.canSealNativeBeforeCommit(row)))
+                for(const row of rows)metadata.sealNativeBeforeCommit(row);
               // Prepare every recipient and notification identifier before ACK.
               validated=rows;validatedIds=rows.map(row=>row.id);
             }
@@ -643,6 +672,7 @@ export async function processJevStreamingWindowV2<I extends FacetInput, R>(args:
             jevLegacyPhaseFlushBytesV3('',1,jevPhaseQuestionSlotsV3(row.call)));
           const workspace=phase.takeTerminalWorkspace(costs,e.flush_size);
           if(!workspace)throw Error('jev_phase_terminal_progress_invalid');
+          metadataLegacyTerminalRows+=workspace.count;
           observe();
           // Returning only scalar outcome ensures result/SQL frame aliases die
           // unless the ORIGINAL first fatal explicitly retains them in escrow.

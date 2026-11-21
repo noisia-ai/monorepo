@@ -54,8 +54,8 @@ const encodedMember=(raw:number)=>4*Math.ceil(raw/3)+2048;
  * result/settled/observation arrays, members, query rows and fixed row wrappers.
  * This inventory inherits the existing pg/storage transport buffer policy;
  * it does not assert a total native Postgres/RSS cap or a new transport bound. */
-function flushBytes(bodyBytes:number,tree:number,raw:number,questions:number):number{
-  const E=encodedMember(raw),J=6*bodyBytes+1024*questions+16384;
+function flushBytes(bodyBytes:number,tree:number,raw:number,questions:number,metadata=1024*questions+16384):number{
+  const E=encodedMember(raw),J=6*bodyBytes+metadata;
   const bytes=20*E+9*raw+3*tree+20*J+10*64*questions+65536;
   if(!Number.isSafeInteger(bytes)||bytes<1)throw Error('jev_phase_geometry_invalid');return bytes;
 }
@@ -80,4 +80,19 @@ export function jevPhaseQuestionSlotsV3(call:{request:unknown;inputs:readonly un
   if(descriptor&&'value'in descriptor&&descriptor.value&&typeof descriptor.value==='object')count=Math.max(count,Object.keys(descriptor.value).length);
  }
  if(!Number.isSafeInteger(count)||count<1||count>256)throw Error('jev_phase_lineage_contract_invalid');return count;
+}
+
+/** Closed first-party RECEIVED rows only. Four payload lanes/call, five query
+ * frames: answers/failures partition calls. UUID36/hash71/key<=64 ASCII.
+ * Includes delimiter/call; body subtrees remain charged at 6B in EVERY lane.
+ * 279 settle (including cache overrides/cost16/invalid-code20), 383+141Q
+ * replay/result error lineage, 373Q answer fanout, 136 failure row. Terminal
+ * technical codes are not covered; their original Legacy helper is unchanged.
+ * No claim about total PG native buffers, RSS or GC follows from this model. */
+export function jevListeningSqlMetadataBytesV3(questions:number):number{
+ if(!Number.isSafeInteger(questions)||questions<1||questions>256)throw Error('jev_phase_lineage_contract_invalid');
+ return Math.max(279,383+141*questions,373*questions,136);
+}
+export function jevListeningPhaseFlushBytesV3(body:string,raw:number,questions:number):number{
+ return flushBytes(Buffer.byteLength(body),jevResponseTreeStorageV3(body),raw,questions,jevListeningSqlMetadataBytesV3(questions));
 }

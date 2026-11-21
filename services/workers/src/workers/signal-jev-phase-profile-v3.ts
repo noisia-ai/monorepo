@@ -1,3 +1,4 @@
+import {JEV_LISTENING_METADATA_SLOTS_V3,JEV_LISTENING_METADATA_FIXED_BYTES_V3,JEV_LISTENING_QUERY_FRAME_BYTES_V3} from './signal-jev-listening-metadata-v3';
 import type {JevProviderV1} from '../providers/typesafe-jev';
 import {isJevPhaseProviderV3} from '../providers/jev-phase-provider-v3';
 import {registerJevPhaseClosedBindingV3,resolveJevPhaseClosedBindingV3,type JevPhaseBudgetParametersV3,type JevPhaseClosedBindingV3} from './signal-jev-response-budget-v3';
@@ -22,14 +23,17 @@ export function jevLegacyCaptureParametersV3(B:number|undefined,e:JevStreamingEx
   // separately. One P pays additional exact UTF8 packing buffers during the
   // strictly synchronous, first-party non-reentrant receive callback; no
   // await/observer occurs before P→R. Remaining64KiB pays owner/scalar tables.
-  const ledger=e.window_size*(32+23)*64+e.max_flushes*(16*e.flush_size+1024)+65536+P;
+  // The additional metadata scope slots are prepaid even if every Native
+  // row falls back to its unchanged Legacy F. Five possible query frames cost
+  // 25 bytes per flush, never a per-row hidden subtraction.
+  const ledger=e.window_size*(32+23+JEV_LISTENING_METADATA_SLOTS_V3)*64+e.max_flushes*(16*e.flush_size+1024)+65536+P+JEV_LISTENING_METADATA_FIXED_BYTES_V3;
   const maxF=jevLegacyPhaseMaximumFlushBytesV3(B,P,256);
   // Unsupported/small memory profiles keep the complete original protocol;
   // never reject a formerly legal call merely to enable this optimization.
-  if(ledger+P+2*(65536+maxF)>e.max_buffered_bytes)return null;
+  if(ledger+P+2*(65536+JEV_LISTENING_QUERY_FRAME_BYTES_V3+maxF)>e.max_buffered_bytes)return null;
   return Object.freeze({capture_mode:'legacy_capture',body_bound_bytes:B,ledger_bytes:ledger,
     max_capture_bytes:P,max_retained_bytes:P,max_raw_wrapper_bytes:P,max_row_flush_bytes:maxF,
-    flush_fixed_bytes:65536,raw_member_overhead_bytes:2048,max_page_bytes:32*1024*1024,
+    flush_fixed_bytes:65536+JEV_LISTENING_QUERY_FRAME_BYTES_V3,raw_member_overhead_bytes:2048,max_page_bytes:32*1024*1024,
     max_pending_calls:e.window_size,max_active_flushes:e.max_flushes,max_flush_rows:e.flush_size});
 }
 export function jevResponseMinimumHeadroomV3(provider:JevProviderV1,e:JevStreamingExecutionV2,enabled=false):number{

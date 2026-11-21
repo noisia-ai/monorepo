@@ -1,3 +1,4 @@
+import {bindJevListeningMetadataV3,registerJevListeningMetadataMapperV3} from './signal-jev-listening-metadata-v3';
 import {createJevListeningPhaseBindingV3,jevResponseInitialHeadroomV3} from './signal-jev-phase-profile-v3';
 import {isJevPhaseSyntheticFactoryV3,registerJevPhaseStoreV3,isJevPhaseStoreV3} from '../providers/jev-phase-provider-v3';
 import {
@@ -127,7 +128,12 @@ export function processSignalListeningJevV1(args:{run_id:string;store:Store;prov
         reserved_micro_usd:llmCostMicroUsdV1(jevUsageV1({input_tokens:Buffer.byteLength(JSON.stringify(request))*4+8192,output_tokens:0}),contextOf(run).price)};
     }),
     map:listeningMap,
-    response_budget_binding:(provider,execution,recovery)=>phaseOwnedListeningJobs.has(args)&&isJevPhaseStoreV3(args.store)?createJevListeningPhaseBindingV3(provider,execution,listeningMap,recovery):undefined,
+    response_budget_binding:(provider,execution,recovery)=>{
+      if(!phaseOwnedListeningJobs.has(args)||!isJevPhaseStoreV3(args.store))return undefined;
+      const binding=createJevListeningPhaseBindingV3(provider,execution,listeningMap,recovery);
+      if(binding){registerJevListeningMetadataMapperV3(listeningMap);bindJevListeningMetadataV3(binding,provider,listeningMap,args.store,recovery);}
+      return binding;
+    },
     error:(run,call,code)=>call.inputs.map(input=>({root_id:input.root_id,input_digest:input.input_digest,
       entity_context_digest:run.entity_context_digest,status:'error',answers:{},question_digests:{...input.question_digests},error_code:code})),
     labeled:result=>result.status==='labeled',fail_on_error:true,recovery_only:args.recovery_only,

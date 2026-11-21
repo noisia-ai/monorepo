@@ -4341,6 +4341,45 @@ jobs:
           export DATABASE_SSL=false
           export NOISIA_R16_LOCAL_PG_LAB=r16-benchmark-pg17
           pnpm --filter @noisia/db db:smoke:migrations
+      - name: Run opt-in listening metadata PostgreSQL serializer on the owned lab
+        id: listening_metadata
+        env:
+          NOISIA_R16_LISTENING_METADATA_SQL_PG: 'true'
+        run: |
+          set -euo pipefail
+          connection_file=.data/piloto-masivo/r16/labs/benchmark-pg17/connection.env
+          test -f "$connection_file"
+          set -a
+          source "$connection_file"
+          set +a
+          export DATABASE_SSL=false
+          export NOISIA_R16_LOCAL_PG_LAB=r16-benchmark-pg17
+          python - <<'PY'
+          import hashlib
+          from pathlib import Path
+          source=Path('services/workers/src/workers/signal-jev-listening-metadata.postgres.test.ts')
+          if not source.is_file() or source.is_symlink() or hashlib.sha256(source.read_bytes()).hexdigest()!='0e693746926d4733e4df0aec28be27d97d6359b4498f84e98f47f05618e94f91':
+              raise SystemExit('listening metadata PostgreSQL source differs from the reviewed Q21 fixture')
+          PY
+          metadata_tap=.data/piloto-masivo/r16/native-link-statement-evidence/listening-metadata.tap
+          (umask 077; printf '%s\n' '# Listening metadata PostgreSQL TAP did not start' > "$metadata_tap")
+          chmod 600 "$metadata_tap"
+          set +e
+          pnpm --filter @noisia/workers exec node --max-old-space-size=1024 --test --test-concurrency=1 --import tsx \
+            src/workers/signal-jev-listening-metadata.postgres.test.ts \
+            2>&1 | tee "$metadata_tap"
+          test_status=${PIPESTATUS[0]}
+          set -e
+          if [[ "$test_status" -ne 0 ]] \
+            || ! grep -qx '# tests 1' "$metadata_tap" \
+            || ! grep -qx '# pass 1' "$metadata_tap" \
+            || ! grep -qx '# fail 0' "$metadata_tap" \
+            || ! grep -qx '# cancelled 0' "$metadata_tap" \
+            || ! grep -qx '# skipped 0' "$metadata_tap" \
+            || ! grep -qx '# Subtest: Listening metadata PostgreSQL serializes four disjoint per-call lanes and five exact mixed query frames' "$metadata_tap"; then
+            echo '::error::Listening metadata PostgreSQL TAP count, title, or no-skip contract failed'
+            exit 1
+          fi
       - name: Run Native link statement parity and bounded ABBA DML on PostgreSQL 17
         id: profile
         env:
@@ -4436,7 +4475,7 @@ jobs:
               raise SystemExit('receipt candidate SQL digest does not bind the executed unnumbered candidate')
           if hashlib.sha256(candidate.read_bytes()).hexdigest()!='f0d4d95a27db9f0bf462f04dc7a73fec2254a9855febc2bb21cfaf3889f3730d':
               raise SystemExit('executed SQL candidate differs from the frozen author source')
-          if not test_source.is_file() or test_source.is_symlink() or hashlib.sha256(test_source.read_bytes()).hexdigest()!='2c83222e9e40dbb5f33bcb12d21e7932ba0ab6c7ca2754bd95d09f77dc7df76b':
+          if not test_source.is_file() or test_source.is_symlink() or hashlib.sha256(test_source.read_bytes()).hexdigest()!='938945e01b9269040e0f5740908a40387584e4c6bcd6f430e578498593109da5':
               raise SystemExit('executed PostgreSQL test differs from the frozen author source')
           scope=str(receipt.get('benchmark_scope',''))
           if 'no COMMIT' not in scope or 'no H1' not in scope:
@@ -4492,6 +4531,7 @@ jobs:
         with:
           name: r16-native-link-statement-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
+            .data/piloto-masivo/r16/native-link-statement-evidence/listening-metadata.tap
             .data/piloto-masivo/r16/native-link-statement-evidence/native-link-statement.tap
             .data/piloto-masivo/r16/native-link-statement-evidence/native-link-statement-receipt.json
             .data/piloto-masivo/r16/native-link-statement-evidence/workflow-control.json

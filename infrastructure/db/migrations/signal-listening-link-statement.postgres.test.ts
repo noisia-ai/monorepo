@@ -246,7 +246,7 @@ test('native Listening link statement preserves guards, valid ACLs, rejected wri
    materially_faster:benchmark?measurements.length===2&&measurements.every(v=>v.materially_faster===true):null};
  };
  if(benchmark)await runMassLabelingAcceptanceFixtureV1('product-recovery',{benchmark:{isolated:true,root_count:1024,
-  execution_cap_micro_usd:100_000_000,beforeProcessing,embedding_page_limit:Math.ceil(1024/128)+1}});
+  execution_cap_micro_usd:16_000_000,beforeProcessing,embedding_page_limit:Math.ceil(1024/128)+1}});
  else await runMassLabelingAcceptanceFixtureV1('product',{beforeProcessing});
  assert.ok(owned&&receipt);
  const {openR16CiPostgresV1}=await import('./signal-r16-local-pg.fixture');
