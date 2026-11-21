@@ -350,7 +350,7 @@ test('capacity clips distinguish a slot cap from a quoted memory cap without ext
  for(const mode of['slots','memory']as const){
   async function execute(observe:boolean){
    const f=fixture(true),observed:SignalListeningPreparationObservationV1[]=[];let quotes=0,validations=0,hints=0,selects=0;
-   if(mode==='slots')f.args.provider.max_concurrency=1;
+   if(mode==='slots')f.args.provider={...f.args.provider,max_concurrency:1};
    const feed=f.args.feed_next!;f.args.feed_next=async(...args)=>{const next=await feed(...args);if(!Array.isArray(next)&&'proposals'in next&&next.workspace_quote){const quote=next.workspace_quote.quote;next.workspace_quote={...next.workspace_quote,quote:count=>{quotes++;return mode==='memory'&&count>1?execution.max_buffered_bytes:quote(count);}};}return next;};
    f.args.preparation_valid=()=>{validations++;return true;};f.args.next_admission_hint=()=>{hints++;return{kind:'open'};};
    if(observe)f.args.observe_preparation=event=>{observed.push(structuredClone(event));throw undefined;};
@@ -371,7 +371,7 @@ test('compile clip preserves tied physical and provider limits and keeps proposa
   const f=fixture(),initial={root_id:'compile-initial',text:'initial'}as FacetInput,inputs=Array.from({length:3},(_,i)=>({root_id:'compile-'+i,text:'compiled-'+i}))as FacetInput[];
   Object.assign(f.run,{kind:'mass_labeling',identity:signalListeningJevIdentityV1(signalListeningBaseTemplateV1({category:'tea',lexicon_terms:['tea']}))});
   const observed:SignalListeningPreparationObservationV1[]=[];let reads=0,proposes=0,quotes=0,guards=0;
-  f.args.provider.max_concurrency=3;const capacity={...execution,max_in_flight:3};
+  f.args.provider={...f.args.provider,max_concurrency:3};const capacity={...execution,max_in_flight:3};
   const store={...f.args.store,claim:async()=>f.run,renew:async()=>{},release:async()=>{},calls:async()=>[],inputs:async()=>[initial],
    admitAndMarkSelected:async(_run:LabelingRunV1,drafts:LabelingCallProposalV1<FacetInput>[],callbacks:Parameters<NonNullable<Args['store']['admitAndMarkSelected']>>[2])=>{
     const selected=callbacks.selectFresh(drafts),rows=selected.map(p=>call(p));callbacks.validateBeforeCommit(rows,selected);f.rows.push(...rows);return{kind:'committed' as const,calls:rows};
