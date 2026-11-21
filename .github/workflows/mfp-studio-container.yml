@@ -1,6 +1,12 @@
 name: MFP Studio container
 
 on:
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: Exact 40-hex product commit to build and verify
+        required: true
+        type: string
   pull_request:
     branches: [develop]
     paths:
@@ -30,12 +36,36 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     env:
+      EXPECTED_SOURCE_SHA: ${{ github.event_name == 'workflow_dispatch' && inputs.source_sha || github.sha }}
       IMAGE: noisia-mfp-studio-container:ci
       CONTAINER: noisia-mfp-studio-container-smoke
     steps:
+      - name: Validate requested source SHA before checkout
+        env:
+          MANUAL_SOURCE_SHA: ${{ inputs.source_sha }}
+          EVENT_NAME: ${{ github.event_name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$EVENT_NAME" == workflow_dispatch ]]; then
+            [[ "$MANUAL_SOURCE_SHA" =~ ^[0-9a-fA-F]{40}$ ]] || { echo 'source_sha must be exactly 40 hex characters' >&2; exit 1; }
+          fi
+          [[ "$EXPECTED_SOURCE_SHA" =~ ^[0-9a-fA-F]{40}$ ]] || { echo 'Expected source SHA is invalid' >&2; exit 1; }
       - uses: actions/checkout@v4
         with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.source_sha || github.sha }}
           persist-credentials: false
+
+      - name: Verify clean exact source and attest Git identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          actual_sha="$(git rev-parse --verify HEAD)"
+          expected_sha="${EXPECTED_SOURCE_SHA,,}"
+          [[ "$actual_sha" == "$expected_sha" ]] || { echo 'Checked-out HEAD does not match expected source SHA' >&2; exit 1; }
+          [[ -z "$(git status --porcelain=v1 --untracked-files=all)" ]] || { echo 'Source checkout is not clean' >&2; exit 1; }
+          tree_sha="$(git rev-parse --verify 'HEAD^{tree}')"
+          echo "Git source attestation: commit=$actual_sha tree=$tree_sha"
 
       - name: Verify private-path exclusions during build
         run: |
