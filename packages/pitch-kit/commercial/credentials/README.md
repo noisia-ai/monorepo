@@ -25,6 +25,15 @@ El PDF sale imprimiendo desde Chrome: `beforeprint` dibuja todas las animaciones
 Para una animación nueva: un archivo en `anims/` con `LIB['nombre']={dur, setup(svg), render(S,t)}`,
 donde `render` depende solo de `t`.
 
+**Un deck en otro idioma.** Los textos fijos de una animación (títulos y leyendas como "Lo que
+empuja" o "Antes") se cambian con la llave `ui` dentro de `labels`, sin copiar el archivo. Lo aceptan
+`trust-convergence`, `journey-stepper`, `corpus-split`, `reputation-routing`, `campaign-window` y
+`payment-compare`; las llaves de cada una están en su `Object.assign` de arriba.
+
+```json
+"labels": {"steps": ["Search", "Product page", "Cart"], "ui": {"push": "What drives", "hold": "What holds back"}}
+```
+
 **Tipos de slide:** `cover`, `pillars`, `ways`, `compare` (con `"copy": "where_we_stand"` toma el copy
 del kit), `case` (con `band` lleva el cierre de tres pasos), `menu`, `coverage` y `website` (una
 animación de noisia.ai por nombre, `"anim": "understand"`; la lista sale con

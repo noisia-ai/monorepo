@@ -124,12 +124,14 @@ abajo un chip con el formato y otro con el tiempo. A la derecha, el escenario an
 "Ilustrativo". El vocabulario de la categoría (CURP, CLABE, tanda; ocasiones, empaque) es lo que hace
 que el deck "no sea tan genérico" sin nombrar la marca.
 
-**Las animaciones** (`credentials/anims/`, 14, cada una con su descripción arriba) siguen cinco
+**Las animaciones** (`credentials/anims/`, 15, cada una con su descripción arriba) siguen cinco
 reglas: `render(estado, t)` depende solo de `t`; el cuadro final siempre está completo; el aleatorio
 lleva semilla, así que el GIF coincide con el HTML; la coreografía dura de 5 a 7 segundos
 (estructura, datos escalonados, un resalte, la leyenda); y **cero datos**: cifras como `XX%`, texto
 en barras esqueleto, "City 1". Teal suma, coral frena, gris es ruido. Las listas de etiquetas se
-cambian por prospecto con `labels` en el JSON; el resto del texto está en el idioma del archivo.
+cambian por prospecto con `labels` en el JSON. El resto del texto está en el idioma del archivo; en
+las animaciones de caso del modo funnel también se cambia, con la llave `ui` dentro de `labels`, para
+usarlas en un deck en otro idioma.
 
 **Reglas del formato**, además de las de §4 y §6:
 - El prospecto no aparece en las slides, ni otras marcas, ni otros clientes. Su contexto público
