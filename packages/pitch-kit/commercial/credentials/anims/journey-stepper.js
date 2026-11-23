@@ -1,9 +1,11 @@
 /* journey-stepper · es
    Caso: un stepper de pasos donde la intención se cae en coral; barras de empuja y frena por paso. 920x780. Lista: steps.
    From a real credentials deck. Labels in lab(svg,'key',[...]) can be replaced per deck with
-   data-labels on the <svg>; the rest of the text is in this file's language. */
+   data-labels on the <svg>; the rest of the text is in this file's language.
+   Fixed text (titles, legends) can be replaced too with the 'ui' key: data-labels='{"ui":{...}}', so the
+   same file serves a deck in any language. */
 LIB['journey-stepper']={dur:7,setup(svg){
-  const S={}, steps=lab(svg,'steps',['Descarga','Registro','Identificación','Cuenta bancaria','Firma','Depósito']);
+  const S={}, U=Object.assign({push:'Lo que empuja',hold:'Lo que frena'},lab(svg,'ui',{})), steps=lab(svg,'steps',['Descarga','Registro','Identificación','Cuenta bancaria','Firma','Depósito']);
   S.X=steps.map((_,i)=>80+i*152); const Y=150;
   el('line',{x1:80,y1:Y,x2:840,y2:Y,stroke:'#e6e6e6','stroke-width':4,'stroke-linecap':'round'},svg);
   S.prog=el('line',{x1:80,y1:Y,x2:80,y2:Y,stroke:C.teal,'stroke-width':4,'stroke-linecap':'round'},svg);
@@ -17,8 +19,8 @@ LIB['journey-stepper']={dur:7,setup(svg){
   // barras arriba y abajo, por paso
   const base=470; S.base=base;
   el('line',{x1:40,y1:base,x2:880,y2:base,stroke:'#dcdcdc','stroke-width':1.5},svg);
-  txt(svg,40,300,'Lo que empuja',{'font-size':17,fill:C.teal,'font-weight':700});
-  txt(svg,40,660,'Lo que frena',{'font-size':17,fill:C.coral,'font-weight':700});
+  txt(svg,40,300,U.push,{'font-size':17,fill:C.teal,'font-weight':700});
+  txt(svg,40,660,U.hold,{'font-size':17,fill:C.coral,'font-weight':700});
   const R2=rng(19); S.bars=S.X.map((x,i)=>{const up=el('rect',{x:x-22,width:44,rx:8,fill:C.teal,opacity:.55},svg),dn=el('rect',{x:x-22,width:44,rx:8,fill:C.coral,opacity:.55},svg);
     up.H=40+R2()*110; dn.H=30+R2()*120; return[up,dn]});
   return S},

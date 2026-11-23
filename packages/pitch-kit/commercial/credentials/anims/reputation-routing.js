@@ -1,9 +1,11 @@
 /* reputation-routing · es
    Caso: fuentes que se enrutan a carriles de tema y un top 3 para atender. 920x780. Listas: src, top.
    From a real credentials deck. Labels in lab(svg,'key',[...]) can be replaced per deck with
-   data-labels on the <svg>; the rest of the text is in this file's language. */
+   data-labels on the <svg>; the rest of the text is in this file's language.
+   Fixed text (titles, legends) can be replaced too with the 'ui' key: data-labels='{"ui":{...}}', so the
+   same file serves a deck in any language. */
 LIB['reputation-routing']={dur:6.8,setup(svg){
-  const S={}, src=lab(svg,'src',['Tiendas de apps','Redes sociales','Foros','Búsqueda']), top=lab(svg,'top',['Cobranza','Costos y cargos','Pagos y extensiones','Atención','Suplantación y fraude']);
+  const S={}, U=Object.assign({panel:'Para atender',when:'esta semana'},lab(svg,'ui',{})), src=lab(svg,'src',['Tiendas de apps','Redes sociales','Foros','Búsqueda']), top=lab(svg,'top',['Cobranza','Costos y cargos','Pagos y extensiones','Atención','Suplantación y fraude']);
   S.src=src.map((s,i)=>{const g=pill(svg,24,150+i*130,s,{fs:18,h:44,minW:180});return g});
   S.lanes=top.map((s,i)=>{const g=el('g',{},svg);const y=110+i*118;tr(g,300,y);
     el('rect',{x:0,y:-28,width:250,height:56,rx:14,fill:C.white,stroke:C.border,'stroke-width':1.5},g);
@@ -20,8 +22,8 @@ LIB['reputation-routing']={dur:6.8,setup(svg){
   const ph=el('g',{},S.panel);tr(ph,22,24);
   const ic=el('image',{href:'assets/sprite-coral.png',width:12*30,height:9*30,x:-(ICONS.indexOf('priority-high')%12)*30,y:-Math.floor(ICONS.indexOf('priority-high')/12)*30,'clip-path':'url(#cp7)'},ph);
   const cp=el('clipPath',{id:'cp7'},svg);el('rect',{x:0,y:0,width:30,height:30},cp);
-  txt(S.panel,62,46,'Para atender',{'font-size':20,'font-weight':700,fill:C.ink});
-  txt(S.panel,62,70,'esta semana',{'font-size':17,fill:C.fg2});
+  txt(S.panel,62,46,U.panel,{'font-size':20,'font-weight':700,fill:C.ink});
+  txt(S.panel,62,70,U.when,{'font-size':17,fill:C.fg2});
   S.rows=[0,1,2].map(i=>{const g=el('g',{},S.panel);tr(g,22,110+i*96);
     el('rect',{width:252,height:78,rx:12,fill:i?'#f6f6f6':C.coralSoft},g);
     txt(g,20,40,String(i+1),{'font-size':22,'font-weight':700,fill:i?C.fg2:C.coral,'dominant-baseline':'central'});
