@@ -7,7 +7,7 @@
 > sirven para cualquier pieza que cuente un hallazgo con una historia humana. Kinetic Cinema (§III) es el
 > lenguaje de las imágenes de atmósfera de video, aperturas y entradas de capítulo, fotografiadas o
 > generadas. La imagen de un estudio (su página, su tarjeta, su correo y la portada del deck) usa una
-> variante quieta del mismo sistema: §VII.1. **La evidencia nunca es una de estas imágenes:** la prueba de un hallazgo es siempre un post,
+> variante documental del mismo sistema: §VII.1. **La evidencia nunca es una de estas imágenes:** la prueba de un hallazgo es siempre un post,
 > video o anuncio real con su pie (`LAYOUTS.md`, Quality Gate y Size Gate). Una imagen hecha con este
 > método ilustra lo que Noisia permite comprender; no documenta lo que dijo nadie.
 
@@ -575,22 +575,40 @@ variaciones de una sola imagen.
 
 ## VII.1 La imagen de un estudio
 
-Decisión del 17 nov 2026, entre tres estilos probados: **la persona en niebla, en el lugar real.** Las
-siluetas sobre fondo blanco o transparente quedaron fuera porque se sienten imagen hecha por IA, y con
-ellas la ilustración de portada de siempre (`assets/cover-illustration.png`) para los estudios.
+Decisión del 17 nov 2026: **gente en niebla, en el lugar real.** Las siluetas sobre fondo blanco o
+transparente quedaron fuera porque se sienten imagen hecha por IA, y con ellas la ilustración de
+portada de siempre (`assets/cover-illustration.png`) para los estudios. **Revisada el 25 nov 2026:**
+con veinte estudios publicados todas se veían iguales (una persona de espaldas, a la izquierda, sin
+rostro, preocupada). Se queda el acabado y la escena cambia de estudio a estudio.
+
+**Lo que no cambia (el acabado):**
 
 | Capa | Cómo es |
 |---|---|
-| **La persona** | De perfil o de tres cuartos por detrás, sin rostro legible. Es lo único con tono y un poco de color. Una niebla luminosa le disuelve la parte baja del cuerpo. El borde anaglifo va solo en la figura: coral `#D91441` de un lado, cyan `#009CA8` del otro |
-| **El lugar** | Reconocible y propio del tema (el comedor de su casa, la sala con el módem, el camión, la farmacia con la puerta del consultorio), en blanco y negro, muy high-key, lavado casi a blanco; los bordes del cuadro se funden a blanco |
-| **El momento** | Una acción clara que es el momento del estudio (§06). Más quieta que Kinetic Cinema: una persona, un momento, niebla |
-| **El acabado** | Grano fotoquímico fino. Nada de texto, logos ni pantallas legibles |
+| **La foto** | Fotoperiodismo cándido, en locación: gente real en un lugar real. Nunca recorte, ilustración ni foto de stock |
+| **La gente** | Lo único con color, un poco apagado. Caras comunes (arrugas, lentes, pelo disparejo, ropa de diario, edades y cuerpos variados), nadie mira a cámara. Una niebla luminosa funde los bordes bajos. El borde anaglifo va solo en la gente: coral `#D91441` de un lado, cyan `#009CA8` del otro |
+| **El lugar** | Reconocible y propio del hallazgo, en blanco y negro, muy high-key, lavado casi a blanco; la luz todavía dice la hora; los bordes del cuadro se funden a blanco |
+| **El acabado** | Grano fotoquímico fino. Nada de texto, logos ni pantallas legibles, figuras públicas ni niños. Sin gestos de stock (mano en la frente, cabeza entre las manos) salvo que el hallazgo lo pida |
 
+**Lo que cambia a propósito (la escena),** elegido en el brief de cada imagen a partir del hallazgo:
+cámara (distancia, posición en el cuadro, ángulo), número de personas (una, dos, tres, grupo), rostro
+(visible por omisión, de perfil, o no visto solo si el hallazgo pide distancia), emoción (alivio,
+triunfo, enojo, risa, cansancio, desafío…; la preocupación es una opción más), hora y luz, adentro o
+afuera. **La escena cuenta el hallazgo, no el tema de la industria:** tapando el título, la foto
+debería decir el hallazgo.
+
+- **Que no se parezcan.** Antes de generar varias (los estudios de un mismo mercado o industria, o
+  las escenas de un mismo deck: portada y subportadas), se escriben en una tabla (hallazgo, escena,
+  personas, rostro, emoción, cámara, luz, adentro/afuera) y se varían emoción, número de personas,
+  adentro y afuera, hora y cámara. Después se miran juntas en una hoja de contactos, al lado de los
+  estudios ya publicados.
 - **Dos formatos de la misma escena:** vertical 2:3 (la página del estudio y la portada del deck) y
   horizontal 3:2 (la tarjeta 16:9, el banner del correo y la atmósfera de video en 16:9).
 - **La fuente de verdad del prompt** es `apps/website-next/content-db/STUDY_IMAGES.md` y `STYLE` en
-  `apps/website-next/scripts/content/image.ts`, que mantiene Website. Si el kit genera una, copia esos
-  bloques tal cual y cambia solo la escena y el lugar. Pasa el control de calidad de §VIII.
+  `apps/website-next/scripts/content/image.ts`, que mantiene Website (las reglas completas de la
+  tabla están ahí). Si el kit genera una, copia esos bloques tal cual y escribe solo el brief y el
+  lugar. **Un deck que todavía se está armando con una copia vieja de `STYLE` la vuelve a copiar.**
+  Pasa el control de calidad de §VIII.
 - Kinetic Cinema (motion blur, flash dirigido) sigue siendo el lenguaje de video y aperturas.
 - Sigue siendo atmósfera: nunca va junto a una cita como si la ilustrara.
 

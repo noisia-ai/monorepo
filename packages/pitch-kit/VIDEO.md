@@ -141,7 +141,7 @@ reemplaza. En noisia.ai/insights, cada historia ajusta su fondo al insight y se 
 - **La atmósfera** puede fotografiarse o generarse con el método y el prompt de `HUMAN_SIGNALS.md`
   (§VI, en 9:16 para video). Pasa su control de calidad (§VIII, sobre todo la integridad anatómica) y
   nunca lleva texto, logos ni datos dentro.
-- **La imagen del estudio** (persona en niebla en el lugar real, `HUMAN_SIGNALS.md` §VII.1) sirve de
+- **La imagen del estudio** (gente real en el momento del hallazgo, en niebla y en el lugar real, `HUMAN_SIGNALS.md` §VII.1) sirve de
   atmósfera en el video de ese estudio: la horizontal para 16:9 y la vertical para 9:16.
 - Una imagen de atmósfera nunca va junto a una cita como si la ilustrara: la cita es de una persona real
   y la imagen no lo es.
