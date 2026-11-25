@@ -59,10 +59,18 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
   if (!file) return deny(404);
 
   // Preview slides are public. Everything else stays in the reader's own browser only (`private`,
-  // so Cloudflare never keeps it). Slides and the PDF carry the study's version in their URL, so
-  // the browser may keep them a day; the deck's own files have no version and keep an hour.
-  const versioned = /^(slides|pdf)(-en)?\//.test(filePath);
-  const cache = !access.allowed ? "public, max-age=3600" : versioned ? "private, max-age=86400" : "private, max-age=3600";
+  // so Cloudflare never keeps it). Slide images carry the study's version in their URL, so the
+  // browser may keep them a day. The deck's own files (its HTML, scripts, styles) have no version,
+  // so the browser asks every time and gets a 304 when nothing changed; that way a reloaded deck
+  // never mixes new HTML with old scripts. The PDF is never kept: each download must reach this
+  // route so it is recorded.
+  const cache = !access.allowed
+    ? "public, max-age=3600"
+    : isPdf
+      ? "private, no-store"
+      : /^slides(-en)?\//.test(filePath)
+        ? "private, max-age=86400"
+        : "private, no-cache";
   const headers: Record<string, string> = { "Content-Type": file.contentType, "Cache-Control": cache, ETag: `"${file.sha256}"`, "X-Robots-Tag": "noindex, nofollow" };
   if (!isPdf && unchanged(request, file.sha256)) {
     return new Response(null, { status: 304, headers: { "Cache-Control": cache, ETag: headers.ETag!, "X-Robots-Tag": "noindex, nofollow" } });
