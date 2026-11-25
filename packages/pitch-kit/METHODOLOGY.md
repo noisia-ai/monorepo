@@ -217,6 +217,13 @@ What held up across three markets:
   small (under about 3,000 posts), code all of it instead of sampling.** It removes the dilemma of
   inflating a number or showing four mentions: in one market the user, frustrated, asked to "invent
   the distribution"; coding the full corpus gave real percentages instead, and that is what shipped.
+- **"Moved" is its own emotion, not sadness.** Every emotion list in a codebook carries `moved`
+  (in Spanish copy, *conmovido*): tears at an ad, a parade, a reunion, a gift that landed. Coded as
+  sadness, they read as grief on the chart. In one seasonal study a human reread of the 30
+  person-voice records coded sadness corrected 7 (crying shown only with emoji, a figurative "I'll
+  cry" over a duplicate gift, someone else's emotion), and the tears at ads were still sitting in
+  sadness because the list had nowhere else to put them. `moved` only counts when the text says it:
+  "made me cry" over an ad is `moved`, a crying emoji alone is not an emotion.
 - **Subthemes are their own layer.** The share of a subtheme inside its theme comes from the reading;
   the monthly curve and the channel split come from the full corpus by word rule (or from the
   reading, in a census).
