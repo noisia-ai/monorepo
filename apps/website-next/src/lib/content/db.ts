@@ -1,5 +1,6 @@
 import "server-only";
 import { Pool, type PoolConfig } from "pg";
+import { poolerBusy } from "./pooler";
 
 /**
  * Connection to the content database (its own Supabase project, never Studio's).
@@ -29,17 +30,36 @@ export function contentDatabaseConfigured(): boolean {
   return Boolean(process.env.CONTENT_DATABASE_URL);
 }
 
-export function contentDb(): Pool {
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * The content pool. `next build` renders the study pages in several workers at once, each with its
+ * own pool, and Supabase's session pooler allows 15 clients in all; one build went over and failed.
+ * So during the build each worker opens one connection, and a query the pooler turns away because
+ * it is full waits and tries again (up to 5 times, about 8 s in all) instead of failing the page.
+ */
+export function contentDb(): Pick<Pool, "query"> {
   const url = process.env.CONTENT_DATABASE_URL;
   if (!url) throw new Error("CONTENT_DATABASE_URL is not set");
   pool ??= new Pool({
     connectionString: url,
     ssl: sslFor(url),
-    max: 3,
+    max: process.env.NEXT_PHASE === "phase-production-build" ? 1 : 3,
     idleTimeoutMillis: 10_000,
     connectionTimeoutMillis: 8_000
   });
-  return pool;
+  const target = pool;
+  const query = (async (...args: unknown[]) => {
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await (target.query as (...a: unknown[]) => Promise<unknown>)(...args);
+      } catch (error) {
+        if (attempt >= 4 || !poolerBusy(error)) throw error;
+        await sleep(400 * 2 ** attempt + Math.random() * 400);
+      }
+    }
+  }) as Pool["query"];
+  return { query };
 }
 
 /** Drafts are visible only in UAT, where the founder reviews a study before it goes live. */
