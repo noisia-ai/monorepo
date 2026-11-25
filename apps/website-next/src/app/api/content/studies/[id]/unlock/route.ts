@@ -28,6 +28,10 @@ const schema = z.object({
 });
 
 const limited = rateLimiter(10, 10 * 60 * 1000);
+// The IP alone is not enough: one address must not receive codes for many studies, and the
+// whole form has a ceiling so the sending domain cannot be used to flood inboxes.
+const limitedEmail = rateLimiter(4, 60 * 60 * 1000);
+const limitedAll = rateLimiter(120, 60 * 60 * 1000);
 
 export async function POST(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   if (Number(request.headers.get("content-length") ?? 0) > 8_000) {
@@ -37,6 +41,9 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   const parsed = schema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) return NextResponse.json({ ok: false, error: "invalid_payload" }, { status: 400 });
   const body = parsed.data;
+  if (limitedEmail(body.email.toLowerCase()) || limitedAll("all")) {
+    return NextResponse.json({ ok: false, error: "rate_limited" }, { status: 429 });
+  }
 
   const { id } = await params;
   const study = await getStudy(id).catch(() => undefined);

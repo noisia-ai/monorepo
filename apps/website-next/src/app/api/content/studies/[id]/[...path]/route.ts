@@ -24,7 +24,13 @@ function viewerHtml(html: string): string {
   return html.replace(/<deck-stage\b(?![^>]*\bno-rail\b)/, "<deck-stage no-rail");
 }
 
-export async function GET(_request: Request, { params }: { params: Promise<{ id: string; path: string[] }> }) {
+/** True when the browser already holds this exact file (its ETag is the file's SHA-256). */
+function unchanged(request: Request, sha256: string): boolean {
+  const sent = request.headers.get("if-none-match");
+  return Boolean(sent && sent.split(",").some((tag) => tag.trim().replace(/^W\//, "") === `"${sha256}"`));
+}
+
+export async function GET(request: Request, { params }: { params: Promise<{ id: string; path: string[] }> }) {
   const { id, path: segments } = await params;
   const path = segments.join("/");
   if (path.includes("..")) return deny(404);
@@ -34,9 +40,9 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
   if (path === "cover.webp" || path === "email.jpg" || (path === "hero.webp" && study.heroPath === path) || (path === "hero-wide.webp" && study.heroWidePath === path)) {
     const cover = await getStudyFile(study, path);
     if (!cover) return deny(404);
-    return new Response(new Uint8Array(cover.bytes), {
-      headers: { "Content-Type": cover.contentType, "Cache-Control": "public, max-age=86400", ETag: `"${cover.sha256}"` }
-    });
+    const coverHeaders = { "Cache-Control": "public, max-age=86400", ETag: `"${cover.sha256}"` };
+    if (unchanged(request, cover.sha256)) return new Response(null, { status: 304, headers: coverHeaders });
+    return new Response(new Uint8Array(cover.bytes), { headers: { "Content-Type": cover.contentType, ...coverHeaders } });
   }
 
   const jar = await cookies();
@@ -52,9 +58,23 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
   const file = await getStudyFile(study, filePath);
   if (!file) return deny(404);
 
-  // Open studies may stay in the reader's own browser cache; gated ones are never stored.
-  const cache = !access.allowed ? "public, max-age=3600" : study.accessMode === "abierto" && !access.viaLink ? "private, max-age=3600" : "private, no-store";
-  const headers: Record<string, string> = { "Content-Type": file.contentType, "Cache-Control": cache, "X-Robots-Tag": "noindex, nofollow" };
+  // Preview slides are public. Everything else stays in the reader's own browser only (`private`,
+  // so Cloudflare never keeps it). Slide images carry the study's version in their URL, so the
+  // browser may keep them a day. The deck's own files (its HTML, scripts, styles) have no version,
+  // so the browser asks every time and gets a 304 when nothing changed; that way a reloaded deck
+  // never mixes new HTML with old scripts. The PDF is never kept: each download must reach this
+  // route so it is recorded.
+  const cache = !access.allowed
+    ? "public, max-age=3600"
+    : isPdf
+      ? "private, no-store"
+      : /^slides(-en)?\//.test(filePath)
+        ? "private, max-age=86400"
+        : "private, no-cache";
+  const headers: Record<string, string> = { "Content-Type": file.contentType, "Cache-Control": cache, ETag: `"${file.sha256}"`, "X-Robots-Tag": "noindex, nofollow" };
+  if (!isPdf && unchanged(request, file.sha256)) {
+    return new Response(null, { status: 304, headers: { "Cache-Control": cache, ETag: headers.ETag!, "X-Robots-Tag": "noindex, nofollow" } });
+  }
 
   if (isPdf) {
     await recordEvent(study.id, access.viaLink ? token : undefined, "pdf");

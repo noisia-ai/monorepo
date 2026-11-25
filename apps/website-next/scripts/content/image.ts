@@ -27,13 +27,13 @@ const SHAPES = {
     size: "1024x1536",
     prompt: "imagen.prompt.txt",
     file: "imagen",
-    frame: "Vertical 2:3 frame. The person stands slightly off-center, seen from waist or knees up, with the room rising behind them and pale space above."
+    frame: "Vertical 2:3 frame. Use the camera distance and the placement written in the moment; do not default to one person standing off-center. Keep heads, faces and hands well inside the frame."
   },
   wide: {
     size: "1536x1024",
     prompt: "imagen-wide.prompt.txt",
     file: "imagen-wide",
-    frame: "Horizontal 3:2 frame. The person stands in the left or right third, seen from waist or knees up; the rest of the frame is the pale room, so the place reads. Keep the person well inside the frame: it will be cropped to 16:9 and to 1.85:1."
+    frame: "Horizontal 3:2 frame. Use the camera distance and the placement written in the moment. Keep the people and the action inside the central band of the frame: it will be cropped to 16:9 and to 1.85:1."
   }
 } as const;
 type Shape = keyof typeof SHAPES;
@@ -70,21 +70,22 @@ const MARKET_PEOPLE: Record<string, string> = {
 };
 
 /**
- * The house style: a person in soft haze with an anaglyph edge, standing in the real place of the
- * study, washed to white. Mirrors content-db/STUDY_IMAGES.md ("The style, block by block");
- * change both together. Each block answers one question and the order matters: the model weighs
- * the start of the prompt most.
+ * The house style: real people caught in the study's moment, in soft haze with an anaglyph edge, in
+ * the real place washed to white. Only the finish is fixed here; who, how many, where the camera
+ * stands, the emotion and the light come from each study's `image.brief` and `image.place`, so the
+ * studies do not look alike. Mirrors content-db/STUDY_IMAGES.md ("How the prompt is built"); change
+ * both together. The order matters: the model weighs the start of the prompt most.
  */
 const STYLE = {
   photograph:
-    "A real documentary photograph, shot on location with a large-format film camera, for the page of a consumer research study. It must read as an honest photograph of a real place: never a cutout on a blank background, never a digital illustration.",
+    "A real documentary photograph, taken on location by a photojournalist on 35mm film, for the page of a consumer research study. Candid: the people are caught in the middle of the moment, not posing and not looking at the camera. It must read as an honest photograph of real people in a real place: never a cutout on a blank background, never a digital illustration, never a stock photo.",
   person:
-    "The person is seen in profile or three-quarter from behind; the face is turned down or away and is never readable. They are the only thing in the frame with tone and a little muted color. A soft luminous haze wraps the figure and dissolves the lower body into light. Anaglyph chromatic split on the figure's edges only: a coral-red fringe (#D91441) on one side and a cyan fringe (#009CA8) on the other, like a slightly misregistered print.",
+    "The people are ordinary people, not models and not attractive stock faces: plain, everyday faces with lines, pores, stubble, glasses or freckles, uneven hair, everyday clothes, and the age, build and hair written in the moment. They are the only things in the frame with full tone and a little muted, natural color. Their faces and bodies carry the emotion named in the moment below, which comes from the study and is not always worry. When a face is visible it is natural and asymmetrical, mid-expression, never retouched. A soft luminous haze wraps the people and fades the lower edges of the frame into light. Anaglyph chromatic split on the edges of the people only: a coral-red fringe (#D91441) on one side and a cyan fringe (#009CA8) on the other, like a slightly misregistered print.",
   place:
-    "Behind the person, the real place where the moment happens, sharp enough to be recognized but pushed far back: black and white, very high-key and overexposed, low contrast, washed toward white so it almost melts into the paper, like a bright room photographed with the exposure set for the person. Real architecture, furniture and objects with natural perspective and soft daylight; no harsh shadows. The edges of the frame fade to white. The person clearly stands out against this pale context.",
-  finish: "Fine photochemical grain over the whole frame. Quiet, cinematic, editorial. One clear human action that is the subject of the study.",
+    "Around them, the real place where the moment happens, sharp enough to be recognized but pushed far back. The whole place is black and white, including the ground, the sky, plants and other bystanders far back; only the main people keep color. The place is very high-key and low contrast, washed toward white so it almost melts into the paper, as if the exposure were set for the people. The time of day still reads in the direction and quality of the light (hard midday sun, low golden sun, blue dusk, a single lamp), but even a night scene stays pale. Real architecture, furniture and objects with natural perspective. The edges of the frame fade to white.",
+  finish: "Fine photochemical grain over the whole frame. Editorial and specific: the distance, placement, number of people and energy of the photograph come from the moment below, not from a template.",
   never:
-    "Never: text, letters, numbers, logos, brand names, readable documents, labels or screens (a screen shows only a soft blur), watermarks, recognizable faces, celebrities or public figures, children. No person isolated on a white or transparent background."
+    "Never: text, letters, numbers, logos, brand names, readable documents, labels or screens (a screen shows only a soft blur), watermarks, celebrities or public figures, children. No one looks into the camera. No stock-photo gestures: no hand on the forehead, no head in the hands, no one staring at a letter in despair, unless the moment asks for it. No plastic skin, no perfectly symmetrical faces. No person isolated on a white or transparent background."
 };
 
 const people = studyMarkets(study).map((m) => MARKET_PEOPLE[m]).join(", ");
@@ -98,9 +99,9 @@ function prompt(shape: Shape): string {
     SHAPES[shape].frame,
     STYLE.never,
     `The study: "${study.en.title}". ${study.en.dek}`,
-    `The person looks like an everyday resident of ${people}.`,
+    `The people look like everyday residents of ${people}.`,
     `The moment: ${image!.brief}`,
-    `The place, washed almost to white behind them: ${image!.place}`
+    `The place, washed almost to white around them: ${image!.place}`
   ].join("\n\n");
 }
 
