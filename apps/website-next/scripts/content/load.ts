@@ -1,7 +1,7 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { storySchema, type Story } from "../../src/content/stories/schema";
-import { connect, parseArgs } from "./env";
+import { connect, parseArgs, revalidateSite } from "./env";
 import { lintStory } from "./lint";
 
 /**
@@ -73,6 +73,7 @@ if (flags.has("dry-run")) {
   process.exit(0);
 }
 
+let refresh = false;
 const db = connect("CONTENT_ADMIN_DATABASE_URL");
 await db.connect();
 try {
@@ -85,23 +86,33 @@ try {
   let next = (rows[0]?.max ?? -1) + 1;
   let created = 0;
   let updated = 0;
+  let liveUpdated = 0;
   for (const { story, notes } of items) {
-    const result = await db.query<{ inserted: boolean }>(
+    const result = await db.query<{ inserted: boolean; status: string }>(
       `insert into content.stories (id, study_id, status, format, position, payload, notes, published_at)
        values ($1, $2, $3, 'animada', $4, $5, $6, case when $3 = 'publicado' then now() end)
        on conflict (id) do update set payload = excluded.payload, notes = excluded.notes,
          study_id = coalesce(excluded.study_id, content.stories.study_id)
-       returning (xmax = 0) as inserted`,
+       returning (xmax = 0) as inserted, status`,
       [story.id, studyId, initial ? "publicado" : "borrador", next, JSON.stringify(story), notes]
     );
     if (result.rows[0]?.inserted) {
       created++;
       next++;
-    } else updated++;
+    } else {
+      updated++;
+      if (result.rows[0]?.status === "publicado") liveUpdated++;
+    }
   }
   await db.query("commit");
   console.log(`Loaded ${items.length} pieces: ${created} new as ${initial ? "publicado" : "borrador"}, ${updated} updated (status unchanged).`);
   if (!initial && created > 0) console.log("Review them in UAT, then run pnpm content:publish <id ...> or --study <id>.");
+  // A piece that is already live changed on the site's data: refresh it now, or the site keeps
+  // the old text until the next publish or deploy. content:study refreshes once for the study.
+  if ((initial || liveUpdated > 0) && !flags.has("no-refresh")) {
+    if (liveUpdated > 0) console.log(`${liveUpdated} of them were already live; refreshing the site.`);
+    refresh = true;
+  }
 } catch (error) {
   await db.query("rollback");
   console.error(`Nothing was loaded: ${(error as Error).message}`);
@@ -109,3 +120,4 @@ try {
 } finally {
   await db.end();
 }
+if (refresh) await revalidateSite();

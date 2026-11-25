@@ -24,13 +24,13 @@ type Params = { locale: string; slug: string };
 export const dynamicParams = true;
 
 export async function generateStaticParams() {
-  const studies = await getStudies();
+  const studies = await getStudies({ strict: true });
   return routing.locales.flatMap((locale) => studies.map((study) => ({ locale, slug: study.id })));
 }
 
 export async function generateMetadata({ params }: { params: Promise<Params> }): Promise<Metadata> {
   const { locale, slug } = await params;
-  const study = await getStudy(slug);
+  const study = await getStudy(slug, { strict: true });
   if (!study) return {};
   return pageMetadata(`/insights/estudios/${study.id}`, locale);
 }
@@ -43,7 +43,7 @@ export async function generateMetadata({ params }: { params: Promise<Params> }):
 export default async function StudyPage({ params }: { params: Promise<Params> }) {
   const { locale, slug } = await params;
   setRequestLocale(locale);
-  const study = await getStudy(slug);
+  const study = await getStudy(slug, { strict: true });
   if (!study) notFound();
   const lang = locale === "en" ? "en" : "es";
   const intl = lang === "en" ? "en-US" : "es-MX";

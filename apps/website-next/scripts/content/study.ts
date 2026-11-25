@@ -5,7 +5,7 @@ import { spawnSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
 import puppeteer from "puppeteer-core";
 import { studyMarkets, studySchema, type StudyInput } from "../../src/content/studies/schema";
-import { connect, parseArgs } from "./env";
+import { connect, parseArgs, revalidateSite } from "./env";
 import { lintDeckHtml, lintTexts } from "./lint";
 
 /**
@@ -308,6 +308,7 @@ if (dryRun) {
 }
 
 // ---------- write ----------
+let status: string | undefined;
 const db = connect("CONTENT_ADMIN_DATABASE_URL");
 await db.connect();
 try {
@@ -363,7 +364,7 @@ try {
     await db.query("delete from content.study_files where study_id = $1 and version <> $2", [study.id, version]);
   }
   await db.query("commit");
-  const status = current?.status ?? "borrador";
+  status = current?.status ?? "borrador";
   console.log(`Loaded ${study.id} as ${status}, version ${version}${current && version === current.version ? " (files unchanged)" : ""}.`);
 } catch (error) {
   await db.query("rollback");
@@ -374,7 +375,12 @@ try {
 }
 
 if (process.exitCode !== 1 && hasPieces) {
-  const load = runLoad(["--study", study.id]);
+  const load = runLoad(["--study", study.id, "--no-refresh"]);
   if (load.status !== 0) process.exitCode = 1;
 }
-if (process.exitCode !== 1) console.log(`Review it in UAT, then: pnpm content:publish --study ${study.id}`);
+if (status === "publicado") {
+  // A live study changed: refresh the site now, or it keeps the old summary and slide count
+  // next to the new files until the next publish or deploy.
+  console.log(`${study.id} is live; refreshing the site.`);
+  await revalidateSite();
+} else if (process.exitCode !== 1) console.log(`Review it in UAT, then: pnpm content:publish --study ${study.id}`);

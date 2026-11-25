@@ -108,20 +108,30 @@ async function readStudies(): Promise<Study[]> {
 
 const cachedStudies = unstable_cache(readStudies, ["content-studies"], { tags: [STUDIES_TAG] });
 
+type ReadOptions = {
+  /**
+   * Throw when the database fails instead of answering with no studies. Pages that Next keeps
+   * (the studies index, a study's page) use it: an error keeps the last good page, while an empty
+   * answer would be stored as an empty index or a 404 until the next publish.
+   */
+  strict?: boolean;
+};
+
 /** Every visible study, newest first (drafts first in UAT). */
-export async function getStudies(): Promise<Study[]> {
+export async function getStudies(options: ReadOptions = {}): Promise<Study[]> {
   if (!contentDatabaseConfigured()) return [];
   try {
     return await cachedStudies();
   } catch (error) {
-    // A database hiccup must not take the site down: the index falls back to the repo's reports.
     console.error(`[content] Could not read studies: ${(error as Error).message}`);
+    if (options.strict) throw error;
+    // Elsewhere a database hiccup must not take the page down: it shows without studies.
     return [];
   }
 }
 
-export async function getStudy(id: string): Promise<Study | undefined> {
-  return (await getStudies()).find((study) => study.id === id);
+export async function getStudy(id: string, options: ReadOptions = {}): Promise<Study | undefined> {
+  return (await getStudies(options)).find((study) => study.id === id);
 }
 
 async function readStudyStoryIds(): Promise<Record<string, string[]>> {
