@@ -47,19 +47,17 @@ export async function sendEmail(message: Record<string, unknown>): Promise<boole
   return Boolean(response?.ok);
 }
 
-/** A per-process limit by IP: true when this IP went over `max` requests in `windowMs`. */
+/** A per-process limit by key (an IP, an email): true when the key went over `max` requests in `windowMs`. */
 export function rateLimiter(max: number, windowMs: number) {
   const recent = new Map<string, number[]>();
-  return (ip: string) => {
+  return (key: string) => {
     const now = Date.now();
-    const hits = (recent.get(ip) ?? []).filter((t) => now - t < windowMs);
+    const hits = (recent.get(key) ?? []).filter((t) => now - t < windowMs);
     hits.push(now);
-    recent.set(ip, hits);
+    recent.set(key, hits);
     if (recent.size > 5000) for (const [key, times] of recent) if (now - times[times.length - 1]! > windowMs) recent.delete(key);
     return hits.length > max;
   };
 }
 
-export function clientIp(request: Request): string {
-  return (request.headers.get("x-forwarded-for") ?? "").split(",")[0]?.trim() || "unknown";
-}
+export { clientIp } from "@/lib/site";
