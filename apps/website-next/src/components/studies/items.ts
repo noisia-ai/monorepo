@@ -47,7 +47,7 @@ export async function studyCardItems(locale: string): Promise<StudyCardItem[]> {
   const label = (industry: string) => (t.has(industry) ? t(industry) : industry);
 
   // Studies in the content database. Those shared only by link stay out of the index.
-  const studies: StudyCardItem[] = (await getStudies())
+  const studies: StudyCardItem[] = (await getStudies({ strict: true }))
     .filter((study) => study.accessMode !== "solo_link")
     .map((study) => ({
       key: `study:${study.id}`,

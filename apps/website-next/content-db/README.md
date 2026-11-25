@@ -39,6 +39,7 @@ Scripts read the repo root's `.env.local`. The site reads its own environment (R
 | `CONTENT_DATABASE_URL` | Railway (`website`, production) | `website_runtime` connection |
 | `CONTENT_DATABASE_URL` | Railway (UAT) | `website_review` connection |
 | `CONTENT_DATABASE_CA` | Railway, optional | Supabase's root certificate, to verify the server |
+| `SITE_HOSTS` | Railway, optional | Extra hosts (comma-separated, e.g. a UAT domain) that links in emails and redirects may use. Without it only `NEXT_PUBLIC_SITE_URL`'s host, `noisia.ai`, `www.noisia.ai` and localhost are accepted |
 
 ## Commands (from `apps/website-next`)
 
@@ -56,6 +57,7 @@ pnpm content:publish --list                            # every piece and its sta
 
 ```bash
 pnpm content:study <web folder> [--dry-run]            # validate, render and load a study as a draft
+                                                       # (a study that is already live is reloaded and the site refreshed)
 pnpm content:publish --study <id>                      # publish the study and its draft pieces
 pnpm content:publish --study <id> --retire             # take the study and its live pieces off the site
 pnpm content:links <id> <leads.csv> [--days 90]        # one personal link per lead, written to <leads>.links.csv
