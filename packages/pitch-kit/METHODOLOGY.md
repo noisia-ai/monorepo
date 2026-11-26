@@ -36,7 +36,10 @@ Hard rules, learned the hard way:
   own `entity_key` and its own CSV.
 - **Contextualize every homonym.** Bare brand/category words that collide with common language
   must carry a disambiguating anchor (rental context, market, `Mexico`, etc.) or the corpus fills
-  with noise. Add a `NOT (...)` list of the known collisions preemptively.
+  with noise. Add a `NOT (...)` list of the known collisions preemptively. Context words count
+  too: a town that is also a common surname, or a city name, brings in authors and long articles
+  that have nothing to do with the subject. A local press site can carry the anchor on every page
+  (a sidebar); exclude the domain or require the anchor in the body (`DATA.md` §8).
 - **A shared NOISE list.** For the category anchor, exclude the obvious off-domain senses up front
   (e.g. the housing/tax/objects senses of a rental word) and say what you cut.
 - **Accents are not documented, so cover both spellings.** The LQL reference says nothing about how
@@ -67,6 +70,11 @@ Hard rules, learned the hard way:
   against a client metric with its own categories, each query is `(brand anchor) AND (that
   subcategory's terms)`, so every export maps to one client category. The overlap between those
   exports is measured and deduplicated after ingest (`DATA.md` §9), never by merging queries.
+- **In a small market, measure every query before the plan.** Run each one in the results preview
+  and put the table of volumes inside the plan the client approves. In one study it changed the
+  scope: the client brand had about a hundred mentions in three months, and two competitors anchored
+  to the country had a few dozen and a handful, almost all noise. The preview gives the order of
+  magnitude to decide scope, never a total (`SENTIONE.md` §2).
 
 - **`rawText:` demands the subject in the post's own text, at collection time.** In one study 74%
   of the main query's rows carried the anchor only in the parent post, and the export weighed
@@ -99,7 +107,9 @@ Hard rules, learned the hard way:
 - **TikTok: one word per rule.** Two-word rules ("brand + match") returned 16,286 rows, of which 53
   named the brand. TikTok carries no country (resolve it in the ETL), its counts are not compared
   with other sources, and a brand name that is noise on its own in every language stays out; its
-  product-line names go in.
+  product-line names go in. The `rawText:` version can keep TikTok, or any network whose comments
+  carry the anchor only in the parent video, at a fraction of its weight: compare the network mix
+  of what gets coded with the counter's (`DATA.md` §7).
 - **Every non-unique term carries a territorial anchor.** Unique names go alone; common words,
   acronyms and process terms ("candidate", "2027", a party acronym that is also a common noun) only
   next to an anchor of the territory. Without it, two party queries brought 292 thousand mentions
@@ -195,18 +205,29 @@ What held up across three markets:
 
 - **An explicit codebook in a file**: theme, relevance, subtheme, tone, level (for football:
   national team, local league, Europe), language, translation, quotable or not, brand mentioned.
-- **Batches of about 200 posts per agent**, JSONL output validated against the input: same line
+  It carries a rule for each edge case agents kept tripping on in a brand study: the brand only
+  as an @handle while its product is the post's subject; resale of seasonal items; seasonal posts
+  out of season (a "Christmas in July"); template or fan-campaign posts copied word for word (coded
+  not relevant); and a brand the tool matched that the truncated text no longer shows (about 5% to
+  7% of records).
+- **Batches of 200 to 300 posts per agent**, JSONL output validated against the input: same line
   count, same ids, same order, every key present. Assigning codes with a keyword script is not
   coding and is not allowed.
 - **Two samples with two jobs.** A random sample fixes precision and volume per theme (posts that use
   the theme's words × the share that really talk about it, with a Wilson interval in the internal
   record). A focus sample, matched on a strict experience pattern, is used only for subthemes, tone
-  and quotes.
+  and quotes. The same product estimates the voice of people behind a brand or an actor: the
+  sampled voice base (`DATA.md` §7) × the share coded person and relevant, with its Wilson
+  interval. With about 300 per brand the top ranges overlap: brands whose ranges all overlap pair
+  by pair are shown as a leading group, never in an exact order.
 - **After the full coding, compare the axes by coder on the border themes.** The pilot can pass
   (kappa 0.81 to 0.94) and nine agents in separate batches can still split border cases differently:
   barrier ranged from 48% to 66% and no direction from 13% to 30%, by agent. If the spread passes
   about 15 points, write the rule for those cases and recode only them, blind. In one study that was
   1,711 mentions.
+- **Emotion gets a human re-read before it is reported.** Agents read emoji and figurative phrases
+  literally. Re-read each emotion class in person voice before it goes on a slide; corrections go
+  in an overrides file that the summary script applies, with the codebook version bumped.
 - **A pilot batch, blind-recoded, before the agents run.** One batch of about 200 coded by an
   agent and recoded blind by another, with κ per axis. Only when it passes do the other batches
   launch. In one study the pilot passed relevance (κ 0.80) and direction (κ 0.93), and the layer,
@@ -241,8 +262,16 @@ What held up across three markets:
   and marked directional. Clients asked for exactly this in a later round: "push more into the
   contradictions".
 
+**Coding costs money: show the budget before launch.** In one study, eight batches of 200 in
+parallel used up the account's spending limit halfway, at about 140 to 165 thousand tokens per
+batch. Estimate tokens and cost from a measured batch, show them to the user before queueing, and
+launch in rounds of about four agents. An agent cut off by a usage limit keeps its progress:
+resume it with `SendMessage` ("continue where you stopped, write the output file and validate it")
+instead of launching it again from zero.
+
 Agents share the scratch folder, and they overwrote each other's helper files twice, in two
-studies. **Give each agent its own folder**, and have the merge validate ids, order and allowed
+studies, and some wrote their working files outside it. **Give each agent its own folder, as an
+absolute path in its brief**, and have the merge validate ids, order and allowed
 values batch by batch before anything is added up; that check is what caught it the second time. Agents also return truncated or positional ids in their
 summaries, so **quotes are always resolved against the file, never against the summary**. Quotes in
 the original language are picked from the unfiltered exports (so local voice is not lost), verified
@@ -260,20 +289,31 @@ using that word. The evidence hierarchy (`DATA.md` §20) decides the verb: *show
 Search is what people do in private; social is what they do in public. Both paid studies of
 October used them, and in both they produced a central finding: what people
 search, what they talk about and what brands advertise are three different maps, and the gaps
-between them are what a media team can act on ("searched, not talked about"). They are standard
-layers of a paid study now. Neither is coded in T&B, and neither is added to the corpus.
+between them are what a media team can act on ("searched, not talked about"). Search is a standard
+layer of every study now, paid or freebie (`PROMPTS.md` flow); the paid-media layer stays for paid
+studies. Neither is coded in T&B, and neither is added to the corpus.
 
 **Search** (Searchbuzz for volume in ranges, 48-month series and Share of Search; Google Trends for
 daily and hourly series and lift against control days):
+- Searchbuzz always, next to Trends, because Trends drops small terms: in one small-market study
+  Trends left the client brand below its threshold, with no series, while Searchbuzz showed it as
+  the most searched brand of its category, and that contradiction was the finding;
 - an anchor term rescales between batteries; it does not measure peaks of small terms;
 - topics, not single terms; a mean of at least 10 before a series is read;
 - control for the day of the week; one capture per query, kept in the case folder;
 - evidence levels: proxy for interest, directional for a comparison, exploratory for a new term;
+- **possession of a season**: searches for the brand with the season or its ritual over all the
+  brand's own searches, in the season's months of the 48-month series. It separates the brands
+  that own the season (ritual brands, a large share) from those that only dominate its volume (mass
+  retailers, a share close to zero). "Per 10,000 of the brand's own mentions" does not work for a
+  mass brand through the counter: a query with the brand alone never finishes counting
+  (`SENTIONE.md` §7);
 - the reproducible extraction: the URL builds the search
   (`/keywords?platform=&query=&country=&language=`), wait for it to load, press Export (a download:
   ask first), move the CSV to the case folder; the monthly series, which Export leaves out, is read
-  off the page; Share of Search exports its pie and its trend separately. TikTok comes without
-  volume, some seeds return nothing, and the same tool covers Mercado Libre, Amazon, Walmart and
+  from the chart's ECharts option in the DOM, without downloading (the node marked
+  `_echarts_instance_`, its React fiber's `memoizedProps.option`); Share of Search exports its pie
+  and its trend separately. TikTok comes without volume, some seeds return nothing, and the same tool covers Mercado Libre, Amazon, Walmart and
   Perplexity, useful for purchase-intent searches. Sending page data to a local receiver is blocked
   in the in-app browser and flagged as exfiltration: do not try it.
 
@@ -310,6 +350,28 @@ blocks are in `PROMPTS.md`.
 Neither is double coding like T&B: the trends method codes four independent axes on a weighted
 sample, and influence history is multi-axis. What they share with every method here: labels after
 ingest, never in the query; `sin_senal` shown and never redistributed; counts from the coded table.
+
+## 4.9 Brands in the conversation: dominance and possession
+
+Two different claims, measured differently, and a deck says which one it makes.
+
+- **Dominance: who carries the conversation.** Measured in social voice only (no web, press or
+  blogs), by network and by month, with the study's universe as the anchor. A brand ranking built
+  over web and press is a ranking of what media publish. Say the benchmark brand's weight inside
+  total voice too, even when it is close to nothing: in one seasonal study it was under 2%, and
+  the deck said "almost nothing". Precision by actor enters the ranking, not only relevance: sellers
+  and affiliates can be most of a mass brand's seasonal voice (`DATA.md` §12). The people-voice
+  estimate and its leading group: §4.6.
+- **Possession: who owns the moment.** The share of a brand's own attention that goes to the
+  season or the territory. Through search it works (§4.7); through the listening counter it does
+  not, for mass brands.
+- **Discovered brands.** When the brief asks "which brands", the answer is an open ranking of the
+  brands people name besides the benchmark, or the plan says why not. A `brand_named` field coded
+  over voice; names normalised (aliases, spellings and handles to one brand); homonyms behind the
+  double gate (§4.6); at most 10 voices per thread and at least 3 threads before a brand enters;
+  the top five or six shown with their logos, each with a deep read of what people say about it.
+- **Each question declares its base.** A question per brand is not answered from a seasonal
+  corpus that carries a dozen pieces per brand (`DATA.md` §2).
 
 ## 5. Provenance + changelog — how the system evolves
 

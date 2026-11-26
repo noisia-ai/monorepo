@@ -73,6 +73,9 @@
 
 ### Paso 4. Reloj de la curva
 
+Antes de la curva, cada fuente se compara entre PREV y NOW: una fuente casi sin recolectar en PREV
+hace crecer sus temas de forma artificial (método, "Reloj de la curva").
+
 Por tema: voces PREV y NOW, momentum pertinente y multiplicador con su **intervalo bootstrap**,
 pendiente de 12 meses, empuje, concentración, salto de comunidad, resonancia, serie mensual por 1,000
 voces y piso de señal. Salida: `curva.csv`.
@@ -84,7 +87,9 @@ voces y piso de señal. Salida: `curva.csv`.
    leer el giro de etapa. Una mención con varios temas se codifica una vez. El codificador ve el texto
    propio (~900 caracteres alrededor del ancla) y 250 del post padre, que sirven para atribuir y nunca
    para codificar.
-2. **Libro de códigos v1** con ejemplos en el idioma del mercado.
+2. **Libro de códigos v1** con ejemplos en el idioma del mercado y las reglas de etapa y de emisor del
+   método (`01-methodologies/cultural-momentum-mapping.md`): adopta quien lo usa o lo hace, no el
+   consejo genérico; señal de venta explícita para el emisor comercial.
 3. **Piloto de 300, codificado dos veces a ciegas**, kappa por eje ≥ 0.80. Los desacuerdos se vuelven
    reglas (v2). El kappa va al registro, **nunca a la slide**.
 4. **Validación humana:** 150 menciones por eje leídas por una persona. Sin ella, el acuerdo es
