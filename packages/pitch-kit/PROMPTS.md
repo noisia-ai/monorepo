@@ -205,7 +205,8 @@ NO NEGOCIABLES:
   tiempo, canal), de qué está hecho, cómo se ve en la vida real (imágenes de posts, videos o
   anuncios) y en sus palabras (citas). Cada marca nombrada lleva su logo. Y cierra con el bloque
   "para pauta". Un pagado escueto se rechazó entero. LAYOUTS.md, "What a paid study carries".
-- La marca cliente va en el acento y las demás en gris; el rojo es solo freno o alerta. CHARTS.md §11.
+- La marca cliente va en el acento y las demás en gris; si la marca cliente no está en la gráfica,
+  cada marca va en el color de su logo. El rojo es solo freno o alerta. CHARTS.md §11.
 - Todo texto que afirma algo lleva su assert en el build, no solo los títulos: subportadas,
   respuesta, apertura, notas y pies. Por mercado si hay varios. Una subportada dijo que algo "se queda
   arriba" y el dato decía lo contrario. Otro assert falla si un título trae dos puntos a media frase.
@@ -217,8 +218,9 @@ NO NEGOCIABLES:
 - En un tema sensible (violencia, salud, seguridad), las slides oscuras van sin rojo.
 - La respuesta cabe en una frase que el cliente pueda repetir. Las salvedades van una vez, en la
   slide de método.
-- Sin eyebrow en las slides del cuerpo, salvo para un nombre acuñado o, en un pagado con más de
-  tres preguntas, la pregunta del brief sobre la slide que la responde. La nota de insight en un
+- Sin eyebrow en las slides del cuerpo, salvo para un nombre acuñado o la pregunta del brief sobre
+  la slide que la responde. La XL lleva una subportada por pregunta, siempre clara (blanco o bloom);
+  el deck regular y el compacto no llevan subportadas y la pregunta va como eyebrow. La nota de insight en un
   tercio de las slides como máximo, el pie solo donde una cifra necesita su base, y nunca tres
   slides seguidas con el mismo layout. LAYOUTS.md, "Rhythm".
 - Verbatims reales, con liga, plataforma y fecha, y sin la liga pegada dentro del texto.
