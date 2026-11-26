@@ -63,6 +63,11 @@ at the top *and* the bottom at once: the eyebrow lands on the logo while the foo
 footer. `builders/qa-render.py` checks both bands for exactly this reason. Seeing only one of the
 two and fixing the bottom leaves the top broken.
 
+**An eyebrow plus a two-line title costs the content about 10%.** On those slides, scale the
+content block down about 10% before rendering; a compact deck whose galleries met an eyebrow and a
+two-line title overflowed until it did. A compact deck that carries the question as eyebrow on every
+chapter slide is therefore `.deck-dense` even under thirty slides (see "Dense decks" below).
+
 ## Backgrounds: one composition per slide
 
 The engine paints the same cyan blob in the same corner on every slide. Over fourteen slides that
@@ -125,6 +130,13 @@ composition and it comes with four rules:
 
 Grain belongs to the asset, not to the browser. See `ICONS.md`.
 
+**Recipe for a study image as full-bleed background (a variant, not the default).** When the study's
+own image goes full-bleed, compose it at 1920 × 1080 from its horizontal 3:2 version with the fade
+**baked into the asset**: a smoothstep from about 36% to 68% of the width toward white, so the
+luminance behind every line of copy stays at or above 0.98. Do not crop the 3:2 to the canvas, and
+do not fake the fade with a CSS overlay. The vertical 2:3 bleeding right stays the default cover; this
+variant is for when the scene reads better wide.
+
 ### Variant: the client's mark on a market study
 
 A study read market by market can carry the client's logo and the market's flag on the cover. The
@@ -162,7 +174,7 @@ restating "brand × topic · country" is redundant next to both marks and comes 
 | 10 | Anatomy of the barrier that decides | mirror of slide 8, coral |
 | 11 | The mirror | `.mir` rows (every pull ↔ its shadow) + `.note` |
 | 12 | Who they measure it against | optional, when the brief names rivals: who the subject is compared against today and who it will be compared against next. Plain cards, no matrix |
-| 13 | Where a brand can act | `.kan` kanban (act here / partial / align only) |
+| 13 | Where a brand can act | a table, one row per place to act: where · what the brand can do · from the study (its figure) · who has done it · when. See below |
 | 14 | The answer | `.slide.dark` — answers the question + `.note` "the bet" |
 | 15 | Method | `slides/method` — how it was read: scope, what was cut, what the numbers mean, see spec below |
 | 16–18 | Glossary ×2–3 | see the scope-contract spec below |
@@ -170,6 +182,15 @@ restating "brand × topic · country" is redundant next to both marks and comes 
 Slides 5 and 15 used to be optional. The four most recent studies all shipped with them, so they
 are part of the sequence now. A study that drops one should say why in its provenance record.
 Slide 12 stays optional and depends on the brief: a category-agnostic study has no rival to name.
+
+**Where to act is a table, not a kanban.** The `.kan` kanban (act here / partial / align only, an
+icon, a figure and a subtitle per card) is no longer the default: in an approved paid study it was
+judged below the quality bar and replaced by a table, which shipped. One row per place to act, five
+columns: where, what the brand can do, from the study (the figure that backs it), who has done it,
+and when. A T&B study can run the same table by layer instead: one row per layer with its
+permission, its weight, its push, how often it carries a brand, the network, the topics and what the
+brand can do. In the study that used it, how often each layer carries a brand was the most useful
+read of the slide.
 
 **The sequence is a ceiling, not a floor.** A study can land at twelve slides and be better for it.
 The narrative order that survived review: the finding that opens the story goes **right after the
@@ -188,6 +209,14 @@ on the panorama: the "all at once" layer below goes in every study. A **paid** s
 30 slides, each with its reason in the record. "The sequence is a ceiling" is a rule for freebies
 and thin bases; a paid study is measured by whether every question got its full block, not by
 being short.
+
+**An XL is sized by chapters, not by a quota.** Its length is the number of chapters times a fixed
+block per chapter (the chapter's dashboard, its data, its reads, real life with its quotes, and its
+close), so it is never padded toward a slide count and never cut to reach one. One XL rejected for
+its empty slides came back approved and much shorter, with no finding lost, once each chapter ran
+the same block.
+**When an XL passes 40 slides, a compact deck of 25 to 40 ships with it**, plus the three-slide
+summary below.
 
 **The "all at once" layer is the floor of every study, freebie included.** Right after the answers
 and the frame: the panorama (the funnel, channel share and month by month per network), **all** the
@@ -225,28 +254,37 @@ consequence for whoever buys media. Its approved version added, in this order:
 2. **The panorama**, before or next to the frame: the funnel (collected, unique, analysed), channel
    share and channel by month, the topics with their curve and topic by channel, and the layers by
    channel and by month with one real mention per layer. The T&B frame uses `slides/tb-layers-evidence`
-   whenever there are verbatims, and in a paid study there always are.
+   whenever there are verbatims, and in a paid study there always are. **The layer slide explains
+   each layer, not only its count**: what people say in it, its topics, its emotion, a verified
+   quote, its permission and what the brand can do there.
 3. **Each finding as a block of three slides:**
    - **in data:** how many mentions, the monthly peak, its subtypes, the channel;
    - **in real life:** the videos with their capture and reach, the ads with a caption, so the
      reader sees what kind of content it is (visible, not playable);
-   - **in their words:** four to six quotes in an even grid. Three wide quotes with little text look
-     broken; a 2 × 3 grid does not.
+   - **in their words:** four to six quotes in an even grid in a normal deck, and up to nine at 22px
+     in a dense deck (`.deck-dense`). Three wide quotes with little text look broken; a 2 × 3 or
+     3 × 3 grid does not.
 4. **Every brand comparison over time:** monthly lines on top and share below, for search and for
    conversation separately, the client in the accent and the rest in grey (`CHARTS.md` §11), a
    logo on every brand.
-5. **Every brief question answered with a chart, a quote and its "for media" line.** With more than
-   three questions, skip the sub-covers: the question goes as the slide's eyebrow ("Question 2 ·
-   does seeing the result convince more than the spec sheet?") and the title is its answer; the
-   chapter shows in the index. If the conversation cannot answer it, the slide says so and sends it
-   to the questions to validate.
-6. **The "for media" block and the questions to validate** (below), and where to act.
+5. **Every brief question answered with a chart, a quote and its "for media" line.** Sub-covers
+   depend on the size of the deck, not on the number of questions: **the XL carries one sub-cover
+   per research question; the regular and the compact deck carry none.** There the question goes as
+   the slide's eyebrow ("Question 2 · does seeing the result convince more than the spec sheet?")
+   and the title is its answer; the chapter shows in the index. If the conversation cannot answer
+   it, the slide says so and sends it to the questions to validate.
+   **A sub-cover is always light**, white or the Noisia bloom (`commercial/COMMERCIAL.md`), never
+   dark navy, even where an approved deck used dark ones. Content cards stay never black
+   (Non-negotiables, below).
+6. **The "for media" block, the questions to validate with what Noisia would measure in the next
+   phase** (below), and where to act.
 
 **T&B is one structure, not the only one.** When the brief brings its own questions or themes, those
-are the chapters, each with its sub-cover in the client's language (plus a line in the market's
-language), closing with what it means for the brand. In a three-market study the structure was the
-client's five themes, and each chapter ran data (monthly bars, subthemes, tone) → subtheme cards →
-the gallery → voices and "for the brand". Forcing the T&B frame on it would have got in the way.
+are the chapters, each in the client's language (plus a line in the market's language), with its
+sub-cover in an XL and as the eyebrow in a regular deck, closing with what it means for the brand.
+In a three-market study the structure was the client's five themes, and each chapter ran data
+(monthly bars, subthemes, tone) → subtheme cards → the gallery → voices and "for the brand". Forcing
+the T&B frame on it would have got in the way.
 
 **A three-slide summary ships with every paid study.** The client's strategist asked for "three or
 four top line observations" the next day, every time: three things to know, the markets or
@@ -260,7 +298,8 @@ first cut was rejected with an empty-ish closing trio and a slide of four loose 
 
 **The descriptive variant.** When the client must not receive recommendations (a government
 service was one), each chapter closes with "what this means / what to watch" instead of the
-recommendation, and the end carries the dates coming up and the questions to validate by survey.
+recommendation, and the end carries the dates coming up and the questions to validate, each with
+what Noisia would measure in the next phase.
 Those closings still carry data; three nearly empty closing slides were the main note of its review.
 
 If the client's own base is small, its brand funnel goes in the deck before anyone asks, every step
@@ -306,7 +345,9 @@ Before choosing a single slide, the agent writes in the chat, and waits for a ye
 1. **The three sentences the client will repeat** in their next meeting, each one tied to the
    decision the study enables. Not three topics: three claims with their number.
 2. **The obvious test for each** (`COPY_RULES.md` §2.9): could the client have written it before
-   the study? If so, it is context and a fourth candidate takes its place.
+   the study? If so, it is context and a fourth candidate takes its place. **And the title assert
+   for each, before the yes** (`COPY_RULES.md` §2.4), with the pair-by-pair overlap test for any
+   "leading group" or ranking. The yes does not exempt a sentence from its assert.
 3. **What the data does not give**, said before the deck exists, not on the method slide after.
 
 The deck is then built from those sentences: the first one opens right after the frame, each one
@@ -346,6 +387,10 @@ content. Rules:
 as *where people talk and what each platform is for*, never as "share of voice de la categoría".
 That phrasing reveals the sell (`COPY_RULES.md` §0). Each channel's role has to be demonstrable
 with verbatims from that channel, not assigned by platform stereotype (`DATA.md` §18).
+**A thesis about one network carries its own series for that network**: the topic in the accent over
+all of that network's voice in grey, by month, or by windows of a few months with their counts when
+the base per cell is small, plus one quote from that same network. A claim about a network with only
+the deck's total series under it is not proved.
 
 ### The framework slide (#3) — the one clients remember
 
@@ -361,7 +406,7 @@ Barriers`. The concentric-rings diagram sits **behind** the content and carries 
   (barrier)` when the question is why people buy or don't. See `COPY_RULES.md` §2.6.
 - Under the map, four permission cards in a 4-column grid (`.lperm`): psychological and personal say a brand
   moves them, social says partial influence, cultural says align only. This is what makes slide 12
-  land, so the wording of the four cards and of the kanban (slide 13) has to agree.
+  land, so the wording of the four cards and of the where-to-act table (slide 13) has to agree.
 - The asset ships with its innermost ring reading `Psychological`, in English, and it stays that
   way in every deck regardless of language. Nothing is overlaid on the artwork (`ICONS.md`). The
   reader gets the word in their language from the `.lperm` cards right below.
@@ -449,15 +494,22 @@ far it goes is selling a projection it did not make.
 ### When the study answers several questions
 
 The skeleton that held up in a long study: cover, index, the frame, hypothesis, channels, the map,
-then **one sub-cover per research question**, its analysis, and **a recommendation closing each
-question**, not all of them piled at the end. Then the brand lens, mirror, kanban, the answer and
-the questions to validate; the method, glossary and brands go to the annex.
+then **one chapter per research question** (with its sub-cover in an XL, with the question as
+eyebrow in a regular or compact deck), its analysis, and **a recommendation closing each
+question**, not all of them piled at the end. Then the brand lens, mirror, where to act, the answer
+and the questions to validate; the method, glossary and brands go to the annex.
 
 **Recommendations follow one format**: the action as the headline, how, *from the study* with the
 figure that backs it, *who has done it* with a real public precedent and its source, and when. In a
 plan the client's team will run, add owner, indicator and risk. Only on layers a brand can move. If
 there is no precedent, say so ("open ground"); if a competitor already did it, it goes in as a risk
 ("reads as a copy").
+
+**The image of a recommendation is evidence, not atmosphere.** Each card carries the real
+precedent's thumbnail, with its views and who posted it, or the study's figure. The chapter's
+recommendation panel can carry one white line illustration on the teal panel, one per chapter.
+Never a generated image or a stock photo there, and never a lone light-bulb icon, which reads as
+made by AI. The study-image style (`HUMAN_SIGNALS.md` §VII.1) does not apply to recommendations.
 
 - **Only what a brand team can execute**: communication, content, activation, media and
   partnerships. "Make getting into the stadium easy" is not marketing's to do, and it was rejected.
@@ -477,17 +529,25 @@ a broad question and four hypotheses.
 part gets its quantity per channel. If a part barely appears, say it with the number and show where
 it does appear. The client wants to place its ideas on numbers; it already has the qualitative.
 
-**The closing slide separates what people write from what matters to them.** Social measures what
-people write; what matters is validated by survey. Three columns: the question, what social already
-shows, and the concrete question for the questionnaire with its screener. It also tells the client
-which parts depend on us and which on them.
+**The closing slide separates what people write from what matters to them, and says what comes
+next.** Social measures what people write; what matters gets validated in a next phase. Three
+columns: the question to validate, what social already shows, and **what Noisia would measure in
+the next phase**, with a soft call to action under the table. The question is not handed off to
+someone else's survey and is not phrased as an assignment: a closing that sent each question to a
+survey questionnaire read as giving the next phase away.
 
 **Adding a finding means re-reading the whole deck.** A new finding changes old slides: the answer,
-the kanban, the index, the recommendations. In one case a single new reading improved ten existing
+where to act, the index, the recommendations. In one case a single new reading improved ten existing
 slides. Patching only the new slide leaves the deck arguing with itself.
 
 ### Slides that came out of a multi-market study
 
+- **Markets side by side by default.** Each chart carries every market at once; the deck splits by
+  market only where the markets differ, and the slide says that they do. Two copies of the same deck,
+  one per market, was a first cut that got rejected.
+- **A country map whenever the data has a country field**, with its coverage in the footnote: the
+  share of posts that carry a country. When the base per country does not hold a finding, the
+  finding is not split by country and the method says why.
 - **The corpus funnel.** Three cards, collected → unique → analysed, each with a proportional bar.
   Under them two equal cards: channels, and languages with a census figure for the market and its
   source. Because the study is sold by corpus size, this one is **not** annex plumbing: it goes at the
@@ -502,6 +562,39 @@ slides. Patching only the new slide leaves the deck arguing with itself.
   markets side by side; the main bet per country.
 - **The presenter script for several decks at once** is an internal HTML table, one row per slide and
   one column per deck. It reads the slide numbers from the decks so it never drifts.
+
+### Slides that came out of a multi-brand seasonal study
+
+From an approved paid study of many brands across one holiday season, by function:
+
+- **The answers first.** Three cards, each with a big figure, the finding in one line and the page
+  that proves it.
+- **The universe.** A funnel from the total conversation to social to the voice about the brands,
+  then the bars by network and the lines of month × network.
+- **The country map**, with the share of posts that carry a country in the footnote (see the
+  multi-market section above).
+- **Every brand at once.** Small multiples, one per brand: its logo, its figure per 10,000, a
+  sparkline in the brand's colour and a chip with its main network.
+- **Heat maps** of brand × network, brand × month and brand × situation, each brand in its own
+  colour (`CHARTS.md` §11), with a "How to read" line under each.
+- **Volume against people's share**: two bars per brand, what the brand's conversation weighs and
+  how much of it comes from people. Next to it, a ranking of people's voice with each brand's
+  likely range as a soft band behind its bar (`CHARTS.md` §2).
+- **Possession measured in search**: the season's share of each brand's own searches, on a log
+  scale; then a scatter of how much a brand is searched against how much it is talked about, with
+  its quadrants named.
+- **The ritual calendar**: small multiples, four years of monthly search per seasonal ritual, so the
+  peak reads as a habit and not as one year's spike.
+- **Real-post galleries** with their views and who posted: paid partner, person, brand or affiliate.
+- **A grid of up to nine literal quotes per chapter**, at 22px in the dense deck.
+- **The chapter close "For the campaign"**: a panel with the chapter's question and three cards:
+  the action, "From the study" with its figure, and "Who has done it" with the real precedent's
+  thumbnail and its views.
+- **Codes with "the other side"**: each cultural code of the season next to the counterexample of a
+  brand that broke it, so a code reads as a choice and not as a law.
+- **Where to act**, as the table (see slide 13 of the study sequence).
+- **Questions to validate**, with the column "what Noisia would measure" in the next phase.
+- **Method and scope**, then **the glossary in two slides**.
 
 ### The "in the wild" gallery
 
@@ -584,7 +677,8 @@ Built with deck classes; they go to the engine if a second study needs them:
 
 Past about thirty slides the default scale overflows. Put `class="deck-dense"` on `<deck-stage>`:
 title 54 → 46px, eyebrow 21 → 18px, top and bottom padding 90 → 68 and 60px, title gap 52 → 34px.
-These are the values one long deck settled on after overriding them by hand.
+These are the values one long deck settled on after overriding them by hand. A compact deck with the
+question as eyebrow on its slides takes it too, whatever its length (see "The height budget").
 
 ## Muestra — the study, cut short
 

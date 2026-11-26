@@ -7,7 +7,11 @@ Two libraries, two jobs:
 | Use | Library | Install |
 |---|---|---|
 | **Semantic / UI icons** (eyebrows, KPIs, notes, glossary, bar labels) | **Iconoir** — `icons/regular/<name>.svg` | `npm i iconoir` |
-| **Brand / platform logos** (X, YouTube, Reddit, Facebook, Instagram, Apple, Sonos, Google…) | **Simple Icons** — `icons/<slug>.svg` | `npm i simple-icons` |
+| **Platform / network marks** (X, YouTube, Reddit, Facebook, Instagram…), and the fallback for a brand with no real logo | **Simple Icons**: `icons/<slug>.svg` | `npm i simple-icons` |
+
+A brand that is studied or compared (the client, a competitor, a benchmark) carries **its real
+logo**, trimmed to its ink and set at the same optical size as the others (`LAYOUTS.md`, "Brand logos
+at the same optical size").
 
 **Look in the repo before you install or ask for a download.** After `pnpm install` at the repo root,
 Simple Icons is already there (the website and `packages/motion` depend on it):
@@ -32,17 +36,18 @@ there as `iconoir-react`; its raw SVGs still come from `npm i iconoir` in a scra
 
 ## Hard rules
 
-1. **No hand-drawn icons.** If it's not from Iconoir or Simple Icons, it doesn't ship.
-2. **Brand logos are Simple Icons, filled white on the brand color.** Semantic icons are Iconoir, stroked, tinted (teal / coral / green) inside an `.icobox`.
+1. **No hand-drawn icons.** If it's not from Iconoir, Simple Icons or a brand's real logo file, it doesn't ship.
+2. **Platform and network marks are Simple Icons, filled white on the brand color.** A studied or compared brand carries its real logo, trimmed to its ink at the same optical size (`LAYOUTS.md`); Simple Icons white on colour is only its fallback when no real logo exists. Semantic icons are Iconoir, stroked, tinted (teal / coral / green) inside an `.icobox`.
 3. **`currentColor` gotcha (contrast bug).** Iconoir children hard-code `stroke="currentColor"`, which **overrides** a `stroke="#fff"` on the parent `<svg>`. A white-on-color marker (e.g. the Web/globe on grey) then renders dark and loses contrast. Fix: in those markers, replace the children's `stroke="currentColor"` with `stroke="#fff"`.
 4. **Amazon isn't in Simple Icons** (removed for trademark) — and decks are brand-agnostic anyway. For "retailer reviews" use a generic **star**, not the Amazon smile:
    `<polygon points="12 2 15 9 22 9.3 16.5 14 18.5 21 12 17 5.5 21 7.5 14 2 9.3 9 9"/>` (fill white).
-5. **Competitor rows** may carry the real brand logo (Simple Icons: `apple`, `sonos`, `googlehome`, …), white on the brand color. If a brand has no logo (Amazon/Alexa), use a neutral Iconoir device glyph (`sound-high`) instead of faking one.
+5. **Competitor rows** carry the real brand logo, trimmed to its ink (rule 2). Where there is none, the Simple Icons glyph (`apple`, `sonos`, `googlehome`, …), white on the brand color. If a brand has neither (Amazon/Alexa), use a neutral Iconoir device glyph (`sound-high`) instead of faking one.
+   **Simple Icons has almost no consumer-goods brands.** In a study of packaged-goods or retail brands, settle in the plan where each logo comes from: a list of logos the user approves, or the user's yes to download them from Wikimedia Commons (a file download: ask with the source). Not at the end of the build.
 6. **Never change a brand glyph across a deck** — a viewer finds a platform by its mark.
 7. **Platform marks inside a card run at about 16px.** Bigger, they compete with the content they
    label.
-8. **No icon tile stacked above a heading.** The icon goes beside the heading or inside the row it
-   belongs to (`impeccable.style/slop`).
+8. **No icon tile stacked above a heading, a figure or a KPI.** The icon goes beside the heading,
+   to the left of the figure's label, or inside the row it belongs to (`impeccable.style/slop`).
 
 ## Bulk replace (porting a deck)
 

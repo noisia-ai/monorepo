@@ -152,7 +152,8 @@ Dos generalizaciones que valen por sí solas:
 
 **Tres excepciones declaradas**, donde el título descriptivo es el correcto: la portada de un
 estudio, donde el título es la pregunta de investigación; la slide de brief; y las páginas de
-referencia, glosario y método, que se nombran por lo que son.
+referencia (glosario, método y alcance, índice), que se nombran por lo que son. "Las respuestas" no
+es una de ellas: lleva el hallazgo en el título, como cualquier slide del cuerpo.
 
 **Y una familia entera donde la regla se invierte: los decks internos.** Un status update o una
 explicación del producto para el equipo no vende ninguna conclusión. Ahí el título nombra el tema,
@@ -173,6 +174,21 @@ deja de serlo. En un caso, un título decía que "ninguna mención" criticaba a 
 precio; el assert encontró 1 de 33 y paró el build. Era sobre otra marca, pero el título bajó a
 "casi nunca", que es lo que sostiene la cifra. En otro, dos títulos dejaron de ser ciertos al
 recodificar, y el build lo dijo.
+
+**Al pasar de conteos a porcentajes, los asserts se corren otra vez.** Un título cierto en conteos
+puede ser falso dentro de cada red: en un caso, "en esta red es orgullo" se sostenía en menciones y
+dejaba de sostenerse en el porcentaje de cada red, porque en conteos lo que pesaba era el tamaño de
+la red.
+
+**Las tres frases pasan el assert antes de pedir el sí, no al construir.** Que el usuario ya las
+haya aprobado no las exime. En un caso, los asserts atraparon tres afirmaciones de frases ya
+aprobadas: un grupo puntero cuyos rangos no se tocaban todos, una "mitad" que eran dos tercios y un
+"cinco veces" que era menos. **Antes de llamar "grupo puntero" a varias marcas, o de ordenarlas en
+un ranking, se comprueba par por par** que sus rangos se traslapan (son grupo) o no se traslapan
+(una va delante de otra). Un grupo donde dos de sus marcas no se tocan no es un grupo.
+
+**Todo mes nombrado en un título lleva su año.** "Diciembre" en un estudio que cubre dos temporadas
+no dice cuál; "diciembre de 2025" sí.
 
 **Y los dos puntos se revisan en el build.** Un assert falla si un título trae dos puntos a media
 frase, igual que con el em dash: un primer corte llegó con doce.
@@ -199,7 +215,8 @@ para las seis metodologías: lo que se cuenta son menciones que llevan la señal
 ### La contraportada se titula por lo que es
 
 La regla de títulos aplica al cuerpo del deck. Las páginas de referencia llevan título literal:
-Glosario. Método y alcance. Alcance y límites. Una frase donde va un nombre se lee como relleno.
+Glosario. Método y alcance. Alcance y límites. Índice. Una frase donde va un nombre se lee como
+relleno. "Las respuestas" se titula con el hallazgo, no con su nombre.
 
 ## 2.6 Vocabulario del método, una sola vez y completo
 
@@ -259,11 +276,21 @@ El término se queda, porque es como la gente habla; la glosa evita que el lecto
 más. Si se recorta, el recorte tiene que existir tal cual en el original: quien arma el deck lo
 comprueba con algo como `assert fragmento in texto_original`, no a ojo.
 
+**Solo una cita verificada va entre comillas.** Una hipótesis, una paráfrasis o el nombre de un tema
+no llevan comillas aunque suenen a la gente: las comillas le dicen al lector que alguien lo escribió
+así.
+
+**La etiqueta de una cita dice quién habla.** Un usuario que cuenta lo que una marca le respondió es
+la historia de ese usuario, y se etiqueta así. "La marca dice" o "la marca responde" va solo en lo
+que la marca publicó con su propia cuenta.
+
 **En inglés tampoco se dice "read".** "Read" y "lectura" no se entienden ni como sustantivo ni
 como título de sección. Para el método: "how it was measured", "qualitative".
 
 **Lo que la conversación no puede medir se nombra como pregunta a validar**, nunca como encargo a
 alguien: "research questions to validate", no "for the survey team" ni el nombre del proveedor.
+Junto a cada pregunta va **lo que Noisia mediría en la siguiente fase**, y la slide cierra con una
+invitación suave a hacerlo. Mandar la pregunta a la encuesta de otro le regala la siguiente fase.
 
 ### Sin dramatizar
 
@@ -362,6 +389,12 @@ decimal y punto de miles: 0,29 y 1.224. En México, al revés. Se decide al empe
 mezcla. Y **la pregunta “¿de dónde sale ese porcentaje?” se responde antes de que la hagan**: una
 línea de “cómo leer los porcentajes” en la slide de método, y el embudo con sus cifras (capturado,
 depurado, núcleo) en la misma slide.
+
+**Total contra muestra: el porcentaje grande, la base chica, el tamaño en el total.** En la slide el
+porcentaje va grande y su base va chica debajo, como "n de N voces". El tamaño del tema se ancla en la
+conversación total recolectada (la portada, el pie del panorama), nunca en lo analizado: la base
+analizada dice de dónde sale el porcentaje, no cuánto pesa el tema. Con menos de 20 casos va el
+conteo y una lectura cualitativa, no un porcentaje (`DATA.md` §25).
 
 ## 3. Tono Noisia para press
 - Simple sobre sofisticado. Si una slide necesita explicación, falló.
