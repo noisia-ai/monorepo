@@ -78,12 +78,22 @@ multiplicador  = exp(momentum)                     # lo que se muestra: "×2.2"
 - Corregir por pertinencia evita que un uso figurado (un platillo usado como insulto político) mueva
   la curva. En el estudio que lo definió, menos de la mitad de lo codificado era pertinente.
 
+**Antes de la curva, cada fuente se compara entre PREV y NOW.** Restar el crecimiento del corpus no
+corrige una fuente que casi no se recolectaba en PREV: en un estudio, una red de video traía en todo
+el trimestre de PREV menos de lo que hoy trae en un día, y los temas que viven en ella crecían de
+mentira. Esa fuente sale de las dos ventanas, y se declara.
+
+**Si no se puede bajar todo el periodo**, PREV y NOW se bajan completos (en tramos de medio mes) y
+los otros meses del año de lectura con una semana fija por mes (por ejemplo, del día 8 al 14). El
+tamaño por 1,000 voces y la pendiente salen de proporciones dentro de cada semana, así que el factor
+de escala se cancela; el multiplicador sale de las dos ventanas completas. Se declara en el método.
+
 **Otras medidas por tema, en el año de lectura:**
 
 | Medida | Definición | Para qué |
 |---|---|---|
 | Tamaño por 1,000 voces | `1000 × voz_del_tema(m) × p / voz_del_corpus(m)`, promedio de 12 meses | Comparar temas sin que el corpus creciente los infle; es la serie de cada tarjeta |
-| **Pendiente de 12 meses** | Regresión de la serie mensual por 1,000 voces, desestacionalizada si hay 24 meses | Segunda medida de la curva: que un evento de un trimestre no domine el multiplicador |
+| **Pendiente de 12 meses** | Regresión de la serie mensual por 1,000 voces, desestacionalizada si hay 24 meses | Segunda medida de la curva: que un evento de un trimestre no domine el multiplicador. El multiplicador junta el salto único (pendiente cerca de 0 después del salto) con el crecimiento sostenido; la pendiente los separa, y la tarjeta del tema lo dice |
 | **Intervalo del multiplicador** | Bootstrap por tema (1,000 remuestreos de voces) | Con bases de cientos, ×2.0 y ×2.2 no se distinguen: el intervalo lo dice |
 | **Empuje** | Parte emitida del tema en el año | Una tendencia empujada es campaña, no cultura |
 | Concentración | Parte del hilo y del autor más grandes en la voz del año | Un pico de un solo post no es tendencia |
@@ -99,17 +109,20 @@ Cada mención de la muestra recibe cuatro ejes independientes y tres banderas:
 | Eje | Valores | Prueba clínica |
 |---|---|---|
 | `pertinencia` | dominio · precio_dominio · figurado · otro | ¿Habla del tema en su sentido del dominio, o lo usa como metáfora, apodo o insulto? |
-| `emisor` | persona · creador · marca_negocio · medio | ¿Quién habla, y vende algo? |
+| `emisor` | persona · creador · marca_negocio · medio | ¿Quién habla, y vende algo? Vende solo con señal explícita: código de descuento, liga de afiliado, #ad o equivalente, o cuenta de la marca. Sin esa regla, el acuerdo en este eje quedó en 0.71 en un estudio |
 | `etapa` (sobre el tema, no sobre la categoría) | descubre · adopta · normaliza · se_cansa · sin_senal | Ver abajo |
 | `momento` | casa y familia · amigos y salida · restaurante · al paso · delivery · pantalla o partido · fiesta o ritual · vacaciones · trabajo o estudio · entreno o dieta · temporada · otro · sin_senal | ¿En qué momento de su vida dice que lo hace? El más explícito |
 | Banderas | precio · marca · citable | Y una glosa para elegir citas, nunca para contar |
 
 **La etapa, en orden:**
 - **Descubre:** lo prueba o lo conoce por primera vez ("lo probé hoy", "¿alguien sabe dónde venden…?").
-- **Adopta:** lo hace suyo, lo repite, lo recomienda ("ya lo hago cada semana").
+- **Adopta:** lo hace suyo, lo repite, lo recomienda desde su propio uso ("ya lo hago cada semana").
+  Un creador que lo muestra o lo hace adopta.
 - **Normaliza:** lo da por hecho, es parte de la rutina, sin novedad.
 - **Se cansa:** rechazo, ironía o fatiga ("ya hasta en el pan le ponen…", "otra vez esto").
-- **Sin señal:** se nombra sin decir qué hace con él.
+- **Sin señal:** se nombra sin decir qué hace con él. También el consejo genérico, el listicle o el
+  explicador sin uso en primera persona, aunque lo publique un creador: recomendar sin usar no es
+  adoptar. Con esta regla, el acuerdo en etapa pasó de 0.78 a 0.90 en un estudio.
 
 **Pesos:** cada mención pesa lo que pesa su estrato en el corpus, `peso = población(t, P) /
 codificadas(t, P)`. Los repartos de etapa y momento son ponderados sobre las pertinentes con señal;

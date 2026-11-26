@@ -7,11 +7,11 @@
 ## Cómo se usa
 
 1. Copia el prompt maestro. No hace falta rellenar nada: el prompt pregunta.
-2. Pega debajo lo que tengas: el brief, la transcripción de la llamada y el contexto que dictes. Si
-   ya sabes la familia, el bloque que corresponda.
+2. Pega debajo lo que tengas: el brief, la transcripción de la llamada, todos los correos del hilo
+   y el contexto que dictes. Si ya sabes la familia, el bloque que corresponda.
 3. El chat lee, investiga y te hace una sola ronda de preguntas con los permisos que necesita. Desde
    tu sí trabaja en automático: opera SentiOne, baja y verifica, y solo te detiene en las tres frases,
-   en el primer corte y si algo cambia el universo.
+   en la tabla de densidad, en el primer corte y si algo cambia el universo.
 4. Si hay un caso anterior del mismo terreno, pasa su `PROVENANCE_AND_CHANGELOG.md` **solo como
    registro**, para heredar decisiones de alcance y caveats. Nunca para reusar su contenido.
 
@@ -24,8 +24,13 @@ nada. Copia el bloque completo, no le quites las preguntas.
 Vamos a construir un entregable de Noisia. Antes de proponer nada, lee el kit y pregúntame.
 
 EL KIT ESTÁ EN: packages/pitch-kit/, dentro del repo de Noisia. Si no sabes dónde está el repo en
-esta máquina, pregúntame. Trabaja sobre main actualizado (git pull), y si no encuentras
-packages/pitch-kit/CANON.md estás en una versión vieja del kit: detente y avísame.
+esta máquina, pregúntame. Lee main sin tocar el checkout del repo, que lo comparten otras sesiones
+(nada de pull, checkout ni stash ahí): git fetch origin, y después
+git archive origin/main packages/pitch-kit | tar -x -C <caso>/work/kit_main/ (crea la carpeta
+antes), con el sha de git rev-parse origin/main anotado en PROVENANCE_AND_CHANGELOG.md. Lee el kit
+de esa copia. examples/_local/ no viene en ella porque no está en git: ese se lee del checkout, sin
+tocarlo. Si no encuentras packages/pitch-kit/CANON.md estás en una versión vieja del kit: detente
+y avísame.
 
 LEE PRIMERO, en este orden. Es la fuente de verdad, no inventes estructura ni método:
 - CANON.md        el contrato: las tres autoridades, las familias, las reglas transversales
@@ -85,6 +90,11 @@ blanco: investiga y propónme la respuesta para que solo la confirme.
 Si el brief viene en un Google Doc, sus casillas no se leen por el conector (trae todas las
 opciones sin decir cuál está marcada): confírmamelas aquí.
 
+ANTES DEL PLAN, escribe PEDIDOS_DEL_CLIENTE.md en la carpeta del caso: cada cosa que el cliente
+pidió (marca, periodo, entregable, formato), con su fuente y su fecha, sacada del brief, de la
+transcripción y de TODOS los correos del hilo, no solo del primero. Cada pedido lleva un assert en
+el builder. Una versión salió sin una marca que el cliente pidió por correo un día después del brief.
+
 EN ESA MISMA RONDA PÍDEME LOS PERMISOS, una sola vez, para no frenarte después:
 - reescribir el proyecto de SentiOne que te diga, con respaldo de sus reglas antes de tocarlo, y
   guardar en él (sin esa frase escrita, el clasificador bloquea Save);
@@ -114,11 +124,13 @@ el ETL, y el idioma se prueba en la vista previa (METHODOLOGY.md §1).
 FLUJO:
 advisor para cerrar el alcance
   → desk research con fuente por afirmación: portafolio y precios, homónimos, vocabulario local,
-    bibliotecas de anuncios, calendario (DATA.md §2). Si es pagado, también el plan de search y
-    pauta (METHODOLOGY.md §4.7)
-  → UNA sola aprobación del plan completo (queries, exportaciones, capas, construcción), con la
-    lista de todas las descargas que vas a necesitar (fuentes, dominios, tamaños) para que las
-    apruebe de una vez y no una por una a media sesión
+    bibliotecas de anuncios, calendario (DATA.md §2). La búsqueda va siempre, pagado o freebie:
+    Searchbuzz para el volumen junto a Google Trends, porque Trends descarta los términos chicos.
+    Si es pagado, también el plan de pauta (METHODOLOGY.md §4.7)
+  → UNA sola aprobación del plan completo (queries, exportaciones, capas, construcción, y el costo
+    estimado de la codificación en tokens y dinero), con la lista de todas las descargas que vas a
+    necesitar (fuentes, dominios, tamaños) para que las apruebe de una vez y no una por una a media
+    sesión
   → queries generadas con script y validadas con builders/check-queries.py
   → si operas la herramienta: respaldo del proyecto, queries pegadas desde el archivo, totales en el
     manifiesto antes de cada export, y un export chico de prueba perfilado antes de bajar el resto
@@ -128,18 +140,26 @@ advisor para cerrar el alcance
     los demás
   → los gates de DATA.md antes de cualquier conclusión, y me dices cuáles fallan
   → un lote piloto codificado y recodificado a ciegas, con kappa por eje, antes de lanzar los
-    demás lotes. Codebook sin capa por defecto: evidencia literal y "unclear" permitido
+    demás lotes. Codebook sin capa por defecto: evidencia literal y "unclear" permitido. Con los
+    tokens medidos en el piloto, me dices el costo de los demás lotes antes de lanzar los agentes,
+    y si pasa del estimado del plan esperas mi sí. Van en tandas medidas, de unos cuatro: ocho lotes
+    en paralelo agotaron a la mitad el límite de gasto de la cuenta
   → codificación en dos ejes, con su cobertura y su guard de sesgo. Al terminar, compara los ejes
     por codificador en los temas frontera: si la diferencia pasa de unos 15 puntos, escribe la regla
     de esos casos y recodifícalos a ciegas (METHODOLOGY.md §4.6)
   → mapa de hallazgos con verbatims reales ligados
   → LAS TRES FRASES, escritas completas en el chat, y esperas mi sí: las tres cosas que el cliente va a repetir en su siguiente
     junta, cada una con su cifra; la prueba de lo obvio para cada una (¿la pudo escribir antes
-    del estudio?); y lo que esta base no da. Ver LAYOUTS.md, "Before the sequence"
-  → la tabla de densidad, en todo estudio: qué lleva cada slide de los dos estudios aprobados más
-    recientes del índice (serie, canal, imágenes, logos, citas, implicación), y el primer corte se
-    mide contra ella. Todo estudio, también freebie, abre con la capa "todo a la vez": panorama,
-    todos los temas con su curva y un mapa de calor (LAYOUTS.md)
+    del estudio?); y lo que esta base no da. Cada pregunta del brief tiene su campo codificado con
+    datos; la que no lo tiene se declara vacía en las tres frases y en la slide de método, nunca se
+    contesta con otro campo. Ver LAYOUTS.md, "Before the sequence"
+  → la tabla de densidad, en todo estudio, en DENSIDAD_VS_REFERENCIAS.md en la carpeta del caso:
+    qué lleva cada slide de los dos estudios aprobados más recientes del índice (serie, canal,
+    imágenes, logos, citas, implicación), y el primer corte se mide contra ella. Antes de escribirla
+    pega en el chat la ruta y el sha256 de examples/_local/INDEX.md y de las dos referencias: un
+    registro dijo que el índice no estaba y sí estaba. Te detienes y esperas mi sí, como en las tres
+    frases: sin ese archivo aprobado no corre el builder. Todo estudio, también freebie, abre con la
+    capa "todo a la vez": panorama, todos los temas con su curva y un mapa de calor (LAYOUTS.md)
   → slides sobre el engine, con los fragmentos de slides/ y un fondo propio por slide
     con builders/gen-backgrounds.py. Si falta Pillow, instálalo; no portes los builders
   → builders/check-styles.py y builders/leak-check.py en cada build, no solo al final: una franja
@@ -147,6 +167,7 @@ advisor para cerrar el alcance
   → render slide por slide con builders/qa-render.py, y los miras. Si es pagado, pon cada render
     junto a la referencia y cuenta paneles de datos por slide, no solo slides
   → PDF, y lo revisas página por página
+  → antes de entregar, relees el hilo de correos completo contra PEDIDOS_DEL_CLIENTE.md
   → PROVENANCE_AND_CHANGELOG.md y GUION_POR_SLIDE.md desde templates/
   → el PDF vigente a Drive, en Leads/<Cliente>, preguntándome si hay duda de carpeta
 
@@ -238,8 +259,9 @@ ANTES DE ESCRIBIR:
   transcript de la sesión.
 - Abre PROVENANCE_AND_CHANGELOG.md y las versiones archivadas del deck, y pon la primera versión
   junto a la final.
-- Haz git pull y lee el kit en main. Lo que ya está no se propone de nuevo; lo que estaba y no se
-  aplicó es justo lo que más importa.
+- Lee el kit en main como al empezar, con git archive de origin/main a work/kit_main/ y su sha,
+  sin tocar el checkout. Lo que ya está no se propone de nuevo; lo que estaba y no se aplicó es
+  justo lo que más importa.
 
 LO QUE TIENE QUE TRAER, en este orden:
 1. El commit del kit que leíste al empezar y el de main hoy.

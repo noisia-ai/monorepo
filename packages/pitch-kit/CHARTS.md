@@ -54,6 +54,10 @@ function barPath(x, y, w, h, r = 8) {
 }
 ```
 
+**Un rango es una barra y su banda, nada más.** La estimación va como barra sólida en el color de la
+marca, y detrás una banda redondeada del mismo color al 20% que va del valor bajo al alto. Nunca
+pista gris + banda + barra, que se leyó como tres tipos de líneas, y nunca líneas con topes en los
+extremos, que se vieron feas. El rango se explica una vez en `.foot`.
 ## 3. Líneas
 
 **Siempre curvadas. Nunca segmentos rectos.** Una serie en segmentos se ve como un gráfico de
@@ -80,13 +84,15 @@ function smoothPath(pts) {
 
 **Sparklines.** Línea suavizada con un área clara debajo y sin puntos. El SVG escala pero nunca se
 estira: `preserveAspectRatio="none"` está prohibido. Los meses de los extremos se anclan para que no
-se corten, y un hueco de datos se dibuja como hueco, no como una línea que lo cruza.
+se corten, y un hueco de datos se dibuja como hueco, no como una línea que lo cruza. Valen también
+en estudios: uno aprobado las usó en small multiples, una por marca y en el color de su logo.
 
 **Serie semanal.** Va suavizada, y cada semana se dibuja en su punto medio, para que el pico caiga
 dentro de la banda del evento que lo explica.
 
-**Comparación de marcas.** Todas en gris y la marca cliente en el color de acento. El rojo para la
-marca cliente se leyó como error.
+**Comparación de marcas.** Si la marca cliente está en el chart, todas en gris y ella en el color de
+acento. El rojo para la marca cliente se leyó como error. Si no está, cada marca en el color de su
+logo (§11).
 
 **Día de la semana.** Mapa de calor de tema × día, cruzado con el calendario de eventos cuando lo hay
 (`METHODOLOGY.md` §4.6).
@@ -108,6 +114,11 @@ color antes de leer la leyenda.
 **TikTok se dibuja como su logo:** la misma curva tres veces, cian `#25F4EE` desplazada
 `translate(-2.6,-2.6)`, rojo `#FE2C55` desplazada `translate(2.6,2.6)`, y negra encima sin
 desplazar. Es la aberración cromática de su marca y se reconoce al instante.
+
+**El reparto por canal sale de la base total**, la conversación depurada (`DATA.md` §7), no del
+corpus analizado. En un caso el corpus con texto propio dejaba a una red de video en una fracción de
+su peso real, porque ahí lo que entra está en el video y los hashtags. Si una slide usa el corpus
+analizado para el reparto, el título lo dice.
 
 ## 5. Ejes y retícula
 
@@ -198,12 +209,18 @@ solo puntos, diagonal y dos o tres nombres.
 
 ## 11. El color de las marcas
 
-La marca cliente va en el acento (teal, o el verde de la marca si así se acordó) y **todas las demás
-en gris**. El rojo o coral es solo para freno, alerta o algo a lo que hay que poner atención: nunca
-para una marca ni para un pico neutro. En un caso, la marca cliente salió en rojo en una gráfica
-informativa y el usuario lo leyó como que algo estaba mal: "me haces que me espante". Cuando cada
-marca necesita su color (varias líneas que se cruzan), se usa la paleta del brand book de cada una,
-con el logo junto a la línea, nunca el nombre en texto.
+**Cuando la marca cliente está en el chart**, va en el acento (teal, o el verde de la marca si así se
+acordó) y **todas las demás en gris**. El rojo o coral es solo para freno, alerta o algo a lo que hay
+que poner atención: nunca para una marca ni para un pico neutro. En un caso, la marca cliente salió
+en rojo en una gráfica informativa y el usuario lo leyó como que algo estaba mal: "me haces que me
+espante". Cuando cada marca necesita su color (varias líneas que se cruzan), se usa la paleta del
+brand book de cada una, con el logo junto a la línea, nunca el nombre en texto.
+
+**Cuando la marca cliente no está en el chart** (un benchmark de marcas ajenas), cada marca va en el
+color de su logo, en barras, mapas de calor, sparklines y dispersión, con el logo junto a la fila o
+al punto. Los logos negros se vuelven grises distintos entre sí, para que dos marcas negras no se
+lean como una. Un benchmark de muchas marcas todo en gris no deja encontrar a ninguna; con el color
+de cada logo se aprobó.
 
 ## 10. Semáforo de valencia
 

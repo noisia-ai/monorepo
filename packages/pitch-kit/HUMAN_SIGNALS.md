@@ -611,6 +611,13 @@ debería decir el hallazgo.
   Pasa el control de calidad de §VIII.
 - Kinetic Cinema (motion blur, flash dirigido) sigue siendo el lenguaje de video y aperturas.
 - Sigue siendo atmósfera: nunca va junto a una cita como si la ilustrara.
+- **Las recomendaciones no son atmósfera, y este estilo no se les aplica.** La slide de
+  recomendación lleva evidencia: la miniatura real del precedente, con sus vistas y quién lo publicó,
+  o la cifra del estudio, y el panel del capítulo puede llevar una ilustración de línea blanca sobre
+  el teal, una por capítulo. Ahí nunca va una imagen generada ni una foto de stock, y un foco solo
+  como ícono se lee como hecho por IA (`LAYOUTS.md`, recomendaciones).
+- Las subportadas, lleven o no la imagen del estudio, van siempre claras, en blanco o sobre el
+  bloom, nunca en azul marino oscuro (`LAYOUTS.md`).
 
 ---
 

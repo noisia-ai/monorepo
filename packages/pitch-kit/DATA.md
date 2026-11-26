@@ -46,6 +46,9 @@ Si una respuesta cambia el universo, no se asume. Se documenta.
 8. Qué totales del tablero existen para reconciliar.
 9. Qué idiomas y canales se conservan.
 10. Qué exclusiones, homónimos y ruido se esperan.
+11. Qué base contesta cada pregunta del brief, dicha por pregunta. Una pregunta por marca no se
+    contesta con un corpus de temporada que trae una decena de piezas por marca: necesita su propia
+    query o se dice que no se contesta (`METHODOLOGY.md` §4.9).
 
 **Cuando el usuario no tiene las respuestas, se investigan antes de escribir una query.** Es una fase
 fija entre el brief y las queries, y corre en paralelo mientras se revisa la vara de calidad. En un
@@ -54,7 +57,9 @@ fuente por afirmación cambió tres decisiones de universo: el grooming de un co
 parte de su portafolio, una submarca se vendía con el nombre de la marca, y la marca vendía otra
 categoría con la misma palabra. El encargo estándar:
 
-- portafolio por marca en el mercado, con precios de retailer;
+- portafolio por marca en el mercado, con precios de retailer, y el dueño de cada competidor del
+  brief: en un caso, el brief listaba como competidor una marca hermana del mismo portafolio, y el
+  desk research la atrapó antes de la primera query;
 - homónimos y ruido;
 - vocabulario local de la categoría, el que la gente usa y no el del brief;
 - cobertura de las bibliotecas de anuncios (`METHODOLOGY.md` §7);
@@ -142,6 +147,11 @@ máxima, conteos por fuente, tipo, sentimiento y mes, campos faltantes, identifi
 sus colisiones, hilos y ligas únicas, anclas de pertinencia, indicadores de ruido, los registros
 de mayor interacción y una muestra aleatoria reproducible. Se fija la semilla y se registra.
 
+**`python3 -I` solo para lo que lee descargas.** El modo aislado ignora los paquetes instalados
+para el usuario, numpy incluido. Los scripts que leen un archivo recién descargado corren con `-I`;
+los de análisis que necesitan esos paquetes corren sin él, desde su propia carpeta de scripts y con
+la ruta de los datos como argumento.
+
 ## 5. Periodo comparable
 
 Nunca se compara un día o un mes incompleto contra periodos cerrados. Se define explícitamente
@@ -155,12 +165,13 @@ dos, la pedida y la entregada, y **el periodo comparable se deriva de la entrega
 Si la exportación incluye el día en curso, esas filas se conservan en el inventario, se excluyen
 del análisis comparable y se reporta cuántas fueron.
 
-**Zona horaria: colchón en la interfaz, corte en el ETL.** No se asume la zona de una exportación:
-SentiOne salió en UTC en un caso, en hora de París en otro y en hora de Lisboa en un tercero, así
-que lo más probable es que exporte en la zona del perfil o de la cuenta; Meltwater, en hora de la
-Ciudad de México. La prueba rápida, sin evento: la última `Created` del archivo contra la hora de
-descarga; si la primera queda después, la zona no es UTC. La conversión se hace con la zona de la
-cuenta y su cambio de horario, nunca con un offset fijo. Si la ventana de la interfaz se escribe
+**Zona horaria: colchón en la interfaz, corte en el ETL.** No se asume la zona de una exportación.
+En SentiOne, `Created` salió en UTC en cuatro de cinco casos operados por el chat y en la zona del
+perfil en el quinto (`SENTIONE.md` §6), y en casos anteriores en hora de París o de Lisboa: UTC es la
+hipótesis de partida, no el supuesto, y el primer archivo la confirma o la tumba. Meltwater salió en
+hora de la Ciudad de México. La prueba rápida, sin evento: la última `Created` del archivo contra la
+hora de descarga; si la primera queda después, la zona no es UTC. La conversión se hace con la zona
+de la cuenta y su cambio de horario, nunca con un offset fijo. Si la ventana de la interfaz se escribe
 en fechas locales, se pierden horas de un extremo y se cuelan del otro. La ventana de la interfaz
 lleva un día de colchón en cada extremo, el corte exacto se hace en el ETL en hora local, y la zona
 de cada herramienta va en el manifiesto. Si no está declarada, se deriva del valle de actividad: en
@@ -211,6 +222,19 @@ real, el reparto por canal se calculó sobre el subconjunto codificado en lugar 
 depurado y el titular de la slide salió invertido: 42% contra 68%. La cobertura del clasificador
 es una base válida para lo que se codificó, nunca para describir dónde vive la conversación.
 
+**La base de toda estimación por participación se declara y se asserta contra el total del
+tablero.** Una estimación base × participación (la voz de personas de una marca, la voz pertinente
+de un tema) toma su base del total social del tablero o de su API, nunca del número de filas de un
+export, que puede venir con tope y mezclar dos generaciones de query. En un caso la nota del método
+declaraba una base y el código usaba otra: con la declarada, el ranking de marcas se reordenó. El
+build compara la base que usa con la que dice la nota y falla si no coinciden.
+
+**La mezcla de redes de lo que se codifica se compara con la del contador.** El export con
+`rawText:` puede traer una red a una fracción de su peso en el total: en un caso, TikTok pesaba en
+el texto codificado varias veces menos que en el total de cada marca, y la lectura de emociones y
+necesidades hablaba sobre todo de otras redes. Si una red cae a menos de la mitad de su peso en el
+total, se dice en el método o se estratifica la muestra por red.
+
 **La participación por capa se calcula por mención única, con su assert.** Una mención con dos temas
 de la misma capa cuenta una vez en esa capa. En un caso la primera versión sumó por tema y entregó
 56% donde el dato era 37%. El build verifica que cada participación salga de menciones únicas y que
@@ -225,8 +249,11 @@ cancelaron entre sí. Cada archivo se cuenta con lector CSV contra el contador d
 `builders/wait-export.py` (`SENTIONE.md` §5).
 
 **Una sola vista para los totales, dicha en el método.** El resumen del tablero y el contador de la
-vista de menciones difirieron 3% para el mismo proyecto y ventana, y la API del tablero otro tanto. Se
-elige una por estudio y no se mezclan; para el corpus manda la exportación. Si los totales salen por
+vista de menciones difirieron 3% para el mismo proyecto y ventana, y la API del tablero otro tanto.
+La diferencia no es fija: la analítica del tablero y su API no cuentan comentarios de YouTube, que
+la vista y el export sí traen, así que difieren en lo que pese YouTube en la query (en una prueba de
+un día, una quinta parte). Se elige una por estudio y no se mezclan; para el corpus manda la
+exportación. Si los totales salen por
 la API, se comprueba que el filtro movió el número: un parámetro mal escrito devuelve el total sin
 filtrar, sin error (`SENTIONE.md` §4B).
 
@@ -243,7 +270,7 @@ de ancla para sujeto, geografía, tema de alta confianza, variantes ortográfica
 separadas de ruido para homónimos, otras geografías, sentidos comunes de una palabra de marca,
 noticias ajenas que secuestran el término y temas parecidos que no responden la pregunta.
 
-Tres clases más que conviene buscar desde el principio. Las tres pasan el filtro de marca
+Cuatro clases más que conviene buscar desde el principio. Las cuatro pasan el filtro de marca
 perfectamente y ninguna habla de la experiencia:
 
 - **Contenido comercial de terceros.** Respuestas de community manager de *otras* marcas que listan
@@ -252,6 +279,11 @@ perfectamente y ninguna habla de la experiencia:
   bases de transporte, anuncios de venta.
 - **Cluster de entretenimiento.** Un personaje o activo de marca que se vuelve fenómeno cultural
   arrastra festival, conciertos y televisión. En un caso fue el 14% del corpus de un competidor.
+- **El ancla en otro idioma o dialecto, o dentro de un handle.** La palabra existe en otra lengua o
+  en un dialecto y trae su conversación, o vive en el handle de una cuenta que recibe respuestas.
+  En un caso, casi una de cada diez menciones únicas era el ancla en un dialecto de otro país, en
+  comentarios de Facebook, y otras decenas eran respuestas a una cuenta con la palabra en el
+  handle. Se busca en el perfil del primer export.
 
 **Una marca que existe en varios países se resuelve por la cuenta, no solo por el campo país.** En
 un caso de telco con el mismo nombre en tres mercados, casi la mitad del crudo era de los otros dos
@@ -280,7 +312,9 @@ lectura se guardan en un archivo, porque son la evidencia del gate C.
 
 **Las páginas web llegan completas.** Un sitio o un blog trae la página entera, menú y pie
 incluidos, y el ancla puede estar a mil palabras del tema. Para esas fuentes se exige cercanía en
-el ETL: ancla y tema a no más de 25 palabras, en el texto propio, no en el contexto.
+el ETL: ancla y tema a no más de 25 palabras, en el texto propio, no en el contexto. Un sitio de
+prensa local puede traer el ancla en todas sus notas, por una barra lateral o un menú: se excluye el
+dominio o se exige el ancla en el cuerpo de la nota.
 
 **El uso figurado se mide aparte, no se tira en silencio.** En un estudio de ingredientes, 205
 menciones eran un meme que usa el nombre de una planta medicinal para hablar del ardor en política
@@ -374,9 +408,11 @@ El detector por hashtag es un piso: el elogio sin hashtag no se ve, y eso se esc
 **Voz, emitido y comercio son tres capas, y su comparación es un hallazgo.** Antes de analizar se
 separa la voz del público de lo que emiten medios, clubes y marcas, y de lo que publica el comercio
 (bares, tiendas, revendedores). El análisis cuantitativo es solo voz; la galería puede mezclarlas a
-propósito. **Cuando las capas tienen largos distintos, el vocabulario se compara por cada 10,000
-palabras, no por cada 1,000 menciones**: un artículo es mucho más largo que un comentario, y por
-mención los medios parecían decir todo más que la gente. Por palabras, la voz decía un término de la
+propósito. **En un ranking de marcas, la precisión se mide por actor**, no solo por pertinencia: en
+la voz de temporada de una marca masiva, vendedores y afiliados pueden ser casi todo, y esa parte
+sale del ranking de dominio (`METHODOLOGY.md` §4.9). **Cuando las capas tienen largos distintos, el
+vocabulario se compara por cada 10,000 palabras, no por cada 1,000 menciones**: un artículo es
+mucho más largo que un comentario, y por mención los medios parecían decir todo más que la gente. Por palabras, la voz decía un término de la
 protesta 5 veces más que los medios. Comparar el vocabulario de cada capa dio el insight más fuerte de un
 estudio: por cada cerveza que menciona un fan, un bar menciona unas 300, y con el banter pasa al
 revés. Los fans cuentan la noche como rivalidad; las marcas y los bares la venden como cerveza.
@@ -692,6 +728,12 @@ slide de embudo, al inicio del método o en la slide de corpus:
    `rawText:` de cada query** (los totales de la interfaz). La versión con `rawText:` da el resto del
    embudo. Por eso cada query se corre en dos versiones (`METHODOLOGY.md` §1). Una mención que
    aparece en dos búsquedas cuenta en las dos; una descarga repetida del mismo periodo no cuenta dos veces.
+   YouTube va aparte: la analítica del tablero no cuenta sus comentarios, y la vista de la query sin
+   `rawText:` los infla con los que entran por el título o la descripción del video. La base es la
+   analítica de la query sin `rawText:`, más YouTube medido sobre su texto propio (`SENTIONE.md` §4).
+   **La diferencia entre las dos versiones, por red, va en el embudo con una línea que la
+   explique**: en un caso, `rawText:` dejó TikTok en una de cada nueve filas, porque los comentarios
+   llevaban el ancla solo en el video padre.
 2. **Menciones únicas** del universo del estudio.
 3. **Posts de fans analizados:** la voz que queda después de la limpieza. Es la base que se vende como analizada.
 
