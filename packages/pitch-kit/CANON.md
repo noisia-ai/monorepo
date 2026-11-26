@@ -347,6 +347,12 @@ Estructura de una carpeta de trabajo:
 `index.html` es la fuente. El PDF, el HTML portátil y el PPTX son salidas y no se editan como
 fuente.
 
+**El PPTX es una salida admitida de un estudio**, cuando el cliente lo pide, y tiene su límite: se
+ve igual que el PDF y su texto se edita, pero no sobrevive un rediseño. Un cambio de estructura o de
+layout se hace en `index.html` y el PPTX se vuelve a sacar. El builder compartido de estudio HTML a
+PPTX está pendiente: `builders/build-pptx.py` arma un spec propio (`deck.json`) y no convierte un
+estudio, así que hoy cada caso trae el suyo.
+
 ## 8. Definition of done
 
 El entregable está terminado cuando alguien que no participó puede responder, solo con el
@@ -374,9 +380,15 @@ Y la revisión técnica pasa:
       Gate y el Size Gate (`LAYOUTS.md`). En todo estudio y toda muestra, no solo en un pagado.
 - [ ] Cada marca nombrada lleva su logo real, y cada hallazgo principal su serie en el tiempo y su
       corte por canal.
-- [ ] Antes del builder se llenó la tabla de densidad contra los dos estudios aprobados más recientes
-      del índice, sea pagado o freebie, y el estudio abre con la capa "todo a la vez": panorama,
-      todos los temas con su curva y un mapa de calor (`LAYOUTS.md`).
+- [ ] Antes del builder se aprobó `DENSIDAD_VS_REFERENCIAS.md` en la carpeta del caso: la tabla de
+      densidad contra los dos estudios aprobados más recientes del índice, sea pagado o freebie, con
+      la ruta y el sha256 del índice y de las dos referencias. El estudio abre con la capa "todo a la
+      vez": panorama, todos los temas con su curva y un mapa de calor (`LAYOUTS.md`).
+- [ ] `PEDIDOS_DEL_CLIENTE.md` lista cada pedido (marca, periodo, entregable, formato) con su fuente
+      y su fecha, sacado del brief, la transcripción y todos los correos del hilo. Cada pedido tiene
+      su assert en el builder, y el hilo se releyó completo antes de entregar.
+- [ ] Cada pregunta del brief tiene su campo codificado con datos, o se declaró vacía en las tres
+      frases y en la slide de método.
 - [ ] La retrospectiva del caso (`CAMBIOS_PROPUESTOS_AL_PITCH_KIT.md`) se escribió con el prompt de
       retrospectiva de `PROMPTS.md`.
 - [ ] Ningún dato de cliente entró a este repo.

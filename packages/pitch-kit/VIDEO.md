@@ -289,19 +289,25 @@ anclan a una palabra: el número arranca cuando el narrador la dice.
 - **Las voces del sistema no sirven para entregar** ("se escuchan súper feas"); sirven de borrador sin
   key.
 - **ElevenLabs por API**, endpoint `/v1/text-to-speech/{voice}/with-timestamps`:
-  - narrador: **una voz profesional de la biblioteca compartida, poco usada, elegida con muestras;
-    nunca una premade.** Una premade popular se rechazó como "la voz que anda circulando en todos los
-    videos de internet". Se busca en `/v1/shared-voices` con `category=professional`, el idioma y el
-    género, un uso anual moderado (entre unos 300 mil y 6 millones de caracteres) y una descripción de
-    narración o documental; se generan tres muestras con una línea del guion y elige el usuario. Las
-    voces compartidas funcionan por `voice_id` sin agregarlas a la cuenta. Modelo por defecto
+  - narrador: **una voz de calidad de estudio de la biblioteca compartida, femenina y joven, que poca
+    gente usa; nunca una premade.** La razón: en el video social ya circula mucho contenido con las
+    voces populares de este proveedor. Una premade popular se rechazó como "la
+    voz que anda circulando en todos los videos de internet". En la biblioteca se filtra por voz de
+    estudio, mujer y joven (por API, `/v1/shared-voices` con `category=professional`, el idioma,
+    `gender=female` y `age=young`), y el uso se mide con `cloned_by_count`: miles está bien (un estudio
+    aprobado usó una de unos 8 mil); cientos de miles o millones quedan fuera. Una descripción de
+    narración o documental ayuda. Se generan tres muestras con una línea del guion, pero no reemplazan
+    ese filtro: elige el usuario, y en un estudio eligió una voz distinta de las tres. Las voces
+    compartidas funcionan por `voice_id` sin agregarlas a la cuenta. Modelo por defecto
     `eleven_multilingual_v2` con `stability 0.42`, `similarity_boost 0.8`, `style 0.35`,
     `use_speaker_boost`; la pieza los cambia con `voices.model`, `voices.quoteModel` y
     `voices.settings` (Eleven v4 solo acepta `stability` y `similarity_boost`);
   - la voz de la apertura se elige también **por ritmo**: la cita del cold open no debería pasar de unos
     10 s. Una de 13 s fue "muy lenta"; la misma cita con otras voces duró de 9.3 a 11.9 s;
   - voces del público: `eleven_v3` con `language_code` del mercado, voces nativas de la biblioteca
-    compartida, y un tag de emoción al inicio de cada cita (`[laughing]`, `[mocking]`, `[excited]`…).
+    compartida con el mismo criterio de uso, elegidas por el mercado y el tono de cada post (de unos
+    cientos a unos 12 mil en `cloned_by_count`), y un tag de emoción al inicio de cada cita
+    (`[laughing]`, `[mocking]`, `[excited]`…).
     Los tags llegan en la alineación como palabras y se filtran. Si la cita trae ortografía de la calle
     ("eh votado", "asen"), su `say` dice lo que lee la voz y la tarjeta sigue mostrando el texto literal.
     Una cita en otro idioma lleva su `translation`, en la tarjeta y en el chat del clímax, y **la
@@ -336,6 +342,10 @@ anclan a una palabra: el número arranca cuando el narrador la dice.
 - **Antes de generar se dice el presupuesto en caracteres:** el video terminado usa ~750 por minuto, y
   con tres pases de narración más las citas y pruebas se gastaron ~5,000. Música y efectos se cobran
   aparte.
+- **Antes de proponer muestras se revisa el saldo** de la cuenta en `/v1/user/subscription` contra los
+  caracteres que pide la pieza: en un estudio hacían falta unos cinco mil y quedaban menos de dos mil.
+  `audio.py --budget` solo cuenta los caracteres; el saldo se lee aparte, y si no alcanza se le dice al
+  usuario antes de generar nada.
 
 **QA:** stills de cada marca (fin de la voz, fin de la cita, Spark completo) y de cada transición (el
 arranque de la escena y el cuadro justo antes de cada marca): los encimados que vio el usuario estaban en
@@ -346,8 +356,10 @@ si un bloque baja a la franja de los subtítulos (60 px sobre ella), aunque en e
 mide la caja ya animada, no el contenedor: una tarjeta que entraba subiendo desde 80 px pisaba los
 subtítulos y la primera versión de la guardia no lo vio. La tarjeta de la
 cita y el Spark van debajo de la gráfica y su nota, en la misma columna, así que una gráfica alta los
-empuja hacia abajo en lugar de quedar debajo de ellos. El audio solo lo puede aprobar una persona
-escuchándolo; se le pide al usuario.
+empuja hacia abajo en lugar de quedar debajo de ellos. La loudness a -14 LUFS es parte de la QA y
+**requiere un ffmpeg completo con `ebur128`** en la máquina: el que trae Remotion no lo tiene y
+`builders/qa.py` solo avisa. Sin él la mezcla queda sin medir, y se entrega diciéndolo, no como
+medida. El audio solo lo puede aprobar una persona escuchándolo; se le pide al usuario.
 
 **El `data.json` del caso.** El builder del deck de cada caso escribe `video/data.json` con las mismas
 variables de sus slides, cada bloque con su `_calc`, y un `make_piece.py` del caso arma la pieza desde
