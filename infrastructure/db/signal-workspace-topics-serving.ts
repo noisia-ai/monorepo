@@ -8,6 +8,7 @@ import { facetForcedAbstentionsSqlV1 } from "./signal-facet-normalizations";
 import {signalDiscoveryProjectionContextCurrentV1} from "./signal-workspace-discovery-projection-current";
 import { inspectFacetContextChangeV1 } from "./signal-mention-facets";
 import { createHash } from "node:crypto";
+import { rankSignalLexiconEvidenceV1 } from "@noisia/query-engine";
 import type { Pool, PoolClient } from "pg";
 import {
   signalTopicDefinitionSchemaV1,
@@ -1577,12 +1578,19 @@ export async function loadSignalWorkspaceMentionsV1(args: SignalWorkspaceMention
   });
 }
 
+/** How many eligible posts the lexicon suggestions compare against, at most. */
+const LEXICON_BACKGROUND_SAMPLE = 8000;
 export type MassLabelingLexiconSuggestionsV1 = {
   contract_version: "mass-labeling-lexicon-suggestions-v1";
   workspace_id: string; revision: number; available: boolean;
-  items: Array<{ term: string; roots: number; trigger_roots: number; barrier_roots: number }>;
+  /** `roots` show the category with high confidence; `background_roots` are all the comparable posts with the term. Ordered by `lift`. */
+  items: Array<{ term: string; roots: number; trigger_roots: number; barrier_roots: number; background_roots: number; lift: number }>;
 };
-/** Free corpus evidence. Count each word or bigram once per eligible root. */
+/**
+ * Free corpus evidence. Each word or pair of words counts once per eligible
+ * root. Function words are left out by the language of the posts and the rest
+ * is ordered by lift, so the slang of the category comes before common words.
+ */
 export async function loadMassLabelingLexiconSuggestionsV1(args: Omit<Args, "include_unselected"> & {
   limit?: number;
 }): Promise<MassLabelingLexiconSuggestionsV1> {
@@ -1597,10 +1605,11 @@ export async function loadMassLabelingLexiconSuggestionsV1(args: Omit<Args, "inc
       revision: policy?.revision ?? 0, available: false, items: []
     };
     if (!ctx.mass_labeling || !ctx.is_current || !ctx.mass_consumer_category_current || !policy) return result;
-    const items = (await client.query<MassLabelingLexiconSuggestionsV1["items"][number]>(`
+    type Counted = Omit<MassLabelingLexiconSuggestionsV1["items"][number], "lift"> & { foreground_size: number; background_size: number; language: string | null };
+    const counted = (await client.query<Counted>(`
       ${populationSql(true, false, false, false, false, undefined, true, "conversation", false)},
       eligible_answers AS MATERIALIZED (
-        SELECT root.root_id, mention.text_clean,
+        SELECT root.root_id, mention.text_clean, mention.language,
           COALESCE(review.trigger_barrier, ${ctx.mass_product ? "prior.probabilities->'trigger_barrier'" : "NULL::jsonb"}) answer
         FROM period_roots root
         JOIN mentions mention ON mention.workspace_id=$1::uuid AND mention.id=root.root_id
@@ -1612,27 +1621,41 @@ export async function loadMassLabelingLexiconSuggestionsV1(args: Omit<Args, "inc
         WHERE root.metrics AND root.evidence AND root.conversation_segment='conversation'
           AND prior.probabilities#>>'{voice,choice}'='individual'
           AND (prior.probabilities#>>'{promotion,noul}')::double precision<=0.7
-      ), high_confidence AS MATERIALIZED (
-        SELECT root_id,text_clean,answer->>'choice' choice FROM eligible_answers
-        WHERE answer->>'choice' IN('trigger','barrier')
-          AND (answer->'probabilities'->>(answer->>'choice'))::double precision>=0.9
-      ), words AS MATERIALIZED (
-        SELECT root_id,choice,token.word,token.position,
-          lead(token.word) OVER(PARTITION BY root_id ORDER BY token.position) following
-        FROM high_confidence CROSS JOIN LATERAL
-          regexp_split_to_table(btrim(regexp_replace(lower(text_clean),'[^[:alnum:]]+',' ','g')),' +')
-            WITH ORDINALITY token(word,position)
-      ), terms AS MATERIALIZED (
-        SELECT DISTINCT root_id,choice,candidate.term FROM words
+      ), marked AS MATERIALIZED (
+        -- choice is set only where the category shows with high confidence: that is the foreground.
+        -- The comparison is a fixed-size, repeatable sample of the eligible posts, so the cost does not grow with the corpus.
+        SELECT root_id,choice,btrim(regexp_replace(lower(text_clean),'[^[:alnum:]]+',' ','g')) clean,language FROM (
+          SELECT root_id,text_clean,language,CASE WHEN answer->>'choice' IN('trigger','barrier')
+            AND (answer->'probabilities'->>(answer->>'choice'))::double precision>=0.9 THEN answer->>'choice' END choice,
+            row_number() OVER(ORDER BY md5(root_id::text)) sampled
+          FROM eligible_answers) eligible WHERE choice IS NOT NULL OR sampled<=$9
+      ), foreground_words AS MATERIALIZED (
+        SELECT root_id,choice,token.word,lead(token.word) OVER(PARTITION BY root_id ORDER BY token.position) following
+        FROM marked CROSS JOIN LATERAL regexp_split_to_table(clean,' +') WITH ORDINALITY token(word,position) WHERE choice IS NOT NULL
+      ), foreground_terms AS MATERIALIZED (
+        SELECT DISTINCT root_id,choice,candidate.term FROM foreground_words
         CROSS JOIN LATERAL (VALUES(word),(word||' '||following)) candidate(term)
         WHERE char_length(candidate.term) BETWEEN 2 AND 200 AND candidate.term ~ '[[:alpha:]]'
-      ) SELECT term,count(DISTINCT root_id)::int roots,
-          count(DISTINCT root_id) FILTER(WHERE choice='trigger')::int trigger_roots,
-          count(DISTINCT root_id) FILTER(WHERE choice='barrier')::int barrier_roots
-        FROM terms WHERE NOT EXISTS(SELECT 1 FROM signal_mass_labeling_lexicon_dismissals dismissal
-          WHERE dismissal.workspace_id=$1::uuid AND dismissal.lexicon_digest=$8 AND dismissal.term=terms.term)
-        GROUP BY term ORDER BY roots DESC,term COLLATE "C" LIMIT $9`,
-    [...populationParams(args, ctx), policy.revision, massLabelingLexiconDigestV1(policy), limit])).rows;
-    return { ...result, available: true, items };
+      ), candidates AS MATERIALIZED (
+        SELECT term,count(*)::int roots,count(*) FILTER(WHERE choice='trigger')::int trigger_roots,count(*) FILTER(WHERE choice='barrier')::int barrier_roots
+        FROM foreground_terms WHERE NOT EXISTS(SELECT 1 FROM signal_mass_labeling_lexicon_dismissals dismissal
+          WHERE dismissal.workspace_id=$1::uuid AND dismissal.lexicon_digest=$8 AND dismissal.term=foreground_terms.term)
+        GROUP BY term HAVING count(*)>=3 ORDER BY 2 DESC,term COLLATE "C" LIMIT 3000
+      ), background AS MATERIALIZED (
+        -- Only the candidate terms are looked for in the rest of the sample.
+        SELECT candidates.term,count(*)::int roots FROM candidates
+        JOIN marked ON marked.choice IS NULL AND (' '||marked.clean||' ') LIKE '% '||candidates.term||' %' GROUP BY 1
+      ) SELECT candidates.term,candidates.roots,candidates.trigger_roots,candidates.barrier_roots,
+          candidates.roots+COALESCE(background.roots,0) background_roots,
+          (SELECT count(*) FILTER(WHERE choice IS NOT NULL)::int FROM marked) foreground_size,(SELECT count(*)::int FROM marked) background_size,
+          (SELECT language FROM marked WHERE choice IS NOT NULL AND language IS NOT NULL GROUP BY 1 ORDER BY count(*) DESC,1 LIMIT 1) language
+        FROM candidates LEFT JOIN background USING(term) ORDER BY candidates.roots DESC,candidates.term COLLATE "C"`,
+    [...populationParams(args, ctx), policy.revision, massLabelingLexiconDigestV1(policy), LEXICON_BACKGROUND_SAMPLE])).rows;
+    const first = counted[0];
+    const ranked = first ? rankSignalLexiconEvidenceV1({ foreground_size: first.foreground_size, background_size: first.background_size, language: first.language,
+      existing_terms: policy.lexicon_terms, limit,
+      items: counted.map(item => ({ term: item.term, foreground_roots: item.roots, background_roots: item.background_roots, trigger_roots: item.trigger_roots, barrier_roots: item.barrier_roots })) }) : [];
+    return { ...result, available: true, items: ranked.map(item => ({ term: item.term, roots: item.foreground_roots, trigger_roots: item.trigger_roots,
+      barrier_roots: item.barrier_roots, background_roots: item.background_roots, lift: item.lift })) };
   });
 }
