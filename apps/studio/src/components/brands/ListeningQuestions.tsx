@@ -6,9 +6,9 @@ import type { SignalListeningStateV1 } from "@noisia/db";
 import { listeningKeyFromLabelV1, listeningQuestionInputSchemaV1, type ListeningQuestionInputV1 } from "@/lib/data-os/signal-listening-api";
 import { useMfpMutation, useMfpResource } from "./useMfpResource";
 
-type Estimate = { roots: number; requests: number; estimated_micro_usd: number;
-  questions: Array<{ label: string; scope: string; roots: number; pending: number }> };
-type State = SignalListeningStateV1 & { estimate: Estimate };
+type Estimate = { contract_version: "signal-listening-estimate-v1"; roots: number; requests: number; estimated_micro_usd: number;
+  topics_without_wording: number; questions: Array<{ label: string; scope: string; roots: number; pending: number }> };
+type State = SignalListeningStateV1;
 type DraftOption = { id: string; key: string; name: string; definition: string };
 type DraftQuestion = { id: string; key: string; text: string; scope: "all" | "consumer_category"; active: boolean; options: DraftOption[] };
 
@@ -17,8 +17,9 @@ const toDraft = (questions: State["configuration"]["questions"]): DraftQuestion[
   text: question.text, scope: question.scope, active: question.active,
   options: question.options.map(option => ({ id: uid(), key: option.key, name: option.key, definition: option.definition })) }));
 /** Keys of saved items never change, so their answers stay in the cache. New items get a key from their text. */
-function toInput(draft: DraftQuestion[]): ListeningQuestionInputV1[] | null {
-  const taken = new Set(draft.map(question => question.key).filter(Boolean));
+function toInput(draft: DraftQuestion[], reserved: readonly string[]): ListeningQuestionInputV1[] | null {
+  if (draft.some(question => question.options.some(option => !option.name.trim()))) return null;
+  const taken = new Set([...reserved, ...draft.map(question => question.key).filter(Boolean)]);
   const questions = draft.map(question => {
     const optionKeys = new Set(question.options.map(option => option.key).filter(Boolean));
     const key = question.key || listeningKeyFromLabelV1(question.text, taken); taken.add(key);
@@ -41,26 +42,34 @@ export function ListeningQuestions({ workspaceId, onAccessDenied }: { workspaceI
   const resource = useMfpResource<State>(endpoint, "signal-listening-state-v1", undefined, true);
   const save = useMfpMutation(endpoint, onAccessDenied), run = useMfpMutation(endpoint, onAccessDenied);
   const state = resource.data?.workspace_id === workspaceId ? resource.data : null;
+  // The estimate scans the answer cache: it is read when the saved version or the last run changes, not on every poll.
+  const estimateKey = state ? `${state.revision}:${state.unsaved_settings}:${state.run?.id ?? ""}:${state.run?.status ?? ""}` : null;
+  const estimates = useMfpResource<Estimate>(`${endpoint}?view=estimate`, "signal-listening-estimate-v1", undefined, false, estimateKey);
+  const estimate = estimateKey ? estimates.data : null;
   const [draft, setDraft] = useState<DraftQuestion[]>([]);
   const [cap, setCap] = useState("");
   useEffect(() => { if (state) setDraft(toDraft(state.configuration.questions)); }, [state?.revision, state?.workspace_id]); // eslint-disable-line react-hooks/exhaustive-deps
-  const suggestedCap = state ? Math.max(0.1, Math.ceil(state.estimate.estimated_micro_usd / 1e6 * 2 * 100) / 100) : 0;
+  const suggestedCap = estimate ? Math.max(0.1, Math.ceil(estimate.estimated_micro_usd / 1e6 * 2 * 100) / 100) : 0;
   useEffect(() => { setCap(suggestedCap ? suggestedCap.toFixed(2) : ""); }, [suggestedCap]);
-  const input = useMemo(() => toInput(draft), [draft]);
-  if (!state) return resource.loading ? <p role="status">{t("loading")}</p> : null;
+  const reserved = useMemo(() => ["voice", "promotion", "trigger_barrier", ...(state?.configuration.defined_topics.map(topic => topic.key) ?? [])], [state]);
+  const input = useMemo(() => toInput(draft, reserved), [draft, reserved]);
+  if (!state) return resource.loading ? <p role="status">{t("loading")}</p>
+    // The feature being off answers 404 and shows nothing; any other failure is said out loud.
+    : resource.error && resource.error !== "forbidden" && resource.error !== "listening_not_enabled"
+      ? <p className="team-msg team-msg--error" role="alert">{t(resource.error === "listening_category_required" ? "categoryRequired" : "unavailable")}</p> : null;
 
   const stored = comparable(state.configuration.questions.map(question => ({ ...question })));
   const dirty = comparable(input) !== stored;
   const active = ["queued", "running"].includes(state.run?.status ?? "");
   const disabled = !state.can_edit || save.busy || active;
-  const pending = state.estimate.questions.reduce((sum, question) => sum + question.pending, 0);
+  const pending = estimate?.questions.reduce((sum, question) => sum + question.pending, 0) ?? 0;
   const capValue = Number(cap);
   const edit = (id: string, change: Partial<DraftQuestion>) => setDraft(current => current.map(question => question.id === id ? { ...question, ...change } : question));
   const editOption = (questionId: string, optionId: string, change: Partial<DraftOption>) => setDraft(current => current.map(question => question.id !== questionId ? question
     : { ...question, options: question.options.map(option => option.id === optionId ? { ...option, ...change } : option) }));
   const label = (value: string) => value.startsWith("question:") ? draft.find(question => question.key === value.slice(9))?.text ?? value.slice(9)
     : value.startsWith("interest:") ? state.configuration.defined_topics.find(topic => topic.key === value.slice(9))?.name ?? value.slice(9)
-    : t(value === "voice" ? "baseVoice" : "basePromotion");
+    : t(value === "voice" ? "baseVoice" : value === "topics" ? "discoveredTopics" : "basePromotion");
 
   return <section className="admin-section" aria-label={t("title")} aria-busy={resource.loading || save.busy || run.busy}>
     <header className="admin-section__head"><div><h2>{t("title")}</h2><p>{t("body")}</p></div>
@@ -89,28 +98,31 @@ export function ListeningQuestions({ workspaceId, onAccessDenied }: { workspaceI
       <div className="admin-form-actions">
         <button className="admin-button" type="button" disabled={disabled || draft.length >= 16} onClick={() => setDraft(current => [...current, { id: uid(), key: "", text: "",
           scope: "consumer_category", active: true, options: [{ id: uid(), key: "", name: "", definition: "" }, { id: uid(), key: "", name: "", definition: "" }] }])}>{t("addQuestion")}</button>
-        <button className="admin-button admin-button--primary" type="button" disabled={disabled || !dirty || !input}
-          onClick={() => void save.send({ expected_revision: state.revision, questions: input ?? [] }, "PUT").then(result => { if (result) void resource.read(); })}>
-          {t(save.busy ? "saving" : "save")}</button>
+        <button className="admin-button admin-button--primary" type="button" disabled={!state.can_edit || save.busy || active || !save.pending && (!dirty || !input)}
+          onClick={() => void save.send(save.pending ? undefined : { expected_revision: state.revision, questions: input ?? [] }, "PUT")
+            .then(result => { if (result) void resource.read(); })}>
+          {t(save.busy ? "saving" : save.pending ? "retry" : "save")}</button>
       </div>
       {dirty && !input ? <p className="team-msg team-msg--error" role="alert">{t("invalid")}</p> : null}
       {save.error ? <p className="team-msg team-msg--error" role="alert">{t("saveError")}</p> : null}
 
       <h3>{t("updateTitle")}</h3>
       <p className="admin-drawer-form__hint">{t("updateHelp")}</p>
-      {state.population ? <table><thead><tr><th>{t("colQuestion")}</th><th>{t("colScope")}</th><th>{t("colRoots")}</th><th>{t("colPending")}</th></tr></thead>
-        <tbody>{state.estimate.questions.map(question => <tr key={question.label}><td>{label(question.label)}</td>
+      {!state.population ? <p>{t("noPopulation")}</p> : !estimate ? <p role={estimates.error ? "alert" : "status"}>{t(estimates.error ? "estimateError" : "estimating")}</p>
+        : <table><thead><tr><th>{t("colQuestion")}</th><th>{t("colScope")}</th><th>{t("colRoots")}</th><th>{t("colPending")}</th></tr></thead>
+        <tbody>{estimate.questions.map(question => <tr key={question.label}><td>{label(question.label)}</td>
           <td>{t(question.scope === "all" ? "scopeAllShort" : "scopeConsumerShort")}</td><td>{question.roots.toLocaleString()}</td>
-          <td>{question.pending.toLocaleString()}</td></tr>)}</tbody></table> : <p>{t("noPopulation")}</p>}
+          <td>{question.pending.toLocaleString()}</td></tr>)}</tbody></table>}
+      {estimate?.topics_without_wording ? <p className="admin-drawer-form__hint">{t("topicsWithoutWording", { count: estimate.topics_without_wording })}</p> : null}
       {state.unsaved_settings ? <p className="admin-drawer-form__hint">{t("settingsChanged")}</p> : null}
-      {state.can_run && state.population ? <div className="admin-form-actions">
+      {state.can_run && state.population && estimate ? <div className="admin-form-actions">
         <label>{t("cap")}<input type="number" min={0.01} max={200} step={0.01} value={cap} disabled={active || run.busy} onChange={event => setCap(event.target.value)} /></label>
         <button className="admin-button admin-button--primary" type="button"
-          disabled={active || run.busy || dirty || pending === 0 || !Number.isFinite(capValue) || capValue < 0.01 || capValue > 200}
-          onClick={() => void run.send({ cap_micro_usd: Math.round(capValue * 1e6) }).then(result => { if (result) void resource.read(); })}>
-          {t(active ? "running" : "update", { cost: (state.estimate.estimated_micro_usd / 1e6).toFixed(2) })}</button>
+          disabled={active || run.busy || !run.pending && (dirty || pending === 0 || !Number.isFinite(capValue) || capValue < 0.01 || capValue > 200)}
+          onClick={() => void run.send(run.pending ? undefined : { cap_micro_usd: Math.round(capValue * 1e6) }).then(result => { if (result) void resource.read(); })}>
+          {t(active ? "running" : run.pending ? "retry" : "update", { cost: (estimate.estimated_micro_usd / 1e6).toFixed(2) })}</button>
       </div> : null}
-      {pending === 0 && state.population ? <p role="status">{t("nothingPending")}</p> : null}
+      {estimate && pending === 0 && state.population ? <p role="status">{t("nothingPending")}</p> : null}
       {run.error ? <p className="team-msg team-msg--error" role="alert">{t("runError")}</p> : null}
       {state.run ? <p role="status">{t(`run.${state.run.status}`, { done: state.run.roots_done.toLocaleString(),
         cost: (state.run.spent_micro_usd / 1e6).toFixed(2) })}</p> : null}

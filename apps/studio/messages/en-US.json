@@ -4963,6 +4963,13 @@
     "running": "Updating…",
     "nothingPending": "Nothing is pending: everything is answered.",
     "runError": "The update could not start. Refresh and try again.",
+    "retry": "Retry",
+    "unavailable": "Listening could not be loaded. Refresh and try again.",
+    "categoryRequired": "Set the study category in the labeling settings first.",
+    "estimating": "Working out what is pending…",
+    "estimateError": "What is pending could not be worked out. Refresh and try again.",
+    "topicsWithoutWording": "{count, plural, one {# discovered topic has no wording in the question language and is not asked.} other {# discovered topics have no wording in the question language and are not asked.}}",
+    "discoveredTopics": "Discovered topics (4 candidates per mention)",
     "baseVoice": "Who is speaking (base)",
     "basePromotion": "Is promotion (base)",
     "run": {

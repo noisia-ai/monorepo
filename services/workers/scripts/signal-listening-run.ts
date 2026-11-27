@@ -14,6 +14,7 @@
  *   metrics  --workspace <uuid> --actor <uuid> --question <key>          distribution of one question
  */
 import pg from "pg";
+import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import {
   claimSignalListeningRunV1, estimateSignalListeningV1, getSignalListeningRunV1, getSignalListeningStateV1, importSignalListeningLegacyAnswersV1,
@@ -85,7 +86,7 @@ try {
     console.log(JSON.stringify({ revision: saved.revision, questions: saved.configuration.questions.map(item => item.key) }));
   } else if (mode === "listen") {
     const queued = await requestSignalListeningV1({ database: pool, workspace_id: required("workspace"), actor_user_id: required("actor"),
-      cap_micro_usd: Math.round(Number(required("cap-usd")) * 1e6) });
+      cap_micro_usd: Math.round(Number(required("cap-usd")) * 1e6), idempotency_key: flag("key") ?? randomUUID() });
     console.log(JSON.stringify(queued));
   } else if (mode === "metrics") {
     const metrics = await readSignalListeningQuestionMetricsV1({ database: pool, workspace_id: required("workspace"), actor_user_id: required("actor"),

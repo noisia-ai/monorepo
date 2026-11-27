@@ -20,7 +20,9 @@ export type SignalListeningRunStatusV1 = "queued" | "running" | "completed" | "f
  * holds the answer, and only skips the roots this same run already answered. */
 export type SignalListeningLegacyPlanV1 = { planner: "r15_request_v2"; map_id: string; root_limit: number; input_usd_per_mtok: number };
 /** Asks, for the brand's current population, only what the answer cache does not hold. */
-export type SignalListeningListeningPlanV1 = { planner: "listening_v1"; configuration_id: string; map_id: string; input_usd_per_mtok: number };
+export type SignalListeningListeningPlanV1 = { planner: "listening_v1"; configuration_id: string; map_id: string; input_usd_per_mtok: number;
+  /** Revision of the study settings whose category lexicon decides the consumer cut. */
+  lexicon_revision: number };
 export type SignalListeningPlanV1 = SignalListeningLegacyPlanV1 | SignalListeningListeningPlanV1;
 export type SignalListeningRunV1 = {
   id: string; workspace_id: string; kind: SignalListeningRunKindV1; plan: SignalListeningPlanV1;
@@ -37,8 +39,9 @@ export function validateSignalListeningPlanV1(value: unknown): SignalListeningPl
   const listening = value as SignalListeningListeningPlanV1 | null;
   if (listening?.planner === "listening_v1") {
     if (!uuid.test(listening.configuration_id) || !uuid.test(listening.map_id) || !Number.isFinite(listening.input_usd_per_mtok)
-      || listening.input_usd_per_mtok <= 0) fail("listening_plan_invalid");
-    return { planner: "listening_v1", configuration_id: listening.configuration_id, map_id: listening.map_id, input_usd_per_mtok: listening.input_usd_per_mtok };
+      || listening.input_usd_per_mtok <= 0 || !Number.isSafeInteger(listening.lexicon_revision) || listening.lexicon_revision < 0) fail("listening_plan_invalid");
+    return { planner: "listening_v1", configuration_id: listening.configuration_id, map_id: listening.map_id,
+      input_usd_per_mtok: listening.input_usd_per_mtok, lexicon_revision: listening.lexicon_revision };
   }
   const plan = value as SignalListeningLegacyPlanV1 | null;
   if (!plan || plan.planner !== "r15_request_v2" || !uuid.test(plan.map_id) || !Number.isSafeInteger(plan.root_limit)

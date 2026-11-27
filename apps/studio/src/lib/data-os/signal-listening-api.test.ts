@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { mfpIntent } from "./mfp-ui-state";
 import { isSignalListeningEnabled, listeningKeyFromLabelV1, listeningRunInputSchemaV1, listeningSaveInputSchemaV1 } from "./signal-listening-api";
 
 test("keys come from the text, stay ASCII and never collide", () => {
@@ -21,10 +22,14 @@ test("a saved question needs text, a scope and at least two defined options", ()
 });
 
 test("a run always carries a bounded spending cap and the feature is off by default", () => {
-  assert.equal(listeningRunInputSchemaV1.safeParse({ cap_micro_usd: 500_000 }).success, true);
-  assert.equal(listeningRunInputSchemaV1.safeParse({}).success, false);
-  assert.equal(listeningRunInputSchemaV1.safeParse({ cap_micro_usd: 1 }).success, false);
-  assert.equal(listeningRunInputSchemaV1.safeParse({ cap_micro_usd: 900_000_000 }).success, false);
+  const idempotency_key = "00000000-0000-4000-8000-000000000001";
+  assert.equal(listeningRunInputSchemaV1.safeParse({ cap_micro_usd: 500_000, idempotency_key }).success, true);
+  assert.equal(listeningRunInputSchemaV1.safeParse({ cap_micro_usd: 500_000 }).success, false, "a run without a request key could be queued twice");
+  assert.equal(listeningRunInputSchemaV1.safeParse({ idempotency_key }).success, false);
+  assert.equal(listeningRunInputSchemaV1.safeParse({ cap_micro_usd: 1, idempotency_key }).success, false);
+  assert.equal(listeningRunInputSchemaV1.safeParse({ cap_micro_usd: 900_000_000, idempotency_key }).success, false);
+  // The same body the Studio mutation hook sends.
+  assert.equal(listeningRunInputSchemaV1.safeParse(mfpIntent({ cap_micro_usd: 500_000 }, "POST", idempotency_key).body).success, true);
   assert.equal(isSignalListeningEnabled({}), false);
   assert.equal(isSignalListeningEnabled({ NOISIA_SIGNAL_LISTENING_ENABLED: "true" }), true);
 });

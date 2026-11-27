@@ -53,11 +53,18 @@ async function compose(client: Queryable, workspace_id: string, questions?: Sign
   const stored = await latestStored(client, workspace_id);
   const policy = await loadMassLabelingStudyPolicyWithClientV1(client, workspace_id);
   if (!policy.category.trim()) fail("listening_category_required");
-  const configuration = validateSignalListeningConfigurationV1({ contract_version: "signal-listening-config-v1", model: "jev-1.13.0",
-    category: policy.category, lexicon_terms: policy.lexicon_terms, candidate_language: policy.candidate_language, base: ["voice", "promotion"],
-    defined_topics: policy.interests.map(interest => ({ key: interest.key, name: interest.name, definition: interest.definition,
-      active: interest.active, origin: "brand_os", human_locked: false })),
-    discovered: { candidates_per_root: 4 }, questions: questions ?? stored?.configuration.questions ?? [] });
+  let configuration: SignalListeningConfigurationV1;
+  try {
+    configuration = validateSignalListeningConfigurationV1({ contract_version: "signal-listening-config-v1", model: "jev-1.13.0",
+      category: policy.category, lexicon_terms: policy.lexicon_terms, candidate_language: policy.candidate_language, base: ["voice", "promotion"],
+      defined_topics: policy.interests.map(interest => ({ key: interest.key, name: interest.name, definition: interest.definition,
+        active: interest.active, origin: "brand_os", human_locked: false })),
+      discovered: { candidates_per_root: 4 }, questions: questions ?? stored?.configuration.questions ?? [] });
+  } catch { fail("listening_configuration_invalid", 422); }
+  // Without a lexicon no root matches the category, so a consumer question would silently never be asked.
+  if (!configuration.lexicon_terms.length && configuration.questions.some(question => question.active && question.scope === "consumer_category")) {
+    fail("listening_lexicon_required", 422);
+  }
   return { stored, configuration, configuration_digest: signalListeningConfigurationDigestV1(configuration), policy_revision: policy.revision };
 }
 async function storeRevision(client: Queryable, args: { workspace_id: string; actor_user_id: string | null; stored: Stored | null;
@@ -108,9 +115,7 @@ export async function saveSignalListeningQuestionsV1(args: Access & {
     const before = await latestStored(client, args.workspace_id);
     if ((before?.revision ?? 0) !== args.expected_revision) fail("listening_revision_conflict");
     if (!Array.isArray(args.questions)) fail("listening_configuration_invalid", 422);
-    let composed: Awaited<ReturnType<typeof compose>>;
-    try { composed = await compose(client, args.workspace_id, args.questions as SignalListeningChoiceQuestionV1[]); }
-    catch (error) { if (error instanceof SignalLabelingError) throw error; fail("listening_configuration_invalid", 422); }
+    const composed = await compose(client, args.workspace_id, args.questions as SignalListeningChoiceQuestionV1[]);
     // A person's edit freezes the question for any later agent proposal.
     const provenance = args.provenance ?? "human";
     const configuration = provenance === "human" ? validateSignalListeningConfigurationV1({ ...composed.configuration,
@@ -125,44 +130,69 @@ export async function saveSignalListeningQuestionsV1(args: Access & {
 export async function estimateSignalListeningV1(access: Access) {
   return transaction(access.database, async client => {
     await authorize(client, access, "view");
-    const { configuration } = await compose(client, access.workspace_id);
+    const { configuration, policy_revision } = await compose(client, access.workspace_id);
     const target = await population(client, access.workspace_id);
-    if (!target) return { roots: 0, questions: [], estimated_micro_usd: 0, requests: 0 };
-    return estimateWithClient(client, access.workspace_id, target.map_id, configuration);
+    if (!target) return { contract_version: "signal-listening-estimate-v1" as const, roots: 0, questions: [], estimated_micro_usd: 0, requests: 0, topics_without_wording: 0 };
+    return { contract_version: "signal-listening-estimate-v1" as const,
+      ...await estimateWithClient(client, access.workspace_id, target.map_id, configuration, policy_revision) };
   });
 }
-async function estimateWithClient(client: Queryable, workspace_id: string, map_id: string, configuration: SignalListeningConfigurationV1) {
+async function estimateWithClient(client: Queryable, workspace_id: string, map_id: string, configuration: SignalListeningConfigurationV1, lexicon_revision: number) {
   const compiled = compileSignalListeningConfigurationV1(configuration);
   const fixed = [compiled.base.voice, compiled.base.promotion, ...compiled.defined, ...compiled.choices];
   const ids = await questionIds(client, workspace_id, fixed.map(question => question.question_digest));
   const sizes = (await client.query<{ roots: number; text_chars: string }>(`SELECT count(*)::int roots,COALESCE(sum(length(text)),0)::text text_chars
     FROM signal_mass_labeling_items WHERE workspace_id=$1 AND map_id=$2`, [workspace_id, map_id])).rows[0]!;
+  const cutArgs = [ids.get(compiled.base.voice.question_digest) ?? -1, ids.get(compiled.base.promotion.question_digest) ?? -1,
+    SIGNAL_LISTENING_CONSUMER_CUT_V1.voice, SIGNAL_LISTENING_CONSUMER_CUT_V1.promotion_max, lexicon_revision];
   const consumer = compiled.choices.some(question => question.scope === "consumer_category")
-    ? (await client.query<{ roots: number }>(`SELECT count(*)::int roots FROM signal_mass_labeling_items item
-        JOIN mentions mention ON mention.workspace_id=item.workspace_id AND mention.id=item.root_id
-        JOIN signal_mass_labeling_root_segments segment ON segment.map_id=item.map_id AND segment.root_id=item.root_id
-        JOIN signal_listening_answers voice ON voice.question_id=$3 AND voice.root_id=item.root_id AND voice.choice=$5
-        JOIN signal_listening_answers promotion ON promotion.question_id=$4 AND promotion.root_id=item.root_id AND promotion.probability<=$6
-        WHERE item.workspace_id=$1 AND item.map_id=$2 AND NOT segment.hashtag_only
-          AND signal_mass_labeling_category_matches_v1(mention.text_clean,$7::text[])`,
-        [workspace_id, map_id, ids.get(compiled.base.voice.question_digest) ?? -1, ids.get(compiled.base.promotion.question_digest) ?? -1,
-          SIGNAL_LISTENING_CONSUMER_CUT_V1.voice, SIGNAL_LISTENING_CONSUMER_CUT_V1.promotion_max, configuration.lexicon_terms])).rows[0]!.roots
+    ? (await client.query<{ roots: number }>(`SELECT count(*)::int roots FROM (${consumerRootsSql(3)}) cut`, [workspace_id, map_id, ...cutArgs])).rows[0]!.roots
     : 0;
+  // An answer only counts for the text fragment the map holds today, exactly as the run decides.
   const answered = new Map((await client.query<{ question_id: string; roots: number }>(`SELECT answer.question_id::text,count(*)::int roots
     FROM signal_listening_answers answer JOIN signal_mass_labeling_items item ON item.root_id=answer.root_id AND item.map_id=$2
+      AND item.workspace_id=answer.workspace_id AND answer.input_sha=decode(substr(item.input_digest,8),'hex')
     WHERE answer.workspace_id=$1 AND answer.question_id=ANY($3::bigint[]) GROUP BY 1`, [workspace_id, map_id, [...ids.values()]])).rows
     .map(row => [Number(row.question_id), row.roots]));
+  const scopedAnswered = new Map(consumer ? (await client.query<{ question_id: string; roots: number }>(`SELECT answer.question_id::text,count(*)::int roots
+    FROM (${consumerRootsSql(4)}) cut JOIN signal_mass_labeling_items item ON item.map_id=$2 AND item.root_id=cut.root_id AND item.workspace_id=$1
+    JOIN signal_listening_answers answer ON answer.root_id=cut.root_id AND answer.workspace_id=$1 AND answer.question_id=ANY($3::bigint[])
+      AND answer.input_sha=decode(substr(item.input_digest,8),'hex') GROUP BY 1`,
+    [workspace_id, map_id, compiled.choices.filter(question => question.scope === "consumer_category").map(question => ids.get(question.question_digest) ?? -1),
+      ...cutArgs])).rows.map(row => [Number(row.question_id), row.roots] as const) : []);
+  // Discovered topics: each root is asked its closest candidates. Pairs without an answer are pending.
+  const catalog = await catalogTopics(client, workspace_id, map_id, configuration, compiled), topics = catalog?.topics;
+  const topicIds = topics ? await questionIds(client, workspace_id, [...topics.values()].map(topic => topic.question_digest)) : new Map<string, number>();
+  const topicKeys = topics ? [...topics.keys()] : [];
+  const discovered = topics ? (await client.query<{ pairs: number; pending: number; roots: number }>(`SELECT count(*)::int pairs,
+      count(*) FILTER (WHERE answer.root_id IS NULL)::int pending,count(DISTINCT item.root_id) FILTER (WHERE answer.root_id IS NULL)::int roots
+    FROM signal_mass_labeling_items item
+    CROSS JOIN LATERAL (SELECT candidate.value->>'topic_key' topic_key FROM jsonb_array_elements(item.candidates) candidate
+      ORDER BY (candidate.value->>'similarity')::float8 DESC,candidate.value->>'topic_key' LIMIT $5) candidate
+    JOIN unnest($3::text[],$4::bigint[]) known(topic_key,question_id) ON known.topic_key=candidate.topic_key
+    LEFT JOIN signal_listening_answers answer ON answer.question_id=known.question_id AND answer.root_id=item.root_id
+      AND answer.workspace_id=item.workspace_id AND answer.input_sha=decode(substr(item.input_digest,8),'hex')
+    WHERE item.workspace_id=$1 AND item.map_id=$2`,
+    [workspace_id, map_id, topicKeys, topicKeys.map(key => topicIds.get(topics.get(key)!.question_digest) ?? -1), configuration.discovered.candidates_per_root])).rows[0]!
+    : { pairs: 0, pending: 0, roots: 0 };
   const tokens = (value: unknown) => Math.ceil(JSON.stringify(value).length / 3.2);
   const questions = fixed.map(question => {
     const scope = "scope" in question ? (question as { scope: string }).scope : "all";
     const population_roots = scope === "consumer_category" ? consumer : sizes.roots;
-    const done = answered.get(ids.get(question.question_digest) ?? -1) ?? 0;
+    const id = ids.get(question.question_digest) ?? -1;
+    const done = (scope === "consumer_category" ? scopedAnswered.get(id) : answered.get(id)) ?? 0;
     return { label: question.label, scope, roots: population_roots, pending: Math.max(0, population_roots - done), question_tokens: tokens(question.wire) };
   });
-  const requests = Math.max(0, ...questions.map(question => question.pending));
+  if (topics?.size) {
+    const sample = [...topics.values()].slice(0, 20);
+    questions.push({ label: "topics", scope: "all", roots: sizes.roots, pending: discovered.pending,
+      question_tokens: Math.ceil(sample.reduce((sum, topic) => sum + tokens(topic.wire), 0) / sample.length) });
+  }
+  const requests = Math.max(discovered.roots, ...questions.filter(question => question.label !== "topics").map(question => question.pending));
   const textTokens = sizes.roots ? Number(sizes.text_chars) / sizes.roots / 3.2 : 0;
   const inputTokens = requests * (textTokens + 30) + questions.reduce((sum, question) => sum + question.pending * question.question_tokens, 0);
-  return { roots: sizes.roots, questions, requests, estimated_micro_usd: Math.ceil(inputTokens * SIGNAL_LISTENING_DEFAULT_PRICE_V1) };
+  return { roots: sizes.roots, questions, requests, estimated_micro_usd: Math.ceil(inputTokens * SIGNAL_LISTENING_DEFAULT_PRICE_V1),
+    topics_without_wording: catalog?.without_wording ?? 0 };
 }
 async function questionIds(client: Queryable, workspace_id: string, digests: string[]) {
   const rows = (await client.query<{ id: string; question_digest: string }>(`SELECT id::text,question_digest FROM signal_listening_questions
@@ -172,26 +202,68 @@ async function questionIds(client: Queryable, workspace_id: string, digests: str
 
 /** Queue a listening pass over the brand's current population. Only what the
  * cache does not hold will be asked. The cap is fixed here. */
-export async function requestSignalListeningV1(args: Access & { cap_micro_usd: number }) {
+export async function requestSignalListeningV1(args: Access & { cap_micro_usd: number; idempotency_key: string }) {
   if (!Number.isSafeInteger(args.cap_micro_usd) || args.cap_micro_usd < 10_000 || args.cap_micro_usd > 200_000_000) fail("listening_cap_invalid", 422);
+  if (typeof args.idempotency_key !== "string" || args.idempotency_key.length < 8 || args.idempotency_key.length > 200) fail("listening_request_invalid", 422);
   return transaction(args.database, async client => {
     await lock(client, args.workspace_id);
     await authorize(client, args, "process");
+    // The same request sent twice is the same run, never a second one.
+    const replay = (await client.query<{ id: string; revision: number }>(`SELECT run.id,configuration.revision FROM signal_listening_runs run
+      JOIN signal_listening_configurations configuration ON configuration.id=(run.plan->>'configuration_id')::uuid
+      WHERE run.workspace_id=$1 AND run.kind='listening' AND run.receipt->>'idempotency_key'=$2`, [args.workspace_id, args.idempotency_key])).rows[0];
+    if (replay) return { run_id: replay.id, revision: replay.revision, replayed: true };
     const target = await population(client, args.workspace_id);
     if (!target) fail("listening_population_required");
     if ((await client.query("SELECT 1 FROM signal_listening_runs WHERE workspace_id=$1 AND status IN('queued','running') LIMIT 1", [args.workspace_id])).rows.length) {
       fail("listening_run_active");
     }
-    const { stored, configuration, configuration_digest } = await compose(client, args.workspace_id);
+    const { stored, configuration, configuration_digest, policy_revision } = await compose(client, args.workspace_id);
     const revision = await storeRevision(client, { workspace_id: args.workspace_id, actor_user_id: args.actor_user_id, stored, configuration,
       configuration_digest, provenance: "human", note: "study settings synchronized before a run" });
     const plan: SignalListeningListeningPlanV1 = { planner: "listening_v1", configuration_id: revision.id, map_id: target.map_id,
-      input_usd_per_mtok: SIGNAL_LISTENING_DEFAULT_PRICE_V1 };
-    const id = (await client.query<{ id: string }>(`INSERT INTO signal_listening_runs(id,workspace_id,kind,plan,cap_micro_usd,requested_by_user_id)
-      VALUES($1,$2,'listening',$3::jsonb,$4,$5) RETURNING id`, [randomUUID(), args.workspace_id, JSON.stringify(plan), args.cap_micro_usd, args.actor_user_id])).rows[0]!.id;
-    return { run_id: id, revision: revision.revision };
+      input_usd_per_mtok: SIGNAL_LISTENING_DEFAULT_PRICE_V1, lexicon_revision: policy_revision };
+    const id = (await client.query<{ id: string }>(`INSERT INTO signal_listening_runs(id,workspace_id,kind,plan,cap_micro_usd,requested_by_user_id,receipt)
+      VALUES($1,$2,'listening',$3::jsonb,$4,$5,jsonb_build_object('idempotency_key',$6::text)) RETURNING id`,
+      [randomUUID(), args.workspace_id, JSON.stringify(plan), args.cap_micro_usd, args.actor_user_id, args.idempotency_key])).rows[0]!.id;
+    return { run_id: id, revision: revision.revision, replayed: false };
   });
 }
+
+/** Discovered topics of a map, worded as they are asked. */
+async function catalogTopics(client: Queryable, workspace_id: string, map_id: string, configuration: SignalListeningConfigurationV1,
+  compiled: ReturnType<typeof compileSignalListeningConfigurationV1>) {
+  const map = (await client.query<{ catalog: Array<{ topic_key: string; name: string; definition: string; localization?: SignalTopicLocalizationV1 }> }>(
+    "SELECT catalog FROM signal_mass_labeling_maps WHERE workspace_id=$1 AND id=$2", [workspace_id, map_id])).rows[0];
+  if (!map) return null;
+  const localized = new Map(map.catalog.flatMap(topic => topic.localization ? [[topic.topic_key, topic.localization] as const] : []));
+  for (const topic of (await client.query<{ topic_key: string; localization: SignalTopicLocalizationV1 }>(
+    "SELECT topic_key,localization FROM signal_mass_labeling_localizations WHERE workspace_id=$1 AND map_id=$2", [workspace_id, map_id])).rows) {
+    if (!localized.has(topic.topic_key)) localized.set(topic.topic_key, topic.localization);
+  }
+  const topics = new Map<string, SignalListeningAskedQuestionV1>();
+  let without_wording = 0;
+  for (const topic of map.catalog) {
+    const wording = configuration.candidate_language === "en" ? localized.get(topic.topic_key)?.en
+      : localized.get(topic.topic_key)?.original ?? { name: topic.name, definition: topic.definition };
+    if (wording?.name.trim() && wording.definition.trim()) topics.set(topic.topic_key, compiled.topic(topic.topic_key, wording));
+    else without_wording++;
+  }
+  // A topic that has no wording in the question language cannot be asked; the estimate reports how many.
+  return { topics, without_wording };
+}
+/** SQL for the roots of a map that are consumer voice and match the category lexicon. The lexicon
+ * match is read from the table the study settings keep per revision, not recomputed per root.
+ * Parameters: $1 workspace, $2 map, then voice id, promotion id, voice option, promotion ceiling, lexicon revision. */
+const consumerRootsSql = (first: number) => `SELECT item.root_id FROM signal_mass_labeling_items item
+  JOIN signal_mass_labeling_category_matches lexical ON lexical.workspace_id=item.workspace_id AND lexical.policy_revision=$${first + 4}::int
+    AND lexical.root_id=item.root_id AND lexical.matched
+  JOIN signal_mass_labeling_root_segments segment ON segment.map_id=item.map_id AND segment.root_id=item.root_id
+  JOIN signal_listening_answers voice ON voice.question_id=$${first} AND voice.root_id=item.root_id AND voice.workspace_id=item.workspace_id
+    AND voice.choice=$${first + 2} AND voice.input_sha=decode(substr(item.input_digest,8),'hex')
+  JOIN signal_listening_answers promotion ON promotion.question_id=$${first + 1} AND promotion.root_id=item.root_id
+    AND promotion.workspace_id=item.workspace_id AND promotion.probability<=$${first + 3} AND promotion.input_sha=decode(substr(item.input_digest,8),'hex')
+  WHERE item.workspace_id=$1 AND item.map_id=$2 AND NOT segment.hashtag_only`;
 
 type ItemRow = { ordinal: number; root_id: string; input_digest: string; text: string; hashtag_only: boolean | null; category_match: boolean;
   candidates: Array<{ topic_key: string; name: string; definition: string; similarity: number }> };
@@ -203,21 +275,10 @@ export async function createSignalListeningSourceV1(database: Database, run: Pic
   try {
     const stored = (await client.query<{ configuration: SignalListeningConfigurationV1 }>(
       "SELECT configuration FROM signal_listening_configurations WHERE id=$1 AND workspace_id=$2", [plan.configuration_id, run.workspace_id])).rows[0];
-    const map = (await client.query<{ catalog: Array<{ topic_key: string; name: string; definition: string; localization?: SignalTopicLocalizationV1 }> }>(
-      "SELECT catalog FROM signal_mass_labeling_maps WHERE workspace_id=$1 AND id=$2", [run.workspace_id, plan.map_id])).rows[0];
-    if (!stored || !map) throw new Error("listening_plan_unavailable");
+    if (!stored) throw new Error("listening_plan_unavailable");
     const configuration = validateSignalListeningConfigurationV1(stored.configuration), compiled = compileSignalListeningConfigurationV1(configuration);
-    const localized = new Map(map.catalog.flatMap(topic => topic.localization ? [[topic.topic_key, topic.localization] as const] : []));
-    for (const topic of (await client.query<{ topic_key: string; localization: SignalTopicLocalizationV1 }>(
-      "SELECT topic_key,localization FROM signal_mass_labeling_localizations WHERE workspace_id=$1 AND map_id=$2", [run.workspace_id, plan.map_id])).rows) {
-      if (!localized.has(topic.topic_key)) localized.set(topic.topic_key, topic.localization);
-    }
-    const topics = new Map<string, SignalListeningAskedQuestionV1>();
-    for (const topic of map.catalog) {
-      const wording = configuration.candidate_language === "en" ? localized.get(topic.topic_key)?.en
-        : localized.get(topic.topic_key)?.original ?? { name: topic.name, definition: topic.definition };
-      if (wording?.name.trim() && wording.definition.trim()) topics.set(topic.topic_key, compiled.topic(topic.topic_key, wording));
-    }
+    const topics = (await catalogTopics(client, run.workspace_id, plan.map_id, configuration, compiled))?.topics;
+    if (!topics) throw new Error("listening_plan_unavailable");
     const fixed = [compiled.base.voice, compiled.base.promotion, ...compiled.defined, ...compiled.choices];
     const ids = await ensureSignalListeningQuestionsV1(client, run.workspace_id, compiled.model, [...fixed, ...topics.values()]);
     const byId = new Map([...ids].map(([digest, id]) => [id, digest]));
@@ -226,16 +287,19 @@ export async function createSignalListeningSourceV1(database: Database, run: Pic
     let cursor = 0;
     return {
       model: compiled.model, input_usd_per_mtok: plan.input_usd_per_mtok,
+      /** Questions that wait for the base answers need a second look at every root. */
+      rescans: scoped,
       rewind() { cursor = 0; },
       async next(limit: number): Promise<SignalListeningItemV1[]> {
         for (;;) {
           const rows = (await database.query<ItemRow>(`SELECT item.ordinal,item.root_id,item.input_digest,item.text,item.candidates,segment.hashtag_only,
-              CASE WHEN $5::boolean THEN signal_mass_labeling_category_matches_v1(mention.text_clean,$6::text[]) ELSE false END category_match
+              COALESCE(lexical.matched,false) category_match
             FROM signal_mass_labeling_items item
-            JOIN mentions mention ON mention.workspace_id=item.workspace_id AND mention.id=item.root_id
             LEFT JOIN signal_mass_labeling_root_segments segment ON segment.map_id=item.map_id AND segment.root_id=item.root_id
+            LEFT JOIN signal_mass_labeling_category_matches lexical ON lexical.workspace_id=item.workspace_id AND lexical.policy_revision=$5::int
+              AND lexical.root_id=item.root_id
             WHERE item.workspace_id=$1 AND item.map_id=$2 AND item.ordinal>$3 ORDER BY item.ordinal LIMIT $4`,
-            [run.workspace_id, plan.map_id, cursor, limit, scoped, configuration.lexicon_terms])).rows;
+            [run.workspace_id, plan.map_id, cursor, limit, plan.lexicon_revision])).rows;
           if (!rows.length) return [];
           cursor = rows.at(-1)!.ordinal;
           const answers = (await database.query<{ root_id: string; question_id: string; probability: number; choice: string | null; input_sha: string }>(
@@ -253,7 +317,8 @@ export async function createSignalListeningSourceV1(database: Database, run: Pic
               .slice(0, configuration.discovered.candidates_per_root).flatMap(candidate => topics.has(candidate.topic_key) ? [topics.get(candidate.topic_key)!] : []);
             const pending = selectSignalListeningPendingV1({ compiled, topics: candidates, category_match: row.category_match,
               answered: new Set(valid.map(answer => byId.get(Number(answer.question_id))!)),
-              base: { voice_choice: voice?.choice ?? null, promotion: promotion?.probability ?? null, hashtag_only: row.hashtag_only ?? false } });
+              // A root without its segment row is treated as outside the cut, as the estimate does.
+              base: { voice_choice: voice?.choice ?? null, promotion: promotion?.probability ?? null, hashtag_only: row.hashtag_only ?? true } });
             if (!pending.length) continue;
             // Request keys are neutral positions; identity travels in the question digest.
             const questions = pending.map((question, index) => ({ ...question, request_key: `q${index}` }));
@@ -282,8 +347,10 @@ export async function importSignalListeningLegacyAnswersV1(args: { database: Dat
   if (!total) throw new Error("listening_import_map_unavailable");
   const prior = (await database.query<{ id: string }>(`SELECT id FROM signal_listening_runs WHERE workspace_id=$1 AND kind='legacy_request'
     AND plan->>'planner'='r15_import' AND plan->>'map_id'=$2 ORDER BY created_at LIMIT 1`, [workspace_id, map_id])).rows[0];
-  const run_id = prior?.id ?? (await database.query<{ id: string }>(`INSERT INTO signal_listening_runs(id,workspace_id,kind,plan,status,cap_micro_usd,started_at)
-    VALUES($1,$2,'legacy_request',$3::jsonb,'running',1,now()) RETURNING id`,
+  // The record is written as finished from the start: the drainer never claims it and it never blocks a pass.
+  // Answers are inserted with ON CONFLICT DO NOTHING, so running the import again is harmless.
+  const run_id = prior?.id ?? (await database.query<{ id: string }>(`INSERT INTO signal_listening_runs(id,workspace_id,kind,plan,status,cap_micro_usd,started_at,completed_at,receipt)
+    VALUES($1,$2,'legacy_request',$3::jsonb,'completed',1,now(),now(),'{"import":"in_progress"}'::jsonb) RETURNING id`,
     [randomUUID(), workspace_id, JSON.stringify({ planner: "r15_import", map_id })])).rows[0]!.id;
   const known = new Set<string>();
   let answers = 0;
@@ -319,8 +386,8 @@ export async function importSignalListeningLegacyAnswersV1(args: { database: Dat
       ON CONFLICT(question_id,root_id) DO NOTHING`, [...range, run_id])).rowCount ?? 0;
     args.on_progress?.(Math.min(total, from + batch), total);
   }
-  await database.query(`UPDATE signal_listening_runs SET status='completed',completed_at=now(),updated_at=now(),
-    receipt=jsonb_build_object('imported_answers',$2::int,'questions',$3::int,'provider_requests',0) WHERE id=$1`, [run_id, answers, known.size]);
+  await database.query(`UPDATE signal_listening_runs SET completed_at=now(),updated_at=now(),
+    receipt=jsonb_build_object('import','finished','imported_answers',$2::int,'questions',$3::int,'provider_requests',0) WHERE id=$1`, [run_id, answers, known.size]);
   return { run_id, answers, questions: known.size, roots: total };
 }
 
@@ -335,7 +402,7 @@ export async function readSignalListeningQuestionMetricsV1(access: Access & { qu
   return transaction(access.database, async client => {
     await client.query("SET TRANSACTION READ ONLY");
     await authorize(client, access, "view");
-    const { stored, configuration } = await compose(client, access.workspace_id);
+    const { stored, configuration, policy_revision } = await compose(client, access.workspace_id);
     const compiled = compileSignalListeningConfigurationV1(configuration);
     const question = compiled.choices.find(candidate => candidate.label === `question:${access.question_key}`);
     if (!question) fail("listening_question_unavailable", 404);
@@ -343,20 +410,32 @@ export async function readSignalListeningQuestionMetricsV1(access: Access & { qu
     const empty = { question_key: access.question_key, revision: stored?.revision ?? 0, answered: 0, distribution: [], by_topic: [], trend: [] };
     const target = await population(client, access.workspace_id);
     if (id === undefined || !target) return empty;
-    const distribution = (await client.query<{ option: string; roots: number }>(`SELECT answer.choice option,count(*)::int roots
-      FROM signal_listening_answers answer JOIN signal_mass_labeling_items item ON item.map_id=$3 AND item.root_id=answer.root_id
-      WHERE answer.workspace_id=$1 AND answer.question_id=$2 GROUP BY 1 ORDER BY 2 DESC,1`, [access.workspace_id, id, target.map_id])).rows;
-    const by_topic = (await client.query<{ topic_key: string; option: string; roots: number }>(`SELECT membership.concept_key topic_key,answer.choice option,count(*)::int roots
-      FROM signal_listening_answers answer
-      JOIN signal_mass_labeling_memberships_v1 membership ON membership.workspace_id=answer.workspace_id AND membership.map_id=$3
-        AND membership.root_id=answer.root_id AND membership.belongs
-      WHERE answer.workspace_id=$1 AND answer.question_id=$2 GROUP BY 1,2 ORDER BY 3 DESC,1,2 LIMIT 400`, [access.workspace_id, id, target.map_id])).rows;
-    const trend = (await client.query<{ period: string; option: string; roots: number }>(`SELECT to_char(date_trunc('month',mention.published_at),'YYYY-MM') period,
-        answer.choice option,count(*)::int roots
-      FROM signal_listening_answers answer JOIN signal_mass_labeling_items item ON item.map_id=$3 AND item.root_id=answer.root_id
-      JOIN mentions mention ON mention.workspace_id=answer.workspace_id AND mention.id=answer.root_id
-      WHERE answer.workspace_id=$1 AND answer.question_id=$2 AND mention.published_at IS NOT NULL GROUP BY 1,2 ORDER BY 1,2`,
-      [access.workspace_id, id, target.map_id])).rows;
+    // The cache keeps every answer ever paid for; the view shows only the roots the
+    // question covers today: this map, this text, and the consumer cut when it applies.
+    const baseIds = await questionIds(client, access.workspace_id, [compiled.base.voice.question_digest, compiled.base.promotion.question_digest]);
+    const cutArgs = [baseIds.get(compiled.base.voice.question_digest) ?? -1, baseIds.get(compiled.base.promotion.question_digest) ?? -1,
+      SIGNAL_LISTENING_CONSUMER_CUT_V1.voice, SIGNAL_LISTENING_CONSUMER_CUT_V1.promotion_max, policy_revision];
+    const consumerOnly = question.scope === "consumer_category";
+    const current = `current AS MATERIALIZED (SELECT answer.root_id,answer.choice FROM signal_listening_answers answer
+      JOIN signal_mass_labeling_items item ON item.map_id=$2 AND item.root_id=answer.root_id AND item.workspace_id=answer.workspace_id
+        AND answer.input_sha=decode(substr(item.input_digest,8),'hex')
+      WHERE answer.workspace_id=$1 AND answer.question_id=$3 AND answer.choice IS NOT NULL
+        ${consumerOnly ? `AND answer.root_id IN (${consumerRootsSql(4)})` : ""})`;
+    const args = [access.workspace_id, target.map_id, id, ...(consumerOnly ? cutArgs : [])];
+    const distribution = (await client.query<{ option: string; roots: number }>(
+      `WITH ${current} SELECT choice option,count(*)::int roots FROM current GROUP BY 1 ORDER BY 2 DESC,1`, args)).rows;
+    const by_topic = (await client.query<{ topic_key: string; option: string; roots: number }>(`WITH ${current}
+      , crossed AS MATERIALIZED (SELECT membership.concept_key topic_key,current.choice option,count(*)::int roots FROM current
+        JOIN signal_mass_labeling_memberships_v1 membership ON membership.workspace_id=$1 AND membership.map_id=$2
+          AND membership.root_id=current.root_id AND membership.belongs GROUP BY 1,2)
+      -- Whole topics are kept or dropped, so the shares within a topic stay correct.
+      SELECT crossed.topic_key,crossed.option,crossed.roots FROM crossed
+      JOIN (SELECT topic_key FROM crossed GROUP BY 1 ORDER BY sum(roots) DESC,1 LIMIT 15) top USING(topic_key)
+      ORDER BY 3 DESC,1,2`, args)).rows;
+    const trend = (await client.query<{ period: string; option: string; roots: number }>(`WITH ${current}
+      SELECT to_char(date_trunc('month',mention.published_at),'YYYY-MM') period,current.choice option,count(*)::int roots FROM current
+      JOIN mentions mention ON mention.workspace_id=$1 AND mention.id=current.root_id
+      WHERE mention.published_at IS NOT NULL GROUP BY 1,2 ORDER BY 1,2`, args)).rows;
     return { ...empty, answered: distribution.reduce((sum, row) => sum + row.roots, 0), distribution, by_topic, trend };
   });
 }

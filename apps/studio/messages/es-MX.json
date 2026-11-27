@@ -4963,6 +4963,13 @@
     "running": "Actualizando…",
     "nothingPending": "No hay nada pendiente: todo está respondido.",
     "runError": "No se pudo iniciar la actualización. Actualiza e inténtalo de nuevo.",
+    "retry": "Reintentar",
+    "unavailable": "No se pudo cargar la escucha. Actualiza e inténtalo de nuevo.",
+    "categoryRequired": "Define primero la categoría del estudio en la configuración de etiquetado.",
+    "estimating": "Calculando lo pendiente…",
+    "estimateError": "No se pudo calcular lo pendiente. Actualiza e inténtalo de nuevo.",
+    "topicsWithoutWording": "{count, plural, one {# tópico descubierto no tiene texto en el idioma de las preguntas y no se pregunta.} other {# tópicos descubiertos no tienen texto en el idioma de las preguntas y no se preguntan.}}",
+    "discoveredTopics": "Tópicos descubiertos (4 candidatos por mención)",
     "baseVoice": "Quién habla (base)",
     "basePromotion": "Es promoción (base)",
     "run": {

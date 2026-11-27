@@ -15,13 +15,15 @@ async function access(context: Context) {
   return { access: { database: pool, workspace_id: workspaceId, actor_user_id: loaded.session.appUser.id } } as const;
 }
 
-/** The effective configuration, what a pass would ask now, and the last run. */
-export async function GET(_request: Request, context: Context) {
+/** The effective configuration and the last run. With `?view=estimate`, what a pass
+ * would ask now: that read scans the answer cache, so it is only made on request. */
+export async function GET(request: Request, context: Context) {
   const resolved = await access(context);
   if ("response" in resolved) return resolved.response;
+  const view = new URL(request.url).searchParams.get("view");
+  if (view !== null && view !== "estimate") return topicResponse({ error: "listening_request_invalid" }, 422);
   try {
-    const state = await getSignalListeningStateV1(resolved.access);
-    return topicResponse({ ...state, estimate: await estimateSignalListeningV1(resolved.access) });
+    return topicResponse(view === "estimate" ? await estimateSignalListeningV1(resolved.access) : await getSignalListeningStateV1(resolved.access));
   } catch (error) { return topicError(error, "listening_unavailable"); }
 }
 

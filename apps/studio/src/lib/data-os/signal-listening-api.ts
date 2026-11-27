@@ -11,7 +11,9 @@ export const listeningQuestionInputSchemaV1 = z.object({
 export const listeningSaveInputSchemaV1 = z.object({
   expected_revision: z.number().int().min(0), questions: z.array(listeningQuestionInputSchemaV1).max(16),
 }).strict();
-export const listeningRunInputSchemaV1 = z.object({ cap_micro_usd: z.number().int().min(10_000).max(200_000_000) }).strict();
+/** The Studio mutation hook adds `idempotency_key` to every POST, so a retried click cannot queue a second paid run. */
+export const listeningRunInputSchemaV1 = z.object({ cap_micro_usd: z.number().int().min(10_000).max(200_000_000),
+  idempotency_key: z.string().min(8).max(200) }).strict();
 export type ListeningQuestionInputV1 = z.infer<typeof listeningQuestionInputSchemaV1>;
 
 export function isSignalListeningEnabled(env: Record<string, string | undefined> = process.env) {
