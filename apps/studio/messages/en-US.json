@@ -4980,6 +4980,20 @@
       "cap_reached": "The last update reached its cap with {done} mentions answered (USD {cost}). Raise the cap and update again.",
       "canceled": "The last update was canceled."
     },
+    "map": {
+      "title": "Theme map",
+      "body": "{themes, plural, one {# theme} other {# themes}} and {topics, plural, one {# topic} other {# topics}}, reviewed after the last classification.",
+      "showOutside": "Show {count, plural, one {# topic} other {# topics}} outside the category",
+      "noTheme": "No theme",
+      "topic": "Topic",
+      "scope": "Relation to the category",
+      "mentions": "Mentions",
+      "domain": {
+        "category": "In the category",
+        "adjacent": "Adjacent",
+        "outside": "Outside the category"
+      }
+    },
     "metrics": {
       "title": "Brand questions",
       "body": "Answers to the questions with options defined in Brand OS.",

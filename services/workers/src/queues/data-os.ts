@@ -1,5 +1,6 @@
 import { SIGNAL_MASS_LABELING_JEV_JOB_V1, signalMassLabelingJevJobV1, startMassLabelingJevDrainerV1 } from "../workers/signal-mass-labeling-jev";
 import { startSignalListeningDrainerV1 } from "../workers/signal-listening-job";
+import { startSignalListeningCycleDrainerV1 } from "../workers/signal-listening-cycle-job";
 import { SIGNAL_CONCEPT_MEMBERSHIP_JOB_V1, signalConceptMembershipJobV1, startConceptMembershipDrainerV1 } from "../workers/signal-concept-membership-batch";
 import { startHybridMembershipDrainerV1 } from "../workers/signal-hybrid-membership";
 import { SIGNAL_MENTION_FACETS_JOB_V1, signalMentionFacetsJobV1, startMentionFacetsDrainerV1 } from '../workers/signal-mention-facets-batch';
@@ -156,6 +157,7 @@ export function startDataOsWorker() {
   const facetsJevDrainer = startMentionFacetsJevDrainerV1();
   const massLabelingDrainer = startMassLabelingJevDrainerV1();
   const listeningDrainer = startSignalListeningDrainerV1();
+  const listeningCycleDrainer = startSignalListeningCycleDrainerV1();
   const membershipDrainer = startConceptMembershipDrainerV1();
   const hybridMembershipDrainer = startHybridMembershipDrainerV1();
   const batchDrainer = startSignalWorkspaceInterestDecisionBatchDrainerV1();
@@ -170,6 +172,7 @@ export function startDataOsWorker() {
     void facetsJevDrainer.close();
     void massLabelingDrainer.close();
     void listeningDrainer.close();
+    void listeningCycleDrainer.close();
     void membershipDrainer.close();
     void hybridMembershipDrainer.close();
     void batchDrainer.close();
