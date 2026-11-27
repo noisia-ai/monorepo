@@ -9,10 +9,17 @@ import { z } from "zod";
 /** Thresholds and the stop rule. Frozen into the cycle before its first step. */
 export type SignalListeningCyclePolicyV1 = {
   contract_version: "signal-listening-cycle-policy-v1";
-  /** A root belongs to a topic at or above this probability. */
+  /** A root is a confirmed member of a topic at or above this probability. Only confirmed members
+   * count in the report, in orphans, in twins and in the centre of a topic. */
   approval: number;
+  /** From here up to `approval` a root is a probable member: stored and available, not counted by default. */
+  probable?: number;
   candidates_per_root: number;
-  twin: { min_jointly_asked: number; min_jointly_approved: number; jaccard: number; coapproval: number; overlap_of_smaller: number; max_pairs: number };
+  twin: { min_jointly_asked: number; min_jointly_approved: number; jaccard: number; coapproval: number; overlap_of_smaller: number; max_pairs: number;
+    /** A pair accepted together at least this often is merged unless the review separates it with contrast. */
+    merge_coapproval?: number;
+    /** A separated pair is asked again; if it is still accepted together at least this often, it is merged. */
+    probation_coapproval?: number };
   /** Topics below this acceptance rate are shown to the reviewer as weak. */
   weak_acceptance: number;
   examples_per_stratum: number;
@@ -23,10 +30,16 @@ export type SignalListeningCyclePolicyV1 = {
 /** Measured on the pilot study before fixing them: the stricter pairs of the first
  * design (Jaccard 0.6 or co-approval 0.8) flagged 2 of 364 eligible topic pairs,
  * although twins were the main failure of the previous round. These flag about
- * sixty; the reviewer decides which of them are real duplicates. */
+ * sixty; the reviewer decides which of them are real duplicates.
+ *
+ * After the blind evaluation of the first full loop (members between 0.70 and
+ * 0.85 were right about six times in ten; the review merged too little) the
+ * auditor set two more rules: membership has two levels, and a pair accepted
+ * together four times in ten or more is merged unless the review separates it. */
 export const SIGNAL_LISTENING_CYCLE_POLICY_V1: Readonly<SignalListeningCyclePolicyV1> = Object.freeze({
-  contract_version: "signal-listening-cycle-policy-v1", approval: 0.7, candidates_per_root: 4,
-  twin: { min_jointly_asked: 20, min_jointly_approved: 10, jaccard: 0.2, coapproval: 0.4, overlap_of_smaller: 0.5, max_pairs: 80 },
+  contract_version: "signal-listening-cycle-policy-v1", approval: 0.85, probable: 0.7, candidates_per_root: 4,
+  twin: { min_jointly_asked: 20, min_jointly_approved: 10, jaccard: 0.2, coapproval: 0.4, overlap_of_smaller: 0.5, max_pairs: 80,
+    merge_coapproval: 0.4, probation_coapproval: 0.2 },
   weak_acceptance: 0.1, examples_per_stratum: 4, excerpt_chars: 240,
   orphan: { min_roots_to_regroup: 200, roots_per_group: 250, min_group: 25, max_groups: 40, examples: 8 },
   stop: { max_rounds: 3 as const, min_improvement: 0.01 },
@@ -66,6 +79,10 @@ export function signalListeningTopicWordingV1(topic: SignalListeningCatalogTopic
 
 export type SignalListeningCycleEvidenceV1 = {
   round: number; roots: number; category_roots: number; orphan_roots: number; orphan_rate: number | null;
+  /** Roots about the category without even a probable topic. Present when the policy has two levels. */
+  orphan_roots_probable?: number; orphan_rate_probable?: number | null;
+  /** Pairs the previous review kept apart with contrast, measured again with their new wording. */
+  probation?: Array<{ left: string; right: string; jointly_asked: number; jointly_approved: number; coapproval: number }>;
   twin_roots: number; twin_root_rate: number | null;
   topics: Array<{ topic_key: string; asked: number; approved: number; acceptance: number | null; accepted_examples: string[]; rejected_examples: string[] }>;
   twins: Array<{ left: string; right: string; jointly_asked: number; jointly_approved: number; jaccard: number; coapproval: number; examples: string[] }>;
@@ -111,6 +128,10 @@ What to decide, in this order. First name the themes. Then write the changed lis
 
 A pair of possible twins is settled in one of three ways: merge them when they mean the same; redefine both with contrast when they are different but their wording lets the same post fit both; leave both kept when they simply tend to happen together in the same post.
 
+A pair marked merges_unless_separated is accepted together so often that it is merged by default. You may keep its two topics apart only by redefining both: each new definition names the other topic and says what belongs there instead. The posts they shared are then classified again, and if both still accept them the pair is merged anyway. Leaving such a pair as kept merges it: the topic with more accepted posts stays as it is and takes the other in. A pair marked must_merge already had that second chance: merge it.
+
+A catch-all topic, one whose definition fits almost any post of its theme and that shows up in several pairs at once, is either dissolved into the neighbours it overlaps with (merge) or redefined narrowly around what only it covers.
+
 Change only what the evidence asks for. A topic that is not in a twin pair and is not weak is almost always kept. Changing a wording has a cost: every post has to be classified again for it.
 
 Rules:
@@ -152,10 +173,17 @@ const reviewOutput = z.object({
 });
 export type SignalListeningReviewOutputV1 = z.infer<typeof reviewOutput>;
 
+const pairKey = (left: string, right: string) => left < right ? `${left}\0${right}` : `${right}\0${left}`;
+/** Pairs that were kept apart with contrast, asked again, and are still accepted together too often: they merge without another say. */
+export function signalListeningForcedMergesV1(policy: SignalListeningCyclePolicyV1, evidence: Pick<SignalListeningCycleEvidenceV1, "probation">): Array<{ left: string; right: string }> {
+  const limit = policy.twin.probation_coapproval;
+  return limit === undefined ? [] : (evidence.probation ?? []).filter(pair => pair.coapproval >= limit).map(pair => ({ left: pair.left, right: pair.right }));
+}
 /** The user message of the review: one JSON document with the map and its evidence. */
 export function buildSignalListeningReviewPayloadV1(args: { category: string; question_language: "en" | "original"; catalog: SignalListeningCatalogTopicV1[];
   themes: SignalListeningThemeV1[]; evidence: SignalListeningCycleEvidenceV1; orphan_groups: SignalListeningOrphanGroupV1[]; policy: SignalListeningCyclePolicyV1 }): string {
   const measured = new Map(args.evidence.topics.map(topic => [topic.topic_key, topic]));
+  const forced = new Set(signalListeningForcedMergesV1(args.policy, args.evidence).map(pair => pairKey(pair.left, pair.right))), byDefault = args.policy.twin.merge_coapproval;
   return JSON.stringify({
     category: args.category, round: args.evidence.round,
     population: { posts: args.evidence.roots, about_the_category: args.evidence.category_roots, without_any_topic: args.evidence.orphan_roots },
@@ -167,8 +195,12 @@ export function buildSignalListeningReviewPayloadV1(args: { category: string; qu
         weak: evidence?.acceptance !== null && evidence?.acceptance !== undefined && evidence.acceptance < args.policy.weak_acceptance,
         accepted_examples: evidence?.accepted_examples ?? [], rejected_examples: evidence?.rejected_examples ?? [] };
     }),
-    possible_twins: args.evidence.twins.map(pair => ({ topics: [pair.left, pair.right], asked_together: pair.jointly_asked, accepted_together: pair.jointly_approved,
-      examples_accepted_by_both: pair.examples })),
+    possible_twins: [
+      ...(args.evidence.probation ?? []).filter(pair => forced.has(pairKey(pair.left, pair.right))).map(pair => ({ topics: [pair.left, pair.right],
+        asked_together: pair.jointly_asked, accepted_together: pair.jointly_approved, must_merge: true })),
+      ...args.evidence.twins.filter(pair => !forced.has(pairKey(pair.left, pair.right))).map(pair => ({ topics: [pair.left, pair.right], asked_together: pair.jointly_asked,
+        accepted_together: pair.jointly_approved, ...(byDefault !== undefined && pair.coapproval >= byDefault ? { merges_unless_separated: true } : {}),
+        examples_accepted_by_both: pair.examples }))],
     orphan_groups: args.orphan_groups.map(group => ({ key: group.group_key, posts: group.roots, examples: group.examples })),
   });
 }
@@ -183,7 +215,13 @@ export type SignalListeningReviewResultV1 = {
   catalog: SignalListeningCatalogTopicV1[]; themes: SignalListeningThemeV1[];
   /** True when at least one topic is asked with a different wording or the set of topics changed. */
   map_changed: boolean;
-  summary: { kept: number; redefined: number; merged: number; created: number; retired_by_merge: number; outside: number; adjacent: number; themes: number };
+  summary: { kept: number; redefined: number; merged: number; created: number; retired_by_merge: number; outside: number; adjacent: number; themes: number;
+    /** Merges made by the rule, not by the agent. */
+    merged_by_rule: number };
+  /** Pairs merged by the rule: the topic that stays and the one folded into it. */
+  rule_merges: Array<{ stays: string; folded: string; reason: "accepted_together" | "second_chance_failed" }>;
+  /** Pairs above the default-merge line that the agent kept apart by redefining both. They are measured again next round. */
+  probation: Array<{ left: string; right: string }>;
   /** What the agent proposed and was not applied, with the reason. Nothing here stops the round. */
   rejected: Array<{ key: string; reason: string }>;
 };
@@ -194,7 +232,9 @@ export type SignalListeningReviewResultV1 = {
  * and every topic the answer does not cover is kept as it was.
  */
 export function applySignalListeningReviewV1(args: { catalog: SignalListeningCatalogTopicV1[]; themes?: SignalListeningThemeV1[];
-  orphan_groups: SignalListeningOrphanGroupV1[]; output: unknown }): SignalListeningReviewResultV1 {
+  orphan_groups: SignalListeningOrphanGroupV1[]; output: unknown;
+  /** The merge rule of the cycle and what it was measured on. Without it only the agent merges. */
+  rules?: { policy: SignalListeningCyclePolicyV1; evidence: Pick<SignalListeningCycleEvidenceV1, "twins" | "topics" | "probation"> } }): SignalListeningReviewResultV1 {
   const parsed = reviewOutput.safeParse(args.output);
   if (!parsed.success) throw new Error("listening_review_output_invalid");
   const current = new Map(args.catalog.map(topic => [topic.topic_key, topic]));
@@ -209,14 +249,16 @@ export function applySignalListeningReviewV1(args: { catalog: SignalListeningCat
     }
   }
   const used = new Set<string>(), next = new Map<string, SignalListeningCatalogTopicV1>(), rejected: SignalListeningReviewResultV1["rejected"] = [];
-  const summary = { kept: 0, redefined: 0, merged: 0, created: 0, retired_by_merge: 0, outside: 0, adjacent: 0, themes: 0 };
+  const summary = { kept: 0, redefined: 0, merged: 0, created: 0, retired_by_merge: 0, outside: 0, adjacent: 0, themes: 0, merged_by_rule: 0 };
+  // Where each current topic ended up, and which ones the agent redefined in this answer.
+  const home = new Map<string, string>(), redefined = new Set<string>(), keptNow = new Set<string>();
   const themeOf = (value: string) => themes.has(value) ? value : null;
   // A kept topic starts the next round without lineage: its centroid comes from its own confirmed
   // members, not from the topics or orphan groups of an earlier round whose keys may be reused.
   const keep = (topic: SignalListeningCatalogTopicV1, domain = topic.domain, theme_key = topic.theme_key) => {
     next.set(topic.topic_key, { ...topic, domain, theme_key: theme_key !== null && themes.has(theme_key) ? theme_key : null,
       source_topic_keys: [], orphan_group_keys: [] });
-    used.add(topic.topic_key); summary.kept++;
+    used.add(topic.topic_key); summary.kept++; home.set(topic.topic_key, topic.topic_key); keptNow.add(topic.topic_key);
   };
   const empty = { name: "", definition: "" };
   // Changes are applied first: a topic listed both as kept and as the source of a change is changed.
@@ -249,20 +291,61 @@ export function applySignalListeningReviewV1(args: { catalog: SignalListeningCat
     next.set(proposal.key, { topic_key: proposal.key, localization: { original_language: language, original: original!, en: en!, es: es! },
       domain: proposal.domain, theme_key: themeOf(proposal.theme_key), origin: "agent", human_locked: false,
       source_topic_keys: sources, orphan_group_keys: proposal.action === "new" ? orphanKeys : [] });
-    for (const source of sources) used.add(source);
+    for (const source of sources) { used.add(source); home.set(source, proposal.key); }
     if (proposal.action === "new") summary.created++;
-    else if (proposal.action === "redefine") summary.redefined++;
+    else if (proposal.action === "redefine") { summary.redefined++; redefined.add(proposal.key); }
     else { summary.merged++; summary.retired_by_merge += sources.length - 1; }
   }
   // Whatever the answer did not cover stays exactly as it was. A key reused by an applied change wins.
   for (const topic of args.catalog) if (!used.has(topic.topic_key) && !next.has(topic.topic_key)) keep(topic);
+  // The merge rule comes last, over whatever the agent decided.
+  const rule_merges: SignalListeningReviewResultV1["rule_merges"] = [], probation: SignalListeningReviewResultV1["probation"] = [];
+  if (args.rules) {
+    const { policy, evidence } = args.rules, byDefault = policy.twin.merge_coapproval;
+    const approved = new Map(evidence.topics.map(topic => [topic.topic_key, topic.approved]));
+    const forced = signalListeningForcedMergesV1(policy, evidence), forcedKeys = new Set(forced.map(pair => pairKey(pair.left, pair.right)));
+    const pending = [...forced.map(pair => ({ ...pair, forced: true })),
+      ...(byDefault === undefined ? [] : [...evidence.twins].filter(pair => pair.coapproval >= byDefault && !forcedKeys.has(pairKey(pair.left, pair.right)))
+        .sort((a, b) => b.coapproval - a.coapproval || pairKey(a.left, a.right).localeCompare(pairKey(b.left, b.right))).map(pair => ({ left: pair.left, right: pair.right, forced: false })))];
+    const lineage = (topic: SignalListeningCatalogTopicV1) => topic.source_topic_keys.length ? topic.source_topic_keys : [topic.topic_key];
+    for (const pair of pending) {
+      const a = home.get(pair.left), b = home.get(pair.right);
+      // Unknown to this map, or already one topic.
+      if (!a || !b || a === b) continue;
+      // Kept apart with contrast: both were redefined now. They get one more measurement.
+      if (!pair.forced && a === pair.left && b === pair.right && redefined.has(a) && redefined.has(b)) { probation.push({ left: pair.left, right: pair.right }); continue; }
+      const first = next.get(a)!, second = next.get(b)!;
+      if (first.human_locked || second.human_locked) { rejected.push({ key: `${pair.left}+${pair.right}`, reason: "rule_merge_human_locked" }); continue; }
+      // The topic with more confirmed posts stays with its wording and takes the other in.
+      const sizeA = approved.get(pair.left) ?? 0, sizeB = approved.get(pair.right) ?? 0;
+      const stays = sizeA > sizeB || (sizeA === sizeB && a < b) ? first : second, folded = stays === first ? second : first;
+      const sources = [...new Set([...lineage(stays), ...lineage(folded)])].sort();
+      if (sources.length > 64) { rejected.push({ key: `${pair.left}+${pair.right}`, reason: "rule_merge_too_wide" }); continue; }
+      next.set(stays.topic_key, { ...stays, source_topic_keys: sources, orphan_group_keys: [...new Set([...stays.orphan_group_keys, ...folded.orphan_group_keys])].slice(0, 16) });
+      next.delete(folded.topic_key);
+      for (const [source, where] of home) if (where === folded.topic_key) home.set(source, stays.topic_key);
+      for (const key of [stays.topic_key, folded.topic_key]) if (keptNow.delete(key)) summary.kept--;
+      summary.merged_by_rule++; summary.retired_by_merge++;
+      rule_merges.push({ stays: stays.topic_key, folded: folded.topic_key, reason: pair.forced ? "second_chance_failed" : "accepted_together" });
+    }
+  }
   const catalog = [...next.values()].sort((a, b) => a.topic_key.localeCompare(b.topic_key));
   const usedThemes = new Set(catalog.flatMap(topic => topic.theme_key ? [topic.theme_key] : []));
   summary.outside = catalog.filter(topic => topic.domain === "outside").length;
   summary.adjacent = catalog.filter(topic => topic.domain === "adjacent").length;
   summary.themes = usedThemes.size;
   return { catalog: validateSignalListeningCatalogV1(catalog), themes: [...themes.values()].filter(item => usedThemes.has(item.theme_key)),
-    map_changed: summary.redefined + summary.merged + summary.created > 0, summary, rejected };
+    map_changed: summary.redefined + summary.merged + summary.created + summary.merged_by_rule > 0, summary, rejected, rule_merges, probation };
+}
+
+/**
+ * The merge rule on its own, for the end of a loop: there is no review left, so
+ * every pair above the line is merged and nothing else changes.
+ */
+export function applySignalListeningRuleMergesV1(args: { catalog: SignalListeningCatalogTopicV1[]; themes: SignalListeningThemeV1[];
+  policy: SignalListeningCyclePolicyV1; evidence: Pick<SignalListeningCycleEvidenceV1, "twins" | "topics" | "probation"> }): SignalListeningReviewResultV1 {
+  return applySignalListeningReviewV1({ catalog: args.catalog, themes: args.themes, orphan_groups: [], output: { themes: [], kept: [], changed: [] },
+    rules: { policy: args.policy, evidence: args.evidence } });
 }
 
 export function signalListeningReviewCostMicroUsdV1(usage: { input_tokens: number; output_tokens: number; cache_creation_input_tokens?: number | null;

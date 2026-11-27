@@ -70,6 +70,8 @@ export type SignalListeningMapV1 = {
   themes: Array<{ theme_key: string | null; name: { original: string; en: string; es: string } | null;
     topics: Array<{ topic_key: string; name: { original: string; en: string; es: string }; definition: { original: string; en: string; es: string };
       domain: "category" | "adjacent" | "outside"; mentions: number;
+      /** Probable members: below the confirmation line, kept and not counted in `mentions`. */
+      probable_mentions: number;
       /** Topics a person folded into this one. */
       merged_from: string[] }> }>;
 };
@@ -85,6 +87,11 @@ export async function readSignalListeningMapV1(access: Access): Promise<SignalLi
     const volumes = new Map((await client.query<{ topic_key: string; mentions: number }>(`WITH ${EFFECTIVE}
       SELECT topic_key,count(*)::int mentions FROM effective GROUP BY 1`, [access.workspace_id, map.base_map_id, map.round_id, map.policy.approval, ...pairs(map.merged)])).rows
       .map(row => [row.topic_key, row.mentions]));
+    const probable = new Map(map.policy.probable === undefined ? [] : (await client.query<{ topic_key: string; mentions: number }>(`WITH ${EFFECTIVE}
+      SELECT COALESCE(merged.target,valid.topic_key) topic_key,count(DISTINCT valid.root_id)::int mentions FROM valid LEFT JOIN merged ON merged.source=valid.topic_key
+      WHERE NOT valid.ok AND valid.probability>=$7::real
+        AND NOT EXISTS(SELECT 1 FROM effective WHERE effective.root_id=valid.root_id AND effective.topic_key=COALESCE(merged.target,valid.topic_key)) GROUP BY 1`,
+      [access.workspace_id, map.base_map_id, map.round_id, map.policy.approval, ...pairs(map.merged), map.policy.probable])).rows.map(row => [row.topic_key, row.mentions]));
     const names = new Map(map.themes.map(item => [item.theme_key, item.name]));
     const grouped = new Map<string | null, SignalListeningMapV1["themes"][number]>();
     for (const topic of map.catalog) {
@@ -94,6 +101,7 @@ export async function readSignalListeningMapV1(access: Access): Promise<SignalLi
       const { original, en, es } = topic.localization;
       grouped.get(theme_key)!.topics.push({ topic_key: topic.topic_key, name: { original: original.name, en: en.name, es: es.name },
         definition: { original: original.definition, en: en.definition, es: es.definition }, domain: topic.domain, mentions: volumes.get(topic.topic_key) ?? 0,
+        probable_mentions: probable.get(topic.topic_key) ?? 0,
         merged_from: [...map.merged].filter(([, target]) => target === topic.topic_key).map(([source]) => source).sort() });
     }
     const total = (item: SignalListeningMapV1["themes"][number]) => item.topics.reduce((sum, topic) => sum + topic.mentions, 0);
@@ -110,8 +118,10 @@ export type SignalListeningTopicMentionsV1 = {
     by_person: boolean }>;
 };
 /** Some mentions of one topic, so a person can read them and correct them. The ones a person added come first. */
-export async function readSignalListeningTopicMentionsV1(access: Access & { topic_key: string; limit?: number }): Promise<SignalListeningTopicMentionsV1> {
-  const limit = access.limit ?? 30;
+export async function readSignalListeningTopicMentionsV1(access: Access & { topic_key: string; limit?: number;
+  /** `probable` lists the members below the confirmation line instead of the confirmed ones. */
+  level?: "confirmed" | "probable" }): Promise<SignalListeningTopicMentionsV1> {
+  const limit = access.limit ?? 30, level = access.level ?? "confirmed";
   if (!topicKey.test(access.topic_key) || !Number.isSafeInteger(limit) || limit < 1 || limit > 100) fail("listening_request_invalid", 422);
   return shared.transaction(access.database, async client => {
     await client.query("SET TRANSACTION READ ONLY");
@@ -121,24 +131,27 @@ export async function readSignalListeningTopicMentionsV1(access: Access & { topi
     // Only this topic and the ones folded into it are read: the whole map is not needed to show one topic.
     const keys = [access.topic_key, ...[...map.merged].filter(([, target]) => target === access.topic_key).map(([source]) => source)];
     const rows = (await client.query<SignalListeningTopicMentionsV1["mentions"][number] & { total: number }>(`WITH classified AS (
-        SELECT DISTINCT answer.root_id FROM signal_listening_round_topics topic
-        JOIN signal_listening_answers answer ON answer.question_id=topic.question_id AND answer.workspace_id=$1 AND answer.probability>=$4::real
+        SELECT answer.root_id FROM signal_listening_round_topics topic
+        JOIN signal_listening_answers answer ON answer.question_id=topic.question_id AND answer.workspace_id=$1
         JOIN signal_mass_labeling_items item ON item.map_id=$2 AND item.workspace_id=$1 AND item.root_id=answer.root_id
           AND answer.input_sha=decode(substr(item.input_digest,8),'hex')
-        WHERE topic.round_id=$3 AND topic.topic_key=ANY($5::text[])),
+        WHERE topic.round_id=$3 AND topic.topic_key=ANY($5::text[]) GROUP BY 1
+        -- Confirmed: some question of the topic reaches the line. Probable: none does, and some reaches the lower one.
+        HAVING CASE WHEN $7::real IS NULL THEN max(answer.probability)>=$4::real ELSE max(answer.probability)<$4::real AND max(answer.probability)>=$7::real END),
       corrections AS (SELECT DISTINCT ON (root_id) root_id,operation FROM signal_listening_human_edits
         WHERE workspace_id=$1 AND topic_key=ANY($5::text[]) AND operation IN('remove_label','add_label') ORDER BY root_id,created_at DESC,id DESC),
       effective AS (
         SELECT root_id,false by_person FROM classified WHERE NOT EXISTS(SELECT 1 FROM corrections WHERE corrections.root_id=classified.root_id)
         UNION ALL SELECT corrections.root_id,true FROM corrections
-        JOIN signal_mass_labeling_items item ON item.workspace_id=$1 AND item.map_id=$2 AND item.root_id=corrections.root_id WHERE corrections.operation='add_label'),
+        JOIN signal_mass_labeling_items item ON item.workspace_id=$1 AND item.map_id=$2 AND item.root_id=corrections.root_id
+        WHERE corrections.operation='add_label' AND $7::real IS NULL),
       -- The few that are shown are chosen first; texts and links are read only for them.
       chosen AS MATERIALIZED (SELECT root_id,by_person,count(*) OVER()::int total FROM effective ORDER BY by_person DESC,md5(root_id::text) LIMIT $6)
       SELECT chosen.root_id,chosen.by_person,chosen.total,left(item.text,600) text,mention.url,mention.platform,mention.published_at::text
       FROM chosen JOIN signal_mass_labeling_items item ON item.workspace_id=$1 AND item.map_id=$2 AND item.root_id=chosen.root_id
       JOIN mentions mention ON mention.workspace_id=$1 AND mention.id=chosen.root_id
       ORDER BY chosen.by_person DESC,md5(chosen.root_id::text)`,
-      [access.workspace_id, map.base_map_id, map.round_id, map.policy.approval, keys, limit])).rows;
+      [access.workspace_id, map.base_map_id, map.round_id, map.policy.approval, keys, limit, level === "probable" ? map.policy.probable ?? map.policy.approval : null])).rows;
     return { contract_version: "signal-listening-topic-mentions-v1", workspace_id: access.workspace_id, topic_key: access.topic_key, total: rows[0]?.total ?? 0,
       mentions: rows.map(({ total: _total, ...row }) => row) };
   });

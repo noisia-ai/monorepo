@@ -4988,6 +4988,8 @@
       "topic": "Tópico",
       "scope": "Relación con la categoría",
       "mentions": "Menciones",
+      "probable": "+{count} probables",
+      "probableHelp": "Menciones que el clasificador ve probables pero no confirma. Se guardan y no se cuentan.",
       "mergedFrom": "{count, plural, one {incluye # tópico fusionado} other {incluye # tópicos fusionados}}",
       "destination": "Otro tópico",
       "choose": "Elige un tópico",

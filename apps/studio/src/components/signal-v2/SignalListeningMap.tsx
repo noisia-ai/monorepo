@@ -71,7 +71,8 @@ export function SignalListeningMap({ workspaceId }: { workspaceId: string }) {
           {map.can_edit ? <button type="button" className="signal-v2-listening__topic" aria-expanded={open === topic.topic_key}
             onClick={() => setOpen(current => current === topic.topic_key ? null : topic.topic_key)}>{topic.name[language]}</button> : topic.name[language]}
           {topic.merged_from.length ? <small> · {t("mergedFrom", { count: topic.merged_from.length })}</small> : null}</th>
-        <td>{t(`domain.${topic.domain}`)}</td><td>{topic.mentions.toLocaleString()}</td></tr>,
+        <td>{t(`domain.${topic.domain}`)}</td>
+        <td>{topic.mentions.toLocaleString()}{topic.probable_mentions ? <small title={t("probableHelp")}> · {t("probable", { count: topic.probable_mentions.toLocaleString() })}</small> : null}</td></tr>,
       open === topic.topic_key ? <tr key={`${topic.topic_key}:edit`}><td colSpan={3} className="signal-v2-listening__edit">
         <p className="signal-v2-listening__note">{topic.definition[language]}</p>
         <label>{t("destination")}<select value={destination} disabled={edit.busy} onChange={event => setDestination(event.target.value)}>

@@ -164,7 +164,7 @@ export async function chargeSignalListeningCycleV1(database: Database, cycle: Pi
 }
 /** Answers of a round that count: this round's topics, for the text the map holds today. */
 const VALID = `valid AS MATERIALIZED (
-  SELECT answer.root_id,topic.topic_key,answer.probability>=$4::real ok
+  SELECT answer.root_id,topic.topic_key,answer.probability>=$4::real ok,answer.probability
   FROM signal_listening_round_topics topic
   JOIN signal_listening_answers answer ON answer.question_id=topic.question_id AND answer.workspace_id=$1
   JOIN signal_mass_labeling_items item ON item.map_id=$2 AND item.workspace_id=$1 AND item.root_id=answer.root_id
@@ -178,16 +178,30 @@ const CATEGORY = `category AS MATERIALIZED (
 
 /** Measures a round without calling any provider: acceptance per topic, possible
  * twins, and roots about the category that no topic accepted. */
-export async function measureSignalListeningRoundV1(database: Database, cycle: SignalListeningCycleV1, round: Pick<SignalListeningRoundV1, "id" | "round_no">) {
+export async function measureSignalListeningRoundV1(database: Database, cycle: SignalListeningCycleV1, round: Pick<SignalListeningRoundV1, "id" | "round_no">,
+  /** Pairs the previous review kept apart with contrast, and the round they were measured in. */
+  second_chance: { previous_round_id: string; pairs: Array<{ left: string; right: string }> } | null = null) {
   const policy = cycle.policy, base = [cycle.workspace_id, cycle.base_map_id, round.id, policy.approval];
   const client = await database.connect();
   try {
     await client.query("BEGIN"); await client.query("SET TRANSACTION READ ONLY");
-    const population = (await client.query<{ roots: number; category_roots: number; orphan_roots: number }>(`WITH ${VALID}, ${CATEGORY}
+    const population = (await client.query<{ roots: number; category_roots: number; orphan_roots: number; orphan_roots_probable: number }>(`WITH ${VALID}, ${CATEGORY}
       SELECT (SELECT count(*)::int FROM signal_mass_labeling_items WHERE workspace_id=$1 AND map_id=$2) roots,
         (SELECT count(*)::int FROM category) category_roots,
-        (SELECT count(*)::int FROM category WHERE NOT EXISTS(SELECT 1 FROM valid WHERE valid.root_id=category.root_id AND valid.ok)) orphan_roots`,
-      [...base, cycle.lexicon_revision])).rows[0]!;
+        (SELECT count(*)::int FROM category WHERE NOT EXISTS(SELECT 1 FROM valid WHERE valid.root_id=category.root_id AND valid.ok)) orphan_roots,
+        (SELECT count(*)::int FROM category WHERE NOT EXISTS(SELECT 1 FROM valid WHERE valid.root_id=category.root_id AND valid.probability>=$6::real)) orphan_roots_probable`,
+      [...base, cycle.lexicon_revision, policy.probable ?? policy.approval])).rows[0]!;
+    // Of the posts both topics of a separated pair accepted before, how many both still accept with the new wording.
+    const probation = second_chance?.pairs.length ? (await client.query<{ left: string; right: string; jointly_asked: number; jointly_approved: number }>(`WITH ${VALID}, shared AS (
+        SELECT pair.left_key,pair.right_key,first.root_id FROM unnest($5::text[],$6::text[]) pair(left_key,right_key)
+        JOIN signal_listening_round_topics a ON a.round_id=$7 AND a.topic_key=pair.left_key
+        JOIN signal_listening_round_topics b ON b.round_id=$7 AND b.topic_key=pair.right_key
+        JOIN signal_listening_answers first ON first.question_id=a.question_id AND first.workspace_id=$1 AND first.probability>=$4::real
+        JOIN signal_listening_answers second ON second.question_id=b.question_id AND second.workspace_id=$1 AND second.root_id=first.root_id AND second.probability>=$4::real)
+      SELECT shared.left_key "left",shared.right_key "right",count(*)::int jointly_asked,count(*) FILTER (WHERE now_left.ok AND now_right.ok)::int jointly_approved
+      FROM shared LEFT JOIN valid now_left ON now_left.root_id=shared.root_id AND now_left.topic_key=shared.left_key
+      LEFT JOIN valid now_right ON now_right.root_id=shared.root_id AND now_right.topic_key=shared.right_key GROUP BY 1,2 ORDER BY 1,2`,
+      [...base, second_chance.pairs.map(pair => pair.left), second_chance.pairs.map(pair => pair.right), second_chance.previous_round_id])).rows : [];
     const topics = (await client.query<{ topic_key: string; asked: number; approved: number }>(`WITH ${VALID}
       SELECT topic.topic_key,count(valid.root_id)::int asked,count(valid.root_id) FILTER (WHERE valid.ok)::int approved
       FROM signal_listening_round_topics topic LEFT JOIN valid USING(topic_key) WHERE topic.round_id=$3 GROUP BY 1 ORDER BY 1`, base)).rows;
@@ -223,6 +237,9 @@ export async function measureSignalListeningRoundV1(database: Database, cycle: S
     await client.query("COMMIT");
     const evidence: SignalListeningCycleEvidenceV1 = { round: round.round_no, roots: population.roots, category_roots: population.category_roots,
       orphan_roots: population.orphan_roots, orphan_rate: population.category_roots ? population.orphan_roots / population.category_roots : null,
+      ...(policy.probable === undefined ? {} : { orphan_roots_probable: population.orphan_roots_probable,
+        orphan_rate_probable: population.category_roots ? population.orphan_roots_probable / population.category_roots : null }),
+      ...(second_chance ? { probation: probation.map(pair => ({ ...pair, coapproval: pair.jointly_asked ? pair.jointly_approved / pair.jointly_asked : 0 })) } : {}),
       twin_roots: twinRoots, twin_root_rate: population.category_roots ? twinRoots / population.category_roots : null,
       topics: topics.map(topic => ({ topic_key: topic.topic_key, asked: topic.asked, approved: topic.approved, acceptance: topic.asked ? topic.approved / topic.asked : null,
         accepted_examples: examples.filter(row => row.topic_key === topic.topic_key && row.ok).map(row => row.excerpt),
@@ -295,13 +312,15 @@ export async function readSignalListeningConfirmedCentroidsV1(database: Database
 export async function openSignalListeningNextRoundV1(args: { database: Database; cycle: SignalListeningCycleV1; round: SignalListeningRoundV1;
   catalog: SignalListeningCatalogTopicV1[]; themes: SignalListeningThemeV1[]; review: Record<string, unknown>;
   /** Confirmed members of every topic of the measured round, so merges can be weighted. */
-  confirmed: SignalListeningConfirmedCentroidsV1 }): Promise<{ round_id: string }> {
+  confirmed: SignalListeningConfirmedCentroidsV1;
+  /** A last round with no review: it only asks what the merges of the rule left pending. Opened right after measuring. */
+  settling?: boolean }): Promise<{ round_id: string }> {
   const { cycle, round, confirmed } = args, configuration = await readSignalListeningCycleConfigurationV1(args.database, cycle);
   return shared.transaction(args.database, async client => {
     const owned = (await client.query("SELECT 1 FROM signal_listening_cycles WHERE id=$1 AND lease_token=$2 FOR UPDATE", [cycle.id, cycle.lease_token])).rows.length;
     if (!owned) throw new Error("listening_cycle_lease_lost");
-    await client.query("UPDATE signal_listening_rounds SET review=$2::jsonb,step='reviewed',updated_at=now() WHERE id=$1 AND step='regrouped'",
-      [round.id, JSON.stringify(args.review)]);
+    await client.query("UPDATE signal_listening_rounds SET review=$2::jsonb,step='reviewed',updated_at=now() WHERE id=$1 AND step=$3",
+      [round.id, JSON.stringify(args.review), args.settling ? "measured" : "regrouped"]);
     const existing = (await client.query<{ id: string }>("SELECT id FROM signal_listening_rounds WHERE cycle_id=$1 AND round_no=$2", [cycle.id, round.round_no + 1])).rows[0];
     if (existing) return { round_id: existing.id };
     const previous = new Map((await client.query<{ topic_key: string; centroid: string | null }>(
@@ -324,8 +343,9 @@ export async function openSignalListeningNextRoundV1(args: { database: Database;
       }
     }
     const round_id = randomUUID();
-    await client.query("INSERT INTO signal_listening_rounds(id,cycle_id,workspace_id,round_no,step,catalog,themes) VALUES($1,$2,$3,$4,'created',$5::jsonb,$6::jsonb)",
-      [round_id, cycle.id, cycle.workspace_id, round.round_no + 1, JSON.stringify(args.catalog), JSON.stringify(args.themes)]);
+    await client.query(`INSERT INTO signal_listening_rounds(id,cycle_id,workspace_id,round_no,step,catalog,themes,review)
+      VALUES($1,$2,$3,$4,'created',$5::jsonb,$6::jsonb,$7::jsonb)`,
+      [round_id, cycle.id, cycle.workspace_id, round.round_no + 1, JSON.stringify(args.catalog), JSON.stringify(args.themes), args.settling ? '{"settling":true}' : null]);
     await writeRoundTopics(client, { id: round_id, workspace_id: cycle.workspace_id }, configuration, args.catalog, centroids);
     return { round_id };
   });
@@ -405,10 +425,17 @@ export async function createSignalListeningRoundSourceV1(database: Database, run
   if (plan.planner !== "topics_round_v1" || !uuid.test(plan.round_id) || !Number.isFinite(plan.input_usd_per_mtok) || plan.input_usd_per_mtok <= 0) {
     throw new Error("listening_plan_invalid");
   }
-  const scope = (await database.query<{ base_map_id: string; configuration_id: string; policy: SignalListeningCyclePolicyV1; catalog: SignalListeningCatalogTopicV1[]; workspace_id: string }>(
-    `SELECT cycle.base_map_id,cycle.configuration_id,cycle.policy,round.catalog,cycle.workspace_id FROM signal_listening_rounds round
+  const scope = (await database.query<{ base_map_id: string; configuration_id: string; policy: SignalListeningCyclePolicyV1; catalog: SignalListeningCatalogTopicV1[]; workspace_id: string;
+    previous_round_id: string | null }>(
+    `SELECT cycle.base_map_id,cycle.configuration_id,cycle.policy,round.catalog,cycle.workspace_id,
+       (SELECT earlier.id FROM signal_listening_rounds earlier WHERE earlier.cycle_id=round.cycle_id AND earlier.round_no=round.round_no-1) previous_round_id
+     FROM signal_listening_rounds round
      JOIN signal_listening_cycles cycle ON cycle.id=round.cycle_id WHERE round.id=$1 AND round.workspace_id=$2`, [plan.round_id, run.workspace_id])).rows[0];
   if (!scope) throw new Error("listening_plan_unavailable");
+  // A topic that was redefined, or that took another one in, is asked of every root its sources held:
+  // being close to its centre is not the only reason to ask.
+  const heirs = new Map<string, string[]>();
+  for (const topic of scope.catalog) for (const source of topic.source_topic_keys) heirs.set(source, [...(heirs.get(source) ?? []), topic.topic_key]);
   const configuration = await readSignalListeningCycleConfigurationV1(database, scope);
   const questions = new Map(validateSignalListeningCatalogV1(scope.catalog).map(topic => [topic.topic_key, topicQuestion(configuration, topic)]));
   const ids = new Map((await database.query<{ topic_key: string; question_id: string }>(
@@ -440,9 +467,21 @@ export async function createSignalListeningRoundSourceV1(database: Database, run
           if (`sha256:${answer.input_sha}` !== digests.get(answer.root_id)) continue;
           const set = answered.get(answer.root_id); if (set) set.add(Number(answer.question_id)); else answered.set(answer.root_id, new Set([Number(answer.question_id)]));
         }
+        const inherited = new Map<string, Set<string>>();
+        if (heirs.size && scope.previous_round_id) {
+          for (const member of (await database.query<{ root_id: string; topic_key: string }>(`SELECT answer.root_id,topic.topic_key FROM signal_listening_round_topics topic
+            JOIN signal_listening_answers answer ON answer.question_id=topic.question_id AND answer.workspace_id=$1 AND answer.root_id=ANY($2::uuid[]) AND answer.probability>=$4::real
+            WHERE topic.round_id=$3 AND topic.topic_key=ANY($5::text[])`,
+            [run.workspace_id, rows.map(row => row.root_id), scope.previous_round_id, scope.policy.approval, [...heirs.keys()]])).rows) {
+            const set = inherited.get(member.root_id) ?? new Set<string>();
+            for (const heir of heirs.get(member.topic_key) ?? []) set.add(heir);
+            inherited.set(member.root_id, set);
+          }
+        }
         const items: SignalListeningItemV1[] = [];
         for (const row of rows) {
-          const pending = (row.candidates ?? []).filter(topic_key => questions.has(topic_key) && ids.has(topic_key) && !answered.get(row.root_id)?.has(ids.get(topic_key)!));
+          const pending = [...new Set([...(row.candidates ?? []), ...(inherited.get(row.root_id) ?? [])])]
+            .filter(topic_key => questions.has(topic_key) && ids.has(topic_key) && !answered.get(row.root_id)?.has(ids.get(topic_key)!));
           if (!pending.length) continue;
           const asked = pending.map((topic_key, index) => ({ ...questions.get(topic_key)!, request_key: `q${index}` }));
           items.push({ root_id: row.root_id, input_digest: row.input_digest, questions: asked,

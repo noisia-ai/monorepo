@@ -60,10 +60,17 @@ async function cycleStatus(cycle_id: string) {
     rounds: state.rounds.map(round => ({ round: round.round_no, step: round.step, topics: round.catalog.length, themes: round.themes.length,
       outside: round.catalog.filter(topic => topic.domain === "outside").length, run_id: round.run_id,
       signals: round.evidence ? { category_roots: round.evidence.category_roots, orphan_roots: round.evidence.orphan_roots,
-        orphan_rate: round.evidence.orphan_rate, twin_pairs: round.evidence.twins.length, twin_roots: round.evidence.twin_roots,
-        twin_root_rate: round.evidence.twin_root_rate } : null,
+        orphan_rate: round.evidence.orphan_rate, orphan_roots_probable: round.evidence.orphan_roots_probable ?? null,
+        orphan_rate_probable: round.evidence.orphan_rate_probable ?? null, twin_pairs: round.evidence.twins.length, twin_roots: round.evidence.twin_roots,
+        twin_root_rate: round.evidence.twin_root_rate,
+        merge_by_default_pairs: state.cycle.policy.twin.merge_coapproval === undefined ? null
+          : round.evidence.twins.filter(pair => pair.coapproval >= state.cycle.policy.twin.merge_coapproval!).length,
+        second_chance: round.evidence.probation?.map(pair => ({ shared: pair.jointly_asked, still_shared: pair.jointly_approved, coapproval: pair.coapproval })) ?? null } : null,
       orphan_groups: round.orphan_groups?.map(group => ({ roots: group.roots, cohesion: group.cohesion })) ?? null,
-      review: round.review ? { summary: round.review.summary, rejected: round.review.rejected, usage: round.review.usage,
+      review: round.review ? { settling: round.review.settling ?? false, summary: round.review.summary, rejected: round.review.rejected,
+        merged_by_rule: Array.isArray(round.review.rule_merges) ? round.review.rule_merges.length : null,
+        kept_apart: Array.isArray(round.review.probation) ? round.review.probation.length : null,
+        settled: (round.review.settled as { rule_merges?: unknown[] } | undefined)?.rule_merges?.length ?? null, usage: round.review.usage,
         cost_usd: Number(round.review.cost_micro_usd) / 1e6, duration_ms: round.review.duration_ms, payload_bytes: round.review.payload_bytes } : null })) }, null, 1));
 }
 

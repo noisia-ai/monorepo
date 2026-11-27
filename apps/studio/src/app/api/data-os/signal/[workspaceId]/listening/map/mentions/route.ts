@@ -12,9 +12,11 @@ export async function GET(request: Request, context: { params: Promise<{ workspa
   if (!isSignalListeningEnabled()) return topicResponse({ error: "listening_not_enabled" }, 404);
   const loaded = await loadSignalWorkspaceContextForTopics(workspaceId);
   if ("response" in loaded) return loaded.response;
-  const query = new URL(request.url).searchParams, topic = query.get("topic");
-  if (!topic || [...query.keys()].some(name => name !== "topic")) return topicResponse({ error: "listening_request_invalid" }, 422);
+  const query = new URL(request.url).searchParams, topic = query.get("topic"), level = query.get("level") ?? "confirmed";
+  if (!topic || (level !== "confirmed" && level !== "probable") || [...query.keys()].some(name => name !== "topic" && name !== "level")) {
+    return topicResponse({ error: "listening_request_invalid" }, 422);
+  }
   try {
-    return topicResponse(await readSignalListeningTopicMentionsV1({ database: pool, workspace_id: workspaceId, actor_user_id: loaded.session.appUser.id, topic_key: topic }));
+    return topicResponse(await readSignalListeningTopicMentionsV1({ database: pool, workspace_id: workspaceId, actor_user_id: loaded.session.appUser.id, topic_key: topic, level }));
   } catch (error) { return topicError(error, "listening_mentions_unavailable"); }
 }
