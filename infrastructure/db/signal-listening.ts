@@ -19,7 +19,11 @@ export type SignalListeningRunStatusV1 = "queued" | "running" | "completed" | "f
 /** This planner is a measurement: it asks again even when the cache already
  * holds the answer, and only skips the roots this same run already answered. */
 export type SignalListeningLegacyPlanV1 = { planner: "r15_request_v2"; map_id: string; root_limit: number; input_usd_per_mtok: number };
-export type SignalListeningPlanV1 = SignalListeningLegacyPlanV1;
+/** Asks, for the brand's current population, only what the answer cache does not hold. */
+export type SignalListeningListeningPlanV1 = { planner: "listening_v1"; configuration_id: string; map_id: string; input_usd_per_mtok: number;
+  /** Revision of the study settings whose category lexicon decides the consumer cut. */
+  lexicon_revision: number };
+export type SignalListeningPlanV1 = SignalListeningLegacyPlanV1 | SignalListeningListeningPlanV1;
 export type SignalListeningRunV1 = {
   id: string; workspace_id: string; kind: SignalListeningRunKindV1; plan: SignalListeningPlanV1;
   status: SignalListeningRunStatusV1; cap_micro_usd: number; spent_micro_usd: number; input_tokens: number;
@@ -32,6 +36,13 @@ const RUN_COLUMNS = `id,workspace_id,kind,plan,status,cap_micro_usd::float8 cap_
 function fail(code: string): never { throw new Error(code); }
 
 export function validateSignalListeningPlanV1(value: unknown): SignalListeningPlanV1 {
+  const listening = value as SignalListeningListeningPlanV1 | null;
+  if (listening?.planner === "listening_v1") {
+    if (!uuid.test(listening.configuration_id) || !uuid.test(listening.map_id) || !Number.isFinite(listening.input_usd_per_mtok)
+      || listening.input_usd_per_mtok <= 0 || !Number.isSafeInteger(listening.lexicon_revision) || listening.lexicon_revision < 0) fail("listening_plan_invalid");
+    return { planner: "listening_v1", configuration_id: listening.configuration_id, map_id: listening.map_id,
+      input_usd_per_mtok: listening.input_usd_per_mtok, lexicon_revision: listening.lexicon_revision };
+  }
   const plan = value as SignalListeningLegacyPlanV1 | null;
   if (!plan || plan.planner !== "r15_request_v2" || !uuid.test(plan.map_id) || !Number.isSafeInteger(plan.root_limit)
     || plan.root_limit < 1 || plan.root_limit > 5_000_000 || !Number.isFinite(plan.input_usd_per_mtok)
@@ -168,6 +179,7 @@ type LegacyRow = MassLabelingInputV1 & { ordinal: number };
 /** Reads the frozen R15 fragments and candidates and rebuilds the exact R15 request. */
 export async function createSignalListeningLegacySourceV1(database: Database, run: SignalListeningRunV1) {
   const plan = validateSignalListeningPlanV1(run.plan);
+  if (plan.planner !== "r15_request_v2") fail("listening_plan_invalid");
   const client = await database.connect();
   const model = "jev-1.13.0";
   let configuration: MassLabelingConfigurationV2, localized: Map<string, SignalTopicLocalizationV1>;

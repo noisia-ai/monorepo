@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { gzipSync } from "node:zlib";
 import type { Pool } from "pg";
 import {
-  claimSignalListeningRunV1, createSignalListeningLegacySourceV1, finishSignalListeningRunV1, releaseSignalListeningRunV1,
+  claimSignalListeningRunV1, createSignalListeningLegacySourceV1, createSignalListeningSourceV1, finishSignalListeningRunV1, releaseSignalListeningRunV1,
   renewSignalListeningRunV1, SIGNAL_LISTENING_MAX_CLAIMS_V1, writeSignalListeningPageV1, type SignalListeningRunV1,
 } from "@noisia/db";
 import { mapSignalListeningAnswersV1, signalListeningCostMicroUsdV1, type SignalListeningItemV1 } from "@noisia/query-engine";
@@ -69,7 +69,8 @@ export async function processSignalListeningRunV1(args: {
     await finishSignalListeningRunV1(database, run, { status: "failed", receipt: {}, error_code: "listening_run_claims_exhausted" });
     throw new Error("listening_run_claims_exhausted");
   }
-  const source = await createSignalListeningLegacySourceV1(database, run);
+  const source = run.plan.planner === "listening_v1" ? await createSignalListeningSourceV1(database, run)
+    : await createSignalListeningLegacySourceV1(database, run);
   let spent = run.spent_micro_usd, leaseLost = false, rawMs = 0, dbMs = 0, rawFailures = 0, pricedTokens = 0;
   const heartbeat = setInterval(() => {
     void renewSignalListeningRunV1(database, run).then(owned => { if (!owned) leaseLost = true; }).catch(() => undefined);
@@ -101,34 +102,48 @@ export async function processSignalListeningRunV1(args: {
   // Spending is recorded when a page is written. The cap therefore counts three
   // things before a new slice may load: what is written, what was answered but
   // is not written yet, and room for the slice plus the requests in flight.
-  let answeredTokens = 0, answeredRoots = 0;
+  let answeredTokens = 0, answeredRoots = 0, settledRoots = 0, loadedRoots = 0, capped = false;
   const metered: JevPacedClientV1 = { async evaluate(request, options) {
-    const result = await args.client.evaluate(request, options);
-    if (result.ok) { answeredTokens += result.response.usage.input_tokens; answeredRoots++; }
-    return result;
+    try {
+      const result = await args.client.evaluate(request, options);
+      if (result.ok) { answeredTokens += result.response.usage.input_tokens; answeredRoots++; }
+      return result;
+    } finally { settledRoots++; }
   } };
-  const overCap = () => {
-    const perRoot = answeredRoots ? answeredTokens / answeredRoots : 2000;
-    const unwritten = answeredTokens - pricedTokens, admitted = (args.page_size + args.max_in_flight) * perRoot * 1.25;
-    return spent + Math.ceil((unwritten + admitted) * source.input_usd_per_mtok) >= run.cap_micro_usd;
+  // How many more roots the remaining budget can pay for, at the observed size
+  // per root with a quarter of slack. A slice is never larger than that, so a
+  // small pass runs with a small cap and a large one stops exactly at its cap.
+  const affordableRoots = () => {
+    const perRoot = (answeredRoots ? answeredTokens / answeredRoots : 2000) * 1.25;
+    const remaining = run.cap_micro_usd - spent - Math.ceil((answeredTokens - pricedTokens) * source.input_usd_per_mtok);
+    return Math.floor(remaining / (perRoot * source.input_usd_per_mtok)) - (loadedRoots - settledRoots);
   };
+  const overCap = () => { if (affordableRoots() < 1) capped = true; return capped; };
+  const nextSlice = async () => {
+    const items = await source.next(Math.max(1, Math.min(args.page_size, affordableRoots())));
+    loadedRoots += items.length;
+    return items;
+  };
+  const rescans = "rescans" in source && source.rescans;
   let receipt!: ListeningStreamReceiptV1;
   const totals = { roots_done: 0, roots_failed: 0, input_tokens: 0, pages: 0, requests: 0, throttled: 0, wall_ms: 0, load_ms: 0, flush_ms: 0 };
   try {
     // Roots that failed stay pending; two more passes give transient failures another chance.
     for (let pass = 0; pass < 3; pass++) {
       receipt = await runListeningStreamV1({ client: metered, max_in_flight: args.max_in_flight, page_size: args.page_size,
-        next: () => source.next(args.page_size), flush, should_stop: () => leaseLost || overCap(), signal: args.signal });
+        next: nextSlice, flush, should_stop: () => leaseLost || overCap(), signal: args.signal });
       run.pages += receipt.pages;
       for (const key of Object.keys(totals) as Array<keyof typeof totals>) totals[key] += receipt[key];
-      if (receipt.stop_reason !== "exhausted" || !receipt.roots_failed || pass === 2) break;
+      // Another pass serves two cases: roots that failed, and questions that were
+      // waiting for the base answers this pass just wrote. A pass that asked nothing ends the run.
+      if (receipt.stop_reason !== "exhausted" || pass === 2 || !(receipt.roots_failed || (rescans && receipt.roots_done))) break;
       totals.roots_failed -= receipt.roots_failed;
       source.rewind();
     }
   } finally { clearInterval(heartbeat); }
   const summary = { ...receipt, ...totals, roots_per_second: totals.wall_ms ? Math.round(totals.roots_done / (totals.wall_ms / 1000) * 10) / 10 : 0 };
   const status = receipt.stop_reason === "fatal" ? "failed" : receipt.stop_reason === "exhausted" ? "completed"
-    : leaseLost ? "running" : overCap() ? "cap_reached" : "running";
+    : leaseLost ? "running" : capped ? "cap_reached" : "running";
   const stored = { stream: summary, raw_upload_ms: Math.round(rawMs), database_write_ms: Math.round(dbMs), raw_pages_failed: rawFailures,
     tokens_per_root: summary.roots_done ? Math.round(summary.input_tokens / summary.roots_done) : null,
     settings: { max_in_flight: args.max_in_flight, page_size: args.page_size } };

@@ -7,10 +7,19 @@
  *   status   --run <uuid>                                                print its receipt
  *   local    --run <uuid>                                                process it in this process
  *   requeue  --run <uuid> [--cap-usd <n>]                                resume a failed or capped run
+ *   import   --workspace <uuid> --map <uuid>                             copy the R15 answers into the cache (no provider call)
+ *   estimate --workspace <uuid> --actor <uuid>                           what a listening pass would ask now
+ *   question --workspace <uuid> --actor <uuid> --file <json>             add or replace one question with options
+ *   listen   --workspace <uuid> --actor <uuid> --cap-usd <n>             queue a listening pass (asks only what is pending)
+ *   metrics  --workspace <uuid> --actor <uuid> --question <key>          distribution of one question
  */
 import pg from "pg";
+import { randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
 import {
-  claimSignalListeningRunV1, getSignalListeningRunV1, requestSignalListeningRunV1, requeueSignalListeningRunV1, SIGNAL_LISTENING_DEFAULT_PRICE_V1,
+  claimSignalListeningRunV1, estimateSignalListeningV1, getSignalListeningRunV1, getSignalListeningStateV1, importSignalListeningLegacyAnswersV1,
+  readSignalListeningQuestionMetricsV1, requestSignalListeningRunV1, requestSignalListeningV1, requeueSignalListeningRunV1,
+  saveSignalListeningQuestionsV1, SIGNAL_LISTENING_DEFAULT_PRICE_V1,
 } from "@noisia/db";
 import { createJevAccountRateLimiter } from "../src/providers/jev-account-rate-limit";
 import { createJevPacedClientV1, createLocalJevRateLimiterV1 } from "../src/providers/jev-paced-client";
@@ -62,5 +71,26 @@ try {
   } else if (mode === "requeue") {
     const cap = flag("cap-usd");
     console.log(JSON.stringify({ requeued: await requeueSignalListeningRunV1(pool, required("run"), cap ? Math.round(Number(cap) * 1e6) : undefined) }));
-  } else throw new Error("usage: signal-listening-run.ts request|status|local|requeue");
+  } else if (mode === "import") {
+    const result = await importSignalListeningLegacyAnswersV1({ database: pool, workspace_id: required("workspace"), map_id: required("map"),
+      on_progress: (done, total) => console.error(`imported roots ${done}/${total}`) });
+    console.log(JSON.stringify({ answers: result.answers, questions: result.questions, roots: result.roots }));
+  } else if (mode === "estimate") {
+    const estimate = await estimateSignalListeningV1({ database: pool, workspace_id: required("workspace"), actor_user_id: required("actor") });
+    console.log(JSON.stringify({ ...estimate, estimated_usd: estimate.estimated_micro_usd / 1e6 }, null, 1));
+  } else if (mode === "question") {
+    const access = { database: pool, workspace_id: required("workspace"), actor_user_id: required("actor") };
+    const state = await getSignalListeningStateV1(access), question = JSON.parse(readFileSync(required("file"), "utf8")) as { key: string };
+    const saved = await saveSignalListeningQuestionsV1({ ...access, expected_revision: state.revision,
+      questions: [...state.configuration.questions.filter(existing => existing.key !== question.key), question] });
+    console.log(JSON.stringify({ revision: saved.revision, questions: saved.configuration.questions.map(item => item.key) }));
+  } else if (mode === "listen") {
+    const queued = await requestSignalListeningV1({ database: pool, workspace_id: required("workspace"), actor_user_id: required("actor"),
+      cap_micro_usd: Math.round(Number(required("cap-usd")) * 1e6), idempotency_key: flag("key") ?? randomUUID() });
+    console.log(JSON.stringify(queued));
+  } else if (mode === "metrics") {
+    const metrics = await readSignalListeningQuestionMetricsV1({ database: pool, workspace_id: required("workspace"), actor_user_id: required("actor"),
+      question_key: required("question") });
+    console.log(JSON.stringify({ ...metrics, by_topic: metrics.by_topic.slice(0, 12), trend: metrics.trend.slice(-12) }, null, 1));
+  } else throw new Error("usage: signal-listening-run.ts request|status|local|requeue|import|estimate|question|listen|metrics");
 } finally { await pool.end(); }
