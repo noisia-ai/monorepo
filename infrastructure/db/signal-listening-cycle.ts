@@ -130,8 +130,8 @@ export async function requestSignalListeningCycleV1(args: { database: Database; 
     const display = (await client.query<{ display_names: Record<string, unknown> }>(`SELECT display_names FROM signal_mass_labeling_study_policies
       WHERE workspace_id=$1 ORDER BY revision DESC LIMIT 1`, [args.workspace_id])).rows[0]?.display_names ?? {};
     const locked = await lockedTopicKeys(client, args.workspace_id, display);
-    const previous = (await client.query<{ round_id: string; catalog: SignalListeningCatalogTopicV1[]; themes: SignalListeningThemeV1[] }>(
-      `SELECT round.id round_id,round.catalog,round.themes FROM signal_listening_cycles cycle JOIN signal_listening_rounds round ON round.cycle_id=cycle.id
+    const previous = (await client.query<{ round_id: string; catalog: SignalListeningCatalogTopicV1[]; themes: SignalListeningThemeV1[]; review: unknown }>(
+      `SELECT round.id round_id,round.catalog,round.themes,round.review FROM signal_listening_cycles cycle JOIN signal_listening_rounds round ON round.cycle_id=cycle.id
        WHERE cycle.workspace_id=$1 AND cycle.base_map_id=$2 AND cycle.status='completed' ORDER BY cycle.completed_at DESC,round.round_no DESC LIMIT 1`,
       [args.workspace_id, target.map_id])).rows[0];
     const catalog = validateSignalListeningCatalogV1(previous
@@ -147,8 +147,11 @@ export async function requestSignalListeningCycleV1(args: { database: Database; 
     await client.query(`INSERT INTO signal_listening_cycles(id,workspace_id,base_map_id,configuration_id,lexicon_revision,policy,cap_micro_usd,requested_by_user_id,receipt)
       VALUES($1,$2,$3,$4,$5,$6::jsonb,$7,$8,jsonb_build_object('idempotency_key',$9::text))`,
       [cycle_id, args.workspace_id, target.map_id, revision.id, policy_revision, JSON.stringify(policy), args.cap_micro_usd, args.actor_user_id, args.idempotency_key]);
-    await client.query("INSERT INTO signal_listening_rounds(id,cycle_id,workspace_id,round_no,step,catalog,themes) VALUES($1,$2,$3,1,'asked',$4::jsonb,$5::jsonb)",
-      [round_id, cycle_id, args.workspace_id, JSON.stringify(catalog), JSON.stringify(previous?.themes ?? [])]);
+    // A merge the last pass of the previous loop asked for travels with the map: it keeps applying where the map is read
+    // until a round of this loop folds the two topics itself. Without it the new loop would bring the folded topic back.
+    const carried = previous ? signalListeningCarriedClosingMergesV1(previous.review, catalog) : [];
+    await client.query("INSERT INTO signal_listening_rounds(id,cycle_id,workspace_id,round_no,step,catalog,themes,review) VALUES($1,$2,$3,1,'asked',$4::jsonb,$5::jsonb,$6::jsonb)",
+      [round_id, cycle_id, args.workspace_id, JSON.stringify(catalog), JSON.stringify(previous?.themes ?? []), carried.length ? JSON.stringify({ closing_merges: carried }) : null]);
     const centroids = new Map((previous
       ? await client.query<{ topic_key: string; centroid: string | null; members: number }>(
         "SELECT topic_key,centroid::text centroid,confirmed_members members FROM signal_listening_round_topics WHERE round_id=$1", [previous.round_id])
@@ -178,6 +181,13 @@ export async function finishSignalListeningCycleV1(database: Database, cycle: Pi
   await database.query(`UPDATE signal_listening_cycles SET status=$3,stop_reason=$4,error_code=$5,receipt=receipt||$6::jsonb,lease_token=NULL,lease_until=NULL,
     completed_at=now(),updated_at=now() WHERE id=$1 AND lease_token=$2`,
     [cycle.id, cycle.lease_token, outcome.status, outcome.stop_reason ?? null, outcome.error_code ?? null, JSON.stringify(outcome.receipt ?? {})]);
+}
+/** The merges recorded with a round that still apply to a catalog: both topics are in it under their own keys. */
+export function signalListeningCarriedClosingMergesV1(review: unknown, catalog: Array<{ topic_key: string }>): Array<{ stays: string; folded: string }> {
+  const known = new Set(catalog.map(topic => topic.topic_key)), listed = (review as { closing_merges?: unknown } | null)?.closing_merges;
+  return (Array.isArray(listed) ? listed : []).flatMap((item: { stays?: unknown; folded?: unknown }) =>
+    typeof item?.stays === "string" && typeof item.folded === "string" && item.stays !== item.folded && known.has(item.stays) && known.has(item.folded)
+      ? [{ stays: item.stays, folded: item.folded }] : []);
 }
 /** Merges the classifier's answers in the last pass of a loop ask for. No pass is left to ask the topic that stays about
  * the posts of the other, so they are kept with the round and applied where the map is read, like a person's merge. */
@@ -436,9 +446,12 @@ export async function openSignalListeningNextRoundV1(args: { database: Database;
       }
     }
     const round_id = randomUUID();
+    // Merges recorded with the round before stay with the map while both of their topics are still in it.
+    const carried = signalListeningCarriedClosingMergesV1(args.review, args.catalog);
+    const opening = { ...(args.settling ? { settling: true } : {}), ...(carried.length ? { closing_merges: carried } : {}) };
     await client.query(`INSERT INTO signal_listening_rounds(id,cycle_id,workspace_id,round_no,step,catalog,themes,review)
       VALUES($1,$2,$3,$4,'created',$5::jsonb,$6::jsonb,$7::jsonb)`,
-      [round_id, cycle.id, cycle.workspace_id, round.round_no + 1, JSON.stringify(args.catalog), JSON.stringify(args.themes), args.settling ? '{"settling":true}' : null]);
+      [round_id, cycle.id, cycle.workspace_id, round.round_no + 1, JSON.stringify(args.catalog), JSON.stringify(args.themes), Object.keys(opening).length ? JSON.stringify(opening) : null]);
     await writeRoundTopics(client, { id: round_id, workspace_id: cycle.workspace_id }, configuration, args.catalog, centroids);
     await writeRoundPairs(client, { id: round_id, workspace_id: cycle.workspace_id }, configuration, args.catalog, args.pairs ?? []);
     return { round_id };

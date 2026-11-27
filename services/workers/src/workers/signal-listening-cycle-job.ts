@@ -1,7 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import type { Pool } from "pg";
 import {
-  beginSignalListeningReviewV1, chargeSignalListeningCycleV1, claimSignalListeningCycleV1, finishSignalListeningCycleV1, recordSignalListeningReviewAnswerV1, recordSignalListeningClosingMergesV1, getSignalListeningCycleV1, measureSignalListeningRoundV1, openSignalListeningNextRoundV1, readSignalListeningConfirmedCentroidsV1, settleSignalListeningPairChoicesV1,
+  beginSignalListeningReviewV1, chargeSignalListeningCycleV1, claimSignalListeningCycleV1, finishSignalListeningCycleV1, recordSignalListeningReviewAnswerV1, recordSignalListeningClosingMergesV1, signalListeningCarriedClosingMergesV1, getSignalListeningCycleV1, measureSignalListeningRoundV1, openSignalListeningNextRoundV1, readSignalListeningConfirmedCentroidsV1, settleSignalListeningPairChoicesV1,
   listSignalListeningOrphanRootsV1, readSignalListeningCycleConfigurationV1, readSignalListeningRootVectorsV1, releaseSignalListeningCycleV1, renewSignalListeningCycleV1,
   requestSignalListeningRoundRunV1, saveSignalListeningOrphanGroupsV1, saveSignalListeningReviewV1, settleSignalListeningRoundRunV1,
   type SignalListeningCycleV1, type SignalListeningRoundV1, type SignalListeningStoredOrphanGroupV1,
@@ -125,7 +125,11 @@ export async function stepSignalListeningCycleV1(args: { database: Database; cyc
       // The choices of this last pass can show that two topics are one. Their merge is recorded with the round and
       // applied where the map is read, so the published map does not carry them as two.
       const closing = applySignalListeningRuleMergesV1({ catalog: round.catalog, themes: round.themes, policy: cycle.policy, evidence: round.evidence! }).rule_merges;
-      if (closing.length) await recordSignalListeningClosingMergesV1(database, cycle, round, closing.map(item => ({ stays: item.stays, folded: item.folded })));
+      if (closing.length) {
+        // Added to the merges this map already carried from an earlier loop; a topic is folded once.
+        const merges = [...signalListeningCarriedClosingMergesV1(round.review, round.catalog), ...closing.map(item => ({ stays: item.stays, folded: item.folded }))];
+        await recordSignalListeningClosingMergesV1(database, cycle, round, merges.filter((item, index) => merges.findIndex(other => other.folded === item.folded) === index));
+      }
       const reason = (previous?.review as { settled?: { stop_reason?: string } } | null)?.settled?.stop_reason ?? "max_rounds";
       await finishSignalListeningCycleV1(database, cycle, { status: "completed", stop_reason: reason });
       return "done";
