@@ -139,14 +139,15 @@ test("a locked topic can be placed in a theme and a domain without touching its 
 
 // ---------- two levels of membership, and pairs settled by the classifier
 
-const pair = (left: string, right: string, coapproval: number) => ({ left, right, jointly_asked: 100, jointly_approved: Math.round(coapproval * 100), jaccard: 0.1, coapproval, examples: [] });
+const pair = (left: string, right: string, coapproval: number) => ({ left, right, jointly_asked: 100, jointly_approved: Math.round(coapproval * 100), jaccard: 0.3, coapproval, examples: [] });
 const sizes = (values: Record<string, number>) => Object.entries(values).map(([topic_key, approved]) => ({ topic_key, asked: approved * 2, approved, acceptance: 0.5,
   accepted_examples: [], rejected_examples: [] }));
-const chosen = (left: string, right: string, both: number, other = 100 - both) => ({ left, right, shared: 100, chose_left: other, chose_right: 0, chose_both: both, chose_neither: 0, both_share: both / 100 });
+const chosen = (left: string, right: string, both: number, jaccard = 0.3) => ({ left, right, shared: 100, chose_left: 100 - both, chose_right: 0, chose_both: both, chose_neither: 0,
+  both_share: both / 100, jaccard });
 const measured = { topics: sizes({ bitter: 300, bitterness: 120, price: 80, auction: 10, ritual: 50 }) };
 
 test("the default policy counts a member from 0.85, keeps 0.70 as probable and lets the classifier settle pairs", () => {
-  assert.deepEqual([policy.approval, policy.probable, policy.twin.choice_coapproval, policy.twin.merge_both_share], [0.85, 0.7, 0.4, 0.5]);
+  assert.deepEqual([policy.approval, policy.probable, policy.twin.choice_coapproval, policy.twin.merge_both_share, policy.twin.merge_min_jaccard], [0.85, 0.7, 0.4, 0.5, 0.2]);
 });
 
 test("a pair accepted together very often is not merged on that signal: it is sent to the classifier", () => {
@@ -154,12 +155,12 @@ test("a pair accepted together very often is not merged on that signal: it is se
   // The agent left both as they were: nothing is merged, and the pair still gets asked with the wording it has.
   const kept = applySignalListeningReviewV1({ catalog, orphan_groups: groups, rules, output: answer(themes, [
     proposal("bitter", "keep", ["bitter"]), proposal("bitterness", "keep", ["bitterness"])]) });
-  assert.deepEqual([kept.catalog.length, kept.rule_merges, kept.probation], [5, [], [{ left: "bitter", right: "bitterness" }]]);
+  assert.deepEqual([kept.catalog.length, kept.rule_merges, kept.probation], [5, [], [{ left: "bitter", right: "bitterness", jaccard: 0.3 }]]);
   assert.equal(kept.map_changed, true, "another round is needed to ask, although no wording changed");
   // The agent wrote contrast for both: same outcome, with the new wording.
   const contrasted = applySignalListeningReviewV1({ catalog, orphan_groups: groups, rules, output: answer(themes, [
     proposal("bitter", "redefine", ["bitter"]), proposal("bitterness", "redefine", ["bitterness"])]) });
-  assert.deepEqual([contrasted.rule_merges, contrasted.probation, contrasted.summary.redefined], [[], [{ left: "bitter", right: "bitterness" }], 2]);
+  assert.deepEqual([contrasted.rule_merges, contrasted.probation, contrasted.summary.redefined], [[], [{ left: "bitter", right: "bitterness", jaccard: 0.3 }], 2]);
   // The agent merged them because they mean the same: there is no pair left to ask about.
   const merged = applySignalListeningReviewV1({ catalog, orphan_groups: groups, rules, output: answer(themes, [proposal("bitterness", "merge", ["bitter", "bitterness"])]) });
   assert.deepEqual([merged.probation, merged.summary.merged, merged.summary.merged_by_rule], [[], 1, 0]);
@@ -191,6 +192,9 @@ test("the rule respects people's edits, follows chains by size, and does nothing
   assert.deepEqual(chain.rule_merges, [{ stays: "bitter", folded: "bitterness", reason: "belongs_to_both" }, { stays: "bitter", folded: "price", reason: "belongs_to_both" }]);
   assert.deepEqual(chain.catalog.find(item => item.topic_key === "bitter")!.source_topic_keys, ["bitter", "bitterness", "price"]);
   assert.deepEqual(chain.catalog.find(item => item.topic_key === "bitter")!.localization, catalog[0]!.localization, "the wording of the largest topic is the one that stays");
+  // Posts that belong to both of two topics that barely overlap as a whole are real overlap, not one topic: no merge.
+  const magnet = applySignalListeningRuleMergesV1({ catalog, themes: [], policy, evidence: { ...measured, twins: [], pair_choices: [chosen("bitter", "bitterness", 97, 0.04)] } });
+  assert.deepEqual([magnet.rule_merges.length, magnet.catalog.length, magnet.map_changed], [0, 5, false]);
   // At the end of a loop nobody is left to write contrast: flagged pairs are not sent to the classifier.
   const end = applySignalListeningRuleMergesV1({ catalog, themes: [], policy, evidence: { ...measured, twins: [pair("bitter", "bitterness", 0.9)] } });
   assert.deepEqual([end.rule_merges.length, end.probation.length, end.map_changed], [0, 0, false]);

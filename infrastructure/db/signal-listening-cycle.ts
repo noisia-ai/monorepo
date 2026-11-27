@@ -61,7 +61,7 @@ async function writeRoundTopics(client: Queryable, round: { id: string; workspac
 
 /** Registers the question of each pair with the wording both topics have in this round, and leaves the pairs in the round. */
 async function writeRoundPairs(client: Queryable, round: { id: string; workspace_id: string }, configuration: SignalListeningConfigurationV1,
-  catalog: SignalListeningCatalogTopicV1[], pairs: Array<{ left: string; right: string }>) {
+  catalog: SignalListeningCatalogTopicV1[], pairs: Array<{ left: string; right: string; jaccard?: number | null }>) {
   const topics = new Map(catalog.map(topic => [topic.topic_key, topic]));
   const asked = pairs.flatMap(pair => {
     const left = topics.get(pair.left), right = topics.get(pair.right);
@@ -70,14 +70,14 @@ async function writeRoundPairs(client: Queryable, round: { id: string; workspace
   if (!asked.length) return;
   const ids = await ensureSignalListeningQuestionsV1(client, round.workspace_id, configuration.model, asked.map(pair => pair.question));
   await client.query("UPDATE signal_listening_rounds SET review=COALESCE(review,'{}'::jsonb)||jsonb_build_object('pairs',$2::jsonb) WHERE id=$1",
-    [round.id, JSON.stringify(asked.map(pair => ({ left: pair.left, right: pair.right, question_id: ids.get(pair.question.question_digest) })))]);
+    [round.id, JSON.stringify(asked.map(pair => ({ left: pair.left, right: pair.right, question_id: ids.get(pair.question.question_digest), jaccard: pair.jaccard ?? null })))]);
 }
 function pairQuestion(configuration: SignalListeningConfigurationV1, left: SignalListeningCatalogTopicV1, right: SignalListeningCatalogTopicV1) {
   const worded = (topic: SignalListeningCatalogTopicV1) => ({ topic_key: topic.topic_key, ...signalListeningTopicWordingV1(topic, configuration.candidate_language) });
   return signalListeningPairQuestionV1(configuration.model, worded(left), worded(right));
 }
 /** For repairs by an operator: sets the pairs a round has to settle. Not used by the loop itself. */
-export async function setSignalListeningRoundPairsV1(database: Database, round_id: string, pairs: Array<{ left: string; right: string }>) {
+export async function setSignalListeningRoundPairsV1(database: Database, round_id: string, pairs: Array<{ left: string; right: string; jaccard?: number | null }>) {
   return shared.transaction(database, async client => {
     const round = (await client.query<{ workspace_id: string; catalog: SignalListeningCatalogTopicV1[]; configuration_id: string }>(
       `SELECT round.workspace_id,round.catalog,cycle.configuration_id FROM signal_listening_rounds round JOIN signal_listening_cycles cycle ON cycle.id=round.cycle_id
@@ -203,7 +203,7 @@ const VALID = `valid AS MATERIALIZED (
   LEFT JOIN signal_listening_answer_overrides decided ON decided.question_id=topic.question_id AND decided.root_id=answer.root_id
   WHERE topic.round_id=$3)`;
 /** A pair of topics the classifier settles post by post, as a round carries it. */
-export type SignalListeningRoundPairV1 = { left: string; right: string; question_id: number };
+export type SignalListeningRoundPairV1 = { left: string; right: string; question_id: number; jaccard?: number | null };
 const roundPairs = (round: Pick<SignalListeningRoundV1, "review">) => ((round.review as { pairs?: SignalListeningRoundPairV1[] } | null)?.pairs ?? []);
 
 /**
@@ -237,7 +237,7 @@ export async function settleSignalListeningPairChoicesV1(database: Database, cyc
         .map(row => [row.choice, row.posts]));
       const of = (choice: string) => counts.get(choice) ?? 0, total = of("left") + of("right") + of("both") + of("neither");
       result.push({ left: pair.left, right: pair.right, shared: total, chose_left: of("left"), chose_right: of("right"), chose_both: of("both"), chose_neither: of("neither"),
-        both_share: total ? of("both") / total : null });
+        both_share: total ? of("both") / total : null, jaccard: pair.jaccard ?? null });
     }
     return result;
   });
@@ -377,7 +377,7 @@ export async function openSignalListeningNextRoundV1(args: { database: Database;
   /** A last round with no review: it only asks what the merges of the rule left pending. Opened right after measuring. */
   settling?: boolean;
   /** Pairs accepted together very often that are still two topics: the posts both hold are asked to choose. */
-  pairs?: Array<{ left: string; right: string }> }): Promise<{ round_id: string }> {
+  pairs?: Array<{ left: string; right: string; jaccard?: number | null }> }): Promise<{ round_id: string }> {
   const { cycle, round, confirmed } = args, configuration = await readSignalListeningCycleConfigurationV1(args.database, cycle);
   return shared.transaction(args.database, async client => {
     const owned = (await client.query("SELECT 1 FROM signal_listening_cycles WHERE id=$1 AND lease_token=$2 FOR UPDATE", [cycle.id, cycle.lease_token])).rows.length;

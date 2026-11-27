@@ -22,8 +22,11 @@ export type SignalListeningCyclePolicyV1 = {
     /** A pair accepted together at least this often is settled by the classifier: the posts both topics hold are
      * asked which of the two they belong to (left, right, both or neither). */
     choice_coapproval?: number;
-    /** The pair is merged only when at least this share of those posts belongs to both. */
-    merge_both_share?: number };
+    /** The pair is merged only when at least this share of those posts belongs to both, */
+    merge_both_share?: number;
+    /** and only when the two topics overlap at least this much as a whole (Jaccard of their members). Posts that
+     * belong to both of two large topics are real overlap, not a sign that the topics are one. */
+    merge_min_jaccard?: number };
   /** Topics below this acceptance rate are shown to the reviewer as weak. */
   weak_acceptance: number;
   examples_per_stratum: number;
@@ -47,7 +50,7 @@ export type SignalListeningCyclePolicyV1 = {
 export const SIGNAL_LISTENING_CYCLE_POLICY_V1: Readonly<SignalListeningCyclePolicyV1> = Object.freeze({
   contract_version: "signal-listening-cycle-policy-v1", approval: 0.85, probable: 0.7, candidates_per_root: 4,
   twin: { min_jointly_asked: 20, min_jointly_approved: 10, jaccard: 0.2, coapproval: 0.4, overlap_of_smaller: 0.5, max_pairs: 80,
-    choice_coapproval: 0.4, merge_both_share: 0.5 },
+    choice_coapproval: 0.4, merge_both_share: 0.5, merge_min_jaccard: 0.2 },
   weak_acceptance: 0.1, examples_per_stratum: 4, excerpt_chars: 240,
   orphan: { min_roots_to_regroup: 200, roots_per_group: 250, min_group: 25, max_groups: 40, examples: 8 },
   stop: { max_rounds: 3 as const, min_improvement: 0.01 },
@@ -96,7 +99,9 @@ export type SignalListeningCycleEvidenceV1 = {
   twins: Array<{ left: string; right: string; jointly_asked: number; jointly_approved: number; jaccard: number; coapproval: number; examples: string[] }>;
 };
 export type SignalListeningPairChoiceV1 = { left: string; right: string; shared: number; chose_left: number; chose_right: number; chose_both: number;
-  chose_neither: number; both_share: number | null };
+  chose_neither: number; both_share: number | null;
+  /** How much the two topics overlapped as a whole when the pair was sent to the classifier. */
+  jaccard?: number | null };
 export type SignalListeningOrphanGroupV1 = { group_key: string; roots: number; cohesion: number; examples: string[] };
 
 /** Decide after measuring round `current.round`. The rule is fixed before the cycle runs:
@@ -186,8 +191,8 @@ export type SignalListeningReviewOutputV1 = z.infer<typeof reviewOutput>;
 const pairKey = (left: string, right: string) => left < right ? `${left}\0${right}` : `${right}\0${left}`;
 /** Pairs whose shared posts were asked and mostly belong to both topics: they merge without another say. */
 export function signalListeningForcedMergesV1(policy: SignalListeningCyclePolicyV1, evidence: Pick<SignalListeningCycleEvidenceV1, "pair_choices">): Array<{ left: string; right: string }> {
-  const limit = policy.twin.merge_both_share;
-  return limit === undefined ? [] : (evidence.pair_choices ?? []).filter(pair => pair.both_share !== null && pair.both_share >= limit)
+  const limit = policy.twin.merge_both_share, overlap = policy.twin.merge_min_jaccard ?? 0;
+  return limit === undefined ? [] : (evidence.pair_choices ?? []).filter(pair => pair.both_share !== null && pair.both_share >= limit && (pair.jaccard ?? 0) >= overlap)
     .map(pair => ({ left: pair.left, right: pair.right }));
 }
 /**
@@ -253,7 +258,7 @@ export type SignalListeningReviewResultV1 = {
   rule_merges: Array<{ stays: string; folded: string; reason: "belongs_to_both" }>;
   /** Pairs accepted together very often that are still two topics after the review. The classifier is asked to
    * choose for each post they share. */
-  probation: Array<{ left: string; right: string }>;
+  probation: Array<{ left: string; right: string; jaccard: number }>;
   /** What the agent proposed and was not applied, with the reason. Nothing here stops the round. */
   rejected: Array<{ key: string; reason: string }>;
 };
@@ -363,7 +368,7 @@ export function applySignalListeningReviewV1(args: { catalog: SignalListeningCat
       .sort((x, y) => y.coapproval - x.coapproval || pairKey(x.left, x.right).localeCompare(pairKey(y.left, y.right)))) {
       const a = home.get(pair.left), b = home.get(pair.right);
       // Only a pair whose two topics still stand under their own keys can be asked about.
-      if (a === pair.left && b === pair.right) probation.push({ left: pair.left, right: pair.right });
+      if (a === pair.left && b === pair.right) probation.push({ left: pair.left, right: pair.right, jaccard: pair.jaccard });
     }
   }
   const catalog = [...next.values()].sort((a, b) => a.topic_key.localeCompare(b.topic_key));
