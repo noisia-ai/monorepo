@@ -66,9 +66,18 @@ export async function requestSignalStudyV1(args: { database: Database; workspace
     if (!target) fail("listening_population_required");
     const { stored, configuration, configuration_digest, policy_revision } = await shared.compose(client, args.workspace_id);
     if (!configuration.lexicon_terms.length) fail("listening_lexicon_required", 422);
+    const cut: SignalStudyCutV1 = { ...template.rules.cut, start_at: period?.start_at ?? null, end_at: period?.end_at ?? null };
+    // The cut is read from the base listening answers (who speaks, and whether it is promotion). Without them it would be
+    // empty and the study would finish with nothing in it, so the brand is asked to listen first.
+    const base = compileSignalListeningConfigurationV1(configuration).base;
+    const baseIds = await shared.questionIds(client, args.workspace_id, [base.voice.question_digest, base.promotion.question_digest]);
+    const voiceId = baseIds.get(base.voice.question_digest), promotionId = baseIds.get(base.promotion.question_digest);
+    if (voiceId === undefined || promotionId === undefined || !(await client.query(`SELECT 1 FROM (${shared.consumerRootsSql(3)}) consumer LIMIT 1`,
+      [args.workspace_id, target.map_id, voiceId, promotionId, SIGNAL_LISTENING_CONSUMER_CUT_V1.voice, cut.promotion_max, policy_revision])).rows.length) {
+      fail("study_listening_required");
+    }
     const revision = await shared.storeRevision(client, { workspace_id: args.workspace_id, actor_user_id: args.actor_user_id, stored, configuration,
       configuration_digest, provenance: "human", note: "study settings synchronized before a study" });
-    const cut: SignalStudyCutV1 = { ...template.rules.cut, start_at: period?.start_at ?? null, end_at: period?.end_at ?? null };
     const id = randomUUID();
     await client.query(`INSERT INTO signal_studies(id,workspace_id,base_map_id,configuration_id,lexicon_revision,name,methodology,subject,cut,cap_micro_usd,requested_by_user_id,receipt)
       VALUES($1,$2,$3,$4,$5,$6,$7::jsonb,$8::jsonb,$9::jsonb,$10,$11,jsonb_build_object('idempotency_key',$12::text))`,
@@ -389,8 +398,10 @@ export async function promoteSignalStudyMotivesV1(args: { database: Database; wo
     const study = (await client.query<{ status: string }>("SELECT status FROM signal_studies WHERE id=$1 AND workspace_id=$2", [args.study_id, args.workspace_id])).rows[0];
     if (!study) fail("study_unavailable", 404);
     if (study.status !== "completed") fail("study_not_finished");
-    const rows = (await client.query<{ motive_key: string; wording: SignalStudyWordingV1 }>(
-      "SELECT motive_key,wording FROM signal_study_motives WHERE study_id=$1 AND motive_key=ANY($2::text[])", [args.study_id, args.motive_keys])).rows;
+    const rows = (await client.query<{ motive_key: string; wording: SignalStudyWordingV1; promoted_as: string | null }>(
+      `SELECT motive.motive_key,motive.wording,promotion.defined_topic_key promoted_as FROM signal_study_motives motive
+       LEFT JOIN signal_study_promotions promotion ON promotion.study_id=motive.study_id AND promotion.motive_key=motive.motive_key
+       WHERE motive.study_id=$1 AND motive.motive_key=ANY($2::text[]) ORDER BY motive.motive_key`, [args.study_id, args.motive_keys])).rows;
     if (rows.length !== new Set(args.motive_keys).size) fail("study_promotion_invalid", 422);
     return rows;
   });
@@ -399,12 +410,18 @@ export async function promoteSignalStudyMotivesV1(args: { database: Database; wo
   const taken = new Set(policy.interests.map(interest => interest.key)), added: Array<{ motive_key: string; defined_topic_key: string }> = [], carried: typeof added = [];
   const interests = [...policy.interests];
   for (const motive of motives) {
-    const defined_topic_key = `motive_${motive.motive_key}`.slice(0, 64);
-    carried.push({ motive_key: motive.motive_key, defined_topic_key });
-    if (taken.has(defined_topic_key)) continue;
     const wording = policy.candidate_language === "en" ? motive.wording.en : motive.wording.original;
+    // Already carried from this study: nothing to add.
+    if (motive.promoted_as && taken.has(motive.promoted_as)) { carried.push({ motive_key: motive.motive_key, defined_topic_key: motive.promoted_as }); continue; }
+    // A defined topic with exactly this wording is the same topic (a retry whose record was not written).
+    const same = interests.find(interest => interest.name === wording.name && interest.definition === wording.definition);
+    if (same) { carried.push({ motive_key: motive.motive_key, defined_topic_key: same.key }); continue; }
+    // Motive keys are unique inside a study, topic keys across the brand: a key in use by another topic is never reused.
+    const stem = `motive_${motive.motive_key}`.slice(0, 60);
+    let defined_topic_key = stem;
+    for (let suffix = 2; taken.has(defined_topic_key); suffix++) defined_topic_key = `${stem}_${suffix}`;
     interests.push({ key: defined_topic_key, name: wording.name, definition: wording.definition, active: true });
-    taken.add(defined_topic_key); added.push({ motive_key: motive.motive_key, defined_topic_key });
+    taken.add(defined_topic_key); added.push({ motive_key: motive.motive_key, defined_topic_key }); carried.push({ motive_key: motive.motive_key, defined_topic_key });
   }
   const record = () => args.database.query(`INSERT INTO signal_study_promotions(study_id,workspace_id,motive_key,defined_topic_key,created_by_user_id)
     SELECT $1,$2,added.motive_key,added.defined_topic_key,$4 FROM jsonb_to_recordset($3::jsonb) added(motive_key text,defined_topic_key text)
