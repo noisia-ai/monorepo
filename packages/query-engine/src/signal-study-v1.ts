@@ -3,6 +3,7 @@ import { z } from "zod";
 import seed from "./data/study-templates/triggers-barriers.r16b-v1.json";
 import seedV2 from "./data/study-templates/triggers-barriers.r16b-v2.json";
 import seedV3 from "./data/study-templates/triggers-barriers.r16b-v3.1.json";
+import seedV32 from "./data/study-templates/triggers-barriers.r16b-v3.2.json";
 import type { JevQuestionV1 } from "./signal-mention-facets-jev-v1";
 import { signalListeningQuestionIdentityV1, type SignalListeningAskedQuestionV1 } from "./signal-listening-questions-v1";
 
@@ -34,6 +35,9 @@ const templateSchema = z.object({
     group_uses: z.array(z.string()).min(1).max(4).optional(),
     /** A direction counts from this probability up; below it the post is kept as probable and read as `none`. */
     direction_min_probability: z.number().min(0).max(1).optional(),
+    /** A direction below the line that counts and from this probability up still enters motive discovery (grouping and
+     * naming). It is not counted in any volume, weight or split by direction. */
+    direction_discovery_min_probability: z.number().min(0).max(1).optional(),
     /** One direction over this share of the cut means the rules read too much: the output says so. */
     direction_share_max: z.number().min(0).max(1).optional(),
     /** The layer is read post by post on this many confirmed posts of each motive, and a motive takes the layer most of them show. */
@@ -81,6 +85,18 @@ export const SIGNAL_STUDY_TB_TEMPLATE_V2: Readonly<SignalStudyTemplateV1> = vali
  * finished with it.
  */
 export const SIGNAL_STUDY_TB_TEMPLATE_V3: Readonly<SignalStudyTemplateV1> = validateSignalStudyTemplateV1(seedV3);
+/**
+ * The template new studies are made with (r16b-v3.2), chosen on two blind
+ * samples. The third template's direction turned out stricter than the second:
+ * every restriction in the wording lowers the classifier's confidence, and
+ * wording hardly moves what passes 0.85. So the direction is worded in the
+ * positive (what a force is, with `none` as one more option), it says that the
+ * subject includes what living it consists of, and it counts from 0.70: the
+ * line where trigger and barrier stayed at 85 % or more for blind judges. A
+ * direction between 0.50 and 0.70 only helps to discover motives: its posts are
+ * grouped and named with the rest and counted nowhere.
+ */
+export const SIGNAL_STUDY_TB_TEMPLATE_V3_2: Readonly<SignalStudyTemplateV1> = validateSignalStudyTemplateV1(seedV32);
 /** A study may use its own lexicon for its cut instead of the brand's: lowercase terms, one or two words each. */
 export function validateSignalStudyLexiconV1(value: unknown): string[] {
   const parsed = z.array(z.string().trim().min(2).max(80)).min(1).max(400).safeParse(value);
@@ -135,24 +151,30 @@ export function signalStudyGroupUsesV1(rules?: Partial<Pick<SignalStudyTemplateV
 export type SignalStudyAxesV1 = { direction: string; target: string; use: string; source_direction: string; alternative_inverted: boolean;
   /** The direction the classifier gave below the line that makes it count; the post is read as `none`. */
   direction_probable: string | null;
+  /** True when that uncounted direction is sure enough to help discover motives. */
+  discovery: boolean;
   /** Where the root is counted: the study subject, a competitor (reported apart), an alternative, or not at all. */
   aggregate: "subject" | "competitor" | "alternative" | "figurative_or_ironic" | "other" };
 /** Reads the three answers of a root. When the subject is an alternative, rejecting
  * the conventional category counts as moving toward the alternative. */
 export function resolveSignalStudyAxesV1(subject: SignalStudySubjectV1, given: { direction: string; target: string; use: string; direction_probability?: number | null },
-  rules?: Pick<SignalStudyTemplateV1["rules"], "direction_min_probability"> & Partial<Pick<SignalStudyTemplateV1["rules"], "group_use" | "group_uses">>): SignalStudyAxesV1 {
+  rules?: Pick<SignalStudyTemplateV1["rules"], "direction_min_probability">
+    & Partial<Pick<SignalStudyTemplateV1["rules"], "group_use" | "group_uses" | "direction_discovery_min_probability">>): SignalStudyAxesV1 {
   const counted = signalStudyGroupUsesV1(rules);
   const weak = rules?.direction_min_probability !== undefined && given.direction !== "none" && (given.direction_probability ?? 0) < rules.direction_min_probability;
   const answers = { ...given, direction: weak ? "none" : given.direction };
   const inverted = subject.kind === "alternative" && answers.target === "category" && answers.direction === "barrier" && answers.use === "literal";
   return { source_direction: given.direction, direction_probable: weak ? given.direction : null,
+    discovery: weak && rules?.direction_discovery_min_probability !== undefined && (given.direction_probability ?? 0) >= rules.direction_discovery_min_probability,
     direction: inverted ? "trigger" : answers.direction, target: answers.target, use: answers.use, alternative_inverted: inverted,
     aggregate: answers.use === "figurative_or_ironic" ? "figurative_or_ironic" : !counted.includes(answers.use) ? "other"
       : answers.target === "competitor_brand" ? "competitor" : answers.target === "alternative" && subject.kind !== "alternative" ? "alternative" : "subject" };
 }
-/** Roots that enter motive discovery: a direction, about the subject, in a use that counts. Pooled across directions. */
+/** Roots that enter motive discovery: a direction, counted or sure enough to help discover, about the subject, in a use
+ * that counts. Pooled across directions. */
 export function signalStudyInMotivePoolV1(template: SignalStudyTemplateV1, axes: SignalStudyAxesV1): boolean {
-  return template.rules.group_directions.includes(axes.direction) && signalStudyGroupUsesV1(template.rules).includes(axes.use) && template.rules.group_targets.includes(axes.target)
+  const direction = axes.discovery ? axes.direction_probable! : axes.direction;
+  return template.rules.group_directions.includes(direction) && signalStudyGroupUsesV1(template.rules).includes(axes.use) && template.rules.group_targets.includes(axes.target)
     && axes.aggregate === "subject";
 }
 export function signalStudyPermissionForLayerV1(template: SignalStudyTemplateV1, layer: SignalStudyLayerV1): SignalStudyPermissionV1 {

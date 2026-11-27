@@ -136,7 +136,9 @@ export async function stepSignalStudyV1(args: { database: Database; study: Signa
           centroid: Array.from(clustered.centroids.subarray(group * dimensions, (group + 1) * dimensions)) });
       });
     }
-    await advanceSignalStudyV1(database, study, "grouped", { groups, pool_roots: pool.length, directed_roots: rows.filter(row => axes.get(row.root_id)!.direction !== "none").length });
+    // Posts that only help to discover motives are grouped and named with the rest and counted nowhere.
+    await advanceSignalStudyV1(database, study, "grouped", { groups, pool_roots: pool.length, pool_discovery_only_roots: pool.filter(root => axes.get(root)!.discovery).length,
+      directed_roots: rows.filter(row => axes.get(row.root_id)!.direction !== "none").length });
     return "continue";
   }
 
@@ -316,6 +318,9 @@ async function buildStudyOutput(database: Database, study: SignalStudyV1): Promi
       // Directions the classifier gave below the line that makes them count: kept, read as none.
       direction_probable: count(rows.flatMap(row => axes.get(row.root_id)!.direction_probable ? [axes.get(row.root_id)!.direction_probable!] : [])), target: count(rows.map(row => row.target)), use: count(rows.map(row => row.use)),
       counted_as: count(directed.map(row => axes.get(row.root_id)!.aggregate)) },
+    // Motives were discovered on more posts than are counted: those with a direction sure enough to group, below the line that counts.
+    discovery: { grouped_mentions: Number(study.state.pool_roots ?? 0), of_them_counted: Number(study.state.pool_roots ?? 0) - Number(study.state.pool_discovery_only_roots ?? 0),
+      of_them_only_for_discovery: Number(study.state.pool_discovery_only_roots ?? 0) },
     directed: { mentions: directed.length, about_the_subject: subjectRoots.size,
       // How the posts that count toward the subject were used, as the use question read them.
       about_the_subject_by_use: count(directed.filter(row => subjectRoots.has(row.root_id)).map(row => row.use)), with_a_motive: [...assigned].filter(root => subjectRoots.has(root)).length,

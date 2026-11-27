@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { compileSignalStudyAxesV1, resolveSignalStudyAxesV1, signalStudyInMotivePoolV1, SIGNAL_STUDY_TB_TEMPLATE_V2 as second, SIGNAL_STUDY_TB_TEMPLATE_V3 as template,
+import { compileSignalStudyAxesV1, resolveSignalStudyAxesV1, signalStudyInMotivePoolV1, SIGNAL_STUDY_TB_TEMPLATE_V2 as second, SIGNAL_STUDY_TB_TEMPLATE_V3 as template, SIGNAL_STUDY_TB_TEMPLATE_V3_2 as current,
   type SignalStudySubjectV1 } from "./signal-study-v1";
 
 const subject: SignalStudySubjectV1 = { kind: "category", name: "sparkling water", category: "sparkling water", own_brand: "Brand One", competitors: ["Brand Two"], alternatives: [] };
@@ -41,4 +41,27 @@ test("direction is aimed at the subject first, and an emotion about it counts wi
   assert.match(option("mixed"), /only one of the two has its fragment/u, "one fragment alone is that fragment's direction");
   // What the second template kept out stays out.
   for (const kept of ["news, announcements, results or schedules", "marketing, promotion or an offer", "a joke or a passing mention"]) assert.ok(option("none").includes(kept));
+});
+
+test("the template in use counts a direction from 0.70 and lets the band below it only discover motives", () => {
+  assert.equal(current.version, "r16b-v3.2");
+  const { direction_min_probability: line, direction_discovery_min_probability: discovery, ...rules } = current.rules;
+  const { direction_min_probability: _line, ...earlier } = template.rules;
+  assert.deepEqual([line, discovery], [0.7, 0.5]);
+  assert.deepEqual(rules, earlier, "everything else is the third template's");
+  const before = compileSignalStudyAxesV1(template, subject), now = compileSignalStudyAxesV1(current, subject);
+  assert.notEqual(now.direction.question_digest, before.direction.question_digest, "the direction is worded again");
+  assert.deepEqual([now.use.question_digest, now.target.question_digest], [before.use.question_digest, before.target.question_digest]);
+  const axis = current.axes.find(item => item.role === "direction")!;
+  assert.match(axis.text, /^Does the speaker express a force of their own aimed at the target/u);
+  assert.match(axis.text, /The target includes what living it consists of/u);
+  assert.doesNotMatch(axis.text, /default|only when|Without such/u, "no restriction in the wording: each one lowers the classifier's confidence");
+  const by = (direction_probability: number, use = "other") => resolveSignalStudyAxesV1(subject, { direction: "barrier", target: "category", use, direction_probability }, current.rules);
+  // Counted from the line; grouped but not counted in the band below it; out under the band.
+  assert.deepEqual([0.9, 0.7, 0.69, 0.5, 0.49].map(probability => by(probability).direction), ["barrier", "barrier", "none", "none", "none"]);
+  assert.deepEqual([0.9, 0.7, 0.69, 0.5, 0.49].map(probability => by(probability).discovery), [false, false, true, true, false]);
+  assert.deepEqual([0.9, 0.7, 0.69, 0.5, 0.49].map(probability => signalStudyInMotivePoolV1(current, by(probability))), [true, true, true, true, false]);
+  assert.equal(signalStudyInMotivePoolV1(current, by(0.6, "figurative_or_ironic")), false, "figurative or ironic use stays out of discovery too");
+  // An earlier template has no such band.
+  assert.equal(resolveSignalStudyAxesV1(subject, { direction: "barrier", target: "category", use: "literal", direction_probability: 0.6 }, template.rules).discovery, false);
 });
