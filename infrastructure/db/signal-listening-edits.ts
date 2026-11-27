@@ -76,7 +76,18 @@ export type SignalListeningMapV1 = {
       merged_from: string[] }> }>;
 };
 /** The map of the last finished discovery cycle: themes, their topics and how many mentions each holds after people's corrections. */
-export async function readSignalListeningMapV1(access: Access): Promise<SignalListeningMapV1> {
+export async function readSignalListeningMapV1(access: Access & {
+  /** Counts only mentions published in this period (dates of the given time zone). Without it, all of them. */
+  period?: { date_from: string | null; date_to: string | null; timezone: string } }): Promise<SignalListeningMapV1> {
+  const date = /^\d{4}-\d{2}-\d{2}$/u, period = access.period ?? { date_from: null, date_to: null, timezone: "UTC" };
+  if ([period.date_from, period.date_to].some(value => value !== null && !date.test(value)) || !/^[A-Za-z0-9_+\-/]{1,64}$/u.test(period.timezone)) fail("listening_request_invalid", 422);
+  // The same period rule as the rest of the Topics page: whole days of the workspace's time zone.
+  // Without dates nothing is joined: the whole map is counted from the answers alone.
+  const dated = period.date_from !== null || period.date_to !== null;
+  const inPeriod = (first: number) => !dated ? "" : `JOIN mentions mention ON mention.workspace_id=$1 AND mention.id=member.root_id
+    AND ($${first}::date IS NULL OR mention.published_at>=($${first}::date::timestamp AT TIME ZONE $${first + 2}::text))
+    AND ($${first + 1}::date IS NULL OR mention.published_at<(($${first + 1}::date+1)::timestamp AT TIME ZONE $${first + 2}::text))`;
+  const when = dated ? [period.date_from, period.date_to, period.timezone] : [];
   return shared.transaction(access.database, async client => {
     await client.query("SET TRANSACTION READ ONLY");
     const caps = await shared.authorize(client, access, "view");
@@ -85,13 +96,14 @@ export async function readSignalListeningMapV1(access: Access): Promise<SignalLi
     const map = await finalMap(client, access.workspace_id);
     if (!map) return empty;
     const volumes = new Map((await client.query<{ topic_key: string; mentions: number }>(`WITH ${EFFECTIVE}
-      SELECT topic_key,count(*)::int mentions FROM effective GROUP BY 1`, [access.workspace_id, map.base_map_id, map.round_id, map.policy.approval, ...pairs(map.merged)])).rows
-      .map(row => [row.topic_key, row.mentions]));
+      SELECT member.topic_key,count(*)::int mentions FROM effective member ${inPeriod(7)} GROUP BY 1`,
+      [access.workspace_id, map.base_map_id, map.round_id, map.policy.approval, ...pairs(map.merged), ...when])).rows.map(row => [row.topic_key, row.mentions]));
     const probable = new Map(map.policy.probable === undefined ? [] : (await client.query<{ topic_key: string; mentions: number }>(`WITH ${EFFECTIVE}
-      SELECT COALESCE(merged.target,valid.topic_key) topic_key,count(DISTINCT valid.root_id)::int mentions FROM valid LEFT JOIN merged ON merged.source=valid.topic_key
-      WHERE NOT valid.ok AND valid.probability>=$7::real
-        AND NOT EXISTS(SELECT 1 FROM effective WHERE effective.root_id=valid.root_id AND effective.topic_key=COALESCE(merged.target,valid.topic_key)) GROUP BY 1`,
-      [access.workspace_id, map.base_map_id, map.round_id, map.policy.approval, ...pairs(map.merged), map.policy.probable])).rows.map(row => [row.topic_key, row.mentions]));
+      SELECT COALESCE(merged.target,member.topic_key) topic_key,count(DISTINCT member.root_id)::int mentions FROM valid member LEFT JOIN merged ON merged.source=member.topic_key
+      ${inPeriod(8)}
+      WHERE NOT member.ok AND member.probability>=$7::real
+        AND NOT EXISTS(SELECT 1 FROM effective WHERE effective.root_id=member.root_id AND effective.topic_key=COALESCE(merged.target,member.topic_key)) GROUP BY 1`,
+      [access.workspace_id, map.base_map_id, map.round_id, map.policy.approval, ...pairs(map.merged), map.policy.probable, ...when])).rows.map(row => [row.topic_key, row.mentions]));
     const names = new Map(map.themes.map(item => [item.theme_key, item.name]));
     const grouped = new Map<string | null, SignalListeningMapV1["themes"][number]>();
     for (const topic of map.catalog) {

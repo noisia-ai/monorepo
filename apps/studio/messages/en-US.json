@@ -4990,6 +4990,7 @@
       "mentions": "Mentions",
       "probable": "+{count} probable",
       "probableHelp": "Mentions the classifier finds probable but does not confirm. They are kept and not counted.",
+      "previousMap": "Previous map (history)",
       "mergedFrom": "{count, plural, one {includes # merged topic} other {includes # merged topics}}",
       "destination": "Another topic",
       "choose": "Choose a topic",

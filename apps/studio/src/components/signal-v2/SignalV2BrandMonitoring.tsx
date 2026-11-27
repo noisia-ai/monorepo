@@ -1,5 +1,5 @@
 "use client";
-import { SignalListeningMap } from "./SignalListeningMap";
+import { SignalReviewedTopics } from "./SignalListeningMap";
 import { SignalListeningMetrics } from "./SignalListeningMetrics";
 import type { SignalWorkspaceTopicReadBundleV1 } from "@noisia/db";
 
@@ -1373,6 +1373,8 @@ export function SignalV2BrandMonitoring({
         {currentModule === "settings" && initialSettings ? (
           <SignalV2Settings data={initialSettings} />
         ) : currentModule === "topics" && topicsNarrativesData?.contract_version === "signal-workspace-topics-serving-v1" ? (
+          <SignalReviewedTopics workspaceId={data.workspace.id} period={{ date_from: topicsNarrativesData.filters.date_from, date_to: topicsNarrativesData.filters.date_to,
+            timezone: topicsNarrativesData.filters.timezone ?? data.workspace.timezone }}>
           <SignalV2WorkspaceTopics initialBundle={nativeTopicBundle} brandName={brandName} data={topicsNarrativesData} loading={loading || Boolean(pendingModule)}
             surface="topics" refreshFailed={Boolean(error)} manageTopicsHref={manageTopicsHref}
             workspaceTimezone={data.workspace.timezone}
@@ -1384,6 +1386,7 @@ export function SignalV2BrandMonitoring({
               if (topicsNarrativesData.filters.date_to) params.set("end", topicsNarrativesData.filters.date_to);
               void navigateToModule("mentions", "push", params);
             }} />
+          </SignalReviewedTopics>
         ) : currentModule === "study" && nativeConsumers && topicsNarrativesData?.contract_version === "signal-workspace-topics-serving-v1" ? (
           <SignalV2WorkspaceTopics brandName={brandName} data={topicsNarrativesData} loading={loading || Boolean(pendingModule)}
             surface="consumers" refreshFailed={Boolean(error)} manageTopicsHref={manageTopicsHref} workspaceTimezone={data.workspace.timezone}
@@ -1838,7 +1841,6 @@ export function SignalV2BrandMonitoring({
         </div>
           </>
         )}
-        {currentModule === "monitoring" ? <SignalListeningMap workspaceId={data.workspace.id} /> : null}
         {currentModule === "monitoring" ? <SignalListeningMetrics workspaceId={data.workspace.id} /> : null}
         </div>
         )}

@@ -9438,6 +9438,8 @@
 .signal-v2-listening thead th { color: #616161; font-size: 12px; }
 .signal-v2-listening th:first-child, .signal-v2-listening td:first-child { text-align: left; }
 .signal-v2-listening__toggle { display: flex !important; align-items: center; gap: 6px; }
+.signal-v2-listening__previous { margin-top: 16px; }
+.signal-v2-listening__previous > summary { padding: 8px 0; color: #616161; font-size: 13px; cursor: pointer; }
 .signal-v2-listening__topic { padding: 0; border: 0; background: none; color: inherit; font: inherit; text-align: left; text-decoration: underline dotted; cursor: pointer; }
 .signal-v2-listening__edit { text-align: left !important; background: #fafafa; }
 .signal-v2-listening__edit ul { margin: 8px 0; padding: 0; list-style: none; display: grid; gap: 8px; }

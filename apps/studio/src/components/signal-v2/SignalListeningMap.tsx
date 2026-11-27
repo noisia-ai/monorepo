@@ -1,9 +1,25 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { useLocale, useTranslations } from "next-intl";
 import type { SignalListeningMapV1, SignalListeningTopicMentionsV1 } from "@noisia/db";
 import { useMfpMutation } from "../brands/useMfpResource";
+
+type Period = { date_from: string | null; date_to: string | null; timezone: string };
+/**
+ * The Topics page of Signal. When the brand has a reviewed map, that map is the
+ * page: themes and their topics, with the page's period. What the page showed
+ * before stays underneath, folded, as the previous map. Without a reviewed map
+ * the page is shown as it was.
+ */
+export function SignalReviewedTopics({ workspaceId, period, children }: { workspaceId: string; period: Period; children: ReactNode }) {
+  const t = useTranslations("Listening.map");
+  const [reviewed, setReviewed] = useState(false);
+  return <>
+    <SignalListeningMap workspaceId={workspaceId} period={period} onAvailable={setReviewed} />
+    {reviewed ? <details className="signal-v2-listening__previous"><summary>{t("previousMap")}</summary>{children}</details> : children}
+  </>;
+}
 
 /**
  * Signal: the reviewed topic map in two levels. Topics outside the category stay
@@ -11,7 +27,7 @@ import { useMfpMutation } from "../brands/useMfpResource";
  * mention out of it or move it, and fold a topic into another. None of it is
  * needed for the report to work.
  */
-export function SignalListeningMap({ workspaceId }: { workspaceId: string }) {
+export function SignalListeningMap({ workspaceId, period, onAvailable }: { workspaceId: string; period?: Period; onAvailable?: (available: boolean) => void }) {
   const t = useTranslations("Listening.map");
   const language = useLocale().toLowerCase().startsWith("es") ? "es" : "en";
   const endpoint = `/api/data-os/signal/${encodeURIComponent(workspaceId)}/listening/map`;
@@ -22,10 +38,17 @@ export function SignalListeningMap({ workspaceId }: { workspaceId: string }) {
   const [destination, setDestination] = useState("");
   const edit = useMfpMutation(`${endpoint}/edits`);
 
+  const start = period?.date_from ?? null, end = period?.date_to ?? null, timezone = period?.timezone ?? null;
   const readMap = useCallback(async (signal?: AbortSignal) => {
-    const response = await fetch(endpoint, { cache: "no-store", signal });
+    const query = new URLSearchParams();
+    if (start) query.set("start", start);
+    if (end) query.set("end", end);
+    if (timezone) query.set("tz", timezone);
+    const response = await fetch(query.size ? `${endpoint}?${query}` : endpoint, { cache: "no-store", signal });
     if (response.ok) setMap(await response.json() as SignalListeningMapV1);
-  }, [endpoint]);
+  }, [endpoint, start, end, timezone]);
+  const available = Boolean(map?.cycle_id);
+  useEffect(() => { onAvailable?.(available); }, [available, onAvailable]);
   const readMentions = useCallback(async (topic: string, signal?: AbortSignal) => {
     const response = await fetch(`${endpoint}/mentions?topic=${encodeURIComponent(topic)}`, { cache: "no-store", signal });
     setMentions(response.ok ? await response.json() as SignalListeningTopicMentionsV1 : null);
