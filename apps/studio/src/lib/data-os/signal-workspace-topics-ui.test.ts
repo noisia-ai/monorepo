@@ -517,7 +517,7 @@ async function initialInspectionFixture(payload: SignalWorkspaceTopicsOverviewV1
   };
   const presentation = new Set(["next/link", "@phosphor-icons/react", "./SignalV2ModuleHeader", "./SignalAnalyticsFilter",
     "./SignalDataScopeFilter", "./SignalEChart", "./SignalSourceIcon", "./SignalEvidenceDrawer", "./SignalConsumerEvidence",
-    "./SignalTopicsPrimitives", "./SignalTopicChartOptions"]);
+    "./SignalTopicsPrimitives", "./SignalTopicChartOptions", "./SignalListeningMap"]);
   const dependencies: Record<string, unknown> = {
     "react": hooks, "react/jsx-runtime": { jsx, jsxs: jsx, Fragment: "fragment" },
     "next-intl": { useLocale: () => "en-US", useTranslations: () => (key: string) => key },

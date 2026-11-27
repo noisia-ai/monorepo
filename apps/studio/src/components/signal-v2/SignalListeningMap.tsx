@@ -7,13 +7,20 @@ import { useMfpMutation } from "../brands/useMfpResource";
 
 type Period = { date_from: string | null; date_to: string | null; timezone: string };
 /**
- * What the Topics page listed before the brand had a reviewed map. With a
- * reviewed map it stays on the page, folded, as the previous map; without one
- * it is shown as it always was. The page's header and period stay outside.
+ * The body of the Topics page. When the brand has a reviewed map, that map is
+ * listed first, for the page's period, and what the page listed before stays
+ * underneath, folded, as the previous map. Without a reviewed map the page is
+ * shown as it always was. The page's header and period controls stay outside,
+ * and the page itself keeps no state for this.
  */
-export function SignalPreviousMap({ folded, children }: { folded: boolean; children: ReactNode }) {
+export function SignalReviewedTopics({ enabled, workspaceId, period, children }: { enabled: boolean; workspaceId: string; period: Period; children: ReactNode }) {
   const t = useTranslations("Listening.map");
-  return folded ? <details className="signal-v2-listening__previous"><summary>{t("previousMap")}</summary>{children}</details> : <>{children}</>;
+  const [reviewed, setReviewed] = useState(false);
+  if (!enabled) return <>{children}</>;
+  return <>
+    <SignalListeningMap workspaceId={workspaceId} period={period} onAvailable={setReviewed} />
+    {reviewed ? <details className="signal-v2-listening__previous"><summary>{t("previousMap")}</summary>{children}</details> : children}
+  </>;
 }
 
 /**
