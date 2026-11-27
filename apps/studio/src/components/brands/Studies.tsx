@@ -27,13 +27,14 @@ export function Studies({ workspaceId, onAccessDenied, onPromoted }: { workspace
   const resource = useMfpResource<List>(endpoint, "signal-studies-v1", undefined, true);
   const create = useMfpMutation(endpoint, onAccessDenied);
   const [form, setForm] = useState({ name: "", kind: "category" as typeof KINDS[number], subject: "", category: "", own_brand: "", competitors: "", alternatives: "",
-    conventional_category: "", cap: "6.00" });
+    conventional_category: "", lexicon: "", cap: "6.00" });
   const [open, setOpen] = useState<string | null>(null);
   const list = resource.data?.workspace_id === workspaceId ? resource.data : null;
   const input = useMemo(() => {
     const parsed = studyCreateInputSchemaV1.omit({ idempotency_key: true }).safeParse({ name: form.name, cap_micro_usd: Math.round(Number(form.cap) * 1e6),
       subject: { kind: form.kind, name: form.subject, category: form.category, own_brand: form.own_brand, competitors: studyNamesFromTextV1(form.competitors),
-        alternatives: studyNamesFromTextV1(form.alternatives), ...(form.kind === "alternative" ? { conventional_category: form.conventional_category } : {}) } });
+        alternatives: studyNamesFromTextV1(form.alternatives), ...(form.kind === "alternative" ? { conventional_category: form.conventional_category } : {}) },
+      ...(form.lexicon.trim() ? { lexicon_terms: studyNamesFromTextV1(form.lexicon, 400) } : {}) });
     return parsed.success ? parsed.data : null;
   }, [form]);
   if (!list) return resource.loading ? <p role="status">{t("loading")}</p>
@@ -41,8 +42,8 @@ export function Studies({ workspaceId, onAccessDenied, onPromoted }: { workspace
     : resource.error && resource.error !== "forbidden" && resource.error !== "listening_not_enabled" ? <p className="team-msg team-msg--error" role="alert">{t("unavailable")}</p> : null;
   const field = (name: keyof typeof form, max: number) => <label>{t(`form.${name}`)}
     <input maxLength={max} value={form[name]} disabled={create.busy} onChange={event => setForm(current => ({ ...current, [name]: event.target.value }))} /></label>;
-  const names = (name: "competitors" | "alternatives") => <label>{t(`form.${name}`)}
-    <textarea rows={2} maxLength={1800} value={form[name]} disabled={create.busy} onChange={event => setForm(current => ({ ...current, [name]: event.target.value }))} /></label>;
+  const names = (name: "competitors" | "alternatives" | "lexicon") => <label>{t(`form.${name}`)}
+    <textarea rows={2} maxLength={name === "lexicon" ? 12000 : 1800} value={form[name]} disabled={create.busy} onChange={event => setForm(current => ({ ...current, [name]: event.target.value }))} /></label>;
 
   return <section className="admin-section" aria-label={t("title")} aria-busy={resource.loading || create.busy}>
     <header className="admin-section__head"><div><h2>{t("title")}</h2><p>{t("body")}</p></div>
@@ -68,7 +69,8 @@ export function Studies({ workspaceId, onAccessDenied, onPromoted }: { workspace
           {KINDS.map(kind => <option key={kind} value={kind}>{t(`kind.${kind}`)}</option>)}</select></label>
         {field("subject", 240)}{field("category", 240)}{field("own_brand", 240)}
         {form.kind === "alternative" ? field("conventional_category", 240) : null}
-        {names("competitors")}{names("alternatives")}
+        {names("competitors")}{names("alternatives")}{names("lexicon")}
+        <p className="admin-drawer-form__hint">{t("form.lexiconHelp")}</p>
         <div className="admin-form-actions">
           <label>{t("form.cap")}<input type="number" min={6} max={200} step={0.5} value={form.cap} onChange={event => setForm(current => ({ ...current, cap: event.target.value }))} /></label>
           <button className="admin-button admin-button--primary" type="button" disabled={create.busy || !create.pending && !input}

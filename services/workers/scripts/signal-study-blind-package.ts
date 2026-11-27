@@ -19,7 +19,7 @@ import { createHash, createHmac, randomBytes } from "node:crypto";
 import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import pg from "pg";
-import { getSignalStudyV1, listSignalStudyMotivesV1, readSignalStudyAxesV1, readSignalStudyMembershipsV1, readSignalStudyRootsV1 } from "@noisia/db";
+import { getSignalStudyV1, listSignalStudyMotivesV1, readSignalStudyAxesV1, readSignalStudyMembershipsV1, readSignalStudyRootsV1, signalStudyRulesOfV1 } from "@noisia/db";
 import { compileSignalListeningConfigurationV1, compileSignalStudyAxesV1, resolveSignalStudyAxesV1, SIGNAL_LISTENING_CONSUMER_CUT_V1,
   validateSignalListeningConfigurationV1 } from "@noisia/query-engine";
 
@@ -76,30 +76,36 @@ try {
 
   // ---- axes
   const answered = await readSignalStudyAxesV1(pool, study);
-  const axes = answered.map(row => ({ ...row, resolved: resolveSignalStudyAxesV1(study.subject, row) }));
+  // Strata follow the direction as the study counts it: one below its probability line is read as none.
+  const axes = answered.map(row => ({ ...row, resolved: resolveSignalStudyAxesV1(study.subject, row, signalStudyRulesOfV1(study)) }));
   const stratum: Record<typeof AXES_STRATA[number][0], (row: typeof axes[number]) => boolean> = {
-    direction_mixed: row => row.direction === "mixed", use_figurative_or_ironic: row => row.use === "figurative_or_ironic",
-    target_competitor_brand: row => row.direction !== "none" && row.target === "competitor_brand", target_own_brand: row => row.direction !== "none" && row.target === "own_brand",
-    target_alternative: row => row.direction !== "none" && row.target === "alternative",
-    direction_trigger: row => row.direction === "trigger", direction_barrier: row => row.direction === "barrier", none_inside_cut: row => row.direction === "none" };
+    direction_mixed: row => row.resolved.direction === "mixed", use_figurative_or_ironic: row => row.use === "figurative_or_ironic",
+    target_competitor_brand: row => row.resolved.direction !== "none" && row.target === "competitor_brand", target_own_brand: row => row.resolved.direction !== "none" && row.target === "own_brand",
+    target_alternative: row => row.resolved.direction !== "none" && row.target === "alternative",
+    direction_trigger: row => row.resolved.source_direction === "trigger" && row.resolved.direction !== "none", direction_barrier: row => row.resolved.source_direction === "barrier" && row.resolved.direction !== "none",
+    none_inside_cut: row => row.resolved.direction === "none" };
   const axisCases = AXES_STRATA.flatMap(([name, limit]) => take(axes.filter(stratum[name]), `axes:${name}`, limit).map(row => ({ root_id: row.root_id, stratum: name as string,
-    answers: { direction: row.direction, target: row.target, use: row.use } as { direction: string; target: string; use: string } | null, counted_as: row.resolved.aggregate as string | null })));
+    answers: { direction: row.resolved.direction, target: row.target, use: row.use, classifier_direction: row.direction, direction_probability: row.direction_probability } as
+      { direction: string; target: string; use: string; classifier_direction: string; direction_probability: number | null } | null, counted_as: row.resolved.aggregate as string | null })));
   // Consumer posts that the category lexicon left outside the cut: nothing was asked of them.
   const configuration = validateSignalListeningConfigurationV1((await pool.query<{ configuration: unknown }>(
     "SELECT configuration FROM signal_listening_configurations WHERE id=$1 AND workspace_id=$2", [study.configuration_id, study.workspace_id])).rows[0]!.configuration);
   const compiled = compileSignalListeningConfigurationV1(configuration);
   const baseIds = new Map((await pool.query<{ id: string; question_digest: string }>("SELECT id::text,question_digest FROM signal_listening_questions WHERE workspace_id=$1 AND question_digest=ANY($2::text[])",
     [study.workspace_id, [compiled.base.voice.question_digest, compiled.base.promotion.question_digest]])).rows.map(row => [row.question_digest, row.id]));
+  // Outside the cut by the lexicon the study used: its own when it has one, the brand's otherwise. A post already drawn is not drawn again.
+  const ownLexicon = Boolean(study.cut.lexicon_terms?.length);
   const outside = (await pool.query<{ root_id: string; text: string }>(`SELECT item.root_id,item.text FROM signal_mass_labeling_items item
     JOIN signal_mass_labeling_root_segments segment ON segment.map_id=item.map_id AND segment.root_id=item.root_id AND NOT segment.hashtag_only
     JOIN signal_listening_answers voice ON voice.question_id=$3::bigint AND voice.root_id=item.root_id AND voice.workspace_id=item.workspace_id
       AND voice.choice=$5 AND voice.input_sha=decode(substr(item.input_digest,8),'hex')
     JOIN signal_listening_answers promotion ON promotion.question_id=$4::bigint AND promotion.root_id=item.root_id AND promotion.workspace_id=item.workspace_id
       AND promotion.probability<=$6 AND promotion.input_sha=decode(substr(item.input_digest,8),'hex')
-    LEFT JOIN signal_mass_labeling_category_matches lexical ON lexical.workspace_id=item.workspace_id AND lexical.policy_revision=$7::int AND lexical.root_id=item.root_id
-    WHERE item.workspace_id=$1 AND item.map_id=$2 AND NOT COALESCE(lexical.matched,false) ORDER BY md5(item.root_id::text||$8) LIMIT $9`,
+    ${ownLexicon ? "LEFT JOIN signal_study_lexicon_matches lexical ON lexical.study_id=$7::uuid AND lexical.root_id=item.root_id"
+      : "LEFT JOIN signal_mass_labeling_category_matches lexical ON lexical.workspace_id=item.workspace_id AND lexical.policy_revision=$7::int AND lexical.root_id=item.root_id AND lexical.matched"}
+    WHERE item.workspace_id=$1 AND item.map_id=$2 AND lexical.root_id IS NULL AND item.root_id<>ALL($10::uuid[]) ORDER BY md5(item.root_id::text||$8) LIMIT $9`,
     [study.workspace_id, study.base_map_id, baseIds.get(compiled.base.voice.question_digest) ?? -1, baseIds.get(compiled.base.promotion.question_digest) ?? -1,
-      SIGNAL_LISTENING_CONSUMER_CUT_V1.voice, study.cut.promotion_max, study.lexicon_revision, seed.toString("hex"), NONE_OUTSIDE])).rows;
+      SIGNAL_LISTENING_CONSUMER_CUT_V1.voice, study.cut.promotion_max, ownLexicon ? study.id : study.lexicon_revision, seed.toString("hex"), NONE_OUTSIDE, [...drawn]])).rows;
   for (const row of outside) { texts.set(row.root_id, row.text); axisCases.push({ root_id: row.root_id, stratum: "outside_cut_by_lexicon", answers: null, counted_as: null }); }
 
   await loadTexts([...assignment, ...purity, ...axisCases].map(item => item.root_id));

@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto";
 import type { Pool, PoolClient } from "pg";
 import {
-  compileSignalListeningConfigurationV1, compileSignalStudyAxesV1, signalStudyMotiveQuestionV1, SIGNAL_LISTENING_CONSUMER_CUT_V1, SIGNAL_STUDY_TB_TEMPLATE_V1,
-  validateSignalListeningConfigurationV1, validateSignalStudySubjectV1, validateSignalStudyTemplateV1,
+  compileSignalListeningConfigurationV1, compileSignalStudyAxesV1, signalStudyGroupUsesV1, signalStudyMotiveQuestionV1, SIGNAL_LISTENING_CONSUMER_CUT_V1, signalStudyDirectionLineV1, signalStudyDirectionProbabilitySqlV1, signalStudyRulesWithLinesV1, validateSignalStudyDirectionLinesV1, SIGNAL_STUDY_TB_TEMPLATE_V3_5, type SignalStudyDirectionLinesV1,
+  validateSignalListeningConfigurationV1, validateSignalStudyLexiconV1, validateSignalStudySubjectV1, validateSignalStudyTemplateV1,
   type SignalListeningAskedQuestionV1, type SignalListeningConfigurationV1, type SignalListeningItemV1, type SignalStudyLayerV1,
   type SignalStudyPermissionV1, type SignalStudySubjectV1, type SignalStudyTemplateV1, type SignalStudyWordingV1,
 } from "@noisia/query-engine";
@@ -25,8 +25,16 @@ export const SIGNAL_STUDY_MIN_CAP_MICRO_USD_V1 = 6_000_000;
 
 export type SignalStudyCutV1 = { voice: "individual"; promotion_max: number; exclude_hashtag_only: true; require_category_lexicon: true;
   /** Optional period, as ISO timestamps. Without it the whole corpus is the cut. */
-  start_at: string | null; end_at: string | null };
-export type SignalStudyStepV1 = "created" | "axes_asked" | "grouped" | "motives_named" | "layers_coded" | "motives_asked" | "checked" | "published";
+  start_at: string | null; end_at: string | null;
+  /** The study's own lexicon. With it the cut is the posts these terms match, not the ones the brand's lexicon matches. */
+  lexicon_terms?: string[];
+  /** Lines of direction this study raises above the template's, each with the blind evidence that justifies it. */
+  direction_lines?: SignalStudyDirectionLinesV1 };
+/** The rules a study counts with: its template's, with the lines it raised for itself. */
+export function signalStudyRulesOfV1(study: Pick<SignalStudyV1, "methodology" | "cut">): SignalStudyTemplateV1["rules"] {
+  return signalStudyRulesWithLinesV1(study.methodology.rules, study.cut.direction_lines);
+}
+export type SignalStudyStepV1 = "created" | "axes_asked" | "grouped" | "motives_named" | "layers_coded" | "motives_asked" | "members_confirmed" | "checked" | "published";
 export type SignalStudyV1 = {
   id: string; workspace_id: string; base_map_id: string; configuration_id: string; lexicon_revision: number; name: string;
   methodology: SignalStudyTemplateV1; subject: SignalStudySubjectV1; cut: SignalStudyCutV1;
@@ -45,13 +53,20 @@ export type SignalStudyMotiveRowV1 = { study_id: string; motive_key: string; wor
  * or embedded again.
  */
 export async function requestSignalStudyV1(args: { database: Database; workspace_id: string; actor_user_id: string; name: string; subject: unknown;
-  cap_micro_usd: number; idempotency_key: string; period?: { start_at: string; end_at: string } | null; template?: unknown }) {
+  cap_micro_usd: number; idempotency_key: string; period?: { start_at: string; end_at: string } | null; template?: unknown;
+  /** The study's own lexicon for its cut, when it is not about the category the brand listens to. */
+  lexicon_terms?: unknown;
+  /** Lines of direction raised for this study, with their blind evidence. */
+  direction_lines?: unknown }) {
   if (!Number.isSafeInteger(args.cap_micro_usd) || args.cap_micro_usd < SIGNAL_STUDY_MIN_CAP_MICRO_USD_V1 || args.cap_micro_usd > 200_000_000) fail("study_cap_invalid", 422);
   if (typeof args.idempotency_key !== "string" || args.idempotency_key.length < 8 || args.idempotency_key.length > 200) fail("study_request_invalid", 422);
   if (typeof args.name !== "string" || !args.name.trim() || args.name.length > 200) fail("study_request_invalid", 422);
-  let subject: SignalStudySubjectV1, template: SignalStudyTemplateV1;
-  try { subject = validateSignalStudySubjectV1(args.subject); template = validateSignalStudyTemplateV1(args.template ?? SIGNAL_STUDY_TB_TEMPLATE_V1); }
-  catch { fail("study_request_invalid", 422); }
+  let subject: SignalStudySubjectV1, template: SignalStudyTemplateV1, lexicon: string[] | null, lines: SignalStudyDirectionLinesV1 | null;
+  try {
+    subject = validateSignalStudySubjectV1(args.subject); template = validateSignalStudyTemplateV1(args.template ?? SIGNAL_STUDY_TB_TEMPLATE_V3_5);
+    lexicon = args.lexicon_terms === undefined || args.lexicon_terms === null ? null : validateSignalStudyLexiconV1(args.lexicon_terms);
+    lines = args.direction_lines === undefined || args.direction_lines === null ? null : validateSignalStudyDirectionLinesV1(args.direction_lines, template.rules);
+  } catch { fail("study_request_invalid", 422); }
   const period = args.period ?? null;
   if (period && (!Number.isFinite(Date.parse(period.start_at)) || !Number.isFinite(Date.parse(period.end_at)) || Date.parse(period.start_at) >= Date.parse(period.end_at))) {
     fail("study_period_invalid", 422);
@@ -65,15 +80,16 @@ export async function requestSignalStudyV1(args: { database: Database; workspace
     const target = await shared.population(client, args.workspace_id);
     if (!target) fail("listening_population_required");
     const { stored, configuration, configuration_digest, policy_revision } = await shared.compose(client, args.workspace_id);
-    if (!configuration.lexicon_terms.length) fail("listening_lexicon_required", 422);
-    const cut: SignalStudyCutV1 = { ...template.rules.cut, start_at: period?.start_at ?? null, end_at: period?.end_at ?? null };
+    if (!lexicon && !configuration.lexicon_terms.length) fail("listening_lexicon_required", 422);
+    const cut: SignalStudyCutV1 = { ...template.rules.cut, start_at: period?.start_at ?? null, end_at: period?.end_at ?? null, ...(lexicon ? { lexicon_terms: lexicon } : {}), ...(lines ? { direction_lines: lines } : {}) };
     // The cut is read from the base listening answers (who speaks, and whether it is promotion). Without them it would be
     // empty and the study would finish with nothing in it, so the brand is asked to listen first.
     const base = compileSignalListeningConfigurationV1(configuration).base;
     const baseIds = await shared.questionIds(client, args.workspace_id, [base.voice.question_digest, base.promotion.question_digest]);
     const voiceId = baseIds.get(base.voice.question_digest), promotionId = baseIds.get(base.promotion.question_digest);
-    if (voiceId === undefined || promotionId === undefined || !(await client.query(`SELECT 1 FROM (${shared.consumerRootsSql(3)}) consumer LIMIT 1`,
-      [args.workspace_id, target.map_id, voiceId, promotionId, SIGNAL_LISTENING_CONSUMER_CUT_V1.voice, cut.promotion_max, policy_revision])).rows.length) {
+    // With its own lexicon the cut is only known once the study starts and matches it; the base answers are still required.
+    if (voiceId === undefined || promotionId === undefined || (!lexicon && !(await client.query(`SELECT 1 FROM (${shared.consumerRootsSql(3)}) consumer LIMIT 1`,
+      [args.workspace_id, target.map_id, voiceId, promotionId, SIGNAL_LISTENING_CONSUMER_CUT_V1.voice, cut.promotion_max, policy_revision])).rows.length)) {
       fail("study_listening_required");
     }
     const revision = await shared.storeRevision(client, { workspace_id: args.workspace_id, actor_user_id: args.actor_user_id, stored, configuration,
@@ -83,6 +99,55 @@ export async function requestSignalStudyV1(args: { database: Database; workspace
       VALUES($1,$2,$3,$4,$5,$6,$7::jsonb,$8::jsonb,$9::jsonb,$10,$11,jsonb_build_object('idempotency_key',$12::text))`,
       [id, args.workspace_id, target.map_id, revision.id, policy_revision, args.name.trim(), JSON.stringify(template), JSON.stringify(subject), JSON.stringify(cut),
         args.cap_micro_usd, args.actor_user_id, args.idempotency_key]);
+    return { study_id: id, replayed: false };
+  });
+}
+
+/**
+ * Counts a finished study again under the rules of today's template, without asking anything: the new study keeps the
+ * subject, the cut, the motives and their questions of the finished one, and starts where the layer is read. It is for a
+ * change of rules that leaves every question as it was, such as a line of direction; if a question differs it refuses.
+ */
+export async function recountSignalStudyV1(args: { database: Database; workspace_id: string; actor_user_id: string; source_study_id: string; name: string;
+  cap_micro_usd: number; idempotency_key: string; direction_lines?: unknown; template?: unknown }) {
+  if (!Number.isSafeInteger(args.cap_micro_usd) || args.cap_micro_usd < 2_000_000 || args.cap_micro_usd > 200_000_000) fail("study_cap_invalid", 422);
+  if (typeof args.idempotency_key !== "string" || args.idempotency_key.length < 8 || args.idempotency_key.length > 200) fail("study_request_invalid", 422);
+  if (typeof args.name !== "string" || !args.name.trim() || args.name.length > 200) fail("study_request_invalid", 422);
+  return shared.transaction(args.database, async client => {
+    await shared.lock(client, args.workspace_id);
+    await shared.authorize(client, args, "process");
+    const replay = (await client.query<{ id: string }>("SELECT id FROM signal_studies WHERE workspace_id=$1 AND receipt->>'idempotency_key'=$2", [args.workspace_id, args.idempotency_key])).rows[0];
+    if (replay) return { study_id: replay.id, replayed: true };
+    const source = (await client.query<SignalStudyV1>(`SELECT ${STUDY} FROM signal_studies WHERE id=$1 AND workspace_id=$2 AND status='completed'`, [args.source_study_id, args.workspace_id])).rows[0];
+    if (!source) fail("study_not_found", 404);
+    let template: SignalStudyTemplateV1, lines: SignalStudyDirectionLinesV1 | null;
+    try {
+      template = validateSignalStudyTemplateV1(args.template ?? SIGNAL_STUDY_TB_TEMPLATE_V3_5);
+      lines = args.direction_lines === undefined || args.direction_lines === null ? null : validateSignalStudyDirectionLinesV1(args.direction_lines, template.rules);
+    } catch { fail("study_request_invalid", 422); }
+    // Every question has to be the one already answered, read the same way, or the motives and their members would not be these.
+    const before = compileSignalStudyAxesV1(source.methodology, source.subject), now = compileSignalStudyAxesV1(template, source.subject);
+    const same = (["direction", "target", "use"] as const).every(role => before[role].question_digest === now[role].question_digest)
+      && JSON.stringify(template.motive_question) === JSON.stringify(source.methodology.motive_question) && template.instructions === source.methodology.instructions
+      && template.rules.direction_probability_of === source.methodology.rules.direction_probability_of
+      && template.rules.motive_approval_min === source.methodology.rules.motive_approval_min
+      && JSON.stringify(template.rules.cut) === JSON.stringify(source.methodology.rules.cut);
+    if (!same) fail("study_recount_questions_differ", 422);
+    // Counting again can only leave posts out. A line lower than the one the study ran with would count posts that were
+    // never asked their motives, so it is refused: that change needs a study of its own.
+    const ran = signalStudyRulesOfV1(source), asked = signalStudyRulesWithLinesV1(template.rules, lines);
+    if (["trigger", "barrier", "mixed"].some(direction => (signalStudyDirectionLineV1(asked, direction) ?? 0) < (signalStudyDirectionLineV1(ran, direction) ?? 0))
+      || JSON.stringify(signalStudyGroupUsesV1(asked)) !== JSON.stringify(signalStudyGroupUsesV1(ran))) fail("study_recount_widens_the_count", 422);
+    const { direction_lines: _earlier, ...kept } = source.cut;
+    const cut: SignalStudyCutV1 = { ...kept, ...(lines ? { direction_lines: lines } : {}) }, id = randomUUID();
+    const carried = Object.fromEntries(["groups", "naming", "pool_roots", "pool_discovery_only_roots", "checks", "contrast_done"].flatMap(key => key in source.state ? [[key, source.state[key]]] : []));
+    await client.query(`INSERT INTO signal_studies(id,workspace_id,base_map_id,configuration_id,lexicon_revision,name,methodology,subject,cut,step,state,cap_micro_usd,requested_by_user_id,receipt)
+      VALUES($1,$2,$3,$4,$5,$6,$7::jsonb,$8::jsonb,$9::jsonb,'members_confirmed',$10::jsonb,$11,$12,jsonb_build_object('idempotency_key',$13::text,'recount_of',$14::text))`,
+      [id, args.workspace_id, source.base_map_id, source.configuration_id, source.lexicon_revision, args.name.trim(), JSON.stringify(template), JSON.stringify(source.subject),
+        JSON.stringify(cut), JSON.stringify({ ...carried, recount_of: source.id }), args.cap_micro_usd, args.actor_user_id, args.idempotency_key, source.id]);
+    await client.query(`INSERT INTO signal_study_motives(study_id,motive_key,wording,layer,permission,layer_record,group_keys,centroid,question_id)
+      SELECT $1,motive_key,wording,'unclear','no_permission','{}'::jsonb,group_keys,centroid,question_id FROM signal_study_motives WHERE study_id=$2`, [id, source.id]);
+    await client.query("INSERT INTO signal_study_lexicon_matches(study_id,root_id) SELECT $1,root_id FROM signal_study_lexicon_matches WHERE study_id=$2", [id, source.id]);
     return { study_id: id, replayed: false };
   });
 }
@@ -175,11 +240,49 @@ type Cut = { sql: string; params: unknown[] };
 async function cutOf(database: Queryable, study: SignalStudyV1): Promise<Cut> {
   const compiled = compileSignalListeningConfigurationV1(await studyConfiguration(database, study));
   const ids = await shared.questionIds(database, study.workspace_id, [compiled.base.voice.question_digest, compiled.base.promotion.question_digest]);
+  const own = Boolean(study.cut.lexicon_terms?.length);
   const base = [study.workspace_id, study.base_map_id, ids.get(compiled.base.voice.question_digest) ?? -1, ids.get(compiled.base.promotion.question_digest) ?? -1,
-    SIGNAL_LISTENING_CONSUMER_CUT_V1.voice, study.cut.promotion_max, study.lexicon_revision, study.cut.start_at, study.cut.end_at];
-  return { params: base, sql: `SELECT consumer.root_id FROM (${shared.consumerRootsSql(3)}) consumer
+    SIGNAL_LISTENING_CONSUMER_CUT_V1.voice, study.cut.promotion_max, own ? study.id : study.lexicon_revision, study.cut.start_at, study.cut.end_at];
+  // Same consumer rule either way; only the lexicon that says what the posts are about changes.
+  const consumer = own ? `SELECT item.root_id FROM signal_mass_labeling_items item
+    JOIN signal_study_lexicon_matches lexical ON lexical.study_id=$7::uuid AND lexical.root_id=item.root_id
+    JOIN signal_mass_labeling_root_segments segment ON segment.map_id=item.map_id AND segment.root_id=item.root_id
+    JOIN signal_listening_answers voice ON voice.question_id=$3 AND voice.root_id=item.root_id AND voice.workspace_id=item.workspace_id
+      AND voice.choice=$5 AND voice.input_sha=decode(substr(item.input_digest,8),'hex')
+    JOIN signal_listening_answers promotion ON promotion.question_id=$4 AND promotion.root_id=item.root_id
+      AND promotion.workspace_id=item.workspace_id AND promotion.probability<=$6 AND promotion.input_sha=decode(substr(item.input_digest,8),'hex')
+    WHERE item.workspace_id=$1 AND item.map_id=$2 AND NOT segment.hashtag_only` : shared.consumerRootsSql(3);
+  return { params: base, sql: `SELECT consumer.root_id FROM (${consumer}) consumer
     JOIN mentions mention ON mention.workspace_id=$1 AND mention.id=consumer.root_id
     WHERE ($8::timestamptz IS NULL OR mention.published_at>=$8::timestamptz) AND ($9::timestamptz IS NULL OR mention.published_at<$9::timestamptz)` };
+}
+/**
+ * Matches the study's own lexicon against the corpus, once, in pages: one statement over every post
+ * does not fit in the statement timeout of a real brand. Nothing to do for a study that uses the brand's lexicon.
+ */
+export async function matchSignalStudyLexiconV1(database: Database, study: SignalStudyV1, heartbeat: () => Promise<unknown> = async () => undefined, page = 4000): Promise<number | null> {
+  const terms = study.cut.lexicon_terms;
+  if (!terms?.length) return null;
+  const last = (await database.query<{ last: number | null }>("SELECT max(ordinal)::int last FROM signal_mass_labeling_items WHERE workspace_id=$1 AND map_id=$2",
+    [study.workspace_id, study.base_map_id])).rows[0]!.last ?? 0;
+  for (let from = 0; from < last; from += page) {
+    await database.query(`INSERT INTO signal_study_lexicon_matches(study_id,root_id)
+      SELECT $1,item.root_id FROM signal_mass_labeling_items item JOIN mentions mention ON mention.workspace_id=item.workspace_id AND mention.id=item.root_id
+      WHERE item.workspace_id=$2 AND item.map_id=$3 AND item.ordinal>$4 AND item.ordinal<=$5 AND signal_mass_labeling_category_matches_v1(mention.text_clean,$6::text[])
+      ON CONFLICT DO NOTHING`, [study.id, study.workspace_id, study.base_map_id, from, from + page, terms]);
+    await heartbeat();
+  }
+  return (await database.query<{ matched: number }>("SELECT count(*)::int matched FROM signal_study_lexicon_matches WHERE study_id=$1", [study.id])).rows[0]!.matched;
+}
+/** Writes the layer each motive took from its posts. Wording, questions and centres are left as they are. */
+export async function setSignalStudyMotiveLayersV1(database: Database, study: Pick<SignalStudyV1, "id" | "lease_token">,
+  layers: Array<{ motive_key: string; layer: SignalStudyLayerV1; permission: SignalStudyPermissionV1; layer_record: Record<string, unknown> }>) {
+  await shared.transaction(database, async client => {
+    if (!(await client.query("SELECT 1 FROM signal_studies WHERE id=$1 AND lease_token=$2 FOR UPDATE", [study.id, study.lease_token])).rows.length) throw new Error("study_lease_lost");
+    await client.query(`UPDATE signal_study_motives motive SET layer=coded.layer,permission=coded.permission,layer_record=coded.layer_record
+      FROM jsonb_to_recordset($2::jsonb) coded(motive_key text,layer text,permission text,layer_record jsonb)
+      WHERE motive.study_id=$1 AND motive.motive_key=coded.motive_key`, [study.id, json(layers)]);
+  });
 }
 /** Registers the three questions of the study and remembers their ids. */
 export async function ensureSignalStudyAxesV1(database: Database, study: SignalStudyV1) {
@@ -266,14 +369,15 @@ export async function createSignalStudySourceV1(database: Database, run: Pick<Si
             FROM (${cut.sql}) included
             JOIN signal_mass_labeling_items item ON item.workspace_id=$1 AND item.map_id=$2 AND item.root_id=included.root_id
             JOIN signal_listening_answers direction ON direction.question_id=$${page + 5} AND direction.root_id=item.root_id AND direction.workspace_id=$1
-              AND direction.choice<>'none' AND direction.input_sha=decode(substr(item.input_digest,8),'hex')
+              AND direction.choice<>'none' AND ${signalStudyDirectionProbabilitySqlV1(template.rules)}>=COALESCE(($${page + 9}::jsonb->>direction.choice)::real,$${page + 8}::real) AND direction.input_sha=decode(substr(item.input_digest,8),'hex')
             JOIN signal_listening_answers use_ ON use_.question_id=$${page + 6} AND use_.root_id=item.root_id AND use_.workspace_id=$1
-              AND use_.choice=$${page + 7} AND use_.input_sha=decode(substr(item.input_digest,8),'hex')
+              AND use_.choice=ANY($${page + 7}::text[]) AND use_.input_sha=decode(substr(item.input_digest,8),'hex')
             JOIN signal_mass_labeling_maps map ON map.id=item.map_id AND map.workspace_id=item.workspace_id
             LEFT JOIN signal_workspace_chunk_embeddings embedding ON embedding.workspace_id=item.workspace_id AND embedding.config_digest=map.embedding_config_digest
               AND embedding.chunk_sha256=item.chunk_sha256
             WHERE ($${page + 1}::uuid IS NULL OR item.root_id>$${page + 1}) ORDER BY item.root_id LIMIT $${page + 2}`,
-            [...cut.params, cursor, limit, study.id, template.rules.motive_candidates, axisIds.direction, axisIds.use, template.rules.group_use])).rows;
+            [...cut.params, cursor, limit, study.id, template.rules.motive_candidates, axisIds.direction, axisIds.use, signalStudyGroupUsesV1(template.rules),
+              template.rules.direction_min_probability ?? 0, JSON.stringify(signalStudyRulesOfV1(study).direction_min_probability_by ?? {})])).rows;
         if (!rows.length) return [];
         cursor = rows.at(-1)!.root_id;
         const digests = new Map(rows.map(row => [row.root_id, row.input_digest])), answered = new Map<string, Set<number>>();
@@ -299,11 +403,11 @@ export async function createSignalStudySourceV1(database: Database, run: Pick<Si
   };
 }
 
-export type SignalStudyPoolRowV1 = { root_id: string; direction: string; target: string; use: string };
+export type SignalStudyPoolRowV1 = { root_id: string; direction: string; target: string; use: string; direction_probability: number | null };
 /** Every root of the cut with its three answers. One read: identifiers and choices only. */
 export async function readSignalStudyAxesV1(database: Database, study: SignalStudyV1): Promise<SignalStudyPoolRowV1[]> {
   const cut = await cutOf(database, study), { ids } = await ensureSignalStudyAxesV1(database, study), n = cut.params.length;
-  return (await database.query<SignalStudyPoolRowV1>(`SELECT item.root_id,direction.choice direction,target.choice target,use_.choice use
+  return (await database.query<SignalStudyPoolRowV1>(`SELECT item.root_id,direction.choice direction,target.choice target,use_.choice use,${signalStudyDirectionProbabilitySqlV1(study.methodology.rules)}::float8 direction_probability
     FROM (${cut.sql}) included JOIN signal_mass_labeling_items item ON item.workspace_id=$1 AND item.map_id=$2 AND item.root_id=included.root_id
     JOIN signal_listening_answers direction ON direction.question_id=$${n + 1} AND direction.root_id=item.root_id AND direction.input_sha=decode(substr(item.input_digest,8),'hex')
     JOIN signal_listening_answers target ON target.question_id=$${n + 2} AND target.root_id=item.root_id AND target.input_sha=decode(substr(item.input_digest,8),'hex')
@@ -372,13 +476,18 @@ export async function rewordSignalStudyMotivesV1(database: Database, study: Sign
 export type SignalStudyMembershipV1 = { root_id: string; motive_key: string };
 /** Roots confirmed for each motive: the classifier said yes at or above the approval threshold. */
 export async function readSignalStudyMembershipsV1(database: Database, study: SignalStudyV1): Promise<SignalStudyMembershipV1[]> {
-  const cut = await cutOf(database, study), n = cut.params.length;
+  const cut = await cutOf(database, study), { ids } = await ensureSignalStudyAxesV1(database, study), n = cut.params.length, rules = signalStudyRulesOfV1(study);
+  // A member of a motive is a post whose direction counts under the rules of this study: a study counted again under
+  // a higher line keeps the answers of the one it comes from, and they include posts that no longer count.
   return (await database.query<SignalStudyMembershipV1>(`SELECT item.root_id,motive.motive_key FROM (${cut.sql}) included
     JOIN signal_mass_labeling_items item ON item.workspace_id=$1 AND item.map_id=$2 AND item.root_id=included.root_id
+    JOIN signal_listening_answers direction ON direction.question_id=$${n + 3} AND direction.root_id=item.root_id AND direction.workspace_id=$1
+      AND direction.input_sha=decode(substr(item.input_digest,8),'hex') AND direction.choice<>'none'
+      AND ${signalStudyDirectionProbabilitySqlV1(rules)}>=COALESCE(($${n + 5}::jsonb->>direction.choice)::real,$${n + 4}::real)
     JOIN signal_study_motives motive ON motive.study_id=$${n + 1}
     JOIN signal_listening_answers answer ON answer.question_id=motive.question_id AND answer.root_id=item.root_id AND answer.workspace_id=$1
       AND answer.probability>=$${n + 2}::real AND answer.input_sha=decode(substr(item.input_digest,8),'hex')`,
-    [...cut.params, study.id, study.methodology.rules.motive_approval_min])).rows;
+    [...cut.params, study.id, rules.motive_approval_min, ids.direction, rules.direction_min_probability ?? 0, JSON.stringify(rules.direction_min_probability_by ?? {})])).rows;
 }
 /** Listening topics each given root belongs to, from the brand's published map. Used for the cross of motives and topics. */
 export async function readSignalStudyTopicMembershipsV1(database: Database, study: Pick<SignalStudyV1, "workspace_id" | "base_map_id">, root_ids: string[]) {

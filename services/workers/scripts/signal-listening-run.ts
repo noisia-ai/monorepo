@@ -15,7 +15,7 @@
  *   cycle    --workspace <uuid> --actor <uuid> --cap-usd <n>             queue the automatic discovery loop
  *   cycle-status --cycle <uuid>                                          rounds, signals and spending of a loop
  *   cycle-local  --cycle <uuid> [--steps <n>]                            advance a loop in this process (no JEV pass)
- *   study    --workspace <uuid> --actor <uuid> --name <text> --subject-file <json> --cap-usd <n>   queue a study
+ *   study    --workspace <uuid> --actor <uuid> --name <text> --subject-file <json> --cap-usd <n> [--lexicon-file <json>]   queue a study
  *   study-status --study <uuid>                                          steps, counts and spending of a study
  *   study-local  --study <uuid> [--steps <n>]                            advance a study in this process (no JEV pass)
  *   study-requeue --study <uuid>                                         put a failed study back in the queue; paid steps are kept
@@ -25,7 +25,7 @@ import pg from "pg";
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import {
-  claimSignalStudyV1, getSignalStudyV1, listSignalStudyMotivesV1, promoteSignalStudyMotivesV1, releaseSignalStudyV1, renewSignalStudyV1, requestSignalStudyV1, requeueSignalStudyV1,
+  claimSignalStudyV1, getSignalStudyV1, listSignalStudyMotivesV1, promoteSignalStudyMotivesV1, releaseSignalStudyV1, renewSignalStudyV1, recountSignalStudyV1, requestSignalStudyV1, requeueSignalStudyV1,
   claimSignalListeningCycleV1, getSignalListeningCycleV1, releaseSignalListeningCycleV1, renewSignalListeningCycleV1, requestSignalListeningCycleV1,
   claimSignalListeningRunV1, estimateSignalListeningV1, getSignalListeningRunV1, getSignalListeningStateV1, importSignalListeningLegacyAnswersV1,
   readSignalListeningQuestionMetricsV1, requestSignalListeningRunV1, requestSignalListeningV1, requeueSignalListeningRunV1,
@@ -60,10 +60,19 @@ async function cycleStatus(cycle_id: string) {
     rounds: state.rounds.map(round => ({ round: round.round_no, step: round.step, topics: round.catalog.length, themes: round.themes.length,
       outside: round.catalog.filter(topic => topic.domain === "outside").length, run_id: round.run_id,
       signals: round.evidence ? { category_roots: round.evidence.category_roots, orphan_roots: round.evidence.orphan_roots,
-        orphan_rate: round.evidence.orphan_rate, twin_pairs: round.evidence.twins.length, twin_roots: round.evidence.twin_roots,
-        twin_root_rate: round.evidence.twin_root_rate } : null,
+        orphan_rate: round.evidence.orphan_rate, orphan_roots_probable: round.evidence.orphan_roots_probable ?? null,
+        orphan_rate_probable: round.evidence.orphan_rate_probable ?? null, twin_pairs: round.evidence.twins.length, twin_roots: round.evidence.twin_roots,
+        twin_root_rate: round.evidence.twin_root_rate,
+        pairs_for_the_classifier: state.cycle.policy.twin.choice_coapproval === undefined ? null
+          : round.evidence.twins.filter(pair => pair.coapproval >= state.cycle.policy.twin.choice_coapproval!).length,
+        // Topic keys are generic English slugs; no post text is printed.
+        pair_choices: round.evidence.pair_choices ?? null } : null,
       orphan_groups: round.orphan_groups?.map(group => ({ roots: group.roots, cohesion: group.cohesion })) ?? null,
-      review: round.review ? { summary: round.review.summary, rejected: round.review.rejected, usage: round.review.usage,
+      review: round.review ? { settling: round.review.settling ?? false, summary: round.review.summary, rejected: round.review.rejected,
+        merged_by_rule: Array.isArray(round.review.rule_merges) ? round.review.rule_merges.length : null,
+        sent_to_the_classifier: Array.isArray(round.review.probation) ? round.review.probation.length : null,
+        pairs_in_this_round: Array.isArray(round.review.pairs) ? round.review.pairs.length : null,
+        settled: (round.review.settled as { rule_merges?: unknown[] } | undefined)?.rule_merges?.length ?? null, usage: round.review.usage,
         cost_usd: Number(round.review.cost_micro_usd) / 1e6, duration_ms: round.review.duration_ms, payload_bytes: round.review.payload_bytes } : null })) }, null, 1));
 }
 
@@ -161,7 +170,14 @@ try {
     // The subject names the brand and its competitors: it is read from a private file and never printed.
     console.log(JSON.stringify(await requestSignalStudyV1({ database: pool, workspace_id: required("workspace"), actor_user_id: required("actor"), name: required("name"),
       subject: JSON.parse(readFileSync(required("subject-file"), "utf8")), cap_micro_usd: Math.round(Number(required("cap-usd")) * 1e6),
+      // Optional: the study's own lexicon for its cut, as a JSON array of terms in a private file.
+      ...(flag("lexicon-file") ? { lexicon_terms: JSON.parse(readFileSync(flag("lexicon-file")!, "utf8")) } : {}),
       idempotency_key: flag("key") ?? randomUUID() })));
+  } else if (mode === "study-recount") {
+    // Counts a finished study again under today's template without asking anything. Lines raised for it come with their blind evidence.
+    console.log(JSON.stringify(await recountSignalStudyV1({ database: pool, workspace_id: required("workspace"), actor_user_id: required("actor"), source_study_id: required("study"),
+      name: required("name"), cap_micro_usd: Math.round(Number(required("cap-usd")) * 1e6),
+      ...(flag("direction-lines-file") ? { direction_lines: JSON.parse(readFileSync(flag("direction-lines-file")!, "utf8")) } : {}), idempotency_key: flag("key") ?? randomUUID() })));
   } else if (mode === "study-status") {
     await studyStatus(required("study"));
   } else if (mode === "study-local") {
@@ -182,5 +198,5 @@ try {
   } else if (mode === "promote") {
     console.log(JSON.stringify(await promoteSignalStudyMotivesV1({ database: pool, workspace_id: required("workspace"), actor_user_id: required("actor"),
       study_id: required("study"), motive_keys: required("motives").split(",").map(item => item.trim()).filter(Boolean) })));
-  } else throw new Error("usage: signal-listening-run.ts request|status|local|requeue|import|estimate|question|listen|metrics|cycle|cycle-status|cycle-local|study|study-status|study-local|study-requeue|promote");
+  } else throw new Error("usage: signal-listening-run.ts request|status|local|requeue|import|estimate|question|listen|metrics|cycle|cycle-status|cycle-local|study|study-recount|study-status|study-local|study-requeue|promote");
 } finally { await pool.end(); }

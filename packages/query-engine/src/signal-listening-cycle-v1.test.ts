@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { applySignalListeningReviewV1, buildSignalListeningReviewPayloadV1, clusterSignalListeningOrphansV1, decideSignalListeningCycleStopV1,
+import { applySignalListeningReviewV1, applySignalListeningRuleMergesV1, buildSignalListeningReviewPayloadV1, signalListeningPairQuestionV1, signalListeningPairVerdictV1, clusterSignalListeningOrphansV1, decideSignalListeningCycleStopV1,
   signalListeningReviewCostMicroUsdV1, SIGNAL_LISTENING_CYCLE_POLICY_V1 as policy, validateSignalListeningCatalogV1,
   type SignalListeningCatalogTopicV1, type SignalListeningCycleEvidenceV1 } from "./signal-listening-cycle-v1";
 
@@ -32,7 +32,7 @@ test("a review merges twins, redefines, adds from orphans and marks what is outs
     proposal("ritual", "keep", ["ritual"]),
   ]) });
   assert.deepEqual(result.catalog.map(item => item.topic_key), ["after_work", "auction", "bitterness", "price", "ritual"]);
-  assert.deepEqual(result.summary, { kept: 2, redefined: 1, merged: 1, created: 1, retired_by_merge: 1, outside: 1, adjacent: 0, themes: 1 });
+  assert.deepEqual(result.summary, { kept: 2, redefined: 1, merged: 1, created: 1, retired_by_merge: 1, outside: 1, adjacent: 0, themes: 1, merged_by_rule: 0 });
   assert.equal(result.map_changed, true);
   const merged = result.catalog.find(item => item.topic_key === "bitterness")!;
   assert.deepEqual(merged.source_topic_keys, ["bitter", "bitterness"]); assert.equal(merged.origin, "agent");
@@ -135,4 +135,114 @@ test("a locked topic can be placed in a theme and a domain without touching its 
   const locked = result.catalog.find(item => item.topic_key === "ritual")!;
   assert.deepEqual([locked.domain, locked.theme_key, locked.human_locked], ["adjacent", "taste", true]);
   assert.deepEqual(locked.localization, catalog[4]!.localization);
+});
+
+// ---------- two levels of membership, and pairs settled by the classifier
+
+const pair = (left: string, right: string, coapproval: number) => ({ left, right, jointly_asked: 100, jointly_approved: Math.round(coapproval * 100), jaccard: 0.3, coapproval, examples: [] });
+const sizes = (values: Record<string, number>) => Object.entries(values).map(([topic_key, approved]) => ({ topic_key, asked: approved * 2, approved, acceptance: 0.5,
+  accepted_examples: [], rejected_examples: [] }));
+const chosen = (left: string, right: string, both: number, jaccard = 0.3) => ({ left, right, shared: 100, chose_left: 100 - both, chose_right: 0, chose_both: both, chose_neither: 0,
+  both_share: both / 100, jaccard });
+const measured = { topics: sizes({ bitter: 300, bitterness: 120, price: 80, auction: 10, ritual: 50 }) };
+
+test("the default policy counts a member from 0.85, keeps 0.70 as probable and lets the classifier settle pairs", () => {
+  assert.deepEqual([policy.approval, policy.probable, policy.twin.choice_coapproval, policy.twin.merge_both_share, policy.twin.merge_min_jaccard], [0.85, 0.7, 0.4, 0.5, 0.2]);
+});
+
+test("a pair accepted together very often is not merged on that signal: it is sent to the classifier", () => {
+  const rules = { policy, evidence: { ...measured, twins: [pair("bitter", "bitterness", 0.55), pair("price", "auction", 0.1)] } };
+  // The agent left both as they were: nothing is merged, and the pair still gets asked with the wording it has.
+  const kept = applySignalListeningReviewV1({ catalog, orphan_groups: groups, rules, output: answer(themes, [
+    proposal("bitter", "keep", ["bitter"]), proposal("bitterness", "keep", ["bitterness"])]) });
+  assert.deepEqual([kept.catalog.length, kept.rule_merges, kept.probation], [5, [], [{ left: "bitter", right: "bitterness", jaccard: 0.3 }]]);
+  assert.equal(kept.map_changed, true, "another round is needed to ask, although no wording changed");
+  // The agent wrote contrast for both: same outcome, with the new wording.
+  const contrasted = applySignalListeningReviewV1({ catalog, orphan_groups: groups, rules, output: answer(themes, [
+    proposal("bitter", "redefine", ["bitter"]), proposal("bitterness", "redefine", ["bitterness"])]) });
+  assert.deepEqual([contrasted.rule_merges, contrasted.probation, contrasted.summary.redefined], [[], [{ left: "bitter", right: "bitterness", jaccard: 0.3 }], 2]);
+  // The agent merged them because they mean the same: there is no pair left to ask about.
+  const merged = applySignalListeningReviewV1({ catalog, orphan_groups: groups, rules, output: answer(themes, [proposal("bitterness", "merge", ["bitter", "bitterness"])]) });
+  assert.deepEqual([merged.probation, merged.summary.merged, merged.summary.merged_by_rule], [[], 1, 0]);
+});
+
+test("a settled pair merges only when most of its shared posts belong to both", () => {
+  const evidence = { ...measured, twins: [pair("bitter", "bitterness", 0.6), pair("price", "auction", 0.5)],
+    pair_choices: [chosen("bitter", "bitterness", 62), chosen("price", "auction", 15)] };
+  const result = applySignalListeningReviewV1({ catalog, orphan_groups: groups, rules: { policy, evidence }, output: answer(themes, [
+    proposal("bitter", "redefine", ["bitter"]), proposal("bitterness", "redefine", ["bitterness"])]) });
+  assert.deepEqual(result.rule_merges, [{ stays: "bitter", folded: "bitterness", reason: "belongs_to_both" }], "the agent cannot keep apart what the classifier found to be one");
+  assert.deepEqual(result.catalog.find(item => item.topic_key === "bitter")!.source_topic_keys, ["bitter", "bitterness"]);
+  assert.ok(result.catalog.some(item => item.topic_key === "price") && result.catalog.some(item => item.topic_key === "auction"), "the pair that came apart stays apart");
+  assert.deepEqual(result.probation, [], "a pair that was already settled is not asked again");
+  const payload = JSON.parse(buildSignalListeningReviewPayloadV1({ category: "beer", question_language: "en", catalog, themes: [], orphan_groups: [], policy,
+    evidence: { round: 2, roots: 10, category_roots: 5, orphan_roots: 1, orphan_rate: 0.2, twin_roots: 1, twin_root_rate: 0.2, topics: [],
+      twins: [pair("price", "ritual", 0.5), pair("price", "auction", 0.5), pair("bitter", "price", 0.1)], pair_choices: evidence.pair_choices } }));
+  assert.deepEqual(payload.possible_twins.map((item: { topics: string[]; must_merge?: boolean; needs_contrast?: boolean }) => [item.topics.join("+"), item.must_merge ?? false, item.needs_contrast ?? false]),
+    [["bitter+bitterness", true, false], ["price+ritual", false, true], ["bitter+price", false, false]]);
+});
+
+test("the rule respects people's edits, follows chains by size, and does nothing for loops that started before it", () => {
+  // A topic a person edited is never folded by the rule.
+  const locked = applySignalListeningRuleMergesV1({ catalog, themes: [], policy, evidence: { ...measured, twins: [], pair_choices: [chosen("price", "ritual", 90)] } });
+  assert.deepEqual([locked.rule_merges.length, locked.rejected.map(item => item.reason), locked.map_changed], [0, ["rule_merge_human_locked"], false]);
+  // bitter (300) takes bitterness (50) in first; price (100) then meets what stands in its place: 350, not 50.
+  const chain = applySignalListeningRuleMergesV1({ catalog, themes: [], policy, evidence: { topics: sizes({ bitter: 300, bitterness: 50, price: 100, auction: 10, ritual: 50 }),
+    twins: [], pair_choices: [chosen("bitter", "bitterness", 80), chosen("bitterness", "price", 70)] } });
+  assert.deepEqual(chain.rule_merges, [{ stays: "bitter", folded: "bitterness", reason: "belongs_to_both" }, { stays: "bitter", folded: "price", reason: "belongs_to_both" }]);
+  assert.deepEqual(chain.catalog.find(item => item.topic_key === "bitter")!.source_topic_keys, ["bitter", "bitterness", "price"]);
+  assert.deepEqual(chain.catalog.find(item => item.topic_key === "bitter")!.localization, catalog[0]!.localization, "the wording of the largest topic is the one that stays");
+  // Posts that belong to both of two topics that barely overlap as a whole are real overlap, not one topic: no merge.
+  const magnet = applySignalListeningRuleMergesV1({ catalog, themes: [], policy, evidence: { ...measured, twins: [], pair_choices: [chosen("bitter", "bitterness", 97, 0.04)] } });
+  assert.deepEqual([magnet.rule_merges.length, magnet.catalog.length, magnet.map_changed], [0, 5, false]);
+  // At the end of a loop every possible twin that was not asked about goes to the classifier as it is worded, whatever its line.
+  const end = applySignalListeningRuleMergesV1({ catalog, themes: [], policy, evidence: { ...measured, twins: [pair("bitter", "bitterness", 0.9), pair("price", "auction", 0.2)] } });
+  assert.deepEqual([end.rule_merges.length, end.probation.map(item => `${item.left}+${item.right}`), end.catalog.length], [0, ["bitter+bitterness", "price+auction"], 5]);
+  // During the loop only the pairs accepted together very often are sent; the review writes contrast for the rest.
+  const during = applySignalListeningReviewV1({ catalog, orphan_groups: groups, output: answer(themes, []), rules: { policy,
+    evidence: { ...measured, twins: [pair("bitter", "bitterness", 0.9), pair("price", "auction", 0.2)] } } });
+  assert.deepEqual(during.probation.map(item => `${item.left}+${item.right}`), ["bitter+bitterness"]);
+  // One it already chose for is not asked again, and one of its topics folded by a merge is no longer a pair.
+  const asked = applySignalListeningRuleMergesV1({ catalog, themes: [], policy, evidence: { ...measured,
+    twins: [pair("bitter", "bitterness", 0.9), pair("bitterness", "price", 0.8)], pair_choices: [chosen("bitter", "bitterness", 80)] } });
+  assert.deepEqual([asked.rule_merges.length, asked.probation.length], [1, 0]);
+  // A policy without the rule never asks nor merges on its own.
+  const { choice_coapproval: _ask, merge_both_share: _share, ...twin } = policy.twin;
+  const old = applySignalListeningReviewV1({ catalog, orphan_groups: groups, output: answer(themes, []), rules: { policy: { ...policy, twin },
+    evidence: { ...measured, twins: [pair("bitter", "bitterness", 0.9)], pair_choices: [chosen("bitter", "bitterness", 90)] } } });
+  assert.deepEqual([old.rule_merges.length, old.probation.length, old.map_changed], [0, 0, false]);
+});
+
+test("the pair question asks which of the two a post belongs to, and its answer decides both memberships", () => {
+  const left = { topic_key: "bitter", name: "Bitter", definition: "About bitterness as taste, not as a mood." };
+  const right = { topic_key: "price", name: "Price", definition: "About what it costs, not what it tastes like." };
+  const question = signalListeningPairQuestionV1("jev-1.13.0", left, right);
+  assert.equal(question.kind, "choice");
+  assert.equal(question.label, "pair:bitter+price");
+  assert.match(question.question_digest, /^sha256:[0-9a-f]{64}$/u);
+  assert.deepEqual(Object.keys((question.wire as { criteria: Record<string, string> }).criteria), ["left", "right", "both", "neither"]);
+  // Neither is said to be a valid answer: the first wording never got it, and blind judges gave it to one post in five.
+  assert.match((question.wire as { instructions: { question: string } }).instructions.question, /Choose neither when it meets neither definition: that is a valid answer/u);
+  // New wording on either side is a new question; the same wording is the same question.
+  assert.notEqual(signalListeningPairQuestionV1("jev-1.13.0", { ...left, definition: "Anything bitter." }, right).question_digest, question.question_digest);
+  assert.equal(signalListeningPairQuestionV1("jev-1.13.0", left, right).question_digest, question.question_digest);
+  assert.deepEqual(["left", "right", "both", "neither", "other", null].map(choice => signalListeningPairVerdictV1(choice)),
+    [{ left: true, right: false }, { left: false, right: true }, { left: true, right: true }, { left: false, right: false }, null, null]);
+});
+
+test("a topic remembers every topic folded into it, so what people corrected on them is not lost", () => {
+  // By the rule: bitter takes bitterness in, then price.
+  const chain = applySignalListeningRuleMergesV1({ catalog, themes: [], policy, evidence: { topics: sizes({ bitter: 300, bitterness: 50, price: 100, auction: 10, ritual: 50 }),
+    twins: [], pair_choices: [chosen("bitter", "bitterness", 80), chosen("bitterness", "price", 70)] } });
+  assert.deepEqual(chain.catalog.find(item => item.topic_key === "bitter")!.folded_keys, ["bitterness", "price"]);
+  // A later round keeps the memory although the topic starts it without lineage.
+  const later = applySignalListeningReviewV1({ catalog: chain.catalog, orphan_groups: groups, output: answer(themes, []) });
+  const kept = later.catalog.find(item => item.topic_key === "bitter")!;
+  assert.deepEqual([kept.source_topic_keys, kept.folded_keys], [[], ["bitterness", "price"]]);
+  // By the agent: a merge under a new key remembers its sources and what they already held.
+  const merged = applySignalListeningReviewV1({ catalog: chain.catalog, orphan_groups: groups,
+    output: answer(themes, [proposal("taste_and_cost", "merge", ["bitter", "auction"])]) });
+  assert.deepEqual(merged.catalog.find(item => item.topic_key === "taste_and_cost")!.folded_keys, ["auction", "bitter", "bitterness", "price"]);
+  // A topic nothing was folded into carries no such list.
+  assert.equal(chain.catalog.find(item => item.topic_key === "auction")!.folded_keys, undefined);
 });

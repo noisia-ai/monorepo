@@ -8,6 +8,7 @@ import { useLocale, useTranslations } from "next-intl";
 import type { SignalFilterV1, SignalWorkspaceOverviewV1, SignalWorkspaceImportedOverviewV1, SignalWorkspaceTopicsOverviewV1, SignalWorkspaceDefinedInterestOverviewV1, SignalWorkspaceTopicEvidencePageV1 } from "@noisia/query-engine";
 import { localizedSignalTopic } from "./signal-topic-localization";
 import { SignalV2ModuleHeader } from "./SignalV2ModuleHeader";
+import { SignalReviewedTopics } from "./SignalListeningMap";
 import { SignalAnalyticsFilter, type SignalAnalyticsFilterSelection } from "./SignalAnalyticsFilter";
 import { SignalDataScopeFilter } from "./SignalDataScopeFilter";
 import { SignalEChart } from "./SignalEChart";
@@ -245,6 +246,8 @@ function SignalComputedWorkspaceTopics({ initialBundle, brandName, data, loading
         <button className="signal-v2-filter" type="button" disabled={loading} onClick={() => void refresh()}><ArrowClockwise size={16} />{t("refresh")}</button>
         <span>{t("workspaceTimezone", { timezone: workspaceTimezone })}</span></>} />
     {refreshFailed ? <div className="signal-v2-error" role="alert">{t("refreshError")}</div> : null}
+    <SignalReviewedTopics enabled={surface === "topics"} workspaceId={data.workspace_id} segment={data.filters.conversation_segment} refreshKey={data.observed_at}
+      period={{ date_from: data.filters.date_from, date_to: data.filters.date_to, timezone: data.filters.timezone ?? workspaceTimezone }}>
     {data.consumer_indicators ? <SignalWorkspaceConsumerIndicators data={data} loading={loading}
       workspaceTimezone={workspaceTimezone} onOpenMention={onOpenMention} /> : null}
     <div aria-busy={loading} className={`signal-v2-tn__data-stage${loading ? " signal-v2-dashboard-stage--loading" : ""}`}>
@@ -361,6 +364,7 @@ function SignalComputedWorkspaceTopics({ initialBundle, brandName, data, loading
       onOpenEnriched={onOpenMention ? record => { setDrawer(false); onOpenMention(record.id); } : undefined}
       onLoadMore={evidence?.next_cursor ? () => void read(evidence.next_cursor!) : error && data.is_current ? () => void read() : undefined}
       loadMoreLabel={t(error ? "refresh" : "more")} openOriginalLabel={t("original")} openingEnrichedLabel={t("loading")} viewEnrichedLabel={t("openMention")} /> : null}
+    </SignalReviewedTopics>
   </div>;
 }
 

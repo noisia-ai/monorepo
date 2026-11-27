@@ -1,6 +1,12 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import seed from "./data/study-templates/triggers-barriers.r16b-v1.json";
+import seedV2 from "./data/study-templates/triggers-barriers.r16b-v2.json";
+import seedV3 from "./data/study-templates/triggers-barriers.r16b-v3.1.json";
+import seedV32 from "./data/study-templates/triggers-barriers.r16b-v3.2.json";
+import seedV33 from "./data/study-templates/triggers-barriers.r16b-v3.3.json";
+import seedV34 from "./data/study-templates/triggers-barriers.r16b-v3.4.json";
+import seedV35 from "./data/study-templates/triggers-barriers.r16b-v3.5.json";
 import type { JevQuestionV1 } from "./signal-mention-facets-jev-v1";
 import { signalListeningQuestionIdentityV1, type SignalListeningAskedQuestionV1 } from "./signal-listening-questions-v1";
 
@@ -28,6 +34,27 @@ const templateSchema = z.object({
   rules: z.object({
     cut: z.object({ voice: z.literal("individual"), promotion_max: z.number().min(0).max(1), exclude_hashtag_only: z.literal(true), require_category_lexicon: z.literal(true) }).strict(),
     group_directions: z.array(z.string()).min(1), group_targets: z.array(z.string()).min(1), group_use: z.string(),
+    /** The uses that count toward the subject and enter motive discovery. Without it, only `group_use`. */
+    group_uses: z.array(z.string()).min(1).max(4).optional(),
+    /** A direction counts from this probability up; below it the post is kept as probable and read as `none`. */
+    direction_min_probability: z.number().min(0).max(1).optional(),
+    /** A line of its own for a direction, in place of `direction_min_probability`. Below it the direction is kept as
+     * probable, like any other below its line. */
+    direction_min_probability_by: z.record(z.string(), z.number().min(0).max(1)).optional(),
+    /** When the two readings leave a motive without a layer, its posts are read a third time and the three decide. */
+    layer_tiebreak_reading: z.boolean().optional(),
+    /** With the third reading, the layer with the most votes wins when it leads the next one by this share of the votes. */
+    layer_tiebreak_margin: z.number().min(0).max(1).optional(),
+    /** Which figure of the classifier's answer the lines of the direction are read on: the probability of the option it
+     * chose, or the confidence it reports for the choice, which runs lower. Without it, the confidence. */
+    direction_probability_of: z.enum(["confidence", "chosen_option"]).optional(),
+    /** A direction below the line that counts and from this probability up still enters motive discovery (grouping and
+     * naming). It is not counted in any volume, weight or split by direction. */
+    direction_discovery_min_probability: z.number().min(0).max(1).optional(),
+    /** One direction over this share of the cut means the rules read too much: the output says so. */
+    direction_share_max: z.number().min(0).max(1).optional(),
+    /** The layer is read post by post on this many confirmed posts of each motive, and a motive takes the layer most of them show. */
+    layer_mentions_per_motive: z.number().int().min(5).max(60).optional(), layer_majority_min: z.number().min(0.5).max(1).optional(),
     roots_per_group: z.number().int().min(20), min_groups: z.number().int().min(1), max_groups: z.number().int().min(1), min_group: z.number().int().min(1),
     random_sample: z.number().int().min(1).max(60), far_sample: z.number().int().min(0).max(20), excerpt_chars: z.number().int().min(80).max(2000),
     blind_passes: z.literal(2), kappa_min: z.number().min(0).max(1), boundary_recode_max: z.literal(1), dominance_max: z.number().min(0).max(1),
@@ -43,8 +70,100 @@ export function validateSignalStudyTemplateV1(value: unknown): SignalStudyTempla
   }
   return parsed.data;
 }
-/** The versioned Triggers & Barriers template. A study stores its own copy. */
+/** The first Triggers & Barriers template. Studies made with it keep their own copy. */
 export const SIGNAL_STUDY_TB_TEMPLATE_V1: Readonly<SignalStudyTemplateV1> = validateSignalStudyTemplateV1(seed);
+/**
+ * The second template, after the first blind evaluation: a direction needs a
+ * force of the speaker's own and only counts from 0.85 (the first wording read
+ * plain mentions as triggers); the layer is read post by post, because
+ * agreement over a dozen motives says little; and a post is a member of a
+ * motive from 0.85. Its direction turned out too narrow: it asked for a stated
+ * reason and left out the emotion a speaker expresses about the subject.
+ */
+export const SIGNAL_STUDY_TB_TEMPLATE_V2: Readonly<SignalStudyTemplateV1> = validateSignalStudyTemplateV1(seedV2);
+/**
+ * The template new studies are made with. Direction is asked in two steps:
+ * first whether the force is aimed at the subject at all (what the first
+ * wording got wrong was posts about something else), then its direction, where
+ * an emotion or an experience about the subject counts as much as a stated
+ * reason, as the methodology defines a trigger. A post with a counted direction
+ * enters motive discovery unless its use is figurative or ironic: once a force
+ * aimed at the subject is found the post is already an evaluation, and the use
+ * question reads `other` for a subject that is not a product. Everything else
+ * is as in the second template. One direction over half of the cut is reported
+ * as a sign that the rules read too much.
+ *
+ * Its version is r16b-v3.1. r16b-v3, written hours earlier on 2026-11-27, had
+ * the same questions and let only literal use into motive discovery; no study
+ * finished with it.
+ */
+export const SIGNAL_STUDY_TB_TEMPLATE_V3: Readonly<SignalStudyTemplateV1> = validateSignalStudyTemplateV1(seedV3);
+/**
+ * r16b-v3.2, chosen on two blind samples. It read its lines on the confidence
+ * the classifier reports, while the samples were judged on the probability of
+ * the option chosen, which runs higher: it counted a fifth fewer posts than
+ * what was measured. No study finished with it; r16b-v3.3 below replaces it.
+ * The third template's direction turned out stricter than the second:
+ * every restriction in the wording lowers the classifier's confidence, and
+ * wording hardly moves what passes 0.85. So the direction is worded in the
+ * positive (what a force is, with `none` as one more option), it says that the
+ * subject includes what living it consists of, and it counts from 0.70: the
+ * line where trigger and barrier stayed at 85 % or more for blind judges. A
+ * direction between 0.50 and 0.70 only helps to discover motives: its posts are
+ * grouped and named with the rest and counted nowhere.
+ */
+export const SIGNAL_STUDY_TB_TEMPLATE_V3_2: Readonly<SignalStudyTemplateV1> = validateSignalStudyTemplateV1(seedV32);
+/** r16b-v3.2 with its lines read on the probability of the option the classifier chose, the figure the blind samples were
+ * judged on. The two accepted test studies ran with it. */
+export const SIGNAL_STUDY_TB_TEMPLATE_V3_3: Readonly<SignalStudyTemplateV1> = validateSignalStudyTemplateV1(seedV33);
+/**
+ * r16b-v3.4, after the blind evaluation of the two studies of r16b-v3.3: barrier
+ * was right in 73 % of the posts of one of them and mixed in 25 %, so both count only from 0.85 and stay probable below;
+ * and the motives the two readings left without a layer were settled consistently by a judge, so their posts are read a
+ * third time and the three readings decide. The questions are the same: nothing is asked again.
+ */
+export const SIGNAL_STUDY_TB_TEMPLATE_V3_4: Readonly<SignalStudyTemplateV1> = validateSignalStudyTemplateV1(seedV34);
+/**
+ * The template new studies are made with (r16b-v3.5). One line for barrier in every study punished the study where
+ * barrier was already right (it lost seven of ten of its barriers) for a weakness of the other. So the template counts
+ * trigger and barrier from 0.70 and mixed from 0.85, and a study may raise the line of one direction with the blind
+ * evidence of its own package (`SignalStudyDirectionLinesV1`). With the third reading of the layer, the layer with the
+ * most votes wins when it leads the next one by ten points of the votes.
+ */
+export const SIGNAL_STUDY_TB_TEMPLATE_V3_5: Readonly<SignalStudyTemplateV1> = validateSignalStudyTemplateV1(seedV35);
+/** Lines a study raises for itself. Each one carries the blind evidence that justifies it: the precision the direction
+ * had at the template's line, and the digest of the answer key of the blind package that measured it. */
+export type SignalStudyDirectionLinesV1 = Record<string, { line: number; precision_at_template_line: number; blind_package_sha256: string }>;
+const directionLines = z.record(z.enum(["trigger", "barrier", "mixed"]), z.object({ line: z.number().min(0).max(1), precision_at_template_line: z.number().min(0).max(1),
+  blind_package_sha256: z.string().regex(/^[0-9a-f]{64}$/u) }).strict());
+/** A study may only raise a line, and only where blind judges found the direction right in fewer than 85 % of its posts. */
+export function validateSignalStudyDirectionLinesV1(value: unknown, rules: Pick<SignalStudyTemplateV1["rules"], "direction_min_probability" | "direction_min_probability_by">): SignalStudyDirectionLinesV1 {
+  const parsed = directionLines.safeParse(value);
+  if (!parsed.success) throw new Error("study_direction_lines_invalid");
+  for (const [direction, item] of Object.entries(parsed.data)) {
+    if (item.line <= (signalStudyDirectionLineV1(rules, direction) ?? 0) || item.precision_at_template_line >= 0.85) throw new Error("study_direction_lines_invalid");
+  }
+  return parsed.data as SignalStudyDirectionLinesV1;
+}
+/** The rules a study counts with: the template's, with the lines the study raised for itself. */
+export function signalStudyRulesWithLinesV1(rules: SignalStudyTemplateV1["rules"], lines?: SignalStudyDirectionLinesV1 | null): SignalStudyTemplateV1["rules"] {
+  if (!lines || !Object.keys(lines).length) return rules;
+  return { ...rules, direction_min_probability_by: { ...(rules.direction_min_probability_by ?? {}), ...Object.fromEntries(Object.entries(lines).map(([direction, item]) => [direction, item.line])) } };
+}
+/** The line a direction counts from: its own when the template gives it one. */
+export function signalStudyDirectionLineV1(rules: Pick<SignalStudyTemplateV1["rules"], "direction_min_probability" | "direction_min_probability_by">, direction: string): number | undefined {
+  return rules.direction_min_probability_by?.[direction] ?? rules.direction_min_probability;
+}
+/** The SQL for the figure a template reads its direction lines on, over an answer aliased `direction`. */
+export function signalStudyDirectionProbabilitySqlV1(rules: Pick<SignalStudyTemplateV1["rules"], "direction_probability_of">): string {
+  return rules.direction_probability_of === "chosen_option" ? "(direction.probabilities->>direction.choice)::real" : "direction.probability";
+}
+/** A study may use its own lexicon for its cut instead of the brand's: lowercase terms, one or two words each. */
+export function validateSignalStudyLexiconV1(value: unknown): string[] {
+  const parsed = z.array(z.string().trim().min(2).max(80)).min(1).max(400).safeParse(value);
+  if (!parsed.success) throw new Error("study_lexicon_invalid");
+  return [...new Set(parsed.data.map(term => term.toLocaleLowerCase().replace(/\s+/gu, " ")))].sort();
+}
 
 const subjectSchema = z.object({
   kind: z.enum(["category", "own_brand", "alternative"]), name: text(240), category: text(240), own_brand: text(240),
@@ -86,20 +205,38 @@ export function signalStudyMotiveQuestionV1(template: SignalStudyTemplateV1, sub
       false: template.motive_question.negative } });
 }
 
+/** The uses of the subject that count: the template's list, or its single use when it has none. Literal use without rules. */
+export function signalStudyGroupUsesV1(rules?: Partial<Pick<SignalStudyTemplateV1["rules"], "group_use" | "group_uses">>): string[] {
+  return rules?.group_uses ?? [rules?.group_use ?? "literal"];
+}
 export type SignalStudyAxesV1 = { direction: string; target: string; use: string; source_direction: string; alternative_inverted: boolean;
+  /** The direction the classifier gave below the line that makes it count; the post is read as `none`. */
+  direction_probable: string | null;
+  /** True when that uncounted direction is sure enough to help discover motives. */
+  discovery: boolean;
   /** Where the root is counted: the study subject, a competitor (reported apart), an alternative, or not at all. */
   aggregate: "subject" | "competitor" | "alternative" | "figurative_or_ironic" | "other" };
 /** Reads the three answers of a root. When the subject is an alternative, rejecting
  * the conventional category counts as moving toward the alternative. */
-export function resolveSignalStudyAxesV1(subject: SignalStudySubjectV1, answers: { direction: string; target: string; use: string }): SignalStudyAxesV1 {
+export function resolveSignalStudyAxesV1(subject: SignalStudySubjectV1, given: { direction: string; target: string; use: string; direction_probability?: number | null },
+  rules?: Pick<SignalStudyTemplateV1["rules"], "direction_min_probability">
+    & Partial<Pick<SignalStudyTemplateV1["rules"], "group_use" | "group_uses" | "direction_discovery_min_probability" | "direction_min_probability_by">>): SignalStudyAxesV1 {
+  const counted = signalStudyGroupUsesV1(rules);
+  const line = rules ? signalStudyDirectionLineV1(rules, given.direction) : undefined;
+  const weak = line !== undefined && given.direction !== "none" && (given.direction_probability ?? 0) < line;
+  const answers = { ...given, direction: weak ? "none" : given.direction };
   const inverted = subject.kind === "alternative" && answers.target === "category" && answers.direction === "barrier" && answers.use === "literal";
-  return { source_direction: answers.direction, direction: inverted ? "trigger" : answers.direction, target: answers.target, use: answers.use, alternative_inverted: inverted,
-    aggregate: answers.use === "figurative_or_ironic" ? "figurative_or_ironic" : answers.use !== "literal" ? "other"
+  return { source_direction: given.direction, direction_probable: weak ? given.direction : null,
+    discovery: weak && rules?.direction_discovery_min_probability !== undefined && (given.direction_probability ?? 0) >= rules.direction_discovery_min_probability,
+    direction: inverted ? "trigger" : answers.direction, target: answers.target, use: answers.use, alternative_inverted: inverted,
+    aggregate: answers.use === "figurative_or_ironic" ? "figurative_or_ironic" : !counted.includes(answers.use) ? "other"
       : answers.target === "competitor_brand" ? "competitor" : answers.target === "alternative" && subject.kind !== "alternative" ? "alternative" : "subject" };
 }
-/** Roots that enter motive discovery: a direction, about the subject, in literal use. Pooled across directions. */
+/** Roots that enter motive discovery: a direction, counted or sure enough to help discover, about the subject, in a use
+ * that counts. Pooled across directions. */
 export function signalStudyInMotivePoolV1(template: SignalStudyTemplateV1, axes: SignalStudyAxesV1): boolean {
-  return template.rules.group_directions.includes(axes.direction) && axes.use === template.rules.group_use && template.rules.group_targets.includes(axes.target)
+  const direction = axes.discovery ? axes.direction_probable! : axes.direction;
+  return template.rules.group_directions.includes(direction) && signalStudyGroupUsesV1(template.rules).includes(axes.use) && template.rules.group_targets.includes(axes.target)
     && axes.aggregate === "subject";
 }
 export function signalStudyPermissionForLayerV1(template: SignalStudyTemplateV1, layer: SignalStudyLayerV1): SignalStudyPermissionV1 {
@@ -249,6 +386,76 @@ export function signalStudyLayerKappaV1(a: SignalStudyLayerCodingV1[], b: Signal
   const expected = SIGNAL_STUDY_LAYERS_V1.reduce((sum, layer) => sum + (pairs.filter(([, left]) => left === layer).length / pairs.length)
     * (pairs.filter(([, , right]) => right === layer).length / pairs.length), 0);
   return { kappa: expected >= 1 ? 1 : (agreement - expected) / (1 - expected), agreement, disagreements: pairs.filter(([, left, right]) => left !== right).map(([motive]) => motive).sort() };
+}
+
+// ---------- the layer, read post by post
+
+/** The answer is written in this order and without a scratchpad: the literal proof comes before the layer it justifies. */
+export const SIGNAL_STUDY_MENTION_LAYERS_SCHEMA_V1 = object({ posts: { type: "array", items: object({ id: string, proof: string, normative_proof: string,
+  layer: { type: "string", enum: [...SIGNAL_STUDY_LAYERS_V1] } }) } });
+export type SignalStudyLayerPostV1 = { id: string; motive_key: string; text: string };
+/** One blind reading: every post with the motive it was confirmed for. `order` shuffles the posts so two readings do not see them in the same sequence. */
+export function buildSignalStudyMentionLayersPayloadV1(args: { template: SignalStudyTemplateV1; subject: SignalStudySubjectV1;
+  motives: Array<{ motive_key: string; name: string; definition: string }>; posts: SignalStudyLayerPostV1[]; order: string }): string {
+  const posts = args.posts.map(post => ({ post, rank: rank(args.order, post.id) })).sort((left, right) => left.rank.localeCompare(right.rank)).map(item => item.post);
+  return JSON.stringify({ study: studyContext(args.subject),
+    diagnostics_in_order: args.template.diagnostics.map(item => ({ key: item.key, layer_when_yes: item.layer, question: item.question })),
+    motives: args.motives.map(motive => ({ key: motive.motive_key, name: motive.name, definition: motive.definition })),
+    posts: posts.map(post => ({ id: post.id, motive: post.motive_key, text: post.text })) });
+}
+export type SignalStudyPostLayerV1 = { layer: SignalStudyLayerV1; proof: string | null; downgraded: string | null };
+/**
+ * Reads one blind reading. The rules are enforced here, not trusted to the
+ * agent: a layer without a literal fragment of that same post is `unclear`, and
+ * cultural also needs a literal normative fragment of that post. A post the
+ * answer forgot is `unclear`.
+ */
+export function applySignalStudyMentionLayersV1(args: { posts: SignalStudyLayerPostV1[]; output: unknown }): Map<string, SignalStudyPostLayerV1> {
+  const parsed = z.object({ posts: z.array(z.object({ id: z.string(), proof: z.string(), normative_proof: z.string(), layer: z.enum(SIGNAL_STUDY_LAYERS_V1) })) }).safeParse(args.output);
+  if (!parsed.success) throw new Error("study_layers_output_invalid");
+  const answers = new Map(parsed.data.posts.map(item => [item.id, item]));
+  return new Map(args.posts.map(post => {
+    const answer = answers.get(post.id);
+    if (!answer) return [post.id, { layer: "unclear" as const, proof: null, downgraded: "not_answered" }];
+    const literal = (quote: string) => { const value = quote.trim(); return value.length >= 8 && post.text.includes(value) ? value : null; };
+    const proof = literal(answer.proof);
+    const downgraded = answer.layer === "unclear" ? null : !proof ? "no_literal_proof" : answer.layer === "cultural" && !literal(answer.normative_proof) ? "no_normative_proof" : null;
+    return [post.id, { layer: downgraded ? "unclear" : answer.layer, proof, downgraded }];
+  }));
+}
+/** Agreement between the two readings, post by post. */
+export function signalStudyMentionKappaV1(first: Map<string, SignalStudyPostLayerV1>, second: Map<string, SignalStudyPostLayerV1>): { kappa: number | null; agreement: number | null; n: number } {
+  const pairs = [...first].flatMap(([id, coded]) => second.has(id) ? [[coded.layer, second.get(id)!.layer] as const] : []);
+  if (!pairs.length) return { kappa: null, agreement: null, n: 0 };
+  const agreement = pairs.filter(([left, right]) => left === right).length / pairs.length;
+  const expected = SIGNAL_STUDY_LAYERS_V1.reduce((sum, layer) => sum + (pairs.filter(([left]) => left === layer).length / pairs.length)
+    * (pairs.filter(([, right]) => right === layer).length / pairs.length), 0);
+  return { kappa: expected >= 1 ? 1 : (agreement - expected) / (1 - expected), agreement, n: pairs.length };
+}
+/**
+ * The layer of each motive from its posts: every reading of every post is one
+ * vote. A motive takes a layer only when that layer has the required share of
+ * the votes; otherwise, or when most votes are `unclear`, it stays `unclear`.
+ */
+export function decideSignalStudyMotiveLayersV1(args: { template: SignalStudyTemplateV1; posts: SignalStudyLayerPostV1[];
+  readings: Array<Map<string, SignalStudyPostLayerV1>>;
+  /** For the tiebreak: the layer with the most votes wins when it leads the next one by this share of the votes. */
+  lead?: number }): Array<{ motive_key: string; layer: SignalStudyLayerV1; permission: SignalStudyPermissionV1; posts: number;
+  votes: Record<string, number>; share: number; proofs: string[] }> {
+  const needed = args.template.rules.layer_majority_min ?? 0.6, byMotive = new Map<string, SignalStudyLayerPostV1[]>();
+  for (const post of args.posts) { const list = byMotive.get(post.motive_key); if (list) list.push(post); else byMotive.set(post.motive_key, [post]); }
+  return [...byMotive].sort(([left], [right]) => left.localeCompare(right)).map(([motive_key, posts]) => {
+    const coded = posts.flatMap(post => args.readings.flatMap(reading => reading.has(post.id) ? [reading.get(post.id)!] : []));
+    const votes: Record<string, number> = {};
+    for (const item of coded) votes[item.layer] = (votes[item.layer] ?? 0) + 1;
+    const ranked = Object.entries(votes).sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]));
+    const [top, count] = ranked[0] ?? ["unclear", 0], next = ranked[1]?.[1] ?? 0;
+    const share = coded.length ? count / coded.length : 0;
+    const wins = args.lead === undefined ? share >= needed : coded.length > 0 && (count - next) / coded.length >= args.lead;
+    const layer = (wins ? top : "unclear") as SignalStudyLayerV1;
+    return { motive_key, layer, permission: signalStudyPermissionForLayerV1(args.template, layer), posts: posts.length, votes, share,
+      proofs: [...new Set(coded.flatMap(item => item.layer === layer && item.proof ? [item.proof] : []))].slice(0, 3) };
+  });
 }
 
 export const SIGNAL_STUDY_BOUNDARY_SCHEMA_V1 = object({ rules: { type: "array", items: object({ motive_key: string, decision_rule: string }) } });

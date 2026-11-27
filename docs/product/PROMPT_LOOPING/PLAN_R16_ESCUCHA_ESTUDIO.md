@@ -16,15 +16,16 @@ No hay aprobaciones humanas intermedias en los procesos de análisis: Sonnet 4.6
 
 - [x] Leer objetivo completo, diseño aprobado, auditoría y reglas del repositorio; contrastar develop y checkout.
 - [x] Verificar límites y saldos actuales en las consolas autenticadas antes de cambiar el pipeline. Recibos privados, sin claves.
-- [ ] H0: medir baseline separado de proveedor, tokens por raíz, crudos, base, materialización e importación/Voyage. Sin cambios productivos antes de esa medición.
-- [ ] H1: transporte JEV masivo durable y rendimiento simulado ≥1,000 raíces/s con latencia 0.1–0.5 s; después medición real respetando ambos límites de la organización.
-- [ ] H2: configuración versionada de Escucha, caché por pregunta y visualización genérica mínima.
-- [ ] H3: ciclo automático de tópicos, con evidencia calculada, límites de vueltas y precedencia humana.
-- [ ] H4: objeto Estudio, plantilla T&B completa y salida con evidencia literal verificada.
-- [ ] H5: stopwords/lift, edición posterior, recibo de costo corregido y ADR033.
-- [x] H5 parcial: corregir la extrapolación del recibo R15 y documentar el escenario de aproximadamente USD 114/millón, separando raíces de grupos/vueltas. El costo real de R16 sigue pendiente.
-- [ ] H6: ejecución real en UAT de Escucha y Estudio T&B; muestras ciegas, comparación privada, guía QA, costos y tiempos.
-- [ ] Aceptación final requisito por requisito, PR revisados y checks reales verdes, paquete con SHA256SUMS y resumen de diez líneas.
+- [x] H0: baseline medido (ver «Sorpresas»). En la reanudación R16b (26-nov) se hizo además el mapa de qué se toma del PR de referencia #198 y qué se descarta.
+- [x] H1 (R16b, PR #228): camino JEV nuevo con ritmo compartido de la cuenta, reintentos con Retry-After, páginas crudas y escritura en bloque. Corrida real en UAT de 5,000 raíces a 51.4 raíces/s con la solicitud de R15 sin cambios. La meta sintética de 1,000/s se sustituyó por una medición real (ver «Registro de decisiones»).
+- [x] H2 (R16b, PR #229): configuración versionada de Escucha, caché por pregunta, «preguntar sólo lo pendiente» comprobado en UAT y vista genérica mínima en Signal.
+- [x] H3 (R16b, PR #230): ciclo automático de tópicos, corrido completo en UAT (3 vueltas) y paquete ciego de 500 casos entregado al auditor.
+- [x] H4 (R16b, PR #231): objeto Estudio, plantilla T&B como datos y corrida real en UAT; paquete ciego de §5.2 y cobertura privada de las causas humanas.
+- [x] H5 (R16b, PR #236): sugerencias del léxico sin palabras vacías y por lift, edición posterior mínima, la página de Tópicos de Signal lee el mapa revisado, ADR 033 y guía de QA (`QA_R16B_UAT.md`).
+- [x] Tras las evaluaciones ciegas (PR #236): pertenencia en dos niveles; pares de tópicos resueltos por el clasificador con una pregunta de elección; plantilla T&B v2 (dirección con fuerza propia desde 0.85, capa leída por menciones, léxico propio de un estudio); ciclo y estudios repetidos en UAT con esas reglas.
+- [x] H5 parcial: corregir la extrapolación del recibo R15 y documentar el escenario de aproximadamente USD 114/millón, separando raíces de grupos/vueltas.
+- [x] Ejecución real en UAT de Escucha y Estudio T&B; muestras ciegas sin clave, costos y tiempos en el recibo privado.
+- [ ] Aceptación: la evaluación de las muestras ciegas es del auditor y las metas de calidad las decide el fundador. Este plan no declara precisión.
 
 ## H0 · Medición y presupuesto antes de cambiar código
 
@@ -100,7 +101,32 @@ Recibo: separar Voyage/JEV por raíz de Claude por número de grupos y vueltas; 
 - El checkout no tiene .data local. La custodia existente está en el checkout privado de Downloads; no copiarla a Git.
 - El promedio del piloto completo incluye una etapa editorial que no escala por raíz. Multiplicarlo linealmente daba USD 205.81/millón; mantener explícitamente los grupos y una vuelta de referencia produce USD 114.035250. Ambos cálculos parten del mismo recibo, cuyo uso histórico permanece USD 17.280463.
 
+- R16b: los límites de la cuenta de JEV (80 solicitudes/s y 100,000 tokens/s) son el freno real: 51–68 raíces/s sostenidas según cuántas preguntas lleve cada raíz. La solicitud de aumento se envió sin aceptar planes.
+- R16b: una revisión completa del mapa con razonamiento previo no cabe en el límite de salida de Sonnet 4.6 (se cortó a 64 mil tokens tras 16 minutos). Sin razonamiento previo, con los tópicos conservados reducidos a su clave y con los cambios pedidos antes que la lista de conservados, tarda 85–160 s.
+- R16b: sin razonamiento previo el orden del esquema decide el orden del juicio. La misma instrucción hizo 1 fusión con «conservados» primero y 3 fusiones más 10 redefiniciones con «cambios» primero.
+- R16b: promediar en una sola consulta los vectores de todas las raíces confirmadas pasa el límite de 2 minutos de UAT; se leen por páginas.
+- R16b: en cada vuelta los candidatos de una raíz se recalculan con los centros de los miembros confirmados, así que una vuelta vuelve a preguntar a la mayoría de las raíces aunque cambien pocos tópicos. Las huérfanas bajaron de 22.3 % a 15.8 %; la señal de posibles gemelos subió de 20.8 % a 35.4 % porque cada raíz acumula respuestas de más tópicos. Si la evaluación ciega confirma gemelos como fallo principal, el ajuste es la regla de fusión, no más vueltas.
+- R16b: un texto cortado a media letra (emoji) no se puede guardar como JSON; una revisión independiente lo encontró antes de la primera corrida del Estudio.
+- R16b: el panel de sugerencias del léxico tarda cerca de 50 s en la marca de prueba por la consulta base de población, anterior a R16b.
+- R16b: la primera evaluación ciega del ciclo dio una precisión baja con la rúbrica completa de tópicos visibles. Los miembros aceptados entre 0.70 y 0.85 acertaban unas seis veces de cada diez, contra ocho o nueve por encima; y la revisión fusionaba pocos de los pares que el clasificador acepta juntos.
+- R16b: las causas del estudio humano de referencia responden otra pregunta (qué acerca o aleja de seguir el torneo) que un estudio sobre la categoría del léxico, y la mayoría de sus menciones queda fuera del corte por léxico. La cobertura privada sale baja por eso, no por la mecánica del estudio.
+- R16b: el almacén de colas de UAT se suspendió por tope de presupuesto durante la jornada; el ritmo compartido hace una operación en él por cada solicitud a JEV. Mientras duró, las corridas se hicieron desde un equipo local contra la base y los proveedores de UAT, con el mismo código.
+
 ## Registro de decisiones
+
+- 2026-11-26 (R16b): el brief de reanudación sustituye la aceptación sintética de H1 (≥1,000 raíces/s con proveedor simulado) por una corrida real en UAT de 5,000 raíces a ≥40 raíces/s. No se construyó el benchmark sintético.
+- 2026-11-26 (R16b): camino JEV nuevo y delgado junto al de R15, que queda como historia legible. La validación vive en TypeScript, no en triggers; las migraciones 0295–0297 son aditivas.
+- 2026-11-27 (R16b): las huérfanas se agrupan con k-means esférico sobre los vectores existentes en lugar de BERTopic; Sonnet decide si hay tópico y JEV confirma cada miembro.
+- 2026-11-27 (R16b): umbrales de posibles gemelos fijados antes de correr: Jaccard 0.2, coaprobación 0.4 o solapamiento 0.5 del tópico menor. Parada: máximo 3 vueltas, o mapa sin cambios, o mejora menor a un punto en huérfanas y gemelos.
+- 2026-11-27 (R16b): Sonnet 4.6 responde sin razonamiento previo en revisión de mapa y en el Estudio; cada esquema pide las razones antes del veredicto. Toda respuesta pagada se guarda y se cobra antes de construir sobre ella.
+- 2026-11-27 (R16b, a pedido del auditor): la página de Tópicos de Signal lista el mapa revisado; lo que listaba antes queda plegado como mapa anterior. No se reconstruyó el linaje de recibos anterior.
+- 2026-11-27 (R16b, decidido por el auditor tras la evaluación ciega): pertenencia confirmada desde 0.85 y probable de 0.70 a 0.85. Es política del ciclo, no una constante.
+- 2026-11-27 (R16b, corregido por el auditor tras evaluar el estrato de fusión): un par aceptado en conjunto en 0.4 o más ya no se fusiona por omisión. La revisión escribe contraste y el clasificador elige para cada mención compartida entre izquierda, derecha, ambos o ninguno; el par se fusiona si la mayoría es de ambos. Quien implementa agregó una condición al aplicarla en la corrida real: además el par debe solaparse en conjunto (Jaccard de 0.2 o más), porque dos pares con solapamiento de 0.04 y 0.10 tenían 95 % de sus compartidas en ambos.
+- 2026-11-27 (R16b, decidido por el auditor tras la evaluación ciega del estudio): plantilla T&B v2. `none` por omisión y dirección desde 0.85; pertenencia a motivo desde 0.85; capa leída sobre unas veinte menciones por motivo en dos lecturas ciegas, con acuerdo medido sobre las menciones.
+- 2026-11-27 (R16b, decisión de validación del auditor): segundo estudio sobre el mismo corpus con sujeto «seguir el torneo» y corte por léxico propio, para poder compararlo con las causas del estudio humano. Un estudio puede traer su léxico; el de la marca sigue siendo el del reporte.
+- 2026-11-27 (R16b, decidido por el auditor sobre dos muestras ciegas): la dirección del Estudio se redacta en positivo, cuenta desde 0.70 sobre la probabilidad de la opción elegida y la banda de 0.50 a 0.70 sólo ayuda a descubrir motivos (plantilla `r16b-v3.3`). Antes se probaron y descartaron: una redacción en dos pasos con restricciones (más estricta que la anterior), dos preguntas de sí o no, y ampliar la definición del sujeto. Entra a motivos toda mención con dirección contada cuyo uso no sea figurado o irónico.
+- 2026-11-27 (R16b, a pedido del auditor): al terminar un ciclo se pregunta al clasificador por todos los pares de posibles gemelos, no sólo por los que la revisión señala. Una fusión que esa pasada pida se guarda con la vuelta y se aplica al leer el mapa.
+- 2026-11-27 (R16b): las correcciones de personas son filas agregadas que se aplican al leer el mapa; una fusión deja ambos tópicos bloqueados para el agente y el siguiente ciclo parte del mapa revisado.
 
 - 2026-11-14: reservar 4 GiB de heap únicamente al paso de construcción de Studio en CI; no omitir lint, tipado, build ni gates. UAT y sus variables no cambian.
 
@@ -113,8 +139,17 @@ Recibo: separar Voyage/JEV por raíz de Claude por número de grupos y vueltas; 
 
 ## Resultado y retrospectiva
 
-Las observaciones H0 y su procedencia se guardan en custodia privada; la implementación, el benchmark integral y las ejecuciones reales de R16 siguen pendientes. Ninguna prueba de adaptador aislado o store en memoria se usa como aceptación global.
+R16b (26–27 de noviembre de 2026) implementó los cinco hitos sobre develop y los corrió en UAT con la marca de prueba «Estudio real A (cerveza, Brasil)». Lo que existe ahora:
 
-En ejecución. Lectura y verificación inicial completas; implementación, mediciones detalladas y aceptación UAT pendientes. Este documento conserva el alcance completo y no sustituye el objetivo por un piloto reducido.
+- **Escucha configurable.** La base es `voice` y `promotion`; tópicos definidos, tópicos descubiertos y preguntas con opciones viven en la configuración versionada de Brand OS. Agregar una pregunta pregunta sólo lo pendiente.
+- **Ciclo cerrado.** Señales sin proveedor, revisión del mapa por Sonnet 4.6 una vez por vuelta, JEV sólo repregunta tópicos, máximo 3 vueltas, sin aprobación humana.
+- **Estudios.** Un Estudio es corpus + corte + metodología versionada + sujeto. La plantilla T&B es un archivo de datos. Su salida se marca direccional.
+- **Edición posterior mínima**, **sugerencias del léxico por lift** y el **mapa revisado en la página de Tópicos** de Signal.
+- **Pertenencia en dos niveles**, como política de cada ciclo, y **pares de tópicos resueltos por el clasificador** mención por mención, también al cierre del ciclo.
+- **Plantilla T&B `r16b-v3.3`**, con la línea de dirección medida en ciego. Lo que un estudio encuentra depende del corpus: el segundo estudio de prueba pregunta por un sujeto que la consulta del corpus no buscó y encuentra poco.
 
-El modelo de costo ya tiene una referencia reproducible en R16_COST_MODEL_BASELINE.md. Las ejecuciones reales de R16 y sus costos por etapa todavía deben producirse y verificarse.
+Qué no se hizo o quedó distinto de este plan: no hay benchmark sintético de 1,000 raíces/s; no hay pruebas de integración con Postgres para las funciones nuevas (se verificaron con corridas reales y con un ejercicio en UAT dentro de una transacción deshecha); el mapa revisado en la página de Tópicos todavía no tiene tendencia ni evidencia por tópico; el runner de R15 sigue en el código; con más de ocho tópicos definidos todavía se preguntan todos; y las pantallas nuevas no se revisaron con una sesión iniciada en UAT.
+
+Costos, tiempos por etapa, identificadores y paquetes ciegos están en la custodia privada (`.data/piloto-masivo/r16b/`), no en el repositorio. La calidad la mide el auditor con los paquetes ciegos; este documento no declara precisión.
+
+El modelo de costo de referencia sigue en R16_COST_MODEL_BASELINE.md.

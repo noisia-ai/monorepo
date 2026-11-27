@@ -1,10 +1,10 @@
 import { randomUUID } from "node:crypto";
 import type { Pool, PoolClient } from "pg";
 import {
-  compileSignalListeningConfigurationV1, signalListeningTopicWordingV1, SIGNAL_LISTENING_CYCLE_POLICY_V1, validateSignalListeningCatalogV1,
+  compileSignalListeningConfigurationV1, signalListeningPairQuestionV1, signalListeningTopicWordingV1, SIGNAL_LISTENING_CYCLE_POLICY_V1, validateSignalListeningCatalogV1,
   validateSignalListeningConfigurationV1,
   type SignalListeningAskedQuestionV1, type SignalListeningCatalogTopicV1, type SignalListeningConfigurationV1, type SignalListeningCycleEvidenceV1,
-  type SignalListeningCyclePolicyV1, type SignalListeningItemV1, type SignalListeningOrphanGroupV1, type SignalListeningThemeV1,
+  type SignalListeningCyclePolicyV1, type SignalListeningItemV1, type SignalListeningOrphanGroupV1, type SignalListeningPairChoiceV1, type SignalListeningThemeV1,
   type SignalTopicLocalizationV1,
 } from "@noisia/query-engine";
 import { SignalLabelingError } from "./signal-labeling-runs";
@@ -35,14 +35,29 @@ const CYCLE = `id,workspace_id,base_map_id,configuration_id,lexicon_revision,pol
 const ROUND = "id,cycle_id,workspace_id,round_no,step,catalog,themes,evidence,orphan_groups,review,run_id";
 const vectorText = (values: ArrayLike<number>) => `[${Array.from(values).join(",")}]`;
 
-/** Topics a person renamed or merged: the agent must leave their wording exactly as it is.
- * Correcting one mention does not freeze the topic; that correction stays with the mention. */
+/** Topics a person renamed or merged (both the one that stays and the one folded into it): the agent
+ * must leave them exactly as they are. Correcting one mention does not freeze the topic; that correction stays with the mention. */
 async function lockedTopicKeys(client: Queryable, workspace_id: string, display_names: Record<string, unknown>) {
-  const rows = (await client.query<{ topic_key: string }>(`SELECT DISTINCT topic_key FROM signal_listening_human_edits
-    WHERE workspace_id=$1 AND operation IN('merge_topics','rename_topic')`, [workspace_id])).rows;
-  return new Set([...rows.map(row => row.topic_key), ...Object.keys(display_names)]);
+  const rows = (await client.query<{ topic_key: string | null }>(`SELECT topic_key FROM signal_listening_human_edits
+    WHERE workspace_id=$1 AND operation IN('merge_topics','rename_topic')
+    UNION SELECT payload->>'source_topic_key' FROM signal_listening_human_edits WHERE workspace_id=$1 AND operation='merge_topics'`, [workspace_id])).rows;
+  return new Set([...rows.flatMap(row => row.topic_key ? [row.topic_key] : []), ...Object.keys(display_names)]);
 }
 
+/**
+ * People may correct the map while a loop runs. The topics they merged or renamed since it started are locked in the
+ * round before the agent or the rules decide on it, so neither folds a topic a person already placed.
+ */
+export async function lockSignalListeningEditedTopicsV1(database: Database, cycle: Pick<SignalListeningCycleV1, "workspace_id">,
+  round: Pick<SignalListeningRoundV1, "id" | "catalog">): Promise<SignalListeningCatalogTopicV1[]> {
+  const display = (await database.query<{ display_names: Record<string, unknown> }>(`SELECT display_names FROM signal_mass_labeling_study_policies
+    WHERE workspace_id=$1 ORDER BY revision DESC LIMIT 1`, [cycle.workspace_id])).rows[0]?.display_names ?? {};
+  const locked = await lockedTopicKeys(database, cycle.workspace_id, display);
+  if (!round.catalog.some(topic => locked.has(topic.topic_key) && !topic.human_locked)) return round.catalog;
+  const catalog = round.catalog.map(topic => locked.has(topic.topic_key) ? { ...topic, human_locked: true } : topic);
+  await database.query("UPDATE signal_listening_rounds SET catalog=$2::jsonb,updated_at=now() WHERE id=$1", [round.id, JSON.stringify(catalog)]);
+  return catalog;
+}
 function topicQuestion(configuration: SignalListeningConfigurationV1, topic: SignalListeningCatalogTopicV1): SignalListeningAskedQuestionV1 {
   return compileSignalListeningConfigurationV1(configuration).topic(topic.topic_key, signalListeningTopicWordingV1(topic, configuration.candidate_language));
 }
@@ -56,13 +71,47 @@ async function writeRoundTopics(client: Queryable, round: { id: string; workspac
     ON CONFLICT(round_id,topic_key) DO NOTHING`, [round.id, JSON.stringify(catalog.map((topic, index) => ({ topic_key: topic.topic_key,
       question_id: ids.get(questions[index]!.question_digest), centroid: centroids.get(topic.topic_key)?.vector ?? null,
       members: centroids.get(topic.topic_key)?.members ?? 0 })))]);
+  // A round is measured through these rows minutes after they are written. Without fresh statistics the planner takes
+  // the new round for empty, and a measurement that takes seconds runs into the statement timeout.
+  await client.query("ANALYZE signal_listening_round_topics");
+}
+
+/** Registers the question of each pair with the wording both topics have in this round, and leaves the pairs in the round. */
+async function writeRoundPairs(client: Queryable, round: { id: string; workspace_id: string }, configuration: SignalListeningConfigurationV1,
+  catalog: SignalListeningCatalogTopicV1[], pairs: Array<{ left: string; right: string; jaccard?: number | null }>) {
+  const topics = new Map(catalog.map(topic => [topic.topic_key, topic]));
+  const asked = pairs.flatMap(pair => {
+    const left = topics.get(pair.left), right = topics.get(pair.right);
+    return left && right ? [{ ...pair, question: pairQuestion(configuration, left, right) }] : [];
+  });
+  if (!asked.length) return;
+  const ids = await ensureSignalListeningQuestionsV1(client, round.workspace_id, configuration.model, asked.map(pair => pair.question));
+  await client.query("UPDATE signal_listening_rounds SET review=COALESCE(review,'{}'::jsonb)||jsonb_build_object('pairs',$2::jsonb) WHERE id=$1",
+    [round.id, JSON.stringify(asked.map(pair => ({ left: pair.left, right: pair.right, question_id: ids.get(pair.question.question_digest), jaccard: pair.jaccard ?? null })))]);
+}
+function pairQuestion(configuration: SignalListeningConfigurationV1, left: SignalListeningCatalogTopicV1, right: SignalListeningCatalogTopicV1) {
+  const worded = (topic: SignalListeningCatalogTopicV1) => ({ topic_key: topic.topic_key, ...signalListeningTopicWordingV1(topic, configuration.candidate_language) });
+  return signalListeningPairQuestionV1(configuration.model, worded(left), worded(right));
+}
+/** For repairs by an operator: sets the pairs a round has to settle. Not used by the loop itself. */
+export async function setSignalListeningRoundPairsV1(database: Database, round_id: string, pairs: Array<{ left: string; right: string; jaccard?: number | null }>) {
+  return shared.transaction(database, async client => {
+    const round = (await client.query<{ workspace_id: string; catalog: SignalListeningCatalogTopicV1[]; configuration_id: string }>(
+      `SELECT round.workspace_id,round.catalog,cycle.configuration_id FROM signal_listening_rounds round JOIN signal_listening_cycles cycle ON cycle.id=round.cycle_id
+       WHERE round.id=$1 FOR UPDATE OF round`, [round_id])).rows[0];
+    if (!round) throw new Error("listening_round_unavailable");
+    const configuration = await readSignalListeningCycleConfigurationV1(client, round);
+    await writeRoundPairs(client, { id: round_id, workspace_id: round.workspace_id }, configuration, round.catalog, pairs);
+  });
 }
 
 /**
  * Starts the automatic loop over the brand's current population. Round 1 is the
  * map as it stands today with the answers already in the cache; nothing is asked
- * until the first review changes the map. The thresholds, the stop rule and the
- * spending cap are fixed here.
+ * until the first review changes the map. A brand that already finished a loop
+ * on this population continues from its reviewed map, so what people merged or
+ * renamed there is still in front of the agent, locked. The thresholds, the stop
+ * rule and the spending cap are fixed here.
  */
 export async function requestSignalListeningCycleV1(args: { database: Database; workspace_id: string; actor_user_id: string; cap_micro_usd: number;
   idempotency_key: string; policy?: SignalListeningCyclePolicyV1 }) {
@@ -95,22 +144,34 @@ export async function requestSignalListeningCycleV1(args: { database: Database; 
     const display = (await client.query<{ display_names: Record<string, unknown> }>(`SELECT display_names FROM signal_mass_labeling_study_policies
       WHERE workspace_id=$1 ORDER BY revision DESC LIMIT 1`, [args.workspace_id])).rows[0]?.display_names ?? {};
     const locked = await lockedTopicKeys(client, args.workspace_id, display);
-    // Only topics worded in all three languages enter the loop; the rest keep their published state.
-    const catalog = validateSignalListeningCatalogV1(map.catalog.flatMap(topic => {
-      const localization = localized.get(topic.topic_key);
-      return localization && /^[a-z][a-z0-9_]{0,119}$/u.test(topic.topic_key) ? [{ topic_key: topic.topic_key, localization, domain: "category" as const,
-        theme_key: null, origin: "discovery" as const, human_locked: locked.has(topic.topic_key), source_topic_keys: [], orphan_group_keys: [] }] : [];
-    }));
+    const previous = (await client.query<{ round_id: string; catalog: SignalListeningCatalogTopicV1[]; themes: SignalListeningThemeV1[]; review: unknown }>(
+      `SELECT round.id round_id,round.catalog,round.themes,round.review FROM signal_listening_cycles cycle JOIN signal_listening_rounds round ON round.cycle_id=cycle.id
+       WHERE cycle.workspace_id=$1 AND cycle.base_map_id=$2 AND cycle.status='completed' ORDER BY cycle.completed_at DESC,round.round_no DESC LIMIT 1`,
+      [args.workspace_id, target.map_id])).rows[0];
+    const catalog = validateSignalListeningCatalogV1(previous
+      ? previous.catalog.map(topic => ({ ...topic, human_locked: locked.has(topic.topic_key), source_topic_keys: [], orphan_group_keys: [] }))
+      // Only topics worded in all three languages enter the loop; the rest keep their published state.
+      : map.catalog.flatMap(topic => {
+        const localization = localized.get(topic.topic_key);
+        return localization && /^[a-z][a-z0-9_]{0,119}$/u.test(topic.topic_key) ? [{ topic_key: topic.topic_key, localization, domain: "category" as const,
+          theme_key: null, origin: "discovery" as const, human_locked: locked.has(topic.topic_key), source_topic_keys: [], orphan_group_keys: [] }] : [];
+      }));
     if (!catalog.length) fail("listening_catalog_required");
     const cycle_id = randomUUID(), round_id = randomUUID();
     await client.query(`INSERT INTO signal_listening_cycles(id,workspace_id,base_map_id,configuration_id,lexicon_revision,policy,cap_micro_usd,requested_by_user_id,receipt)
       VALUES($1,$2,$3,$4,$5,$6::jsonb,$7,$8,jsonb_build_object('idempotency_key',$9::text))`,
       [cycle_id, args.workspace_id, target.map_id, revision.id, policy_revision, JSON.stringify(policy), args.cap_micro_usd, args.actor_user_id, args.idempotency_key]);
-    await client.query("INSERT INTO signal_listening_rounds(id,cycle_id,workspace_id,round_no,step,catalog) VALUES($1,$2,$3,1,'asked',$4::jsonb)",
-      [round_id, cycle_id, args.workspace_id, JSON.stringify(catalog)]);
-    const centroids = new Map((await client.query<{ topic_key: string; centroid: string }>(
-      "SELECT topic_key,centroid::text centroid FROM signal_mass_labeling_topics WHERE workspace_id=$1 AND map_id=$2", [args.workspace_id, target.map_id])).rows
-      .map(row => [row.topic_key, { vector: row.centroid, members: 0 }]));
+    // A merge the last pass of the previous loop asked for travels with the map: it keeps applying where the map is read
+    // until a round of this loop folds the two topics itself. Without it the new loop would bring the folded topic back.
+    const carried = previous ? signalListeningCarriedClosingMergesV1(previous.review, catalog) : [];
+    await client.query("INSERT INTO signal_listening_rounds(id,cycle_id,workspace_id,round_no,step,catalog,themes,review) VALUES($1,$2,$3,1,'asked',$4::jsonb,$5::jsonb,$6::jsonb)",
+      [round_id, cycle_id, args.workspace_id, JSON.stringify(catalog), JSON.stringify(previous?.themes ?? []), carried.length ? JSON.stringify({ closing_merges: carried }) : null]);
+    const centroids = new Map((previous
+      ? await client.query<{ topic_key: string; centroid: string | null; members: number }>(
+        "SELECT topic_key,centroid::text centroid,confirmed_members members FROM signal_listening_round_topics WHERE round_id=$1", [previous.round_id])
+      : await client.query<{ topic_key: string; centroid: string | null; members: number }>(
+        "SELECT topic_key,centroid::text centroid,0 members FROM signal_mass_labeling_topics WHERE workspace_id=$1 AND map_id=$2", [args.workspace_id, target.map_id])).rows
+      .flatMap(row => row.centroid ? [[row.topic_key, { vector: row.centroid, members: row.members }] as const] : []));
     await writeRoundTopics(client, { id: round_id, workspace_id: args.workspace_id }, configuration, catalog, centroids);
     return { cycle_id, replayed: false, topics: catalog.length, locked: catalog.filter(topic => topic.human_locked).length };
   });
@@ -135,6 +196,20 @@ export async function finishSignalListeningCycleV1(database: Database, cycle: Pi
     completed_at=now(),updated_at=now() WHERE id=$1 AND lease_token=$2`,
     [cycle.id, cycle.lease_token, outcome.status, outcome.stop_reason ?? null, outcome.error_code ?? null, JSON.stringify(outcome.receipt ?? {})]);
 }
+/** The merges recorded with a round that still apply to a catalog: both topics are in it under their own keys. */
+export function signalListeningCarriedClosingMergesV1(review: unknown, catalog: Array<{ topic_key: string }>): Array<{ stays: string; folded: string }> {
+  const known = new Set(catalog.map(topic => topic.topic_key)), listed = (review as { closing_merges?: unknown } | null)?.closing_merges;
+  return (Array.isArray(listed) ? listed : []).flatMap((item: { stays?: unknown; folded?: unknown }) =>
+    typeof item?.stays === "string" && typeof item.folded === "string" && item.stays !== item.folded && known.has(item.stays) && known.has(item.folded)
+      ? [{ stays: item.stays, folded: item.folded }] : []);
+}
+/** Merges the classifier's answers in the last pass of a loop ask for. No pass is left to ask the topic that stays about
+ * the posts of the other, so they are kept with the round and applied where the map is read, like a person's merge. */
+export async function recordSignalListeningClosingMergesV1(database: Database, cycle: Pick<SignalListeningCycleV1, "id" | "lease_token">,
+  round: Pick<SignalListeningRoundV1, "id">, merges: Array<{ stays: string; folded: string }>) {
+  await database.query(`UPDATE signal_listening_rounds round SET review=COALESCE(round.review,'{}'::jsonb)||jsonb_build_object('closing_merges',$3::jsonb),updated_at=now()
+    FROM signal_listening_cycles cycle WHERE round.id=$1 AND cycle.id=round.cycle_id AND cycle.lease_token=$2`, [round.id, cycle.lease_token, JSON.stringify(merges)]);
+}
 export async function getSignalListeningCycleV1(database: Queryable, cycle_id: string) {
   const cycle = (await database.query<SignalListeningCycleV1>(`SELECT ${CYCLE} FROM signal_listening_cycles WHERE id=$1`, [cycle_id])).rows[0] ?? null;
   const rounds = cycle ? (await database.query<SignalListeningRoundV1>(`SELECT ${ROUND} FROM signal_listening_rounds WHERE cycle_id=$1 ORDER BY round_no`, [cycle_id])).rows : [];
@@ -150,14 +225,88 @@ export async function readSignalListeningCycleConfigurationV1(database: Queryabl
 export async function chargeSignalListeningCycleV1(database: Database, cycle: Pick<SignalListeningCycleV1, "id">, micro_usd: number) {
   await database.query("UPDATE signal_listening_cycles SET spent_micro_usd=spent_micro_usd+$2,updated_at=now() WHERE id=$1", [cycle.id, Math.ceil(micro_usd)]);
 }
-/** Answers of a round that count: this round's topics, for the text the map holds today. */
+/** Answers of a round that count: this round's topics, for the text the map holds today. Where the classifier
+ * was asked to choose between two topics for a post, that choice replaces the two separate answers. */
 const VALID = `valid AS MATERIALIZED (
-  SELECT answer.root_id,topic.topic_key,answer.probability>=$4::real ok
+  SELECT answer.root_id,topic.topic_key,COALESCE(decided.belongs,answer.probability>=$4::real) ok,
+    CASE WHEN decided.belongs IS NULL THEN answer.probability WHEN decided.belongs THEN 1::real ELSE 0::real END probability
   FROM signal_listening_round_topics topic
   JOIN signal_listening_answers answer ON answer.question_id=topic.question_id AND answer.workspace_id=$1
   JOIN signal_mass_labeling_items item ON item.map_id=$2 AND item.workspace_id=$1 AND item.root_id=answer.root_id
     AND answer.input_sha=decode(substr(item.input_digest,8),'hex')
+  LEFT JOIN signal_listening_answer_overrides decided ON decided.cycle_id=(SELECT scoped.cycle_id FROM signal_listening_rounds scoped WHERE scoped.id=$3) AND decided.question_id=topic.question_id AND decided.root_id=answer.root_id AND decided.input_sha=answer.input_sha
   WHERE topic.round_id=$3)`;
+/** A pair of topics the classifier settles post by post, as a round carries it. */
+export type SignalListeningRoundPairV1 = { left: string; right: string; question_id: number; jaccard?: number | null };
+const roundPairs = (round: Pick<SignalListeningRoundV1, "review">) => ((round.review as { pairs?: SignalListeningRoundPairV1[] } | null)?.pairs ?? []);
+
+/**
+ * Applies what the classifier chose for the pairs of a round: for each post
+ * both topics held, its choice (left, right, both or neither) becomes the two
+ * memberships. Safe to repeat. Returns how the posts of each pair were shared out.
+ */
+/**
+ * The posts a pair of this round shares, with what the classifier chose for each. Parameters: $1 the workspace, $2 to $4
+ * the pair questions and the questions of their left and right topics, $5 the map, $6 the approval line.
+ * A post counts when it is in the map, the choice was made on the text it has now, and both topics accept it by their
+ * own questions at the line: an answer kept from another map, another text or another line is not this pair's.
+ */
+const PAIR_SHARED = `pair AS (SELECT * FROM unnest($2::bigint[],$3::bigint[],$4::bigint[]) listed(question_id,left_id,right_id)),
+  shared AS MATERIALIZED (
+    SELECT pair.question_id pair_question,pair.left_id,pair.right_id,answer.root_id,answer.choice,answer.input_sha
+    FROM pair JOIN signal_listening_answers answer ON answer.question_id=pair.question_id AND answer.workspace_id=$1 AND answer.choice IN('left','right','both','neither')
+    JOIN signal_mass_labeling_items item ON item.workspace_id=$1 AND item.map_id=$5 AND item.root_id=answer.root_id AND answer.input_sha=decode(substr(item.input_digest,8),'hex')
+    JOIN signal_listening_answers on_left ON on_left.question_id=pair.left_id AND on_left.root_id=answer.root_id AND on_left.workspace_id=$1
+      AND on_left.input_sha=answer.input_sha AND on_left.probability>=$6::real
+    JOIN signal_listening_answers on_right ON on_right.question_id=pair.right_id AND on_right.root_id=answer.root_id AND on_right.workspace_id=$1
+      AND on_right.input_sha=answer.input_sha AND on_right.probability>=$6::real)`;
+export async function settleSignalListeningPairChoicesV1(database: Database, cycle: Pick<SignalListeningCycleV1, "id" | "workspace_id" | "lease_token" | "base_map_id" | "policy">,
+  round: Pick<SignalListeningRoundV1, "id" | "review">,
+  /** Pairs that were merged: the decisions they made are taken back, and what the other pairs chose is applied again. */
+  merged: Array<{ stays: string; folded: string }> = []): Promise<SignalListeningPairChoiceV1[]> {
+  const together = new Set(merged.flatMap(item => [`${item.stays}+${item.folded}`, `${item.folded}+${item.stays}`]));
+  const every = roundPairs(round), pairs = every.filter(pair => !together.has(`${pair.left}+${pair.right}`));
+  if (!every.length) return [];
+  return shared.transaction(database, async client => {
+    if (!(await client.query("SELECT 1 FROM signal_listening_cycles WHERE id=$1 AND lease_token=$2 FOR UPDATE", [cycle.id, cycle.lease_token])).rows.length) {
+      throw new Error("listening_cycle_lease_lost");
+    }
+    const topics = new Map((await client.query<{ topic_key: string; question_id: string }>(
+      "SELECT topic_key,question_id::text FROM signal_listening_round_topics WHERE round_id=$1", [round.id])).rows.map(row => [row.topic_key, row.question_id]));
+    const asked = pairs.flatMap(pair => { const left = topics.get(pair.left), right = topics.get(pair.right); return left && right ? [{ ...pair, left_id: left, right_id: right }] : []; });
+    // The posts of a merged pair belong to the topic that stays whichever side they chose. Its decisions are removed, so
+    // those posts count again by the topic's own answer; the choices of the other pairs are written again just below.
+    const undone = every.filter(pair => together.has(`${pair.left}+${pair.right}`));
+    if (undone.length) {
+      await client.query(`DELETE FROM signal_listening_answer_overrides WHERE workspace_id=$1 AND decided_by_question_id=ANY($2::bigint[]) AND question_id=ANY($3::bigint[]) AND cycle_id=$4`,
+        [cycle.workspace_id, undone.map(pair => pair.question_id), undone.flatMap(pair => [topics.get(pair.left), topics.get(pair.right)]).filter(Boolean), cycle.id]);
+    }
+    if (!asked.length) return [];
+    const params = [cycle.workspace_id, asked.map(pair => pair.question_id), asked.map(pair => pair.left_id), asked.map(pair => pair.right_id), cycle.base_map_id, cycle.policy.approval];
+    // A post two pairs share through the same topic gets one decision for that topic, whatever the order of the pairs: it
+    // is out of the topic when any of the choices left it out. The decision travels with the digest of the text it was
+    // made on, so it never applies to an answer about another text, and to the loop that made it: the map of a loop
+    // that already finished is not touched by one that is still running.
+    await client.query(`WITH ${PAIR_SHARED}, side AS (
+        SELECT left_id question_id,root_id,input_sha,choice IN('left','both') belongs,pair_question FROM shared
+        UNION ALL SELECT right_id,root_id,input_sha,choice IN('right','both'),pair_question FROM shared),
+      decided AS (SELECT question_id,root_id,bool_and(belongs) belongs,COALESCE(min(pair_question) FILTER (WHERE NOT belongs),min(pair_question)) decided_by,
+        (array_agg(input_sha))[1] input_sha FROM side GROUP BY 1,2)
+      INSERT INTO signal_listening_answer_overrides(workspace_id,cycle_id,question_id,root_id,belongs,decided_by_question_id,input_sha)
+      SELECT $1,$7::uuid,question_id,root_id,belongs,decided_by,input_sha FROM decided
+      ON CONFLICT(cycle_id,question_id,root_id) DO UPDATE SET belongs=EXCLUDED.belongs,decided_by_question_id=EXCLUDED.decided_by_question_id,input_sha=EXCLUDED.input_sha`, [...params, cycle.id]);
+    const counts = new Map<string, Map<string, number>>();
+    for (const row of (await client.query<{ pair_question: string; choice: string; posts: number }>(
+      `WITH ${PAIR_SHARED} SELECT pair_question::text,choice,count(*)::int posts FROM shared GROUP BY 1,2`, params)).rows) {
+      counts.set(row.pair_question, (counts.get(row.pair_question) ?? new Map()).set(row.choice, row.posts));
+    }
+    return asked.map(pair => {
+      const of = (choice: string) => counts.get(String(pair.question_id))?.get(choice) ?? 0, total = of("left") + of("right") + of("both") + of("neither");
+      return { left: pair.left, right: pair.right, shared: total, chose_left: of("left"), chose_right: of("right"), chose_both: of("both"), chose_neither: of("neither"),
+        both_share: total ? of("both") / total : null, jaccard: pair.jaccard ?? null };
+    });
+  });
+}
 const CATEGORY = `category AS MATERIALIZED (
   SELECT item.root_id FROM signal_mass_labeling_items item
   JOIN signal_mass_labeling_category_matches lexical ON lexical.workspace_id=item.workspace_id AND lexical.policy_revision=$5::int
@@ -166,16 +315,19 @@ const CATEGORY = `category AS MATERIALIZED (
 
 /** Measures a round without calling any provider: acceptance per topic, possible
  * twins, and roots about the category that no topic accepted. */
-export async function measureSignalListeningRoundV1(database: Database, cycle: SignalListeningCycleV1, round: Pick<SignalListeningRoundV1, "id" | "round_no">) {
+export async function measureSignalListeningRoundV1(database: Database, cycle: SignalListeningCycleV1, round: Pick<SignalListeningRoundV1, "id" | "round_no">,
+  /** How the classifier shared out the posts of the pairs it was asked to settle in this round. */
+  pair_choices: SignalListeningPairChoiceV1[] = []) {
   const policy = cycle.policy, base = [cycle.workspace_id, cycle.base_map_id, round.id, policy.approval];
   const client = await database.connect();
   try {
     await client.query("BEGIN"); await client.query("SET TRANSACTION READ ONLY");
-    const population = (await client.query<{ roots: number; category_roots: number; orphan_roots: number }>(`WITH ${VALID}, ${CATEGORY}
+    const population = (await client.query<{ roots: number; category_roots: number; orphan_roots: number; orphan_roots_probable: number }>(`WITH ${VALID}, ${CATEGORY}
       SELECT (SELECT count(*)::int FROM signal_mass_labeling_items WHERE workspace_id=$1 AND map_id=$2) roots,
         (SELECT count(*)::int FROM category) category_roots,
-        (SELECT count(*)::int FROM category WHERE NOT EXISTS(SELECT 1 FROM valid WHERE valid.root_id=category.root_id AND valid.ok)) orphan_roots`,
-      [...base, cycle.lexicon_revision])).rows[0]!;
+        (SELECT count(*)::int FROM category WHERE NOT EXISTS(SELECT 1 FROM valid WHERE valid.root_id=category.root_id AND valid.ok)) orphan_roots,
+        (SELECT count(*)::int FROM category WHERE NOT EXISTS(SELECT 1 FROM valid WHERE valid.root_id=category.root_id AND valid.probability>=$6::real)) orphan_roots_probable`,
+      [...base, cycle.lexicon_revision, policy.probable ?? policy.approval])).rows[0]!;
     const topics = (await client.query<{ topic_key: string; asked: number; approved: number }>(`WITH ${VALID}
       SELECT topic.topic_key,count(valid.root_id)::int asked,count(valid.root_id) FILTER (WHERE valid.ok)::int approved
       FROM signal_listening_round_topics topic LEFT JOIN valid USING(topic_key) WHERE topic.round_id=$3 GROUP BY 1 ORDER BY 1`, base)).rows;
@@ -211,6 +363,9 @@ export async function measureSignalListeningRoundV1(database: Database, cycle: S
     await client.query("COMMIT");
     const evidence: SignalListeningCycleEvidenceV1 = { round: round.round_no, roots: population.roots, category_roots: population.category_roots,
       orphan_roots: population.orphan_roots, orphan_rate: population.category_roots ? population.orphan_roots / population.category_roots : null,
+      ...(policy.probable === undefined ? {} : { orphan_roots_probable: population.orphan_roots_probable,
+        orphan_rate_probable: population.category_roots ? population.orphan_roots_probable / population.category_roots : null }),
+      ...(pair_choices.length ? { pair_choices } : {}),
       twin_roots: twinRoots, twin_root_rate: population.category_roots ? twinRoots / population.category_roots : null,
       topics: topics.map(topic => ({ topic_key: topic.topic_key, asked: topic.asked, approved: topic.approved, acceptance: topic.asked ? topic.approved / topic.asked : null,
         accepted_examples: examples.filter(row => row.topic_key === topic.topic_key && row.ok).map(row => row.excerpt),
@@ -283,13 +438,17 @@ export async function readSignalListeningConfirmedCentroidsV1(database: Database
 export async function openSignalListeningNextRoundV1(args: { database: Database; cycle: SignalListeningCycleV1; round: SignalListeningRoundV1;
   catalog: SignalListeningCatalogTopicV1[]; themes: SignalListeningThemeV1[]; review: Record<string, unknown>;
   /** Confirmed members of every topic of the measured round, so merges can be weighted. */
-  confirmed: SignalListeningConfirmedCentroidsV1 }): Promise<{ round_id: string }> {
+  confirmed: SignalListeningConfirmedCentroidsV1;
+  /** A last round with no review: it only asks what the merges of the rule left pending. Opened right after measuring. */
+  settling?: boolean;
+  /** Pairs accepted together very often that are still two topics: the posts both hold are asked to choose. */
+  pairs?: Array<{ left: string; right: string; jaccard?: number | null }> }): Promise<{ round_id: string }> {
   const { cycle, round, confirmed } = args, configuration = await readSignalListeningCycleConfigurationV1(args.database, cycle);
   return shared.transaction(args.database, async client => {
     const owned = (await client.query("SELECT 1 FROM signal_listening_cycles WHERE id=$1 AND lease_token=$2 FOR UPDATE", [cycle.id, cycle.lease_token])).rows.length;
     if (!owned) throw new Error("listening_cycle_lease_lost");
-    await client.query("UPDATE signal_listening_rounds SET review=$2::jsonb,step='reviewed',updated_at=now() WHERE id=$1 AND step='regrouped'",
-      [round.id, JSON.stringify(args.review)]);
+    await client.query("UPDATE signal_listening_rounds SET review=$2::jsonb,step='reviewed',updated_at=now() WHERE id=$1 AND step=$3",
+      [round.id, JSON.stringify(args.review), args.settling ? "measured" : "regrouped"]);
     const existing = (await client.query<{ id: string }>("SELECT id FROM signal_listening_rounds WHERE cycle_id=$1 AND round_no=$2", [cycle.id, round.round_no + 1])).rows[0];
     if (existing) return { round_id: existing.id };
     const previous = new Map((await client.query<{ topic_key: string; centroid: string | null }>(
@@ -312,9 +471,14 @@ export async function openSignalListeningNextRoundV1(args: { database: Database;
       }
     }
     const round_id = randomUUID();
-    await client.query("INSERT INTO signal_listening_rounds(id,cycle_id,workspace_id,round_no,step,catalog,themes) VALUES($1,$2,$3,$4,'created',$5::jsonb,$6::jsonb)",
-      [round_id, cycle.id, cycle.workspace_id, round.round_no + 1, JSON.stringify(args.catalog), JSON.stringify(args.themes)]);
+    // Merges recorded with the round before stay with the map while both of their topics are still in it.
+    const carried = signalListeningCarriedClosingMergesV1(args.review, args.catalog);
+    const opening = { ...(args.settling ? { settling: true } : {}), ...(carried.length ? { closing_merges: carried } : {}) };
+    await client.query(`INSERT INTO signal_listening_rounds(id,cycle_id,workspace_id,round_no,step,catalog,themes,review)
+      VALUES($1,$2,$3,$4,'created',$5::jsonb,$6::jsonb,$7::jsonb)`,
+      [round_id, cycle.id, cycle.workspace_id, round.round_no + 1, JSON.stringify(args.catalog), JSON.stringify(args.themes), Object.keys(opening).length ? JSON.stringify(opening) : null]);
     await writeRoundTopics(client, { id: round_id, workspace_id: cycle.workspace_id }, configuration, args.catalog, centroids);
+    await writeRoundPairs(client, { id: round_id, workspace_id: cycle.workspace_id }, configuration, args.catalog, args.pairs ?? []);
     return { round_id };
   });
 }
@@ -393,14 +557,26 @@ export async function createSignalListeningRoundSourceV1(database: Database, run
   if (plan.planner !== "topics_round_v1" || !uuid.test(plan.round_id) || !Number.isFinite(plan.input_usd_per_mtok) || plan.input_usd_per_mtok <= 0) {
     throw new Error("listening_plan_invalid");
   }
-  const scope = (await database.query<{ base_map_id: string; configuration_id: string; policy: SignalListeningCyclePolicyV1; catalog: SignalListeningCatalogTopicV1[]; workspace_id: string }>(
-    `SELECT cycle.base_map_id,cycle.configuration_id,cycle.policy,round.catalog,cycle.workspace_id FROM signal_listening_rounds round
+  const scope = (await database.query<{ base_map_id: string; configuration_id: string; policy: SignalListeningCyclePolicyV1; catalog: SignalListeningCatalogTopicV1[]; workspace_id: string;
+    previous_round_id: string | null; review: Record<string, unknown> | null }>(
+    `SELECT cycle.base_map_id,cycle.configuration_id,cycle.policy,round.catalog,cycle.workspace_id,round.review,
+       (SELECT earlier.id FROM signal_listening_rounds earlier WHERE earlier.cycle_id=round.cycle_id AND earlier.round_no=round.round_no-1) previous_round_id
+     FROM signal_listening_rounds round
      JOIN signal_listening_cycles cycle ON cycle.id=round.cycle_id WHERE round.id=$1 AND round.workspace_id=$2`, [plan.round_id, run.workspace_id])).rows[0];
   if (!scope) throw new Error("listening_plan_unavailable");
+  // A topic that was redefined, or that took another one in, is asked of every root its sources held:
+  // being close to its centre is not the only reason to ask.
+  const heirs = new Map<string, string[]>();
+  for (const topic of scope.catalog) for (const source of topic.source_topic_keys) heirs.set(source, [...(heirs.get(source) ?? []), topic.topic_key]);
   const configuration = await readSignalListeningCycleConfigurationV1(database, scope);
   const questions = new Map(validateSignalListeningCatalogV1(scope.catalog).map(topic => [topic.topic_key, topicQuestion(configuration, topic)]));
   const ids = new Map((await database.query<{ topic_key: string; question_id: string }>(
     "SELECT topic_key,question_id::text FROM signal_listening_round_topics WHERE round_id=$1", [plan.round_id])).rows.map(row => [row.topic_key, Number(row.question_id)]));
+  // Pairs the classifier settles: asked only of the posts both topics held in the previous round.
+  const byKey = new Map(scope.catalog.map(topic => [topic.topic_key, topic]));
+  const pairs = roundPairs(scope).flatMap(pair => byKey.has(pair.left) && byKey.has(pair.right)
+    ? [{ ...pair, question: pairQuestion(configuration, byKey.get(pair.left)!, byKey.get(pair.right)!) }] : []);
+  const watched = [...new Set([...heirs.keys(), ...pairs.flatMap(pair => [pair.left, pair.right])])];
   let cursor = 0;
   return {
     model: configuration.model, input_usd_per_mtok: plan.input_usd_per_mtok,
@@ -424,15 +600,30 @@ export async function createSignalListeningRoundSourceV1(database: Database, run
         for (const answer of (await database.query<{ root_id: string; question_id: string; input_sha: string }>(
           `SELECT root_id,question_id::text,encode(input_sha,'hex') input_sha FROM signal_listening_answers
            WHERE workspace_id=$1 AND root_id=ANY($2::uuid[]) AND question_id=ANY($3::bigint[])`,
-          [run.workspace_id, rows.map(row => row.root_id), [...ids.values()]])).rows) {
+          [run.workspace_id, rows.map(row => row.root_id), [...ids.values(), ...pairs.map(pair => pair.question_id)]])).rows) {
           if (`sha256:${answer.input_sha}` !== digests.get(answer.root_id)) continue;
           const set = answered.get(answer.root_id); if (set) set.add(Number(answer.question_id)); else answered.set(answer.root_id, new Set([Number(answer.question_id)]));
         }
+        // What each root held in the previous round, among the topics that matter here.
+        const held = new Map<string, Set<string>>();
+        if (watched.length && scope.previous_round_id) {
+          for (const member of (await database.query<{ root_id: string; topic_key: string }>(`SELECT answer.root_id,topic.topic_key FROM signal_listening_round_topics topic
+            JOIN signal_listening_answers answer ON answer.question_id=topic.question_id AND answer.workspace_id=$1 AND answer.root_id=ANY($2::uuid[])
+            LEFT JOIN signal_listening_answer_overrides decided ON decided.cycle_id=(SELECT scoped.cycle_id FROM signal_listening_rounds scoped WHERE scoped.id=$3) AND decided.question_id=topic.question_id AND decided.root_id=answer.root_id AND decided.input_sha=answer.input_sha
+            WHERE topic.round_id=$3 AND topic.topic_key=ANY($5::text[]) AND COALESCE(decided.belongs,answer.probability>=$4::real)`,
+            [run.workspace_id, rows.map(row => row.root_id), scope.previous_round_id, scope.policy.approval, watched])).rows) {
+            const set = held.get(member.root_id); if (set) set.add(member.topic_key); else held.set(member.root_id, new Set([member.topic_key]));
+          }
+        }
         const items: SignalListeningItemV1[] = [];
         for (const row of rows) {
-          const pending = (row.candidates ?? []).filter(topic_key => questions.has(topic_key) && ids.has(topic_key) && !answered.get(row.root_id)?.has(ids.get(topic_key)!));
-          if (!pending.length) continue;
-          const asked = pending.map((topic_key, index) => ({ ...questions.get(topic_key)!, request_key: `q${index}` }));
+          const before = held.get(row.root_id), done = answered.get(row.root_id);
+          const inherited = [...(before ?? [])].flatMap(source => heirs.get(source) ?? []);
+          const pending = [...new Set([...(row.candidates ?? []), ...inherited])]
+            .filter(topic_key => questions.has(topic_key) && ids.has(topic_key) && !done?.has(ids.get(topic_key)!));
+          const choosing = pairs.filter(pair => before?.has(pair.left) && before.has(pair.right) && !done?.has(pair.question_id));
+          if (!pending.length && !choosing.length) continue;
+          const asked = [...pending.map(topic_key => questions.get(topic_key)!), ...choosing.map(pair => pair.question)].map((question, index) => ({ ...question, request_key: `q${index}` }));
           items.push({ root_id: row.root_id, input_digest: row.input_digest, questions: asked,
             request: { model: configuration.model, state: row.text, questions: Object.fromEntries(asked.map(question => [question.request_key, question.wire])) } });
         }
@@ -442,39 +633,5 @@ export async function createSignalListeningRoundSourceV1(database: Database, run
   };
 }
 
-export type SignalListeningMapV1 = {
-  contract_version: "signal-listening-map-v1"; workspace_id: string; cycle_id: string | null; round: number | null; completed_at: string | null;
-  themes: Array<{ theme_key: string | null; name: { original: string; en: string; es: string } | null;
-    topics: Array<{ topic_key: string; name: { original: string; en: string; es: string }; definition: { original: string; en: string; es: string };
-      domain: "category" | "adjacent" | "outside"; mentions: number }> }>;
-};
-/** The map of the last finished discovery cycle: themes, their topics and how many roots each topic holds. */
-export async function readSignalListeningMapV1(access: { database: Database; workspace_id: string; actor_user_id: string }): Promise<SignalListeningMapV1> {
-  return shared.transaction(access.database, async client => {
-    await client.query("SET TRANSACTION READ ONLY");
-    await shared.authorize(client, access, "view");
-    const empty: SignalListeningMapV1 = { contract_version: "signal-listening-map-v1", workspace_id: access.workspace_id, cycle_id: null, round: null, completed_at: null, themes: [] };
-    const cycle = (await client.query<{ id: string; base_map_id: string; policy: SignalListeningCyclePolicyV1; completed_at: string }>(`SELECT id,base_map_id,policy,completed_at::text
-      FROM signal_listening_cycles WHERE workspace_id=$1 AND status='completed' ORDER BY completed_at DESC LIMIT 1`, [access.workspace_id])).rows[0];
-    if (!cycle) return empty;
-    const round = (await client.query<{ id: string; round_no: number; catalog: SignalListeningCatalogTopicV1[]; themes: SignalListeningThemeV1[] }>(
-      "SELECT id,round_no,catalog,themes FROM signal_listening_rounds WHERE cycle_id=$1 ORDER BY round_no DESC LIMIT 1", [cycle.id])).rows[0];
-    if (!round) return empty;
-    const volumes = new Map((await client.query<{ topic_key: string; mentions: number }>(`WITH ${VALID}
-      SELECT topic_key,count(*) FILTER (WHERE ok)::int mentions FROM valid GROUP BY 1`, [access.workspace_id, cycle.base_map_id, round.id, cycle.policy.approval])).rows
-      .map(row => [row.topic_key, row.mentions]));
-    const names = new Map(round.themes.map(item => [item.theme_key, item.name]));
-    const grouped = new Map<string | null, SignalListeningMapV1["themes"][number]>();
-    for (const topic of round.catalog) {
-      const theme_key = topic.theme_key !== null && names.has(topic.theme_key) ? topic.theme_key : null;
-      if (!grouped.has(theme_key)) grouped.set(theme_key, { theme_key, name: theme_key === null ? null : names.get(theme_key)!, topics: [] });
-      const { original, en, es } = topic.localization;
-      grouped.get(theme_key)!.topics.push({ topic_key: topic.topic_key, name: { original: original.name, en: en.name, es: es.name },
-        definition: { original: original.definition, en: en.definition, es: es.definition }, domain: topic.domain, mentions: volumes.get(topic.topic_key) ?? 0 });
-    }
-    const total = (item: SignalListeningMapV1["themes"][number]) => item.topics.reduce((sum, topic) => sum + topic.mentions, 0);
-    const themes = [...grouped.values()].map(item => ({ ...item, topics: item.topics.sort((a, b) => b.mentions - a.mentions || a.topic_key.localeCompare(b.topic_key)) }))
-      .sort((a, b) => Number(a.theme_key === null) - Number(b.theme_key === null) || total(b) - total(a));
-    return { ...empty, cycle_id: cycle.id, round: round.round_no, completed_at: cycle.completed_at, themes };
-  });
-}
+/** Shared with the reader of the reviewed map. */
+export const signalListeningCycleInternalsV1 = { VALID };

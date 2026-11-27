@@ -1,4 +1,6 @@
 import "./env/load";
+// Before any queue connects: an uncaught error is logged without its own properties (a Redis error carries its command).
+import "./process-errors-install";
 
 import { isDataOsWorkerEnabled, isEngineRuntimeEnabled } from "@noisia/query-engine";
 import { closeWorkerDatabasePoolsV1, pool } from "./db/client";
