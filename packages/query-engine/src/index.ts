@@ -1287,3 +1287,4 @@ export * from "./signal-workspace-monitoring-insights-v1";
 export * from "./signal-listening-questions-v1";
 export * from "./signal-listening-config-v1";
 export * from "./signal-listening-cycle-v1";
+export * from "./signal-study-v1";

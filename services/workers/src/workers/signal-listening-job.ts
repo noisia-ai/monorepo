@@ -2,7 +2,8 @@ import { createHash } from "node:crypto";
 import { gzipSync } from "node:zlib";
 import type { Pool } from "pg";
 import {
-  claimSignalListeningRunV1, createSignalListeningLegacySourceV1, createSignalListeningRoundSourceV1, createSignalListeningSourceV1, finishSignalListeningRunV1, releaseSignalListeningRunV1,
+  claimSignalListeningRunV1, createSignalListeningLegacySourceV1, createSignalListeningRoundSourceV1, createSignalListeningSourceV1, createSignalStudySourceV1,
+  finishSignalListeningRunV1, releaseSignalListeningRunV1,
   renewSignalListeningRunV1, SIGNAL_LISTENING_MAX_CLAIMS_V1, writeSignalListeningPageV1, type SignalListeningRunV1,
 } from "@noisia/db";
 import { mapSignalListeningAnswersV1, signalListeningCostMicroUsdV1, type SignalListeningItemV1 } from "@noisia/query-engine";
@@ -72,6 +73,7 @@ export async function processSignalListeningRunV1(args: {
   const planner = (run.plan as { planner?: string }).planner;
   const source = planner === "listening_v1" ? await createSignalListeningSourceV1(database, run)
     : planner === "topics_round_v1" ? await createSignalListeningRoundSourceV1(database, run)
+    : planner === "study_axes_v1" || planner === "study_motives_v1" ? await createSignalStudySourceV1(database, run)
     : await createSignalListeningLegacySourceV1(database, run);
   let spent = run.spent_micro_usd, leaseLost = false, rawMs = 0, dbMs = 0, rawFailures = 0, pricedTokens = 0;
   const heartbeat = setInterval(() => {

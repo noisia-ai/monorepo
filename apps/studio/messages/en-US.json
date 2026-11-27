@@ -5012,5 +5012,92 @@
       "topic": "Topic",
       "period": "Month"
     }
+  },
+  "Studies": {
+    "title": "Studies",
+    "body": "A study applies a methodology to a cut of the same mentions the report listens to. Nothing is imported or embedded again.",
+    "loading": "Loading studies…",
+    "unavailable": "The studies could not be read.",
+    "refresh": "Refresh",
+    "empty": "This brand has no studies yet.",
+    "open": "See result",
+    "close": "Close",
+    "directional": "Directional result: it points at where to look. It is not validated by sampling yet.",
+    "summary": "Cut of {cut} consumer mentions about the category (out of {corpus}). {directed} talk about the subject with a direction and {withMotive} carry a motive. Agreement between the two layer readings: {kappa}.",
+    "layersTitle": "Layers",
+    "motivesTitle": "Motives",
+    "source": "source",
+    "choose": "Choose {name}",
+    "promoteHelp": "The chosen motives become defined topics of the brand. The report will measure them on its next update.",
+    "promote": "Carry {count, plural, =0 {motives} one {# motive} other {# motives}} to the report",
+    "promoting": "Carrying…",
+    "promoteError": "The motives could not be carried over.",
+    "col": {
+      "name": "Study",
+      "status": "Status",
+      "cost": "Spent / cap",
+      "created": "Created",
+      "layer": "Layer",
+      "permission": "Permission",
+      "motives": "Motives",
+      "mentions": "Mentions",
+      "share": "Of all with a direction",
+      "motive": "Motive",
+      "trigger": "With a trigger signal",
+      "barrier": "With a barrier signal",
+      "tension": "With tension"
+    },
+    "status": {
+      "queued": "Queued",
+      "running": "Working",
+      "completed": "Finished",
+      "failed": "Failed",
+      "canceled": "Canceled"
+    },
+    "step": {
+      "created": "asking direction, target and use",
+      "axes_asked": "grouping mentions",
+      "grouped": "naming motives",
+      "motives_named": "reading layers",
+      "layers_coded": "confirming motives",
+      "motives_asked": "checking results",
+      "checked": "building the result",
+      "published": "ready"
+    },
+    "kind": {
+      "category": "The category",
+      "own_brand": "The own brand",
+      "alternative": "An alternative to the category"
+    },
+    "layer": {
+      "psychological": "Psychological",
+      "personal": "Personal",
+      "social": "Social",
+      "cultural": "Cultural",
+      "unclear": "Not enough evidence"
+    },
+    "permission": {
+      "movable": "Movable",
+      "partial": "Partly movable",
+      "structural_align_or_exit": "Structural: align or exit",
+      "no_permission": "No permission"
+    },
+    "form": {
+      "title": "New Triggers & Barriers study",
+      "help": "The study runs on its own from start to finish, within the spending cap.",
+      "name": "Study name",
+      "kind": "The subject is",
+      "subject": "Exact subject of the study",
+      "category": "Category",
+      "own_brand": "Own brand",
+      "conventional_category": "Conventional category",
+      "competitors": "Competitors (one per line)",
+      "alternatives": "Alternatives (one per line)",
+      "cap": "Spending cap (USD)",
+      "create": "Create study",
+      "creating": "Creating…",
+      "retry": "Retry",
+      "error": "The study could not be created."
+    }
   }
 }
