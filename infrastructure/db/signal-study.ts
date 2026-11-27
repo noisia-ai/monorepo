@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { Pool, PoolClient } from "pg";
 import {
-  compileSignalListeningConfigurationV1, compileSignalStudyAxesV1, signalStudyGroupUsesV1, signalStudyMotiveQuestionV1, SIGNAL_LISTENING_CONSUMER_CUT_V1, signalStudyDirectionProbabilitySqlV1, signalStudyRulesWithLinesV1, validateSignalStudyDirectionLinesV1, SIGNAL_STUDY_TB_TEMPLATE_V3_5, type SignalStudyDirectionLinesV1,
+  compileSignalListeningConfigurationV1, compileSignalStudyAxesV1, signalStudyGroupUsesV1, signalStudyMotiveQuestionV1, SIGNAL_LISTENING_CONSUMER_CUT_V1, signalStudyDirectionLineV1, signalStudyDirectionProbabilitySqlV1, signalStudyRulesWithLinesV1, validateSignalStudyDirectionLinesV1, SIGNAL_STUDY_TB_TEMPLATE_V3_5, type SignalStudyDirectionLinesV1,
   validateSignalListeningConfigurationV1, validateSignalStudyLexiconV1, validateSignalStudySubjectV1, validateSignalStudyTemplateV1,
   type SignalListeningAskedQuestionV1, type SignalListeningConfigurationV1, type SignalListeningItemV1, type SignalStudyLayerV1,
   type SignalStudyPermissionV1, type SignalStudySubjectV1, type SignalStudyTemplateV1, type SignalStudyWordingV1,
@@ -133,6 +133,11 @@ export async function recountSignalStudyV1(args: { database: Database; workspace
       && template.rules.motive_approval_min === source.methodology.rules.motive_approval_min
       && JSON.stringify(template.rules.cut) === JSON.stringify(source.methodology.rules.cut);
     if (!same) fail("study_recount_questions_differ", 422);
+    // Counting again can only leave posts out. A line lower than the one the study ran with would count posts that were
+    // never asked their motives, so it is refused: that change needs a study of its own.
+    const ran = signalStudyRulesOfV1(source), asked = signalStudyRulesWithLinesV1(template.rules, lines);
+    if (["trigger", "barrier", "mixed"].some(direction => (signalStudyDirectionLineV1(asked, direction) ?? 0) < (signalStudyDirectionLineV1(ran, direction) ?? 0))
+      || JSON.stringify(signalStudyGroupUsesV1(asked)) !== JSON.stringify(signalStudyGroupUsesV1(ran))) fail("study_recount_widens_the_count", 422);
     const { direction_lines: _earlier, ...kept } = source.cut;
     const cut: SignalStudyCutV1 = { ...kept, ...(lines ? { direction_lines: lines } : {}) }, id = randomUUID();
     const carried = Object.fromEntries(["groups", "naming", "pool_roots", "pool_discovery_only_roots", "checks", "contrast_done"].flatMap(key => key in source.state ? [[key, source.state[key]]] : []));
