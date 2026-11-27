@@ -173,6 +173,9 @@ export async function stepSignalStudyV1(args: { database: Database; study: Signa
   }
 
   if (study.step === "motives_asked" || study.step === "layers_coded") {
+    // A study made when the layer was read before the motives were confirmed stopped at `layers_coded` without its first
+    // pass. It takes it here; for a study that already has it, this only reads the finished run.
+    if (study.step === "layers_coded" && await jevPass(database, study, "study_motives_v1", 1, LAYER_READINGS_RESERVE_MICRO_USD) === "waiting") return "waiting";
     if (state.contrast_done) {
       // The rewritten motives are asked again; everything else is already in the cache.
       if (await jevPass(database, study, "study_motives_v1", 2, LAYER_READINGS_RESERVE_MICRO_USD) === "waiting") return "waiting";
