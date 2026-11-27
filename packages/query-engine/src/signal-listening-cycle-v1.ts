@@ -27,7 +27,7 @@ export type SignalListeningCyclePolicyV1 = {
 export const SIGNAL_LISTENING_CYCLE_POLICY_V1: Readonly<SignalListeningCyclePolicyV1> = Object.freeze({
   contract_version: "signal-listening-cycle-policy-v1", approval: 0.7, candidates_per_root: 4,
   twin: { min_jointly_asked: 20, min_jointly_approved: 10, jaccard: 0.2, coapproval: 0.4, overlap_of_smaller: 0.5, max_pairs: 80 },
-  weak_acceptance: 0.1, examples_per_stratum: 6, excerpt_chars: 320,
+  weak_acceptance: 0.1, examples_per_stratum: 4, excerpt_chars: 240,
   orphan: { min_roots_to_regroup: 200, roots_per_group: 250, min_group: 25, max_groups: 40, examples: 8 },
   stop: { max_rounds: 3 as const, min_improvement: 0.01 },
 });
@@ -99,43 +99,50 @@ What you receive:
 - Pairs of topics that the classifier often accepts together for the same post. These may be twins: two topics that mean the same thing.
 - Groups of posts about the category that no topic accepted, each with excerpts.
 
-What to decide, for every topic of the resulting map:
-- keep: the topic is right as it is. Its wording must not change, so leave its three wordings as empty strings.
-- redefine: same topic, clearer wording. Use it for twins that are in fact different: write contrastive definitions that say what the topic is and what it is not, naming the neighbouring topic it is confused with.
-- merge: two or more topics that mean the same become one. List every source topic.
-- new: a topic that an orphan group shows and no existing topic covers. List the orphan groups that support it. Vocabulary of the category alone is not a topic.
+What to decide. Every current topic goes in exactly one of two lists:
+- kept: the topic is right as it is. Give only its key, its domain and its theme. Its wording stays untouched. Most topics belong here.
+- changed: a topic whose wording must change, or a new one. Each entry has an action:
+  - redefine: same topic, clearer wording. Use it for twins that are in fact different: write contrastive definitions that say what the topic is and what it is not, naming the neighbouring topic it is confused with. Its only source is itself.
+  - merge: two or more topics that mean the same become one. List every source topic.
+  - new: a topic that an orphan group shows and no existing topic covers. List the orphan groups that support it and no source topics. Vocabulary of the category alone is not a topic.
+
+Change only what the evidence asks for. A topic that is not in a twin pair and is not weak is almost always kept. Changing a wording has a cost: every post has to be classified again for it.
 
 Rules:
-- Every current topic appears exactly once in the source_topic_keys of exactly one resulting topic. Do not drop a topic because it is small or weak; mark it instead.
+- Every current topic appears exactly once: either in kept, or as a source of exactly one changed entry. Do not drop a topic because it is small or weak; mark it instead.
 - A topic marked locked was edited by a person. Keep it exactly: do not merge, rename or redefine it.
 - Mark each resulting topic: category (about the category the brand listens to), adjacent (related, but about something next to it), or outside (unrelated to the category, such as other products, auctions or games). Outside topics stay in the map, hidden by default.
 - Group the resulting topics into about ten themes. A theme is a plain, short name a brand manager would use. Do not force a theme that the topics do not support.
-- A definition is one or two sentences that a classifier can apply to a single post without any other context. Write each changed topic in the original language of the posts, in English and in Spanish.
+- A definition is one or two sentences that a classifier can apply to a single post without any other context. Write each changed topic in the original language of the posts, in English and in Spanish. Be brief.
 - Keys are lowercase snake_case in English. A kept or redefined topic keeps its key. A merged topic may reuse the key of one of its sources.
 - Use only the evidence given. Do not invent counts, quotes or topics.`;
 
 const text = { type: "string" } as const;
 const wordingWire = { type: "object", additionalProperties: false, required: ["name", "definition"], properties: { name: text, definition: text } } as const;
 /** Only the structural subset the provider enforces. Lengths, uniqueness and coverage are checked locally. */
+const domainWire = { type: "string", enum: ["category", "adjacent", "outside"] } as const;
+/** Kept topics carry no wording, so a map where little changes is a short answer. */
 export const SIGNAL_LISTENING_REVIEW_SCHEMA_V1 = {
-  type: "object", additionalProperties: false, required: ["themes", "topics"],
+  type: "object", additionalProperties: false, required: ["themes", "kept", "changed"],
   properties: {
     themes: { type: "array", items: { type: "object", additionalProperties: false, required: ["key", "name_original", "name_en", "name_es"],
       properties: { key: text, name_original: text, name_en: text, name_es: text } } },
-    topics: { type: "array", items: { type: "object", additionalProperties: false,
+    kept: { type: "array", items: { type: "object", additionalProperties: false, required: ["key", "domain", "theme_key"],
+      properties: { key: text, domain: domainWire, theme_key: text } } },
+    changed: { type: "array", items: { type: "object", additionalProperties: false,
       required: ["key", "action", "source_topic_keys", "orphan_group_keys", "domain", "theme_key", "original_language", "original", "en", "es"],
-      properties: { key: text, action: { type: "string", enum: ["keep", "redefine", "merge", "new"] },
+      properties: { key: text, action: { type: "string", enum: ["redefine", "merge", "new"] },
         source_topic_keys: { type: "array", items: text }, orphan_group_keys: { type: "array", items: text },
-        domain: { type: "string", enum: ["category", "adjacent", "outside"] }, theme_key: text, original_language: text,
-        original: wordingWire, en: wordingWire, es: wordingWire } } },
+        domain: domainWire, theme_key: text, original_language: text, original: wordingWire, en: wordingWire, es: wordingWire } } },
   },
 } as const;
+const domainOutput = z.enum(["category", "adjacent", "outside"]), wordingOutput = z.object({ name: z.string(), definition: z.string() });
 const reviewOutput = z.object({
   themes: z.array(z.object({ key: z.string(), name_original: z.string(), name_en: z.string(), name_es: z.string() })).max(60),
-  topics: z.array(z.object({ key: z.string(), action: z.enum(["keep", "redefine", "merge", "new"]), source_topic_keys: z.array(z.string()),
-    orphan_group_keys: z.array(z.string()), domain: z.enum(["category", "adjacent", "outside"]), theme_key: z.string(), original_language: z.string(),
-    original: z.object({ name: z.string(), definition: z.string() }), en: z.object({ name: z.string(), definition: z.string() }),
-    es: z.object({ name: z.string(), definition: z.string() }) })).max(500),
+  kept: z.array(z.object({ key: z.string(), domain: domainOutput, theme_key: z.string() })).max(500),
+  changed: z.array(z.object({ key: z.string(), action: z.enum(["redefine", "merge", "new"]), source_topic_keys: z.array(z.string()),
+    orphan_group_keys: z.array(z.string()), domain: domainOutput, theme_key: z.string(), original_language: z.string(),
+    original: wordingOutput, en: wordingOutput, es: wordingOutput })).max(500),
 });
 export type SignalListeningReviewOutputV1 = z.infer<typeof reviewOutput>;
 
@@ -196,10 +203,16 @@ export function applySignalListeningReviewV1(args: { catalog: SignalListeningCat
   const keep = (topic: SignalListeningCatalogTopicV1, domain = topic.domain, theme_key = topic.theme_key) => {
     next.set(topic.topic_key, { ...topic, domain, theme_key }); used.add(topic.topic_key); summary.kept++;
   };
-  for (const proposal of parsed.data.topics) {
+  const empty = { name: "", definition: "" };
+  // Changes are applied first: a topic listed both as kept and as the source of a change is changed.
+  const proposals = [...parsed.data.changed, ...parsed.data.kept.map(item => ({ ...item, action: "keep" as const, source_topic_keys: [item.key],
+    orphan_group_keys: [] as string[], original_language: "", original: empty, en: empty, es: empty }))];
+  for (const proposal of proposals) {
     let sources = [...new Set(proposal.source_topic_keys)].filter(source => current.has(source));
     // An answer that names the topic only by its key still refers to that topic.
-    if (!sources.length && proposal.action !== "new" && proposal.action !== "merge" && current.has(proposal.key)) sources = [proposal.key];
+    if (!sources.length && proposal.action === "redefine" && current.has(proposal.key)) sources = [proposal.key];
+    // A kept topic that a change already took is simply covered; it is not a conflict worth reporting.
+    if (proposal.action === "keep" && sources.every(source => used.has(source))) continue;
     if (sources.some(source => used.has(source))) { rejected.push({ key: proposal.key, reason: "source_already_used" }); continue; }
     const locked = sources.some(source => current.get(source)!.human_locked);
     if (proposal.action === "keep" || locked) {

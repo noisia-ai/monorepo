@@ -1,7 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import type { Pool } from "pg";
 import {
-  claimSignalListeningCycleV1, finishSignalListeningCycleV1, getSignalListeningCycleV1, measureSignalListeningRoundV1, openSignalListeningNextRoundV1,
+  chargeSignalListeningCycleV1, claimSignalListeningCycleV1, finishSignalListeningCycleV1, getSignalListeningCycleV1, measureSignalListeningRoundV1, openSignalListeningNextRoundV1,
   listSignalListeningOrphanRootsV1, readSignalListeningCycleConfigurationV1, readSignalListeningRootVectorsV1, releaseSignalListeningCycleV1, renewSignalListeningCycleV1,
   requestSignalListeningRoundRunV1, saveSignalListeningOrphanGroupsV1, saveSignalListeningReviewV1, settleSignalListeningRoundRunV1,
   type SignalListeningCycleV1, type SignalListeningRoundV1, type SignalListeningStoredOrphanGroupV1,
@@ -16,6 +16,10 @@ export type ListeningReviewUsageV1 = { input_tokens: number; output_tokens: numb
 /** One review of the map: a system prompt, one JSON document, one JSON answer. */
 export type ListeningReviewerV1 = (request: { system: string; payload: string }) => Promise<{ output: unknown; usage: ListeningReviewUsageV1; model: string }>;
 
+/** A review that was paid for but cannot be used. Its usage is kept so the cycle is still charged. */
+export class ListeningReviewErrorV1 extends Error {
+  constructor(readonly code: string, readonly usage?: ListeningReviewUsageV1) { super(code); this.name = "ListeningReviewErrorV1"; }
+}
 /** Largest review this job will pay for, used to refuse a step the remaining budget cannot cover. */
 const REVIEW_RESERVE_MICRO_USD = 3_000_000;
 
@@ -30,14 +34,15 @@ export function createSonnetListeningReviewerV1(options: { apiKey: string; clien
     const message = await client.messages.stream({
       model: SIGNAL_LISTENING_REVIEW_MODEL_V1, max_tokens: 64_000, thinking: { type: "adaptive" },
       system: request.system,
-      output_config: { format: { type: "json_schema", schema: SIGNAL_LISTENING_REVIEW_SCHEMA_V1 as unknown as Record<string, unknown> } },
+      // Thinking shares the output limit with the answer: medium effort leaves the room to the map itself.
+      output_config: { effort: "medium", format: { type: "json_schema", schema: SIGNAL_LISTENING_REVIEW_SCHEMA_V1 as unknown as Record<string, unknown> } },
       messages: [{ role: "user", content: request.payload }],
     }).finalMessage();
-    if (message.stop_reason === "refusal") throw new Error("listening_review_refused");
-    if (message.stop_reason === "max_tokens") throw new Error("listening_review_truncated");
+    if (message.stop_reason === "refusal") throw new ListeningReviewErrorV1("listening_review_refused", message.usage);
+    if (message.stop_reason === "max_tokens") throw new ListeningReviewErrorV1("listening_review_truncated", message.usage);
     const text = message.content.flatMap(block => block.type === "text" ? [block.text] : []).join("");
     let output: unknown;
-    try { output = JSON.parse(text); } catch { throw new Error("listening_review_output_invalid"); }
+    try { output = JSON.parse(text); } catch { throw new ListeningReviewErrorV1("listening_review_output_invalid", message.usage); }
     return { output, usage: message.usage, model: message.model };
   };
 }
@@ -117,9 +122,17 @@ export async function stepSignalListeningCycleV1(args: { database: Database; cyc
       catalog: round.catalog, themes: round.themes, evidence: round.evidence!, policy: cycle.policy,
       orphan_groups: groups.map(({ centroid: _centroid, ...group }) => group) });
     const started = Date.now();
-    const answer = await args.reviewer({ system: SIGNAL_LISTENING_REVIEW_SYSTEM_V1, payload });
+    let answer: Awaited<ReturnType<ListeningReviewerV1>>;
+    try { answer = await args.reviewer({ system: SIGNAL_LISTENING_REVIEW_SYSTEM_V1, payload }); }
+    catch (error) {
+      // An unusable answer was still billed: the cycle is charged before it stops.
+      if (error instanceof ListeningReviewErrorV1 && error.usage) await chargeSignalListeningCycleV1(database, cycle, signalListeningReviewCostMicroUsdV1(error.usage));
+      throw error;
+    }
     const cost_micro_usd = signalListeningReviewCostMicroUsdV1(answer.usage);
-    const result = applySignalListeningReviewV1({ catalog: round.catalog, orphan_groups: groups, output: answer.output });
+    let result: ReturnType<typeof applySignalListeningReviewV1>;
+    try { result = applySignalListeningReviewV1({ catalog: round.catalog, orphan_groups: groups, output: answer.output }); }
+    catch (error) { await chargeSignalListeningCycleV1(database, cycle, cost_micro_usd); throw error; }
     const review = { model: answer.model, usage: answer.usage, cost_micro_usd, duration_ms: Date.now() - started, payload_bytes: Buffer.byteLength(payload),
       summary: result.summary, rejected: result.rejected, map_changed: result.map_changed, output: answer.output };
     if (!result.map_changed) {

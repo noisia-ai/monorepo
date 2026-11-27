@@ -287,12 +287,14 @@ export async function createSignalListeningSourceV1(database: Database, run: Pic
     const byId = new Map([...ids].map(([digest, id]) => [id, digest]));
     const voiceId = ids.get(compiled.base.voice.question_digest)!, promotionId = ids.get(compiled.base.promotion.question_digest)!;
     const scoped = compiled.choices.some(question => question.scope === "consumer_category");
-    let cursor = 0;
+    let cursor = 0, askedBase = false;
+    const baseDigests = new Set([compiled.base.voice.question_digest, compiled.base.promotion.question_digest]);
     return {
       model: compiled.model, input_usd_per_mtok: plan.input_usd_per_mtok,
-      /** Questions that wait for the base answers need a second look at every root. */
-      rescans: scoped,
-      rewind() { cursor = 0; },
+      /** A question that waits for the base answers needs a second look at every root, but
+       * only when this pass asked a base question: otherwise nothing new can have become askable. */
+      needs_rescan() { return scoped && askedBase; },
+      rewind() { cursor = 0; askedBase = false; },
       async next(limit: number): Promise<SignalListeningItemV1[]> {
         for (;;) {
           const rows = (await database.query<ItemRow>(`SELECT item.ordinal,item.root_id,item.input_digest,item.text,item.candidates,segment.hashtag_only,
@@ -323,6 +325,7 @@ export async function createSignalListeningSourceV1(database: Database, run: Pic
               // A root without its segment row is treated as outside the cut, as the estimate does.
               base: { voice_choice: voice?.choice ?? null, promotion: promotion?.probability ?? null, hashtag_only: row.hashtag_only ?? true } });
             if (!pending.length) continue;
+            askedBase ||= pending.some(question => baseDigests.has(question.question_digest));
             // Request keys are neutral positions; identity travels in the question digest.
             const questions = pending.map((question, index) => ({ ...question, request_key: `q${index}` }));
             items.push({ root_id: row.root_id, input_digest: row.input_digest, questions,

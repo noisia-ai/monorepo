@@ -144,6 +144,10 @@ export async function readSignalListeningCycleConfigurationV1(database: Queryabl
   if (!row) throw new Error("listening_cycle_configuration_unavailable");
   return validateSignalListeningConfigurationV1(row.configuration);
 }
+/** Adds a cost that has no step to travel with, such as a review that was billed but could not be used. */
+export async function chargeSignalListeningCycleV1(database: Database, cycle: Pick<SignalListeningCycleV1, "id">, micro_usd: number) {
+  await database.query("UPDATE signal_listening_cycles SET spent_micro_usd=spent_micro_usd+$2,updated_at=now() WHERE id=$1", [cycle.id, Math.ceil(micro_usd)]);
+}
 /** Answers of a round that count: this round's topics, for the text the map holds today. */
 const VALID = `valid AS MATERIALIZED (
   SELECT answer.root_id,topic.topic_key,answer.probability>=$4::real ok

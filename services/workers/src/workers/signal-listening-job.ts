@@ -126,7 +126,7 @@ export async function processSignalListeningRunV1(args: {
     loadedRoots += items.length;
     return items;
   };
-  const rescans = "rescans" in source && source.rescans;
+  const needsRescan = () => (source as { needs_rescan?: () => boolean }).needs_rescan?.() ?? false;
   let receipt!: ListeningStreamReceiptV1;
   const totals = { roots_done: 0, roots_failed: 0, input_tokens: 0, pages: 0, requests: 0, throttled: 0, wall_ms: 0, load_ms: 0, flush_ms: 0 };
   try {
@@ -138,7 +138,7 @@ export async function processSignalListeningRunV1(args: {
       for (const key of Object.keys(totals) as Array<keyof typeof totals>) totals[key] += receipt[key];
       // Another pass serves two cases: roots that failed, and questions that were
       // waiting for the base answers this pass just wrote. A pass that asked nothing ends the run.
-      if (receipt.stop_reason !== "exhausted" || pass === 2 || !(receipt.roots_failed || (rescans && receipt.roots_done))) break;
+      if (receipt.stop_reason !== "exhausted" || pass === 2 || !(receipt.roots_failed || needsRescan())) break;
       totals.roots_failed -= receipt.roots_failed;
       source.rewind();
     }

@@ -9,10 +9,14 @@ const topic = (topic_key: string, extra: Partial<SignalListeningCatalogTopicV1> 
     en: { name: `${topic_key} en`, definition: `About ${topic_key}.` }, es: { name: `${topic_key} es`, definition: `Sobre ${topic_key}.` } },
   domain: "category", theme_key: null, origin: "discovery", human_locked: false, source_topic_keys: [], orphan_group_keys: [], ...extra });
 const wording = (name: string) => ({ name, definition: `${name}: what it is and what it is not.` });
-const proposal = (key: string, action: "keep" | "redefine" | "merge" | "new", sources: string[], extra: Record<string, unknown> = {}) => ({ key, action,
+type Action = "keep" | "redefine" | "merge" | "new";
+const proposal = (key: string, action: Action, sources: string[], extra: Record<string, unknown> = {}) => ({ key, action,
   source_topic_keys: sources, orphan_group_keys: [], domain: "category", theme_key: "taste", original_language: "pt-BR",
-  original: action === "keep" ? { name: "", definition: "" } : wording(`${key} pt`), en: action === "keep" ? { name: "", definition: "" } : wording(`${key} en`),
-  es: action === "keep" ? { name: "", definition: "" } : wording(`${key} es`), ...extra });
+  original: wording(`${key} pt`), en: wording(`${key} en`), es: wording(`${key} es`), ...extra });
+/** Builds the agent's answer: kept topics carry only key, domain and theme. */
+const answer = (themeList: unknown[], items: Array<ReturnType<typeof proposal>>) => ({ themes: themeList,
+  kept: items.filter(item => item.action === "keep").map(item => ({ key: item.key, domain: item.domain, theme_key: item.theme_key })),
+  changed: items.filter(item => item.action !== "keep") });
 const themes = [{ key: "taste", name_original: "Sabor", name_en: "Taste", name_es: "Sabor" }];
 const catalog = [topic("bitter"), topic("bitterness"), topic("price"), topic("auction"), topic("ritual", { human_locked: true })];
 const groups = [{ group_key: "orphans_1", roots: 120, cohesion: 0.6, examples: ["cold one after work"] }];
@@ -20,13 +24,13 @@ const evidence = (round: number, orphan_rate: number, twin_root_rate: number): S
   orphan_roots: Math.round(orphan_rate * 500), orphan_rate, twin_roots: Math.round(twin_root_rate * 500), twin_root_rate, topics: [], twins: [] });
 
 test("a review merges twins, redefines, adds from orphans and marks what is outside", () => {
-  const result = applySignalListeningReviewV1({ catalog, orphan_groups: groups, output: { themes, topics: [
+  const result = applySignalListeningReviewV1({ catalog, orphan_groups: groups, output: answer(themes, [
     proposal("bitterness", "merge", ["bitter", "bitterness"]),
     proposal("price", "redefine", ["price"]),
     proposal("auction", "keep", ["auction"], { domain: "outside" }),
     proposal("after_work", "new", [], { orphan_group_keys: ["orphans_1"] }),
     proposal("ritual", "keep", ["ritual"]),
-  ] } });
+  ]) });
   assert.deepEqual(result.catalog.map(item => item.topic_key), ["after_work", "auction", "bitterness", "price", "ritual"]);
   assert.deepEqual(result.summary, { kept: 2, redefined: 1, merged: 1, created: 1, retired_by_merge: 1, outside: 1, adjacent: 0, themes: 1 });
   assert.equal(result.map_changed, true);
@@ -39,10 +43,10 @@ test("a review merges twins, redefines, adds from orphans and marks what is outs
 });
 
 test("a topic a person edited is frozen for the agent", () => {
-  const result = applySignalListeningReviewV1({ catalog, orphan_groups: groups, output: { themes, topics: [
+  const result = applySignalListeningReviewV1({ catalog, orphan_groups: groups, output: answer(themes, [
     proposal("ritual", "redefine", ["ritual"]),
     proposal("everything", "merge", ["ritual", "price"]),
-  ] } });
+  ]) });
   const locked = result.catalog.find(item => item.topic_key === "ritual")!;
   assert.deepEqual(locked, catalog[4]);
   assert.deepEqual(result.rejected.map(item => item.reason), ["human_locked", "source_already_used"]);
@@ -51,19 +55,19 @@ test("a topic a person edited is frozen for the agent", () => {
 });
 
 test("a partial or sloppy answer never loses a topic", () => {
-  const result = applySignalListeningReviewV1({ catalog, orphan_groups: groups, output: { themes: [], topics: [
+  const result = applySignalListeningReviewV1({ catalog, orphan_groups: groups, output: answer([], [
     proposal("bitter", "keep", []),
     proposal("Bad Key", "new", [], { orphan_group_keys: ["orphans_1"] }),
     proposal("ghost", "new", [], { orphan_group_keys: ["no_such_group"] }),
     proposal("price", "redefine", ["price"], { en: { name: "", definition: "" } }),
     proposal("bitterness", "merge", ["bitterness"]),
     proposal("bitterness", "redefine", ["bitter"]),
-  ] } });
+  ]) });
   assert.deepEqual(result.catalog.map(item => item.topic_key), catalog.map(item => item.topic_key).sort());
-  assert.deepEqual(result.rejected.map(item => item.reason), ["key_invalid", "new_without_orphan_group", "wording_incomplete", "merge_needs_two_sources", "source_already_used"]);
+  assert.deepEqual(result.rejected.map(item => item.reason), ["key_invalid", "new_without_orphan_group", "wording_incomplete", "merge_needs_two_sources", "redefine_needs_its_own_key"]);
   assert.equal(result.map_changed, false);
   assert.equal(result.catalog.every(item => item.theme_key === null), true, "an unknown theme is not invented");
-  assert.throws(() => applySignalListeningReviewV1({ catalog, orphan_groups: groups, output: { topics: "no" } }), /listening_review_output_invalid/);
+  assert.throws(() => applySignalListeningReviewV1({ catalog, orphan_groups: groups, output: { kept: "no" } }), /listening_review_output_invalid/);
 });
 
 test("the stop rule is the round limit, no change, or no improvement", () => {
