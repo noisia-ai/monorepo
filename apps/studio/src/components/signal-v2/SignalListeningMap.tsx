@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useLocale, useTranslations } from "next-intl";
 import type { SignalListeningMapV1, SignalListeningTopicMentionsV1 } from "@noisia/db";
 import { useMfpMutation } from "../brands/useMfpResource";
@@ -13,12 +13,14 @@ type Period = { date_from: string | null; date_to: string | null; timezone: stri
  * shown as it always was. The page's header and period controls stay outside,
  * and the page itself keeps no state for this.
  */
-export function SignalReviewedTopics({ enabled, workspaceId, period, children }: { enabled: boolean; workspaceId: string; period: Period; children: ReactNode }) {
+export function SignalReviewedTopics({ enabled, workspaceId, period, segment, refreshKey, children }: { enabled: boolean; workspaceId: string; period: Period;
+  /** The segment of the conversation the page shows, and a value that changes each time the page is refreshed. */
+  segment?: string; refreshKey?: string; children: ReactNode }) {
   const t = useTranslations("Listening.map");
   const [reviewed, setReviewed] = useState(false);
   if (!enabled) return <>{children}</>;
   return <>
-    <SignalListeningMap workspaceId={workspaceId} period={period} onAvailable={setReviewed} />
+    <SignalListeningMap workspaceId={workspaceId} period={period} segment={segment} refreshKey={refreshKey} onAvailable={setReviewed} />
     {reviewed ? <details className="signal-v2-listening__previous"><summary>{t("previousMap")}</summary>{children}</details> : children}
   </>;
 }
@@ -29,7 +31,8 @@ export function SignalReviewedTopics({ enabled, workspaceId, period, children }:
  * mention out of it or move it, and fold a topic into another. None of it is
  * needed for the report to work.
  */
-export function SignalListeningMap({ workspaceId, period, onAvailable }: { workspaceId: string; period?: Period; onAvailable?: (available: boolean) => void }) {
+export function SignalListeningMap({ workspaceId, period, segment, refreshKey, onAvailable }: { workspaceId: string; period?: Period; segment?: string; refreshKey?: string;
+  onAvailable?: (available: boolean) => void }) {
   const t = useTranslations("Listening.map");
   const language = useLocale().toLowerCase().startsWith("es") ? "es" : "en";
   const endpoint = `/api/data-os/signal/${encodeURIComponent(workspaceId)}/listening/map`;
@@ -41,14 +44,15 @@ export function SignalListeningMap({ workspaceId, period, onAvailable }: { works
   const edit = useMfpMutation(`${endpoint}/edits`);
 
   const start = period?.date_from ?? null, end = period?.date_to ?? null, timezone = period?.timezone ?? null;
-  // The map and the mentions of a topic are read for the same period.
+  // The map and the mentions of a topic are read for the same period and the same segment of the conversation.
   const when = useCallback(() => {
     const query = new URLSearchParams();
     if (start) query.set("start", start);
     if (end) query.set("end", end);
     if (timezone && (start || end)) query.set("tz", timezone);
+    if (segment && segment !== "all") query.set("segment", segment);
     return query;
-  }, [start, end, timezone]);
+  }, [start, end, timezone, segment]);
   const readMap = useCallback(async (signal?: AbortSignal) => {
     const query = when();
     const response = await fetch(query.size ? `${endpoint}?${query}` : endpoint, { cache: "no-store", signal });
@@ -67,6 +71,16 @@ export function SignalListeningMap({ workspaceId, period, onAvailable }: { works
     void readMap(controller.signal).catch(() => undefined);
     return () => controller.abort();
   }, [readMap]);
+  // Refreshing the page reads the map again, so a correction by someone else or a cycle that just finished shows up.
+  // What is on screen stays until the new reading arrives.
+  const refreshed = useRef(refreshKey);
+  useEffect(() => {
+    if (refreshed.current === refreshKey) return;
+    refreshed.current = refreshKey;
+    const controller = new AbortController();
+    void readMap(controller.signal).catch(() => undefined);
+    return () => controller.abort();
+  }, [refreshKey, readMap]);
   useEffect(() => {
     setMentions(null); setDestination("");
     if (!open) return;

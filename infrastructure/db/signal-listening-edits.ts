@@ -77,14 +77,21 @@ const EFFECTIVE = `${cycles.VALID}, merged AS (SELECT * FROM unnest($5::text[],$
     SELECT corrections.root_id,corrections.topic_key,true FROM corrections
     JOIN signal_mass_labeling_items item ON item.workspace_id=$1 AND item.map_id=$2 AND item.root_id=corrections.root_id WHERE corrections.operation='add_label')`;
 /** Joins `member.root_id` to its mention and keeps the ones published in the period: whole days of the given time zone,
- * the rule the Topics page uses. Without dates nothing is joined. Its three parameters start at `first`. */
+ * the rule the Topics page uses. Without dates nothing is joined. Its three parameters start at `first`.
+ * A segment of the conversation other than `all` keeps the roots the base map (`$2`) filed under it, as the page does. */
 type Period = { date_from: string | null; date_to: string | null; timezone: string };
-function periodFilter(value: Period | undefined, first: number): { join: string; params: unknown[] } {
+type Segment = "all" | "conversation" | "advertising" | "hashtags";
+const SEGMENTS: readonly Segment[] = ["all", "conversation", "advertising", "hashtags"];
+function periodFilter(value: Period | undefined, first: number, segment: Segment = "all"): { join: string; params: unknown[] } {
   const period = value ?? { date_from: null, date_to: null, timezone: "UTC" }, date = /^\d{4}-\d{2}-\d{2}$/u;
-  if ([period.date_from, period.date_to].some(item => item !== null && !date.test(item)) || !/^[A-Za-z0-9_+\-/]{1,64}$/u.test(period.timezone)) fail("listening_request_invalid", 422);
-  if (period.date_from === null && period.date_to === null) return { join: "", params: [] };
+  if ([period.date_from, period.date_to].some(item => item !== null && !date.test(item)) || !/^[A-Za-z0-9_+\-/]{1,64}$/u.test(period.timezone)
+    || !SEGMENTS.includes(segment)) fail("listening_request_invalid", 422);
+  // The value is one of the four above, never text from the request.
+  const filed = segment === "all" ? "" : `JOIN signal_mass_labeling_root_segments filed ON filed.workspace_id=$1 AND filed.map_id=$2 AND filed.root_id=member.root_id
+    AND filed.conversation_segment='${segment}'`;
+  if (period.date_from === null && period.date_to === null) return { join: filed, params: [] };
   const from = "$" + first, to = "$" + (first + 1), zone = "$" + (first + 2);
-  return { params: [period.date_from, period.date_to, period.timezone], join: `JOIN mentions mention ON mention.workspace_id=$1 AND mention.id=member.root_id
+  return { params: [period.date_from, period.date_to, period.timezone], join: `${filed} JOIN mentions mention ON mention.workspace_id=$1 AND mention.id=member.root_id
     AND (${from}::date IS NULL OR mention.published_at>=(${from}::date::timestamp AT TIME ZONE ${zone}::text))
     AND (${to}::date IS NULL OR mention.published_at<((${to}::date+1)::timestamp AT TIME ZONE ${zone}::text))` };
 }
@@ -104,8 +111,10 @@ export type SignalListeningMapV1 = {
 /** The map of the last finished discovery cycle: themes, their topics and how many mentions each holds after people's corrections. */
 export async function readSignalListeningMapV1(access: Access & {
   /** Counts only mentions published in this period (dates of the given time zone). Without it, all of them. */
-  period?: Period }): Promise<SignalListeningMapV1> {
-  const counted = periodFilter(access.period, 7), probablyCounted = periodFilter(access.period, 8);
+  period?: Period;
+  /** Counts only mentions of this segment of the conversation. Without it, all of them. */
+  segment?: Segment }): Promise<SignalListeningMapV1> {
+  const counted = periodFilter(access.period, 7, access.segment), probablyCounted = periodFilter(access.period, 8, access.segment);
   return shared.transaction(access.database, async client => {
     await client.query("SET TRANSACTION READ ONLY");
     const caps = await shared.authorize(client, access, "view");
@@ -154,9 +163,9 @@ export type SignalListeningTopicMentionsV1 = {
 export async function readSignalListeningTopicMentionsV1(access: Access & { topic_key: string; limit?: number;
   /** `probable` lists the members below the confirmation line instead of the confirmed ones. */
   level?: "confirmed" | "probable";
-  /** The same period the map was read for. */
-  period?: Period }): Promise<SignalListeningTopicMentionsV1> {
-  const limit = access.limit ?? 30, level = access.level ?? "confirmed", when = periodFilter(access.period, 9);
+  /** The same period and segment the map was read for. */
+  period?: Period; segment?: Segment }): Promise<SignalListeningTopicMentionsV1> {
+  const limit = access.limit ?? 30, level = access.level ?? "confirmed", when = periodFilter(access.period, 9, access.segment);
   if (!topicKey.test(access.topic_key) || !Number.isSafeInteger(limit) || limit < 1 || limit > 100) fail("listening_request_invalid", 422);
   return shared.transaction(access.database, async client => {
     await client.query("SET TRANSACTION READ ONLY");

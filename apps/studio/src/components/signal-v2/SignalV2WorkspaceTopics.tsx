@@ -246,7 +246,7 @@ function SignalComputedWorkspaceTopics({ initialBundle, brandName, data, loading
         <button className="signal-v2-filter" type="button" disabled={loading} onClick={() => void refresh()}><ArrowClockwise size={16} />{t("refresh")}</button>
         <span>{t("workspaceTimezone", { timezone: workspaceTimezone })}</span></>} />
     {refreshFailed ? <div className="signal-v2-error" role="alert">{t("refreshError")}</div> : null}
-    <SignalReviewedTopics enabled={surface === "topics"} workspaceId={data.workspace_id}
+    <SignalReviewedTopics enabled={surface === "topics"} workspaceId={data.workspace_id} segment={data.filters.conversation_segment} refreshKey={data.observed_at}
       period={{ date_from: data.filters.date_from, date_to: data.filters.date_to, timezone: data.filters.timezone ?? workspaceTimezone }}>
     {data.consumer_indicators ? <SignalWorkspaceConsumerIndicators data={data} loading={loading}
       workspaceTimezone={workspaceTimezone} onOpenMention={onOpenMention} /> : null}
