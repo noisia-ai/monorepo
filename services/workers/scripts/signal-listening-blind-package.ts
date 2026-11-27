@@ -39,7 +39,7 @@ try {
     JOIN signal_listening_answers answer ON answer.question_id=topic.question_id AND answer.workspace_id=$1
     JOIN signal_mass_labeling_items item ON item.map_id=$2 AND item.workspace_id=$1 AND item.root_id=answer.root_id
       AND answer.input_sha=decode(substr(item.input_digest,8),'hex')
-    LEFT JOIN signal_listening_answer_overrides decided ON decided.question_id=topic.question_id AND decided.root_id=answer.root_id
+    LEFT JOIN signal_listening_answer_overrides decided ON decided.question_id=topic.question_id AND decided.root_id=answer.root_id AND decided.input_sha=answer.input_sha
     WHERE topic.round_id=$3 AND COALESCE(decided.belongs,answer.probability>=$4::real) GROUP BY 1 ORDER BY 2 DESC,1`, [cycle.workspace_id, cycle.base_map_id, round.id, cycle.policy.approval])).rows
     .filter(row => visible.has(row.topic_key));
   const cohorts = volumes.slice(0, topicCount);
@@ -52,7 +52,7 @@ try {
       JOIN signal_listening_answers answer ON answer.question_id=topic.question_id AND answer.workspace_id=$1
       JOIN signal_mass_labeling_items item ON item.map_id=$2 AND item.workspace_id=$1 AND item.root_id=answer.root_id
         AND answer.input_sha=decode(substr(item.input_digest,8),'hex')
-      LEFT JOIN signal_listening_answer_overrides decided ON decided.question_id=topic.question_id AND decided.root_id=answer.root_id
+      LEFT JOIN signal_listening_answer_overrides decided ON decided.question_id=topic.question_id AND decided.root_id=answer.root_id AND decided.input_sha=answer.input_sha
       WHERE topic.round_id=$3 AND topic.topic_key=$5 AND COALESCE(decided.belongs,answer.probability>=$4::real) AND item.root_id<>ALL($8::uuid[])
       ORDER BY md5(item.root_id::text||$6) LIMIT $7`,
       [cycle.workspace_id, cycle.base_map_id, round.id, cycle.policy.approval, cohort.topic_key, seed.toString("hex"), perTopic, [...sampled]])).rows;

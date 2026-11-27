@@ -18,6 +18,9 @@ import { createSonnetJsonAgentV1, SonnetJsonAgentErrorV1, sonnetJsonCostMicroUsd
 type Database = Pick<Pool, "connect" | "query">;
 /** Room kept for the agent steps that follow a JEV pass, and the least a step needs to start. */
 const AGENT_RESERVE_MICRO_USD = 4_000_000, AGENT_STEP_MIN_MICRO_USD = 1_500_000, MAX_AGENT_ATTEMPTS = 2, MAX_STUMBLES = 5;
+/** After the motives are confirmed the layer is read twice. The second reading must still find the least a step needs,
+ * so a pass before them leaves that plus the most one reading has cost. */
+const LAYER_READINGS_RESERVE_MICRO_USD = AGENT_STEP_MIN_MICRO_USD + 1_000_000;
 type StoredGroup = SignalStudyGroupV1 & { centroid: number[]; sample_b: SignalStudySampleRowV1[] };
 type StoredMotive = { motive_key: string; wording: SignalStudyWordingV1; group_keys: string[] };
 type Answers = Record<string, { output: unknown } | undefined>;
@@ -162,7 +165,7 @@ export async function stepSignalStudyV1(args: { database: Database; study: Signa
   if (study.step === "motives_named") {
     if (!(await listSignalStudyMotivesV1(database, study.id)).length) { await advanceSignalStudyV1(database, study, "checked"); return "continue"; }
     // Every post with a direction is asked its closest motives. Room is kept for reading the layers afterwards.
-    if (await jevPass(database, study, "study_motives_v1", 1, AGENT_STEP_MIN_MICRO_USD) === "waiting") return "waiting";
+    if (await jevPass(database, study, "study_motives_v1", 1, LAYER_READINGS_RESERVE_MICRO_USD) === "waiting") return "waiting";
     await advanceSignalStudyV1(database, study, "motives_asked");
     return "continue";
   }
@@ -170,7 +173,7 @@ export async function stepSignalStudyV1(args: { database: Database; study: Signa
   if (study.step === "motives_asked" || study.step === "layers_coded") {
     if (state.contrast_done) {
       // The rewritten motives are asked again; everything else is already in the cache.
-      if (await jevPass(database, study, "study_motives_v1", 2, AGENT_STEP_MIN_MICRO_USD) === "waiting") return "waiting";
+      if (await jevPass(database, study, "study_motives_v1", 2, LAYER_READINGS_RESERVE_MICRO_USD) === "waiting") return "waiting";
       await advanceSignalStudyV1(database, study, "members_confirmed");
       return "continue";
     }
@@ -181,7 +184,7 @@ export async function stepSignalStudyV1(args: { database: Database; study: Signa
       motives: motives.map(motive => ({ motive_key: motive.motive_key, layer: motive.layer, roots: sizes[motive.motive_key] ?? 0 })) });
     if (!dominance.rewrite.length) { await advanceSignalStudyV1(database, study, "members_confirmed", { checks: { ...dominance, contrast_applied: false } }); return "continue"; }
     // The rewrite is an improvement, not a requirement: without room for it the study goes on as it is, and says so.
-    if (!(study.state.answers as Answers | undefined)?.contrast && study.cap_micro_usd - study.spent_micro_usd < 2 * AGENT_STEP_MIN_MICRO_USD) {
+    if (!(study.state.answers as Answers | undefined)?.contrast && study.cap_micro_usd - study.spent_micro_usd < AGENT_STEP_MIN_MICRO_USD + LAYER_READINGS_RESERVE_MICRO_USD) {
       await advanceSignalStudyV1(database, study, "members_confirmed", { checks: { ...dominance, contrast_applied: false, contrast_skipped: "budget" } });
       return "continue";
     }

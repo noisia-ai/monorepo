@@ -200,7 +200,7 @@ const VALID = `valid AS MATERIALIZED (
   JOIN signal_listening_answers answer ON answer.question_id=topic.question_id AND answer.workspace_id=$1
   JOIN signal_mass_labeling_items item ON item.map_id=$2 AND item.workspace_id=$1 AND item.root_id=answer.root_id
     AND answer.input_sha=decode(substr(item.input_digest,8),'hex')
-  LEFT JOIN signal_listening_answer_overrides decided ON decided.question_id=topic.question_id AND decided.root_id=answer.root_id
+  LEFT JOIN signal_listening_answer_overrides decided ON decided.question_id=topic.question_id AND decided.root_id=answer.root_id AND decided.input_sha=answer.input_sha
   WHERE topic.round_id=$3)`;
 /** A pair of topics the classifier settles post by post, as a round carries it. */
 export type SignalListeningRoundPairV1 = { left: string; right: string; question_id: number; jaccard?: number | null };
@@ -225,12 +225,13 @@ export async function settleSignalListeningPairChoicesV1(database: Database, cyc
     for (const pair of pairs) {
       const left = topics.get(pair.left), right = topics.get(pair.right);
       if (!left || !right) continue;
-      await client.query(`INSERT INTO signal_listening_answer_overrides(workspace_id,question_id,root_id,belongs,decided_by_question_id)
-        SELECT $1,side.question_id,answer.root_id,answer.choice=ANY(side.accepted),$2::bigint
+      // The decision travels with the digest of the text it was made on: it never applies to an answer about another text.
+      await client.query(`INSERT INTO signal_listening_answer_overrides(workspace_id,question_id,root_id,belongs,decided_by_question_id,input_sha)
+        SELECT $1,side.question_id,answer.root_id,answer.choice=ANY(side.accepted),$2::bigint,answer.input_sha
         FROM signal_listening_answers answer
         CROSS JOIN (VALUES($3::bigint,ARRAY['left','both']),($4::bigint,ARRAY['right','both'])) side(question_id,accepted)
         WHERE answer.question_id=$2::bigint AND answer.workspace_id=$1 AND answer.choice IN('left','right','both','neither')
-        ON CONFLICT(question_id,root_id) DO UPDATE SET belongs=EXCLUDED.belongs,decided_by_question_id=EXCLUDED.decided_by_question_id`,
+        ON CONFLICT(question_id,root_id) DO UPDATE SET belongs=EXCLUDED.belongs,decided_by_question_id=EXCLUDED.decided_by_question_id,input_sha=EXCLUDED.input_sha`,
         [cycle.workspace_id, pair.question_id, left, right]);
       const counts = new Map((await client.query<{ choice: string; posts: number }>(
         "SELECT choice,count(*)::int posts FROM signal_listening_answers WHERE question_id=$1::bigint AND workspace_id=$2 GROUP BY 1", [pair.question_id, cycle.workspace_id])).rows
@@ -541,7 +542,7 @@ export async function createSignalListeningRoundSourceV1(database: Database, run
         if (watched.length && scope.previous_round_id) {
           for (const member of (await database.query<{ root_id: string; topic_key: string }>(`SELECT answer.root_id,topic.topic_key FROM signal_listening_round_topics topic
             JOIN signal_listening_answers answer ON answer.question_id=topic.question_id AND answer.workspace_id=$1 AND answer.root_id=ANY($2::uuid[])
-            LEFT JOIN signal_listening_answer_overrides decided ON decided.question_id=topic.question_id AND decided.root_id=answer.root_id
+            LEFT JOIN signal_listening_answer_overrides decided ON decided.question_id=topic.question_id AND decided.root_id=answer.root_id AND decided.input_sha=answer.input_sha
             WHERE topic.round_id=$3 AND topic.topic_key=ANY($5::text[]) AND COALESCE(decided.belongs,answer.probability>=$4::real)`,
             [run.workspace_id, rows.map(row => row.root_id), scope.previous_round_id, scope.policy.approval, watched])).rows) {
             const set = held.get(member.root_id); if (set) set.add(member.topic_key); else held.set(member.root_id, new Set([member.topic_key]));
