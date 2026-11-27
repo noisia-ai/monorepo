@@ -60,10 +60,15 @@ export function SignalListeningMap({ workspaceId, period, segment, refreshKey, o
   }, [endpoint, when]);
   const available = Boolean(map?.cycle_id);
   useEffect(() => { onAvailable?.(available); }, [available, onAvailable]);
+  // The topic whose mentions are on screen. A reading that comes back for another topic is dropped: its mentions under
+  // this topic's buttons would send a correction to the wrong topic.
+  const shown = useRef(open);
+  shown.current = open;
   const readMentions = useCallback(async (topic: string, signal?: AbortSignal) => {
     const query = when(); query.set("topic", topic);
     const response = await fetch(`${endpoint}/mentions?${query}`, { cache: "no-store", signal });
-    setMentions(response.ok ? await response.json() as SignalListeningTopicMentionsV1 : null);
+    const page = response.ok ? await response.json() as SignalListeningTopicMentionsV1 : null;
+    if (shown.current === topic) setMentions(page);
   }, [endpoint, when]);
   useEffect(() => {
     const controller = new AbortController();
