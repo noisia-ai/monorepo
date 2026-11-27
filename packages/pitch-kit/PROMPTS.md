@@ -29,7 +29,8 @@ esta máquina, pregúntame. Lee main sin tocar el checkout del repo, que lo comp
 git archive origin/main packages/pitch-kit | tar -x -C <caso>/work/kit_main/ (crea la carpeta
 antes), con el sha de git rev-parse origin/main anotado en PROVENANCE_AND_CHANGELOG.md. Lee el kit
 de esa copia. examples/_local/ no viene en ella porque no está en git: ese se lee del checkout, sin
-tocarlo. Si no encuentras packages/pitch-kit/CANON.md estás en una versión vieja del kit: detente
+tocarlo. Puede haber más de una copia del repo en la máquina y solo una tiene el índice: antes de
+darlo por ausente, búscalo con find ~/Downloads -path '*examples/_local/INDEX.md' y usa el que dé. Si no encuentras packages/pitch-kit/CANON.md estás en una versión vieja del kit: detente
 y avísame.
 
 LEE PRIMERO, en este orden. Es la fuente de verdad, no inventes estructura ni método:

@@ -33,6 +33,7 @@
 | Qué | Cuándo |
 |---|---|
 | Iniciar sesión en la pestaña del chat | Al arrancar, y cuando la sesión expira (pasó de un día a otro) |
+| Decir qué cuenta de escucha se usa: hay más de una, y no todas son de SentiOne. El chat la confirma por el nombre de cuenta que se ve en pantalla, lo anota en el plan y no toca credenciales | Al arrancar, antes de abrir un proyecto |
 | Decir qué proyecto se puede reescribir ("cualquiera sin edición en 30 días" es una respuesta válida) | En la primera validación |
 | Autorizar por escrito guardar en ese proyecto | En la primera validación. Sin esa frase en el chat, el clasificador de permisos bloquea Save y las reglas de idioma |
 | Autorizar leer totales por la API del tablero desde su pestaña | En la primera validación, si el estudio lo necesita |
