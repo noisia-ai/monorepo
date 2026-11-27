@@ -1,7 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import type { Pool } from "pg";
 import {
-  beginSignalListeningReviewV1, chargeSignalListeningCycleV1, claimSignalListeningCycleV1, finishSignalListeningCycleV1, recordSignalListeningReviewAnswerV1, recordSignalListeningClosingMergesV1, signalListeningCarriedClosingMergesV1, getSignalListeningCycleV1, measureSignalListeningRoundV1, openSignalListeningNextRoundV1, readSignalListeningConfirmedCentroidsV1, settleSignalListeningPairChoicesV1,
+  beginSignalListeningReviewV1, chargeSignalListeningCycleV1, claimSignalListeningCycleV1, finishSignalListeningCycleV1, recordSignalListeningReviewAnswerV1, recordSignalListeningClosingMergesV1, lockSignalListeningEditedTopicsV1, signalListeningCarriedClosingMergesV1, getSignalListeningCycleV1, measureSignalListeningRoundV1, openSignalListeningNextRoundV1, readSignalListeningConfirmedCentroidsV1, settleSignalListeningPairChoicesV1,
   listSignalListeningOrphanRootsV1, readSignalListeningCycleConfigurationV1, readSignalListeningRootVectorsV1, releaseSignalListeningCycleV1, renewSignalListeningCycleV1,
   requestSignalListeningRoundRunV1, saveSignalListeningOrphanGroupsV1, saveSignalListeningReviewV1, settleSignalListeningRoundRunV1,
   type SignalListeningCycleV1, type SignalListeningRoundV1, type SignalListeningStoredOrphanGroupV1,
@@ -120,6 +120,8 @@ export async function stepSignalListeningCycleV1(args: { database: Database; cyc
     await measureSignalListeningRoundV1(database, cycle, round, await settleSignalListeningPairChoicesV1(database, cycle, round));
     return "continue";
   }
+  // What people corrected while the loop ran is locked before the rules or the review decide on this round.
+  if (round.step === "measured" || round.step === "regrouped") round.catalog = await lockSignalListeningEditedTopicsV1(database, cycle, round);
   if (round.step === "measured") {
     if (settling) {
       // The choices of this last pass can show that two topics are one. Their merge is recorded with the round and

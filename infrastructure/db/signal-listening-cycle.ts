@@ -44,6 +44,20 @@ async function lockedTopicKeys(client: Queryable, workspace_id: string, display_
   return new Set([...rows.flatMap(row => row.topic_key ? [row.topic_key] : []), ...Object.keys(display_names)]);
 }
 
+/**
+ * People may correct the map while a loop runs. The topics they merged or renamed since it started are locked in the
+ * round before the agent or the rules decide on it, so neither folds a topic a person already placed.
+ */
+export async function lockSignalListeningEditedTopicsV1(database: Database, cycle: Pick<SignalListeningCycleV1, "workspace_id">,
+  round: Pick<SignalListeningRoundV1, "id" | "catalog">): Promise<SignalListeningCatalogTopicV1[]> {
+  const display = (await database.query<{ display_names: Record<string, unknown> }>(`SELECT display_names FROM signal_mass_labeling_study_policies
+    WHERE workspace_id=$1 ORDER BY revision DESC LIMIT 1`, [cycle.workspace_id])).rows[0]?.display_names ?? {};
+  const locked = await lockedTopicKeys(database, cycle.workspace_id, display);
+  if (!round.catalog.some(topic => locked.has(topic.topic_key) && !topic.human_locked)) return round.catalog;
+  const catalog = round.catalog.map(topic => locked.has(topic.topic_key) ? { ...topic, human_locked: true } : topic);
+  await database.query("UPDATE signal_listening_rounds SET catalog=$2::jsonb,updated_at=now() WHERE id=$1", [round.id, JSON.stringify(catalog)]);
+  return catalog;
+}
 function topicQuestion(configuration: SignalListeningConfigurationV1, topic: SignalListeningCatalogTopicV1): SignalListeningAskedQuestionV1 {
   return compileSignalListeningConfigurationV1(configuration).topic(topic.topic_key, signalListeningTopicWordingV1(topic, configuration.candidate_language));
 }
