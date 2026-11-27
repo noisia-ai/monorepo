@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { compileSignalStudyAxesV1, SIGNAL_STUDY_TB_TEMPLATE_V2 as second, SIGNAL_STUDY_TB_TEMPLATE_V3 as template, type SignalStudySubjectV1 } from "./signal-study-v1";
+import { compileSignalStudyAxesV1, resolveSignalStudyAxesV1, signalStudyInMotivePoolV1, SIGNAL_STUDY_TB_TEMPLATE_V2 as second, SIGNAL_STUDY_TB_TEMPLATE_V3 as template,
+  type SignalStudySubjectV1 } from "./signal-study-v1";
 
 const subject: SignalStudySubjectV1 = { kind: "category", name: "sparkling water", category: "sparkling water", own_brand: "Brand One", competitors: ["Brand Two"], alternatives: [] };
 
@@ -9,10 +10,23 @@ test("the third template asks again only for the direction", () => {
   assert.notEqual(now.direction.question_digest, before.direction.question_digest, "the direction is asked again");
   assert.equal(now.use.question_digest, before.use.question_digest, "use is reused");
   assert.equal(now.target.question_digest, before.target.question_digest, "and so is the target");
-  const { direction_share_max: guard, ...rules } = template.rules;
+  const { direction_share_max: guard, group_uses: uses, ...rules } = template.rules;
   assert.deepEqual(rules, second.rules, "the line, the layer reading and the rest are those of the second template");
   assert.equal(guard, 0.5);
+  assert.deepEqual(uses, ["literal", "other"]);
   assert.equal(template.instructions, second.instructions);
+});
+
+test("a post with a counted direction counts toward the subject unless its use is figurative or ironic", () => {
+  const answers = { direction: "trigger", target: "category", direction_probability: 0.9 };
+  const by = (use: string, rules = template.rules) => resolveSignalStudyAxesV1(subject, { ...answers, use }, rules);
+  assert.deepEqual(["literal", "other", "figurative_or_ironic"].map(use => by(use).aggregate), ["subject", "subject", "figurative_or_ironic"]);
+  assert.deepEqual(["literal", "other", "figurative_or_ironic"].map(use => signalStudyInMotivePoolV1(template, by(use))), [true, true, false]);
+  // The second template keeps its rule: only literal use.
+  assert.deepEqual(["literal", "other"].map(use => by(use, second.rules).aggregate), ["subject", "other"]);
+  assert.deepEqual(["literal", "other"].map(use => signalStudyInMotivePoolV1(second, by(use, second.rules))), [true, false]);
+  // Below the line there is no direction, whatever the use.
+  assert.equal(signalStudyInMotivePoolV1(template, resolveSignalStudyAxesV1(subject, { ...answers, use: "other", direction_probability: 0.7 }, template.rules)), false);
 });
 
 test("direction is aimed at the subject first, and an emotion about it counts with a literal fragment", () => {

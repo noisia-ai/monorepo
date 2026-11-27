@@ -165,6 +165,10 @@
     "multilayer": "split",
     "without_literal_evidence": "unclear",
     "output_status": "directional",
-    "direction_share_max": 0.5
+    "direction_share_max": 0.5,
+    "group_uses": [
+      "literal",
+      "other"
+    ]
   }
 }

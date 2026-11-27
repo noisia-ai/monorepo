@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { Pool, PoolClient } from "pg";
 import {
-  compileSignalListeningConfigurationV1, compileSignalStudyAxesV1, signalStudyMotiveQuestionV1, SIGNAL_LISTENING_CONSUMER_CUT_V1, SIGNAL_STUDY_TB_TEMPLATE_V3,
+  compileSignalListeningConfigurationV1, compileSignalStudyAxesV1, signalStudyGroupUsesV1, signalStudyMotiveQuestionV1, SIGNAL_LISTENING_CONSUMER_CUT_V1, SIGNAL_STUDY_TB_TEMPLATE_V3,
   validateSignalListeningConfigurationV1, validateSignalStudyLexiconV1, validateSignalStudySubjectV1, validateSignalStudyTemplateV1,
   type SignalListeningAskedQuestionV1, type SignalListeningConfigurationV1, type SignalListeningItemV1, type SignalStudyLayerV1,
   type SignalStudyPermissionV1, type SignalStudySubjectV1, type SignalStudyTemplateV1, type SignalStudyWordingV1,
@@ -313,12 +313,12 @@ export async function createSignalStudySourceV1(database: Database, run: Pick<Si
             JOIN signal_listening_answers direction ON direction.question_id=$${page + 5} AND direction.root_id=item.root_id AND direction.workspace_id=$1
               AND direction.choice<>'none' AND direction.probability>=$${page + 8}::real AND direction.input_sha=decode(substr(item.input_digest,8),'hex')
             JOIN signal_listening_answers use_ ON use_.question_id=$${page + 6} AND use_.root_id=item.root_id AND use_.workspace_id=$1
-              AND use_.choice=$${page + 7} AND use_.input_sha=decode(substr(item.input_digest,8),'hex')
+              AND use_.choice=ANY($${page + 7}::text[]) AND use_.input_sha=decode(substr(item.input_digest,8),'hex')
             JOIN signal_mass_labeling_maps map ON map.id=item.map_id AND map.workspace_id=item.workspace_id
             LEFT JOIN signal_workspace_chunk_embeddings embedding ON embedding.workspace_id=item.workspace_id AND embedding.config_digest=map.embedding_config_digest
               AND embedding.chunk_sha256=item.chunk_sha256
             WHERE ($${page + 1}::uuid IS NULL OR item.root_id>$${page + 1}) ORDER BY item.root_id LIMIT $${page + 2}`,
-            [...cut.params, cursor, limit, study.id, template.rules.motive_candidates, axisIds.direction, axisIds.use, template.rules.group_use,
+            [...cut.params, cursor, limit, study.id, template.rules.motive_candidates, axisIds.direction, axisIds.use, signalStudyGroupUsesV1(template.rules),
               template.rules.direction_min_probability ?? 0])).rows;
         if (!rows.length) return [];
         cursor = rows.at(-1)!.root_id;

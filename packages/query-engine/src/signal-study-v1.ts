@@ -30,6 +30,8 @@ const templateSchema = z.object({
   rules: z.object({
     cut: z.object({ voice: z.literal("individual"), promotion_max: z.number().min(0).max(1), exclude_hashtag_only: z.literal(true), require_category_lexicon: z.literal(true) }).strict(),
     group_directions: z.array(z.string()).min(1), group_targets: z.array(z.string()).min(1), group_use: z.string(),
+    /** The uses that count toward the subject and enter motive discovery. Without it, only `group_use`. */
+    group_uses: z.array(z.string()).min(1).max(4).optional(),
     /** A direction counts from this probability up; below it the post is kept as probable and read as `none`. */
     direction_min_probability: z.number().min(0).max(1).optional(),
     /** One direction over this share of the cut means the rules read too much: the output says so. */
@@ -67,9 +69,12 @@ export const SIGNAL_STUDY_TB_TEMPLATE_V2: Readonly<SignalStudyTemplateV1> = vali
  * first whether the force is aimed at the subject at all (what the first
  * wording got wrong was posts about something else), then its direction, where
  * an emotion or an experience about the subject counts as much as a stated
- * reason, as the methodology defines a trigger. Everything else is as in the
- * second template. One direction over half of the cut is reported as a sign
- * that the rules read too much.
+ * reason, as the methodology defines a trigger. A post with a counted direction
+ * enters motive discovery unless its use is figurative or ironic: once a force
+ * aimed at the subject is found the post is already an evaluation, and the use
+ * question reads `other` for a subject that is not a product. Everything else
+ * is as in the second template. One direction over half of the cut is reported
+ * as a sign that the rules read too much.
  */
 export const SIGNAL_STUDY_TB_TEMPLATE_V3: Readonly<SignalStudyTemplateV1> = validateSignalStudyTemplateV1(seedV3);
 /** A study may use its own lexicon for its cut instead of the brand's: lowercase terms, one or two words each. */
@@ -119,6 +124,10 @@ export function signalStudyMotiveQuestionV1(template: SignalStudyTemplateV1, sub
       false: template.motive_question.negative } });
 }
 
+/** The uses of the subject that count: the template's list, or its single use when it has none. Literal use without rules. */
+export function signalStudyGroupUsesV1(rules?: Partial<Pick<SignalStudyTemplateV1["rules"], "group_use" | "group_uses">>): string[] {
+  return rules?.group_uses ?? [rules?.group_use ?? "literal"];
+}
 export type SignalStudyAxesV1 = { direction: string; target: string; use: string; source_direction: string; alternative_inverted: boolean;
   /** The direction the classifier gave below the line that makes it count; the post is read as `none`. */
   direction_probable: string | null;
@@ -127,18 +136,19 @@ export type SignalStudyAxesV1 = { direction: string; target: string; use: string
 /** Reads the three answers of a root. When the subject is an alternative, rejecting
  * the conventional category counts as moving toward the alternative. */
 export function resolveSignalStudyAxesV1(subject: SignalStudySubjectV1, given: { direction: string; target: string; use: string; direction_probability?: number | null },
-  rules?: Pick<SignalStudyTemplateV1["rules"], "direction_min_probability">): SignalStudyAxesV1 {
+  rules?: Pick<SignalStudyTemplateV1["rules"], "direction_min_probability"> & Partial<Pick<SignalStudyTemplateV1["rules"], "group_use" | "group_uses">>): SignalStudyAxesV1 {
+  const counted = signalStudyGroupUsesV1(rules);
   const weak = rules?.direction_min_probability !== undefined && given.direction !== "none" && (given.direction_probability ?? 0) < rules.direction_min_probability;
   const answers = { ...given, direction: weak ? "none" : given.direction };
   const inverted = subject.kind === "alternative" && answers.target === "category" && answers.direction === "barrier" && answers.use === "literal";
   return { source_direction: given.direction, direction_probable: weak ? given.direction : null,
     direction: inverted ? "trigger" : answers.direction, target: answers.target, use: answers.use, alternative_inverted: inverted,
-    aggregate: answers.use === "figurative_or_ironic" ? "figurative_or_ironic" : answers.use !== "literal" ? "other"
+    aggregate: answers.use === "figurative_or_ironic" ? "figurative_or_ironic" : !counted.includes(answers.use) ? "other"
       : answers.target === "competitor_brand" ? "competitor" : answers.target === "alternative" && subject.kind !== "alternative" ? "alternative" : "subject" };
 }
-/** Roots that enter motive discovery: a direction, about the subject, in literal use. Pooled across directions. */
+/** Roots that enter motive discovery: a direction, about the subject, in a use that counts. Pooled across directions. */
 export function signalStudyInMotivePoolV1(template: SignalStudyTemplateV1, axes: SignalStudyAxesV1): boolean {
-  return template.rules.group_directions.includes(axes.direction) && axes.use === template.rules.group_use && template.rules.group_targets.includes(axes.target)
+  return template.rules.group_directions.includes(axes.direction) && signalStudyGroupUsesV1(template.rules).includes(axes.use) && template.rules.group_targets.includes(axes.target)
     && axes.aggregate === "subject";
 }
 export function signalStudyPermissionForLayerV1(template: SignalStudyTemplateV1, layer: SignalStudyLayerV1): SignalStudyPermissionV1 {

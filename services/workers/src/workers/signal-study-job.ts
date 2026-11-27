@@ -316,7 +316,9 @@ async function buildStudyOutput(database: Database, study: SignalStudyV1): Promi
       // Directions the classifier gave below the line that makes them count: kept, read as none.
       direction_probable: count(rows.flatMap(row => axes.get(row.root_id)!.direction_probable ? [axes.get(row.root_id)!.direction_probable!] : [])), target: count(rows.map(row => row.target)), use: count(rows.map(row => row.use)),
       counted_as: count(directed.map(row => axes.get(row.root_id)!.aggregate)) },
-    directed: { mentions: directed.length, about_the_subject: subjectRoots.size, with_a_motive: [...assigned].filter(root => subjectRoots.has(root)).length,
+    directed: { mentions: directed.length, about_the_subject: subjectRoots.size,
+      // How the posts that count toward the subject were used, as the use question read them.
+      about_the_subject_by_use: count(directed.filter(row => subjectRoots.has(row.root_id)).map(row => row.use)), with_a_motive: [...assigned].filter(root => subjectRoots.has(root)).length,
       without_a_motive: [...subjectRoots].filter(root => !assigned.has(root)).length },
     // The balance of direction depends in part on how the corpus was collected, so its base rates travel with it.
     query_bias: { note: "direction_balance_depends_on_the_corpus_query", cut_share_of_corpus: sizes.corpus_roots ? sizes.cut_roots / sizes.corpus_roots : null,
