@@ -221,6 +221,8 @@ test("the pair question asks which of the two a post belongs to, and its answer 
   assert.equal(question.label, "pair:bitter+price");
   assert.match(question.question_digest, /^sha256:[0-9a-f]{64}$/u);
   assert.deepEqual(Object.keys((question.wire as { criteria: Record<string, string> }).criteria), ["left", "right", "both", "neither"]);
+  // Neither is said to be a valid answer: the first wording never got it, and blind judges gave it to one post in five.
+  assert.match((question.wire as { instructions: { question: string } }).instructions.question, /Choose neither when it meets neither definition: that is a valid answer/u);
   // New wording on either side is a new question; the same wording is the same question.
   assert.notEqual(signalListeningPairQuestionV1("jev-1.13.0", { ...left, definition: "Anything bitter." }, right).question_digest, question.question_digest);
   assert.equal(signalListeningPairQuestionV1("jev-1.13.0", left, right).question_digest, question.question_digest);

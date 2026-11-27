@@ -15,6 +15,7 @@ test("the third template asks again only for the direction", () => {
   assert.equal(guard, 0.5);
   assert.deepEqual(uses, ["literal", "other"]);
   assert.equal(template.instructions, second.instructions);
+  assert.equal(template.version, "r16b-v3.1");
 });
 
 test("a post with a counted direction counts toward the subject unless its use is figurative or ironic", () => {

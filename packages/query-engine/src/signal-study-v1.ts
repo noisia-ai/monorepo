@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { z } from "zod";
 import seed from "./data/study-templates/triggers-barriers.r16b-v1.json";
 import seedV2 from "./data/study-templates/triggers-barriers.r16b-v2.json";
-import seedV3 from "./data/study-templates/triggers-barriers.r16b-v3.json";
+import seedV3 from "./data/study-templates/triggers-barriers.r16b-v3.1.json";
 import type { JevQuestionV1 } from "./signal-mention-facets-jev-v1";
 import { signalListeningQuestionIdentityV1, type SignalListeningAskedQuestionV1 } from "./signal-listening-questions-v1";
 
@@ -75,6 +75,10 @@ export const SIGNAL_STUDY_TB_TEMPLATE_V2: Readonly<SignalStudyTemplateV1> = vali
  * question reads `other` for a subject that is not a product. Everything else
  * is as in the second template. One direction over half of the cut is reported
  * as a sign that the rules read too much.
+ *
+ * Its version is r16b-v3.1. r16b-v3, written hours earlier on 2026-11-27, had
+ * the same questions and let only literal use into motive discovery; no study
+ * finished with it.
  */
 export const SIGNAL_STUDY_TB_TEMPLATE_V3: Readonly<SignalStudyTemplateV1> = validateSignalStudyTemplateV1(seedV3);
 /** A study may use its own lexicon for its cut instead of the brand's: lowercase terms, one or two words each. */

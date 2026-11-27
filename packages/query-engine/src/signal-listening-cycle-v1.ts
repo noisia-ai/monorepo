@@ -203,9 +203,10 @@ export function signalListeningForcedMergesV1(policy: SignalListeningCyclePolicy
 export function signalListeningPairQuestionV1(model: string, left: { topic_key: string; name: string; definition: string },
   right: { topic_key: string; name: string; definition: string }): SignalListeningAskedQuestionV1 {
   const wire: JevQuestionV1 = { type: "choice",
-    instructions: { rules: MASS_LABELING_JEV_WIRES_V2.instructions, question: "Which of these two topics does the text belong to? Choose both only when it clearly fits each definition on its own." },
+    instructions: { rules: MASS_LABELING_JEV_WIRES_V2.instructions, question: "Which of these two topics does the text belong to? Judge each definition on its own. Choose both only when the text clearly fits each of them. "
+      + "Choose neither when it meets neither definition: that is a valid answer, the text does not have to belong to one of the two." },
     criteria: { left: `${left.name}: ${left.definition}`, right: `${right.name}: ${right.definition}`,
-      both: "The text clearly fits the first topic and also clearly fits the second.", neither: "The text fits neither of the two topics." } };
+      both: "The text clearly fits the first topic and also clearly fits the second.", neither: "The text does not meet the definition of the first topic and does not meet the definition of the second." } };
   return { request_key: "pair", label: `pair:${left.topic_key}+${right.topic_key}`, wire, kind: wire.type, question_digest: signalListeningQuestionIdentityV1(model, wire) };
 }
 /** Reads the answers of a pair question into the two memberships it decides. */
