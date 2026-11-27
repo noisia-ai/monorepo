@@ -145,3 +145,4 @@ export * from './signal-monitoring-insights';
 export * from './signal-monitoring-insights-policy';
 export * from "./signal-listening";
 export * from "./signal-listening-configuration";
+export * from "./signal-listening-cycle";

@@ -4980,6 +4980,20 @@
       "cap_reached": "La última actualización llegó a su tope con {done} menciones respondidas (USD {cost}). Sube el tope y vuelve a actualizar.",
       "canceled": "La última actualización se canceló."
     },
+    "map": {
+      "title": "Mapa de temas",
+      "body": "{themes, plural, one {# tema} other {# temas}} y {topics, plural, one {# tópico} other {# tópicos}}, revisados después de la última clasificación.",
+      "showOutside": "Mostrar {count, plural, one {# tópico} other {# tópicos}} fuera de la categoría",
+      "noTheme": "Sin tema",
+      "topic": "Tópico",
+      "scope": "Relación con la categoría",
+      "mentions": "Menciones",
+      "domain": {
+        "category": "De la categoría",
+        "adjacent": "Cercano",
+        "outside": "Fuera de la categoría"
+      }
+    },
     "metrics": {
       "title": "Preguntas de la marca",
       "body": "Respuestas a las preguntas con opciones definidas en Brand OS.",

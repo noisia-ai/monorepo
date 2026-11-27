@@ -12,11 +12,15 @@
  *   question --workspace <uuid> --actor <uuid> --file <json>             add or replace one question with options
  *   listen   --workspace <uuid> --actor <uuid> --cap-usd <n>             queue a listening pass (asks only what is pending)
  *   metrics  --workspace <uuid> --actor <uuid> --question <key>          distribution of one question
+ *   cycle    --workspace <uuid> --actor <uuid> --cap-usd <n>             queue the automatic discovery loop
+ *   cycle-status --cycle <uuid>                                          rounds, signals and spending of a loop
+ *   cycle-local  --cycle <uuid> [--steps <n>]                            advance a loop in this process (no JEV pass)
  */
 import pg from "pg";
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import {
+  claimSignalListeningCycleV1, getSignalListeningCycleV1, releaseSignalListeningCycleV1, requestSignalListeningCycleV1,
   claimSignalListeningRunV1, estimateSignalListeningV1, getSignalListeningRunV1, getSignalListeningStateV1, importSignalListeningLegacyAnswersV1,
   readSignalListeningQuestionMetricsV1, requestSignalListeningRunV1, requestSignalListeningV1, requeueSignalListeningRunV1,
   saveSignalListeningQuestionsV1, SIGNAL_LISTENING_DEFAULT_PRICE_V1,
@@ -24,6 +28,7 @@ import {
 import { createJevAccountRateLimiter } from "../src/providers/jev-account-rate-limit";
 import { createJevPacedClientV1, createLocalJevRateLimiterV1 } from "../src/providers/jev-paced-client";
 import { createListeningRawStoreV1, processSignalListeningRunV1, readListeningJevSettingsV1 } from "../src/workers/signal-listening-job";
+import { createSonnetListeningReviewerV1, stepSignalListeningCycleV1 } from "../src/workers/signal-listening-cycle-job";
 
 const [mode, ...rest] = process.argv.slice(2);
 const flag = (name: string) => { const index = rest.indexOf(`--${name}`); return index >= 0 ? rest[index + 1] : undefined; };
@@ -36,6 +41,22 @@ function report(run: NonNullable<Awaited<ReturnType<typeof getSignalListeningRun
   console.log(JSON.stringify({ status: run.status, kind: run.kind, roots_done: run.roots_done, roots_failed: run.roots_failed,
     pages: run.pages, input_tokens: run.input_tokens, spent_usd: run.spent_micro_usd / 1e6, cap_usd: run.cap_micro_usd / 1e6,
     error_code: run.error_code, started_at: run.started_at, completed_at: run.completed_at, receipt: run.receipt }, null, 1));
+}
+
+/** Counts and decisions only: no post text and no topic wording is printed. */
+async function cycleStatus(cycle_id: string) {
+  const state = await getSignalListeningCycleV1(pool, cycle_id);
+  if (!state) throw new Error("cycle not found");
+  console.log(JSON.stringify({ status: state.cycle.status, stop_reason: state.cycle.stop_reason, error_code: state.cycle.error_code,
+    spent_usd: state.cycle.spent_micro_usd / 1e6, cap_usd: state.cycle.cap_micro_usd / 1e6,
+    rounds: state.rounds.map(round => ({ round: round.round_no, step: round.step, topics: round.catalog.length, themes: round.themes.length,
+      outside: round.catalog.filter(topic => topic.domain === "outside").length, run_id: round.run_id,
+      signals: round.evidence ? { category_roots: round.evidence.category_roots, orphan_roots: round.evidence.orphan_roots,
+        orphan_rate: round.evidence.orphan_rate, twin_pairs: round.evidence.twins.length, twin_roots: round.evidence.twin_roots,
+        twin_root_rate: round.evidence.twin_root_rate } : null,
+      orphan_groups: round.orphan_groups?.map(group => ({ roots: group.roots, cohesion: group.cohesion })) ?? null,
+      review: round.review ? { summary: round.review.summary, rejected: round.review.rejected, usage: round.review.usage,
+        cost_usd: Number(round.review.cost_micro_usd) / 1e6, duration_ms: round.review.duration_ms, payload_bytes: round.review.payload_bytes } : null })) }, null, 1));
 }
 
 try {
@@ -92,5 +113,22 @@ try {
     const metrics = await readSignalListeningQuestionMetricsV1({ database: pool, workspace_id: required("workspace"), actor_user_id: required("actor"),
       question_key: required("question") });
     console.log(JSON.stringify({ ...metrics, by_topic: metrics.by_topic.slice(0, 12), trend: metrics.trend.slice(-12) }, null, 1));
-  } else throw new Error("usage: signal-listening-run.ts request|status|local|requeue|import|estimate|question|listen|metrics");
+  } else if (mode === "cycle") {
+    console.log(JSON.stringify(await requestSignalListeningCycleV1({ database: pool, workspace_id: required("workspace"), actor_user_id: required("actor"),
+      cap_micro_usd: Math.round(Number(required("cap-usd")) * 1e6), idempotency_key: flag("key") ?? randomUUID() })));
+  } else if (mode === "cycle-status") {
+    await cycleStatus(required("cycle"));
+  } else if (mode === "cycle-local") {
+    const cycle = await claimSignalListeningCycleV1(pool, required("cycle"));
+    if (!cycle) throw new Error("the cycle is not claimable: it is finished or another worker holds it");
+    const reviewer = createSonnetListeningReviewerV1({ apiKey: process.env.NOISIA_MASS_LABELING_ANTHROPIC_API_KEY ?? process.env.ANTHROPIC_API_KEY ?? "" });
+    try {
+      for (let step = 0; step < Number(flag("steps") ?? 1); step++) {
+        const outcome = await stepSignalListeningCycleV1({ database: pool, cycle, reviewer });
+        console.error(`step ${step + 1}: ${outcome}`);
+        if (outcome !== "continue") break;
+      }
+    } finally { await releaseSignalListeningCycleV1(pool, cycle); }
+    await cycleStatus(cycle.id);
+  } else throw new Error("usage: signal-listening-run.ts request|status|local|requeue|import|estimate|question|listen|metrics|cycle|cycle-status|cycle-local");
 } finally { await pool.end(); }

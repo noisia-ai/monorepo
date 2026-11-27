@@ -23,6 +23,7 @@
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^3.0.79",
+    "@anthropic-ai/sdk": "^1.14.0",
     "@noisia/db": "workspace:*",
     "@noisia/query-engine": "workspace:*",
     "ai": "^6.0.191",

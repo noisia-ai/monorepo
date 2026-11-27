@@ -79,6 +79,9 @@ async function storeRevision(client: Queryable, args: { workspace_id: string; ac
 const lock = (client: Queryable, workspace_id: string) =>
   client.query("SELECT pg_advisory_xact_lock(hashtextextended('signal-listening:'||$1,0))", [workspace_id]);
 
+/** Shared with the discovery cycle, which composes, locks and authorizes the same way. Not part of the package surface. */
+export const signalListeningInternalsV1 = { transaction, authorize, lock, compose, storeRevision, population: (client: Queryable, workspace_id: string) => population(client, workspace_id) };
+
 export type SignalListeningStateV1 = {
   contract_version: "signal-listening-state-v1"; workspace_id: string; revision: number; configuration: SignalListeningConfigurationV1;
   /** True when the study settings changed after the last stored revision. */

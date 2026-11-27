@@ -9437,3 +9437,4 @@
 .signal-v2-listening th, .signal-v2-listening td { padding: 6px 8px; border-bottom: 1px solid #ebebeb; text-align: right; font-weight: 400; }
 .signal-v2-listening thead th { color: #616161; font-size: 12px; }
 .signal-v2-listening th:first-child, .signal-v2-listening td:first-child { text-align: left; }
+.signal-v2-listening__toggle { display: flex !important; align-items: center; gap: 6px; }
