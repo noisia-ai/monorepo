@@ -1,7 +1,7 @@
 # ADR 033 · Escucha y Estudios sobre un corpus compartido
 
-Estado: diseño aprobado por el fundador; implementación y aceptación de R16 en curso.
-Fecha: 2026-11-14.
+Estado: implementado en develop y corrido en UAT (R16b, 27 de noviembre de 2026). La evaluación de calidad es del auditor y está pendiente; producción queda fuera.
+Fecha: 2026-11-14; implementación añadida el 2026-11-27.
 
 ## Contexto
 
@@ -63,3 +63,44 @@ El recibo separa partidas que escalan por raíz de las que escalan por grupos y 
 - Toda migración se ensaya en una copia antes de aplicarse una vez en UAT. Producción y main quedan fuera de R16.
 - La aceptación exige ejecución real de Escucha y Estudio en UAT, muestras ciegas separadas de sus claves, comparación privada y los gates del [ExecPlan R16](../product/PROMPT_LOOPING/PLAN_R16_ESCUCHA_ESTUDIO.md).
 - El rediseño de Signal, el release a producción y la experiencia agéntica de diseño permanecen fuera del alcance de esta decisión de implementación.
+
+## Implementación (R16b)
+
+Lo que sigue describe cómo quedó construida la decisión y en qué se apartó del texto de arriba. No contiene datos del cliente; los recibos y paquetes están en custodia privada.
+
+### Dónde vive cada pieza
+
+| Pieza | Datos | Código |
+|---|---|---|
+| Preguntas, respuestas y pasadas de JEV | migración 0295: configuraciones, preguntas, pasadas, páginas crudas y respuestas | `signal-listening-questions-v1`, `signal-listening-config-v1`, `signal-listening*.ts`, `jev-paced-client`, `jev-account-rate-limit` |
+| Ciclo de descubrimiento y correcciones | migraciones 0296 y 0298: ciclos, vueltas, tópicos por vuelta y ediciones de personas | `signal-listening-cycle-v1`, `signal-listening-cycle.ts`, `signal-listening-edits.ts`, `signal-listening-cycle-job` |
+| Estudios | migración 0297: estudios, motivos y motivos pasados al reporte | `signal-study-v1`, `data/study-templates/triggers-barriers.r16b-v1.json`, `signal-study.ts`, `signal-study-job`, `sonnet-json-agent` |
+
+Todo se enciende con `NOISIA_SIGNAL_LISTENING_ENABLED=true`; apagado, nada de esto se ejecuta ni se muestra.
+
+### Reglas que el código hace cumplir
+
+- **Una respuesta se pregunta una vez.** La identidad de una pregunta es el modelo más la pregunta exacta; la respuesta se guarda por raíz junto con la huella del texto clasificado. El alcance decide a quién se pregunta, no forma parte de la identidad. Por eso agregar una pregunta, un tópico o un estudio sólo paga lo que falta.
+- **Todo gasto nace con tope.** Cada pasada, ciclo y estudio fija su tope al pedirse y reserva lo que necesitan sus pasos siguientes. Una respuesta pagada se guarda y se cobra antes de construir sobre ella; una respuesta inservible también se cobra.
+- **Sin puertas humanas.** Ciclos y estudios avanzan solos de principio a fin. Un fallo ajeno al proceso se reintenta unas pocas veces; un estudio fallido se puede volver a encolar sin repetir lo pagado.
+- **Sonnet 4.6 para el juicio**, con salida restringida a un esquema y sin razonamiento previo: el razonamiento comparte el límite de salida y, sobre un mapa completo, no deja lugar a la respuesta. Cada esquema pide las razones antes del veredicto.
+- **Las reglas de la metodología no se confían al agente.** En T&B, una capa sin fragmento literal de los ejemplos del motivo queda como `unclear`; cultural exige además un fragmento normativo; el permiso sale de la capa salvo excepción con razón escrita; las dos pasadas ciegas leen ejemplos distintos y un desacuerdo deja la capa como `unclear`.
+- **Lo que se muestra es literal.** Una cita es un fragmento exacto de su publicación, con liga, red y fecha, y sin nombres de usuario. Es integridad de la salida, no un requisito para etiquetar.
+- **Las personas mandan.** Sus correcciones son filas agregadas que se aplican al leer el mapa: la última corrección de una mención y un tópico gana al clasificador. Una fusión deja ambos tópicos bloqueados para el agente, y el siguiente ciclo parte del mapa revisado.
+
+### En qué se apartó del texto de arriba
+
+- **Transporte.** Se construyó un camino nuevo y delgado junto al de R15 en vez de rehacer aquél; el de R15 queda como historia legible. La validación vive en TypeScript, no en triggers. La aceptación fue una corrida real al límite de la cuenta del proveedor, no un banco sintético: el freno medido es el límite de tokens por segundo de la cuenta.
+- **Huérfanas.** Se agrupan con k-means esférico sobre los vectores que ya existen, no con el motor de tópicos, que exige el manifiesto completo de una preparación. El agente decide si un grupo es un tópico y el clasificador confirma cada miembro.
+- **Candidatos por vuelta.** Después de cada revisión los candidatos de una raíz se recalculan con el centro de los miembros confirmados. Una vuelta vuelve a preguntar a la mayoría de las raíces aunque cambien pocos tópicos, y cada raíz acumula respuestas de más tópicos; eso reduce huérfanas y eleva la señal de posibles gemelos.
+- **Signal.** La página de Tópicos lista el mapa revisado en dos niveles, para el periodo de la página y con lo de fuera de categoría oculto por omisión. Lo que listaba antes (el mapa de R15, con su linaje de recibos) queda plegado debajo como mapa anterior; no se reconstruyó ese linaje. Las preguntas genéricas se sirven en un panel de Monitoreo. El detalle por tópico del mapa revisado es una muestra de menciones, todavía sin gráfica de tendencia.
+- **Pertenencia en dos niveles y fusión por omisión.** Tras la primera evaluación ciega (los miembros entre 0.70 y 0.85 acertaban seis de cada diez y la revisión fusionaba poco), la política del ciclo cuenta como confirmada la pertenencia desde 0.85 y guarda como probable la de 0.70 a 0.85, sin contarla. Un par aceptado en conjunto en 0.4 o más de lo preguntado a ambos se fusiona salvo que la revisión redefina los dos con contraste; ese par se vuelve a medir sobre lo que compartía y se fusiona si 0.2 o más sigue aceptado por ambos. La política viaja con cada ciclo: uno ya terminado conserva la suya.
+- **Vuelta de asentamiento.** Un ciclo que termina con pares por encima de la línea los fusiona y hace una pasada final sin revisión, para que el mapa publicado no los tenga.
+- **Ritmo compartido.** El límite del proveedor es de toda la organización y lo comparten todas las llaves y entornos; el limitador sólo ve el almacén de colas de su entorno. Si otro entorno llama al mismo tiempo, lo absorbe el reintento con espera.
+- **Dos caminos de JEV.** El de R15 sigue en el código para leer su historia y para la pantalla anterior de etiquetado. Lo nuevo (Escucha, ciclo, Estudios) usa sólo el camino nuevo. Retirar el runner de R15 queda pendiente de una decisión de producto, no de una razón técnica.
+- **Ensayo de migraciones.** El ensayo en copia es el trabajo de CI que aplica todas las migraciones numeradas a un PostgreSQL desechable. En UAT se aplicaron ejecutando el SQL, porque el diario de migraciones está desfasado.
+- **Pruebas.** Las funciones puras tienen pruebas unitarias. Las funciones nuevas de base de datos se comprobaron con corridas reales y con un ejercicio en UAT dentro de una transacción deshecha; no tienen todavía pruebas de integración con Postgres.
+
+### Pendiente fuera de esta decisión
+
+Tendencia y evidencia por tópico del mapa revisado en la página de Tópicos; retirar el runner de R15; candidatos por vectores cuando haya más de ocho tópicos definidos; elegir sujeto y corte de un Estudio cuando la pregunta no es sobre la categoría del léxico; y un ritmo compartido que consuma menos operaciones del almacén de colas (la cuenta del almacén de UAT se suspendió por presupuesto durante R16b).
