@@ -15,11 +15,17 @@
  *   cycle    --workspace <uuid> --actor <uuid> --cap-usd <n>             queue the automatic discovery loop
  *   cycle-status --cycle <uuid>                                          rounds, signals and spending of a loop
  *   cycle-local  --cycle <uuid> [--steps <n>]                            advance a loop in this process (no JEV pass)
+ *   study    --workspace <uuid> --actor <uuid> --name <text> --subject-file <json> --cap-usd <n>   queue a study
+ *   study-status --study <uuid>                                          steps, counts and spending of a study
+ *   study-local  --study <uuid> [--steps <n>]                            advance a study in this process (no JEV pass)
+ *   study-requeue --study <uuid>                                         put a failed study back in the queue; paid steps are kept
+ *   promote  --workspace <uuid> --actor <uuid> --study <uuid> --motives <key,key>   carry motives to the defined topics
  */
 import pg from "pg";
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import {
+  claimSignalStudyV1, getSignalStudyV1, listSignalStudyMotivesV1, promoteSignalStudyMotivesV1, releaseSignalStudyV1, renewSignalStudyV1, requestSignalStudyV1, requeueSignalStudyV1,
   claimSignalListeningCycleV1, getSignalListeningCycleV1, releaseSignalListeningCycleV1, renewSignalListeningCycleV1, requestSignalListeningCycleV1,
   claimSignalListeningRunV1, estimateSignalListeningV1, getSignalListeningRunV1, getSignalListeningStateV1, importSignalListeningLegacyAnswersV1,
   readSignalListeningQuestionMetricsV1, requestSignalListeningRunV1, requestSignalListeningV1, requeueSignalListeningRunV1,
@@ -29,6 +35,8 @@ import { createJevAccountRateLimiter } from "../src/providers/jev-account-rate-l
 import { createJevPacedClientV1, createLocalJevRateLimiterV1 } from "../src/providers/jev-paced-client";
 import { createListeningRawStoreV1, processSignalListeningRunV1, readListeningJevSettingsV1 } from "../src/workers/signal-listening-job";
 import { createSonnetListeningReviewerV1, stepSignalListeningCycleV1 } from "../src/workers/signal-listening-cycle-job";
+import { createSonnetJsonAgentV1 } from "../src/providers/sonnet-json-agent";
+import { stepSignalStudyV1 } from "../src/workers/signal-study-job";
 
 const [mode, ...rest] = process.argv.slice(2);
 const flag = (name: string) => { const index = rest.indexOf(`--${name}`); return index >= 0 ? rest[index + 1] : undefined; };
@@ -57,6 +65,23 @@ async function cycleStatus(cycle_id: string) {
       orphan_groups: round.orphan_groups?.map(group => ({ roots: group.roots, cohesion: group.cohesion })) ?? null,
       review: round.review ? { summary: round.review.summary, rejected: round.review.rejected, usage: round.review.usage,
         cost_usd: Number(round.review.cost_micro_usd) / 1e6, duration_ms: round.review.duration_ms, payload_bytes: round.review.payload_bytes } : null })) }, null, 1));
+}
+
+/** Counts and decisions only: no post text, no brand name and no motive wording is printed. */
+async function studyStatus(study_id: string) {
+  const study = await getSignalStudyV1(pool, study_id);
+  if (!study) throw new Error("study not found");
+  const state = study.state as Record<string, any>, motives = await listSignalStudyMotivesV1(pool, study_id), output = study.output as Record<string, any> | null;
+  console.log(JSON.stringify({ status: study.status, step: study.step, error_code: study.error_code, spent_usd: study.spent_micro_usd / 1e6, cap_usd: study.cap_micro_usd / 1e6,
+    runs: state.runs ?? {}, attempts: state.attempts ?? {}, pool_roots: state.pool_roots ?? null, directed_roots: state.directed_roots ?? null,
+    groups: (state.groups ?? []).map((group: { roots: number }) => group.roots), naming: state.naming ? { ...state.naming, rejected: state.naming.rejected?.length } : null,
+    layer_stability: state.layer_stability ? { ...state.layer_stability, decision_rules: undefined } : null, checks: state.checks ?? null,
+    agent_costs_usd: Object.fromEntries(Object.entries(state.answers ?? {}).map(([key, value]: [string, any]) => [key, value.cost_micro_usd / 1e6])),
+    motives: motives.length, layers: motives.reduce<Record<string, number>>((totals, motive) => { totals[motive.layer] = (totals[motive.layer] ?? 0) + 1; return totals; }, {}),
+    output: output ? { status: output.status, cut: { mentions: output.cut?.mentions, corpus_mentions: output.cut?.corpus_mentions, answered: output.cut?.answered },
+      axes: output.axes, directed: output.directed, query_bias: output.query_bias,
+      layers: output.layers, motives: (output.motives ?? []).map((motive: Record<string, any>) => ({ layer: motive.layer, permission: motive.permission, mentions: motive.mentions,
+        trigger: motive.mentions_with_trigger_signal, barrier: motive.mentions_with_barrier_signal, tension: motive.mentions_with_tension, verbatims: motive.verbatims?.length })) } : null }, null, 1));
 }
 
 try {
@@ -132,5 +157,30 @@ try {
       }
     } finally { clearInterval(beat); await releaseSignalListeningCycleV1(pool, cycle); }
     await cycleStatus(cycle.id);
-  } else throw new Error("usage: signal-listening-run.ts request|status|local|requeue|import|estimate|question|listen|metrics|cycle|cycle-status|cycle-local");
+  } else if (mode === "study") {
+    // The subject names the brand and its competitors: it is read from a private file and never printed.
+    console.log(JSON.stringify(await requestSignalStudyV1({ database: pool, workspace_id: required("workspace"), actor_user_id: required("actor"), name: required("name"),
+      subject: JSON.parse(readFileSync(required("subject-file"), "utf8")), cap_micro_usd: Math.round(Number(required("cap-usd")) * 1e6),
+      idempotency_key: flag("key") ?? randomUUID() })));
+  } else if (mode === "study-status") {
+    await studyStatus(required("study"));
+  } else if (mode === "study-local") {
+    const study = await claimSignalStudyV1(pool, required("study"));
+    if (!study) throw new Error("the study is not claimable: it is finished or another worker holds it");
+    const agent = createSonnetJsonAgentV1({ apiKey: process.env.NOISIA_MASS_LABELING_ANTHROPIC_API_KEY ?? process.env.ANTHROPIC_API_KEY ?? "" });
+    const beat = setInterval(() => void renewSignalStudyV1(pool, study).catch(() => undefined), 60_000);
+    try {
+      for (let step = 0; step < Number(flag("steps") ?? 1); step++) {
+        const outcome = await stepSignalStudyV1({ database: pool, study, agent });
+        console.error(`step ${step + 1}: ${outcome}`);
+        if (outcome !== "continue") break;
+      }
+    } finally { clearInterval(beat); await releaseSignalStudyV1(pool, study); }
+    await studyStatus(study.id);
+  } else if (mode === "study-requeue") {
+    console.log(JSON.stringify({ requeued: await requeueSignalStudyV1(pool, required("study")) }));
+  } else if (mode === "promote") {
+    console.log(JSON.stringify(await promoteSignalStudyMotivesV1({ database: pool, workspace_id: required("workspace"), actor_user_id: required("actor"),
+      study_id: required("study"), motive_keys: required("motives").split(",").map(item => item.trim()).filter(Boolean) })));
+  } else throw new Error("usage: signal-listening-run.ts request|status|local|requeue|import|estimate|question|listen|metrics|cycle|cycle-status|cycle-local|study|study-status|study-local|study-requeue|promote");
 } finally { await pool.end(); }
