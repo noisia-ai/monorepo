@@ -244,6 +244,36 @@ export async function saveSignalListeningOrphanGroupsV1(database: Database, roun
     [round.id, JSON.stringify(groups)]);
 }
 
+/** One confirmed centroid per topic of a measured round. */
+export type SignalListeningConfirmedCentroidsV1 = Map<string, { members: number; centroid: number[] }>;
+/**
+ * The mean vector of the roots each topic of the round accepted. Read in pages
+ * and summed here: one statement over every confirmed root does not fit in the
+ * statement timeout of a real brand.
+ */
+export async function readSignalListeningConfirmedCentroidsV1(database: Database, cycle: SignalListeningCycleV1, round: Pick<SignalListeningRoundV1, "id">,
+  heartbeat: () => Promise<void> = async () => undefined, page_size = 500): Promise<SignalListeningConfirmedCentroidsV1> {
+  const accepted = (await database.query<{ root_id: string; topic_keys: string[] }>(`WITH ${VALID}
+    SELECT root_id,array_agg(topic_key ORDER BY topic_key) topic_keys FROM valid WHERE ok GROUP BY 1 ORDER BY 1`,
+    [cycle.workspace_id, cycle.base_map_id, round.id, cycle.policy.approval])).rows;
+  const sums = new Map<string, { members: number; sum: Float64Array }>();
+  for (let from = 0; from < accepted.length; from += page_size) {
+    const page = accepted.slice(from, from + page_size), topics = new Map(page.map(row => [row.root_id, row.topic_keys]));
+    for (const row of await readSignalListeningRootVectorsV1(database, cycle, page.map(item => item.root_id))) {
+      for (const topic_key of topics.get(row.root_id) ?? []) {
+        let entry = sums.get(topic_key);
+        if (!entry) sums.set(topic_key, entry = { members: 0, sum: new Float64Array(row.vector.length) });
+        // A root without a vector of the map's size cannot move a centroid.
+        if (entry.sum.length !== row.vector.length) continue;
+        for (let d = 0; d < entry.sum.length; d++) entry.sum[d]! += row.vector[d]!;
+        entry.members += 1;
+      }
+    }
+    await heartbeat();
+  }
+  return new Map([...sums].map(([topic_key, entry]) => [topic_key, { members: entry.members, centroid: Array.from(entry.sum, value => value / entry.members) }]));
+}
+
 /**
  * Stores the review and opens the next round with the reviewed map. Each topic
  * of the new round gets the centroid of the roots that were confirmed for it
@@ -251,8 +281,10 @@ export async function saveSignalListeningOrphanGroupsV1(database: Database, roun
  * orphan groups that support it.
  */
 export async function openSignalListeningNextRoundV1(args: { database: Database; cycle: SignalListeningCycleV1; round: SignalListeningRoundV1;
-  catalog: SignalListeningCatalogTopicV1[]; themes: SignalListeningThemeV1[]; review: Record<string, unknown> }): Promise<{ round_id: string }> {
-  const { cycle, round } = args, configuration = await readSignalListeningCycleConfigurationV1(args.database, cycle);
+  catalog: SignalListeningCatalogTopicV1[]; themes: SignalListeningThemeV1[]; review: Record<string, unknown>;
+  /** Confirmed members of every topic of the measured round, so merges can be weighted. */
+  confirmed: SignalListeningConfirmedCentroidsV1 }): Promise<{ round_id: string }> {
+  const { cycle, round, confirmed } = args, configuration = await readSignalListeningCycleConfigurationV1(args.database, cycle);
   return shared.transaction(args.database, async client => {
     const owned = (await client.query("SELECT 1 FROM signal_listening_cycles WHERE id=$1 AND lease_token=$2 FOR UPDATE", [cycle.id, cycle.lease_token])).rows.length;
     if (!owned) throw new Error("listening_cycle_lease_lost");
@@ -260,14 +292,6 @@ export async function openSignalListeningNextRoundV1(args: { database: Database;
       [round.id, JSON.stringify(args.review)]);
     const existing = (await client.query<{ id: string }>("SELECT id FROM signal_listening_rounds WHERE cycle_id=$1 AND round_no=$2", [cycle.id, round.round_no + 1])).rows[0];
     if (existing) return { round_id: existing.id };
-    // Confirmed members of every topic of the measured round, summed so merges can be weighted.
-    const confirmed = new Map((await client.query<{ topic_key: string; members: number; centroid: number[] }>(`WITH ${VALID}
-      SELECT valid.topic_key,count(*)::int members,avg(embedding.embedding)::real[] centroid FROM valid
-      JOIN signal_mass_labeling_items item ON item.map_id=$2 AND item.root_id=valid.root_id
-      JOIN signal_mass_labeling_maps map ON map.id=item.map_id AND map.workspace_id=item.workspace_id
-      JOIN signal_workspace_chunk_embeddings embedding ON embedding.workspace_id=item.workspace_id AND embedding.config_digest=map.embedding_config_digest
-        AND embedding.chunk_sha256=item.chunk_sha256
-      WHERE valid.ok GROUP BY 1`, [cycle.workspace_id, cycle.base_map_id, round.id, cycle.policy.approval])).rows.map(row => [row.topic_key, row]));
     const previous = new Map((await client.query<{ topic_key: string; centroid: string | null }>(
       "SELECT topic_key,centroid::text centroid FROM signal_listening_round_topics WHERE round_id=$1", [round.id])).rows.map(row => [row.topic_key, row.centroid]));
     const groups = new Map((round.orphan_groups ?? []).map(group => [group.group_key, group]));

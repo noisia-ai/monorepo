@@ -1,7 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import type { Pool } from "pg";
 import {
-  beginSignalListeningReviewV1, chargeSignalListeningCycleV1, claimSignalListeningCycleV1, finishSignalListeningCycleV1, recordSignalListeningReviewAnswerV1, getSignalListeningCycleV1, measureSignalListeningRoundV1, openSignalListeningNextRoundV1,
+  beginSignalListeningReviewV1, chargeSignalListeningCycleV1, claimSignalListeningCycleV1, finishSignalListeningCycleV1, recordSignalListeningReviewAnswerV1, getSignalListeningCycleV1, measureSignalListeningRoundV1, openSignalListeningNextRoundV1, readSignalListeningConfirmedCentroidsV1,
   listSignalListeningOrphanRootsV1, readSignalListeningCycleConfigurationV1, readSignalListeningRootVectorsV1, releaseSignalListeningCycleV1, renewSignalListeningCycleV1,
   requestSignalListeningRoundRunV1, saveSignalListeningOrphanGroupsV1, saveSignalListeningReviewV1, settleSignalListeningRoundRunV1,
   type SignalListeningCycleV1, type SignalListeningRoundV1, type SignalListeningStoredOrphanGroupV1,
@@ -34,10 +34,12 @@ export function createSonnetListeningReviewerV1(options: { apiKey: string; clien
   const client = options.client ?? new Anthropic({ apiKey: options.apiKey, maxRetries: 2 });
   return async request => {
     const message = await client.messages.stream({
-      model: SIGNAL_LISTENING_REVIEW_MODEL_V1, max_tokens: 64_000, thinking: { type: "adaptive" },
+      // Thinking shares the output limit with the answer, and a whole map is a long answer: two real
+      // reviews with thinking on ran out of room before finishing. The evidence is explicit in the
+      // request, so the answer is written directly.
+      model: SIGNAL_LISTENING_REVIEW_MODEL_V1, max_tokens: 64_000, thinking: { type: "disabled" },
       system: request.system,
-      // Thinking shares the output limit with the answer: medium effort leaves the room to the map itself.
-      output_config: { effort: "medium", format: { type: "json_schema", schema: SIGNAL_LISTENING_REVIEW_SCHEMA_V1 as unknown as Record<string, unknown> } },
+      output_config: { format: { type: "json_schema", schema: SIGNAL_LISTENING_REVIEW_SCHEMA_V1 as unknown as Record<string, unknown> } },
       messages: [{ role: "user", content: request.payload }],
     }).finalMessage();
     if (message.stop_reason === "refusal") throw new ListeningReviewErrorV1("listening_review_refused", message.usage);
@@ -154,7 +156,8 @@ export async function stepSignalListeningCycleV1(args: { database: Database; cyc
       await finishSignalListeningCycleV1(database, cycle, { status: "completed", stop_reason: "map_unchanged" });
       return "done";
     }
-    await openSignalListeningNextRoundV1({ database, cycle, round, catalog: result.catalog, themes: result.themes, review });
+    const confirmed = await readSignalListeningConfirmedCentroidsV1(database, cycle, round, args.heartbeat);
+    await openSignalListeningNextRoundV1({ database, cycle, round, catalog: result.catalog, themes: result.themes, review, confirmed });
     return "continue";
   }
   // `reviewed` on the last round means the review changed nothing and the cycle only needs closing.

@@ -102,12 +102,14 @@ What you receive:
 - Pairs of topics that the classifier often accepts together for the same post. These may be twins: two topics that mean the same thing.
 - Groups of posts about the category that no topic accepted, each with excerpts.
 
-What to decide. Every current topic goes in exactly one of two lists:
-- kept: the topic is right as it is. Give only its key, its domain and its theme. Its wording stays untouched. Most topics belong here.
+What to decide, in this order. First name the themes. Then write the changed list: go through every pair of possible twins and every orphan group before anything else. Only then list the rest as kept. Every current topic goes in exactly one of the two lists:
 - changed: a topic whose wording must change, or a new one. Each entry has an action:
   - redefine: same topic, clearer wording. Use it for twins that are in fact different: write contrastive definitions that say what the topic is and what it is not, naming the neighbouring topic it is confused with. Its only source is itself.
   - merge: two or more topics that mean the same become one. List every source topic.
   - new: a topic that an orphan group shows and no existing topic covers. List the orphan groups that support it and no source topics. Vocabulary of the category alone is not a topic.
+- kept: the topic is right as it is. Give only its key, its domain and its theme. Its wording stays untouched. Most topics belong here.
+
+A pair of possible twins is settled in one of three ways: merge them when they mean the same; redefine both with contrast when they are different but their wording lets the same post fit both; leave both kept when they simply tend to happen together in the same post.
 
 Change only what the evidence asks for. A topic that is not in a twin pair and is not weak is almost always kept. Changing a wording has a cost: every post has to be classified again for it.
 
@@ -126,17 +128,18 @@ const wordingWire = { type: "object", additionalProperties: false, required: ["n
 const domainWire = { type: "string", enum: ["category", "adjacent", "outside"] } as const;
 /** Kept topics carry no wording, so a map where little changes is a short answer. */
 export const SIGNAL_LISTENING_REVIEW_SCHEMA_V1 = {
-  type: "object", additionalProperties: false, required: ["themes", "kept", "changed"],
+  // The answer is written in this order and without a scratchpad: the changes come before the long list of kept topics so they are decided first.
+  type: "object", additionalProperties: false, required: ["themes", "changed", "kept"],
   properties: {
     themes: { type: "array", items: { type: "object", additionalProperties: false, required: ["key", "name_original", "name_en", "name_es"],
       properties: { key: text, name_original: text, name_en: text, name_es: text } } },
-    kept: { type: "array", items: { type: "object", additionalProperties: false, required: ["key", "domain", "theme_key"],
-      properties: { key: text, domain: domainWire, theme_key: text } } },
     changed: { type: "array", items: { type: "object", additionalProperties: false,
       required: ["key", "action", "source_topic_keys", "orphan_group_keys", "domain", "theme_key", "original_language", "original", "en", "es"],
       properties: { key: text, action: { type: "string", enum: ["redefine", "merge", "new"] },
         source_topic_keys: { type: "array", items: text }, orphan_group_keys: { type: "array", items: text },
         domain: domainWire, theme_key: text, original_language: text, original: wordingWire, en: wordingWire, es: wordingWire } } },
+    kept: { type: "array", items: { type: "object", additionalProperties: false, required: ["key", "domain", "theme_key"],
+      properties: { key: text, domain: domainWire, theme_key: text } } },
   },
 } as const;
 const domainOutput = z.enum(["category", "adjacent", "outside"]), wordingOutput = z.object({ name: z.string(), definition: z.string() });

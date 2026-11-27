@@ -21,8 +21,7 @@ test("the review is one streamed Sonnet 4.6 request constrained to the review sc
   assert.equal(sent[0]!.system, "rules");
   assert.deepEqual(sent[0]!.messages, [{ role: "user", content: '{"topics":[]}' }]);
   assert.equal(sent[0]!.output_config.format.type, "json_schema");
-  assert.deepEqual(sent[0]!.thinking, { type: "adaptive" });
-  assert.equal((sent[0]!.output_config as { effort?: string }).effort, "medium");
+  assert.deepEqual(sent[0]!.thinking, { type: "disabled" }, "the whole output limit is left to the map");
 });
 
 test("a refusal, a truncated answer or broken JSON is an error, never a partial map", async () => {
