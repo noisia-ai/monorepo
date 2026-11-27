@@ -13,9 +13,9 @@ export async function POST(request: Request, context: { params: Promise<{ worksp
   const loaded = await loadSignalWorkspaceContextForTopics(workspaceId);
   if ("response" in loaded) return loaded.response;
   try {
-    // The retry key of the mutation hook is accepted and not needed: corrections are appended, and the latest one wins.
-    const edit = listeningMapEditSchemaV1.parse(await request.json());
+    // The retry key of the mutation hook travels with the correction: the same attempt sent twice is recorded once.
+    const { idempotency_key, ...edit } = listeningMapEditSchemaV1.parse(await request.json());
     return topicResponse({ contract_version: "signal-listening-map-edit-v1", ...await applySignalListeningHumanEditV1({ database: pool, workspace_id: workspaceId,
-      actor_user_id: loaded.session.appUser.id, edit }) });
+      actor_user_id: loaded.session.appUser.id, edit, ...(idempotency_key ? { intent_key: idempotency_key } : {}) }) });
   } catch (error) { return topicError(error, "listening_edit_rejected"); }
 }

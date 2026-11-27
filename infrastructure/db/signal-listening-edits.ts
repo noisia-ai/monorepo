@@ -240,18 +240,29 @@ export type SignalListeningHumanEditV1 = { operation: "remove_label"; topic_key:
  * and its numbers are read with them applied, and later discovery cycles leave
  * a merged topic as the person left it.
  */
-export async function applySignalListeningHumanEditV1(access: Access & { edit: SignalListeningHumanEditV1 }) {
-  const { edit } = access;
+export async function applySignalListeningHumanEditV1(access: Access & { edit: SignalListeningHumanEditV1;
+  /** The key of this attempt. The same key again, after an answer that was lost, finds the correction made and adds nothing. */
+  intent_key?: string }) {
+  const { edit } = access, intent = access.intent_key;
+  if (intent !== undefined && (typeof intent !== "string" || intent.length < 8 || intent.length > 200)) fail("listening_edit_invalid", 422);
   return shared.transaction(access.database, async client => {
     await shared.lock(client, access.workspace_id);
     await shared.authorize(client, access, "edit");
+    // A correction is appended and the latest wins, so adding it twice would put it after what someone else corrected
+    // in between. A repeated attempt is recognised by its key and answered with what the first one did.
+    if (intent) {
+      const made = (await client.query<{ applied: string | null }>(`SELECT payload->>'applied' applied FROM signal_listening_human_edits
+        WHERE workspace_id=$1 AND created_by_user_id=$2 AND payload->>'intent_key'=$3 ORDER BY created_at,id LIMIT 1`, [access.workspace_id, access.actor_user_id, intent])).rows[0];
+      if (made?.applied) return { applied: made.applied as "remove_label" | "move_label" | "merge_topics" };
+    }
     const map = await finalMap(client, access.workspace_id);
     if (!map) fail("listening_map_required");
     // Only topics the map shows today can be corrected: one that was folded into another is no longer there.
     const shown = (key: string) => topicKey.test(key) && !map.merged.has(key) && map.catalog.some(topic => topic.topic_key === key);
     const insert = (operation: string, topic_key: string, root_id: string | null, payload: Record<string, unknown>) => client.query(
       "INSERT INTO signal_listening_human_edits(workspace_id,operation,topic_key,root_id,payload,created_by_user_id) VALUES($1,$2,$3,$4,$5::jsonb,$6)",
-      [access.workspace_id, operation, topic_key, root_id, JSON.stringify({ ...payload, cycle_id: map.cycle_id }), access.actor_user_id]);
+      [access.workspace_id, operation, topic_key, root_id, JSON.stringify({ ...payload, cycle_id: map.cycle_id, applied: edit.operation, ...(intent ? { intent_key: intent } : {}) }),
+        access.actor_user_id]);
     if (edit.operation === "merge_topics") {
       // A retried click after a lost answer finds the merge done: that is a success, not an error.
       if (map.merged.get(edit.source_topic_key) === edit.target_topic_key) return { applied: "merge_topics" as const };
