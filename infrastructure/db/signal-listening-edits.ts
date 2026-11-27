@@ -194,7 +194,10 @@ export async function readSignalListeningTopicMentionsV1(access: Access & { topi
       members AS (
         SELECT answered.root_id FROM answered WHERE answered.probability>=$4::real AND (answered.topic_key=$8
           OR NOT EXISTS(SELECT 1 FROM latest WHERE latest.root_id=answered.root_id AND latest.topic_key=answered.topic_key))
-        UNION SELECT latest.root_id FROM latest WHERE latest.topic_key<>$8 AND latest.operation='add_label'),
+        -- A mention a person added to a folded topic counts only while it is in the map being read.
+        UNION SELECT latest.root_id FROM latest
+        JOIN signal_mass_labeling_items item ON item.workspace_id=$1 AND item.map_id=$2 AND item.root_id=latest.root_id
+        WHERE latest.topic_key<>$8 AND latest.operation='add_label'),
       classified AS (
         SELECT members.root_id FROM members WHERE $7::real IS NULL
         UNION ALL
