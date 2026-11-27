@@ -8,6 +8,7 @@ import { useLocale, useTranslations } from "next-intl";
 import type { SignalFilterV1, SignalWorkspaceOverviewV1, SignalWorkspaceImportedOverviewV1, SignalWorkspaceTopicsOverviewV1, SignalWorkspaceDefinedInterestOverviewV1, SignalWorkspaceTopicEvidencePageV1 } from "@noisia/query-engine";
 import { localizedSignalTopic } from "./signal-topic-localization";
 import { SignalV2ModuleHeader } from "./SignalV2ModuleHeader";
+import { SignalListeningMap, SignalPreviousMap } from "./SignalListeningMap";
 import { SignalAnalyticsFilter, type SignalAnalyticsFilterSelection } from "./SignalAnalyticsFilter";
 import { SignalDataScopeFilter } from "./SignalDataScopeFilter";
 import { SignalEChart } from "./SignalEChart";
@@ -97,6 +98,8 @@ function SignalComputedWorkspaceTopics({ initialBundle, brandName, data, loading
   const [termLimit, setTermLimit] = useState(50);
   const [section, setSection] = useState<NativeTopicSection>("topics");
   const [rankingView, setRankingView] = useState<"list" | "chart">("list");
+  // True when the brand has a reviewed map: it is listed first and what this page listed before is folded under it.
+  const [reviewed, setReviewed] = useState(false);
   const tabsId = useId();
   const tabButtons = useRef<Array<HTMLButtonElement | null>>([]);
 
@@ -245,6 +248,9 @@ function SignalComputedWorkspaceTopics({ initialBundle, brandName, data, loading
         <button className="signal-v2-filter" type="button" disabled={loading} onClick={() => void refresh()}><ArrowClockwise size={16} />{t("refresh")}</button>
         <span>{t("workspaceTimezone", { timezone: workspaceTimezone })}</span></>} />
     {refreshFailed ? <div className="signal-v2-error" role="alert">{t("refreshError")}</div> : null}
+    {surface === "topics" ? <SignalListeningMap workspaceId={data.workspace_id} onAvailable={setReviewed}
+      period={{ date_from: data.filters.date_from, date_to: data.filters.date_to, timezone: data.filters.timezone ?? workspaceTimezone }} /> : null}
+    <SignalPreviousMap folded={surface === "topics" && reviewed}>
     {data.consumer_indicators ? <SignalWorkspaceConsumerIndicators data={data} loading={loading}
       workspaceTimezone={workspaceTimezone} onOpenMention={onOpenMention} /> : null}
     <div aria-busy={loading} className={`signal-v2-tn__data-stage${loading ? " signal-v2-dashboard-stage--loading" : ""}`}>
@@ -361,6 +367,7 @@ function SignalComputedWorkspaceTopics({ initialBundle, brandName, data, loading
       onOpenEnriched={onOpenMention ? record => { setDrawer(false); onOpenMention(record.id); } : undefined}
       onLoadMore={evidence?.next_cursor ? () => void read(evidence.next_cursor!) : error && data.is_current ? () => void read() : undefined}
       loadMoreLabel={t(error ? "refresh" : "more")} openOriginalLabel={t("original")} openingEnrichedLabel={t("loading")} viewEnrichedLabel={t("openMention")} /> : null}
+    </SignalPreviousMap>
   </div>;
 }
 

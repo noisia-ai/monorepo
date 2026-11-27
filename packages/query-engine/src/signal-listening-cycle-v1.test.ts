@@ -209,3 +209,12 @@ test("the rule respects what the agent and people already decided, and follows c
   const old = applySignalListeningRuleMergesV1({ catalog, themes: [], policy: { ...policy, twin }, evidence: { ...measured, twins: [pair("bitter", "bitterness", 0.9)] } });
   assert.deepEqual([old.rule_merges.length, old.map_changed], [0, false]);
 });
+
+test("in a chain the topic that already took another in is compared with all it holds", () => {
+  // bitter (300) takes bitterness (50) in first; price (100) then meets what stands in the place of bitterness: 350, not 50.
+  const evidence = { topics: sizes({ bitter: 300, bitterness: 50, price: 100, auction: 10, ritual: 50 }), twins: [pair("bitter", "bitterness", 0.6), pair("bitterness", "price", 0.5)] };
+  const result = applySignalListeningRuleMergesV1({ catalog, themes: [], policy, evidence });
+  assert.deepEqual(result.rule_merges, [{ stays: "bitter", folded: "bitterness", reason: "accepted_together" }, { stays: "bitter", folded: "price", reason: "accepted_together" }]);
+  assert.deepEqual(result.catalog.find(item => item.topic_key === "bitter")!.source_topic_keys, ["bitter", "bitterness", "price"]);
+  assert.deepEqual(result.catalog.find(item => item.topic_key === "bitter")!.localization, catalog[0]!.localization, "the wording of the largest topic is the one that stays");
+});

@@ -7,18 +7,13 @@ import { useMfpMutation } from "../brands/useMfpResource";
 
 type Period = { date_from: string | null; date_to: string | null; timezone: string };
 /**
- * The Topics page of Signal. When the brand has a reviewed map, that map is the
- * page: themes and their topics, with the page's period. What the page showed
- * before stays underneath, folded, as the previous map. Without a reviewed map
- * the page is shown as it was.
+ * What the Topics page listed before the brand had a reviewed map. With a
+ * reviewed map it stays on the page, folded, as the previous map; without one
+ * it is shown as it always was. The page's header and period stay outside.
  */
-export function SignalReviewedTopics({ workspaceId, period, children }: { workspaceId: string; period: Period; children: ReactNode }) {
+export function SignalPreviousMap({ folded, children }: { folded: boolean; children: ReactNode }) {
   const t = useTranslations("Listening.map");
-  const [reviewed, setReviewed] = useState(false);
-  return <>
-    <SignalListeningMap workspaceId={workspaceId} period={period} onAvailable={setReviewed} />
-    {reviewed ? <details className="signal-v2-listening__previous"><summary>{t("previousMap")}</summary>{children}</details> : children}
-  </>;
+  return folded ? <details className="signal-v2-listening__previous"><summary>{t("previousMap")}</summary>{children}</details> : <>{children}</>;
 }
 
 /**
@@ -39,20 +34,26 @@ export function SignalListeningMap({ workspaceId, period, onAvailable }: { works
   const edit = useMfpMutation(`${endpoint}/edits`);
 
   const start = period?.date_from ?? null, end = period?.date_to ?? null, timezone = period?.timezone ?? null;
-  const readMap = useCallback(async (signal?: AbortSignal) => {
+  // The map and the mentions of a topic are read for the same period.
+  const when = useCallback(() => {
     const query = new URLSearchParams();
     if (start) query.set("start", start);
     if (end) query.set("end", end);
-    if (timezone) query.set("tz", timezone);
+    if (timezone && (start || end)) query.set("tz", timezone);
+    return query;
+  }, [start, end, timezone]);
+  const readMap = useCallback(async (signal?: AbortSignal) => {
+    const query = when();
     const response = await fetch(query.size ? `${endpoint}?${query}` : endpoint, { cache: "no-store", signal });
     if (response.ok) setMap(await response.json() as SignalListeningMapV1);
-  }, [endpoint, start, end, timezone]);
+  }, [endpoint, when]);
   const available = Boolean(map?.cycle_id);
   useEffect(() => { onAvailable?.(available); }, [available, onAvailable]);
   const readMentions = useCallback(async (topic: string, signal?: AbortSignal) => {
-    const response = await fetch(`${endpoint}/mentions?topic=${encodeURIComponent(topic)}`, { cache: "no-store", signal });
+    const query = when(); query.set("topic", topic);
+    const response = await fetch(`${endpoint}/mentions?${query}`, { cache: "no-store", signal });
     setMentions(response.ok ? await response.json() as SignalListeningTopicMentionsV1 : null);
-  }, [endpoint]);
+  }, [endpoint, when]);
   useEffect(() => {
     const controller = new AbortController();
     setMap(null); setOpen(null);

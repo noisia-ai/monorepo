@@ -316,8 +316,10 @@ export function applySignalListeningReviewV1(args: { catalog: SignalListeningCat
       if (!pair.forced && a === pair.left && b === pair.right && redefined.has(a) && redefined.has(b)) { probation.push({ left: pair.left, right: pair.right }); continue; }
       const first = next.get(a)!, second = next.get(b)!;
       if (first.human_locked || second.human_locked) { rejected.push({ key: `${pair.left}+${pair.right}`, reason: "rule_merge_human_locked" }); continue; }
-      // The topic with more confirmed posts stays with its wording and takes the other in.
-      const sizeA = approved.get(pair.left) ?? 0, sizeB = approved.get(pair.right) ?? 0;
+      // The topic with more confirmed posts stays with its wording and takes the other in. After earlier merges
+      // a side of the pair is whatever stands in its place now, with everything it already took in.
+      const standing = (key: string) => [...home].reduce((sum, [source, where]) => where === key ? sum + (approved.get(source) ?? 0) : sum, 0);
+      const sizeA = standing(a), sizeB = standing(b);
       const stays = sizeA > sizeB || (sizeA === sizeB && a < b) ? first : second, folded = stays === first ? second : first;
       const sources = [...new Set([...lineage(stays), ...lineage(folded)])].sort();
       if (sources.length > 64) { rejected.push({ key: `${pair.left}+${pair.right}`, reason: "rule_merge_too_wide" }); continue; }

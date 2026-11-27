@@ -13,10 +13,11 @@ export async function GET(request: Request, context: { params: Promise<{ workspa
   const loaded = await loadSignalWorkspaceContextForTopics(workspaceId);
   if ("response" in loaded) return loaded.response;
   const query = new URL(request.url).searchParams, topic = query.get("topic"), level = query.get("level") ?? "confirmed";
-  if (!topic || (level !== "confirmed" && level !== "probable") || [...query.keys()].some(name => name !== "topic" && name !== "level")) {
+  if (!topic || (level !== "confirmed" && level !== "probable") || [...query.keys()].some(name => !["topic", "level", "start", "end", "tz"].includes(name))) {
     return topicResponse({ error: "listening_request_invalid" }, 422);
   }
   try {
-    return topicResponse(await readSignalListeningTopicMentionsV1({ database: pool, workspace_id: workspaceId, actor_user_id: loaded.session.appUser.id, topic_key: topic, level }));
+    return topicResponse(await readSignalListeningTopicMentionsV1({ database: pool, workspace_id: workspaceId, actor_user_id: loaded.session.appUser.id, topic_key: topic, level,
+      period: { date_from: query.get("start"), date_to: query.get("end"), timezone: query.get("tz") ?? "UTC" } }));
   } catch (error) { return topicError(error, "listening_mentions_unavailable"); }
 }
