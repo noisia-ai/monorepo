@@ -4,6 +4,7 @@ import seed from "./data/study-templates/triggers-barriers.r16b-v1.json";
 import seedV2 from "./data/study-templates/triggers-barriers.r16b-v2.json";
 import seedV3 from "./data/study-templates/triggers-barriers.r16b-v3.1.json";
 import seedV32 from "./data/study-templates/triggers-barriers.r16b-v3.2.json";
+import seedV33 from "./data/study-templates/triggers-barriers.r16b-v3.3.json";
 import type { JevQuestionV1 } from "./signal-mention-facets-jev-v1";
 import { signalListeningQuestionIdentityV1, type SignalListeningAskedQuestionV1 } from "./signal-listening-questions-v1";
 
@@ -35,6 +36,9 @@ const templateSchema = z.object({
     group_uses: z.array(z.string()).min(1).max(4).optional(),
     /** A direction counts from this probability up; below it the post is kept as probable and read as `none`. */
     direction_min_probability: z.number().min(0).max(1).optional(),
+    /** Which figure of the classifier's answer the lines of the direction are read on: the probability of the option it
+     * chose, or the confidence it reports for the choice, which runs lower. Without it, the confidence. */
+    direction_probability_of: z.enum(["confidence", "chosen_option"]).optional(),
     /** A direction below the line that counts and from this probability up still enters motive discovery (grouping and
      * naming). It is not counted in any volume, weight or split by direction. */
     direction_discovery_min_probability: z.number().min(0).max(1).optional(),
@@ -86,8 +90,11 @@ export const SIGNAL_STUDY_TB_TEMPLATE_V2: Readonly<SignalStudyTemplateV1> = vali
  */
 export const SIGNAL_STUDY_TB_TEMPLATE_V3: Readonly<SignalStudyTemplateV1> = validateSignalStudyTemplateV1(seedV3);
 /**
- * The template new studies are made with (r16b-v3.2), chosen on two blind
- * samples. The third template's direction turned out stricter than the second:
+ * r16b-v3.2, chosen on two blind samples. It read its lines on the confidence
+ * the classifier reports, while the samples were judged on the probability of
+ * the option chosen, which runs higher: it counted a fifth fewer posts than
+ * what was measured. No study finished with it; r16b-v3.3 below replaces it.
+ * The third template's direction turned out stricter than the second:
  * every restriction in the wording lowers the classifier's confidence, and
  * wording hardly moves what passes 0.85. So the direction is worded in the
  * positive (what a force is, with `none` as one more option), it says that the
@@ -97,6 +104,13 @@ export const SIGNAL_STUDY_TB_TEMPLATE_V3: Readonly<SignalStudyTemplateV1> = vali
  * grouped and named with the rest and counted nowhere.
  */
 export const SIGNAL_STUDY_TB_TEMPLATE_V3_2: Readonly<SignalStudyTemplateV1> = validateSignalStudyTemplateV1(seedV32);
+/** The template new studies are made with: r16b-v3.2 with its lines read on the probability of the option the classifier
+ * chose, the figure the blind samples were judged on. */
+export const SIGNAL_STUDY_TB_TEMPLATE_V3_3: Readonly<SignalStudyTemplateV1> = validateSignalStudyTemplateV1(seedV33);
+/** The SQL for the figure a template reads its direction lines on, over an answer aliased `direction`. */
+export function signalStudyDirectionProbabilitySqlV1(rules: Pick<SignalStudyTemplateV1["rules"], "direction_probability_of">): string {
+  return rules.direction_probability_of === "chosen_option" ? "(direction.probabilities->>direction.choice)::real" : "direction.probability";
+}
 /** A study may use its own lexicon for its cut instead of the brand's: lowercase terms, one or two words each. */
 export function validateSignalStudyLexiconV1(value: unknown): string[] {
   const parsed = z.array(z.string().trim().min(2).max(80)).min(1).max(400).safeParse(value);

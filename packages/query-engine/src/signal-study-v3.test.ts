@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { compileSignalStudyAxesV1, resolveSignalStudyAxesV1, signalStudyInMotivePoolV1, SIGNAL_STUDY_TB_TEMPLATE_V2 as second, SIGNAL_STUDY_TB_TEMPLATE_V3 as template, SIGNAL_STUDY_TB_TEMPLATE_V3_2 as current,
+import { compileSignalStudyAxesV1, resolveSignalStudyAxesV1, signalStudyInMotivePoolV1, SIGNAL_STUDY_TB_TEMPLATE_V2 as second, signalStudyDirectionProbabilitySqlV1, SIGNAL_STUDY_TB_TEMPLATE_V3 as template, SIGNAL_STUDY_TB_TEMPLATE_V3_2 as current, SIGNAL_STUDY_TB_TEMPLATE_V3_3 as latest,
   type SignalStudySubjectV1 } from "./signal-study-v1";
 
 const subject: SignalStudySubjectV1 = { kind: "category", name: "sparkling water", category: "sparkling water", own_brand: "Brand One", competitors: ["Brand Two"], alternatives: [] };
@@ -64,4 +64,15 @@ test("the template in use counts a direction from 0.70 and lets the band below i
   assert.equal(signalStudyInMotivePoolV1(current, by(0.6, "figurative_or_ironic")), false, "figurative or ironic use stays out of discovery too");
   // An earlier template has no such band.
   assert.equal(resolveSignalStudyAxesV1(subject, { direction: "barrier", target: "category", use: "literal", direction_probability: 0.6 }, template.rules).discovery, false);
+});
+
+test("the lines of the direction are read on the probability of the option chosen, the figure they were measured on", () => {
+  assert.equal(latest.version, "r16b-v3.3");
+  const { direction_probability_of: figure, ...rules } = latest.rules;
+  assert.equal(figure, "chosen_option");
+  assert.deepEqual(rules, current.rules, "nothing else changes");
+  assert.deepEqual(compileSignalStudyAxesV1(latest, subject), compileSignalStudyAxesV1(current, subject), "the questions are the same: nothing is asked again");
+  assert.equal(signalStudyDirectionProbabilitySqlV1(latest.rules), "(direction.probabilities->>direction.choice)::real");
+  // Earlier templates keep the confidence the classifier reports, which runs lower.
+  for (const earlier of [second, template, current]) assert.equal(signalStudyDirectionProbabilitySqlV1(earlier.rules), "direction.probability");
 });
