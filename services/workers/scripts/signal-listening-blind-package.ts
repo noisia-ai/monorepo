@@ -43,7 +43,7 @@ try {
     .filter(row => visible.has(row.topic_key));
   const cohorts = volumes.slice(0, topicCount);
   if (cohorts.length < topicCount) throw new Error("not enough topics with confirmed roots");
-  const seed = randomBytes(32);
+  const seed = randomBytes(32), sampled = new Set<string>();
   const cases: Array<{ case_id: string; text: string; root_id: string; topic_key: string; probability: number; cohort_rank: number }> = [];
   for (const [rank, cohort] of cohorts.entries()) {
     const rows = (await pool.query<{ root_id: string; text: string; probability: number }>(`SELECT item.root_id,item.text,answer.probability::float8 probability
@@ -51,9 +51,11 @@ try {
       JOIN signal_listening_answers answer ON answer.question_id=topic.question_id AND answer.workspace_id=$1 AND answer.probability>=$4::real
       JOIN signal_mass_labeling_items item ON item.map_id=$2 AND item.workspace_id=$1 AND item.root_id=answer.root_id
         AND answer.input_sha=decode(substr(item.input_digest,8),'hex')
-      WHERE topic.round_id=$3 AND topic.topic_key=$5 ORDER BY md5(item.root_id::text||$6) LIMIT $7`,
-      [cycle.workspace_id, cycle.base_map_id, round.id, cycle.policy.approval, cohort.topic_key, seed.toString("hex"), perTopic])).rows;
+      WHERE topic.round_id=$3 AND topic.topic_key=$5 AND item.root_id<>ALL($8::uuid[]) ORDER BY md5(item.root_id::text||$6) LIMIT $7`,
+      [cycle.workspace_id, cycle.base_map_id, round.id, cycle.policy.approval, cohort.topic_key, seed.toString("hex"), perTopic, [...sampled]])).rows;
     if (rows.length < perTopic) throw new Error("a cohort has fewer roots than requested");
+    // A root already drawn for another cohort is not drawn again, so a repeated text never hints at an overlap.
+    for (const row of rows) sampled.add(row.root_id);
     for (const row of rows) cases.push({ case_id: createHmac("sha256", seed).update(`${rank}:${row.root_id}`).digest("hex").slice(0, 24), text: row.text,
       root_id: row.root_id, topic_key: cohort.topic_key, probability: row.probability, cohort_rank: rank + 1 });
   }

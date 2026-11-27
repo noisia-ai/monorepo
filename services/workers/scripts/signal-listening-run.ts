@@ -20,7 +20,7 @@ import pg from "pg";
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import {
-  claimSignalListeningCycleV1, getSignalListeningCycleV1, releaseSignalListeningCycleV1, requestSignalListeningCycleV1,
+  claimSignalListeningCycleV1, getSignalListeningCycleV1, releaseSignalListeningCycleV1, renewSignalListeningCycleV1, requestSignalListeningCycleV1,
   claimSignalListeningRunV1, estimateSignalListeningV1, getSignalListeningRunV1, getSignalListeningStateV1, importSignalListeningLegacyAnswersV1,
   readSignalListeningQuestionMetricsV1, requestSignalListeningRunV1, requestSignalListeningV1, requeueSignalListeningRunV1,
   saveSignalListeningQuestionsV1, SIGNAL_LISTENING_DEFAULT_PRICE_V1,
@@ -122,13 +122,15 @@ try {
     const cycle = await claimSignalListeningCycleV1(pool, required("cycle"));
     if (!cycle) throw new Error("the cycle is not claimable: it is finished or another worker holds it");
     const reviewer = createSonnetListeningReviewerV1({ apiKey: process.env.NOISIA_MASS_LABELING_ANTHROPIC_API_KEY ?? process.env.ANTHROPIC_API_KEY ?? "" });
+    // A review can take longer than the lease: it is renewed so no worker starts a second, paid one.
+    const beat = setInterval(() => void renewSignalListeningCycleV1(pool, cycle).catch(() => undefined), 60_000);
     try {
       for (let step = 0; step < Number(flag("steps") ?? 1); step++) {
         const outcome = await stepSignalListeningCycleV1({ database: pool, cycle, reviewer });
         console.error(`step ${step + 1}: ${outcome}`);
         if (outcome !== "continue") break;
       }
-    } finally { await releaseSignalListeningCycleV1(pool, cycle); }
+    } finally { clearInterval(beat); await releaseSignalListeningCycleV1(pool, cycle); }
     await cycleStatus(cycle.id);
   } else throw new Error("usage: signal-listening-run.ts request|status|local|requeue|import|estimate|question|listen|metrics|cycle|cycle-status|cycle-local");
 } finally { await pool.end(); }

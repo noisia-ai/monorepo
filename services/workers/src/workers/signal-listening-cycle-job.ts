@@ -1,7 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import type { Pool } from "pg";
 import {
-  chargeSignalListeningCycleV1, claimSignalListeningCycleV1, finishSignalListeningCycleV1, getSignalListeningCycleV1, measureSignalListeningRoundV1, openSignalListeningNextRoundV1,
+  beginSignalListeningReviewV1, chargeSignalListeningCycleV1, claimSignalListeningCycleV1, finishSignalListeningCycleV1, recordSignalListeningReviewAnswerV1, getSignalListeningCycleV1, measureSignalListeningRoundV1, openSignalListeningNextRoundV1,
   listSignalListeningOrphanRootsV1, readSignalListeningCycleConfigurationV1, readSignalListeningRootVectorsV1, releaseSignalListeningCycleV1, renewSignalListeningCycleV1,
   requestSignalListeningRoundRunV1, saveSignalListeningOrphanGroupsV1, saveSignalListeningReviewV1, settleSignalListeningRoundRunV1,
   type SignalListeningCycleV1, type SignalListeningRoundV1, type SignalListeningStoredOrphanGroupV1,
@@ -22,6 +22,8 @@ export class ListeningReviewErrorV1 extends Error {
 }
 /** Largest review this job will pay for, used to refuse a step the remaining budget cannot cover. */
 const REVIEW_RESERVE_MICRO_USD = 3_000_000;
+/** A review that fails is tried once more; after that the cycle stops instead of paying again. */
+const MAX_REVIEW_ATTEMPTS = 2;
 
 /**
  * The map review runs on Claude Sonnet 4.6, streamed because the answer can be
@@ -97,8 +99,10 @@ export async function stepSignalListeningCycleV1(args: { database: Database; cyc
   const remaining = state.cycle.cap_micro_usd - state.cycle.spent_micro_usd;
   if (round.step === "created") {
     if (!round.run_id) {
-      if (remaining < 50_000) { await finishSignalListeningCycleV1(database, cycle, { status: "failed", error_code: "listening_cycle_cap_reached" }); return "done"; }
-      await requestSignalListeningRoundRunV1(database, cycle, round, remaining);
+      // A round that may still be reviewed leaves the price of that review untouched.
+      const reserve = round.round_no < cycle.policy.stop.max_rounds ? REVIEW_RESERVE_MICRO_USD : 0;
+      if (remaining - reserve < 50_000) { await finishSignalListeningCycleV1(database, cycle, { status: "failed", error_code: "listening_cycle_cap_reached" }); return "done"; }
+      await requestSignalListeningRoundRunV1(database, cycle, round, remaining - reserve);
       return "waiting";
     }
     const run = await settleSignalListeningRoundRunV1(database, cycle, round);
@@ -115,33 +119,42 @@ export async function stepSignalListeningCycleV1(args: { database: Database; cyc
     return "continue";
   }
   if (round.step === "regrouped") {
-    if (remaining < REVIEW_RESERVE_MICRO_USD) { await finishSignalListeningCycleV1(database, cycle, { status: "failed", error_code: "listening_cycle_cap_reached" }); return "done"; }
-    const configuration = await readSignalListeningCycleConfigurationV1(database, cycle);
     const groups = round.orphan_groups ?? [];
-    const payload = buildSignalListeningReviewPayloadV1({ category: configuration.category, question_language: configuration.candidate_language,
-      catalog: round.catalog, themes: round.themes, evidence: round.evidence!, policy: cycle.policy,
-      orphan_groups: groups.map(({ centroid: _centroid, ...group }) => group) });
-    const started = Date.now();
-    let answer: Awaited<ReturnType<ListeningReviewerV1>>;
-    try { answer = await args.reviewer({ system: SIGNAL_LISTENING_REVIEW_SYSTEM_V1, payload }); }
-    catch (error) {
-      // An unusable answer was still billed: the cycle is charged before it stops.
-      if (error instanceof ListeningReviewErrorV1 && error.usage) await chargeSignalListeningCycleV1(database, cycle, signalListeningReviewCostMicroUsdV1(error.usage));
-      throw error;
+    type StoredAnswer = { model: string; usage: ListeningReviewUsageV1; cost_micro_usd: number; duration_ms: number; payload_bytes: number; output: unknown };
+    let answer = (round.review as { answer?: StoredAnswer } | null)?.answer;
+    if (!answer) {
+      // The measured round is a valid result on its own: when the budget cannot pay for a review, the cycle ends there.
+      if (remaining < REVIEW_RESERVE_MICRO_USD) { await finishSignalListeningCycleV1(database, cycle, { status: "completed", stop_reason: "budget" }); return "done"; }
+      if (await beginSignalListeningReviewV1(database, round) > MAX_REVIEW_ATTEMPTS) {
+        await finishSignalListeningCycleV1(database, cycle, { status: "failed", error_code: "listening_review_attempts_exhausted" }); return "done";
+      }
+      const configuration = await readSignalListeningCycleConfigurationV1(database, cycle);
+      const payload = buildSignalListeningReviewPayloadV1({ category: configuration.category, question_language: configuration.candidate_language,
+        catalog: round.catalog, themes: round.themes, evidence: round.evidence!, policy: cycle.policy,
+        orphan_groups: groups.map(({ centroid: _centroid, ...group }) => group) });
+      const started = Date.now();
+      let reviewed: Awaited<ReturnType<ListeningReviewerV1>>;
+      try { reviewed = await args.reviewer({ system: SIGNAL_LISTENING_REVIEW_SYSTEM_V1, payload }); }
+      catch (error) {
+        // An unusable answer was still billed: the cycle is charged before it stops.
+        if (error instanceof ListeningReviewErrorV1 && error.usage) await chargeSignalListeningCycleV1(database, cycle, signalListeningReviewCostMicroUsdV1(error.usage));
+        throw error;
+      }
+      answer = { model: reviewed.model, usage: reviewed.usage, cost_micro_usd: signalListeningReviewCostMicroUsdV1(reviewed.usage),
+        duration_ms: Date.now() - started, payload_bytes: Buffer.byteLength(payload), output: reviewed.output };
+      // The paid answer is stored and charged before anything is built on it.
+      await recordSignalListeningReviewAnswerV1(database, cycle, round, answer, answer.cost_micro_usd);
     }
-    const cost_micro_usd = signalListeningReviewCostMicroUsdV1(answer.usage);
-    let result: ReturnType<typeof applySignalListeningReviewV1>;
-    try { result = applySignalListeningReviewV1({ catalog: round.catalog, orphan_groups: groups, output: answer.output }); }
-    catch (error) { await chargeSignalListeningCycleV1(database, cycle, cost_micro_usd); throw error; }
-    const review = { model: answer.model, usage: answer.usage, cost_micro_usd, duration_ms: Date.now() - started, payload_bytes: Buffer.byteLength(payload),
-      summary: result.summary, rejected: result.rejected, map_changed: result.map_changed, output: answer.output };
+    const result = applySignalListeningReviewV1({ catalog: round.catalog, themes: round.themes, orphan_groups: groups, output: answer.output });
+    const review = { ...(round.review ?? {}), answer, summary: result.summary, rejected: result.rejected, map_changed: result.map_changed,
+      usage: answer.usage, cost_micro_usd: answer.cost_micro_usd, duration_ms: answer.duration_ms, payload_bytes: answer.payload_bytes };
     if (!result.map_changed) {
       // Nothing to ask again: the map keeps its wording and only gains its themes and domains.
-      await saveSignalListeningReviewV1(database, cycle, round, review, { catalog: result.catalog, themes: result.themes }, cost_micro_usd);
+      await saveSignalListeningReviewV1(database, cycle, round, review, { catalog: result.catalog, themes: result.themes });
       await finishSignalListeningCycleV1(database, cycle, { status: "completed", stop_reason: "map_unchanged" });
       return "done";
     }
-    await openSignalListeningNextRoundV1({ database, cycle, round, catalog: result.catalog, themes: result.themes, review, cost_micro_usd });
+    await openSignalListeningNextRoundV1({ database, cycle, round, catalog: result.catalog, themes: result.themes, review });
     return "continue";
   }
   // `reviewed` on the last round means the review changed nothing and the cycle only needs closing.
@@ -161,7 +174,8 @@ export function startSignalListeningCycleDrainerV1(options: { database?: Databas
     const cycle = await claimSignalListeningCycleV1(database);
     if (!cycle) return;
     reviewer ??= createSonnetListeningReviewerV1({ apiKey: env.NOISIA_MASS_LABELING_ANTHROPIC_API_KEY ?? env.ANTHROPIC_API_KEY ?? "" });
-    const heartbeat = async () => { await renewSignalListeningCycleV1(database, cycle); };
+    let owned = true;
+    const heartbeat = async () => { owned = await renewSignalListeningCycleV1(database, cycle) && owned; };
     const beat = setInterval(() => void heartbeat().catch(() => undefined), 60_000); beat.unref?.();
     try {
       for (;;) {
@@ -170,6 +184,8 @@ export function startSignalListeningCycleDrainerV1(options: { database?: Databas
         // While JEV answers a round, the cycle is released and looked at again on a later tick.
         if (outcome === "waiting") { await releaseSignalListeningCycleV1(database, cycle); return; }
         await heartbeat();
+        // Another worker owns the cycle now: this one stops without touching it.
+        if (!owned) { console.warn(`[listening-cycle] ${cycle.id} lease lost`); return; }
       }
     } catch (error) {
       const code = error instanceof Error && /^[a-z0-9_]{1,80}$/u.test(error.message) ? error.message : "listening_cycle_failed";

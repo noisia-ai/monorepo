@@ -48,7 +48,8 @@ test("a topic a person edited is frozen for the agent", () => {
     proposal("everything", "merge", ["ritual", "price"]),
   ]) });
   const locked = result.catalog.find(item => item.topic_key === "ritual")!;
-  assert.deepEqual(locked, catalog[4]);
+  assert.deepEqual(locked.localization, catalog[4]!.localization, "its wording is untouched");
+  assert.equal(locked.human_locked, true);
   assert.deepEqual(result.rejected.map(item => item.reason), ["human_locked", "source_already_used"]);
   assert.ok(result.catalog.some(item => item.topic_key === "price"), "the other source of the refused merge is kept");
   assert.equal(result.map_changed, false);
@@ -114,4 +115,24 @@ test("orphans are grouped by direction", () => {
   for (let row = 3; row < 90; row++) assert.equal(result.assignments[row], result.assignments[row % 3], "same direction, same group whatever the length");
   assert.ok(Math.min(...result.similarities) > 0.99);
   assert.equal(clusterSignalListeningOrphansV1({ vectors: vectors.subarray(0, 6), dimensions, groups: 10 }).sizes.reduce((sum, size) => sum + size, 0), 2);
+});
+
+test("a kept topic drops its lineage and keeps its exact wording and its theme", () => {
+  const spaced = topic("spaced", { source_topic_keys: ["older"], orphan_group_keys: ["orphans_1"], theme_key: "old_theme" });
+  spaced.localization.en.definition = "About spaced. ";
+  const before = [{ theme_key: "old_theme", name: { original: "Velho", en: "Old", es: "Viejo" } }];
+  const result = applySignalListeningReviewV1({ catalog: [spaced, topic("other")], themes: before, orphan_groups: groups, output: answer(themes, [
+    proposal("other", "keep", ["other"]) ]) });
+  const kept = result.catalog.find(item => item.topic_key === "spaced")!;
+  assert.deepEqual([kept.source_topic_keys, kept.orphan_group_keys], [[], []], "old lineage must not steer the next centroid");
+  assert.equal(kept.localization.en.definition, "About spaced. ", "trimming would change the identity of an answered question");
+  assert.equal(kept.theme_key, "old_theme", "a topic the answer does not mention keeps its theme");
+  assert.deepEqual(result.themes.map(item => item.theme_key).sort(), ["old_theme", "taste"]);
+});
+
+test("a locked topic can be placed in a theme and a domain without touching its wording", () => {
+  const result = applySignalListeningReviewV1({ catalog, orphan_groups: groups, output: answer(themes, [proposal("ritual", "keep", ["ritual"], { domain: "adjacent" })]) });
+  const locked = result.catalog.find(item => item.topic_key === "ritual")!;
+  assert.deepEqual([locked.domain, locked.theme_key, locked.human_locked], ["adjacent", "taste", true]);
+  assert.deepEqual(locked.localization, catalog[4]!.localization);
 });

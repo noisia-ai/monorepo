@@ -35,10 +35,11 @@ const CYCLE = `id,workspace_id,base_map_id,configuration_id,lexicon_revision,pol
 const ROUND = "id,cycle_id,workspace_id,round_no,step,catalog,themes,evidence,orphan_groups,review,run_id";
 const vectorText = (values: ArrayLike<number>) => `[${Array.from(values).join(",")}]`;
 
-/** Topics a person already touched: the agent must leave them exactly as they are. */
-async function lockedTopicKeys(client: Queryable, workspace_id: string, map_id: string, display_names: Record<string, unknown>) {
-  const rows = (await client.query<{ topic_key: string }>(`SELECT DISTINCT topic_key FROM signal_mass_labeling_overrides WHERE workspace_id=$1 AND map_id=$2
-    UNION SELECT DISTINCT topic_key FROM signal_listening_human_edits WHERE workspace_id=$1`, [workspace_id, map_id])).rows;
+/** Topics a person renamed or merged: the agent must leave their wording exactly as it is.
+ * Correcting one mention does not freeze the topic; that correction stays with the mention. */
+async function lockedTopicKeys(client: Queryable, workspace_id: string, display_names: Record<string, unknown>) {
+  const rows = (await client.query<{ topic_key: string }>(`SELECT DISTINCT topic_key FROM signal_listening_human_edits
+    WHERE workspace_id=$1 AND operation IN('merge_topics','rename_topic')`, [workspace_id])).rows;
   return new Set([...rows.map(row => row.topic_key), ...Object.keys(display_names)]);
 }
 
@@ -65,7 +66,8 @@ async function writeRoundTopics(client: Queryable, round: { id: string; workspac
  */
 export async function requestSignalListeningCycleV1(args: { database: Database; workspace_id: string; actor_user_id: string; cap_micro_usd: number;
   idempotency_key: string; policy?: SignalListeningCyclePolicyV1 }) {
-  if (!Number.isSafeInteger(args.cap_micro_usd) || args.cap_micro_usd < 100_000 || args.cap_micro_usd > 200_000_000) fail("listening_cap_invalid", 422);
+  // A cycle needs room for at least one map review.
+  if (!Number.isSafeInteger(args.cap_micro_usd) || args.cap_micro_usd < 3_500_000 || args.cap_micro_usd > 200_000_000) fail("listening_cap_invalid", 422);
   if (typeof args.idempotency_key !== "string" || args.idempotency_key.length < 8 || args.idempotency_key.length > 200) fail("listening_request_invalid", 422);
   const policy = args.policy ?? SIGNAL_LISTENING_CYCLE_POLICY_V1;
   return shared.transaction(args.database, async client => {
@@ -92,7 +94,7 @@ export async function requestSignalListeningCycleV1(args: { database: Database; 
     }
     const display = (await client.query<{ display_names: Record<string, unknown> }>(`SELECT display_names FROM signal_mass_labeling_study_policies
       WHERE workspace_id=$1 ORDER BY revision DESC LIMIT 1`, [args.workspace_id])).rows[0]?.display_names ?? {};
-    const locked = await lockedTopicKeys(client, args.workspace_id, target.map_id, display);
+    const locked = await lockedTopicKeys(client, args.workspace_id, display);
     // Only topics worded in all three languages enter the loop; the rest keep their published state.
     const catalog = validateSignalListeningCatalogV1(map.catalog.flatMap(topic => {
       const localization = localized.get(topic.topic_key);
@@ -118,7 +120,7 @@ export async function claimSignalListeningCycleV1(database: Database, cycle_id?:
   return (await database.query<SignalListeningCycleV1>(`UPDATE signal_listening_cycles SET status='running',lease_token=gen_random_uuid(),
     lease_until=now()+${LEASE},started_at=COALESCE(started_at,now()),updated_at=now()
     WHERE id=(SELECT id FROM signal_listening_cycles WHERE status IN('queued','running') AND ($1::uuid IS NULL OR id=$1)
-      AND (lease_until IS NULL OR lease_until<now()) ORDER BY created_at LIMIT 1 FOR UPDATE SKIP LOCKED) RETURNING ${CYCLE}`, [cycle_id ?? null])).rows[0] ?? null;
+      AND (lease_until IS NULL OR lease_until<now()) ORDER BY updated_at LIMIT 1 FOR UPDATE SKIP LOCKED) RETURNING ${CYCLE}`, [cycle_id ?? null])).rows[0] ?? null;
 }
 export async function renewSignalListeningCycleV1(database: Database, cycle: Pick<SignalListeningCycleV1, "id" | "lease_token">) {
   return (await database.query(`UPDATE signal_listening_cycles SET lease_until=now()+${LEASE},updated_at=now() WHERE id=$1 AND lease_token=$2 AND status='running'`,
@@ -249,16 +251,13 @@ export async function saveSignalListeningOrphanGroupsV1(database: Database, roun
  * orphan groups that support it.
  */
 export async function openSignalListeningNextRoundV1(args: { database: Database; cycle: SignalListeningCycleV1; round: SignalListeningRoundV1;
-  catalog: SignalListeningCatalogTopicV1[]; themes: SignalListeningThemeV1[]; review: Record<string, unknown>; cost_micro_usd: number }): Promise<{ round_id: string }> {
+  catalog: SignalListeningCatalogTopicV1[]; themes: SignalListeningThemeV1[]; review: Record<string, unknown> }): Promise<{ round_id: string }> {
   const { cycle, round } = args, configuration = await readSignalListeningCycleConfigurationV1(args.database, cycle);
   return shared.transaction(args.database, async client => {
     const owned = (await client.query("SELECT 1 FROM signal_listening_cycles WHERE id=$1 AND lease_token=$2 FOR UPDATE", [cycle.id, cycle.lease_token])).rows.length;
     if (!owned) throw new Error("listening_cycle_lease_lost");
-    // The review and its cost are recorded together, once.
-    const reviewed = await client.query("UPDATE signal_listening_rounds SET review=$2::jsonb,step='reviewed',updated_at=now() WHERE id=$1 AND step='regrouped'",
+    await client.query("UPDATE signal_listening_rounds SET review=$2::jsonb,step='reviewed',updated_at=now() WHERE id=$1 AND step='regrouped'",
       [round.id, JSON.stringify(args.review)]);
-    if (reviewed.rowCount === 1) await client.query("UPDATE signal_listening_cycles SET spent_micro_usd=spent_micro_usd+$2,updated_at=now() WHERE id=$1",
-      [cycle.id, Math.ceil(args.cost_micro_usd)]);
     const existing = (await client.query<{ id: string }>("SELECT id FROM signal_listening_rounds WHERE cycle_id=$1 AND round_no=$2", [cycle.id, round.round_no + 1])).rows[0];
     if (existing) return { round_id: existing.id };
     // Confirmed members of every topic of the measured round, summed so merges can be weighted.
@@ -298,14 +297,31 @@ export async function openSignalListeningNextRoundV1(args: { database: Database;
 /** Records a review that changed nothing: the map stays and no new round is opened. */
 export async function saveSignalListeningReviewV1(database: Database, cycle: Pick<SignalListeningCycleV1, "id" | "lease_token">,
   round: Pick<SignalListeningRoundV1, "id">, review: Record<string, unknown>,
-  placement: { catalog: SignalListeningCatalogTopicV1[]; themes: SignalListeningThemeV1[] }, cost_micro_usd: number) {
+  placement: { catalog: SignalListeningCatalogTopicV1[]; themes: SignalListeningThemeV1[] }) {
   await shared.transaction(database, async client => {
     if (!(await client.query("SELECT 1 FROM signal_listening_cycles WHERE id=$1 AND lease_token=$2 FOR UPDATE", [cycle.id, cycle.lease_token])).rows.length) {
       throw new Error("listening_cycle_lease_lost");
     }
-    const reviewed = await client.query(`UPDATE signal_listening_rounds SET review=$2::jsonb,catalog=$3::jsonb,themes=$4::jsonb,step='reviewed',updated_at=now()
+    await client.query(`UPDATE signal_listening_rounds SET review=$2::jsonb,catalog=$3::jsonb,themes=$4::jsonb,step='reviewed',updated_at=now()
       WHERE id=$1 AND step='regrouped'`, [round.id, JSON.stringify(review), JSON.stringify(placement.catalog), JSON.stringify(placement.themes)]);
-    if (reviewed.rowCount === 1) await client.query("UPDATE signal_listening_cycles SET spent_micro_usd=spent_micro_usd+$2,updated_at=now() WHERE id=$1",
+  });
+}
+/** Counts a review attempt before the provider is called, so a round that keeps dying cannot keep paying. */
+export async function beginSignalListeningReviewV1(database: Database, round: Pick<SignalListeningRoundV1, "id">): Promise<number> {
+  return (await database.query<{ attempts: number }>(`UPDATE signal_listening_rounds SET review=jsonb_set(COALESCE(review,'{}'::jsonb),'{attempts}',
+    to_jsonb(COALESCE((review->>'attempts')::int,0)+1)),updated_at=now() WHERE id=$1 AND step='regrouped' RETURNING (review->>'attempts')::int attempts`, [round.id])).rows[0]?.attempts ?? 0;
+}
+/** Stores the answer of a review and charges it, in one small transaction, before anything is built on it.
+ * A restart then applies the stored answer instead of paying for another one. */
+export async function recordSignalListeningReviewAnswerV1(database: Database, cycle: Pick<SignalListeningCycleV1, "id" | "lease_token">,
+  round: Pick<SignalListeningRoundV1, "id">, answer: Record<string, unknown>, cost_micro_usd: number) {
+  await shared.transaction(database, async client => {
+    if (!(await client.query("SELECT 1 FROM signal_listening_cycles WHERE id=$1 AND lease_token=$2 FOR UPDATE", [cycle.id, cycle.lease_token])).rows.length) {
+      throw new Error("listening_cycle_lease_lost");
+    }
+    const stored = await client.query(`UPDATE signal_listening_rounds SET review=COALESCE(review,'{}'::jsonb)||jsonb_build_object('answer',$2::jsonb),updated_at=now()
+      WHERE id=$1 AND step='regrouped' AND NOT COALESCE(review,'{}'::jsonb) ? 'answer'`, [round.id, JSON.stringify(answer)]);
+    if (stored.rowCount === 1) await client.query("UPDATE signal_listening_cycles SET spent_micro_usd=spent_micro_usd+$2,updated_at=now() WHERE id=$1",
       [cycle.id, Math.ceil(cost_micro_usd)]);
   });
 }
@@ -331,12 +347,15 @@ export async function settleSignalListeningRoundRunV1(database: Database, cycle:
     const run = (await client.query<{ status: SignalListeningRunV1["status"]; spent_micro_usd: number; roots_done: number }>(
       "SELECT status,spent_micro_usd::float8 spent_micro_usd,roots_done FROM signal_listening_runs WHERE id=$1", [round.run_id])).rows[0];
     if (!run) throw new Error("listening_round_run_unavailable");
-    if (run.status !== "completed") return run;
+    if (run.status === "queued" || run.status === "running") return run;
     if (!(await client.query("SELECT 1 FROM signal_listening_cycles WHERE id=$1 AND lease_token=$2 FOR UPDATE", [cycle.id, cycle.lease_token])).rows.length) {
       throw new Error("listening_cycle_lease_lost");
     }
-    const asked = await client.query("UPDATE signal_listening_rounds SET step='asked',updated_at=now() WHERE id=$1 AND step='created'", [round.id]);
-    if (asked.rowCount === 1) await client.query("UPDATE signal_listening_cycles SET spent_micro_usd=spent_micro_usd+$2,updated_at=now() WHERE id=$1",
+    // What the pass spent is charged once it stops, whether it finished or not.
+    const settled = await client.query(`UPDATE signal_listening_rounds SET review=COALESCE(review,'{}'::jsonb)||'{"run_charged":true}'::jsonb,
+      step=CASE WHEN $2::boolean THEN 'asked' ELSE step END,updated_at=now() WHERE id=$1 AND step='created' AND NOT COALESCE(review,'{}'::jsonb) ? 'run_charged'`,
+      [round.id, run.status === "completed"]);
+    if (settled.rowCount === 1) await client.query("UPDATE signal_listening_cycles SET spent_micro_usd=spent_micro_usd+$2,updated_at=now() WHERE id=$1",
       [cycle.id, Math.ceil(run.spent_micro_usd)]);
     return run;
   });
@@ -367,7 +386,7 @@ export async function createSignalListeningRoundSourceV1(database: Database, run
         const rows = (await database.query<RoundRow>(`SELECT item.ordinal,item.root_id,item.input_digest,item.text,
             (SELECT array_agg(closest.topic_key ORDER BY closest.distance,closest.topic_key) FROM (
               SELECT topic.topic_key,topic.centroid <=> embedding.embedding distance FROM signal_listening_round_topics topic
-              WHERE topic.round_id=$5 AND topic.centroid IS NOT NULL ORDER BY 2,1 LIMIT $6) closest) candidates
+              WHERE topic.round_id=$5 AND topic.centroid IS NOT NULL AND embedding.embedding IS NOT NULL ORDER BY 2,1 LIMIT $6) closest) candidates
           FROM signal_mass_labeling_items item
           JOIN signal_mass_labeling_maps map ON map.id=item.map_id AND map.workspace_id=item.workspace_id
           LEFT JOIN signal_workspace_chunk_embeddings embedding ON embedding.workspace_id=item.workspace_id AND embedding.config_digest=map.embedding_config_digest
@@ -376,13 +395,13 @@ export async function createSignalListeningRoundSourceV1(database: Database, run
           [run.workspace_id, scope.base_map_id, cursor, limit, plan.round_id, scope.policy.candidates_per_root])).rows;
         if (!rows.length) return [];
         cursor = rows.at(-1)!.ordinal;
+        const digests = new Map(rows.map(row => [row.root_id, row.input_digest]));
         const answered = new Map<string, Set<number>>();
         for (const answer of (await database.query<{ root_id: string; question_id: string; input_sha: string }>(
           `SELECT root_id,question_id::text,encode(input_sha,'hex') input_sha FROM signal_listening_answers
            WHERE workspace_id=$1 AND root_id=ANY($2::uuid[]) AND question_id=ANY($3::bigint[])`,
           [run.workspace_id, rows.map(row => row.root_id), [...ids.values()]])).rows) {
-          const row = rows.find(candidate => candidate.root_id === answer.root_id);
-          if (!row || `sha256:${answer.input_sha}` !== row.input_digest) continue;
+          if (`sha256:${answer.input_sha}` !== digests.get(answer.root_id)) continue;
           const set = answered.get(answer.root_id); if (set) set.add(Number(answer.question_id)); else answered.set(answer.root_id, new Set([Number(answer.question_id)]));
         }
         const items: SignalListeningItemV1[] = [];

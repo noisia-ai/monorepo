@@ -33,7 +33,10 @@ export const SIGNAL_LISTENING_CYCLE_POLICY_V1: Readonly<SignalListeningCyclePoli
 });
 
 const key = z.string().regex(/^[a-z][a-z0-9_]{0,119}$/u);
-const wording = z.object({ name: z.string().trim().min(1).max(160), definition: z.string().trim().min(1).max(1200) }).strict();
+// Wording is kept byte for byte: it is part of the identity of a question, and trimming it
+// would turn a topic that was already answered into a new, unanswered one.
+const present = (max: number) => z.string().min(1).max(max).refine(value => value.trim().length > 0);
+const wording = z.object({ name: present(160), definition: present(1200) }).strict();
 const localization = z.object({ original_language: z.string().trim().min(2).max(35), original: wording, en: wording, es: wording }).strict();
 const catalogTopic = z.object({
   topic_key: key, localization,
@@ -187,21 +190,30 @@ export type SignalListeningReviewResultV1 = {
  * partial answer: a proposal that breaks a rule is set aside with its reason,
  * and every topic the answer does not cover is kept as it was.
  */
-export function applySignalListeningReviewV1(args: { catalog: SignalListeningCatalogTopicV1[]; orphan_groups: SignalListeningOrphanGroupV1[]; output: unknown }): SignalListeningReviewResultV1 {
+export function applySignalListeningReviewV1(args: { catalog: SignalListeningCatalogTopicV1[]; themes?: SignalListeningThemeV1[];
+  orphan_groups: SignalListeningOrphanGroupV1[]; output: unknown }): SignalListeningReviewResultV1 {
   const parsed = reviewOutput.safeParse(args.output);
   if (!parsed.success) throw new Error("listening_review_output_invalid");
   const current = new Map(args.catalog.map(topic => [topic.topic_key, topic]));
   const groups = new Set(args.orphan_groups.map(group => group.group_key));
-  const themes = new Map<string, SignalListeningThemeV1>();
+  // Themes of the previous map stay available, so a topic the answer does not mention keeps its place.
+  const themes = new Map<string, SignalListeningThemeV1>((args.themes ?? []).map(item => [item.theme_key, item]));
+  const answered = new Set<string>();
   for (const item of parsed.data.themes) {
     const names = { original: clean(item.name_original), en: clean(item.name_en), es: clean(item.name_es) };
-    if (validKey(item.key) && !themes.has(item.key) && Object.values(names).every(name => name && name.length <= 160)) themes.set(item.key, { theme_key: item.key, name: names });
+    if (validKey(item.key) && !answered.has(item.key) && Object.values(names).every(name => name && name.length <= 160)) {
+      themes.set(item.key, { theme_key: item.key, name: names }); answered.add(item.key);
+    }
   }
   const used = new Set<string>(), next = new Map<string, SignalListeningCatalogTopicV1>(), rejected: SignalListeningReviewResultV1["rejected"] = [];
   const summary = { kept: 0, redefined: 0, merged: 0, created: 0, retired_by_merge: 0, outside: 0, adjacent: 0, themes: 0 };
   const themeOf = (value: string) => themes.has(value) ? value : null;
+  // A kept topic starts the next round without lineage: its centroid comes from its own confirmed
+  // members, not from the topics or orphan groups of an earlier round whose keys may be reused.
   const keep = (topic: SignalListeningCatalogTopicV1, domain = topic.domain, theme_key = topic.theme_key) => {
-    next.set(topic.topic_key, { ...topic, domain, theme_key }); used.add(topic.topic_key); summary.kept++;
+    next.set(topic.topic_key, { ...topic, domain, theme_key: theme_key !== null && themes.has(theme_key) ? theme_key : null,
+      source_topic_keys: [], orphan_group_keys: [] });
+    used.add(topic.topic_key); summary.kept++;
   };
   const empty = { name: "", definition: "" };
   // Changes are applied first: a topic listed both as kept and as the source of a change is changed.
@@ -218,10 +230,8 @@ export function applySignalListeningReviewV1(args: { catalog: SignalListeningCat
     if (proposal.action === "keep" || locked) {
       // A locked topic is kept whatever was proposed; so is each source of a rejected change.
       if (locked && proposal.action !== "keep") rejected.push({ key: proposal.key, reason: "human_locked" });
-      for (const source of sources) {
-        const topic = current.get(source)!;
-        if (topic.human_locked) keep(topic); else keep(topic, proposal.domain, themeOf(proposal.theme_key));
-      }
+      // Where a topic sits in the map (domain and theme) is not its wording: a locked topic can still be placed.
+      for (const source of sources) keep(current.get(source)!, proposal.domain, themeOf(proposal.theme_key) ?? current.get(source)!.theme_key);
       continue;
     }
     const original = usableWording(proposal.original), en = usableWording(proposal.en), es = usableWording(proposal.es);
