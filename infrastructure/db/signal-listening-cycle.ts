@@ -192,16 +192,23 @@ export async function measureSignalListeningRoundV1(database: Database, cycle: S
         (SELECT count(*)::int FROM category WHERE NOT EXISTS(SELECT 1 FROM valid WHERE valid.root_id=category.root_id AND valid.probability>=$6::real)) orphan_roots_probable`,
       [...base, cycle.lexicon_revision, policy.probable ?? policy.approval])).rows[0]!;
     // Of the posts both topics of a separated pair accepted before, how many both still accept with the new wording.
-    const probation = second_chance?.pairs.length ? (await client.query<{ left: string; right: string; jointly_asked: number; jointly_approved: number }>(`WITH ${VALID}, shared AS (
-        SELECT pair.left_key,pair.right_key,first.root_id FROM unnest($5::text[],$6::text[]) pair(left_key,right_key)
-        JOIN signal_listening_round_topics a ON a.round_id=$7 AND a.topic_key=pair.left_key
-        JOIN signal_listening_round_topics b ON b.round_id=$7 AND b.topic_key=pair.right_key
-        JOIN signal_listening_answers first ON first.question_id=a.question_id AND first.workspace_id=$1 AND first.probability>=$4::real
-        JOIN signal_listening_answers second ON second.question_id=b.question_id AND second.workspace_id=$1 AND second.root_id=first.root_id AND second.probability>=$4::real)
-      SELECT shared.left_key "left",shared.right_key "right",count(*)::int jointly_asked,count(*) FILTER (WHERE now_left.ok AND now_right.ok)::int jointly_approved
-      FROM shared LEFT JOIN valid now_left ON now_left.root_id=shared.root_id AND now_left.topic_key=shared.left_key
-      LEFT JOIN valid now_right ON now_right.root_id=shared.root_id AND now_right.topic_key=shared.right_key GROUP BY 1,2 ORDER BY 1,2`,
-      [...base, second_chance.pairs.map(pair => pair.left), second_chance.pairs.map(pair => pair.right), second_chance.previous_round_id])).rows : [];
+    // Each answer is looked up by its key: joining the whole round twice does not fit in the statement timeout of a real brand.
+    const probation = second_chance?.pairs.length ? (await client.query<{ left: string; right: string; jointly_asked: number; jointly_approved: number }>(`WITH shared AS MATERIALIZED (
+        SELECT pair.left_key,pair.right_key,first.root_id,now_a.question_id left_question,now_b.question_id right_question
+        FROM unnest($4::text[],$5::text[]) pair(left_key,right_key)
+        JOIN signal_listening_round_topics a ON a.round_id=$6 AND a.topic_key=pair.left_key
+        JOIN signal_listening_round_topics b ON b.round_id=$6 AND b.topic_key=pair.right_key
+        JOIN signal_listening_round_topics now_a ON now_a.round_id=$2 AND now_a.topic_key=pair.left_key
+        JOIN signal_listening_round_topics now_b ON now_b.round_id=$2 AND now_b.topic_key=pair.right_key
+        JOIN signal_listening_answers first ON first.question_id=a.question_id AND first.workspace_id=$1 AND first.probability>=$3::real
+        JOIN signal_listening_answers second ON second.question_id=b.question_id AND second.root_id=first.root_id AND second.workspace_id=$1 AND second.probability>=$3::real)
+      SELECT shared.left_key "left",shared.right_key "right",count(*)::int jointly_asked,
+        count(*) FILTER (WHERE now_left.probability>=$3::real AND now_right.probability>=$3::real)::int jointly_approved
+      FROM shared
+      LEFT JOIN signal_listening_answers now_left ON now_left.question_id=shared.left_question AND now_left.root_id=shared.root_id
+      LEFT JOIN signal_listening_answers now_right ON now_right.question_id=shared.right_question AND now_right.root_id=shared.root_id
+      GROUP BY 1,2 ORDER BY 1,2`,
+      [cycle.workspace_id, round.id, policy.approval, second_chance.pairs.map(pair => pair.left), second_chance.pairs.map(pair => pair.right), second_chance.previous_round_id])).rows : [];
     const topics = (await client.query<{ topic_key: string; asked: number; approved: number }>(`WITH ${VALID}
       SELECT topic.topic_key,count(valid.root_id)::int asked,count(valid.root_id) FILTER (WHERE valid.ok)::int approved
       FROM signal_listening_round_topics topic LEFT JOIN valid USING(topic_key) WHERE topic.round_id=$3 GROUP BY 1 ORDER BY 1`, base)).rows;
