@@ -229,7 +229,10 @@ export async function stepSignalStudyV1(args: { database: Database; study: Signa
     let stability: Record<string, unknown> = { unit: "posts", n: 0, kappa: null, agreement: null };
     if (posts.length) {
       const named = motives.map(motive => ({ motive_key: motive.motive_key, ...wordingOf(motive) }));
-      const reading = async (key: "layers_a" | "layers_b") => applySignalStudyMentionLayersV1({ posts, output: await agentStep({ database, study, agent: args.agent, key,
+      // Kept under their own names: a study made before the layer was read by post holds readings by motive under the
+      // old ones, in another shape, and takes these readings again instead of failing on them.
+      const reading = async (key: "layers_a" | "layers_b") => applySignalStudyMentionLayersV1({ posts, output: await agentStep({ database, study, agent: args.agent,
+        key: key === "layers_a" ? "post_layers_a" : "post_layers_b",
         system: system("layers"), schema: SIGNAL_STUDY_MENTION_LAYERS_SCHEMA_V1,
         payload: buildSignalStudyMentionLayersPayloadV1({ template, subject: study.subject, motives: named, posts, order: key }) }) });
       const first = await reading("layers_a"), second = await reading("layers_b");

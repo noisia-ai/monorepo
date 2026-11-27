@@ -179,6 +179,13 @@ export async function finishSignalListeningCycleV1(database: Database, cycle: Pi
     completed_at=now(),updated_at=now() WHERE id=$1 AND lease_token=$2`,
     [cycle.id, cycle.lease_token, outcome.status, outcome.stop_reason ?? null, outcome.error_code ?? null, JSON.stringify(outcome.receipt ?? {})]);
 }
+/** Merges the classifier's answers in the last pass of a loop ask for. No pass is left to ask the topic that stays about
+ * the posts of the other, so they are kept with the round and applied where the map is read, like a person's merge. */
+export async function recordSignalListeningClosingMergesV1(database: Database, cycle: Pick<SignalListeningCycleV1, "id" | "lease_token">,
+  round: Pick<SignalListeningRoundV1, "id">, merges: Array<{ stays: string; folded: string }>) {
+  await database.query(`UPDATE signal_listening_rounds round SET review=COALESCE(round.review,'{}'::jsonb)||jsonb_build_object('closing_merges',$3::jsonb),updated_at=now()
+    FROM signal_listening_cycles cycle WHERE round.id=$1 AND cycle.id=round.cycle_id AND cycle.lease_token=$2`, [round.id, cycle.lease_token, JSON.stringify(merges)]);
+}
 export async function getSignalListeningCycleV1(database: Queryable, cycle_id: string) {
   const cycle = (await database.query<SignalListeningCycleV1>(`SELECT ${CYCLE} FROM signal_listening_cycles WHERE id=$1`, [cycle_id])).rows[0] ?? null;
   const rounds = cycle ? (await database.query<SignalListeningRoundV1>(`SELECT ${ROUND} FROM signal_listening_rounds WHERE cycle_id=$1 ORDER BY round_no`, [cycle_id])).rows : [];

@@ -19,17 +19,22 @@ function fail(code: string, status = 409): never { throw new SignalLabelingError
 
 type FinalMap = { cycle_id: string; base_map_id: string; policy: SignalListeningCyclePolicyV1; completed_at: string; round_id: string; round_no: number;
   catalog: SignalListeningCatalogTopicV1[]; themes: SignalListeningThemeV1[];
-  /** Topics a person folded into another one: source → the topic that holds its mentions now. */
+  /** Topics folded into another one, by a person or by the last pass of the loop: source → the topic that holds its mentions now. */
   merged: Map<string, string> };
-/** The last finished discovery cycle of the brand and the merges people made on its map. */
+/** The last finished discovery cycle of the brand, the merges its last pass asked for and the merges people made on its map. */
 async function finalMap(client: Queryable, workspace_id: string): Promise<FinalMap | null> {
   const cycle = (await client.query<{ id: string; base_map_id: string; policy: SignalListeningCyclePolicyV1; completed_at: string }>(`SELECT id,base_map_id,policy,completed_at::text
     FROM signal_listening_cycles WHERE workspace_id=$1 AND status='completed' ORDER BY completed_at DESC LIMIT 1`, [workspace_id])).rows[0];
   if (!cycle) return null;
-  const round = (await client.query<{ id: string; round_no: number; catalog: SignalListeningCatalogTopicV1[]; themes: SignalListeningThemeV1[] }>(
-    "SELECT id,round_no,catalog,themes FROM signal_listening_rounds WHERE cycle_id=$1 ORDER BY round_no DESC LIMIT 1", [cycle.id])).rows[0];
+  const round = (await client.query<{ id: string; round_no: number; catalog: SignalListeningCatalogTopicV1[]; themes: SignalListeningThemeV1[];
+    closing: Array<{ stays?: unknown; folded?: unknown }> | null }>(
+    "SELECT id,round_no,catalog,themes,review->'closing_merges' closing FROM signal_listening_rounds WHERE cycle_id=$1 ORDER BY round_no DESC LIMIT 1", [cycle.id])).rows[0];
   if (!round) return null;
   const known = new Set(round.catalog.map(topic => topic.topic_key)), direct = new Map<string, string>();
+  // What the classifier settled as one topic in the last pass comes first; a person's merge of the same topic replaces it.
+  for (const item of Array.isArray(round.closing) ? round.closing : []) {
+    if (typeof item.folded === "string" && typeof item.stays === "string" && item.folded !== item.stays && known.has(item.folded) && known.has(item.stays)) direct.set(item.folded, item.stays);
+  }
   for (const row of (await client.query<{ source: string | null; target: string }>(`SELECT payload->>'source_topic_key' source,topic_key target FROM signal_listening_human_edits
     WHERE workspace_id=$1 AND operation='merge_topics' ORDER BY created_at,id`, [workspace_id])).rows) {
     // A later merge of the same topic replaces the earlier one.
