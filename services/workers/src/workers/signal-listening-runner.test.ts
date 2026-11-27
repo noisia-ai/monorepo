@@ -63,6 +63,16 @@ test("the stop check ends the run between slices and a write failure is surfaced
     flush: async () => { throw new Error("listening_run_lease_lost"); } }), /listening_run_lease_lost/);
 });
 
+test("a failed load ends the run but everything already answered is written first", async () => {
+  const pages: Array<ListeningStreamPageV1<Item>> = []; let slice = 0, sent = 0;
+  const client: JevPacedClientV1 = { async evaluate() { sent++; await new Promise(resolve => setImmediate(resolve)); return answer(); } };
+  await assert.rejects(runListeningStreamV1({ client, max_in_flight: 4, page_size: 1000,
+    next: async () => { if (slice++ === 2) throw new Error("database unavailable"); return items(100, (slice - 1) * 100); },
+    flush: async page => { pages.push(page); } }), /database unavailable/);
+  assert.equal(sent, 200);
+  assert.equal(pages.reduce((sum, page) => sum + page.done.length, 0), 200, "paid answers are not discarded");
+});
+
 test("unwritten pages hold back new requests", async () => {
   const roots = source(2000, 500); let release!: () => void, sentWhileBlocked = 0, blocked = false;
   const gate = new Promise<void>(resolve => { release = resolve; });

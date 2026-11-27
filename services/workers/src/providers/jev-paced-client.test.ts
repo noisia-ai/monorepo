@@ -51,6 +51,18 @@ test("the exponential floor applies when the provider sends no retry-after and r
   assert.deepEqual(log.filter(entry => entry.startsWith("throttle")), ["throttle:1000", "throttle:2000", "throttle:1000"]);
 });
 
+test("rejections of one burst lengthen the shared pause once, not once per request", async () => {
+  const { limiter, log } = recordingLimiter();
+  let release!: () => void; const gate = new Promise<void>(resolve => { release = resolve; });
+  let call = 0;
+  const paced = createJevPacedClientV1({ api_key: "synthetic-test-key", limiter, max_input_tokens_per_request: 65_536, sleep: async () => undefined,
+    fetch: (async () => { const mine = call++; if (mine < 6) { await gate; return new Response("", { status: 429 }); } return ok(); }) as typeof fetch });
+  const burst = Array.from({ length: 6 }, () => paced.evaluate(request));
+  await new Promise(resolve => setTimeout(resolve, 10)); release();
+  await Promise.all(burst);
+  assert.deepEqual(log.filter(entry => entry.startsWith("throttle")), Array.from({ length: 6 }, () => "throttle:1000"));
+});
+
 test("authentication and balance failures stop the run instead of being retried", async () => {
   for (const status of [401, 402, 403]) {
     await assert.rejects(client(recordingLimiter().limiter, [() => new Response("", { status })]).evaluate(request),
@@ -68,7 +80,7 @@ test("server errors and broken responses are retried a bounded number of times f
   const rejected = await client(recordingLimiter().limiter, [() => new Response("", { status: 400 })]).evaluate(request);
   assert.deepEqual(rejected, { ok: false, code: "jev_http_400", attempts: 1, throttled: 0, http_status: 400 });
   const invalid = await client(recordingLimiter().limiter, [() => Response.json({ model: "jev-1.13.0", usage: { input_tokens: 1, output_tokens: 0 }, answers: {} })]).evaluate(request);
-  assert.equal(invalid.ok, false); if (!invalid.ok) { assert.equal(invalid.code, "jev_response_invalid"); assert.equal(invalid.attempts, 4); }
+  assert.equal(invalid.ok, false); if (!invalid.ok) { assert.equal(invalid.code, "jev_response_invalid"); assert.equal(invalid.attempts, 1, "a billed malformed answer is not sent again"); }
 });
 
 test("retry-after accepts seconds and HTTP dates", () => {

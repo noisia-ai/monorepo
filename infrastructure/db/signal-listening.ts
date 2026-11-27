@@ -61,12 +61,22 @@ export async function getSignalListeningRunV1(database: Queryable, run_id: strin
 
 /** One worker owns a run at a time. An expired lease means that worker died:
  * its unwritten pages were never recorded, so their roots are still pending. */
-export async function claimSignalListeningRunV1(database: Database): Promise<SignalListeningRunV1 | null> {
+export async function claimSignalListeningRunV1(database: Database, run_id?: string): Promise<SignalListeningRunV1 | null> {
+  // Each claim is counted in the receipt, so a run that keeps dying is stopped instead of paying for the same pages again.
   return (await database.query<SignalListeningRunV1>(`UPDATE signal_listening_runs SET status='running',lease_token=gen_random_uuid(),
-    lease_until=now()+${LEASE},started_at=COALESCE(started_at,now()),updated_at=now()
-    WHERE id=(SELECT id FROM signal_listening_runs WHERE status IN('queued','running')
+    lease_until=now()+${LEASE},started_at=COALESCE(started_at,now()),updated_at=now(),
+    receipt=jsonb_set(receipt,'{claims}',to_jsonb(COALESCE((receipt->>'claims')::int,0)+1))
+    WHERE id=(SELECT id FROM signal_listening_runs WHERE status IN('queued','running') AND ($1::uuid IS NULL OR id=$1)
       AND (lease_until IS NULL OR lease_until<now()) ORDER BY created_at LIMIT 1 FOR UPDATE SKIP LOCKED)
-    RETURNING ${RUN_COLUMNS}`)).rows[0] ?? null;
+    RETURNING ${RUN_COLUMNS}`, [run_id ?? null])).rows[0] ?? null;
+}
+export const SIGNAL_LISTENING_MAX_CLAIMS_V1 = 6;
+
+/** Puts a failed or capped run back in the queue. It resumes: answered roots are not asked again. */
+export async function requeueSignalListeningRunV1(database: Database, run_id: string, cap_micro_usd?: number): Promise<boolean> {
+  return (await database.query(`UPDATE signal_listening_runs SET status='queued',error_code=NULL,completed_at=NULL,lease_token=NULL,lease_until=NULL,
+    cap_micro_usd=GREATEST(cap_micro_usd,COALESCE($2::bigint,cap_micro_usd)),receipt=receipt-'claims',updated_at=now()
+    WHERE id=$1 AND status IN('failed','cap_reached')`, [run_id, cap_micro_usd ?? null])).rowCount === 1;
 }
 
 export async function renewSignalListeningRunV1(database: Database, run: Pick<SignalListeningRunV1, "id" | "lease_token">): Promise<boolean> {
@@ -111,7 +121,7 @@ export async function writeSignalListeningPageV1(args: {
   questions: SignalListeningAskedQuestionV1[]; answers: SignalListeningAnswerRowV1[];
   raw: { storage_key: string; sha256: string; size_bytes: number } | null;
   roots_done: number; roots_failed: number; input_tokens: number; cost_micro_usd: number;
-}): Promise<{ written: boolean; spent_micro_usd: number }> {
+}): Promise<{ spent_micro_usd: number }> {
   const client = await args.database.connect();
   try {
     await client.query("BEGIN");
@@ -122,14 +132,18 @@ export async function writeSignalListeningPageV1(args: {
       VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(run_id,page_no) DO NOTHING`,
       [args.run.id, args.page_no, args.raw?.storage_key ?? "", args.raw?.sha256 ?? `sha256:${"0".repeat(64)}`,
         args.raw?.size_bytes ?? 0, args.roots_done, args.input_tokens]);
-    if (page.rowCount !== 1) { await client.query("ROLLBACK"); return { written: false, spent_micro_usd: owner.spent }; }
+    if (page.rowCount !== 1) fail("listening_page_conflict");
     if (args.answers.length) {
       const ids = await ensureSignalListeningQuestionsV1(client, args.run.workspace_id, args.model, args.questions);
       const question: number[] = [], root: string[] = [], input: string[] = [], probability: number[] = [],
         choice: Array<string | null> = [], probabilities: Array<string | null> = [];
+      const seen = new Set<string>();
       for (const answer of args.answers) {
         const id = ids.get(answer.question_digest);
         if (id === undefined) fail("listening_answer_question_unknown");
+        // One row per root and question, even if a request carried the same question twice.
+        if (seen.has(`${id}:${answer.root_id}`)) continue;
+        seen.add(`${id}:${answer.root_id}`);
         question.push(id); root.push(answer.root_id); input.push(answer.input_digest.slice(7)); probability.push(answer.probability);
         choice.push(answer.choice); probabilities.push(answer.probabilities ? JSON.stringify(answer.probabilities) : null);
       }
@@ -147,7 +161,7 @@ export async function writeSignalListeningPageV1(args: {
       lease_until=now()+${LEASE},updated_at=now() WHERE id=$1 RETURNING spent_micro_usd::float8 spent`,
       [args.run.id, args.cost_micro_usd, args.input_tokens, args.roots_done, args.roots_failed])).rows[0]!.spent;
     await client.query("COMMIT");
-    return { written: true, spent_micro_usd: spent };
+    return { spent_micro_usd: spent };
   } catch (error) { await client.query("ROLLBACK").catch(() => undefined); throw error; }
   finally { client.release(); }
 }
@@ -190,7 +204,11 @@ export async function createSignalListeningLegacySourceV1(database: Database, ru
         ORDER BY item.ordinal LIMIT $7`,
         [run.workspace_id, plan.map_id, cursor, plan.root_limit, run.id, plan.reask, limit])).rows;
       if (rows.length) cursor = rows.at(-1)!.ordinal;
-      return rows.map(row => {
+      return rows.flatMap(row => {
+        // A root whose request cannot be built is left out; it never stops the others.
+        try { return [build(row)]; } catch { return []; }
+      });
+      function build(row: LegacyRow): SignalListeningItemV1 {
         const candidates = [...row.candidates].sort((a, b) => b.similarity - a.similarity || a.topic_key.localeCompare(b.topic_key)).slice(0, 4)
           .map(candidate => ({ ...candidate, ...(localized.has(candidate.topic_key) ? { localization: localized.get(candidate.topic_key) } : {}) }));
         const request = buildMassLabelingJevRequestV2({ ...row, candidates }, { version_no: 0, entities: [] } as never, configuration, model);
@@ -199,7 +217,7 @@ export async function createSignalListeningLegacySourceV1(database: Database, ru
           return ordinal ? `topic:${candidates[Number(ordinal[1])]!.topic_key}` : key.startsWith("interest_") ? `interest:${key.slice(9)}` : key;
         });
         return { root_id: row.root_id, input_digest: row.input_digest, request, questions };
-      });
+      }
     },
   };
 }

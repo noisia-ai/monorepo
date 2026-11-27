@@ -47,15 +47,18 @@ export async function runListeningStreamV1<Item extends ListeningStreamItemV1>(a
   const queue: Item[] = [], latencies: number[] = [];
   let exhausted = false, stopped = false, loading: Promise<void> | undefined, loadMs = 0, flushMs = 0;
   let done: Array<ListeningStreamDoneV1<Item>> = [], failed: Array<{ item: Item; code: string }> = [];
-  let pageNo = 0, pendingFlushes = 0, flushChain: Promise<void> = Promise.resolve(), flushError: unknown, fatal: JevFatalErrorV1 | undefined;
+  let pageNo = 0, pendingFlushes = 0, flushChain: Promise<void> = Promise.resolve(), flushError: unknown, loadError: unknown, fatal: JevFatalErrorV1 | undefined;
   const totals = { roots_done: 0, roots_failed: 0, input_tokens: 0, requests: 0, throttled: 0 };
 
+  // A failed load ends the stream, but what was already answered is still written.
   const load = () => loading ??= (async () => {
     if (args.should_stop?.()) { stopped = true; exhausted = true; return; }
     const t = performance.now();
-    const items = await args.next();
-    loadMs += performance.now() - t;
-    if (items.length) queue.push(...items); else exhausted = true;
+    try {
+      const items = await args.next();
+      if (items.length) queue.push(...items); else exhausted = true;
+    } catch (error) { loadError ??= error; exhausted = true; }
+    finally { loadMs += performance.now() - t; }
   })().finally(() => { loading = undefined; });
 
   const schedule = (force = false) => {
@@ -83,7 +86,7 @@ export async function runListeningStreamV1<Item extends ListeningStreamItemV1>(a
         item = queue.shift();
         if (!item) { if (exhausted) return; continue; }
       }
-      if (queue.length < args.max_in_flight && !exhausted && !loading) void load().catch(error => { flushError ??= error; abort.abort(); });
+      if (queue.length < args.max_in_flight && !exhausted && !loading) void load();
       try {
         const result = await args.client.evaluate(item.request, { signal: abort.signal });
         totals.requests += result.attempts + result.throttled; totals.throttled += result.throttled;
@@ -103,12 +106,13 @@ export async function runListeningStreamV1<Item extends ListeningStreamItemV1>(a
   try {
     await load();
     await Promise.all(Array.from({ length: args.max_in_flight }, worker));
-  } catch (error) { flushError ??= error; }
+  } catch (error) { flushError ??= error; abort.abort(); }
   finally { args.signal?.removeEventListener("abort", onAbort); }
   // Whatever was answered and paid for is still written, even after a fatal stop.
   schedule(true);
   await flushChain;
   if (flushError && !fatal) throw flushError;
+  if (loadError && !fatal) throw loadError;
   latencies.sort((a, b) => a - b);
   const wall = performance.now() - started;
   return { ...totals, pages: pageNo, wall_ms: Math.round(wall), load_ms: Math.round(loadMs), flush_ms: Math.round(flushMs),

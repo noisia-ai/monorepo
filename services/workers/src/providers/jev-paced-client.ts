@@ -99,7 +99,7 @@ export function createJevPacedClientV1(options: {
   const estimator = options.estimator ?? createJevTokenEstimatorV1({ max_tokens: options.max_input_tokens_per_request });
   const maxAttempts = options.max_attempts ?? 4, maxThrottles = options.max_throttles ?? 20, timeout = options.timeout_ms ?? 60_000;
   const pause = options.sleep ?? ((ms: number, signal?: AbortSignal) => sleep(ms, undefined, { signal }));
-  let consecutiveRejections = 0;
+  let consecutiveRejections = 0, cooldownStartedAt = -1;
   return { estimator, async evaluate(request, { signal } = {}) {
     const body = JSON.stringify(request), bytes = Buffer.byteLength(body);
     let attempts = 0, throttled = 0, lastCode = "jev_transport_unknown", lastStatus: number | undefined;
@@ -123,7 +123,10 @@ export function createJevPacedClientV1(options: {
       const latency_ms = performance.now() - started;
       lastStatus = response.status;
       if (response.status === 429 || response.status === 529) {
-        throttled++; consecutiveRejections++;
+        throttled++;
+        // Requests rejected in the same burst count once: only a rejection of a
+        // request sent after the last pause began makes the next pause longer.
+        if (started > cooldownStartedAt) { consecutiveRejections++; cooldownStartedAt = performance.now(); }
         const retryAfter = response.headers.get("retry-after");
         const requested = retryAfter === null ? undefined : jevRetryAfterMsV1(retryAfter, Date.now());
         const backoff = Math.min(120_000, Math.max(requested ?? 0, Math.min(30_000, 1000 * 2 ** Math.min(consecutiveRejections - 1, 5))));
@@ -147,7 +150,10 @@ export function createJevPacedClientV1(options: {
         // Correcting the shared window is best effort; the estimate already holds the slot.
         void options.limiter.observe(reservation, parsed.usage.input_tokens).catch(() => undefined);
         return { ok: true, response: parsed, raw_body: text, latency_ms, attempts, throttled };
-      } catch { lastCode = "jev_response_invalid"; }
+      } catch {
+        // A malformed 200 was billed. Asking again here would pay again; the root is reported instead.
+        lastCode = "jev_response_invalid"; break;
+      }
     }
     return { ok: false, code: lastCode, attempts, throttled, ...(lastStatus === undefined ? {} : { http_status: lastStatus }) };
   } };

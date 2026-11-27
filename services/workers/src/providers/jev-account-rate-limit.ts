@@ -30,6 +30,9 @@ for _,id in ipairs(expired) do
 end
 redis.call('ZREMRANGEBYSCORE',events,'-inf',cutoff)
 used=math.max(0,used)
+-- An empty window holds no tokens. Without this, events that expired by TTL
+-- during a quiet gap would leave their tokens counted forever.
+if redis.call('ZCARD',events)==0 then used=0 end
 redis.call('SET',total,used,'PX',2000)
 local operation=ARGV[1]
 if operation=='throttle' then

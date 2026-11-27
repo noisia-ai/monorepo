@@ -6,10 +6,11 @@
  *   request  --workspace <uuid> --map <uuid> --roots <n> --cap-usd <n>   queue a run for the workers
  *   status   --run <uuid>                                                print its receipt
  *   local    --run <uuid>                                                process it in this process
+ *   requeue  --run <uuid> [--cap-usd <n>]                                resume a failed or capped run
  */
 import pg from "pg";
 import {
-  claimSignalListeningRunV1, getSignalListeningRunV1, requestSignalListeningRunV1, SIGNAL_LISTENING_DEFAULT_PRICE_V1,
+  claimSignalListeningRunV1, getSignalListeningRunV1, requestSignalListeningRunV1, requeueSignalListeningRunV1, SIGNAL_LISTENING_DEFAULT_PRICE_V1,
 } from "@noisia/db";
 import { createJevAccountRateLimiter } from "../src/providers/jev-account-rate-limit";
 import { createJevPacedClientV1, createLocalJevRateLimiterV1 } from "../src/providers/jev-paced-client";
@@ -40,8 +41,8 @@ try {
     if (!run) throw new Error("run not found");
     report(run);
   } else if (mode === "local") {
-    const claimed = await claimSignalListeningRunV1(pool);
-    if (!claimed || claimed.id !== required("run")) throw new Error("the requested run is not the next claimable run");
+    const claimed = await claimSignalListeningRunV1(pool, required("run"));
+    if (!claimed) throw new Error("the run is not claimable: it is finished or another worker holds it");
     const settings = readListeningJevSettingsV1();
     let quit: (() => Promise<unknown>) | undefined;
     let limiter = createLocalJevRateLimiterV1(settings);
@@ -53,9 +54,13 @@ try {
     }
     const client = createJevPacedClientV1({ api_key: process.env.TYPESAFE_API_KEY ?? "", limiter,
       max_input_tokens_per_request: Math.min(65_536, settings.input_tokens_per_second) });
-    await processSignalListeningRunV1({ database: pool, run: claimed, client, store_raw: createListeningRawStoreV1(),
-      max_in_flight: settings.max_in_flight, page_size: settings.page_size });
-    await quit?.();
+    try {
+      await processSignalListeningRunV1({ database: pool, run: claimed, client, store_raw: createListeningRawStoreV1(),
+        max_in_flight: settings.max_in_flight, page_size: settings.page_size });
+    } finally { await quit?.().catch(() => undefined); }
     report((await getSignalListeningRunV1(pool, claimed.id))!);
-  } else throw new Error("usage: signal-listening-run.ts request|status|local");
+  } else if (mode === "requeue") {
+    const cap = flag("cap-usd");
+    console.log(JSON.stringify({ requeued: await requeueSignalListeningRunV1(pool, required("run"), cap ? Math.round(Number(cap) * 1e6) : undefined) }));
+  } else throw new Error("usage: signal-listening-run.ts request|status|local|requeue");
 } finally { await pool.end(); }
