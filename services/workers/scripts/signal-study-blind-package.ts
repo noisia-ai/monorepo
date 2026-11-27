@@ -76,14 +76,17 @@ try {
 
   // ---- axes
   const answered = await readSignalStudyAxesV1(pool, study);
-  const axes = answered.map(row => ({ ...row, resolved: resolveSignalStudyAxesV1(study.subject, row) }));
+  // Strata follow the direction as the study counts it: one below its probability line is read as none.
+  const axes = answered.map(row => ({ ...row, resolved: resolveSignalStudyAxesV1(study.subject, row, study.methodology.rules) }));
   const stratum: Record<typeof AXES_STRATA[number][0], (row: typeof axes[number]) => boolean> = {
-    direction_mixed: row => row.direction === "mixed", use_figurative_or_ironic: row => row.use === "figurative_or_ironic",
-    target_competitor_brand: row => row.direction !== "none" && row.target === "competitor_brand", target_own_brand: row => row.direction !== "none" && row.target === "own_brand",
-    target_alternative: row => row.direction !== "none" && row.target === "alternative",
-    direction_trigger: row => row.direction === "trigger", direction_barrier: row => row.direction === "barrier", none_inside_cut: row => row.direction === "none" };
+    direction_mixed: row => row.resolved.direction === "mixed", use_figurative_or_ironic: row => row.use === "figurative_or_ironic",
+    target_competitor_brand: row => row.resolved.direction !== "none" && row.target === "competitor_brand", target_own_brand: row => row.resolved.direction !== "none" && row.target === "own_brand",
+    target_alternative: row => row.resolved.direction !== "none" && row.target === "alternative",
+    direction_trigger: row => row.resolved.source_direction === "trigger" && row.resolved.direction !== "none", direction_barrier: row => row.resolved.source_direction === "barrier" && row.resolved.direction !== "none",
+    none_inside_cut: row => row.resolved.direction === "none" };
   const axisCases = AXES_STRATA.flatMap(([name, limit]) => take(axes.filter(stratum[name]), `axes:${name}`, limit).map(row => ({ root_id: row.root_id, stratum: name as string,
-    answers: { direction: row.direction, target: row.target, use: row.use } as { direction: string; target: string; use: string } | null, counted_as: row.resolved.aggregate as string | null })));
+    answers: { direction: row.resolved.direction, target: row.target, use: row.use, classifier_direction: row.direction, direction_probability: row.direction_probability } as
+      { direction: string; target: string; use: string; classifier_direction: string; direction_probability: number | null } | null, counted_as: row.resolved.aggregate as string | null })));
   // Consumer posts that the category lexicon left outside the cut: nothing was asked of them.
   const configuration = validateSignalListeningConfigurationV1((await pool.query<{ configuration: unknown }>(
     "SELECT configuration FROM signal_listening_configurations WHERE id=$1 AND workspace_id=$2", [study.configuration_id, study.workspace_id])).rows[0]!.configuration);

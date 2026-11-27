@@ -5075,6 +5075,7 @@
       "grouped": "naming motives",
       "motives_named": "reading layers",
       "layers_coded": "confirming motives",
+      "members_confirmed": "reading layers",
       "motives_asked": "checking results",
       "checked": "building the result",
       "published": "ready"
@@ -5106,6 +5107,8 @@
       "category": "Category",
       "own_brand": "Own brand",
       "conventional_category": "Conventional category",
+      "lexicon": "The study's own lexicon (optional, one term per line)",
+      "lexiconHelp": "Use it only when the study is not about the category the brand listens to: the cut will be the consumer mentions that use these terms.",
       "competitors": "Competitors (one per line)",
       "alternatives": "Alternatives (one per line)",
       "cap": "Spending cap (USD)",

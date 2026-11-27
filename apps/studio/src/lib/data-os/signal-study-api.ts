@@ -10,6 +10,8 @@ export const studyCreateInputSchemaV1 = z.object({
   }).strict(),
   period: z.object({ start_at: z.string().datetime({ offset: true }), end_at: z.string().datetime({ offset: true }) }).strict().nullable().optional(),
   cap_micro_usd: z.number().int().min(6_000_000).max(200_000_000),
+  /** The study's own lexicon, for a study that is not about the category the brand listens to. */
+  lexicon_terms: z.array(text(80)).min(1).max(400).optional(),
   /** Added by the Studio mutation hook to every POST: a retried click is the same study. */
   idempotency_key: z.string().min(8).max(200),
 }).strict();
@@ -19,6 +21,6 @@ export const studyPromotionInputSchemaV1 = z.object({
 }).strict();
 export type StudyCreateInputV1 = z.infer<typeof studyCreateInputSchemaV1>;
 /** One name per line or separated by commas, without blanks or repeats. */
-export function studyNamesFromTextV1(value: string): string[] {
-  return [...new Set(value.split(/[\n,;]+/u).map(item => item.trim()).filter(Boolean))].slice(0, 20);
+export function studyNamesFromTextV1(value: string, limit = 20): string[] {
+  return [...new Set(value.split(/[\n,;]+/u).map(item => item.trim()).filter(Boolean))].slice(0, limit);
 }

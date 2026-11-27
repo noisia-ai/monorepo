@@ -5075,6 +5075,7 @@
       "grouped": "nombrando motivos",
       "motives_named": "leyendo capas",
       "layers_coded": "confirmando motivos",
+      "members_confirmed": "leyendo capas",
       "motives_asked": "revisando resultados",
       "checked": "armando el resultado",
       "published": "listo"
@@ -5106,6 +5107,8 @@
       "category": "Categoría",
       "own_brand": "Marca propia",
       "conventional_category": "Categoría convencional",
+      "lexicon": "Léxico propio del estudio (opcional, un término por línea)",
+      "lexiconHelp": "Úsalo sólo si el estudio no es sobre la categoría que escucha la marca: el corte serán las menciones de consumidores que usen estos términos.",
       "competitors": "Competidores (uno por línea)",
       "alternatives": "Alternativas (una por línea)",
       "cap": "Tope de gasto (USD)",

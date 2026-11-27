@@ -15,7 +15,7 @@
  *   cycle    --workspace <uuid> --actor <uuid> --cap-usd <n>             queue the automatic discovery loop
  *   cycle-status --cycle <uuid>                                          rounds, signals and spending of a loop
  *   cycle-local  --cycle <uuid> [--steps <n>]                            advance a loop in this process (no JEV pass)
- *   study    --workspace <uuid> --actor <uuid> --name <text> --subject-file <json> --cap-usd <n>   queue a study
+ *   study    --workspace <uuid> --actor <uuid> --name <text> --subject-file <json> --cap-usd <n> [--lexicon-file <json>]   queue a study
  *   study-status --study <uuid>                                          steps, counts and spending of a study
  *   study-local  --study <uuid> [--steps <n>]                            advance a study in this process (no JEV pass)
  *   study-requeue --study <uuid>                                         put a failed study back in the queue; paid steps are kept
@@ -170,6 +170,8 @@ try {
     // The subject names the brand and its competitors: it is read from a private file and never printed.
     console.log(JSON.stringify(await requestSignalStudyV1({ database: pool, workspace_id: required("workspace"), actor_user_id: required("actor"), name: required("name"),
       subject: JSON.parse(readFileSync(required("subject-file"), "utf8")), cap_micro_usd: Math.round(Number(required("cap-usd")) * 1e6),
+      // Optional: the study's own lexicon for its cut, as a JSON array of terms in a private file.
+      ...(flag("lexicon-file") ? { lexicon_terms: JSON.parse(readFileSync(flag("lexicon-file")!, "utf8")) } : {}),
       idempotency_key: flag("key") ?? randomUUID() })));
   } else if (mode === "study-status") {
     await studyStatus(required("study"));
