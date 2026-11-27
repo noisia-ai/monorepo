@@ -20,6 +20,7 @@ Nada de lo que sigue pide una aprobación intermedia: si algo se queda esperando
 2. **Signal → Tópicos**: arriba aparece **«Mapa de temas»**, el mapa revisado en dos niveles (tema → tópico) con sus menciones.
    - La casilla «Mostrar … fuera de la categoría» está apagada al entrar; al encenderla aparecen los tópicos ocultos.
    - Cada tópico cuenta sólo menciones confirmadas; a su lado, en pequeño, las «probables», que se guardan y no se cuentan.
+   - **Menciones sin tópico, en dos niveles.** Una mención de la categoría puede quedar sin ningún tópico confirmado. En el ciclo de prueba es 37 % de la categoría. Cerca de la mitad de ésas sí tiene un tópico probable; el resto no tiene ninguno (17 % de la categoría). Las probables no entran a los totales a propósito: en la evaluación ciega sólo la mitad tenía bien su tópico probable. Que los totales del mapa no sumen toda la categoría es lo esperado.
    - Al cambiar el periodo de la página, los conteos del mapa cambian con él.
    - Lo que la página mostraba antes queda debajo, plegado, como **«Mapa anterior (historia)»**.
 3. En Monitoreo ya no hay un panel de mapa aparte.

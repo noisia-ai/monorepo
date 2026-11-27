@@ -128,14 +128,15 @@ export async function stepSignalListeningCycleV1(args: { database: Database; cyc
     }
     const decision = decideSignalListeningCycleStopV1({ policy: cycle.policy, current: round.evidence!, previous: previous?.evidence ?? null, map_changed: true });
     if (decision.stop) {
-      // The loop ends here. Pairs the classifier found to be one topic are merged now, and one last pass asks what
-      // that leaves pending, so the map that is published does not carry them as two.
+      // The loop ends here. Pairs the classifier found to be one topic are merged now, and the pairs still above the
+      // line that it was never asked about go to it as they are worded. One last pass asks what that leaves pending,
+      // so the map that is published carries neither two topics that are one nor posts counted in both of a pair.
       const merges = decision.reason === "no_category_population" ? null
         : applySignalListeningRuleMergesV1({ catalog: round.catalog, themes: round.themes, policy: cycle.policy, evidence: round.evidence! });
-      if (merges?.rule_merges.length && remaining >= 50_000) {
+      if (merges && (merges.rule_merges.length || merges.probation.length) && remaining >= 50_000) {
         const confirmed = await readSignalListeningConfirmedCentroidsV1(database, cycle, round, args.heartbeat);
-        await openSignalListeningNextRoundV1({ database, cycle, round, catalog: merges.catalog, themes: merges.themes, confirmed, settling: true,
-          review: { ...(round.review ?? {}), settled: { stop_reason: decision.reason, rule_merges: merges.rule_merges, rejected: merges.rejected } } });
+        await openSignalListeningNextRoundV1({ database, cycle, round, catalog: merges.catalog, themes: merges.themes, confirmed, settling: true, pairs: merges.probation,
+          review: { ...(round.review ?? {}), settled: { stop_reason: decision.reason, rule_merges: merges.rule_merges, rejected: merges.rejected, pairs_asked: merges.probation.length } } });
         return "continue";
       }
       await finishSignalListeningCycleV1(database, cycle, { status: "completed", stop_reason: decision.reason });
