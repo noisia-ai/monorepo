@@ -35,12 +35,13 @@ const CYCLE = `id,workspace_id,base_map_id,configuration_id,lexicon_revision,pol
 const ROUND = "id,cycle_id,workspace_id,round_no,step,catalog,themes,evidence,orphan_groups,review,run_id";
 const vectorText = (values: ArrayLike<number>) => `[${Array.from(values).join(",")}]`;
 
-/** Topics a person renamed or merged: the agent must leave their wording exactly as it is.
- * Correcting one mention does not freeze the topic; that correction stays with the mention. */
+/** Topics a person renamed or merged (both the one that stays and the one folded into it): the agent
+ * must leave them exactly as they are. Correcting one mention does not freeze the topic; that correction stays with the mention. */
 async function lockedTopicKeys(client: Queryable, workspace_id: string, display_names: Record<string, unknown>) {
-  const rows = (await client.query<{ topic_key: string }>(`SELECT DISTINCT topic_key FROM signal_listening_human_edits
-    WHERE workspace_id=$1 AND operation IN('merge_topics','rename_topic')`, [workspace_id])).rows;
-  return new Set([...rows.map(row => row.topic_key), ...Object.keys(display_names)]);
+  const rows = (await client.query<{ topic_key: string | null }>(`SELECT topic_key FROM signal_listening_human_edits
+    WHERE workspace_id=$1 AND operation IN('merge_topics','rename_topic')
+    UNION SELECT payload->>'source_topic_key' FROM signal_listening_human_edits WHERE workspace_id=$1 AND operation='merge_topics'`, [workspace_id])).rows;
+  return new Set([...rows.flatMap(row => row.topic_key ? [row.topic_key] : []), ...Object.keys(display_names)]);
 }
 
 function topicQuestion(configuration: SignalListeningConfigurationV1, topic: SignalListeningCatalogTopicV1): SignalListeningAskedQuestionV1 {
@@ -61,8 +62,10 @@ async function writeRoundTopics(client: Queryable, round: { id: string; workspac
 /**
  * Starts the automatic loop over the brand's current population. Round 1 is the
  * map as it stands today with the answers already in the cache; nothing is asked
- * until the first review changes the map. The thresholds, the stop rule and the
- * spending cap are fixed here.
+ * until the first review changes the map. A brand that already finished a loop
+ * on this population continues from its reviewed map, so what people merged or
+ * renamed there is still in front of the agent, locked. The thresholds, the stop
+ * rule and the spending cap are fixed here.
  */
 export async function requestSignalListeningCycleV1(args: { database: Database; workspace_id: string; actor_user_id: string; cap_micro_usd: number;
   idempotency_key: string; policy?: SignalListeningCyclePolicyV1 }) {
@@ -95,22 +98,31 @@ export async function requestSignalListeningCycleV1(args: { database: Database; 
     const display = (await client.query<{ display_names: Record<string, unknown> }>(`SELECT display_names FROM signal_mass_labeling_study_policies
       WHERE workspace_id=$1 ORDER BY revision DESC LIMIT 1`, [args.workspace_id])).rows[0]?.display_names ?? {};
     const locked = await lockedTopicKeys(client, args.workspace_id, display);
-    // Only topics worded in all three languages enter the loop; the rest keep their published state.
-    const catalog = validateSignalListeningCatalogV1(map.catalog.flatMap(topic => {
-      const localization = localized.get(topic.topic_key);
-      return localization && /^[a-z][a-z0-9_]{0,119}$/u.test(topic.topic_key) ? [{ topic_key: topic.topic_key, localization, domain: "category" as const,
-        theme_key: null, origin: "discovery" as const, human_locked: locked.has(topic.topic_key), source_topic_keys: [], orphan_group_keys: [] }] : [];
-    }));
+    const previous = (await client.query<{ round_id: string; catalog: SignalListeningCatalogTopicV1[]; themes: SignalListeningThemeV1[] }>(
+      `SELECT round.id round_id,round.catalog,round.themes FROM signal_listening_cycles cycle JOIN signal_listening_rounds round ON round.cycle_id=cycle.id
+       WHERE cycle.workspace_id=$1 AND cycle.base_map_id=$2 AND cycle.status='completed' ORDER BY cycle.completed_at DESC,round.round_no DESC LIMIT 1`,
+      [args.workspace_id, target.map_id])).rows[0];
+    const catalog = validateSignalListeningCatalogV1(previous
+      ? previous.catalog.map(topic => ({ ...topic, human_locked: locked.has(topic.topic_key), source_topic_keys: [], orphan_group_keys: [] }))
+      // Only topics worded in all three languages enter the loop; the rest keep their published state.
+      : map.catalog.flatMap(topic => {
+        const localization = localized.get(topic.topic_key);
+        return localization && /^[a-z][a-z0-9_]{0,119}$/u.test(topic.topic_key) ? [{ topic_key: topic.topic_key, localization, domain: "category" as const,
+          theme_key: null, origin: "discovery" as const, human_locked: locked.has(topic.topic_key), source_topic_keys: [], orphan_group_keys: [] }] : [];
+      }));
     if (!catalog.length) fail("listening_catalog_required");
     const cycle_id = randomUUID(), round_id = randomUUID();
     await client.query(`INSERT INTO signal_listening_cycles(id,workspace_id,base_map_id,configuration_id,lexicon_revision,policy,cap_micro_usd,requested_by_user_id,receipt)
       VALUES($1,$2,$3,$4,$5,$6::jsonb,$7,$8,jsonb_build_object('idempotency_key',$9::text))`,
       [cycle_id, args.workspace_id, target.map_id, revision.id, policy_revision, JSON.stringify(policy), args.cap_micro_usd, args.actor_user_id, args.idempotency_key]);
-    await client.query("INSERT INTO signal_listening_rounds(id,cycle_id,workspace_id,round_no,step,catalog) VALUES($1,$2,$3,1,'asked',$4::jsonb)",
-      [round_id, cycle_id, args.workspace_id, JSON.stringify(catalog)]);
-    const centroids = new Map((await client.query<{ topic_key: string; centroid: string }>(
-      "SELECT topic_key,centroid::text centroid FROM signal_mass_labeling_topics WHERE workspace_id=$1 AND map_id=$2", [args.workspace_id, target.map_id])).rows
-      .map(row => [row.topic_key, { vector: row.centroid, members: 0 }]));
+    await client.query("INSERT INTO signal_listening_rounds(id,cycle_id,workspace_id,round_no,step,catalog,themes) VALUES($1,$2,$3,1,'asked',$4::jsonb,$5::jsonb)",
+      [round_id, cycle_id, args.workspace_id, JSON.stringify(catalog), JSON.stringify(previous?.themes ?? [])]);
+    const centroids = new Map((previous
+      ? await client.query<{ topic_key: string; centroid: string | null; members: number }>(
+        "SELECT topic_key,centroid::text centroid,confirmed_members members FROM signal_listening_round_topics WHERE round_id=$1", [previous.round_id])
+      : await client.query<{ topic_key: string; centroid: string | null; members: number }>(
+        "SELECT topic_key,centroid::text centroid,0 members FROM signal_mass_labeling_topics WHERE workspace_id=$1 AND map_id=$2", [args.workspace_id, target.map_id])).rows
+      .flatMap(row => row.centroid ? [[row.topic_key, { vector: row.centroid, members: row.members }] as const] : []));
     await writeRoundTopics(client, { id: round_id, workspace_id: args.workspace_id }, configuration, catalog, centroids);
     return { cycle_id, replayed: false, topics: catalog.length, locked: catalog.filter(topic => topic.human_locked).length };
   });
@@ -442,39 +454,5 @@ export async function createSignalListeningRoundSourceV1(database: Database, run
   };
 }
 
-export type SignalListeningMapV1 = {
-  contract_version: "signal-listening-map-v1"; workspace_id: string; cycle_id: string | null; round: number | null; completed_at: string | null;
-  themes: Array<{ theme_key: string | null; name: { original: string; en: string; es: string } | null;
-    topics: Array<{ topic_key: string; name: { original: string; en: string; es: string }; definition: { original: string; en: string; es: string };
-      domain: "category" | "adjacent" | "outside"; mentions: number }> }>;
-};
-/** The map of the last finished discovery cycle: themes, their topics and how many roots each topic holds. */
-export async function readSignalListeningMapV1(access: { database: Database; workspace_id: string; actor_user_id: string }): Promise<SignalListeningMapV1> {
-  return shared.transaction(access.database, async client => {
-    await client.query("SET TRANSACTION READ ONLY");
-    await shared.authorize(client, access, "view");
-    const empty: SignalListeningMapV1 = { contract_version: "signal-listening-map-v1", workspace_id: access.workspace_id, cycle_id: null, round: null, completed_at: null, themes: [] };
-    const cycle = (await client.query<{ id: string; base_map_id: string; policy: SignalListeningCyclePolicyV1; completed_at: string }>(`SELECT id,base_map_id,policy,completed_at::text
-      FROM signal_listening_cycles WHERE workspace_id=$1 AND status='completed' ORDER BY completed_at DESC LIMIT 1`, [access.workspace_id])).rows[0];
-    if (!cycle) return empty;
-    const round = (await client.query<{ id: string; round_no: number; catalog: SignalListeningCatalogTopicV1[]; themes: SignalListeningThemeV1[] }>(
-      "SELECT id,round_no,catalog,themes FROM signal_listening_rounds WHERE cycle_id=$1 ORDER BY round_no DESC LIMIT 1", [cycle.id])).rows[0];
-    if (!round) return empty;
-    const volumes = new Map((await client.query<{ topic_key: string; mentions: number }>(`WITH ${VALID}
-      SELECT topic_key,count(*) FILTER (WHERE ok)::int mentions FROM valid GROUP BY 1`, [access.workspace_id, cycle.base_map_id, round.id, cycle.policy.approval])).rows
-      .map(row => [row.topic_key, row.mentions]));
-    const names = new Map(round.themes.map(item => [item.theme_key, item.name]));
-    const grouped = new Map<string | null, SignalListeningMapV1["themes"][number]>();
-    for (const topic of round.catalog) {
-      const theme_key = topic.theme_key !== null && names.has(topic.theme_key) ? topic.theme_key : null;
-      if (!grouped.has(theme_key)) grouped.set(theme_key, { theme_key, name: theme_key === null ? null : names.get(theme_key)!, topics: [] });
-      const { original, en, es } = topic.localization;
-      grouped.get(theme_key)!.topics.push({ topic_key: topic.topic_key, name: { original: original.name, en: en.name, es: es.name },
-        definition: { original: original.definition, en: en.definition, es: es.definition }, domain: topic.domain, mentions: volumes.get(topic.topic_key) ?? 0 });
-    }
-    const total = (item: SignalListeningMapV1["themes"][number]) => item.topics.reduce((sum, topic) => sum + topic.mentions, 0);
-    const themes = [...grouped.values()].map(item => ({ ...item, topics: item.topics.sort((a, b) => b.mentions - a.mentions || a.topic_key.localeCompare(b.topic_key)) }))
-      .sort((a, b) => Number(a.theme_key === null) - Number(b.theme_key === null) || total(b) - total(a));
-    return { ...empty, cycle_id: cycle.id, round: round.round_no, completed_at: cycle.completed_at, themes };
-  });
-}
+/** Shared with the reader of the reviewed map. */
+export const signalListeningCycleInternalsV1 = { VALID };
