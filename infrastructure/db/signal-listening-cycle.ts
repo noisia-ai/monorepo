@@ -221,7 +221,22 @@ const roundPairs = (round: Pick<SignalListeningRoundV1, "review">) => ((round.re
  * both topics held, its choice (left, right, both or neither) becomes the two
  * memberships. Safe to repeat. Returns how the posts of each pair were shared out.
  */
-export async function settleSignalListeningPairChoicesV1(database: Database, cycle: Pick<SignalListeningCycleV1, "id" | "workspace_id" | "lease_token">,
+/**
+ * The posts a pair of this round shares, with what the classifier chose for each. Parameters: $1 the workspace, $2 to $4
+ * the pair questions and the questions of their left and right topics, $5 the map, $6 the approval line.
+ * A post counts when it is in the map, the choice was made on the text it has now, and both topics accept it by their
+ * own questions at the line: an answer kept from another map, another text or another line is not this pair's.
+ */
+const PAIR_SHARED = `pair AS (SELECT * FROM unnest($2::bigint[],$3::bigint[],$4::bigint[]) listed(question_id,left_id,right_id)),
+  shared AS MATERIALIZED (
+    SELECT pair.question_id pair_question,pair.left_id,pair.right_id,answer.root_id,answer.choice,answer.input_sha
+    FROM pair JOIN signal_listening_answers answer ON answer.question_id=pair.question_id AND answer.workspace_id=$1 AND answer.choice IN('left','right','both','neither')
+    JOIN signal_mass_labeling_items item ON item.workspace_id=$1 AND item.map_id=$5 AND item.root_id=answer.root_id AND answer.input_sha=decode(substr(item.input_digest,8),'hex')
+    JOIN signal_listening_answers on_left ON on_left.question_id=pair.left_id AND on_left.root_id=answer.root_id AND on_left.workspace_id=$1
+      AND on_left.input_sha=answer.input_sha AND on_left.probability>=$6::real
+    JOIN signal_listening_answers on_right ON on_right.question_id=pair.right_id AND on_right.root_id=answer.root_id AND on_right.workspace_id=$1
+      AND on_right.input_sha=answer.input_sha AND on_right.probability>=$6::real)`;
+export async function settleSignalListeningPairChoicesV1(database: Database, cycle: Pick<SignalListeningCycleV1, "id" | "workspace_id" | "lease_token" | "base_map_id" | "policy">,
   round: Pick<SignalListeningRoundV1, "id" | "review">): Promise<SignalListeningPairChoiceV1[]> {
   const pairs = roundPairs(round);
   if (!pairs.length) return [];
@@ -231,26 +246,30 @@ export async function settleSignalListeningPairChoicesV1(database: Database, cyc
     }
     const topics = new Map((await client.query<{ topic_key: string; question_id: string }>(
       "SELECT topic_key,question_id::text FROM signal_listening_round_topics WHERE round_id=$1", [round.id])).rows.map(row => [row.topic_key, row.question_id]));
-    const result: SignalListeningPairChoiceV1[] = [];
-    for (const pair of pairs) {
-      const left = topics.get(pair.left), right = topics.get(pair.right);
-      if (!left || !right) continue;
-      // The decision travels with the digest of the text it was made on: it never applies to an answer about another text.
-      await client.query(`INSERT INTO signal_listening_answer_overrides(workspace_id,question_id,root_id,belongs,decided_by_question_id,input_sha)
-        SELECT $1,side.question_id,answer.root_id,answer.choice=ANY(side.accepted),$2::bigint,answer.input_sha
-        FROM signal_listening_answers answer
-        CROSS JOIN (VALUES($3::bigint,ARRAY['left','both']),($4::bigint,ARRAY['right','both'])) side(question_id,accepted)
-        WHERE answer.question_id=$2::bigint AND answer.workspace_id=$1 AND answer.choice IN('left','right','both','neither')
-        ON CONFLICT(question_id,root_id) DO UPDATE SET belongs=EXCLUDED.belongs,decided_by_question_id=EXCLUDED.decided_by_question_id,input_sha=EXCLUDED.input_sha`,
-        [cycle.workspace_id, pair.question_id, left, right]);
-      const counts = new Map((await client.query<{ choice: string; posts: number }>(
-        "SELECT choice,count(*)::int posts FROM signal_listening_answers WHERE question_id=$1::bigint AND workspace_id=$2 GROUP BY 1", [pair.question_id, cycle.workspace_id])).rows
-        .map(row => [row.choice, row.posts]));
-      const of = (choice: string) => counts.get(choice) ?? 0, total = of("left") + of("right") + of("both") + of("neither");
-      result.push({ left: pair.left, right: pair.right, shared: total, chose_left: of("left"), chose_right: of("right"), chose_both: of("both"), chose_neither: of("neither"),
-        both_share: total ? of("both") / total : null, jaccard: pair.jaccard ?? null });
+    const asked = pairs.flatMap(pair => { const left = topics.get(pair.left), right = topics.get(pair.right); return left && right ? [{ ...pair, left_id: left, right_id: right }] : []; });
+    if (!asked.length) return [];
+    const params = [cycle.workspace_id, asked.map(pair => pair.question_id), asked.map(pair => pair.left_id), asked.map(pair => pair.right_id), cycle.base_map_id, cycle.policy.approval];
+    // A post two pairs share through the same topic gets one decision for that topic, whatever the order of the pairs: it
+    // is out of the topic when any of the choices left it out. The decision travels with the digest of the text it was
+    // made on, so it never applies to an answer about another text.
+    await client.query(`WITH ${PAIR_SHARED}, side AS (
+        SELECT left_id question_id,root_id,input_sha,choice IN('left','both') belongs,pair_question FROM shared
+        UNION ALL SELECT right_id,root_id,input_sha,choice IN('right','both'),pair_question FROM shared),
+      decided AS (SELECT question_id,root_id,bool_and(belongs) belongs,COALESCE(min(pair_question) FILTER (WHERE NOT belongs),min(pair_question)) decided_by,
+        (array_agg(input_sha))[1] input_sha FROM side GROUP BY 1,2)
+      INSERT INTO signal_listening_answer_overrides(workspace_id,question_id,root_id,belongs,decided_by_question_id,input_sha)
+      SELECT $1,question_id,root_id,belongs,decided_by,input_sha FROM decided
+      ON CONFLICT(question_id,root_id) DO UPDATE SET belongs=EXCLUDED.belongs,decided_by_question_id=EXCLUDED.decided_by_question_id,input_sha=EXCLUDED.input_sha`, params);
+    const counts = new Map<string, Map<string, number>>();
+    for (const row of (await client.query<{ pair_question: string; choice: string; posts: number }>(
+      `WITH ${PAIR_SHARED} SELECT pair_question::text,choice,count(*)::int posts FROM shared GROUP BY 1,2`, params)).rows) {
+      counts.set(row.pair_question, (counts.get(row.pair_question) ?? new Map()).set(row.choice, row.posts));
     }
-    return result;
+    return asked.map(pair => {
+      const of = (choice: string) => counts.get(String(pair.question_id))?.get(choice) ?? 0, total = of("left") + of("right") + of("both") + of("neither");
+      return { left: pair.left, right: pair.right, shared: total, chose_left: of("left"), chose_right: of("right"), chose_both: of("both"), chose_neither: of("neither"),
+        both_share: total ? of("both") / total : null, jaccard: pair.jaccard ?? null };
+    });
   });
 }
 const CATEGORY = `category AS MATERIALIZED (
