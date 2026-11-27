@@ -16,11 +16,9 @@ const LEASE = "interval '3 minutes'";
 export type SignalListeningRunKindV1 = "listening" | "topics_round" | "study" | "legacy_request";
 export type SignalListeningRunStatusV1 = "queued" | "running" | "completed" | "failed" | "cap_reached" | "canceled";
 /** Re-sends the exact R15 request over the first roots of a frozen R15 map. */
-export type SignalListeningLegacyPlanV1 = {
-  planner: "r15_request_v2"; map_id: string; root_limit: number; input_usd_per_mtok: number;
-  /** A measurement asks again even when the cache already holds the answer. */
-  reask: boolean;
-};
+/** This planner is a measurement: it asks again even when the cache already
+ * holds the answer, and only skips the roots this same run already answered. */
+export type SignalListeningLegacyPlanV1 = { planner: "r15_request_v2"; map_id: string; root_limit: number; input_usd_per_mtok: number };
 export type SignalListeningPlanV1 = SignalListeningLegacyPlanV1;
 export type SignalListeningRunV1 = {
   id: string; workspace_id: string; kind: SignalListeningRunKindV1; plan: SignalListeningPlanV1;
@@ -37,8 +35,8 @@ export function validateSignalListeningPlanV1(value: unknown): SignalListeningPl
   const plan = value as SignalListeningLegacyPlanV1 | null;
   if (!plan || plan.planner !== "r15_request_v2" || !uuid.test(plan.map_id) || !Number.isSafeInteger(plan.root_limit)
     || plan.root_limit < 1 || plan.root_limit > 5_000_000 || !Number.isFinite(plan.input_usd_per_mtok)
-    || plan.input_usd_per_mtok <= 0 || typeof plan.reask !== "boolean") fail("listening_plan_invalid");
-  return { planner: plan.planner, map_id: plan.map_id, root_limit: plan.root_limit, input_usd_per_mtok: plan.input_usd_per_mtok, reask: plan.reask };
+    || plan.input_usd_per_mtok <= 0) fail("listening_plan_invalid");
+  return { planner: plan.planner, map_id: plan.map_id, root_limit: plan.root_limit, input_usd_per_mtok: plan.input_usd_per_mtok };
 }
 
 /** Queue a run. The spending cap is part of the request and never grows. */
@@ -191,7 +189,7 @@ export async function createSignalListeningLegacySourceV1(database: Database, ru
     model, input_usd_per_mtok: plan.input_usd_per_mtok,
     /** Start another pass over the roots that are still pending. */
     rewind() { cursor = 0; },
-    /** Next slice in `ordinal` order. Roots already answered by this run are skipped, so a restart resumes. */
+    /** Next slice in `ordinal` order. Roots this run already answered are skipped, so a restart resumes. */
     async next(limit: number): Promise<SignalListeningItemV1[]> {
       const rows = (await database.query<LegacyRow>(`SELECT item.ordinal,item.root_id,item.input_digest,item.text,NULL::text title,
           mention.platform,mention.content_type,NULL::text author,mention.published_at::text,mention.language,item.chunk_index,
@@ -200,9 +198,9 @@ export async function createSignalListeningLegacySourceV1(database: Database, ru
         JOIN mentions mention ON mention.workspace_id=item.workspace_id AND mention.id=item.root_id
         WHERE item.workspace_id=$1 AND item.map_id=$2 AND item.ordinal>$3 AND item.ordinal<=$4
           AND NOT EXISTS(SELECT 1 FROM signal_listening_answers answer WHERE answer.root_id=item.root_id
-            AND answer.workspace_id=item.workspace_id AND ($6::boolean IS FALSE OR answer.run_id=$5))
-        ORDER BY item.ordinal LIMIT $7`,
-        [run.workspace_id, plan.map_id, cursor, plan.root_limit, run.id, plan.reask, limit])).rows;
+            AND answer.workspace_id=item.workspace_id AND answer.run_id=$5)
+        ORDER BY item.ordinal LIMIT $6`,
+        [run.workspace_id, plan.map_id, cursor, plan.root_limit, run.id, limit])).rows;
       if (rows.length) cursor = rows.at(-1)!.ordinal;
       return rows.flatMap(row => {
         // A root whose request cannot be built is left out; it never stops the others.

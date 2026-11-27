@@ -34,7 +34,7 @@ try {
     const run = await requestSignalListeningRunV1({ database: pool, workspace_id: required("workspace"), kind: "legacy_request",
       cap_micro_usd: Math.round(Number(required("cap-usd")) * 1e6),
       plan: { planner: "r15_request_v2", map_id: required("map"), root_limit: Number(required("roots")),
-        input_usd_per_mtok: SIGNAL_LISTENING_DEFAULT_PRICE_V1, reask: true } });
+        input_usd_per_mtok: SIGNAL_LISTENING_DEFAULT_PRICE_V1 } });
     console.log(JSON.stringify({ run_id: run.id, status: run.status }));
   } else if (mode === "status") {
     const run = await getSignalListeningRunV1(pool, required("run"));

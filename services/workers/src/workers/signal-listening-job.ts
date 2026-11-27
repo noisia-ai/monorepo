@@ -70,7 +70,7 @@ export async function processSignalListeningRunV1(args: {
     throw new Error("listening_run_claims_exhausted");
   }
   const source = await createSignalListeningLegacySourceV1(database, run);
-  let spent = run.spent_micro_usd, leaseLost = false, rawMs = 0, dbMs = 0, rawFailures = 0, pricedTokens = 0, pricedRoots = 0;
+  let spent = run.spent_micro_usd, leaseLost = false, rawMs = 0, dbMs = 0, rawFailures = 0, pricedTokens = 0;
   const heartbeat = setInterval(() => {
     void renewSignalListeningRunV1(database, run).then(owned => { if (!owned) leaseLost = true; }).catch(() => undefined);
   }, args.lease_renewal_ms ?? 30_000); heartbeat.unref?.();
@@ -96,18 +96,28 @@ export async function processSignalListeningRunV1(args: {
       roots_done: page.done.length, roots_failed: page.failed.length, input_tokens: tokens,
       cost_micro_usd: signalListeningCostMicroUsdV1(tokens, source.input_usd_per_mtok) });
     dbMs += performance.now() - started;
-    spent = written.spent_micro_usd; pricedTokens += tokens; pricedRoots += page.done.length;
+    spent = written.spent_micro_usd; pricedTokens += tokens;
   };
-  // The cap is checked before each slice is loaded, so it must leave room for
-  // one slice, two pages not yet written and the requests in flight, at the observed size per root.
-  const overCap = () => spent + Math.ceil((3 * args.page_size + 2 * args.max_in_flight)
-    * (pricedRoots ? pricedTokens / pricedRoots : 2000) * source.input_usd_per_mtok) >= run.cap_micro_usd;
+  // Spending is recorded when a page is written. The cap therefore counts three
+  // things before a new slice may load: what is written, what was answered but
+  // is not written yet, and room for the slice plus the requests in flight.
+  let answeredTokens = 0, answeredRoots = 0;
+  const metered: JevPacedClientV1 = { async evaluate(request, options) {
+    const result = await args.client.evaluate(request, options);
+    if (result.ok) { answeredTokens += result.response.usage.input_tokens; answeredRoots++; }
+    return result;
+  } };
+  const overCap = () => {
+    const perRoot = answeredRoots ? answeredTokens / answeredRoots : 2000;
+    const unwritten = answeredTokens - pricedTokens, admitted = (args.page_size + args.max_in_flight) * perRoot * 1.25;
+    return spent + Math.ceil((unwritten + admitted) * source.input_usd_per_mtok) >= run.cap_micro_usd;
+  };
   let receipt!: ListeningStreamReceiptV1;
   const totals = { roots_done: 0, roots_failed: 0, input_tokens: 0, pages: 0, requests: 0, throttled: 0, wall_ms: 0, load_ms: 0, flush_ms: 0 };
   try {
     // Roots that failed stay pending; two more passes give transient failures another chance.
     for (let pass = 0; pass < 3; pass++) {
-      receipt = await runListeningStreamV1({ client: args.client, max_in_flight: args.max_in_flight, page_size: args.page_size,
+      receipt = await runListeningStreamV1({ client: metered, max_in_flight: args.max_in_flight, page_size: args.page_size,
         next: () => source.next(args.page_size), flush, should_stop: () => leaseLost || overCap(), signal: args.signal });
       run.pages += receipt.pages;
       for (const key of Object.keys(totals) as Array<keyof typeof totals>) totals[key] += receipt[key];
