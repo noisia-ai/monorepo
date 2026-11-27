@@ -384,14 +384,17 @@ export function applySignalListeningReviewV1(args: { catalog: SignalListeningCat
 /**
  * The rules on their own, for the end of a loop: there is no review left, so
  * pairs the classifier settled as one topic are merged, and `probation` lists
- * the pairs still above the line that it was never asked about. Those go to it
- * with the wording they have, in the last pass, so the published map does not
- * count as members of both what belongs to one.
+ * every pair of possible twins it was not asked about in this round, whatever
+ * its line. Those go to it with the wording they have, in the last pass, so
+ * the published map does not count as members of both what belongs to one.
+ * During the loop only the pairs accepted together very often are asked: the
+ * review writes contrast for the rest.
  */
 export function applySignalListeningRuleMergesV1(args: { catalog: SignalListeningCatalogTopicV1[]; themes: SignalListeningThemeV1[];
   policy: SignalListeningCyclePolicyV1; evidence: Pick<SignalListeningCycleEvidenceV1, "twins" | "topics" | "pair_choices"> }): SignalListeningReviewResultV1 {
+  const twin = args.policy.twin.choice_coapproval === undefined ? args.policy.twin : { ...args.policy.twin, choice_coapproval: 0 };
   return applySignalListeningReviewV1({ catalog: args.catalog, themes: args.themes, orphan_groups: [], output: { themes: [], kept: [], changed: [] },
-    rules: { policy: args.policy, evidence: args.evidence } });
+    rules: { policy: { ...args.policy, twin }, evidence: args.evidence } });
 }
 
 export function signalListeningReviewCostMicroUsdV1(usage: { input_tokens: number; output_tokens: number; cache_creation_input_tokens?: number | null;

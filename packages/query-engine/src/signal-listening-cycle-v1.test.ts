@@ -195,9 +195,13 @@ test("the rule respects people's edits, follows chains by size, and does nothing
   // Posts that belong to both of two topics that barely overlap as a whole are real overlap, not one topic: no merge.
   const magnet = applySignalListeningRuleMergesV1({ catalog, themes: [], policy, evidence: { ...measured, twins: [], pair_choices: [chosen("bitter", "bitterness", 97, 0.04)] } });
   assert.deepEqual([magnet.rule_merges.length, magnet.catalog.length, magnet.map_changed], [0, 5, false]);
-  // At the end of a loop a pair still above the line that was never asked about goes to the classifier as it is worded.
+  // At the end of a loop every possible twin that was not asked about goes to the classifier as it is worded, whatever its line.
   const end = applySignalListeningRuleMergesV1({ catalog, themes: [], policy, evidence: { ...measured, twins: [pair("bitter", "bitterness", 0.9), pair("price", "auction", 0.2)] } });
-  assert.deepEqual([end.rule_merges.length, end.probation.map(item => `${item.left}+${item.right}`), end.catalog.length], [0, ["bitter+bitterness"], 5]);
+  assert.deepEqual([end.rule_merges.length, end.probation.map(item => `${item.left}+${item.right}`), end.catalog.length], [0, ["bitter+bitterness", "price+auction"], 5]);
+  // During the loop only the pairs accepted together very often are sent; the review writes contrast for the rest.
+  const during = applySignalListeningReviewV1({ catalog, orphan_groups: groups, output: answer(themes, []), rules: { policy,
+    evidence: { ...measured, twins: [pair("bitter", "bitterness", 0.9), pair("price", "auction", 0.2)] } } });
+  assert.deepEqual(during.probation.map(item => `${item.left}+${item.right}`), ["bitter+bitterness"]);
   // One it already chose for is not asked again, and one of its topics folded by a merge is no longer a pair.
   const asked = applySignalListeningRuleMergesV1({ catalog, themes: [], policy, evidence: { ...measured,
     twins: [pair("bitter", "bitterness", 0.9), pair("bitterness", "price", 0.8)], pair_choices: [chosen("bitter", "bitterness", 80)] } });
