@@ -42,6 +42,7 @@ Sólo si tu usuario puede editar tópicos; el nombre del tópico aparece subraya
 2. **«Ver resultado»**:
    - Aviso de **resultado direccional** arriba.
    - Resumen: tamaño del corte, menciones con dirección, con motivo y acuerdo entre las dos lecturas de capa.
+   - Las menciones con dirección son las **contadas**: aquéllas donde el clasificador da impulso, freno o ambos con 0.70 o más. El estudio agrupa además otras, entre 0.50 y 0.70, que sólo ayudan a descubrir motivos y no entran a ningún conteo. Es normal que haya motivos chicos y menciones contadas sin motivo.
    - Tabla de capas con su permiso y tabla de motivos con menciones y señales de impulso, freno y tensión.
    - Al abrir un motivo: definición y citas. Cada cita es un fragmento literal de su publicación, con liga, red y fecha, sin nombres de usuario.
 3. Marca uno o dos motivos y pulsa **«Pasar … al reporte»**. Esperado: quedan marcados como pasados y aparecen como tópicos definidos de la marca en la sección de ajustes de arriba. No se pregunta nada hasta que alguien actualice la escucha.
