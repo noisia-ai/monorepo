@@ -261,9 +261,12 @@ const PAIR_SHARED = `pair AS (SELECT * FROM unnest($2::bigint[],$3::bigint[],$4:
     JOIN signal_listening_answers on_right ON on_right.question_id=pair.right_id AND on_right.root_id=answer.root_id AND on_right.workspace_id=$1
       AND on_right.input_sha=answer.input_sha AND on_right.probability>=$6::real)`;
 export async function settleSignalListeningPairChoicesV1(database: Database, cycle: Pick<SignalListeningCycleV1, "id" | "workspace_id" | "lease_token" | "base_map_id" | "policy">,
-  round: Pick<SignalListeningRoundV1, "id" | "review">): Promise<SignalListeningPairChoiceV1[]> {
-  const pairs = roundPairs(round);
-  if (!pairs.length) return [];
+  round: Pick<SignalListeningRoundV1, "id" | "review">,
+  /** Pairs that were merged: the decisions they made are taken back, and what the other pairs chose is applied again. */
+  merged: Array<{ stays: string; folded: string }> = []): Promise<SignalListeningPairChoiceV1[]> {
+  const together = new Set(merged.flatMap(item => [`${item.stays}+${item.folded}`, `${item.folded}+${item.stays}`]));
+  const every = roundPairs(round), pairs = every.filter(pair => !together.has(`${pair.left}+${pair.right}`));
+  if (!every.length) return [];
   return shared.transaction(database, async client => {
     if (!(await client.query("SELECT 1 FROM signal_listening_cycles WHERE id=$1 AND lease_token=$2 FOR UPDATE", [cycle.id, cycle.lease_token])).rows.length) {
       throw new Error("listening_cycle_lease_lost");
@@ -271,6 +274,13 @@ export async function settleSignalListeningPairChoicesV1(database: Database, cyc
     const topics = new Map((await client.query<{ topic_key: string; question_id: string }>(
       "SELECT topic_key,question_id::text FROM signal_listening_round_topics WHERE round_id=$1", [round.id])).rows.map(row => [row.topic_key, row.question_id]));
     const asked = pairs.flatMap(pair => { const left = topics.get(pair.left), right = topics.get(pair.right); return left && right ? [{ ...pair, left_id: left, right_id: right }] : []; });
+    // The posts of a merged pair belong to the topic that stays whichever side they chose. Its decisions are removed, so
+    // those posts count again by the topic's own answer; the choices of the other pairs are written again just below.
+    const undone = every.filter(pair => together.has(`${pair.left}+${pair.right}`));
+    if (undone.length) {
+      await client.query(`DELETE FROM signal_listening_answer_overrides WHERE workspace_id=$1 AND decided_by_question_id=ANY($2::bigint[]) AND question_id=ANY($3::bigint[])`,
+        [cycle.workspace_id, undone.map(pair => pair.question_id), undone.flatMap(pair => [topics.get(pair.left), topics.get(pair.right)]).filter(Boolean)]);
+    }
     if (!asked.length) return [];
     const params = [cycle.workspace_id, asked.map(pair => pair.question_id), asked.map(pair => pair.left_id), asked.map(pair => pair.right_id), cycle.base_map_id, cycle.policy.approval];
     // A post two pairs share through the same topic gets one decision for that topic, whatever the order of the pairs: it

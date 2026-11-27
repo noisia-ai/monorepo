@@ -144,6 +144,7 @@ export async function stepSignalListeningCycleV1(args: { database: Database; cyc
       const merges = decision.reason === "no_category_population" ? null
         : applySignalListeningRuleMergesV1({ catalog: round.catalog, themes: round.themes, policy: cycle.policy, evidence: round.evidence! });
       if (merges && (merges.rule_merges.length || merges.probation.length) && remaining >= 50_000) {
+        if (merges.rule_merges.length) await settleSignalListeningPairChoicesV1(database, cycle, round, merges.rule_merges);
         const confirmed = await readSignalListeningConfirmedCentroidsV1(database, cycle, round, args.heartbeat);
         await openSignalListeningNextRoundV1({ database, cycle, round, catalog: merges.catalog, themes: merges.themes, confirmed, settling: true, pairs: merges.probation,
           review: { ...(round.review ?? {}), settled: { stop_reason: decision.reason, rule_merges: merges.rule_merges, rejected: merges.rejected, pairs_asked: merges.probation.length } } });
@@ -193,6 +194,8 @@ export async function stepSignalListeningCycleV1(args: { database: Database; cyc
       await finishSignalListeningCycleV1(database, cycle, { status: "completed", stop_reason: "map_unchanged" });
       return "done";
     }
+    // A pair the rule merged gives back the decisions it made: its posts belong to the topic that stays.
+    if (result.rule_merges.length) await settleSignalListeningPairChoicesV1(database, cycle, round, result.rule_merges);
     const confirmed = await readSignalListeningConfirmedCentroidsV1(database, cycle, round, args.heartbeat);
     await openSignalListeningNextRoundV1({ database, cycle, round, catalog: result.catalog, themes: result.themes, review, confirmed, pairs: result.probation });
     return "continue";
