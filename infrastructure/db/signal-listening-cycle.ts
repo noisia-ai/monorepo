@@ -57,6 +57,9 @@ async function writeRoundTopics(client: Queryable, round: { id: string; workspac
     ON CONFLICT(round_id,topic_key) DO NOTHING`, [round.id, JSON.stringify(catalog.map((topic, index) => ({ topic_key: topic.topic_key,
       question_id: ids.get(questions[index]!.question_digest), centroid: centroids.get(topic.topic_key)?.vector ?? null,
       members: centroids.get(topic.topic_key)?.members ?? 0 })))]);
+  // A round is measured through these rows minutes after they are written. Without fresh statistics the planner takes
+  // the new round for empty, and a measurement that takes seconds runs into the statement timeout.
+  await client.query("ANALYZE signal_listening_round_topics");
 }
 
 /** Registers the question of each pair with the wording both topics have in this round, and leaves the pairs in the round. */
