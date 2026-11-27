@@ -229,3 +229,20 @@ test("the pair question asks which of the two a post belongs to, and its answer 
   assert.deepEqual(["left", "right", "both", "neither", "other", null].map(choice => signalListeningPairVerdictV1(choice)),
     [{ left: true, right: false }, { left: false, right: true }, { left: true, right: true }, { left: false, right: false }, null, null]);
 });
+
+test("a topic remembers every topic folded into it, so what people corrected on them is not lost", () => {
+  // By the rule: bitter takes bitterness in, then price.
+  const chain = applySignalListeningRuleMergesV1({ catalog, themes: [], policy, evidence: { topics: sizes({ bitter: 300, bitterness: 50, price: 100, auction: 10, ritual: 50 }),
+    twins: [], pair_choices: [chosen("bitter", "bitterness", 80), chosen("bitterness", "price", 70)] } });
+  assert.deepEqual(chain.catalog.find(item => item.topic_key === "bitter")!.folded_keys, ["bitterness", "price"]);
+  // A later round keeps the memory although the topic starts it without lineage.
+  const later = applySignalListeningReviewV1({ catalog: chain.catalog, orphan_groups: groups, output: answer(themes, []) });
+  const kept = later.catalog.find(item => item.topic_key === "bitter")!;
+  assert.deepEqual([kept.source_topic_keys, kept.folded_keys], [[], ["bitterness", "price"]]);
+  // By the agent: a merge under a new key remembers its sources and what they already held.
+  const merged = applySignalListeningReviewV1({ catalog: chain.catalog, orphan_groups: groups,
+    output: answer(themes, [proposal("taste_and_cost", "merge", ["bitter", "auction"])]) });
+  assert.deepEqual(merged.catalog.find(item => item.topic_key === "taste_and_cost")!.folded_keys, ["auction", "bitter", "bitterness", "price"]);
+  // A topic nothing was folded into carries no such list.
+  assert.equal(chain.catalog.find(item => item.topic_key === "auction")!.folded_keys, undefined);
+});

@@ -476,13 +476,18 @@ export async function rewordSignalStudyMotivesV1(database: Database, study: Sign
 export type SignalStudyMembershipV1 = { root_id: string; motive_key: string };
 /** Roots confirmed for each motive: the classifier said yes at or above the approval threshold. */
 export async function readSignalStudyMembershipsV1(database: Database, study: SignalStudyV1): Promise<SignalStudyMembershipV1[]> {
-  const cut = await cutOf(database, study), n = cut.params.length;
+  const cut = await cutOf(database, study), { ids } = await ensureSignalStudyAxesV1(database, study), n = cut.params.length, rules = signalStudyRulesOfV1(study);
+  // A member of a motive is a post whose direction counts under the rules of this study: a study counted again under
+  // a higher line keeps the answers of the one it comes from, and they include posts that no longer count.
   return (await database.query<SignalStudyMembershipV1>(`SELECT item.root_id,motive.motive_key FROM (${cut.sql}) included
     JOIN signal_mass_labeling_items item ON item.workspace_id=$1 AND item.map_id=$2 AND item.root_id=included.root_id
+    JOIN signal_listening_answers direction ON direction.question_id=$${n + 3} AND direction.root_id=item.root_id AND direction.workspace_id=$1
+      AND direction.input_sha=decode(substr(item.input_digest,8),'hex') AND direction.choice<>'none'
+      AND ${signalStudyDirectionProbabilitySqlV1(rules)}>=COALESCE(($${n + 5}::jsonb->>direction.choice)::real,$${n + 4}::real)
     JOIN signal_study_motives motive ON motive.study_id=$${n + 1}
     JOIN signal_listening_answers answer ON answer.question_id=motive.question_id AND answer.root_id=item.root_id AND answer.workspace_id=$1
       AND answer.probability>=$${n + 2}::real AND answer.input_sha=decode(substr(item.input_digest,8),'hex')`,
-    [...cut.params, study.id, study.methodology.rules.motive_approval_min])).rows;
+    [...cut.params, study.id, rules.motive_approval_min, ids.direction, rules.direction_min_probability ?? 0, JSON.stringify(rules.direction_min_probability_by ?? {})])).rows;
 }
 /** Listening topics each given root belongs to, from the brand's published map. Used for the cross of motives and topics. */
 export async function readSignalStudyTopicMembershipsV1(database: Database, study: Pick<SignalStudyV1, "workspace_id" | "base_map_id">, root_ids: string[]) {

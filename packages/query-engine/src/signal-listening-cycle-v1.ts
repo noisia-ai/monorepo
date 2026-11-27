@@ -73,7 +73,15 @@ const catalogTopic = z.object({
   human_locked: z.boolean(),
   source_topic_keys: z.array(key).max(64),
   orphan_group_keys: z.array(key).max(16),
+  /** Every topic that was ever folded into this one by a review or by the rule. Unlike `source_topic_keys` it is never
+   * emptied: what a person corrected on a topic that no longer exists is read as a correction on this one. */
+  folded_keys: z.array(key).max(256).optional(),
 }).strict();
+/** The topics folded into a topic that comes from `sources`: theirs, and the sources themselves other than its own key. */
+function foldedInto(topic_key: string, sources: SignalListeningCatalogTopicV1[]): { folded_keys?: string[] } {
+  const keys = [...new Set(sources.flatMap(source => [...(source.folded_keys ?? []), source.topic_key]))].filter(item => item !== topic_key).sort().slice(0, 256);
+  return keys.length ? { folded_keys: keys } : {};
+}
 const theme = z.object({ theme_key: key, name: z.object({ original: z.string().trim().min(1).max(160), en: z.string().trim().min(1).max(160),
   es: z.string().trim().min(1).max(160) }).strict() }).strict();
 export type SignalListeningCatalogTopicV1 = z.infer<typeof catalogTopic>;
@@ -328,7 +336,8 @@ export function applySignalListeningReviewV1(args: { catalog: SignalListeningCat
     if (problem) { rejected.push({ key: proposal.key, reason: problem }); continue; }
     next.set(proposal.key, { topic_key: proposal.key, localization: { original_language: language, original: original!, en: en!, es: es! },
       domain: proposal.domain, theme_key: themeOf(proposal.theme_key), origin: "agent", human_locked: false,
-      source_topic_keys: sources, orphan_group_keys: proposal.action === "new" ? orphanKeys : [] });
+      source_topic_keys: sources, orphan_group_keys: proposal.action === "new" ? orphanKeys : [],
+      ...foldedInto(proposal.key, sources.flatMap(source => current.has(source) ? [current.get(source)!] : [])) });
     for (const source of sources) { used.add(source); home.set(source, proposal.key); }
     if (proposal.action === "new") summary.created++;
     else if (proposal.action === "redefine") summary.redefined++;
@@ -356,7 +365,8 @@ export function applySignalListeningReviewV1(args: { catalog: SignalListeningCat
       const stays = sizeA > sizeB || (sizeA === sizeB && a < b) ? first : second, folded = stays === first ? second : first;
       const sources = [...new Set([...lineage(stays), ...lineage(folded)])].sort();
       if (sources.length > 64) { rejected.push({ key: `${pair.left}+${pair.right}`, reason: "rule_merge_too_wide" }); continue; }
-      next.set(stays.topic_key, { ...stays, source_topic_keys: sources, orphan_group_keys: [...new Set([...stays.orphan_group_keys, ...folded.orphan_group_keys])].slice(0, 16) });
+      next.set(stays.topic_key, { ...stays, source_topic_keys: sources, orphan_group_keys: [...new Set([...stays.orphan_group_keys, ...folded.orphan_group_keys])].slice(0, 16),
+        ...foldedInto(stays.topic_key, [stays, folded]) });
       next.delete(folded.topic_key);
       for (const [source, where] of home) if (where === folded.topic_key) home.set(source, stays.topic_key);
       for (const key of [stays.topic_key, folded.topic_key]) if (keptNow.delete(key)) summary.kept--;

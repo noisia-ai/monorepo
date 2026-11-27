@@ -46,6 +46,11 @@ async function finalMap(client: Queryable, workspace_id: string): Promise<FinalM
     for (let hop = 0; direct.has(target) && hop < 64; hop++) target = direct.get(target)!;
     if (target !== source && !direct.has(target)) merged.set(source, target);
   }
+  // A topic a review or the rule folded into another is no longer in the catalog. What people corrected on it is read
+  // as a correction on the topic that holds it now, or on the one a person later folded that one into.
+  for (const topic of round.catalog) {
+    for (const gone of topic.folded_keys ?? []) if (!known.has(gone) && !merged.has(gone)) merged.set(gone, merged.get(topic.topic_key) ?? topic.topic_key);
+  }
   return { cycle_id: cycle.id, base_map_id: cycle.base_map_id, policy: cycle.policy, completed_at: cycle.completed_at, round_id: round.id, round_no: round.round_no,
     catalog: round.catalog, themes: round.themes, merged };
 }
