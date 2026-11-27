@@ -301,6 +301,9 @@ async function buildStudyOutput(database: Database, study: SignalStudyV1): Promi
     return { layer: layer.key, permission: layer.permission, motives: own.length, mentions, share_of_directed: subjectRoots.size ? mentions / subjectRoots.size : 0 };
   });
   const barrierShare = subjectRoots.size ? directed.filter(row => subjectRoots.has(row.root_id) && axes.get(row.root_id)!.direction === "barrier").length / subjectRoots.size : null;
+  // The guard of the methodology: a direction that takes more than its share of the cut means the rules read too much.
+  const directionShares = Object.fromEntries(Object.entries(count(directed.map(row => axes.get(row.root_id)!.direction))).map(([key, mentions]) => [key, mentions / rows.length]));
+  const tooWide = rules.direction_share_max === undefined ? [] : Object.entries(directionShares).filter(([, share]) => share > rules.direction_share_max!).map(([key]) => key).sort();
   return {
     contract_version: "signal-study-output-v1", status: rules.output_status, generated_at: new Date().toISOString(),
     methodology: { key: template.key, version: template.version }, subject: study.subject,
@@ -314,7 +317,8 @@ async function buildStudyOutput(database: Database, study: SignalStudyV1): Promi
       without_a_motive: [...subjectRoots].filter(root => !assigned.has(root)).length },
     // The balance of direction depends in part on how the corpus was collected, so its base rates travel with it.
     query_bias: { note: "direction_balance_depends_on_the_corpus_query", cut_share_of_corpus: sizes.corpus_roots ? sizes.cut_roots / sizes.corpus_roots : null,
-      directed_share_of_cut: rows.length ? directed.length / rows.length : null, barrier_share_of_directed: barrierShare },
+      directed_share_of_cut: rows.length ? directed.length / rows.length : null, barrier_share_of_directed: barrierShare,
+      direction_share_of_cut: directionShares, directions_over_the_share_allowed: tooWide },
     layer_stability: study.state.layer_stability ?? null, checks: study.state.checks ?? null, naming: study.state.naming ?? null,
     motives: motiveRows, layers,
     competitor: { mentions: directed.filter(row => axes.get(row.root_id)!.aggregate === "competitor").length,

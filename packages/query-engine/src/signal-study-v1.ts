@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { z } from "zod";
 import seed from "./data/study-templates/triggers-barriers.r16b-v1.json";
 import seedV2 from "./data/study-templates/triggers-barriers.r16b-v2.json";
+import seedV3 from "./data/study-templates/triggers-barriers.r16b-v3.json";
 import type { JevQuestionV1 } from "./signal-mention-facets-jev-v1";
 import { signalListeningQuestionIdentityV1, type SignalListeningAskedQuestionV1 } from "./signal-listening-questions-v1";
 
@@ -31,6 +32,8 @@ const templateSchema = z.object({
     group_directions: z.array(z.string()).min(1), group_targets: z.array(z.string()).min(1), group_use: z.string(),
     /** A direction counts from this probability up; below it the post is kept as probable and read as `none`. */
     direction_min_probability: z.number().min(0).max(1).optional(),
+    /** One direction over this share of the cut means the rules read too much: the output says so. */
+    direction_share_max: z.number().min(0).max(1).optional(),
     /** The layer is read post by post on this many confirmed posts of each motive, and a motive takes the layer most of them show. */
     layer_mentions_per_motive: z.number().int().min(5).max(60).optional(), layer_majority_min: z.number().min(0.5).max(1).optional(),
     roots_per_group: z.number().int().min(20), min_groups: z.number().int().min(1), max_groups: z.number().int().min(1), min_group: z.number().int().min(1),
@@ -51,13 +54,24 @@ export function validateSignalStudyTemplateV1(value: unknown): SignalStudyTempla
 /** The first Triggers & Barriers template. Studies made with it keep their own copy. */
 export const SIGNAL_STUDY_TB_TEMPLATE_V1: Readonly<SignalStudyTemplateV1> = validateSignalStudyTemplateV1(seed);
 /**
- * The template new studies are made with. After the first blind evaluation:
- * a direction needs a force of the speaker's own and only counts from 0.85 (the
- * first wording read plain mentions as triggers); the layer is read post by
- * post, because agreement over a dozen motives says little; and a post is a
- * member of a motive from 0.85.
+ * The second template, after the first blind evaluation: a direction needs a
+ * force of the speaker's own and only counts from 0.85 (the first wording read
+ * plain mentions as triggers); the layer is read post by post, because
+ * agreement over a dozen motives says little; and a post is a member of a
+ * motive from 0.85. Its direction turned out too narrow: it asked for a stated
+ * reason and left out the emotion a speaker expresses about the subject.
  */
 export const SIGNAL_STUDY_TB_TEMPLATE_V2: Readonly<SignalStudyTemplateV1> = validateSignalStudyTemplateV1(seedV2);
+/**
+ * The template new studies are made with. Direction is asked in two steps:
+ * first whether the force is aimed at the subject at all (what the first
+ * wording got wrong was posts about something else), then its direction, where
+ * an emotion or an experience about the subject counts as much as a stated
+ * reason, as the methodology defines a trigger. Everything else is as in the
+ * second template. One direction over half of the cut is reported as a sign
+ * that the rules read too much.
+ */
+export const SIGNAL_STUDY_TB_TEMPLATE_V3: Readonly<SignalStudyTemplateV1> = validateSignalStudyTemplateV1(seedV3);
 /** A study may use its own lexicon for its cut instead of the brand's: lowercase terms, one or two words each. */
 export function validateSignalStudyLexiconV1(value: unknown): string[] {
   const parsed = z.array(z.string().trim().min(2).max(80)).min(1).max(400).safeParse(value);

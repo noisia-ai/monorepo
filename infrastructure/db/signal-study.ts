@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { Pool, PoolClient } from "pg";
 import {
-  compileSignalListeningConfigurationV1, compileSignalStudyAxesV1, signalStudyMotiveQuestionV1, SIGNAL_LISTENING_CONSUMER_CUT_V1, SIGNAL_STUDY_TB_TEMPLATE_V2,
+  compileSignalListeningConfigurationV1, compileSignalStudyAxesV1, signalStudyMotiveQuestionV1, SIGNAL_LISTENING_CONSUMER_CUT_V1, SIGNAL_STUDY_TB_TEMPLATE_V3,
   validateSignalListeningConfigurationV1, validateSignalStudyLexiconV1, validateSignalStudySubjectV1, validateSignalStudyTemplateV1,
   type SignalListeningAskedQuestionV1, type SignalListeningConfigurationV1, type SignalListeningItemV1, type SignalStudyLayerV1,
   type SignalStudyPermissionV1, type SignalStudySubjectV1, type SignalStudyTemplateV1, type SignalStudyWordingV1,
@@ -55,7 +55,7 @@ export async function requestSignalStudyV1(args: { database: Database; workspace
   if (typeof args.name !== "string" || !args.name.trim() || args.name.length > 200) fail("study_request_invalid", 422);
   let subject: SignalStudySubjectV1, template: SignalStudyTemplateV1, lexicon: string[] | null;
   try {
-    subject = validateSignalStudySubjectV1(args.subject); template = validateSignalStudyTemplateV1(args.template ?? SIGNAL_STUDY_TB_TEMPLATE_V2);
+    subject = validateSignalStudySubjectV1(args.subject); template = validateSignalStudyTemplateV1(args.template ?? SIGNAL_STUDY_TB_TEMPLATE_V3);
     lexicon = args.lexicon_terms === undefined || args.lexicon_terms === null ? null : validateSignalStudyLexiconV1(args.lexicon_terms);
   } catch { fail("study_request_invalid", 422); }
   const period = args.period ?? null;
