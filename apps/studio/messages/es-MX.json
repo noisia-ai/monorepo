@@ -5012,5 +5012,92 @@
       "topic": "Tópico",
       "period": "Mes"
     }
+  },
+  "Studies": {
+    "title": "Estudios",
+    "body": "Un estudio aplica una metodología a un corte de las mismas menciones que escucha el reporte. No vuelve a importar ni a vectorizar nada.",
+    "loading": "Cargando estudios…",
+    "unavailable": "No se pudieron leer los estudios.",
+    "refresh": "Actualizar",
+    "empty": "Esta marca todavía no tiene estudios.",
+    "open": "Ver resultado",
+    "close": "Cerrar",
+    "directional": "Resultado direccional: señala hacia dónde mirar. Todavía no está validado por muestreo.",
+    "summary": "Corte de {cut} menciones de consumidores sobre la categoría (de {corpus}). {directed} hablan del sujeto con una dirección y {withMotive} tienen un motivo. Acuerdo entre las dos lecturas de capa: {kappa}.",
+    "layersTitle": "Capas",
+    "motivesTitle": "Motivos",
+    "source": "fuente",
+    "choose": "Elegir {name}",
+    "promoteHelp": "Los motivos elegidos pasan a los temas definidos de la marca. El reporte los medirá en su siguiente actualización.",
+    "promote": "Pasar {count, plural, =0 {motivos} one {# motivo} other {# motivos}} al reporte",
+    "promoting": "Pasando…",
+    "promoteError": "No se pudieron pasar los motivos.",
+    "col": {
+      "name": "Estudio",
+      "status": "Estado",
+      "cost": "Gasto / tope",
+      "created": "Creado",
+      "layer": "Capa",
+      "permission": "Permiso",
+      "motives": "Motivos",
+      "mentions": "Menciones",
+      "share": "Del total con dirección",
+      "motive": "Motivo",
+      "trigger": "Con señal de impulso",
+      "barrier": "Con señal de freno",
+      "tension": "Con tensión"
+    },
+    "status": {
+      "queued": "En cola",
+      "running": "Trabajando",
+      "completed": "Terminado",
+      "failed": "Falló",
+      "canceled": "Cancelado"
+    },
+    "step": {
+      "created": "preguntando dirección, objeto y uso",
+      "axes_asked": "agrupando menciones",
+      "grouped": "nombrando motivos",
+      "motives_named": "leyendo capas",
+      "layers_coded": "confirmando motivos",
+      "motives_asked": "revisando resultados",
+      "checked": "armando el resultado",
+      "published": "listo"
+    },
+    "kind": {
+      "category": "La categoría",
+      "own_brand": "La marca propia",
+      "alternative": "Una alternativa a la categoría"
+    },
+    "layer": {
+      "psychological": "Psicológica",
+      "personal": "Personal",
+      "social": "Social",
+      "cultural": "Cultural",
+      "unclear": "Sin evidencia suficiente"
+    },
+    "permission": {
+      "movable": "Se puede mover",
+      "partial": "Se puede mover en parte",
+      "structural_align_or_exit": "Estructural: alinearse o salir",
+      "no_permission": "Sin permiso"
+    },
+    "form": {
+      "title": "Nuevo estudio de Triggers & Barriers",
+      "help": "El estudio corre solo de principio a fin, dentro del tope de gasto.",
+      "name": "Nombre del estudio",
+      "kind": "El sujeto es",
+      "subject": "Sujeto exacto del estudio",
+      "category": "Categoría",
+      "own_brand": "Marca propia",
+      "conventional_category": "Categoría convencional",
+      "competitors": "Competidores (uno por línea)",
+      "alternatives": "Alternativas (una por línea)",
+      "cap": "Tope de gasto (USD)",
+      "create": "Crear estudio",
+      "creating": "Creando…",
+      "retry": "Reintentar",
+      "error": "No se pudo crear el estudio."
+    }
   }
 }

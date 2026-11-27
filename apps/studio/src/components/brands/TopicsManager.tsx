@@ -19,6 +19,7 @@ import { MfpDiscoveryAdoption } from "./MfpDiscoveryAdoption";
 import { ClientProcessingJourney } from "./ClientProcessingJourney";
 import { LabelingStudySettings } from "./LabelingStudySettings";
 import { ListeningQuestions } from "./ListeningQuestions";
+import { Studies } from "./Studies";
 import { StudyLabelingControls } from "./StudyLabelingControls";
 import { WorkspaceTopicConsolidationControls } from "./WorkspaceTopicConsolidationCard";
 import { WorkspaceTopicConsolidationActivationControls } from "./WorkspaceTopicConsolidationActivationCard";
@@ -349,6 +350,7 @@ function ScopedTopicsManager({ brandId, initial, workspaceId, actorId, initialCo
     <StudyLabelingControls workspaceId={workspaceId} signalHref={signalHref}
       disabled={!labelingSettingsReady} refreshSignal={String(labelingRefresh)} onAccessDenied={clearAccess} />
     <ListeningQuestions key={`listening-${labelingRefresh}`} workspaceId={workspaceId} onAccessDenied={clearAccess} />
+    <Studies workspaceId={workspaceId} onAccessDenied={clearAccess} />
   </div>;
   return <div className="topics-manager">
     {mfpEnabled ? <MfpFacetWorkspace workspaceId={workspaceId} dataHref={dataHref} signalHref={signalHref} onAccessDenied={clearAccess} onFacetsChanged={setFacetsReceipt}/> : navigation ? <ClientProcessingJourney workspaceId={workspaceId} onAccessDenied={clearAccess}
