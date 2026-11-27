@@ -1,7 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import type { Pool } from "pg";
 import {
-  beginSignalListeningReviewV1, chargeSignalListeningCycleV1, claimSignalListeningCycleV1, finishSignalListeningCycleV1, recordSignalListeningReviewAnswerV1, getSignalListeningCycleV1, measureSignalListeningRoundV1, openSignalListeningNextRoundV1, readSignalListeningConfirmedCentroidsV1,
+  beginSignalListeningReviewV1, chargeSignalListeningCycleV1, claimSignalListeningCycleV1, finishSignalListeningCycleV1, recordSignalListeningReviewAnswerV1, getSignalListeningCycleV1, measureSignalListeningRoundV1, openSignalListeningNextRoundV1, readSignalListeningConfirmedCentroidsV1, settleSignalListeningPairChoicesV1,
   listSignalListeningOrphanRootsV1, readSignalListeningCycleConfigurationV1, readSignalListeningRootVectorsV1, releaseSignalListeningCycleV1, renewSignalListeningCycleV1,
   requestSignalListeningRoundRunV1, saveSignalListeningOrphanGroupsV1, saveSignalListeningReviewV1, settleSignalListeningRoundRunV1,
   type SignalListeningCycleV1, type SignalListeningRoundV1, type SignalListeningStoredOrphanGroupV1,
@@ -116,9 +116,8 @@ export async function stepSignalListeningCycleV1(args: { database: Database; cyc
     return "done";
   }
   if (round.step === "asked") {
-    // Pairs the last review kept apart with contrast are measured again on the posts they shared.
-    const apart = (previous?.review as { probation?: Array<{ left: string; right: string }> } | null)?.probation ?? [];
-    await measureSignalListeningRoundV1(database, cycle, round, previous && apart.length ? { previous_round_id: previous.id, pairs: apart } : null);
+    // What the classifier chose for the pairs of this round becomes membership before anything is counted.
+    await measureSignalListeningRoundV1(database, cycle, round, await settleSignalListeningPairChoicesV1(database, cycle, round));
     return "continue";
   }
   if (round.step === "measured") {
@@ -129,8 +128,8 @@ export async function stepSignalListeningCycleV1(args: { database: Database; cyc
     }
     const decision = decideSignalListeningCycleStopV1({ policy: cycle.policy, current: round.evidence!, previous: previous?.evidence ?? null, map_changed: true });
     if (decision.stop) {
-      // The loop ends here. Pairs that the rule merges are merged now, and one last pass asks what that leaves pending,
-      // so the map that is published has no pair above the line.
+      // The loop ends here. Pairs the classifier found to be one topic are merged now, and one last pass asks what
+      // that leaves pending, so the map that is published does not carry them as two.
       const merges = decision.reason === "no_category_population" ? null
         : applySignalListeningRuleMergesV1({ catalog: round.catalog, themes: round.themes, policy: cycle.policy, evidence: round.evidence! });
       if (merges?.rule_merges.length && remaining >= 50_000) {
@@ -184,7 +183,7 @@ export async function stepSignalListeningCycleV1(args: { database: Database; cyc
       return "done";
     }
     const confirmed = await readSignalListeningConfirmedCentroidsV1(database, cycle, round, args.heartbeat);
-    await openSignalListeningNextRoundV1({ database, cycle, round, catalog: result.catalog, themes: result.themes, review, confirmed });
+    await openSignalListeningNextRoundV1({ database, cycle, round, catalog: result.catalog, themes: result.themes, review, confirmed, pairs: result.probation });
     return "continue";
   }
   // `reviewed` on the last round means the review changed nothing and the cycle only needs closing.

@@ -1,10 +1,10 @@
 import { randomUUID } from "node:crypto";
 import type { Pool, PoolClient } from "pg";
 import {
-  compileSignalListeningConfigurationV1, signalListeningTopicWordingV1, SIGNAL_LISTENING_CYCLE_POLICY_V1, validateSignalListeningCatalogV1,
+  compileSignalListeningConfigurationV1, signalListeningPairQuestionV1, signalListeningTopicWordingV1, SIGNAL_LISTENING_CYCLE_POLICY_V1, validateSignalListeningCatalogV1,
   validateSignalListeningConfigurationV1,
   type SignalListeningAskedQuestionV1, type SignalListeningCatalogTopicV1, type SignalListeningConfigurationV1, type SignalListeningCycleEvidenceV1,
-  type SignalListeningCyclePolicyV1, type SignalListeningItemV1, type SignalListeningOrphanGroupV1, type SignalListeningThemeV1,
+  type SignalListeningCyclePolicyV1, type SignalListeningItemV1, type SignalListeningOrphanGroupV1, type SignalListeningPairChoiceV1, type SignalListeningThemeV1,
   type SignalTopicLocalizationV1,
 } from "@noisia/query-engine";
 import { SignalLabelingError } from "./signal-labeling-runs";
@@ -57,6 +57,35 @@ async function writeRoundTopics(client: Queryable, round: { id: string; workspac
     ON CONFLICT(round_id,topic_key) DO NOTHING`, [round.id, JSON.stringify(catalog.map((topic, index) => ({ topic_key: topic.topic_key,
       question_id: ids.get(questions[index]!.question_digest), centroid: centroids.get(topic.topic_key)?.vector ?? null,
       members: centroids.get(topic.topic_key)?.members ?? 0 })))]);
+}
+
+/** Registers the question of each pair with the wording both topics have in this round, and leaves the pairs in the round. */
+async function writeRoundPairs(client: Queryable, round: { id: string; workspace_id: string }, configuration: SignalListeningConfigurationV1,
+  catalog: SignalListeningCatalogTopicV1[], pairs: Array<{ left: string; right: string }>) {
+  const topics = new Map(catalog.map(topic => [topic.topic_key, topic]));
+  const asked = pairs.flatMap(pair => {
+    const left = topics.get(pair.left), right = topics.get(pair.right);
+    return left && right ? [{ ...pair, question: pairQuestion(configuration, left, right) }] : [];
+  });
+  if (!asked.length) return;
+  const ids = await ensureSignalListeningQuestionsV1(client, round.workspace_id, configuration.model, asked.map(pair => pair.question));
+  await client.query("UPDATE signal_listening_rounds SET review=COALESCE(review,'{}'::jsonb)||jsonb_build_object('pairs',$2::jsonb) WHERE id=$1",
+    [round.id, JSON.stringify(asked.map(pair => ({ left: pair.left, right: pair.right, question_id: ids.get(pair.question.question_digest) })))]);
+}
+function pairQuestion(configuration: SignalListeningConfigurationV1, left: SignalListeningCatalogTopicV1, right: SignalListeningCatalogTopicV1) {
+  const worded = (topic: SignalListeningCatalogTopicV1) => ({ topic_key: topic.topic_key, ...signalListeningTopicWordingV1(topic, configuration.candidate_language) });
+  return signalListeningPairQuestionV1(configuration.model, worded(left), worded(right));
+}
+/** For repairs by an operator: sets the pairs a round has to settle. Not used by the loop itself. */
+export async function setSignalListeningRoundPairsV1(database: Database, round_id: string, pairs: Array<{ left: string; right: string }>) {
+  return shared.transaction(database, async client => {
+    const round = (await client.query<{ workspace_id: string; catalog: SignalListeningCatalogTopicV1[]; configuration_id: string }>(
+      `SELECT round.workspace_id,round.catalog,cycle.configuration_id FROM signal_listening_rounds round JOIN signal_listening_cycles cycle ON cycle.id=round.cycle_id
+       WHERE round.id=$1 FOR UPDATE OF round`, [round_id])).rows[0];
+    if (!round) throw new Error("listening_round_unavailable");
+    const configuration = await readSignalListeningCycleConfigurationV1(client, round);
+    await writeRoundPairs(client, { id: round_id, workspace_id: round.workspace_id }, configuration, round.catalog, pairs);
+  });
 }
 
 /**
@@ -162,14 +191,57 @@ export async function readSignalListeningCycleConfigurationV1(database: Queryabl
 export async function chargeSignalListeningCycleV1(database: Database, cycle: Pick<SignalListeningCycleV1, "id">, micro_usd: number) {
   await database.query("UPDATE signal_listening_cycles SET spent_micro_usd=spent_micro_usd+$2,updated_at=now() WHERE id=$1", [cycle.id, Math.ceil(micro_usd)]);
 }
-/** Answers of a round that count: this round's topics, for the text the map holds today. */
+/** Answers of a round that count: this round's topics, for the text the map holds today. Where the classifier
+ * was asked to choose between two topics for a post, that choice replaces the two separate answers. */
 const VALID = `valid AS MATERIALIZED (
-  SELECT answer.root_id,topic.topic_key,answer.probability>=$4::real ok,answer.probability
+  SELECT answer.root_id,topic.topic_key,COALESCE(decided.belongs,answer.probability>=$4::real) ok,
+    CASE WHEN decided.belongs IS NULL THEN answer.probability WHEN decided.belongs THEN 1::real ELSE 0::real END probability
   FROM signal_listening_round_topics topic
   JOIN signal_listening_answers answer ON answer.question_id=topic.question_id AND answer.workspace_id=$1
   JOIN signal_mass_labeling_items item ON item.map_id=$2 AND item.workspace_id=$1 AND item.root_id=answer.root_id
     AND answer.input_sha=decode(substr(item.input_digest,8),'hex')
+  LEFT JOIN signal_listening_answer_overrides decided ON decided.question_id=topic.question_id AND decided.root_id=answer.root_id
   WHERE topic.round_id=$3)`;
+/** A pair of topics the classifier settles post by post, as a round carries it. */
+export type SignalListeningRoundPairV1 = { left: string; right: string; question_id: number };
+const roundPairs = (round: Pick<SignalListeningRoundV1, "review">) => ((round.review as { pairs?: SignalListeningRoundPairV1[] } | null)?.pairs ?? []);
+
+/**
+ * Applies what the classifier chose for the pairs of a round: for each post
+ * both topics held, its choice (left, right, both or neither) becomes the two
+ * memberships. Safe to repeat. Returns how the posts of each pair were shared out.
+ */
+export async function settleSignalListeningPairChoicesV1(database: Database, cycle: Pick<SignalListeningCycleV1, "id" | "workspace_id" | "lease_token">,
+  round: Pick<SignalListeningRoundV1, "id" | "review">): Promise<SignalListeningPairChoiceV1[]> {
+  const pairs = roundPairs(round);
+  if (!pairs.length) return [];
+  return shared.transaction(database, async client => {
+    if (!(await client.query("SELECT 1 FROM signal_listening_cycles WHERE id=$1 AND lease_token=$2 FOR UPDATE", [cycle.id, cycle.lease_token])).rows.length) {
+      throw new Error("listening_cycle_lease_lost");
+    }
+    const topics = new Map((await client.query<{ topic_key: string; question_id: string }>(
+      "SELECT topic_key,question_id::text FROM signal_listening_round_topics WHERE round_id=$1", [round.id])).rows.map(row => [row.topic_key, row.question_id]));
+    const result: SignalListeningPairChoiceV1[] = [];
+    for (const pair of pairs) {
+      const left = topics.get(pair.left), right = topics.get(pair.right);
+      if (!left || !right) continue;
+      await client.query(`INSERT INTO signal_listening_answer_overrides(workspace_id,question_id,root_id,belongs,decided_by_question_id)
+        SELECT $1,side.question_id,answer.root_id,answer.choice=ANY(side.accepted),$2::bigint
+        FROM signal_listening_answers answer
+        CROSS JOIN (VALUES($3::bigint,ARRAY['left','both']),($4::bigint,ARRAY['right','both'])) side(question_id,accepted)
+        WHERE answer.question_id=$2::bigint AND answer.workspace_id=$1 AND answer.choice IN('left','right','both','neither')
+        ON CONFLICT(question_id,root_id) DO UPDATE SET belongs=EXCLUDED.belongs,decided_by_question_id=EXCLUDED.decided_by_question_id`,
+        [cycle.workspace_id, pair.question_id, left, right]);
+      const counts = new Map((await client.query<{ choice: string; posts: number }>(
+        "SELECT choice,count(*)::int posts FROM signal_listening_answers WHERE question_id=$1::bigint AND workspace_id=$2 GROUP BY 1", [pair.question_id, cycle.workspace_id])).rows
+        .map(row => [row.choice, row.posts]));
+      const of = (choice: string) => counts.get(choice) ?? 0, total = of("left") + of("right") + of("both") + of("neither");
+      result.push({ left: pair.left, right: pair.right, shared: total, chose_left: of("left"), chose_right: of("right"), chose_both: of("both"), chose_neither: of("neither"),
+        both_share: total ? of("both") / total : null });
+    }
+    return result;
+  });
+}
 const CATEGORY = `category AS MATERIALIZED (
   SELECT item.root_id FROM signal_mass_labeling_items item
   JOIN signal_mass_labeling_category_matches lexical ON lexical.workspace_id=item.workspace_id AND lexical.policy_revision=$5::int
@@ -179,8 +251,8 @@ const CATEGORY = `category AS MATERIALIZED (
 /** Measures a round without calling any provider: acceptance per topic, possible
  * twins, and roots about the category that no topic accepted. */
 export async function measureSignalListeningRoundV1(database: Database, cycle: SignalListeningCycleV1, round: Pick<SignalListeningRoundV1, "id" | "round_no">,
-  /** Pairs the previous review kept apart with contrast, and the round they were measured in. */
-  second_chance: { previous_round_id: string; pairs: Array<{ left: string; right: string }> } | null = null) {
+  /** How the classifier shared out the posts of the pairs it was asked to settle in this round. */
+  pair_choices: SignalListeningPairChoiceV1[] = []) {
   const policy = cycle.policy, base = [cycle.workspace_id, cycle.base_map_id, round.id, policy.approval];
   const client = await database.connect();
   try {
@@ -191,24 +263,6 @@ export async function measureSignalListeningRoundV1(database: Database, cycle: S
         (SELECT count(*)::int FROM category WHERE NOT EXISTS(SELECT 1 FROM valid WHERE valid.root_id=category.root_id AND valid.ok)) orphan_roots,
         (SELECT count(*)::int FROM category WHERE NOT EXISTS(SELECT 1 FROM valid WHERE valid.root_id=category.root_id AND valid.probability>=$6::real)) orphan_roots_probable`,
       [...base, cycle.lexicon_revision, policy.probable ?? policy.approval])).rows[0]!;
-    // Of the posts both topics of a separated pair accepted before, how many both still accept with the new wording.
-    // Each answer is looked up by its key: joining the whole round twice does not fit in the statement timeout of a real brand.
-    const probation = second_chance?.pairs.length ? (await client.query<{ left: string; right: string; jointly_asked: number; jointly_approved: number }>(`WITH shared AS MATERIALIZED (
-        SELECT pair.left_key,pair.right_key,first.root_id,now_a.question_id left_question,now_b.question_id right_question
-        FROM unnest($4::text[],$5::text[]) pair(left_key,right_key)
-        JOIN signal_listening_round_topics a ON a.round_id=$6 AND a.topic_key=pair.left_key
-        JOIN signal_listening_round_topics b ON b.round_id=$6 AND b.topic_key=pair.right_key
-        JOIN signal_listening_round_topics now_a ON now_a.round_id=$2 AND now_a.topic_key=pair.left_key
-        JOIN signal_listening_round_topics now_b ON now_b.round_id=$2 AND now_b.topic_key=pair.right_key
-        JOIN signal_listening_answers first ON first.question_id=a.question_id AND first.workspace_id=$1 AND first.probability>=$3::real
-        JOIN signal_listening_answers second ON second.question_id=b.question_id AND second.root_id=first.root_id AND second.workspace_id=$1 AND second.probability>=$3::real)
-      SELECT shared.left_key "left",shared.right_key "right",count(*)::int jointly_asked,
-        count(*) FILTER (WHERE now_left.probability>=$3::real AND now_right.probability>=$3::real)::int jointly_approved
-      FROM shared
-      LEFT JOIN signal_listening_answers now_left ON now_left.question_id=shared.left_question AND now_left.root_id=shared.root_id
-      LEFT JOIN signal_listening_answers now_right ON now_right.question_id=shared.right_question AND now_right.root_id=shared.root_id
-      GROUP BY 1,2 ORDER BY 1,2`,
-      [cycle.workspace_id, round.id, policy.approval, second_chance.pairs.map(pair => pair.left), second_chance.pairs.map(pair => pair.right), second_chance.previous_round_id])).rows : [];
     const topics = (await client.query<{ topic_key: string; asked: number; approved: number }>(`WITH ${VALID}
       SELECT topic.topic_key,count(valid.root_id)::int asked,count(valid.root_id) FILTER (WHERE valid.ok)::int approved
       FROM signal_listening_round_topics topic LEFT JOIN valid USING(topic_key) WHERE topic.round_id=$3 GROUP BY 1 ORDER BY 1`, base)).rows;
@@ -246,7 +300,7 @@ export async function measureSignalListeningRoundV1(database: Database, cycle: S
       orphan_roots: population.orphan_roots, orphan_rate: population.category_roots ? population.orphan_roots / population.category_roots : null,
       ...(policy.probable === undefined ? {} : { orphan_roots_probable: population.orphan_roots_probable,
         orphan_rate_probable: population.category_roots ? population.orphan_roots_probable / population.category_roots : null }),
-      ...(second_chance ? { probation: probation.map(pair => ({ ...pair, coapproval: pair.jointly_asked ? pair.jointly_approved / pair.jointly_asked : 0 })) } : {}),
+      ...(pair_choices.length ? { pair_choices } : {}),
       twin_roots: twinRoots, twin_root_rate: population.category_roots ? twinRoots / population.category_roots : null,
       topics: topics.map(topic => ({ topic_key: topic.topic_key, asked: topic.asked, approved: topic.approved, acceptance: topic.asked ? topic.approved / topic.asked : null,
         accepted_examples: examples.filter(row => row.topic_key === topic.topic_key && row.ok).map(row => row.excerpt),
@@ -321,7 +375,9 @@ export async function openSignalListeningNextRoundV1(args: { database: Database;
   /** Confirmed members of every topic of the measured round, so merges can be weighted. */
   confirmed: SignalListeningConfirmedCentroidsV1;
   /** A last round with no review: it only asks what the merges of the rule left pending. Opened right after measuring. */
-  settling?: boolean }): Promise<{ round_id: string }> {
+  settling?: boolean;
+  /** Pairs accepted together very often that are still two topics: the posts both hold are asked to choose. */
+  pairs?: Array<{ left: string; right: string }> }): Promise<{ round_id: string }> {
   const { cycle, round, confirmed } = args, configuration = await readSignalListeningCycleConfigurationV1(args.database, cycle);
   return shared.transaction(args.database, async client => {
     const owned = (await client.query("SELECT 1 FROM signal_listening_cycles WHERE id=$1 AND lease_token=$2 FOR UPDATE", [cycle.id, cycle.lease_token])).rows.length;
@@ -354,6 +410,7 @@ export async function openSignalListeningNextRoundV1(args: { database: Database;
       VALUES($1,$2,$3,$4,'created',$5::jsonb,$6::jsonb,$7::jsonb)`,
       [round_id, cycle.id, cycle.workspace_id, round.round_no + 1, JSON.stringify(args.catalog), JSON.stringify(args.themes), args.settling ? '{"settling":true}' : null]);
     await writeRoundTopics(client, { id: round_id, workspace_id: cycle.workspace_id }, configuration, args.catalog, centroids);
+    await writeRoundPairs(client, { id: round_id, workspace_id: cycle.workspace_id }, configuration, args.catalog, args.pairs ?? []);
     return { round_id };
   });
 }
@@ -433,8 +490,8 @@ export async function createSignalListeningRoundSourceV1(database: Database, run
     throw new Error("listening_plan_invalid");
   }
   const scope = (await database.query<{ base_map_id: string; configuration_id: string; policy: SignalListeningCyclePolicyV1; catalog: SignalListeningCatalogTopicV1[]; workspace_id: string;
-    previous_round_id: string | null }>(
-    `SELECT cycle.base_map_id,cycle.configuration_id,cycle.policy,round.catalog,cycle.workspace_id,
+    previous_round_id: string | null; review: Record<string, unknown> | null }>(
+    `SELECT cycle.base_map_id,cycle.configuration_id,cycle.policy,round.catalog,cycle.workspace_id,round.review,
        (SELECT earlier.id FROM signal_listening_rounds earlier WHERE earlier.cycle_id=round.cycle_id AND earlier.round_no=round.round_no-1) previous_round_id
      FROM signal_listening_rounds round
      JOIN signal_listening_cycles cycle ON cycle.id=round.cycle_id WHERE round.id=$1 AND round.workspace_id=$2`, [plan.round_id, run.workspace_id])).rows[0];
@@ -447,6 +504,11 @@ export async function createSignalListeningRoundSourceV1(database: Database, run
   const questions = new Map(validateSignalListeningCatalogV1(scope.catalog).map(topic => [topic.topic_key, topicQuestion(configuration, topic)]));
   const ids = new Map((await database.query<{ topic_key: string; question_id: string }>(
     "SELECT topic_key,question_id::text FROM signal_listening_round_topics WHERE round_id=$1", [plan.round_id])).rows.map(row => [row.topic_key, Number(row.question_id)]));
+  // Pairs the classifier settles: asked only of the posts both topics held in the previous round.
+  const byKey = new Map(scope.catalog.map(topic => [topic.topic_key, topic]));
+  const pairs = roundPairs(scope).flatMap(pair => byKey.has(pair.left) && byKey.has(pair.right)
+    ? [{ ...pair, question: pairQuestion(configuration, byKey.get(pair.left)!, byKey.get(pair.right)!) }] : []);
+  const watched = [...new Set([...heirs.keys(), ...pairs.flatMap(pair => [pair.left, pair.right])])];
   let cursor = 0;
   return {
     model: configuration.model, input_usd_per_mtok: plan.input_usd_per_mtok,
@@ -470,27 +532,30 @@ export async function createSignalListeningRoundSourceV1(database: Database, run
         for (const answer of (await database.query<{ root_id: string; question_id: string; input_sha: string }>(
           `SELECT root_id,question_id::text,encode(input_sha,'hex') input_sha FROM signal_listening_answers
            WHERE workspace_id=$1 AND root_id=ANY($2::uuid[]) AND question_id=ANY($3::bigint[])`,
-          [run.workspace_id, rows.map(row => row.root_id), [...ids.values()]])).rows) {
+          [run.workspace_id, rows.map(row => row.root_id), [...ids.values(), ...pairs.map(pair => pair.question_id)]])).rows) {
           if (`sha256:${answer.input_sha}` !== digests.get(answer.root_id)) continue;
           const set = answered.get(answer.root_id); if (set) set.add(Number(answer.question_id)); else answered.set(answer.root_id, new Set([Number(answer.question_id)]));
         }
-        const inherited = new Map<string, Set<string>>();
-        if (heirs.size && scope.previous_round_id) {
+        // What each root held in the previous round, among the topics that matter here.
+        const held = new Map<string, Set<string>>();
+        if (watched.length && scope.previous_round_id) {
           for (const member of (await database.query<{ root_id: string; topic_key: string }>(`SELECT answer.root_id,topic.topic_key FROM signal_listening_round_topics topic
-            JOIN signal_listening_answers answer ON answer.question_id=topic.question_id AND answer.workspace_id=$1 AND answer.root_id=ANY($2::uuid[]) AND answer.probability>=$4::real
-            WHERE topic.round_id=$3 AND topic.topic_key=ANY($5::text[])`,
-            [run.workspace_id, rows.map(row => row.root_id), scope.previous_round_id, scope.policy.approval, [...heirs.keys()]])).rows) {
-            const set = inherited.get(member.root_id) ?? new Set<string>();
-            for (const heir of heirs.get(member.topic_key) ?? []) set.add(heir);
-            inherited.set(member.root_id, set);
+            JOIN signal_listening_answers answer ON answer.question_id=topic.question_id AND answer.workspace_id=$1 AND answer.root_id=ANY($2::uuid[])
+            LEFT JOIN signal_listening_answer_overrides decided ON decided.question_id=topic.question_id AND decided.root_id=answer.root_id
+            WHERE topic.round_id=$3 AND topic.topic_key=ANY($5::text[]) AND COALESCE(decided.belongs,answer.probability>=$4::real)`,
+            [run.workspace_id, rows.map(row => row.root_id), scope.previous_round_id, scope.policy.approval, watched])).rows) {
+            const set = held.get(member.root_id); if (set) set.add(member.topic_key); else held.set(member.root_id, new Set([member.topic_key]));
           }
         }
         const items: SignalListeningItemV1[] = [];
         for (const row of rows) {
-          const pending = [...new Set([...(row.candidates ?? []), ...(inherited.get(row.root_id) ?? [])])]
-            .filter(topic_key => questions.has(topic_key) && ids.has(topic_key) && !answered.get(row.root_id)?.has(ids.get(topic_key)!));
-          if (!pending.length) continue;
-          const asked = pending.map((topic_key, index) => ({ ...questions.get(topic_key)!, request_key: `q${index}` }));
+          const before = held.get(row.root_id), done = answered.get(row.root_id);
+          const inherited = [...(before ?? [])].flatMap(source => heirs.get(source) ?? []);
+          const pending = [...new Set([...(row.candidates ?? []), ...inherited])]
+            .filter(topic_key => questions.has(topic_key) && ids.has(topic_key) && !done?.has(ids.get(topic_key)!));
+          const choosing = pairs.filter(pair => before?.has(pair.left) && before.has(pair.right) && !done?.has(pair.question_id));
+          if (!pending.length && !choosing.length) continue;
+          const asked = [...pending.map(topic_key => questions.get(topic_key)!), ...choosing.map(pair => pair.question)].map((question, index) => ({ ...question, request_key: `q${index}` }));
           items.push({ root_id: row.root_id, input_digest: row.input_digest, questions: asked,
             request: { model: configuration.model, state: row.text, questions: Object.fromEntries(asked.map(question => [question.request_key, question.wire])) } });
         }

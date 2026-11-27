@@ -55,11 +55,15 @@ try {
     const rows = (await pool.query<{ root_id: string; text: string; left_probability: number; right_probability: number }>(`
       SELECT item.root_id,item.text,first.probability::float8 left_probability,second.probability::float8 right_probability
       FROM signal_listening_round_topics a JOIN signal_listening_round_topics b ON b.round_id=a.round_id AND b.topic_key=$6
-      JOIN signal_listening_answers first ON first.question_id=a.question_id AND first.workspace_id=$1 AND first.probability>=$4::real
-      JOIN signal_listening_answers second ON second.question_id=b.question_id AND second.workspace_id=$1 AND second.root_id=first.root_id AND second.probability>=$4::real
+      JOIN signal_listening_answers first ON first.question_id=a.question_id AND first.workspace_id=$1
+      JOIN signal_listening_answers second ON second.question_id=b.question_id AND second.workspace_id=$1 AND second.root_id=first.root_id
       JOIN signal_mass_labeling_items item ON item.map_id=$2 AND item.workspace_id=$1 AND item.root_id=first.root_id
         AND first.input_sha=decode(substr(item.input_digest,8),'hex') AND second.input_sha=decode(substr(item.input_digest,8),'hex')
-      WHERE a.round_id=$3 AND a.topic_key=$5 AND item.root_id<>ALL($9::uuid[]) ORDER BY md5(item.root_id::text||$7) LIMIT $8`,
+      -- Both memberships as they count today: where the classifier chose between the two, its choice.
+      LEFT JOIN signal_listening_answer_overrides left_decided ON left_decided.question_id=a.question_id AND left_decided.root_id=first.root_id
+      LEFT JOIN signal_listening_answer_overrides right_decided ON right_decided.question_id=b.question_id AND right_decided.root_id=first.root_id
+      WHERE a.round_id=$3 AND a.topic_key=$5 AND COALESCE(left_decided.belongs,first.probability>=$4::real) AND COALESCE(right_decided.belongs,second.probability>=$4::real)
+        AND item.root_id<>ALL($9::uuid[]) ORDER BY md5(item.root_id::text||$7) LIMIT $8`,
       [cycle.workspace_id, cycle.base_map_id, round.id, cycle.policy.approval, pair.left, pair.right, seed.toString("hex"), Math.min(perPair, fusionTotal - fusion.length), [...drawn]])).rows;
     for (const row of rows) { drawn.add(row.root_id); fusion.push({ ...row, pair_rank: rank + 1, left: pair.left, right: pair.right, coapproval: pair.coapproval, jaccard: pair.jaccard }); }
   }

@@ -63,13 +63,15 @@ async function cycleStatus(cycle_id: string) {
         orphan_rate: round.evidence.orphan_rate, orphan_roots_probable: round.evidence.orphan_roots_probable ?? null,
         orphan_rate_probable: round.evidence.orphan_rate_probable ?? null, twin_pairs: round.evidence.twins.length, twin_roots: round.evidence.twin_roots,
         twin_root_rate: round.evidence.twin_root_rate,
-        merge_by_default_pairs: state.cycle.policy.twin.merge_coapproval === undefined ? null
-          : round.evidence.twins.filter(pair => pair.coapproval >= state.cycle.policy.twin.merge_coapproval!).length,
-        second_chance: round.evidence.probation?.map(pair => ({ shared: pair.jointly_asked, still_shared: pair.jointly_approved, coapproval: pair.coapproval })) ?? null } : null,
+        pairs_for_the_classifier: state.cycle.policy.twin.choice_coapproval === undefined ? null
+          : round.evidence.twins.filter(pair => pair.coapproval >= state.cycle.policy.twin.choice_coapproval!).length,
+        // Topic keys are generic English slugs; no post text is printed.
+        pair_choices: round.evidence.pair_choices ?? null } : null,
       orphan_groups: round.orphan_groups?.map(group => ({ roots: group.roots, cohesion: group.cohesion })) ?? null,
       review: round.review ? { settling: round.review.settling ?? false, summary: round.review.summary, rejected: round.review.rejected,
         merged_by_rule: Array.isArray(round.review.rule_merges) ? round.review.rule_merges.length : null,
-        kept_apart: Array.isArray(round.review.probation) ? round.review.probation.length : null,
+        sent_to_the_classifier: Array.isArray(round.review.probation) ? round.review.probation.length : null,
+        pairs_in_this_round: Array.isArray(round.review.pairs) ? round.review.pairs.length : null,
         settled: (round.review.settled as { rule_merges?: unknown[] } | undefined)?.rule_merges?.length ?? null, usage: round.review.usage,
         cost_usd: Number(round.review.cost_micro_usd) / 1e6, duration_ms: round.review.duration_ms, payload_bytes: round.review.payload_bytes } : null })) }, null, 1));
 }

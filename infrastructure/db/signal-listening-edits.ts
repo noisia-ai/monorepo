@@ -166,10 +166,13 @@ export async function readSignalListeningTopicMentionsV1(access: Access & { topi
     // Only this topic and the ones folded into it are read: the whole map is not needed to show one topic.
     const keys = [access.topic_key, ...[...map.merged].filter(([, target]) => target === access.topic_key).map(([source]) => source)];
     const rows = (await client.query<SignalListeningTopicMentionsV1["mentions"][number] & { total: number }>(`WITH answered AS (
-        SELECT answer.root_id,topic.topic_key,max(answer.probability) probability FROM signal_listening_round_topics topic
+        -- Where the classifier was asked to choose between two topics for a post, that choice is the answer.
+        SELECT answer.root_id,topic.topic_key,max(CASE WHEN decided.belongs IS NULL THEN answer.probability WHEN decided.belongs THEN 1::real ELSE 0::real END) probability
+        FROM signal_listening_round_topics topic
         JOIN signal_listening_answers answer ON answer.question_id=topic.question_id AND answer.workspace_id=$1
         JOIN signal_mass_labeling_items item ON item.map_id=$2 AND item.workspace_id=$1 AND item.root_id=answer.root_id
           AND answer.input_sha=decode(substr(item.input_digest,8),'hex')
+        LEFT JOIN signal_listening_answer_overrides decided ON decided.question_id=topic.question_id AND decided.root_id=answer.root_id
         WHERE topic.round_id=$3 AND topic.topic_key=ANY($5::text[]) GROUP BY 1,2),
       latest AS (SELECT DISTINCT ON (root_id,topic_key) root_id,topic_key,operation FROM signal_listening_human_edits
         WHERE workspace_id=$1 AND topic_key=ANY($5::text[]) AND operation IN('remove_label','add_label') ORDER BY root_id,topic_key,created_at DESC,id DESC),
