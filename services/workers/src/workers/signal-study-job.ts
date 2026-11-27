@@ -5,6 +5,7 @@ import {
   listSignalStudyMotivesV1, matchSignalStudyLexiconV1, readSignalStudyAxesV1, readSignalStudyMembershipsV1, readSignalStudyRootsV1, readSignalStudyTopicMembershipsV1,
   recordSignalStudyAgentAnswerV1, releaseSignalStudyV1, renewSignalStudyV1, requestSignalStudyRunV1, rewordSignalStudyMotivesV1, saveSignalStudyMotivesV1,
   setSignalStudyMotiveLayersV1, settleSignalStudyRunV1, type SignalStudyV1,
+  signalStudyRulesOfV1,
 } from "@noisia/db";
 import {
   applySignalStudyContrastV1, applySignalStudyMentionLayersV1, applySignalStudyMotivesV1,
@@ -87,7 +88,7 @@ export type StudyStepOutcomeV1 = "continue" | "waiting" | "done";
 export async function stepSignalStudyV1(args: { database: Database; study: SignalStudyV1; agent: SonnetJsonAgentV1 }): Promise<StudyStepOutcomeV1> {
   const { database } = args, fresh = await getSignalStudyV1(database, args.study.id);
   if (!fresh) throw new Error("study_unavailable");
-  const study: SignalStudyV1 = { ...fresh, lease_token: args.study.lease_token }, template = study.methodology, rules = template.rules;
+  const study: SignalStudyV1 = { ...fresh, lease_token: args.study.lease_token }, template = study.methodology, rules = signalStudyRulesOfV1(study);
   const state = study.state as { groups?: StoredGroup[]; motives?: StoredMotive[]; contrast_done?: boolean; directed_roots?: number; lexicon_matched?: number | null };
   const system = (part: keyof typeof template.editorial) => `${template.editorial.base}\n\n${template.editorial[part]}`;
 
@@ -250,7 +251,7 @@ export async function stepSignalStudyV1(args: { database: Database; study: Signa
         const third = applySignalStudyMentionLayersV1({ posts: again, output: await agentStep({ database, study, agent: args.agent, key: "post_layers_c",
           system: system("layers"), schema: SIGNAL_STUDY_MENTION_LAYERS_SCHEMA_V1,
           payload: buildSignalStudyMentionLayersPayloadV1({ template, subject: study.subject, motives: named.filter(motive => open.includes(motive.motive_key)), posts: again, order: "layers_c" }) }) });
-        const settled = decideSignalStudyMotiveLayersV1({ template, posts: again, readings: [first, second, third] });
+        const settled = decideSignalStudyMotiveLayersV1({ template, posts: again, readings: [first, second, third], lead: rules.layer_tiebreak_margin });
         decided = both.map(item => settled.find(other => other.motive_key === item.motive_key) ?? item);
         tiebreak = { motives: open, settled: settled.filter(item => item.layer !== "unclear").map(item => item.motive_key) };
       }
@@ -265,7 +266,9 @@ export async function stepSignalStudyV1(args: { database: Database; study: Signa
     const after = await listSignalStudyMotivesV1(database, study.id), layerOf = new Map(after.map(motive => [motive.motive_key, motive.layer]));
     const inLayer = new Map<string, Set<string>>();
     for (const row of memberships) { const layer = layerOf.get(row.motive_key) ?? "unclear", roots = inLayer.get(layer); if (roots) roots.add(row.root_id); else inLayer.set(layer, new Set([row.root_id])); }
-    const dominant_layers = [...inLayer].filter(([, roots]) => roots.size / Math.max(1, state.directed_roots ?? 0) > rules.dominance_max).map(([layer]) => layer).sort();
+    // Counted here, not taken from an earlier step: a study counted again under new lines starts at this step.
+    const directedNow = rows.filter(row => resolveSignalStudyAxesV1(study.subject, row, rules).direction !== "none").length;
+    const dominant_layers = [...inLayer].filter(([, roots]) => roots.size / Math.max(1, directedNow) > rules.dominance_max).map(([layer]) => layer).sort();
     await advanceSignalStudyV1(database, study, "checked", { layer_stability: stability, checks: { ...(study.state.checks as Record<string, unknown> | undefined ?? {}), dominant_layers } });
     return "continue";
   }
@@ -279,7 +282,7 @@ export async function stepSignalStudyV1(args: { database: Database; study: Signa
 
 /** The directional result of a study. Every number is counted here; nothing in it was written by the agent except names, definitions and layers. */
 async function buildStudyOutput(database: Database, study: SignalStudyV1): Promise<Record<string, unknown>> {
-  const template = study.methodology, rules = template.rules;
+  const template = study.methodology, rules = signalStudyRulesOfV1(study);
   const rows = await readSignalStudyAxesV1(database, study), sizes = await countSignalStudyCutV1(database, study);
   const axes = new Map<string, SignalStudyAxesV1>(rows.map(row => [row.root_id, resolveSignalStudyAxesV1(study.subject, row, rules)]));
   const motives = await listSignalStudyMotivesV1(database, study.id), memberships = await readSignalStudyMembershipsV1(database, study);
@@ -328,6 +331,8 @@ async function buildStudyOutput(database: Database, study: SignalStudyV1): Promi
   return {
     contract_version: "signal-study-output-v1", status: rules.output_status, generated_at: new Date().toISOString(),
     methodology: { key: template.key, version: template.version }, subject: study.subject,
+    // The lines this study raised over the template's, with their evidence, and the study it was counted again from.
+    ...(study.cut.direction_lines ? { direction_lines: study.cut.direction_lines } : {}), ...(study.state.recount_of ? { recount_of: study.state.recount_of } : {}),
     cut: { ...study.cut, mentions: sizes.cut_roots, corpus_mentions: sizes.corpus_roots, share_of_corpus: sizes.corpus_roots ? sizes.cut_roots / sizes.corpus_roots : 0,
       answered: rows.length },
     axes: { direction: count(rows.map(row => axes.get(row.root_id)!.direction)),

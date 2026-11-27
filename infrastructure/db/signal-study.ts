@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { Pool, PoolClient } from "pg";
 import {
-  compileSignalListeningConfigurationV1, compileSignalStudyAxesV1, signalStudyGroupUsesV1, signalStudyMotiveQuestionV1, SIGNAL_LISTENING_CONSUMER_CUT_V1, signalStudyDirectionProbabilitySqlV1, SIGNAL_STUDY_TB_TEMPLATE_V3_4,
+  compileSignalListeningConfigurationV1, compileSignalStudyAxesV1, signalStudyGroupUsesV1, signalStudyMotiveQuestionV1, SIGNAL_LISTENING_CONSUMER_CUT_V1, signalStudyDirectionProbabilitySqlV1, signalStudyRulesWithLinesV1, validateSignalStudyDirectionLinesV1, SIGNAL_STUDY_TB_TEMPLATE_V3_5, type SignalStudyDirectionLinesV1,
   validateSignalListeningConfigurationV1, validateSignalStudyLexiconV1, validateSignalStudySubjectV1, validateSignalStudyTemplateV1,
   type SignalListeningAskedQuestionV1, type SignalListeningConfigurationV1, type SignalListeningItemV1, type SignalStudyLayerV1,
   type SignalStudyPermissionV1, type SignalStudySubjectV1, type SignalStudyTemplateV1, type SignalStudyWordingV1,
@@ -27,7 +27,13 @@ export type SignalStudyCutV1 = { voice: "individual"; promotion_max: number; exc
   /** Optional period, as ISO timestamps. Without it the whole corpus is the cut. */
   start_at: string | null; end_at: string | null;
   /** The study's own lexicon. With it the cut is the posts these terms match, not the ones the brand's lexicon matches. */
-  lexicon_terms?: string[] };
+  lexicon_terms?: string[];
+  /** Lines of direction this study raises above the template's, each with the blind evidence that justifies it. */
+  direction_lines?: SignalStudyDirectionLinesV1 };
+/** The rules a study counts with: its template's, with the lines it raised for itself. */
+export function signalStudyRulesOfV1(study: Pick<SignalStudyV1, "methodology" | "cut">): SignalStudyTemplateV1["rules"] {
+  return signalStudyRulesWithLinesV1(study.methodology.rules, study.cut.direction_lines);
+}
 export type SignalStudyStepV1 = "created" | "axes_asked" | "grouped" | "motives_named" | "layers_coded" | "motives_asked" | "members_confirmed" | "checked" | "published";
 export type SignalStudyV1 = {
   id: string; workspace_id: string; base_map_id: string; configuration_id: string; lexicon_revision: number; name: string;
@@ -49,14 +55,17 @@ export type SignalStudyMotiveRowV1 = { study_id: string; motive_key: string; wor
 export async function requestSignalStudyV1(args: { database: Database; workspace_id: string; actor_user_id: string; name: string; subject: unknown;
   cap_micro_usd: number; idempotency_key: string; period?: { start_at: string; end_at: string } | null; template?: unknown;
   /** The study's own lexicon for its cut, when it is not about the category the brand listens to. */
-  lexicon_terms?: unknown }) {
+  lexicon_terms?: unknown;
+  /** Lines of direction raised for this study, with their blind evidence. */
+  direction_lines?: unknown }) {
   if (!Number.isSafeInteger(args.cap_micro_usd) || args.cap_micro_usd < SIGNAL_STUDY_MIN_CAP_MICRO_USD_V1 || args.cap_micro_usd > 200_000_000) fail("study_cap_invalid", 422);
   if (typeof args.idempotency_key !== "string" || args.idempotency_key.length < 8 || args.idempotency_key.length > 200) fail("study_request_invalid", 422);
   if (typeof args.name !== "string" || !args.name.trim() || args.name.length > 200) fail("study_request_invalid", 422);
-  let subject: SignalStudySubjectV1, template: SignalStudyTemplateV1, lexicon: string[] | null;
+  let subject: SignalStudySubjectV1, template: SignalStudyTemplateV1, lexicon: string[] | null, lines: SignalStudyDirectionLinesV1 | null;
   try {
-    subject = validateSignalStudySubjectV1(args.subject); template = validateSignalStudyTemplateV1(args.template ?? SIGNAL_STUDY_TB_TEMPLATE_V3_4);
+    subject = validateSignalStudySubjectV1(args.subject); template = validateSignalStudyTemplateV1(args.template ?? SIGNAL_STUDY_TB_TEMPLATE_V3_5);
     lexicon = args.lexicon_terms === undefined || args.lexicon_terms === null ? null : validateSignalStudyLexiconV1(args.lexicon_terms);
+    lines = args.direction_lines === undefined || args.direction_lines === null ? null : validateSignalStudyDirectionLinesV1(args.direction_lines, template.rules);
   } catch { fail("study_request_invalid", 422); }
   const period = args.period ?? null;
   if (period && (!Number.isFinite(Date.parse(period.start_at)) || !Number.isFinite(Date.parse(period.end_at)) || Date.parse(period.start_at) >= Date.parse(period.end_at))) {
@@ -72,7 +81,7 @@ export async function requestSignalStudyV1(args: { database: Database; workspace
     if (!target) fail("listening_population_required");
     const { stored, configuration, configuration_digest, policy_revision } = await shared.compose(client, args.workspace_id);
     if (!lexicon && !configuration.lexicon_terms.length) fail("listening_lexicon_required", 422);
-    const cut: SignalStudyCutV1 = { ...template.rules.cut, start_at: period?.start_at ?? null, end_at: period?.end_at ?? null, ...(lexicon ? { lexicon_terms: lexicon } : {}) };
+    const cut: SignalStudyCutV1 = { ...template.rules.cut, start_at: period?.start_at ?? null, end_at: period?.end_at ?? null, ...(lexicon ? { lexicon_terms: lexicon } : {}), ...(lines ? { direction_lines: lines } : {}) };
     // The cut is read from the base listening answers (who speaks, and whether it is promotion). Without them it would be
     // empty and the study would finish with nothing in it, so the brand is asked to listen first.
     const base = compileSignalListeningConfigurationV1(configuration).base;
@@ -90,6 +99,50 @@ export async function requestSignalStudyV1(args: { database: Database; workspace
       VALUES($1,$2,$3,$4,$5,$6,$7::jsonb,$8::jsonb,$9::jsonb,$10,$11,jsonb_build_object('idempotency_key',$12::text))`,
       [id, args.workspace_id, target.map_id, revision.id, policy_revision, args.name.trim(), JSON.stringify(template), JSON.stringify(subject), JSON.stringify(cut),
         args.cap_micro_usd, args.actor_user_id, args.idempotency_key]);
+    return { study_id: id, replayed: false };
+  });
+}
+
+/**
+ * Counts a finished study again under the rules of today's template, without asking anything: the new study keeps the
+ * subject, the cut, the motives and their questions of the finished one, and starts where the layer is read. It is for a
+ * change of rules that leaves every question as it was, such as a line of direction; if a question differs it refuses.
+ */
+export async function recountSignalStudyV1(args: { database: Database; workspace_id: string; actor_user_id: string; source_study_id: string; name: string;
+  cap_micro_usd: number; idempotency_key: string; direction_lines?: unknown; template?: unknown }) {
+  if (!Number.isSafeInteger(args.cap_micro_usd) || args.cap_micro_usd < 2_000_000 || args.cap_micro_usd > 200_000_000) fail("study_cap_invalid", 422);
+  if (typeof args.idempotency_key !== "string" || args.idempotency_key.length < 8 || args.idempotency_key.length > 200) fail("study_request_invalid", 422);
+  if (typeof args.name !== "string" || !args.name.trim() || args.name.length > 200) fail("study_request_invalid", 422);
+  return shared.transaction(args.database, async client => {
+    await shared.lock(client, args.workspace_id);
+    await shared.authorize(client, args, "process");
+    const replay = (await client.query<{ id: string }>("SELECT id FROM signal_studies WHERE workspace_id=$1 AND receipt->>'idempotency_key'=$2", [args.workspace_id, args.idempotency_key])).rows[0];
+    if (replay) return { study_id: replay.id, replayed: true };
+    const source = (await client.query<SignalStudyV1>(`SELECT ${STUDY} FROM signal_studies WHERE id=$1 AND workspace_id=$2 AND status='completed'`, [args.source_study_id, args.workspace_id])).rows[0];
+    if (!source) fail("study_not_found", 404);
+    let template: SignalStudyTemplateV1, lines: SignalStudyDirectionLinesV1 | null;
+    try {
+      template = validateSignalStudyTemplateV1(args.template ?? SIGNAL_STUDY_TB_TEMPLATE_V3_5);
+      lines = args.direction_lines === undefined || args.direction_lines === null ? null : validateSignalStudyDirectionLinesV1(args.direction_lines, template.rules);
+    } catch { fail("study_request_invalid", 422); }
+    // Every question has to be the one already answered, read the same way, or the motives and their members would not be these.
+    const before = compileSignalStudyAxesV1(source.methodology, source.subject), now = compileSignalStudyAxesV1(template, source.subject);
+    const same = (["direction", "target", "use"] as const).every(role => before[role].question_digest === now[role].question_digest)
+      && JSON.stringify(template.motive_question) === JSON.stringify(source.methodology.motive_question) && template.instructions === source.methodology.instructions
+      && template.rules.direction_probability_of === source.methodology.rules.direction_probability_of
+      && template.rules.motive_approval_min === source.methodology.rules.motive_approval_min
+      && JSON.stringify(template.rules.cut) === JSON.stringify(source.methodology.rules.cut);
+    if (!same) fail("study_recount_questions_differ", 422);
+    const { direction_lines: _earlier, ...kept } = source.cut;
+    const cut: SignalStudyCutV1 = { ...kept, ...(lines ? { direction_lines: lines } : {}) }, id = randomUUID();
+    const carried = Object.fromEntries(["groups", "naming", "pool_roots", "pool_discovery_only_roots", "checks", "contrast_done"].flatMap(key => key in source.state ? [[key, source.state[key]]] : []));
+    await client.query(`INSERT INTO signal_studies(id,workspace_id,base_map_id,configuration_id,lexicon_revision,name,methodology,subject,cut,step,state,cap_micro_usd,requested_by_user_id,receipt)
+      VALUES($1,$2,$3,$4,$5,$6,$7::jsonb,$8::jsonb,$9::jsonb,'members_confirmed',$10::jsonb,$11,$12,jsonb_build_object('idempotency_key',$13::text,'recount_of',$14::text))`,
+      [id, args.workspace_id, source.base_map_id, source.configuration_id, source.lexicon_revision, args.name.trim(), JSON.stringify(template), JSON.stringify(source.subject),
+        JSON.stringify(cut), JSON.stringify({ ...carried, recount_of: source.id }), args.cap_micro_usd, args.actor_user_id, args.idempotency_key, source.id]);
+    await client.query(`INSERT INTO signal_study_motives(study_id,motive_key,wording,layer,permission,layer_record,group_keys,centroid,question_id)
+      SELECT $1,motive_key,wording,'unclear','no_permission','{}'::jsonb,group_keys,centroid,question_id FROM signal_study_motives WHERE study_id=$2`, [id, source.id]);
+    await client.query("INSERT INTO signal_study_lexicon_matches(study_id,root_id) SELECT $1,root_id FROM signal_study_lexicon_matches WHERE study_id=$2", [id, source.id]);
     return { study_id: id, replayed: false };
   });
 }
@@ -319,7 +372,7 @@ export async function createSignalStudySourceV1(database: Database, run: Pick<Si
               AND embedding.chunk_sha256=item.chunk_sha256
             WHERE ($${page + 1}::uuid IS NULL OR item.root_id>$${page + 1}) ORDER BY item.root_id LIMIT $${page + 2}`,
             [...cut.params, cursor, limit, study.id, template.rules.motive_candidates, axisIds.direction, axisIds.use, signalStudyGroupUsesV1(template.rules),
-              template.rules.direction_min_probability ?? 0, JSON.stringify(template.rules.direction_min_probability_by ?? {})])).rows;
+              template.rules.direction_min_probability ?? 0, JSON.stringify(signalStudyRulesOfV1(study).direction_min_probability_by ?? {})])).rows;
         if (!rows.length) return [];
         cursor = rows.at(-1)!.root_id;
         const digests = new Map(rows.map(row => [row.root_id, row.input_digest])), answered = new Map<string, Set<number>>();

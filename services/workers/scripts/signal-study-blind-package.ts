@@ -19,7 +19,7 @@ import { createHash, createHmac, randomBytes } from "node:crypto";
 import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import pg from "pg";
-import { getSignalStudyV1, listSignalStudyMotivesV1, readSignalStudyAxesV1, readSignalStudyMembershipsV1, readSignalStudyRootsV1 } from "@noisia/db";
+import { getSignalStudyV1, listSignalStudyMotivesV1, readSignalStudyAxesV1, readSignalStudyMembershipsV1, readSignalStudyRootsV1, signalStudyRulesOfV1 } from "@noisia/db";
 import { compileSignalListeningConfigurationV1, compileSignalStudyAxesV1, resolveSignalStudyAxesV1, SIGNAL_LISTENING_CONSUMER_CUT_V1,
   validateSignalListeningConfigurationV1 } from "@noisia/query-engine";
 
@@ -77,7 +77,7 @@ try {
   // ---- axes
   const answered = await readSignalStudyAxesV1(pool, study);
   // Strata follow the direction as the study counts it: one below its probability line is read as none.
-  const axes = answered.map(row => ({ ...row, resolved: resolveSignalStudyAxesV1(study.subject, row, study.methodology.rules) }));
+  const axes = answered.map(row => ({ ...row, resolved: resolveSignalStudyAxesV1(study.subject, row, signalStudyRulesOfV1(study)) }));
   const stratum: Record<typeof AXES_STRATA[number][0], (row: typeof axes[number]) => boolean> = {
     direction_mixed: row => row.resolved.direction === "mixed", use_figurative_or_ironic: row => row.use === "figurative_or_ironic",
     target_competitor_brand: row => row.resolved.direction !== "none" && row.target === "competitor_brand", target_own_brand: row => row.resolved.direction !== "none" && row.target === "own_brand",

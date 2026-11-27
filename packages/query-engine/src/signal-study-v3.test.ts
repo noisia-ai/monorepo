@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { compileSignalStudyAxesV1, resolveSignalStudyAxesV1, signalStudyInMotivePoolV1, SIGNAL_STUDY_TB_TEMPLATE_V2 as second, signalStudyDirectionProbabilitySqlV1, SIGNAL_STUDY_TB_TEMPLATE_V3 as template, SIGNAL_STUDY_TB_TEMPLATE_V3_2 as current, SIGNAL_STUDY_TB_TEMPLATE_V3_3 as latest, SIGNAL_STUDY_TB_TEMPLATE_V3_4 as inUse, signalStudyDirectionLineV1, decideSignalStudyMotiveLayersV1,
+import { compileSignalStudyAxesV1, resolveSignalStudyAxesV1, signalStudyInMotivePoolV1, SIGNAL_STUDY_TB_TEMPLATE_V2 as second, signalStudyDirectionProbabilitySqlV1, SIGNAL_STUDY_TB_TEMPLATE_V3 as template, SIGNAL_STUDY_TB_TEMPLATE_V3_2 as current, SIGNAL_STUDY_TB_TEMPLATE_V3_3 as latest, SIGNAL_STUDY_TB_TEMPLATE_V3_4 as inUse, SIGNAL_STUDY_TB_TEMPLATE_V3_5 as final, signalStudyRulesWithLinesV1, validateSignalStudyDirectionLinesV1, signalStudyDirectionLineV1, decideSignalStudyMotiveLayersV1,
   type SignalStudySubjectV1 } from "./signal-study-v1";
 
 const subject: SignalStudySubjectV1 = { kind: "category", name: "sparkling water", category: "sparkling water", own_brand: "Brand One", competitors: ["Brand Two"], alternatives: [] };
@@ -95,4 +95,39 @@ test("barrier and mixed count from their own line, and a motive without a layer 
   const first = reading(["social", "social", "personal", "personal"]), second = reading(["social", "personal", "personal", "social"]);
   assert.equal(decideSignalStudyMotiveLayersV1({ template: inUse, posts, readings: [first, second] })[0]!.layer, "unclear");
   assert.equal(decideSignalStudyMotiveLayersV1({ template: inUse, posts, readings: [first, second, reading(["social", "social", "social", "social"])] })[0]!.layer, "social");
+});
+
+test("the template counts barrier from its common line, and a study raises a line only with blind evidence", () => {
+  assert.equal(final.version, "r16b-v3.5");
+  const { direction_min_probability_by: lines, layer_tiebreak_margin: lead, ...rules } = final.rules;
+  const { direction_min_probability_by: _lines, ...earlier } = inUse.rules;
+  assert.deepEqual([lines, lead], [{ mixed: 0.85 }, 0.1]);
+  assert.deepEqual(rules, earlier);
+  assert.deepEqual(compileSignalStudyAxesV1(final, subject), compileSignalStudyAxesV1(inUse, subject), "nothing is asked again");
+  assert.deepEqual(["trigger", "barrier", "mixed"].map(direction => signalStudyDirectionLineV1(final.rules, direction)), [0.7, 0.7, 0.85]);
+  const evidence = { line: 0.85, precision_at_template_line: 0.73, blind_package_sha256: "a".repeat(64) };
+  const raised = signalStudyRulesWithLinesV1(final.rules, validateSignalStudyDirectionLinesV1({ barrier: evidence }, final.rules));
+  assert.deepEqual(["trigger", "barrier", "mixed"].map(direction => signalStudyDirectionLineV1(raised, direction)), [0.7, 0.85, 0.85]);
+  assert.equal(signalStudyRulesWithLinesV1(final.rules, null), final.rules);
+  const barrier = (rules: typeof final.rules) => resolveSignalStudyAxesV1(subject, { direction: "barrier", target: "category", use: "literal", direction_probability: 0.75 }, rules).direction;
+  assert.deepEqual([barrier(final.rules), barrier(raised)], ["barrier", "none"]);
+  // No raising without the evidence, where blind judges already found the direction right, or to lower a line.
+  for (const wrong of [{ barrier: { ...evidence, blind_package_sha256: "abc" } }, { barrier: { ...evidence, precision_at_template_line: 0.9 } }, { barrier: { ...evidence, line: 0.6 } },
+    { mixed: { ...evidence, line: 0.85 } }, { none: evidence }, { barrier: { line: 0.85 } }, "barrier"]) {
+    assert.throws(() => validateSignalStudyDirectionLinesV1(wrong, final.rules), /study_direction_lines_invalid/u);
+  }
+});
+
+test("with the third reading the layer with the most votes wins when it leads by ten points of the votes", () => {
+  const posts = ["p1", "p2", "p3", "p4", "p5"].map(id => ({ id, motive_key: "price", text: "text" }));
+  const reading = (layers: string[]) => new Map(posts.map((post, index) => [post.id, { layer: layers[index]! as "social", proof: "text", downgraded: null }]));
+  const first = reading(["social", "social", "personal", "personal", "psychological"]), second = reading(["social", "personal", "personal", "social", "psychological"]);
+  const third = reading(["social", "social", "personal", "psychological", "psychological"]);
+  // 15 votes: social 6, personal 5, psychological 4. No layer reaches six in ten, and a lead of one vote is under ten points.
+  assert.equal(decideSignalStudyMotiveLayersV1({ template: final, posts, readings: [first, second, third] })[0]!.layer, "unclear");
+  assert.equal(decideSignalStudyMotiveLayersV1({ template: final, posts, readings: [first, second, third], lead: final.rules.layer_tiebreak_margin })[0]!.layer, "unclear");
+  // social 8, personal 4, psychological 3: under six in ten, but a lead of four votes in fifteen settles it.
+  const clearer = reading(["social", "social", "social", "social", "psychological"]);
+  assert.equal(decideSignalStudyMotiveLayersV1({ template: final, posts, readings: [first, second, clearer] })[0]!.layer, "unclear");
+  assert.equal(decideSignalStudyMotiveLayersV1({ template: final, posts, readings: [first, second, clearer], lead: final.rules.layer_tiebreak_margin })[0]!.layer, "social");
 });

@@ -6,6 +6,7 @@ import seedV3 from "./data/study-templates/triggers-barriers.r16b-v3.1.json";
 import seedV32 from "./data/study-templates/triggers-barriers.r16b-v3.2.json";
 import seedV33 from "./data/study-templates/triggers-barriers.r16b-v3.3.json";
 import seedV34 from "./data/study-templates/triggers-barriers.r16b-v3.4.json";
+import seedV35 from "./data/study-templates/triggers-barriers.r16b-v3.5.json";
 import type { JevQuestionV1 } from "./signal-mention-facets-jev-v1";
 import { signalListeningQuestionIdentityV1, type SignalListeningAskedQuestionV1 } from "./signal-listening-questions-v1";
 
@@ -42,6 +43,8 @@ const templateSchema = z.object({
     direction_min_probability_by: z.record(z.string(), z.number().min(0).max(1)).optional(),
     /** When the two readings leave a motive without a layer, its posts are read a third time and the three decide. */
     layer_tiebreak_reading: z.boolean().optional(),
+    /** With the third reading, the layer with the most votes wins when it leads the next one by this share of the votes. */
+    layer_tiebreak_margin: z.number().min(0).max(1).optional(),
     /** Which figure of the classifier's answer the lines of the direction are read on: the probability of the option it
      * chose, or the confidence it reports for the choice, which runs lower. Without it, the confidence. */
     direction_probability_of: z.enum(["confidence", "chosen_option"]).optional(),
@@ -114,12 +117,39 @@ export const SIGNAL_STUDY_TB_TEMPLATE_V3_2: Readonly<SignalStudyTemplateV1> = va
  * judged on. The two accepted test studies ran with it. */
 export const SIGNAL_STUDY_TB_TEMPLATE_V3_3: Readonly<SignalStudyTemplateV1> = validateSignalStudyTemplateV1(seedV33);
 /**
- * The template new studies are made with (r16b-v3.4), after the blind evaluation of the two studies of r16b-v3.3: barrier
+ * r16b-v3.4, after the blind evaluation of the two studies of r16b-v3.3: barrier
  * was right in 73 % of the posts of one of them and mixed in 25 %, so both count only from 0.85 and stay probable below;
  * and the motives the two readings left without a layer were settled consistently by a judge, so their posts are read a
  * third time and the three readings decide. The questions are the same: nothing is asked again.
  */
 export const SIGNAL_STUDY_TB_TEMPLATE_V3_4: Readonly<SignalStudyTemplateV1> = validateSignalStudyTemplateV1(seedV34);
+/**
+ * The template new studies are made with (r16b-v3.5). One line for barrier in every study punished the study where
+ * barrier was already right (it lost seven of ten of its barriers) for a weakness of the other. So the template counts
+ * trigger and barrier from 0.70 and mixed from 0.85, and a study may raise the line of one direction with the blind
+ * evidence of its own package (`SignalStudyDirectionLinesV1`). With the third reading of the layer, the layer with the
+ * most votes wins when it leads the next one by ten points of the votes.
+ */
+export const SIGNAL_STUDY_TB_TEMPLATE_V3_5: Readonly<SignalStudyTemplateV1> = validateSignalStudyTemplateV1(seedV35);
+/** Lines a study raises for itself. Each one carries the blind evidence that justifies it: the precision the direction
+ * had at the template's line, and the digest of the answer key of the blind package that measured it. */
+export type SignalStudyDirectionLinesV1 = Record<string, { line: number; precision_at_template_line: number; blind_package_sha256: string }>;
+const directionLines = z.record(z.enum(["trigger", "barrier", "mixed"]), z.object({ line: z.number().min(0).max(1), precision_at_template_line: z.number().min(0).max(1),
+  blind_package_sha256: z.string().regex(/^[0-9a-f]{64}$/u) }).strict());
+/** A study may only raise a line, and only where blind judges found the direction right in fewer than 85 % of its posts. */
+export function validateSignalStudyDirectionLinesV1(value: unknown, rules: Pick<SignalStudyTemplateV1["rules"], "direction_min_probability" | "direction_min_probability_by">): SignalStudyDirectionLinesV1 {
+  const parsed = directionLines.safeParse(value);
+  if (!parsed.success) throw new Error("study_direction_lines_invalid");
+  for (const [direction, item] of Object.entries(parsed.data)) {
+    if (item.line <= (signalStudyDirectionLineV1(rules, direction) ?? 0) || item.precision_at_template_line >= 0.85) throw new Error("study_direction_lines_invalid");
+  }
+  return parsed.data as SignalStudyDirectionLinesV1;
+}
+/** The rules a study counts with: the template's, with the lines the study raised for itself. */
+export function signalStudyRulesWithLinesV1(rules: SignalStudyTemplateV1["rules"], lines?: SignalStudyDirectionLinesV1 | null): SignalStudyTemplateV1["rules"] {
+  if (!lines || !Object.keys(lines).length) return rules;
+  return { ...rules, direction_min_probability_by: { ...(rules.direction_min_probability_by ?? {}), ...Object.fromEntries(Object.entries(lines).map(([direction, item]) => [direction, item.line])) } };
+}
 /** The line a direction counts from: its own when the template gives it one. */
 export function signalStudyDirectionLineV1(rules: Pick<SignalStudyTemplateV1["rules"], "direction_min_probability" | "direction_min_probability_by">, direction: string): number | undefined {
   return rules.direction_min_probability_by?.[direction] ?? rules.direction_min_probability;
@@ -408,7 +438,9 @@ export function signalStudyMentionKappaV1(first: Map<string, SignalStudyPostLaye
  * the votes; otherwise, or when most votes are `unclear`, it stays `unclear`.
  */
 export function decideSignalStudyMotiveLayersV1(args: { template: SignalStudyTemplateV1; posts: SignalStudyLayerPostV1[];
-  readings: Array<Map<string, SignalStudyPostLayerV1>> }): Array<{ motive_key: string; layer: SignalStudyLayerV1; permission: SignalStudyPermissionV1; posts: number;
+  readings: Array<Map<string, SignalStudyPostLayerV1>>;
+  /** For the tiebreak: the layer with the most votes wins when it leads the next one by this share of the votes. */
+  lead?: number }): Array<{ motive_key: string; layer: SignalStudyLayerV1; permission: SignalStudyPermissionV1; posts: number;
   votes: Record<string, number>; share: number; proofs: string[] }> {
   const needed = args.template.rules.layer_majority_min ?? 0.6, byMotive = new Map<string, SignalStudyLayerPostV1[]>();
   for (const post of args.posts) { const list = byMotive.get(post.motive_key); if (list) list.push(post); else byMotive.set(post.motive_key, [post]); }
@@ -416,8 +448,11 @@ export function decideSignalStudyMotiveLayersV1(args: { template: SignalStudyTem
     const coded = posts.flatMap(post => args.readings.flatMap(reading => reading.has(post.id) ? [reading.get(post.id)!] : []));
     const votes: Record<string, number> = {};
     for (const item of coded) votes[item.layer] = (votes[item.layer] ?? 0) + 1;
-    const [top, count] = Object.entries(votes).sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))[0] ?? ["unclear", 0];
-    const share = coded.length ? count / coded.length : 0, layer = (share >= needed ? top : "unclear") as SignalStudyLayerV1;
+    const ranked = Object.entries(votes).sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]));
+    const [top, count] = ranked[0] ?? ["unclear", 0], next = ranked[1]?.[1] ?? 0;
+    const share = coded.length ? count / coded.length : 0;
+    const wins = args.lead === undefined ? share >= needed : coded.length > 0 && (count - next) / coded.length >= args.lead;
+    const layer = (wins ? top : "unclear") as SignalStudyLayerV1;
     return { motive_key, layer, permission: signalStudyPermissionForLayerV1(args.template, layer), posts: posts.length, votes, share,
       proofs: [...new Set(coded.flatMap(item => item.layer === layer && item.proof ? [item.proof] : []))].slice(0, 3) };
   });

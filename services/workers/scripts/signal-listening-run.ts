@@ -25,7 +25,7 @@ import pg from "pg";
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import {
-  claimSignalStudyV1, getSignalStudyV1, listSignalStudyMotivesV1, promoteSignalStudyMotivesV1, releaseSignalStudyV1, renewSignalStudyV1, requestSignalStudyV1, requeueSignalStudyV1,
+  claimSignalStudyV1, getSignalStudyV1, listSignalStudyMotivesV1, promoteSignalStudyMotivesV1, releaseSignalStudyV1, renewSignalStudyV1, recountSignalStudyV1, requestSignalStudyV1, requeueSignalStudyV1,
   claimSignalListeningCycleV1, getSignalListeningCycleV1, releaseSignalListeningCycleV1, renewSignalListeningCycleV1, requestSignalListeningCycleV1,
   claimSignalListeningRunV1, estimateSignalListeningV1, getSignalListeningRunV1, getSignalListeningStateV1, importSignalListeningLegacyAnswersV1,
   readSignalListeningQuestionMetricsV1, requestSignalListeningRunV1, requestSignalListeningV1, requeueSignalListeningRunV1,
@@ -173,6 +173,11 @@ try {
       // Optional: the study's own lexicon for its cut, as a JSON array of terms in a private file.
       ...(flag("lexicon-file") ? { lexicon_terms: JSON.parse(readFileSync(flag("lexicon-file")!, "utf8")) } : {}),
       idempotency_key: flag("key") ?? randomUUID() })));
+  } else if (mode === "study-recount") {
+    // Counts a finished study again under today's template without asking anything. Lines raised for it come with their blind evidence.
+    console.log(JSON.stringify(await recountSignalStudyV1({ database: pool, workspace_id: required("workspace"), actor_user_id: required("actor"), source_study_id: required("study"),
+      name: required("name"), cap_micro_usd: Math.round(Number(required("cap-usd")) * 1e6),
+      ...(flag("direction-lines-file") ? { direction_lines: JSON.parse(readFileSync(flag("direction-lines-file")!, "utf8")) } : {}), idempotency_key: flag("key") ?? randomUUID() })));
   } else if (mode === "study-status") {
     await studyStatus(required("study"));
   } else if (mode === "study-local") {
@@ -193,5 +198,5 @@ try {
   } else if (mode === "promote") {
     console.log(JSON.stringify(await promoteSignalStudyMotivesV1({ database: pool, workspace_id: required("workspace"), actor_user_id: required("actor"),
       study_id: required("study"), motive_keys: required("motives").split(",").map(item => item.trim()).filter(Boolean) })));
-  } else throw new Error("usage: signal-listening-run.ts request|status|local|requeue|import|estimate|question|listen|metrics|cycle|cycle-status|cycle-local|study|study-status|study-local|study-requeue|promote");
+  } else throw new Error("usage: signal-listening-run.ts request|status|local|requeue|import|estimate|question|listen|metrics|cycle|cycle-status|cycle-local|study|study-recount|study-status|study-local|study-requeue|promote");
 } finally { await pool.end(); }
