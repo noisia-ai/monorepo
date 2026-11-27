@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { compileSignalStudyAxesV1, resolveSignalStudyAxesV1, signalStudyInMotivePoolV1, SIGNAL_STUDY_TB_TEMPLATE_V2 as second, signalStudyDirectionProbabilitySqlV1, SIGNAL_STUDY_TB_TEMPLATE_V3 as template, SIGNAL_STUDY_TB_TEMPLATE_V3_2 as current, SIGNAL_STUDY_TB_TEMPLATE_V3_3 as latest,
+import { compileSignalStudyAxesV1, resolveSignalStudyAxesV1, signalStudyInMotivePoolV1, SIGNAL_STUDY_TB_TEMPLATE_V2 as second, signalStudyDirectionProbabilitySqlV1, SIGNAL_STUDY_TB_TEMPLATE_V3 as template, SIGNAL_STUDY_TB_TEMPLATE_V3_2 as current, SIGNAL_STUDY_TB_TEMPLATE_V3_3 as latest, SIGNAL_STUDY_TB_TEMPLATE_V3_4 as inUse, signalStudyDirectionLineV1, decideSignalStudyMotiveLayersV1,
   type SignalStudySubjectV1 } from "./signal-study-v1";
 
 const subject: SignalStudySubjectV1 = { kind: "category", name: "sparkling water", category: "sparkling water", own_brand: "Brand One", competitors: ["Brand Two"], alternatives: [] };
@@ -75,4 +75,24 @@ test("the lines of the direction are read on the probability of the option chose
   assert.equal(signalStudyDirectionProbabilitySqlV1(latest.rules), "(direction.probabilities->>direction.choice)::real");
   // Earlier templates keep the confidence the classifier reports, which runs lower.
   for (const earlier of [second, template, current]) assert.equal(signalStudyDirectionProbabilitySqlV1(earlier.rules), "direction.probability");
+});
+
+test("barrier and mixed count from their own line, and a motive without a layer gets a third reading", () => {
+  assert.equal(inUse.version, "r16b-v3.4");
+  const { direction_min_probability_by: lines, layer_tiebreak_reading: third, ...rules } = inUse.rules;
+  assert.deepEqual([lines, third], [{ barrier: 0.85, mixed: 0.85 }, true]);
+  assert.deepEqual(rules, latest.rules, "nothing else changes");
+  assert.deepEqual(compileSignalStudyAxesV1(inUse, subject), compileSignalStudyAxesV1(latest, subject), "the questions are the same: nothing is asked again");
+  assert.deepEqual(["trigger", "barrier", "mixed"].map(direction => signalStudyDirectionLineV1(inUse.rules, direction)), [0.7, 0.85, 0.85]);
+  const by = (direction: string, direction_probability: number) => resolveSignalStudyAxesV1(subject, { direction, target: "category", use: "literal", direction_probability }, inUse.rules);
+  assert.deepEqual([by("trigger", 0.75).direction, by("barrier", 0.75).direction, by("barrier", 0.85).direction, by("mixed", 0.8).direction, by("mixed", 0.9).direction],
+    ["trigger", "none", "barrier", "none", "mixed"]);
+  // Below its line a barrier is kept as probable and still helps to discover motives.
+  assert.deepEqual([by("barrier", 0.75).direction_probable, by("barrier", 0.75).discovery, signalStudyInMotivePoolV1(inUse, by("barrier", 0.75))], ["barrier", true, true]);
+  // Two readings that split leave no layer; a third one settles it.
+  const posts = ["p1", "p2", "p3", "p4"].map(id => ({ id, motive_key: "price", text: "text" }));
+  const reading = (layers: string[]) => new Map(posts.map((post, index) => [post.id, { layer: layers[index]! as "social", proof: "text", downgraded: null }]));
+  const first = reading(["social", "social", "personal", "personal"]), second = reading(["social", "personal", "personal", "social"]);
+  assert.equal(decideSignalStudyMotiveLayersV1({ template: inUse, posts, readings: [first, second] })[0]!.layer, "unclear");
+  assert.equal(decideSignalStudyMotiveLayersV1({ template: inUse, posts, readings: [first, second, reading(["social", "social", "social", "social"])] })[0]!.layer, "social");
 });

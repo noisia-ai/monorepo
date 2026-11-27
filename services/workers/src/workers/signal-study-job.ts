@@ -241,12 +241,25 @@ export async function stepSignalStudyV1(args: { database: Database; study: Signa
         system: system("layers"), schema: SIGNAL_STUDY_MENTION_LAYERS_SCHEMA_V1,
         payload: buildSignalStudyMentionLayersPayloadV1({ template, subject: study.subject, motives: named, posts, order: key }) }) });
       const first = await reading("layers_a"), second = await reading("layers_b");
-      const agreement = signalStudyMentionKappaV1(first, second), decided = decideSignalStudyMotiveLayersV1({ template, posts, readings: [first, second] });
+      const agreement = signalStudyMentionKappaV1(first, second), both = decideSignalStudyMotiveLayersV1({ template, posts, readings: [first, second] });
+      // A motive the two readings leave without a layer gets a third reading of its posts, and the three decide.
+      const open = both.filter(item => item.layer === "unclear").map(item => item.motive_key);
+      let decided = both, tiebreak: { motives: string[]; settled: string[] } | null = null;
+      if (rules.layer_tiebreak_reading && open.length && study.cap_micro_usd - study.spent_micro_usd >= AGENT_STEP_MIN_MICRO_USD) {
+        const again = posts.filter(post => open.includes(post.motive_key));
+        const third = applySignalStudyMentionLayersV1({ posts: again, output: await agentStep({ database, study, agent: args.agent, key: "post_layers_c",
+          system: system("layers"), schema: SIGNAL_STUDY_MENTION_LAYERS_SCHEMA_V1,
+          payload: buildSignalStudyMentionLayersPayloadV1({ template, subject: study.subject, motives: named.filter(motive => open.includes(motive.motive_key)), posts: again, order: "layers_c" }) }) });
+        const settled = decideSignalStudyMotiveLayersV1({ template, posts: again, readings: [first, second, third] });
+        decided = both.map(item => settled.find(other => other.motive_key === item.motive_key) ?? item);
+        tiebreak = { motives: open, settled: settled.filter(item => item.layer !== "unclear").map(item => item.motive_key) };
+      }
       await setSignalStudyMotiveLayersV1(database, study, decided.map(item => ({ motive_key: item.motive_key, layer: item.layer, permission: item.permission,
         layer_record: { unit: "posts", posts: item.posts, votes: item.votes, share: item.share, proofs: item.proofs } })));
       const without = [...first.values(), ...second.values()].filter(item => item.downgraded !== null).length;
       stability = { unit: "posts", n: agreement.n, kappa: agreement.kappa, agreement: agreement.agreement, kappa_min: rules.kappa_min,
-        readings_without_literal_proof: without, motives_without_majority: decided.filter(item => item.layer === "unclear").map(item => item.motive_key) };
+        readings_without_literal_proof: without, motives_without_majority: decided.filter(item => item.layer === "unclear").map(item => item.motive_key),
+        ...(tiebreak ? { third_reading: tiebreak } : {}) };
     }
     // Reported, not acted on: a layer that holds more than half of the cut.
     const after = await listSignalStudyMotivesV1(database, study.id), layerOf = new Map(after.map(motive => [motive.motive_key, motive.layer]));

@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { Pool, PoolClient } from "pg";
 import {
-  compileSignalListeningConfigurationV1, compileSignalStudyAxesV1, signalStudyGroupUsesV1, signalStudyMotiveQuestionV1, SIGNAL_LISTENING_CONSUMER_CUT_V1, signalStudyDirectionProbabilitySqlV1, SIGNAL_STUDY_TB_TEMPLATE_V3_3,
+  compileSignalListeningConfigurationV1, compileSignalStudyAxesV1, signalStudyGroupUsesV1, signalStudyMotiveQuestionV1, SIGNAL_LISTENING_CONSUMER_CUT_V1, signalStudyDirectionProbabilitySqlV1, SIGNAL_STUDY_TB_TEMPLATE_V3_4,
   validateSignalListeningConfigurationV1, validateSignalStudyLexiconV1, validateSignalStudySubjectV1, validateSignalStudyTemplateV1,
   type SignalListeningAskedQuestionV1, type SignalListeningConfigurationV1, type SignalListeningItemV1, type SignalStudyLayerV1,
   type SignalStudyPermissionV1, type SignalStudySubjectV1, type SignalStudyTemplateV1, type SignalStudyWordingV1,
@@ -55,7 +55,7 @@ export async function requestSignalStudyV1(args: { database: Database; workspace
   if (typeof args.name !== "string" || !args.name.trim() || args.name.length > 200) fail("study_request_invalid", 422);
   let subject: SignalStudySubjectV1, template: SignalStudyTemplateV1, lexicon: string[] | null;
   try {
-    subject = validateSignalStudySubjectV1(args.subject); template = validateSignalStudyTemplateV1(args.template ?? SIGNAL_STUDY_TB_TEMPLATE_V3_3);
+    subject = validateSignalStudySubjectV1(args.subject); template = validateSignalStudyTemplateV1(args.template ?? SIGNAL_STUDY_TB_TEMPLATE_V3_4);
     lexicon = args.lexicon_terms === undefined || args.lexicon_terms === null ? null : validateSignalStudyLexiconV1(args.lexicon_terms);
   } catch { fail("study_request_invalid", 422); }
   const period = args.period ?? null;
@@ -311,7 +311,7 @@ export async function createSignalStudySourceV1(database: Database, run: Pick<Si
             FROM (${cut.sql}) included
             JOIN signal_mass_labeling_items item ON item.workspace_id=$1 AND item.map_id=$2 AND item.root_id=included.root_id
             JOIN signal_listening_answers direction ON direction.question_id=$${page + 5} AND direction.root_id=item.root_id AND direction.workspace_id=$1
-              AND direction.choice<>'none' AND ${signalStudyDirectionProbabilitySqlV1(template.rules)}>=$${page + 8}::real AND direction.input_sha=decode(substr(item.input_digest,8),'hex')
+              AND direction.choice<>'none' AND ${signalStudyDirectionProbabilitySqlV1(template.rules)}>=COALESCE(($${page + 9}::jsonb->>direction.choice)::real,$${page + 8}::real) AND direction.input_sha=decode(substr(item.input_digest,8),'hex')
             JOIN signal_listening_answers use_ ON use_.question_id=$${page + 6} AND use_.root_id=item.root_id AND use_.workspace_id=$1
               AND use_.choice=ANY($${page + 7}::text[]) AND use_.input_sha=decode(substr(item.input_digest,8),'hex')
             JOIN signal_mass_labeling_maps map ON map.id=item.map_id AND map.workspace_id=item.workspace_id
@@ -319,7 +319,7 @@ export async function createSignalStudySourceV1(database: Database, run: Pick<Si
               AND embedding.chunk_sha256=item.chunk_sha256
             WHERE ($${page + 1}::uuid IS NULL OR item.root_id>$${page + 1}) ORDER BY item.root_id LIMIT $${page + 2}`,
             [...cut.params, cursor, limit, study.id, template.rules.motive_candidates, axisIds.direction, axisIds.use, signalStudyGroupUsesV1(template.rules),
-              template.rules.direction_min_probability ?? 0])).rows;
+              template.rules.direction_min_probability ?? 0, JSON.stringify(template.rules.direction_min_probability_by ?? {})])).rows;
         if (!rows.length) return [];
         cursor = rows.at(-1)!.root_id;
         const digests = new Map(rows.map(row => [row.root_id, row.input_digest])), answered = new Map<string, Set<number>>();

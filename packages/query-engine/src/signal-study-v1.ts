@@ -5,6 +5,7 @@ import seedV2 from "./data/study-templates/triggers-barriers.r16b-v2.json";
 import seedV3 from "./data/study-templates/triggers-barriers.r16b-v3.1.json";
 import seedV32 from "./data/study-templates/triggers-barriers.r16b-v3.2.json";
 import seedV33 from "./data/study-templates/triggers-barriers.r16b-v3.3.json";
+import seedV34 from "./data/study-templates/triggers-barriers.r16b-v3.4.json";
 import type { JevQuestionV1 } from "./signal-mention-facets-jev-v1";
 import { signalListeningQuestionIdentityV1, type SignalListeningAskedQuestionV1 } from "./signal-listening-questions-v1";
 
@@ -36,6 +37,11 @@ const templateSchema = z.object({
     group_uses: z.array(z.string()).min(1).max(4).optional(),
     /** A direction counts from this probability up; below it the post is kept as probable and read as `none`. */
     direction_min_probability: z.number().min(0).max(1).optional(),
+    /** A line of its own for a direction, in place of `direction_min_probability`. Below it the direction is kept as
+     * probable, like any other below its line. */
+    direction_min_probability_by: z.record(z.string(), z.number().min(0).max(1)).optional(),
+    /** When the two readings leave a motive without a layer, its posts are read a third time and the three decide. */
+    layer_tiebreak_reading: z.boolean().optional(),
     /** Which figure of the classifier's answer the lines of the direction are read on: the probability of the option it
      * chose, or the confidence it reports for the choice, which runs lower. Without it, the confidence. */
     direction_probability_of: z.enum(["confidence", "chosen_option"]).optional(),
@@ -104,9 +110,20 @@ export const SIGNAL_STUDY_TB_TEMPLATE_V3: Readonly<SignalStudyTemplateV1> = vali
  * grouped and named with the rest and counted nowhere.
  */
 export const SIGNAL_STUDY_TB_TEMPLATE_V3_2: Readonly<SignalStudyTemplateV1> = validateSignalStudyTemplateV1(seedV32);
-/** The template new studies are made with: r16b-v3.2 with its lines read on the probability of the option the classifier
- * chose, the figure the blind samples were judged on. */
+/** r16b-v3.2 with its lines read on the probability of the option the classifier chose, the figure the blind samples were
+ * judged on. The two accepted test studies ran with it. */
 export const SIGNAL_STUDY_TB_TEMPLATE_V3_3: Readonly<SignalStudyTemplateV1> = validateSignalStudyTemplateV1(seedV33);
+/**
+ * The template new studies are made with (r16b-v3.4), after the blind evaluation of the two studies of r16b-v3.3: barrier
+ * was right in 73 % of the posts of one of them and mixed in 25 %, so both count only from 0.85 and stay probable below;
+ * and the motives the two readings left without a layer were settled consistently by a judge, so their posts are read a
+ * third time and the three readings decide. The questions are the same: nothing is asked again.
+ */
+export const SIGNAL_STUDY_TB_TEMPLATE_V3_4: Readonly<SignalStudyTemplateV1> = validateSignalStudyTemplateV1(seedV34);
+/** The line a direction counts from: its own when the template gives it one. */
+export function signalStudyDirectionLineV1(rules: Pick<SignalStudyTemplateV1["rules"], "direction_min_probability" | "direction_min_probability_by">, direction: string): number | undefined {
+  return rules.direction_min_probability_by?.[direction] ?? rules.direction_min_probability;
+}
 /** The SQL for the figure a template reads its direction lines on, over an answer aliased `direction`. */
 export function signalStudyDirectionProbabilitySqlV1(rules: Pick<SignalStudyTemplateV1["rules"], "direction_probability_of">): string {
   return rules.direction_probability_of === "chosen_option" ? "(direction.probabilities->>direction.choice)::real" : "direction.probability";
@@ -173,9 +190,10 @@ export type SignalStudyAxesV1 = { direction: string; target: string; use: string
  * the conventional category counts as moving toward the alternative. */
 export function resolveSignalStudyAxesV1(subject: SignalStudySubjectV1, given: { direction: string; target: string; use: string; direction_probability?: number | null },
   rules?: Pick<SignalStudyTemplateV1["rules"], "direction_min_probability">
-    & Partial<Pick<SignalStudyTemplateV1["rules"], "group_use" | "group_uses" | "direction_discovery_min_probability">>): SignalStudyAxesV1 {
+    & Partial<Pick<SignalStudyTemplateV1["rules"], "group_use" | "group_uses" | "direction_discovery_min_probability" | "direction_min_probability_by">>): SignalStudyAxesV1 {
   const counted = signalStudyGroupUsesV1(rules);
-  const weak = rules?.direction_min_probability !== undefined && given.direction !== "none" && (given.direction_probability ?? 0) < rules.direction_min_probability;
+  const line = rules ? signalStudyDirectionLineV1(rules, given.direction) : undefined;
+  const weak = line !== undefined && given.direction !== "none" && (given.direction_probability ?? 0) < line;
   const answers = { ...given, direction: weak ? "none" : given.direction };
   const inverted = subject.kind === "alternative" && answers.target === "category" && answers.direction === "barrier" && answers.use === "literal";
   return { source_direction: given.direction, direction_probable: weak ? given.direction : null,
