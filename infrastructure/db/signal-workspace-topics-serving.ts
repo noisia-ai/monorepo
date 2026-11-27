@@ -1580,6 +1580,9 @@ export async function loadSignalWorkspaceMentionsV1(args: SignalWorkspaceMention
 
 /** How many eligible posts the lexicon suggestions compare against, at most. */
 const LEXICON_BACKGROUND_SAMPLE = 8000;
+/** A term needs this many posts that show the category once there are enough of them to choose from;
+ * a brand that is just starting is shown every term of the few it has. */
+const LEXICON_MIN_ROOTS = 3, LEXICON_MIN_ROOTS_FROM = 30;
 export type MassLabelingLexiconSuggestionsV1 = {
   contract_version: "mass-labeling-lexicon-suggestions-v1";
   workspace_id: string; revision: number; available: boolean;
@@ -1640,7 +1643,8 @@ export async function loadMassLabelingLexiconSuggestionsV1(args: Omit<Args, "inc
         SELECT term,count(*)::int roots,count(*) FILTER(WHERE choice='trigger')::int trigger_roots,count(*) FILTER(WHERE choice='barrier')::int barrier_roots
         FROM foreground_terms WHERE NOT EXISTS(SELECT 1 FROM signal_mass_labeling_lexicon_dismissals dismissal
           WHERE dismissal.workspace_id=$1::uuid AND dismissal.lexicon_digest=$8 AND dismissal.term=foreground_terms.term)
-        GROUP BY term HAVING count(*)>=3 ORDER BY 2 DESC,term COLLATE "C" LIMIT 3000
+        GROUP BY term HAVING count(*)>=CASE WHEN (SELECT count(*) FROM marked WHERE choice IS NOT NULL)>=${LEXICON_MIN_ROOTS_FROM} THEN ${LEXICON_MIN_ROOTS} ELSE 1 END
+        ORDER BY 2 DESC,term COLLATE "C" LIMIT 3000
       ), background AS MATERIALIZED (
         -- Only the candidate terms are looked for in the rest of the sample.
         SELECT candidates.term,count(*)::int roots FROM candidates
@@ -1653,7 +1657,7 @@ export async function loadMassLabelingLexiconSuggestionsV1(args: Omit<Args, "inc
     [...populationParams(args, ctx), policy.revision, massLabelingLexiconDigestV1(policy), LEXICON_BACKGROUND_SAMPLE])).rows;
     const first = counted[0];
     const ranked = first ? rankSignalLexiconEvidenceV1({ foreground_size: first.foreground_size, background_size: first.background_size, language: first.language,
-      existing_terms: policy.lexicon_terms, limit,
+      existing_terms: policy.lexicon_terms, limit, minimum_roots: first.foreground_size >= LEXICON_MIN_ROOTS_FROM ? LEXICON_MIN_ROOTS : 1,
       items: counted.map(item => ({ term: item.term, foreground_roots: item.roots, background_roots: item.background_roots, trigger_roots: item.trigger_roots, barrier_roots: item.barrier_roots })) }) : [];
     return { ...result, available: true, items: ranked.map(item => ({ term: item.term, roots: item.foreground_roots, trigger_roots: item.trigger_roots,
       barrier_roots: item.barrier_roots, background_roots: item.background_roots, lift: item.lift })) };
