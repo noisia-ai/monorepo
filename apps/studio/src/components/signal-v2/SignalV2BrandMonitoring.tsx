@@ -1,4 +1,5 @@
 "use client";
+import { SignalListeningMetrics } from "./SignalListeningMetrics";
 import type { SignalWorkspaceTopicReadBundleV1 } from "@noisia/db";
 
 import Link from "next/link";
@@ -1836,6 +1837,7 @@ export function SignalV2BrandMonitoring({
         </div>
           </>
         )}
+        {currentModule === "monitoring" ? <SignalListeningMetrics workspaceId={data.workspace.id} /> : null}
         </div>
         )}
       </WorkspaceMain>

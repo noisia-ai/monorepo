@@ -28,6 +28,18 @@ const voice = {
   unknown: "Insufficient evidence to identify the voice",
 };
 
+/** The exact R15 wires. Listening reuses them so answers already paid for keep their identity. */
+export const MASS_LABELING_JEV_WIRES_V2 = {
+  promotion: (): JevQuestionV1 => ({ type: "noul", instructions, criteria: { true: promotionTrue, false: promotionFalse } }),
+  voice: (): JevQuestionV1 => ({ type: "choice", instructions: voiceQuestion, criteria: { ...voice } }),
+  topic: (wording: { name: string; definition: string }): JevQuestionV1 => ({ type: "noul", instructions, criteria: {
+    true: { question: topicQuestion, name: wording.name, definition: wording.definition }, false: topicFalse } }),
+  interest: (interest: { name: string; definition: string }): JevQuestionV1 => ({ type: "noul", instructions, criteria: {
+    true: { question: interestQuestion, name: interest.name, definition: interest.definition }, false: interestFalse } }),
+  /** Rules shared by every question, for questions that carry their own text. */
+  instructions,
+} as const;
+
 /** The complete configuration is frozen into the run identity before admission. */
 export function massLabelingConfigurationV2(value: unknown): MassLabelingConfigurationV2 {
   const config = value as MassLabelingConfigurationV2 | null;
@@ -70,8 +82,8 @@ export function buildMassLabelingJevRequestV2(input: MassLabelingInputV1, _conte
     || input.candidates.some(c => !c.topic_key || !c.name.trim() || !c.definition.trim() || !Number.isFinite(c.similarity)
       || c.name.length > 160 || c.definition.length > 1200 || c.similarity < -1 || c.similarity > 1)) throw new Error("mass_labeling_input_invalid");
   const questions: Record<string, JevQuestionV1> = {
-    promotion: { type: "noul", instructions, criteria: { true: promotionTrue, false: promotionFalse } },
-    voice: { type: "choice", instructions: voiceQuestion, criteria: voice },
+    promotion: MASS_LABELING_JEV_WIRES_V2.promotion(),
+    voice: MASS_LABELING_JEV_WIRES_V2.voice(),
     trigger_barrier: buildTriggerBarrierR13("en", config.category),
   };
   const candidates = [...input.candidates].sort((a, b) => b.similarity - a.similarity || a.topic_key.localeCompare(b.topic_key)).slice(0, 4);
@@ -79,14 +91,9 @@ export function buildMassLabelingJevRequestV2(input: MassLabelingInputV1, _conte
     const wording = config.candidate_language === "en" ? candidate.localization?.en
       : candidate.localization?.original ?? { name: candidate.name, definition: candidate.definition };
     if (!wording?.name.trim() || !wording.definition.trim()) throw new Error("mass_labeling_candidate_translation_required");
-    questions[`topic_${ordinal}`] = { type: "noul", instructions, criteria: {
-      true: { question: topicQuestion, name: wording.name, definition: wording.definition },
-      false: topicFalse,
-    } };
+    questions[`topic_${ordinal}`] = MASS_LABELING_JEV_WIRES_V2.topic(wording);
   });
-  for (const interest of config.interests) questions[`interest_${interest.key}`] = { type: "noul", instructions,
-    criteria: { true: { question: interestQuestion, name: interest.name, definition: interest.definition },
-      false: interestFalse } };
+  for (const interest of config.interests) questions[`interest_${interest.key}`] = MASS_LABELING_JEV_WIRES_V2.interest(interest);
   return { model, state: input.text, questions };
 }
 

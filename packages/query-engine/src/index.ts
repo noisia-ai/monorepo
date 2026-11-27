@@ -1285,3 +1285,4 @@ export * from "./signal-mass-labeling-category-lexicon-v1";
 
 export * from "./signal-workspace-monitoring-insights-v1";
 export * from "./signal-listening-questions-v1";
+export * from "./signal-listening-config-v1";

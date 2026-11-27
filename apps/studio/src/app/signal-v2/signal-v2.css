@@ -9424,3 +9424,16 @@
 .signal-v2-mentions-platforms form { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; min-width: 0; }
 .signal-v2-mentions-platforms label { font-size: 12px; }
 .signal-v2-mentions-platforms select { min-width: 0; max-width: 100%; border: 1px solid #ccc; border-radius: 6px; padding: 6px 8px; font: inherit; font-size: 12px; background: #fff; }
+
+/* Listening: answers to the brand's questions with options. */
+.signal-v2-listening { display: grid; gap: 16px; }
+.signal-v2-listening__head { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 12px; }
+.signal-v2-listening__head h3 { margin: 0; font-size: 15px; font-weight: 600; }
+.signal-v2-listening__head p, .signal-v2-listening__note { margin: 4px 0 0; color: #616161; font-size: 13px; }
+.signal-v2-listening__head label { display: grid; gap: 4px; font-size: 12px; color: #616161; }
+.signal-v2-listening__head select { max-width: 360px; padding: 6px 8px; border: 1px solid #c9cccf; border-radius: 8px; background: #fff; font-size: 13px; }
+.signal-v2-listening table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.signal-v2-listening caption { padding-bottom: 6px; text-align: left; font-weight: 600; }
+.signal-v2-listening th, .signal-v2-listening td { padding: 6px 8px; border-bottom: 1px solid #ebebeb; text-align: right; font-weight: 400; }
+.signal-v2-listening thead th { color: #616161; font-size: 12px; }
+.signal-v2-listening th:first-child, .signal-v2-listening td:first-child { text-align: left; }
