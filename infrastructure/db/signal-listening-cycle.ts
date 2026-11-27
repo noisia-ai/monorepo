@@ -234,7 +234,7 @@ const VALID = `valid AS MATERIALIZED (
   JOIN signal_listening_answers answer ON answer.question_id=topic.question_id AND answer.workspace_id=$1
   JOIN signal_mass_labeling_items item ON item.map_id=$2 AND item.workspace_id=$1 AND item.root_id=answer.root_id
     AND answer.input_sha=decode(substr(item.input_digest,8),'hex')
-  LEFT JOIN signal_listening_answer_overrides decided ON decided.question_id=topic.question_id AND decided.root_id=answer.root_id AND decided.input_sha=answer.input_sha
+  LEFT JOIN signal_listening_answer_overrides decided ON decided.cycle_id=(SELECT scoped.cycle_id FROM signal_listening_rounds scoped WHERE scoped.id=$3) AND decided.question_id=topic.question_id AND decided.root_id=answer.root_id AND decided.input_sha=answer.input_sha
   WHERE topic.round_id=$3)`;
 /** A pair of topics the classifier settles post by post, as a round carries it. */
 export type SignalListeningRoundPairV1 = { left: string; right: string; question_id: number; jaccard?: number | null };
@@ -278,22 +278,23 @@ export async function settleSignalListeningPairChoicesV1(database: Database, cyc
     // those posts count again by the topic's own answer; the choices of the other pairs are written again just below.
     const undone = every.filter(pair => together.has(`${pair.left}+${pair.right}`));
     if (undone.length) {
-      await client.query(`DELETE FROM signal_listening_answer_overrides WHERE workspace_id=$1 AND decided_by_question_id=ANY($2::bigint[]) AND question_id=ANY($3::bigint[])`,
-        [cycle.workspace_id, undone.map(pair => pair.question_id), undone.flatMap(pair => [topics.get(pair.left), topics.get(pair.right)]).filter(Boolean)]);
+      await client.query(`DELETE FROM signal_listening_answer_overrides WHERE workspace_id=$1 AND decided_by_question_id=ANY($2::bigint[]) AND question_id=ANY($3::bigint[]) AND cycle_id=$4`,
+        [cycle.workspace_id, undone.map(pair => pair.question_id), undone.flatMap(pair => [topics.get(pair.left), topics.get(pair.right)]).filter(Boolean), cycle.id]);
     }
     if (!asked.length) return [];
     const params = [cycle.workspace_id, asked.map(pair => pair.question_id), asked.map(pair => pair.left_id), asked.map(pair => pair.right_id), cycle.base_map_id, cycle.policy.approval];
     // A post two pairs share through the same topic gets one decision for that topic, whatever the order of the pairs: it
     // is out of the topic when any of the choices left it out. The decision travels with the digest of the text it was
-    // made on, so it never applies to an answer about another text.
+    // made on, so it never applies to an answer about another text, and to the loop that made it: the map of a loop
+    // that already finished is not touched by one that is still running.
     await client.query(`WITH ${PAIR_SHARED}, side AS (
         SELECT left_id question_id,root_id,input_sha,choice IN('left','both') belongs,pair_question FROM shared
         UNION ALL SELECT right_id,root_id,input_sha,choice IN('right','both'),pair_question FROM shared),
       decided AS (SELECT question_id,root_id,bool_and(belongs) belongs,COALESCE(min(pair_question) FILTER (WHERE NOT belongs),min(pair_question)) decided_by,
         (array_agg(input_sha))[1] input_sha FROM side GROUP BY 1,2)
-      INSERT INTO signal_listening_answer_overrides(workspace_id,question_id,root_id,belongs,decided_by_question_id,input_sha)
-      SELECT $1,question_id,root_id,belongs,decided_by,input_sha FROM decided
-      ON CONFLICT(question_id,root_id) DO UPDATE SET belongs=EXCLUDED.belongs,decided_by_question_id=EXCLUDED.decided_by_question_id,input_sha=EXCLUDED.input_sha`, params);
+      INSERT INTO signal_listening_answer_overrides(workspace_id,cycle_id,question_id,root_id,belongs,decided_by_question_id,input_sha)
+      SELECT $1,$7::uuid,question_id,root_id,belongs,decided_by,input_sha FROM decided
+      ON CONFLICT(cycle_id,question_id,root_id) DO UPDATE SET belongs=EXCLUDED.belongs,decided_by_question_id=EXCLUDED.decided_by_question_id,input_sha=EXCLUDED.input_sha`, [...params, cycle.id]);
     const counts = new Map<string, Map<string, number>>();
     for (const row of (await client.query<{ pair_question: string; choice: string; posts: number }>(
       `WITH ${PAIR_SHARED} SELECT pair_question::text,choice,count(*)::int posts FROM shared GROUP BY 1,2`, params)).rows) {
@@ -608,7 +609,7 @@ export async function createSignalListeningRoundSourceV1(database: Database, run
         if (watched.length && scope.previous_round_id) {
           for (const member of (await database.query<{ root_id: string; topic_key: string }>(`SELECT answer.root_id,topic.topic_key FROM signal_listening_round_topics topic
             JOIN signal_listening_answers answer ON answer.question_id=topic.question_id AND answer.workspace_id=$1 AND answer.root_id=ANY($2::uuid[])
-            LEFT JOIN signal_listening_answer_overrides decided ON decided.question_id=topic.question_id AND decided.root_id=answer.root_id AND decided.input_sha=answer.input_sha
+            LEFT JOIN signal_listening_answer_overrides decided ON decided.cycle_id=(SELECT scoped.cycle_id FROM signal_listening_rounds scoped WHERE scoped.id=$3) AND decided.question_id=topic.question_id AND decided.root_id=answer.root_id AND decided.input_sha=answer.input_sha
             WHERE topic.round_id=$3 AND topic.topic_key=ANY($5::text[]) AND COALESCE(decided.belongs,answer.probability>=$4::real)`,
             [run.workspace_id, rows.map(row => row.root_id), scope.previous_round_id, scope.policy.approval, watched])).rows) {
             const set = held.get(member.root_id); if (set) set.add(member.topic_key); else held.set(member.root_id, new Set([member.topic_key]));

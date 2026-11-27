@@ -64,8 +64,8 @@ try {
       JOIN signal_mass_labeling_items item ON item.map_id=$2 AND item.workspace_id=$1 AND item.root_id=first.root_id
         AND first.input_sha=decode(substr(item.input_digest,8),'hex') AND second.input_sha=decode(substr(item.input_digest,8),'hex')
       -- Both memberships as they count today: where the classifier chose between the two, its choice.
-      LEFT JOIN signal_listening_answer_overrides left_decided ON left_decided.question_id=a.question_id AND left_decided.root_id=first.root_id AND left_decided.input_sha=first.input_sha
-      LEFT JOIN signal_listening_answer_overrides right_decided ON right_decided.question_id=b.question_id AND right_decided.root_id=first.root_id AND right_decided.input_sha=second.input_sha
+      LEFT JOIN signal_listening_answer_overrides left_decided ON left_decided.cycle_id=(SELECT scoped.cycle_id FROM signal_listening_rounds scoped WHERE scoped.id=$3) AND left_decided.question_id=a.question_id AND left_decided.root_id=first.root_id AND left_decided.input_sha=first.input_sha
+      LEFT JOIN signal_listening_answer_overrides right_decided ON right_decided.cycle_id=(SELECT scoped.cycle_id FROM signal_listening_rounds scoped WHERE scoped.id=$3) AND right_decided.question_id=b.question_id AND right_decided.root_id=first.root_id AND right_decided.input_sha=second.input_sha
       WHERE a.round_id=$3 AND a.topic_key=$5 AND COALESCE(left_decided.belongs,first.probability>=$4::real) AND COALESCE(right_decided.belongs,second.probability>=$4::real)
         AND item.root_id<>ALL($9::uuid[]) ORDER BY md5(item.root_id::text||$7) LIMIT $8`,
       [cycle.workspace_id, cycle.base_map_id, round.id, cycle.policy.approval, pair.left, pair.right, seed.toString("hex"), Math.min(perPair, fusionTotal - fusion.length), [...drawn]])).rows;
@@ -108,7 +108,7 @@ try {
       JOIN signal_listening_answers answer ON answer.question_id=topic.question_id AND answer.workspace_id=$1
       JOIN signal_mass_labeling_items item ON item.map_id=$2 AND item.workspace_id=$1 AND item.root_id=answer.root_id
         AND answer.input_sha=decode(substr(item.input_digest,8),'hex')
-      LEFT JOIN signal_listening_answer_overrides decided ON decided.question_id=topic.question_id AND decided.root_id=answer.root_id AND decided.input_sha=answer.input_sha
+      LEFT JOIN signal_listening_answer_overrides decided ON decided.cycle_id=(SELECT scoped.cycle_id FROM signal_listening_rounds scoped WHERE scoped.id=$3) AND decided.question_id=topic.question_id AND decided.root_id=answer.root_id AND decided.input_sha=answer.input_sha
       WHERE topic.round_id=$3),
     best AS (SELECT DISTINCT ON (root_id) root_id,topic_key,probability FROM scored ORDER BY root_id,probability DESC,topic_key)
     SELECT item.root_id,item.text,best.topic_key,best.probability::float8 probability FROM best
